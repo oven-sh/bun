@@ -1792,6 +1792,7 @@ fn run_one(
             compiler_options: &[],
             cwd: cwd.as_bytes(),
             project: None,
+            build: false,
             paths: &[],
             are_entry_points: false,
             threads: 1,

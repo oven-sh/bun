@@ -629,10 +629,12 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// `IsEffectiveExternalModule`. `GetEmitModuleDetectionKind`: from `node16` on every file is a
-    /// module. A `moduleDetection` option that overrides this is not stored.
+    /// `IsEffectiveExternalModule`
     pub(super) fn is_effective_external_module(&self, file: FileId) -> bool {
-        self.files().module(file).is_module() || self.p.files.options.module.is_node()
+        let (module, kind) = (self.files().module(file), self.p.files.options.module);
+        // `isCommonJSContainingModuleKind`
+        module.hir.has_module_syntax
+            || (kind == ModuleKind::CommonJs || kind.is_node()) && module.is_commonjs()
     }
 
     /// `getContainingFunctionOrClassStaticBlock`, `NodeFlagsAwaitContext`, `IsInTopLevelContext`, of `node`.
@@ -647,8 +649,8 @@ impl Checker<'_, '_> {
             Err(statement) => {
                 if self.parsed_again_for_await.is_none() {
                     // `parseSourceFileWorker`: a declaration file is not reparsed.
-                    let is_parsed_again = self.is_effective_external_module(file)
-                        && hir.kind != FileKind::Declaration;
+                    let is_parsed_again =
+                        hir.has_module_syntax && hir.kind != FileKind::Declaration;
                     let statements = if is_parsed_again {
                         let index = self.exprs_by_kind(file);
                         self.statements_parsed_again_for_await(file, &index)

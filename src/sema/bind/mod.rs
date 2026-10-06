@@ -124,7 +124,8 @@ pub enum Decl {
     UmdGlobal(StmtId),
     /// The file itself, as a module.
     File,
-    /// `const a = require("m")`, `const { a } = require("m")` in JavaScript: the name.
+    /// `const a = require("m")`, `const { a } = require("m")`, `const [a] = require("m")` in
+    /// JavaScript: the name.
     Require(PatId),
     /// `module.exports = e` in JavaScript: the assignment.
     ModuleExports(ExprId),
@@ -200,7 +201,7 @@ pub enum JsDeclarationKind {
 
 /// The text of a string literal or of a template without substitutions, parenthesized or not.
 /// `NONE` for anything else, including a numeric literal, whose text requires an interner.
-fn string_literal_text(hir: &File, e: ExprId) -> Atom {
+pub(crate) fn string_literal_text(hir: &File, e: ExprId) -> Atom {
     match hir[e].kind {
         ExprKind::String(text) => text,
         ExprKind::Template { exprs } if exprs.is_empty() => hir.id_at(hir.template_texts(exprs), 0),
@@ -909,6 +910,8 @@ pub struct BoundIn<S: Storage> {
     /// The scope that an interface, an enum, a module or a namespace creates. Its enclosing scope
     /// is the parent of that scope.
     pub interface_scope: S::List<ScopeId>,
+    /// `NodeFlagsContainsThis` of an interface declaration.
+    pub interface_contains_this: S::List<bool>,
     pub enum_scope: S::Few<ScopeId>,
     pub module_scope: S::Few<ScopeId>,
     pub alias_symbol: S::List<SymbolId>,
@@ -991,6 +994,25 @@ pub type BoundBuilder = BoundIn<Growable>;
 pub const UNREACHABLE: FlowId = FlowId(0);
 
 /// What the binder also calls while it binds.
+/// The text of `PropertyNameOrName()` of the binding element whose name is `pat`. `NONE` if that is
+/// neither an identifier nor a string literal.
+fn property_name_or_name(hir: &File, pat: PatId, property_name: Option<&PatProp>) -> Atom {
+    match property_name.map(|p| (p.key, p.name_kind, p.key_pos)) {
+        None | Some((PropKey::None, ..)) => match hir[pat].kind {
+            PatKind::Ident(name) => name,
+            _ => Atom::NONE,
+        },
+        Some((PropKey::Name(name), NameKind::StringLiteral, _)) => name,
+        // A bigint literal has this kind too.
+        Some((PropKey::Name(name), NameKind::Identifier, pos))
+            if !is_bigint_literal_at(hir, pos) =>
+        {
+            name
+        }
+        Some(_) => Atom::NONE,
+    }
+}
+
 impl<S: Storage> BoundIn<S> {
     /// A table with at most this many names is searched linearly.
     pub const SCANNED: usize = 8;
@@ -1089,18 +1111,26 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// `IsVariableDeclarationInitializedToRequire` for the name `pat`: the module, and the export
-    /// name if `pat` does not bind the whole module.
+    /// `IsVariableDeclarationInitializedToRequire` for the variable declaration or the binding
+    /// element whose name is `pat`: the module. For a binding element, of an object or an array
+    /// pattern, with `...` or not, also the export that `getExternalModuleMember` looks up: the
+    /// text of `PropertyNameOrName()`, `NONE` if that is neither an identifier nor a string
+    /// literal.
     pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
-        let (d, part) = match self.pat_parent[pat.idx()] {
-            PatParent::Var(d) => (d, None),
-            PatParent::Prop(outer, p) => match (self.pat_parent[outer.idx()], hir[p].key) {
-                (PatParent::Var(d), PropKey::Name(name)) => (d, Some(name)),
-                _ => return None,
-            },
-            _ => return None,
+        if !hir.is_js {
+            return None;
+        }
+        let (pattern, property_name) = match self.pat_parent[pat.idx()] {
+            PatParent::Var(d) => return Some((module_required_by(hir, d)?, None)),
+            PatParent::Prop(pattern, p) => (pattern, Some(&hir[p])),
+            PatParent::Elem(pattern, _) => (pattern, None),
+            PatParent::Param(_) | PatParent::None => return None,
         };
-        Some((module_required_by(hir, d)?, part))
+        let PatParent::Var(d) = self.pat_parent[pattern.idx()] else {
+            return None;
+        };
+        let name = property_name_or_name(hir, pat, property_name);
+        Some((module_required_by(hir, d)?, Some(name)))
     }
 
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
@@ -1176,10 +1206,15 @@ fn target_of_for_in_or_of(
     .then_some(AssignmentTarget::ForInOrOf)
 }
 
-/// `IsVariableDeclarationInitializedToRequire`: the module that `d` is initialized to.
+/// `isVariableDeclarationInitializedWithRequireHelper` in a JavaScript file, without
+/// `allowAccessedRequire`: the module that `d` is initialized to.
 fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
     let init = hir[d].init;
-    if !hir.is_js || init.is_none() || hir[d].ty.is_some() || hir[d].flags.contains(Flags::EXPORT) {
+    if init.is_none()
+        || is_parenthesized(hir, init)
+        || hir[d].ty.is_some()
+        || hir[d].flags.contains(Flags::EXPORT)
+    {
         return None;
     }
     required_specifier(hir, init)
@@ -1252,11 +1287,17 @@ impl Bound<'_> {
 
     /// `isSymbolAssignedDefinitely`: `+=` and `++` modify a value, they do not initialize one.
     pub fn is_symbol_assigned_definitely(&self, hir: &File, symbol: SymbolId) -> bool {
-        let from = self.assignments.partition_point(|a| a.0.0 < symbol.0);
-        self.assignments[from..]
+        self.assignments_to(symbol)
             .iter()
-            .take_while(|a| a.0 == symbol)
             .any(|a| self.get_assignment_target_kind(hir, a.1) == AssignmentKind::Definite)
+    }
+
+    /// `markNodeAssignmentsWorker`: the identifiers that resolve to `symbol` and are assignment
+    /// targets, in source order.
+    pub fn assignments_to(&self, symbol: SymbolId) -> &[(SymbolId, ExprId)] {
+        let from = self.assignments.partition_point(|a| a.0.0 < symbol.0);
+        let len = self.assignments[from..].partition_point(|a| a.0 == symbol);
+        &self.assignments[from..from + len]
     }
 
     /// `GetImmediatelyInvokedFunctionExpression`: the call, if the function expression or arrow
@@ -1513,15 +1554,10 @@ impl Bound<'_> {
 
     /// `NameResolver.Resolve`, at a class or an interface reached from a static member
     /// (`IsStatic(lastLocation)`), at `KindComputedPropertyName` and at
-    /// `KindExpressionWithTypeArguments`: the error with which a lookup for `meaning` that has
-    /// reached `scope` fails because a type parameter of the enclosing class or interface is named
-    /// `name`.
-    pub fn type_parameter_out_of_reach(
-        &self,
-        scope: ScopeId,
-        name: Atom,
-        meaning: SymFlags,
-    ) -> Option<u32> {
+    /// `KindExpressionWithTypeArguments`: the error with which a search that has reached `scope`
+    /// ends, if `r.lookup` finds a type parameter among the locals of the scope returned with it,
+    /// that of the enclosing class or interface.
+    pub fn type_parameter_out_of_reach(&self, scope: ScopeId) -> Option<(u32, ScopeId)> {
         let s = &self.scopes[scope.idx()];
         let code = match s.kind {
             ScopeKind::StaticMember => 2302,
@@ -1529,10 +1565,7 @@ impl Bound<'_> {
             ScopeKind::BaseExpression => 2562,
             _ => return None,
         };
-        let symbol = self.lookup(self.scopes[s.parent.idx()].locals, name)?;
-        (meaning & self.symbols[symbol.idx()].flags)
-            .contains(SymFlags::TYPE_PARAMETER)
-            .then_some(code)
+        Some((code, s.parent))
     }
 
     /// `NameResolver.Resolve`, `case KindPropertyDeclaration`: `propertyWithInvalidInitializer`, if
@@ -1634,6 +1667,7 @@ impl BoundBuilder {
             class_scope: copy_to_arena(&mut self.class_scope, arena),
             interface_symbol: copy_to_arena(&mut self.interface_symbol, arena),
             interface_scope: copy_to_arena(&mut self.interface_scope, arena),
+            interface_contains_this: copy_to_arena(&mut self.interface_contains_this, arena),
             enum_scope: few_to_arena(self.enum_scope, arena),
             module_scope: few_to_arena(self.module_scope, arena),
             alias_symbol: copy_to_arena(&mut self.alias_symbol, arena),

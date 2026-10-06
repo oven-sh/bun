@@ -837,19 +837,19 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `getEffectiveTypeArguments`
         let actual = self.types_from_nodes(file, nodes);
-        let type_arguments = self.fill_type_args(type_parameters, &actual);
+        let type_arguments = self.fill_type_args_as(type_parameters, &actual, hir.is_js);
         let mapper = self.mapper_from(type_parameters, &type_arguments);
-        for (i, node) in hir.ids(nodes).enumerate().take(type_parameters.len()) {
-            let Some(constraint) = self.constraint_of_type_param(type_parameters[i]) else {
+        for (i, &type_parameter) in type_parameters.iter().enumerate() {
+            let Some(constraint) = self.constraint_of_type_param(type_parameter) else {
                 continue;
             };
-            // An `infer` type in a constrained position is inferred to satisfy the constraint.
-            if matches!(hir[node].kind, TypeNodeKind::Infer(_)) {
+            let constraint = self.instantiate(constraint, mapper);
+            if self.is_assignable(type_arguments[i], constraint) {
                 continue;
             }
-            let constraint = self.instantiate(constraint, mapper);
-            // The end of the node is read from the source text, so only for an error.
-            if !self.is_assignable(type_arguments[i], constraint) {
+            // A default has no node, and nothing is reported for it.
+            if i < nodes.len() {
+                let node: TypeNodeId = hir.id_at(nodes, i);
                 let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
                 self.check_type_assignable_to(
                     type_arguments[i],
@@ -857,8 +857,8 @@ impl Checker<'_, '_> {
                     Some(error_node),
                     Some(2344),
                 );
-                return;
             }
+            return;
         }
     }
 
@@ -1168,7 +1168,7 @@ impl Checker<'_, '_> {
 
     /// `getReturnTypeFromAnnotation`: a getter without an annotation uses its setter's parameter
     /// type, any other function the signature of its `@type` tag.
-    fn return_type_from_annotation(&mut self, file: FileId, f: FnId) -> Option<TypeId> {
+    pub(super) fn return_type_from_annotation(&mut self, file: FileId, f: FnId) -> Option<TypeId> {
         let func = &self.hir(file)[f];
         if func.ret.is_some() {
             Some(self.type_from_node(file, func.ret))
@@ -1510,10 +1510,6 @@ impl Checker<'_, '_> {
         )
     }
 
-    fn is_primitive_or_never(&self, ty: TypeId) -> bool {
-        ty.is_never() || self.is_primitive(ty)
-    }
-
     /// `elaborateObjectLiteral`
     fn elaborate_object_literal(
         &mut self,
@@ -1523,7 +1519,7 @@ impl Checker<'_, '_> {
         target: TypeId,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        if self.is_primitive_or_never(target) {
+        if self.flags(target) & (tf::PRIMITIVE | tf::NEVER) != 0 {
             return false;
         }
         let hir = self.hir(file);
@@ -1560,27 +1556,23 @@ impl Checker<'_, '_> {
         file: FileId,
         node: ExprId,
         items: IdList<ExprId>,
-        source: TypeId,
+        mut source: TypeId,
         target: TypeId,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        if self.is_primitive_or_never(target) {
+        if self.flags(target) & (tf::PRIMITIVE | tf::NEVER) != 0 {
             return false;
         }
         let hir = self.hir(file);
-        // It is checked as the tuple of its elements.
-        let source = if self.is_tuple(source) {
-            source
-        } else {
+        if !self.is_tuple_like(source) {
             // The mode reaches the arrays in it, also through the object literals in it.
             let mode = CheckMode::FORCE_TUPLE;
-            let tuple = self.check_expression_with_contextual_type(file, node, target, None, mode);
+            source = self.check_expression_with_contextual_type(file, node, target, None, mode);
             // `[...xs]` is an array type even when checked as a tuple.
-            if !self.is_tuple(tuple) {
+            if !self.is_tuple_like(source) {
                 return false;
             }
-            tuple
-        };
+        }
         // A tuple-like type does not constrain the indexes it has no property for.
         let is_tuple_like = self.is_tuple_like(target);
         let mut reported = false;
@@ -1627,88 +1619,90 @@ impl Checker<'_, '_> {
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let file = prop.0;
-        // `getPropertyNameFromType`
+        // `getPropertyNameFromIndex`: every caller passes a type that names a property.
         let Some(name) = self.property_name_of_type(name_type) else {
             return false;
         };
-        // The property type of a generic object type is deferred: there is nothing to elaborate
-        // into.
-        if self.is_generic_object_type(target) {
-            return false;
-        }
         // `getBestMatchIndexedAccessTypeOrUndefined`
-        let expected = match self.indexed_access_if_any(target, name_type, false) {
-            Some(expected) => expected,
+        let mut target_prop_type = match self.indexed_access_if_any(target, name_type, false) {
+            Some(target_prop_type) => target_prop_type,
             None if self.is_union(target) => {
                 let best =
                     self.best_matching_type(source, target, &mut |c, s, t| c.is_assignable(s, t));
                 let Some(best) = best else {
                     return false;
                 };
-                let Some(expected) = self.indexed_access_if_any(best, name_type, false) else {
+                let Some(of_best) = self.indexed_access_if_any(best, name_type, false) else {
                     return false;
                 };
-                expected
+                of_best
             }
             None => return false,
         };
-        if matches!(self.data(expected), TypeData::IndexedAccess { .. }) {
+        // "Don't elaborate on indexes on generic variables"
+        if matches!(self.data(target_prop_type), TypeData::IndexedAccess { .. }) {
             return false;
         }
-        let Some(actual) = self.indexed_access_if_any(source, name_type, false) else {
+        let Some(mut source_prop_type) = self.indexed_access_if_any(source, name_type, false)
+        else {
             return false;
         };
-        if self.is_assignable(actual, expected) {
+        if self.is_assignable(source_prop_type, target_prop_type) {
             return false;
         }
         let output = diagnostic_output.as_deref_mut();
         if next.is_some()
-            && self.elaborate_error(file, next, is_effective, actual, expected, None, output)
+            && self.elaborate_error(
+                file,
+                next,
+                is_effective,
+                source_prop_type,
+                target_prop_type,
+                None,
+                output,
+            )
         {
             return true;
         }
-        // `checkExpressionForMutableLocationWithContextualType`: the type of the expression there,
-        // checked with `actual` as its contextual type.
-        let actual = if next.is_some() {
-            let written = match self.hir(file)[next].kind {
-                // `checkSpreadExpression`
-                ExprKind::Spread(inner) => {
-                    let spread = self.type_of_expr(file, inner);
-                    self.iterated_type_of_spread(spread)
-                }
-                _ => {
-                    let mode = CheckMode::empty();
-                    self.check_expression_with_contextual_type(file, next, actual, None, mode)
-                }
-            };
-            let specific = if self.is_const_context(file, next) {
-                self.regular(written)
-            } else if matches!(
-                self.hir(file)[next].kind,
-                ExprKind::As { .. } | ExprKind::AsConst(_)
-            ) {
-                written
-            } else {
-                self.widen_literal_for_context(written, Some(actual))
-            };
-            if self.is_assignable(specific, expected) {
-                actual
-            } else {
-                specific
-            }
+        let specific_source = if next.is_some() {
+            self.check_expression_for_mutable_location_with_contextual_type(
+                file,
+                next,
+                source_prop_type,
+            )
         } else {
-            actual
+            source_prop_type
         };
         let mut diags = Vec::new();
-        if self.is_exact_optional_property_mismatch(actual, expected) {
-            diags.push(self.new_diagnostic(prop, 2412, &[Arg::Type(actual), Arg::Type(expected)]));
+        if self.is_exact_optional_property_mismatch(specific_source, target_prop_type) {
+            let args = [Arg::Type(specific_source), Arg::Type(target_prop_type)];
+            diags.push(self.new_diagnostic(prop, 2412, &args));
         } else {
-            let target_is_optional = self
-                .get_property_of_type(target, name)
-                .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL));
-            let expected = self.remove_missing_type(expected, target_is_optional);
-            let output = Some(&mut diags);
-            self.check_type_assignable_to_ex(actual, expected, Some(prop), error_message, output);
+            let is_optional = |c: &mut Self, ty: TypeId| {
+                c.get_property_of_type(ty, name)
+                    .is_some_and(|(p, _)| p.flags.contains(PropFlags::OPTIONAL))
+            };
+            let target_is_optional = is_optional(self, target);
+            let source_is_optional = is_optional(self, source);
+            target_prop_type = self.remove_missing_type(target_prop_type, target_is_optional);
+            source_prop_type = self
+                .remove_missing_type(source_prop_type, target_is_optional && source_is_optional);
+            let is_related = self.check_type_assignable_to_ex(
+                specific_source,
+                target_prop_type,
+                Some(prop),
+                error_message,
+                Some(&mut diags),
+            );
+            if is_related && specific_source != source_prop_type {
+                self.check_type_assignable_to_ex(
+                    source_prop_type,
+                    target_prop_type,
+                    Some(prop),
+                    error_message,
+                    Some(&mut diags),
+                );
+            }
         }
         let Some(mut diagnostic) = diags.pop() else {
             return false;
@@ -1719,6 +1713,34 @@ impl Checker<'_, '_> {
             .extend(related.filter(|related| related.file != NOWHERE.0));
         self.report_diagnostic(diagnostic, diagnostic_output);
         true
+    }
+
+    /// `checkExpressionForMutableLocationWithContextualType`
+    pub(super) fn check_expression_for_mutable_location_with_contextual_type(
+        &mut self,
+        file: FileId,
+        next: ExprId,
+        source_prop_type: TypeId,
+    ) -> TypeId {
+        let kind = self.hir(file)[next].kind;
+        let ty = match kind {
+            // `checkSpreadExpression`
+            ExprKind::Spread(inner) => {
+                let spread = self.type_of_expr(file, inner);
+                self.iterated_type_of_spread(spread)
+            }
+            _ => {
+                let mode = CheckMode::empty();
+                self.check_expression_with_contextual_type(file, next, source_prop_type, None, mode)
+            }
+        };
+        if self.is_const_context(file, next) {
+            self.regular(ty)
+        } else if matches!(kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
+            ty
+        } else {
+            self.widen_literal_for_context(ty, Some(source_prop_type))
+        }
     }
 
     /// `isExactOptionalPropertyMismatch`. Only exactOptionalPropertyTypes has a missing type.
@@ -1805,10 +1827,9 @@ impl Checker<'_, '_> {
                 return Some(callable);
             }
         }
-        // `findMostOverlappyType`. `keyof T` is an instantiable primitive
-        // (`TypeFlagsInstantiablePrimitive`).
-        let is_primitive =
-            |c: &Self, t: TypeId| c.is_primitive(t) || matches!(c.data(t), TypeData::Keyof(_));
+        // `findMostOverlappyType`. `TypeFlagsPrimitive` has the rest of
+        // `TypeFlagsInstantiablePrimitive`.
+        let is_primitive = |c: &Self, t: TypeId| c.flags(t) & (tf::PRIMITIVE | tf::INDEX) != 0;
         if is_primitive(self, source) {
             return None;
         }
@@ -1979,46 +2000,6 @@ impl Checker<'_, '_> {
         Some((start, code))
     }
 
-    /// The conditions of `getSingleBaseForNonAugmentingSubtype` that depend only on the
-    /// declarations of the class or interface `target`: the symbol has no members, and the
-    /// expression a class extends is a plain identifier.
-    pub(super) fn is_non_augmenting_declaration(&self, target: Sym) -> bool {
-        use crate::bind::Decl;
-        for (file, decl) in self.files().decls(target) {
-            let hir = self.hir(file);
-            match decl {
-                Decl::Class(c) => {
-                    let class = &hir[c];
-                    // `getMembersOfSymbol`: type parameters, the constructor, whatever is not static.
-                    if !class.type_params.is_empty()
-                        || class.members.iter().any(|m| {
-                            !hir[m].flags.contains(Flags::STATIC)
-                                && hir[m].kind != MemberKind::StaticBlock
-                        })
-                    {
-                        return false;
-                    }
-                    // Only a plain identifier is guaranteed not to refer back to the class.
-                    if class.extends.is_some()
-                        && (!matches!(
-                            hir[class.extends].kind,
-                            ExprKind::Ident(_) | ExprKind::Dot { .. }
-                        ) || is_parenthesized(hir, class.extends))
-                    {
-                        return false;
-                    }
-                }
-                Decl::Interface(i)
-                    if !hir[i].type_params.is_empty() || !hir[i].members.is_empty() =>
-                {
-                    return false;
-                }
-                _ => {}
-            }
-        }
-        true
-    }
-
     /// Whether `getTypeWithThisArgument` changes `ty`: a reference with a `this` type to
     /// instantiate, or an intersection with such a member.
     pub(super) fn takes_this_argument(&mut self, ty: TypeId) -> bool {
@@ -2044,7 +2025,7 @@ impl Checker<'_, '_> {
         for (file, decl) in self.files().decls(sym) {
             let Decl::Interface(i) = decl else { continue };
             let (hir, bound) = (self.hir(file), self.bound(file));
-            if !hir[i].type_params.is_empty() {
+            if !hir[i].type_params.is_empty() || bound.interface_contains_this[i.idx()] {
                 return true;
             }
             let own = bound.interface_scope[i.idx()];
@@ -2057,21 +2038,6 @@ impl Checker<'_, '_> {
                 .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
             {
                 return true;
-            }
-            // `NodeFlagsContainsThis`
-            for (t, node) in hir.types.iter().enumerate() {
-                let is_this = match node.kind {
-                    TypeNodeKind::Keyword(Keyword::This) => true,
-                    TypeNodeKind::Predicate { param, .. } => param == known::this,
-                    _ => false,
-                };
-                let mut scope = bound.type_scope[t];
-                while is_this && scope.is_some() {
-                    if scope == own {
-                        return true;
-                    }
-                    scope = bound.scopes[scope.idx()].parent;
-                }
             }
             // Its base types must be interfaces that are themselves not declared as references.
             for node in hir.ids(hir[i].extends) {

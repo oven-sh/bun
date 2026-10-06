@@ -3,6 +3,7 @@
 
 use super::infer::{Inference, Parts};
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
+use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use smallvec::SmallVec;
@@ -332,11 +333,17 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 return c.optional(ty);
             }
-            let implied = c.implied_by_pattern(file, pat, for_context, report_errors);
-            if implied.is_none() && report_errors == ReportErrors::Yes {
+            if let Some(implied) = c.implied_by_pattern(file, pat, for_context, report_errors) {
+                return implied;
+            }
+            if report_errors == ReportErrors::Yes {
                 c.report_implicit_any_of_name(file, pat, TypeId::ANY);
             }
-            implied.unwrap_or(TypeId::ANY)
+            if for_context == IncludePatternInType::Yes {
+                TypeId::NON_INFERRABLE_ANY
+            } else {
+                TypeId::ANY
+            }
         };
         match hir[pat].kind {
             PatKind::Missing | PatKind::Ident(_) => None,
@@ -433,6 +440,7 @@ impl<'p, 's> Checker<'p, 's> {
                         Literalness::Pattern
                     };
                 }
+                shape.has_no_instantiable_symbol = true;
                 Some(self.synth(shape))
             }
         }
@@ -773,7 +781,9 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let parent_ty = match bound.pat_parent[parent.idx()] {
             PatParent::Var(d) if hir[d].ty.is_some() => self.type_from_node(file, hir[d].ty),
-            PatParent::Var(d) if hir[d].init.is_some() => self.type_of_expr(file, hir[d].init),
+            PatParent::Var(d) if hir[d].init.is_some() => {
+                self.check_declaration_initializer(file, hir[d].init)
+            }
             PatParent::Param(p) if hir[p].ty.is_some() => self.type_from_node(file, hir[p].ty),
             PatParent::Param(p) => {
                 let func = bound.param_fn[p.idx()];
@@ -783,10 +793,9 @@ impl<'p, 's> Checker<'p, 's> {
                     (p.0 - hir[func].params.start) as usize,
                 ) {
                     Some(ty) => ty,
-                    // `checkDeclarationInitializer` for the parameter. What it adds for the
-                    // defaults in the pattern is omitted: for a default it only restates the type
-                    // of that default.
-                    None if hir[p].default.is_some() => self.type_of_expr(file, hir[p].default),
+                    None if hir[p].default.is_some() => {
+                        self.check_declaration_initializer(file, hir[p].default)
+                    }
                     None => return None,
                 }
             }
@@ -802,6 +811,27 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(index) => self.contextual_element_at(parent_ty, index, None, None, None),
         }
+    }
+
+    /// `checkDeclarationInitializer(parent, CheckModeNormal, nil)` for `getContextualTypeForBindingElement`. What it adds under a
+    /// parameter for the defaults in the pattern is omitted: for a default it only restates the type of that default.
+    /// `checkExpressionCached` has no re-entrancy guard: an initializer that is being checked is checked again.
+    fn check_declaration_initializer(&mut self, file: FileId, initializer: ExprId) -> TypeId {
+        let q = Query::Expr(file, initializer);
+        let from = self.resolution_start.min(self.stack.len());
+        if !self.may_be_in_flight(q) || !self.stack[from..].contains(&q) {
+            return self.type_of_expr(file, initializer);
+        }
+        // Results computed under what is pushed are not valid here, nor these there.
+        let found_outside = (
+            std::mem::take(&mut self.rechecked_exprs),
+            std::mem::take(&mut self.rechecked_members),
+        );
+        let outer = self.begin_recheck();
+        let ty = self.check_expression_ex(file, initializer, CheckMode::empty());
+        self.end_recheck(outer);
+        (self.rechecked_exprs, self.rechecked_members) = found_outside;
+        ty
     }
 
     /// `contextual_property`, for the value `e` of the property. A literal or a function is queried
@@ -1050,7 +1080,7 @@ impl<'p, 's> Checker<'p, 's> {
         this: Option<TypeId>,
     ) -> Option<TypeId> {
         let members = self.members(part)?;
-        let (prop, mut mapper) = self.property_in(&members, name)?;
+        let (prop, mut mapper) = self.property_in_type(part, &members, name)?;
         // `isCircularMappedProperty`
         if let PropSource::Mapped(of, ..) = prop.source
             && self.is_resolving(Query::MappedProp(of, prop.name))
@@ -1175,8 +1205,8 @@ impl<'p, 's> Checker<'p, 's> {
         let around = self
             .get_inference_context(file, e)
             .and_then(|level| self.inference_contexts[level].context.as_ref()?.sig)
-            .and_then(|sig| self.sig_decl(sig))
-            .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
+            .and_then(|sig| self.mapper_of_signature(sig))
+            .unwrap_or(MapperId::IDENTITY);
         Some(self.map_type_unreduced(instantiated, |c, t| {
             if c.is_deferred(t) {
                 let constraint = c.base_constraint(t);
@@ -1466,29 +1496,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getContextFreeTypeOfExpression` for such an expression. Whether a template keeps a template
-    /// literal type does depend on the contextual type, which is what is being computed: its type
-    /// is the literal it evaluates to, or else `string`. Also returns whether the type is the same
-    /// for any caller: it is a literal in the source, or it is cached and primitive. A value that
-    /// may have a generic signature is rechecked for a call that is being resolved.
+    /// `getContextFreeTypeOfExpression` for such an expression. Also returns whether the type is
+    /// the same for any caller: it is a literal in the source, or it is cached and primitive. A
+    /// value that may have a generic signature is rechecked for a call that is being resolved.
     fn context_free_discriminant_type(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
-        let kind = self.hir(file)[e].kind;
-        let actual = match kind {
-            ExprKind::Template { .. } => match self.constant_value(file, e) {
-                Some(EnumValue::String(text)) => self.string_literal(text, true),
-                _ => TypeId::STRING,
-            },
-            _ => self.check_expression_with_contextual_type(
-                file,
-                e,
-                TypeId::ANY,
-                None,
-                CheckMode::SKIP_CONTEXT_SENSITIVE,
-            ),
-        };
+        let actual = self.check_expression_with_contextual_type(
+            file,
+            e,
+            TypeId::ANY,
+            None,
+            CheckMode::SKIP_CONTEXT_SENSITIVE,
+        );
         // A literal in the source does not depend on the caller.
         let is_final = matches!(
-            kind,
+            self.hir(file)[e].kind,
             ExprKind::String(_)
                 | ExprKind::Number(_)
                 | ExprKind::BigInt(_)
@@ -1663,6 +1684,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Array(items) => {
                 let context = self.apparent_type_of_contextual_type(file, parent, context_flags)?;
+                // `getApparentTypeOfContextualType` maps every member, `apparent_contextual_type`
+                // the deferred ones.
+                let context = self.map_type_unreduced(context, |c, t| {
+                    if c.mapped_origin(t).is_some() {
+                        t
+                    } else {
+                        c.apparent_type(t)
+                    }
+                });
                 let index = hir.ids(items).position(|i| i == e)?;
                 // `getSpreadIndices`
                 let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
@@ -1998,25 +2028,6 @@ impl<'p, 's> Checker<'p, 's> {
         let before_spreads = first_spread.is_none_or(|s| index < s);
         let mut types = Parts::new();
         for &part in self.parts(context) {
-            // `getApparentTypeOfContextualType`: a mapped type is left unchanged.
-            let part = if self.mapped_origin(part).is_some() {
-                part
-            } else {
-                self.apparent_type(part)
-            };
-            if self.is_union(part) {
-                if let Some(t) =
-                    self.contextual_element_at(part, index, length, first_spread, last_spread)
-                {
-                    types.push(t);
-                }
-                continue;
-            }
-            // Iterating `any` yields `any`.
-            if self.has_any_flag(part) {
-                types.push(part);
-                continue;
-            }
             if let TypeData::Tuple { flags, .. } = self.data(part) {
                 let elems = self.type_arguments(part);
                 let fixed = Self::fixed_length(flags);
@@ -2062,35 +2073,24 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 continue;
             }
+            // FOR SPEED: both its index signature and what it yields.
             if let Some(element) = self.array_element(part) {
                 types.push(element);
                 continue;
             }
             // `getTypeOfPropertyOfContextualType(t, index)`: a property of that name, or the
-            // applicable index signature.
-            if before_spreads {
+            // applicable index signature, of an object type or an intersection and of nothing else.
+            if before_spreads && (self.is_object_type(part) || self.is_intersection(part)) {
                 let name = self.number_name(index as f64);
                 if let Some(t) = self.contextual_property(part, name) {
                     types.push(t);
                     continue;
                 }
             }
-            // `getIteratedTypeOrElementType(IterationUseElement, t, .., nil)`: a type that is not
-            // iterable contributes nothing.
-            let part = self.apparent_type(part);
-            if let Some((method, mapper)) = self.prop_ref(part, known::sym_iterator)
-                && !method.flags.contains(PropFlags::OPTIONAL)
-            {
-                let method = self.type_of_prop(method, mapper);
-                if self.has_any_flag(method) {
-                    types.push(method);
-                } else if !self.signatures(method, false).is_empty() {
-                    let element = self.iterated_type(part, false);
-                    if element != TypeId::UNRESOLVED {
-                        types.push(element);
-                    }
-                }
-            }
+            // `IterationUseElement`, which without an error node is any use of a sync iterable.
+            let usage = IterationUse::Spread;
+            let element = self.iterated_type_or_element_type(usage, part, TypeId::UNDEFINED, None);
+            types.extend(element.filter(|&element| element != TypeId::UNRESOLVED));
         }
         if types.is_empty() {
             None

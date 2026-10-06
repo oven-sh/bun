@@ -311,6 +311,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // `lone_object_modifier` is the only one, if `checkGrammarMethod` reports it (1184).
         let mut has_object_modifier = false;
         let mut lone_object_modifier: Option<bun_ast::Range> = None;
+        // Tolerant mode: the `async` modifiers consumed before a member of an object literal.
+        let mut object_async_modifiers: smallvec::SmallVec<[bun_ast::Range; 1]> =
+            smallvec::SmallVec::new();
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             // Every match arm below assigns `key` (or `continue 'restart` /
@@ -321,6 +324,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Tolerant mode: the "?" or "!" after the name of an object literal member was
             // consumed.
             let mut has_postfix_token = false;
+            // Tolerant mode: no member follows the modifiers of a class member.
+            let mut is_declaration_missing = false;
 
             match p.lexer.token {
                 T::TNumericLiteral => {
@@ -447,7 +452,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                     if !p.lexer.is_identifier_or_keyword() {
                         if p.is_tolerant() && !p.lexer.is_log_disabled {
-                            key = p.missing_property_name()?;
+                            // After "get", "set" or "*" it is the name that is missing.
+                            is_declaration_missing = opts.is_class
+                                && !opts.is_generator
+                                && matches!(
+                                    kind,
+                                    PropertyKind::Normal | PropertyKind::AutoAccessor
+                                );
+                            key = if is_declaration_missing {
+                                p.missing_declaration_after_modifiers()
+                            } else {
+                                p.missing_property_name()?
+                            };
                             break 'name;
                         }
                         p.lexer.expect(T::TIdentifier)?;
@@ -511,14 +527,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 }
                                 match keyword {
                                     PropertyModifierKeyword::PGet => {
-                                        // `parseClassElement` consumes every modifier first,
-                                        // including "async", and then checks for "get". The
-                                        // accessor is not parsed in an await context, and the
-                                        // checker reports the "async" (1042).
+                                        // `parseClassElement` and `parseObjectLiteralElement`
+                                        // consume every modifier first, including "async", and
+                                        // then check for "get". The accessor is not parsed in an
+                                        // await context, and the "async" is reported (1042): that
+                                        // of a class member when it is lowered.
                                         if (!opts.is_async || p.is_tolerant())
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PGet)
                                         {
+                                            p.async_cannot_be_used_here(&object_async_modifiers);
                                             opts.is_async = false;
                                             kind = PropertyKind::Get;
                                             errors = None;
@@ -531,6 +549,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PSet)
                                         {
+                                            p.async_cannot_be_used_here(&object_async_modifiers);
                                             opts.is_async = false;
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             kind = PropertyKind::Set;
@@ -553,10 +572,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             }
                                             opts.is_async = true;
                                             p.push_member_modifier(opts, keyword, name_range.loc);
+                                            if !opts.is_class && p.is_tolerant() {
+                                                object_async_modifiers.push(name_range);
+                                            }
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 
-                                            errors = None;
                                             continue 'restart;
                                         }
                                     }
@@ -738,11 +759,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             && !p.lexer.is_log_disabled
                             && p.is_modifier_without_name(raw, opts.is_static)
                         {
-                            // `parseClassElement`: a property whose name is missing, right after the last modifier.
-                            let at = name_range.end();
-                            p.lexer.ts_error(bun_ast::Range { loc: at, len: 0 }, 1146);
                             opts.is_static = opts.is_static || raw == b"static";
-                            key = p.new_expr(E::EString::init(b""), at);
+                            is_declaration_missing = true;
+                            key = p.missing_declaration_after_modifiers();
                             break 'name;
                         }
                     }
@@ -783,7 +802,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         && p.lexer.token != T::TOpenParen
                         && p.lexer.token != T::TLessThan
                         && !opts.is_generator
-                        && !opts.is_async
+                        // `parseObjectLiteralElement`: no modifier makes a method.
+                        && (!opts.is_async || p.is_tolerant())
                         && js_lexer::keyword(name).is_none();
 
                     if is_shorthand_property
@@ -826,6 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
 
                     if is_shorthand_property {
+                        p.async_cannot_be_used_here(&object_async_modifiers);
                         let ref_ = p.store_name_in_ref(name);
                         let value = p.new_expr(E::Identifier::init(ref_), key.loc);
 
@@ -857,7 +878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 if opts.is_class {
-                    if p.lexer.token == T::TQuestion {
+                    if p.lexer.token == T::TQuestion && !is_declaration_missing {
                         // "class X { foo?: number }"
                         // "class X { foo!: number }"
                         p.note_loc(&mut key.loc, crate::sema::Mark::Optional, p.lexer.loc());
@@ -888,7 +909,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
-                if !has_definite_assignment_assertion_operator {
+                if !has_definite_assignment_assertion_operator && !is_declaration_missing {
                     let skipped = p.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
@@ -1071,7 +1092,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if p.lexer.token == T::TOpenParen
                 || kind != PropertyKind::Normal
                 || opts.is_class
-                || opts.is_async
+                || (opts.is_async && !p.is_tolerant())
                 || opts.is_generator
                 // `parseObjectLiteralElement`: a "<" after the name makes a method. `parse_fn` reports the missing "(".
                 || (has_type_parameters && p.is_tolerant())
@@ -1094,6 +1115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
 
             // Parse an object key/value pair
+            p.async_cannot_be_used_here(&object_async_modifiers);
             p.lexer.expect(T::TColon)?;
             let mut prop_flags = flags::PropertySet::empty();
             if is_computed {
@@ -1186,6 +1208,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         found
     }
 
+    /// `checkGrammarObjectLiteralExpression`: `async` is allowed on a method only. `modifiers`:
+    /// those of a member of an object literal that is not a method.
+    #[inline]
+    fn async_cannot_be_used_here(&mut self, modifiers: &[bun_ast::Range]) {
+        for &modifier in modifiers {
+            self.lexer.ts_grammar_error(modifier, 1042);
+        }
+    }
+
     /// Whether `word` is a modifier of a class member before the `{` or `...` the lexer is at. `canFollowModifier` accepts both,
     /// and neither starts a name.
     #[cold]
@@ -1204,18 +1235,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
+    /// `parseClassElement`: no member follows the modifiers, decorators included. It is a property
+    /// whose name is missing (`createMissingIdentifier`), reported (1146) right after the last of
+    /// them. Consumes nothing.
+    #[cold]
+    #[inline(never)]
+    fn missing_declaration_after_modifiers(&mut self) -> Expr {
+        let at = self.lexer.full_start();
+        self.lexer
+            .ts_error(bun_ast::Range { loc: at, len: 0 }, 1146);
+        self.new_expr(E::EString::init(b""), at)
+    }
+
     /// `parseIdentifierName` at a token that is not a name: reports 1003 and creates a missing name
     /// (`createMissingIdentifier`). Consumes nothing.
     #[cold]
     #[inline(never)]
     fn missing_property_name(&mut self) -> crate::CrateResult<Expr> {
         let at = self.lexer.full_start();
-        if self.lexer.token == T::TEndOfFile {
-            self.lexer
-                .ts_error(bun_ast::Range { loc: at, len: 0 }, 1003);
-        } else {
-            self.lexer.expect(T::TIdentifier)?;
-        }
+        self.lexer.expect(T::TIdentifier)?;
         Ok(self.new_expr(E::EString::init(b""), at))
     }
 

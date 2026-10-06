@@ -88,9 +88,7 @@ impl Checker<'_, '_> {
 
     /// `errorSkippedOnNoEmit`
     fn error_skipped_on_no_emit(&mut self, file: FileId, node: Node, code: u32, args: &[Arg<'_>]) {
-        if !self.p.files.options.no_emit {
-            self.error(file, node, code, args);
-        }
+        self.error(file, node, code, args).skipped_on_no_emit = true;
     }
 
     /// Whether the declaration `node` is at the top level of a file that is a module, and is not a
@@ -272,7 +270,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `produceDeferredDiagnostics`
+    /// `produceDeferredDiagnostics`, for the callbacks in `deferred_diagnostics`.
     pub(super) fn produce_deferred_diagnostics(&mut self, file: FileId) {
         for node in std::mem::take(&mut self.deferred_diagnostics) {
             if self.hir(file).text(self.hir(file).name(node)) == known::Reflect {

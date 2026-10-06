@@ -282,7 +282,7 @@ impl Checker<'_, '_> {
             let is_tagged = matches!(bound.expr_parent[e.idx()], Parent::Expr(parent)
                 if matches!(hir[parent].kind, ExprKind::TaggedTemplate(call) if hir[call].template == e));
             if !is_tagged && is_checked(u, e) {
-                self.note_evaluated(file, u, e, Location::Expr(file, e), 0);
+                self.note_evaluated(file, u, e, Location::Expr(file, e));
             }
         }
         // `checkBinaryLikeExpression`: the right operand of a shift.
@@ -301,14 +301,14 @@ impl Checker<'_, '_> {
                 continue;
             };
             if matches!(op, BinOp::Shl | BinOp::Shr | BinOp::UShr) && is_checked(u, e) {
-                self.note_evaluated(file, u, right, Location::Expr(file, right), 0);
+                self.note_evaluated(file, u, right, Location::Expr(file, right));
             }
         }
         // `computeConstantEnumMemberValue`
         for (i, member) in hir.enum_members.iter().enumerate() {
             if member.init.is_some() {
                 let location = Location::Member(file, EnumMemberId(i as u32));
-                self.note_evaluated(file, u, member.init, location, 0);
+                self.note_evaluated(file, u, member.init, location);
             }
         }
     }
@@ -326,34 +326,30 @@ impl Checker<'_, '_> {
     }
 
     /// The names that `evaluate(e, location)` resolves. It visits what `evaluate` visits.
-    fn note_evaluated(
-        &mut self,
-        file: FileId,
-        u: &mut Unused,
-        e: ExprId,
-        location: Location,
-        depth: u32,
-    ) {
+    fn note_evaluated(&mut self, file: FileId, u: &mut Unused, e: ExprId, location: Location) {
+        if self.is_stack_low() {
+            return;
+        }
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Unary {
                 op:
                     UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::PreInc | UnOp::PreDec,
                 operand,
-            } => self.note_evaluated(file, u, operand, location, depth),
+            } => self.note_evaluated(file, u, operand, location),
             ExprKind::Binary { left, right, .. }
             | ExprKind::Assign {
                 target: left,
                 value: right,
                 ..
             } => {
-                self.note_evaluated(file, u, left, location, depth);
-                self.note_evaluated(file, u, right, location, depth);
+                self.note_evaluated(file, u, left, location);
+                self.note_evaluated(file, u, right, location);
             }
             // `evaluateTemplateExpression` stops at the first span without a value.
             ExprKind::Template { exprs } => {
                 for span in hir.ids(exprs) {
-                    self.note_evaluated(file, u, span, location, depth);
+                    self.note_evaluated(file, u, span, location);
                     if self.evaluate(file, span, location).value.is_none() {
                         break;
                     }
@@ -372,13 +368,13 @@ impl Checker<'_, '_> {
                 self.note_qualified_name(file, u, e);
             }
             // The initializer of a constant.
-            ExprKind::Ident(_) if depth < 16 => {
+            ExprKind::Ident(_) => {
                 if let Some(symbol) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
                     && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
                     && of == file
                 {
                     let location = Location::Variable(of, d);
-                    self.note_evaluated(file, u, hir[d].init, location, depth + 1);
+                    self.note_evaluated(file, u, hir[d].init, location);
                 }
             }
             _ => {}
@@ -432,8 +428,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkJSDocComment`: the name of each `{@link name}` in the JSDoc of a statement, a member
-    /// or a parameter is resolved, which references its first identifier.
+    /// `checkJSDocComment`: the name of each `{@link name}` in the JSDoc of a statement, a member,
+    /// a parameter or a variable declaration is resolved, which references its first identifier.
     fn note_jsdoc_links(&self, file: FileId, u: &mut Unused) {
         let atoms = &self.atoms();
         let text: &[u8] = &self.hir(file).text;
@@ -918,6 +914,31 @@ fn identifier_at(text: &[u8], at: usize, is_jsdoc_token: bool) -> &[u8] {
     &rest[..len.unwrap_or(rest.len())]
 }
 
+/// `parseTag`: whether the parser of the tag `name` takes a `{` that follows the name, as
+/// `tryParseTypeExpression`, `parseJSDocTypeExpression`,
+/// `parseExpressionWithTypeArgumentsForAugments` and `tryParseImportClause` do.
+fn jsdoc_tag_takes_brace(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"implements"
+            | b"augments"
+            | b"extends"
+            | b"this"
+            | b"arg"
+            | b"argument"
+            | b"param"
+            | b"return"
+            | b"returns"
+            | b"template"
+            | b"type"
+            | b"typedef"
+            | b"satisfies"
+            | b"exception"
+            | b"throws"
+            | b"import"
+    )
+}
+
 /// `parseJSDocLink`, `parseJSDocLinkName`: the names of each `{@link a.b}`, `{@linkcode a.b}` and `{@linkplain a.b}` in the text of
 /// a JSDoc comment. A missing name is empty.
 fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
@@ -927,9 +948,31 @@ fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
         }
         at
     };
+    // `skipWhitespaceOrAsterisk`
+    let skip_spaces_or_asterisk = |mut at: usize| {
+        let mut preceding_line_break = false;
+        while let Some(&c) = comment.get(at) {
+            match c {
+                b'\n' | b'\r' => preceding_line_break = true,
+                b'*' if preceding_line_break => preceding_line_break = false,
+                _ if c.is_ascii_whitespace() => {}
+                _ => break,
+            }
+            at += 1;
+        }
+        at
+    };
+    let is_space = |at: usize| comment.get(at).is_some_and(|c| c.is_ascii_whitespace());
+    // `CanFollowJSDocAt`
+    let can_follow_at = |at: usize| {
+        at >= comment.len() || is_space(at) || !identifier_at(comment, at, true).is_empty()
+    };
     let mut links = Vec::new();
     // `jsdocStateSavingBackticks`, `inFencedCodeBlock`, `backtickCount`
     let (mut in_backticks, mut in_fence, mut backticks) = (false, false, 0u32);
+    // `jsdocStateBeginningOfLine` or `jsdocStateSawAsterisk`, and which of them: there the scanner
+    // returns every `@` as a token.
+    let (mut is_before_text, mut saw_asterisk) = (true, true);
     let mut i = 0;
     while let Some(&c) = comment.get(i) {
         if c != b'`' && backticks > 0 {
@@ -937,11 +980,37 @@ fn jsdoc_link_names(comment: &[u8]) -> Vec<Vec<&[u8]>> {
             backticks = 0;
         }
         i += 1;
+        let was_before_text = is_before_text;
+        is_before_text &= c.is_ascii_whitespace() || c == b'*' && !saw_asterisk;
         match c {
-            b'\n' | b'\r' => in_backticks = false,
+            b'\n' | b'\r' => {
+                in_backticks = false;
+                (is_before_text, saw_asterisk) = (true, false);
+            }
+            b'*' => saw_asterisk = true,
             b'`' => {
                 backticks += 1;
                 in_backticks = !in_backticks;
+            }
+            // `ScanJSDocCommentTextToken`: in text, "only after whitespace and before
+            // non-whitespace".
+            b'@' if !in_backticks
+                && !in_fence
+                && (was_before_text || i >= 2 && is_space(i - 2) && !is_space(i))
+                && can_follow_at(i) =>
+            {
+                let name = identifier_at(comment, i, true);
+                i += name.len();
+                (is_before_text, saw_asterisk) = (true, true);
+                let brace = skip_spaces_or_asterisk(i);
+                if !jsdoc_tag_takes_brace(name) || comment.get(brace) != Some(&b'{') {
+                    continue;
+                }
+                // No type starts with `@`, and `parseTagComments` ends at it: it starts a tag.
+                i = match comment.get(brace + 1) {
+                    Some(b'@') => brace + 1,
+                    _ => closing_bracket_after(comment, brace + 1) as usize + 1,
+                };
             }
             b'{' if !in_backticks && !in_fence && comment.get(i) == Some(&b'@') => {
                 let tag = identifier_at(comment, i + 1, true);
@@ -998,7 +1067,7 @@ fn closing_bracket_after(text: &[u8], from: usize) -> u32 {
 }
 
 /// `isThisless` for a method or an accessor.
-fn is_thisless(hir: &hir::File, m: MemberId) -> bool {
+pub(super) fn is_thisless(hir: &hir::File, m: MemberId) -> bool {
     if !matches!(
         hir[m].kind,
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter
@@ -1025,7 +1094,7 @@ fn is_thisless(hir: &hir::File, m: MemberId) -> bool {
 }
 
 /// `isThislessType`
-fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
+pub(super) fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
     // A parenthesized type is not inspected. Parentheses are only visible in the source text.
     if hir
         .text
@@ -1188,8 +1257,8 @@ impl Unused<'_, '_> {
     }
 
     /// The scope the names in the JSDoc comment `open..end` are resolved from: that of the
-    /// statement, member or parameter it is attached to (`withJSDoc`), which are the nodes passed
-    /// to `checkSourceElement`. `NONE` if it is attached to no node.
+    /// statement, member, parameter or variable declaration it is attached to (`withJSDoc`), which
+    /// are the nodes passed to `checkSourceElement`. `NONE` if it is attached to no node.
     fn scope_of_jsdoc(&self, open: usize, end: usize) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         let text: &[u8] = &hir.text;
@@ -1218,13 +1287,25 @@ impl Unused<'_, '_> {
                     .map_or(ScopeId::NONE, |&it| it);
             }
         }
-        match hir.params.iter().position(|p| p.pos == first) {
-            Some(p)
-                if bound.param_fn[p].is_some() && matches!(before, None | Some(b'(' | b',')) =>
-            {
+        if let Some(p) = hir.params.iter().position(|p| p.pos == first) {
+            return if bound.param_fn[p].is_some() && matches!(before, None | Some(b'(' | b',')) {
                 bound.fns[bound.param_fn[p].idx()].scope
-            }
-            _ => ScopeId::NONE,
+            } else {
+                ScopeId::NONE
+            };
+        }
+        // `GetJSDocCommentRanges`: a variable declaration owns those comments too.
+        let Some(d) = (hir.var_decls.iter()).position(|d| hir[d.pat].pos == first) else {
+            return ScopeId::NONE;
+        };
+        // `checkVariableDeclarationList`: not the variable of a `catch` clause.
+        let s = bound.var_stmt[d];
+        if s.is_none() || !matches!(hir[s].kind, StmtKind::Var(_)) {
+            return ScopeId::NONE;
+        }
+        match bound.stmt_scope[s.idx()] {
+            ScopeId::NONE => self.scope_of_statement(s),
+            scope => scope,
         }
     }
 

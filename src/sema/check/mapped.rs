@@ -34,6 +34,24 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper_of(&pairs)
     }
 
+    /// `prependTypeMapping`: a `MergedTypeMapper`, so `source` maps to what `mapper` maps `target`
+    /// to, which is not `target` if that is a type parameter `mapper` maps.
+    pub(super) fn prepend_type_mapping(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        mapper: MapperId,
+    ) -> MapperId {
+        let target = self.types().map(mapper, target).unwrap_or(target);
+        let mut pairs: SmallVec<[(TypeId, TypeId); 8]> =
+            SmallVec::from_slice(self.types().mapping(mapper));
+        match pairs.iter_mut().find(|pair| pair.0 == source) {
+            Some(pair) => pair.1 = target,
+            None => pairs.push((source, target)),
+        }
+        self.types().mapper_of(&pairs)
+    }
+
     /// `isGenericType`
     pub fn is_generic(&mut self, ty: TypeId) -> bool {
         self.get_generic_object_flags(ty) != (false, false)
@@ -123,9 +141,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.generic_mapped_types_cut_short.contains(&ty) {
             return false;
         }
-        // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type.
-        self.generic_mapped_types_in_progress.push(ty);
-        let name = if self.is_half_of_stack_in_use() {
+        // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type of the one declaration.
+        let is_in_progress = (self.generic_mapped_types_in_progress).contains(&(file, node));
+        self.generic_mapped_types_in_progress.push((file, node));
+        let name = if is_in_progress && self.is_half_of_stack_in_use() {
             self.generic_mapped_types_cut_short.push(ty);
             self.instantiation_count = 5_000_000;
             self.instantiation_too_deep()
@@ -692,9 +711,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// signature and nothing else, that signature applies to any key, and the key is `string` from
     /// there on.
     pub(super) fn key_into_string_index_only(&mut self, obj: TypeId, index: TypeId) -> TypeId {
-        if index != TypeId::STRING
+        if self.is_string_index_signature_only(obj)
             && !self.is_nullish(index)
-            && self.is_string_index_signature_only(obj)
             && (self.is_assignable(index, TypeId::NUMBER)
                 || self.is_assignable(index, TypeId::STRING))
         {
@@ -711,24 +729,12 @@ impl<'p, 's> Checker<'p, 's> {
                 .iter()
                 .all(|&p| self.is_string_index_signature_only(p));
         }
-        // A tuple has a `length`.
-        if !self.is_object_type(ty) || self.is_tuple(ty) || self.is_generic(ty) {
+        if !self.is_object_type(ty) || self.is_generic_mapped_type(ty) {
             return false;
         }
-        // A mapped type over a name has a property of that name. Its members are not resolved to
-        // determine that.
-        if let TypeData::Anon {
-            origin: Origin::Mapped(file, node),
-            mapper,
-        } = *self.data(ty)
-            && self.mapped_decl(file, node).name_ty.is_none()
-        {
-            let keys = self.mapped_constraint(file, node, mapper);
-            for &key in self.parts(keys) {
-                if self.property_name_of_type(key).is_some() {
-                    return false;
-                }
-            }
+        // FOR SPEED: a tuple has a `length`. The members of a deferred one resolve its elements.
+        if self.is_tuple(ty) && self.types().deferred(ty).is_none() {
+            return false;
         }
         self.members(ty).is_some_and(|m| {
             m.shape().props.is_empty()
@@ -778,7 +784,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTotalFixedElementCount`: the elements before the first and after the last
     /// variable-length element.
-    fn total_fixed_element_count(flags: &[ElemFlags]) -> usize {
+    pub(super) fn total_fixed_element_count(flags: &[ElemFlags]) -> usize {
         let variable = ElemFlags::REST | ElemFlags::VARIADIC;
         flags.iter().take_while(|f| !f.intersects(variable)).count()
             + flags
@@ -788,52 +794,21 @@ impl<'p, 's> Checker<'p, 's> {
                 .count()
     }
 
-    /// `isGenericReducibleType`: whether instantiation could reduce the intersection `ty`, or a
-    /// member of the union `ty`, to nothing (`isReducibleIntersection`).
+    /// `isGenericReducibleType`
     pub(super) fn is_generic_reducible(&mut self, ty: TypeId) -> bool {
-        if !self.has_type_variables(ty) {
-            return false;
-        }
         match self.data(ty) {
-            TypeData::Union(parts) => parts.iter().any(|&p| {
-                matches!(self.data(p), TypeData::Intersection(_)) && self.is_generic_reducible(p)
-            }),
-            TypeData::Intersection(_) => {
-                let Some(members) = self.members(ty) else {
-                    return false;
-                };
-                for prop in &members.shape().props {
-                    let PropSource::Intersected(_, parts) = &prop.source else {
-                        continue;
-                    };
-                    if prop.flags.contains(PropFlags::OPTIONAL) {
-                        continue;
-                    }
-                    let mut list = Vec::with_capacity(parts.len());
-                    for part in parts.iter() {
-                        list.push(self.type_of_prop(part, MapperId::IDENTITY));
-                    }
-                    // `uniqueLiteralMapper` replaces everything with `TypeFlagsTypeParameter` by `uniqueLiteralType`, a literal that
-                    // no other literal equals. `CheckFlagsHasLiteralType` counts pattern literals as well.
-                    if list.iter().any(|&t| {
-                        matches!(
-                            self.data(t),
-                            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_)
-                        )
-                    }) && !list.iter().any(|t| t.is_never())
-                        && list.iter().any(|&t| {
-                            self.is_boolean(t)
-                                || self.every_type(t, |c, m| c.is_unit(m))
-                                || self.is_pattern_literal(t)
-                        })
-                    {
-                        return true;
-                    }
-                }
-                false
+            TypeData::Union(parts) => {
+                self.may_be_reduced(ty) && parts.iter().any(|&p| self.is_generic_reducible(p))
             }
+            TypeData::Intersection(_) => self.is_reducible_intersection(ty),
             _ => false,
         }
+    }
+
+    /// `isReducibleIntersection`
+    fn is_reducible_intersection(&mut self, ty: TypeId) -> bool {
+        let filled = self.unique_literal_filled_instantiation(ty);
+        self.reduced(filled) != filled
     }
 
     /// `getIndexNodeForAccessExpression`, as an error position.
@@ -1300,24 +1275,31 @@ impl<'p, 's> Checker<'p, 's> {
             // `getConditionalTypeInstantiation`: an intersection that reduces to `never` is removed
             // before distribution.
             let value = self.reduced(value);
-            if (value.is_never() || self.is_union(value))
-                && self.is_distributive_conditional(file, node)
-            {
+            if value.is_never() || self.is_union(value) {
+                let distributed_over = mapper;
                 let of_member = |c: &mut Self, part: TypeId| {
-                    let mut pairs = c.types().mapping(mapper).to_vec();
-                    for p in &mut pairs {
-                        if p.0 == check_declared {
-                            p.1 = part;
-                        }
-                    }
-                    let one = c.types().mapper(pairs);
+                    let one = c.prepend_type_mapping(check_declared, part, distributed_over);
                     if for_constraint {
                         // The type arguments of the union that is distributed over.
-                        let for_constraint = mapper;
-                        c.resolve_conditional(file, node, one, for_constraint, None)
-                    } else {
-                        c.conditional_type(file, node, one)
+                        let for_constraint = distributed_over;
+                        return c.resolve_conditional(
+                            file,
+                            node,
+                            one,
+                            distributed_over,
+                            for_constraint,
+                            None,
+                        );
                     }
+                    // FOR SPEED: `getConditionalType`, cached. `part` is no union, and without a
+                    // type variable nothing is deferred, so no type has the merged mapper.
+                    let has_type_variables = (c.types().mapper_flags(one))
+                        .contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES);
+                    if !has_type_variables && c.types().map(one, check_declared) == Some(part) {
+                        return c.conditional_type(file, node, one);
+                    }
+                    let for_constraint = MapperId::IDENTITY;
+                    c.resolve_conditional(file, node, one, distributed_over, for_constraint, None)
                 };
                 return self.map_type_with_alias(value, of_member, alias);
             }
@@ -1327,11 +1309,18 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             MapperId::IDENTITY
         };
-        self.resolve_conditional(file, node, mapper, for_constraint, alias)
+        self.resolve_conditional(
+            file,
+            node,
+            mapper,
+            MapperId::IDENTITY,
+            for_constraint,
+            alias,
+        )
     }
 
     /// The number of elements of the tuple type node at `node`, if none is optional or a rest.
-    fn simple_tuple_len(&self, file: FileId, node: TypeNodeId) -> Option<usize> {
+    pub(super) fn simple_tuple_len(&self, file: FileId, node: TypeNodeId) -> Option<usize> {
         let hir = self.hir(file);
         let TypeNodeKind::Tuple(elems) = hir[node].kind else {
             return None;
@@ -1340,16 +1329,17 @@ impl<'p, 's> Checker<'p, 's> {
             .then(|| elems.iter().count())
     }
 
-    fn has_generic_element(&mut self, ty: TypeId) -> bool {
+    pub(super) fn has_generic_element(&mut self, ty: TypeId) -> bool {
         self.is_tuple(ty) && self.type_arguments(ty).iter().any(|&e| self.is_generic(e))
     }
 
-    /// `getConditionalType`. `for_constraint`: see `TypeData::Cond`.
+    /// `getConditionalType`. `distributed_over`, `for_constraint`: see `TypeData::Cond`.
     fn resolve_conditional(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
+        mut distributed_over: MapperId,
         for_constraint: MapperId,
         mut alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
@@ -1431,7 +1421,14 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.is_generic(extends_ty)
                 || check_tuples && self.has_generic_element(extends_ty)
             {
-                break self.deferred_conditional_type(file, node, mapper, for_constraint, alias);
+                break self.deferred_conditional_type(
+                    file,
+                    node,
+                    mapper,
+                    distributed_over,
+                    for_constraint,
+                    alias,
+                );
             }
             let extends_is_top = self.has_any_flag(extends_ty) || extends_ty == TypeId::UNKNOWN;
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
@@ -1461,6 +1458,7 @@ impl<'p, 's> Checker<'p, 's> {
                         file,
                         node,
                         mapper,
+                        distributed_over,
                         for_constraint,
                         alias,
                     );
@@ -1475,8 +1473,9 @@ impl<'p, 's> Checker<'p, 's> {
                 is_false_branch,
             ) {
                 Ok((root, is_tail_call)) => {
+                    // `newRootMapper` is not a merged mapper.
                     if is_tail_call {
-                        alias = None;
+                        (alias, distributed_over) = (None, MapperId::IDENTITY);
                     }
                     // A root that is not the branch node itself is reached through a type
                     // reference. The other steps descend in the syntax.
@@ -1524,6 +1523,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
+        distributed_over: MapperId,
         for_constraint: MapperId,
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
@@ -1531,6 +1531,7 @@ impl<'p, 's> Checker<'p, 's> {
             file,
             node,
             mapper,
+            distributed_over,
             for_constraint,
         });
         match alias {
@@ -1710,10 +1711,15 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         node: TypeNodeId,
     ) -> Option<(TypeId, bool)> {
-        let mapped = self.mapped_decl(file, node);
-        let constraint = self.hir(file)[mapped.param].constraint;
-        // Decided by the syntax: `keyof` of a non-generic type is a plain union by now.
-        if let TypeNodeKind::Keyof(of) = self.hir(file)[constraint].kind {
+        let param = &self.hir(file)[self.mapped_decl(file, node).param];
+        let constraint = param.constraint;
+        // Decided by the syntax: `keyof` of a non-generic type is a plain union by now. A
+        // `ParenthesizedType` is not a type operator.
+        if let TypeNodeKind::Keyof(of) = self.hir(file)[constraint].kind
+            && (self.parenthesized_types_around(file, constraint, param.pos))
+                .next()
+                .is_none()
+        {
             return Some((self.type_from_node(file, of), true));
         }
         let declared = self.type_from_node(file, constraint);
@@ -1789,10 +1795,7 @@ impl<'p, 's> Checker<'p, 's> {
         if base == modifiers || base.is_never() || !self.every_type(base, is_array_like) {
             return ty;
         }
-        let mut pairs = self.types().mapping(mapper).to_vec();
-        pairs.retain(|p| p.0 != source);
-        pairs.push((source, base));
-        let applied = self.types().mapper(pairs);
+        let applied = self.prepend_type_mapping(source, base, mapper);
         self.instantiate_mapped(file, node, applied)
     }
 
@@ -1836,7 +1839,7 @@ impl<'p, 's> Checker<'p, 's> {
                 NewAlias::Given(alias, type_arguments) => {
                     c.with_alias(created, alias, type_arguments)
                 }
-                _ => created,
+                NewAlias::OfNode => created,
             }
         };
         let Some(source) = self.homomorphic_type_variable(file, node, MapperId::IDENTITY) else {
@@ -1849,26 +1852,62 @@ impl<'p, 's> Checker<'p, 's> {
             return anon(self);
         }
         let value = self.reduced(value);
-        let of_node;
-        let alias = match alias {
-            NewAlias::Given(alias, type_arguments) => Some((alias, type_arguments)),
-            NewAlias::OfNode if self.is_union(value) => {
-                of_node = self.alias_of_node_under(file, node, mapper);
-                of_node
-                    .as_ref()
-                    .map(|(alias, type_arguments)| (*alias, &type_arguments[..]))
-            }
-            _ => None,
+        // `instantiateTypeAlias(t.alias, m)`
+        let of_node = match alias {
+            NewAlias::OfNode if !self.is_union(value) => None,
+            _ => self.alias_of_node_under(file, node, mapper),
         };
-        self.map_type_with_alias(
+        let of_node =
+            (of_node.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+        // The second: `InstantiationKey::alias`.
+        let (alias, given) = match alias {
+            NewAlias::Given(alias, type_arguments) if Some((alias, type_arguments)) != of_node => {
+                let flags = vec![ElemFlags::REQUIRED; type_arguments.len()];
+                let given = (alias, self.tuple(type_arguments, &flags, false));
+                (Some((alias, type_arguments)), Some(given))
+            }
+            _ => (of_node, None),
+        };
+        let result = self.map_type_with_alias(
             value,
-            |c, t| c.instantiate_mapped_constituent(file, node, mapper, source, t),
+            |c, t| c.instantiate_mapped_constituent(file, node, mapper, source, t, given),
             alias,
+        );
+        // `getObjectTypeInstantiation`: "If none of the type arguments for the outer type
+        // parameters contain type variables, it follows that the instantiated type doesn't
+        // reference type variables."
+        let has_other_instantiation =
+            (self.types().object_flags(result)).contains(ObjectFlags::HAS_OTHER_INSTANTIATION);
+        if !has_other_instantiation
+            || !self.is_union(result)
+            || self.could_type_arguments_contain_type_variables(mapper)
+        {
+            return result;
+        }
+        let own = self.stored_alias(result);
+        self.types().intern_key_with(
+            TypeKey::Data(self.data(result)),
+            &ProvenanceKey {
+                alias: own.map(|(alias, type_arguments)| (*alias, &type_arguments[..])),
+                origin: self.origin(result).into(),
+                is_enum: false,
+                stored_under: Some(InstantiationKey {
+                    type_arguments: mapper,
+                    alias: given,
+                    could_contain_type_variables: false,
+                }),
+            },
         )
     }
 
+    /// `core.Some(typeArguments, c.couldContainTypeVariables)` in `getObjectTypeInstantiation`
+    fn could_type_arguments_contain_type_variables(&self, new_mapper: MapperId) -> bool {
+        let mut type_arguments = self.types().mapping(new_mapper).iter();
+        type_arguments.any(|pair| self.could_contain_type_variables(pair.1))
+    }
+
     /// `instantiateConstituent`: the mapped type over the keys of `source`, with `t`, which is not
-    /// a union, substituted for `source`.
+    /// a union, substituted for `source`. `given`: `InstantiationKey::alias`.
     fn instantiate_mapped_constituent(
         &mut self,
         file: FileId,
@@ -1876,35 +1915,51 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
         source: TypeId,
         t: TypeId,
+        given: Option<(Sym, TypeId)>,
     ) -> TypeId {
-        if self.is_primitive(t)
+        let is_mapped =
+            tf::ANY | tf::UNKNOWN | tf::INSTANTIABLE_NON_PRIMITIVE | tf::OBJECT | tf::INTERSECTION;
+        if self.flags(t) & is_mapped == 0
             || t == TypeId::UNRESOLVED
             || t == TypeId::WILDCARD
             || self.is_error_type(t)
-            || t == TypeId::OBJECT
-            || matches!(
-                self.data(t),
-                TypeData::Keyof(_) | TypeData::Template { .. } | TypeData::StringMapping { .. }
-            )
         {
             return t;
         }
-        let with = |c: &mut Self, t: TypeId| {
-            let mut pairs = c.types().mapping(mapper).to_vec();
-            for p in &mut pairs {
-                if p.0 == source {
-                    p.1 = t;
-                }
-            }
-            c.types().mapper(pairs)
-        };
         let mapped = self.mapped_decl(file, node);
-        let one = with(self, t);
-        if mapped.name_ty.is_some() {
-            return self.intern(TypeData::Anon {
+        let one = self.prepend_type_mapping(source, t, mapper);
+        // `instantiateAnonymousType(t, prependTypeMapping(typeVariable, s, m), nil)`
+        let anonymous = |c: &mut Self| {
+            let created = TypeData::Anon {
                 origin: Origin::Mapped(file, node),
                 mapper: one,
-            });
+            };
+            // `getObjectTypeInstantiation` stores the result under `m` and the alias.
+            if one == mapper && given.is_none() {
+                return c.intern(created);
+            }
+            // It sets the flag of its result from the type arguments. For a member of a union
+            // `couldContainTypeVariables` computes it, and it holds for every mapped type.
+            let distributed = c.types().map(mapper, source).unwrap_or(source);
+            let distributed = c.reduced(distributed);
+            let could_contain_type_variables =
+                c.is_union(distributed) || c.could_type_arguments_contain_type_variables(mapper);
+            c.types().intern_key_with(
+                TypeKey::Data(&created),
+                &ProvenanceKey {
+                    alias: None,
+                    origin: OriginKey::None,
+                    is_enum: false,
+                    stored_under: Some(InstantiationKey {
+                        type_arguments: mapper,
+                        alias: given,
+                        could_contain_type_variables,
+                    }),
+                },
+            )
+        };
+        if mapped.name_ty.is_some() {
+            return anonymous(self);
         }
         let param = self.type_param(file, mapped.param);
         // `instantiateMappedTypeTemplate`
@@ -1971,18 +2026,17 @@ impl<'p, 's> Checker<'p, 's> {
                     let key = self.string_literal(name, false);
                     template(self, one, key, f.contains(ElemFlags::OPTIONAL))
                 } else if f.contains(ElemFlags::VARIADIC) {
-                    // `prependTypeMapping(typeVariable, e, m)` is a merged mapper: `e` is
-                    // instantiated with `m` as well. `...T` in the tuple that `m` has for `T` is
-                    // that tuple again, and the same instantiation starts over until
-                    // `instantiationDepth == 100`.
-                    if elems[i] == source {
+                    let of_element = self.prepend_type_mapping(source, elems[i], mapper);
+                    // `...T` in the tuple that `m` has for `T` is that tuple again, and the same
+                    // instantiation starts over until `instantiationDepth == 100`.
+                    if of_element == mapper {
                         return self.excessively_deep();
                     }
-                    let of_element = with(self, elems[i]);
-                    self.instantiate_mapped_type(file, node, of_element, NewAlias::None)
+                    let declared = self.type_from_node(file, node);
+                    self.instantiate(declared, of_element)
                 } else {
                     let list = self.array_of(elems[i]);
-                    let of_list = with(self, list);
+                    let of_list = self.prepend_type_mapping(source, list, mapper);
                     // `getElementTypeOfArrayType` of the result of `instantiateMappedArrayType`,
                     // and the error type is not an array.
                     match template(self, of_list, TypeId::NUMBER, true) {
@@ -2024,14 +2078,11 @@ impl<'p, 's> Checker<'p, 's> {
         {
             let members: Vec<TypeId> = parts
                 .iter()
-                .map(|&p| self.instantiate_mapped_constituent(file, node, mapper, source, p))
+                .map(|&p| self.instantiate_mapped_constituent(file, node, mapper, source, p, given))
                 .collect();
             return self.intersection(&members);
         }
-        self.intern(TypeData::Anon {
-            origin: Origin::Mapped(file, node),
-            mapper: one,
-        })
+        anonymous(self)
     }
 
     /// `getKnownKeysOfTupleType`: the indexes before the first variable-length element, and the
@@ -2100,13 +2151,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if bound == checked {
                     return ty;
                 }
-                let mut pairs = self.types().mapping(mapper).to_vec();
-                for pair in &mut pairs {
-                    if pair.0 == declared {
-                        pair.1 = bound;
-                    }
-                }
-                let mapper = self.types().mapper(pairs);
+                let mapper = self.prepend_type_mapping(declared, bound, mapper);
                 self.conditional_type(file, node, mapper)
             }
             // `mapTypeEx(.., noReductions)`: `string` from `keyof S` does not absorb the names next
@@ -2690,8 +2735,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTemplateLiteralType`: `` `${A}text${B}` ``
     pub fn template_type(&mut self, texts: &[Atom], types: &[TypeId]) -> TypeId {
-        if types.iter().any(|t| t.is_never()) {
-            return TypeId::NEVER;
+        // `mapType` returns a type with `TypeFlagsNever` as it is. After a union there is one for
+        // each member, and their union is `never`.
+        if let Some(at) = types.iter().position(|t| t.is_never()) {
+            let follows_union = types[..at].iter().any(|&t| self.is_union(t));
+            return if follows_union {
+                TypeId::NEVER
+            } else {
+                types[at]
+            };
         }
         if types.contains(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
@@ -2848,6 +2900,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
                 | Intrinsic::ImplicitNever
+                | Intrinsic::UniqueLiteral
                 | Intrinsic::Unresolved,
             ) => ty,
             // `TypeFlagsStringLiteral`, which a string enum member has too: the result is a plain

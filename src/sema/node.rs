@@ -2272,7 +2272,7 @@ impl<'s> File<'s> {
             {
                 self[t].pos
             }
-            (Part::Head | Part::Keyword, NodeData::Expr(e)) => self[e].pos,
+            (Part::Head | Part::Keyword | Part::Opening, NodeData::Expr(e)) => self[e].pos,
             (Part::Keyword, NodeData::Type(t)) => self[t].pos,
             (Part::Namespace, _) => self.start(self.parent_of_part(row.with(part))),
             (Part::LocalName, _) => {

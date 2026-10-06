@@ -3,7 +3,7 @@
 use super::infer::{Inference, PRIORITY_RETURN};
 use super::relate::Relation;
 use super::*;
-use crate::bind::{FnOwner, MemberOwner, Parent};
+use crate::bind::{FnOwner, MemberOwner, Parent, ScopeId, ScopeKind};
 use smallvec::{SmallVec, smallvec};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -35,18 +35,31 @@ pub(super) enum Arg {
     /// field is the node it is positioned at: the argument whose tuple it is an element of, the
     /// template whose pieces of text it represents, the expression of the decorator.
     Type(TypeId, Atom, ExprId),
-    /// `...list`: any number of values of the first type. The second is the type of the list that
-    /// is spread. The third is the label of the spread tuple element that it represents
-    /// (`tupleNameSource`), or `NONE`. The last is the argument that spreads it.
+    /// `createSyntheticExpression` with `isSpread`, for a variable element of a tuple: any number
+    /// of values of the first type. The second is the type of the list that is spread. The third
+    /// is the label of the element (`tupleNameSource`), or `NONE`. The last is the argument that
+    /// spreads the tuple.
     Spread(TypeId, TypeId, Atom, ExprId),
+    /// A `SpreadElement` that `getEffectiveCallArguments` leaves as it is, since its operand is not
+    /// a tuple: the type it iterates, the type of its operand without a contextual type, the
+    /// operand, and the element itself.
+    SpreadElement(TypeId, TypeId, ExprId, ExprId),
 }
 
 impl Arg {
     /// The node at which an error about it is reported.
     pub(super) fn node(self) -> ExprId {
         match self {
-            Arg::Expr(e) | Arg::Type(_, _, e) | Arg::Spread(_, _, _, e) => e,
+            Arg::Expr(e)
+            | Arg::Type(_, _, e)
+            | Arg::Spread(_, _, _, e)
+            | Arg::SpreadElement(_, _, _, e) => e,
         }
+    }
+
+    /// `isSpreadArgument`
+    pub(super) fn is_spread(self) -> bool {
+        matches!(self, Arg::Spread(..) | Arg::SpreadElement(..))
     }
 }
 
@@ -272,11 +285,20 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         // `resolvingSignature`
-        let is_in_progress = self
+        let in_progress_at = self
             .stack
             .iter()
-            .any(|q| matches!(*q, Query::Call(f, c) if f == file && c == call));
-        if !self.enter(Query::Call(file, call)) {
+            .rposition(|&q| q == Query::Call(file, call));
+        let is_in_progress = in_progress_at.is_some();
+        let resolution_start = self.resolution_start;
+        // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
+        // being resolved is resolved again, any number of times: see `recheck_in_flow_loop`.
+        if in_progress_at.is_some_and(|at| self.flow_loop_pushed_since(at).is_some()) {
+            self.resolution_start = self.stack.len();
+        }
+        let entered = self.enter(Query::Call(file, call));
+        self.resolution_start = resolution_start;
+        if !entered {
             return ResolvedCall {
                 sig: None,
                 ret: TypeId::UNRESOLVED,
@@ -287,7 +309,6 @@ impl<'p, 's> Checker<'p, 's> {
         // is queried again, this time with the call in progress. If that reaches the call as an
         // expression, the call is resolved again, without another reset: anything that re-enters
         // then is a cycle.
-        let resolution_start = self.resolution_start;
         if !is_in_progress {
             self.resolution_start = self.stack.len();
         }
@@ -394,32 +415,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // yields `any`. The error is not reported for a type the operand is only assumed to
                 // have.
                 let element = self.iterated_type_of_spread(ty);
-                push(Arg::Spread(element, ty, Atom::NONE, a));
+                push(Arg::SpreadElement(element, ty, inner, a));
             }
         }
-    }
-
-    /// `ty` if it is an array, or the array it extends: `Array<string>` for `RegExpMatchArray`.
-    fn array_it_extends(&mut self, ty: TypeId, depth: u32) -> Option<TypeId> {
-        if self.is_array(ty) {
-            return Some(ty);
-        }
-        let &TypeData::Ref { target, .. } = self.data(ty) else {
-            return None;
-        };
-        if depth > 8 {
-            return None;
-        }
-        let args = self.type_arguments(ty);
-        let params = self.all_type_params_of_symbol(target);
-        let mapper = self.mapper_from(&params, &args[..params.len().min(args.len())]);
-        for base in self.base_types(target).to_vec() {
-            let base = self.instantiate(base, mapper);
-            if let Some(array) = self.array_it_extends(base, depth + 1) {
-                return Some(array);
-            }
-        }
-        None
     }
 
     /// The parameters of an immediately invoked function expression are typed from its arguments.
@@ -493,7 +491,9 @@ impl<'p, 's> Checker<'p, 's> {
                 self.iife_resolving.pop();
                 Some(self.widen_literal(ty))
             }
-            Some(&(Arg::Type(ty, ..) | Arg::Spread(ty, ..))) => Some(ty),
+            Some(&(Arg::Type(ty, ..) | Arg::Spread(ty, ..) | Arg::SpreadElement(ty, ..))) => {
+                Some(ty)
+            }
             None if own.default.is_some() => None,
             None => Some(self.undefined_widening()),
         }
@@ -527,7 +527,7 @@ impl<'p, 's> Checker<'p, 's> {
             CallLike::Decorator(owner) => self.decorator_argument_count(file, owner, params),
             _ => args.len(),
         };
-        let spread = args.iter().position(|a| matches!(a, Arg::Spread(..)));
+        let spread = args.iter().position(|a| a.is_spread());
         let is_incomplete = self.is_call_incomplete(file, call, node);
         self.has_correct_arity_for_count(params, actual, spread, is_incomplete)
     }
@@ -740,7 +740,7 @@ impl<'p, 's> Checker<'p, 's> {
         callee = if is_re_resolved {
             let since = self.reported.len();
             let callee = self.check_non_null_callee(file, data.callee, callee, is_new);
-            let reported = self.reported.split_off(since);
+            let reported = self.take_reported_from(since);
             if !reported.is_empty() {
                 (self.call_resolution_errors.get_or_insert_default()).extend(reported);
             }
@@ -785,53 +785,6 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.has_abstract_construct_signature(callee))
         {
             return self.resolve_error_call(file, data.args);
-        }
-        // A method of `A[] | B[]` whose signatures cannot be combined is called as the method of
-        // `(A | B)[]`.
-        if sigs.is_empty()
-            && !is_new
-            && self.is_union(callee)
-            && let ExprKind::Dot { obj, name, .. } = hir[data.callee].kind
-        {
-            let receiver = self.type_of_expr(file, obj);
-            let receiver = self.non_nullable(receiver);
-            let receiver = self.apparent_type(receiver);
-            let mut elements = Vec::new();
-            let mut readonly = false;
-            let all_arrays =
-                self.is_union(receiver)
-                    && self.parts(receiver).to_vec().into_iter().all(|part| {
-                        match self.data(part) {
-                            TypeData::Tuple {
-                                flags, readonly: r, ..
-                            } => {
-                                readonly |= r;
-                                let elems = self.type_arguments(part);
-                                elements.push(self.tuple_element_union(elems, flags));
-                                true
-                            }
-                            _ => match self.array_it_extends(part, 0) {
-                                Some(array) => {
-                                    readonly |=
-                                        self.is_reference_to_global(array, known::ReadonlyArray);
-                                    elements.extend(self.array_element(array));
-                                    true
-                                }
-                                None => false,
-                            },
-                        }
-                    });
-            if all_arrays {
-                let element = self.union(&elements);
-                let merged = if readonly {
-                    self.global_ref(known::ReadonlyArray, &[element])
-                } else {
-                    self.array_of(element)
-                };
-                if let Some(method) = self.type_of_property(merged, name) {
-                    sigs = self.signatures(method, false);
-                }
-            }
         }
         // `new` on a type that has only call signatures is resolved as a call.
         let is_call_by_new = is_new && sigs.is_empty();
@@ -978,45 +931,68 @@ impl<'p, 's> Checker<'p, 's> {
             .any(|&sig| self.is_abstract_signature(sig))
     }
 
-    /// `getQuickTypeOfExpression` for `new`: the return type of the single construct signature of
-    /// the callee, if it is not generic, regardless of errors in the call.
+    /// `getQuickTypeOfExpression` for `new`, regardless of errors in the call.
     pub(super) fn quick_type_of_new(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let ExprKind::New(c) = self.hir(file)[e].kind else {
             return None;
         };
-        let called = self.type_of_expr(file, self.hir(file)[c].callee);
-        let callee = self.check_non_null_type(file, self.hir(file)[c].callee, called);
-        let only = self.single_signature(callee, SignatureKind::Construct, AllowMembers::Yes)?;
-        if !self.sig_type_params(only).is_empty() {
-            return None;
-        }
-        Some(self.sig_return(only))
+        let callee = self.hir(file)[c].callee;
+        let called = self.type_of_expr(file, callee);
+        let func_type = self.check_non_null_type(file, callee, called);
+        self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Construct)
     }
 
-    /// `getQuickTypeOfExpression` for a call: the return type of the single call signature of the
-    /// callee, if it is not generic. The arguments are not checked.
+    /// `getQuickTypeOfExpression` for a call. The arguments are not checked.
     pub(super) fn quick_type_of_call(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let hir = self.hir(file);
         let ExprKind::Call(c) = hir[e].kind else {
             return None;
         };
         let callee = hir[c].callee;
-        if matches!(
-            hir[callee].kind,
-            ExprKind::Super | ExprKind::Ident(known::require)
-        ) || self.is_symbol_or_symbol_for_call(file, e)
-            || hir[c].chain != Chain::No
-            || self.is_in_optional_chain(file, callee)
+        if matches!(hir[callee].kind, ExprKind::Super)
+            || crate::bind::required_specifier(hir, e).is_some()
+            || self.is_symbol_or_symbol_for_call(file, e)
         {
             return None;
         }
+        if hir[c].chain != Chain::No {
+            return self.return_type_of_single_non_generic_signature_of_call_chain(file, c);
+        }
         let called = self.type_of_expr(file, callee);
-        let callee = self.check_non_null_type(file, callee, called);
-        let only = self.single_signature(callee, SignatureKind::Call, AllowMembers::Yes)?;
-        if !self.sig_type_params(only).is_empty() {
+        let func_type = self.check_non_null_type(file, callee, called);
+        self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Call)
+    }
+
+    /// `getReturnTypeOfSingleNonGenericSignature`
+    fn return_type_of_single_non_generic_signature(
+        &mut self,
+        func_type: TypeId,
+        kind: SignatureKind,
+    ) -> Option<TypeId> {
+        let signature = self.single_signature(func_type, kind, AllowMembers::Yes)?;
+        if !self.sig_type_params(signature).is_empty() {
             return None;
         }
-        Some(self.sig_return(only))
+        Some(self.sig_return(signature))
+    }
+
+    /// `getReturnTypeOfSingleNonGenericSignatureOfCallChain`. The signature is that of the type of
+    /// the callee as it is: there is none where the chain may short-circuit before the call.
+    fn return_type_of_single_non_generic_signature_of_call_chain(
+        &mut self,
+        file: FileId,
+        c: CallId,
+    ) -> Option<TypeId> {
+        let Call { callee, chain, .. } = self.hir(file)[c];
+        let func_type = self.type_of_expr(file, callee);
+        let return_type =
+            self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Call)?;
+        // `nonOptionalType != funcType`, `propagateOptionalTypeMarker`
+        if self.chain_receiver(file, callee, chain).1 {
+            Some(self.optional(return_type))
+        } else {
+            Some(return_type)
+        }
     }
 
     /// `resolveCall`
@@ -1100,7 +1076,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.report_call_resolution_errors(&s, signatures, head_message);
             self.resolved_meanwhile.pop();
             // Another checker may be the one to report it.
-            let reported = self.reported.split_off(since);
+            let reported = self.take_reported_from(since);
             if !reported.is_empty() {
                 (self.call_resolution_errors.get_or_insert_default()).extend(reported);
             }
@@ -1253,7 +1229,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if let Some(contextual_type) = self.contextual_type(file, call, context_flags) {
                 let inference_target_type = self.return_type_in_chain(file, call, signature);
-                if self.has_type_variables(inference_target_type) {
+                if self.could_contain_type_variables(inference_target_type) {
                     let outer_context = self.get_inference_context(file, call);
                     let is_from_binding_pattern = !skip_binding_patterns
                         && self.contextual_type(file, call, ContextFlags::SKIP_BINDING_PATTERNS)
@@ -1312,7 +1288,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let params = self.sig_params(signature);
+        // `getTypeAtPosition(signature, i)` for every argument.
+        let params = self.sig_params_up_to(signature, args.len());
         let rest_type = self.non_array_rest_type(&params);
         let arg_count = if rest_type.is_some() {
             (self.parameter_count(&params) - 1).min(args.len())
@@ -1321,14 +1298,12 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if let Some(rest) = rest_type
             && let Some(k) = context.params.iter().position(|&p| p == rest)
-            && !args[arg_count..]
-                .iter()
-                .any(|a| matches!(a, Arg::Spread(..)))
+            && !args[arg_count..].iter().any(|a| a.is_spread())
         {
             context.candidates[k].implied_arity = Some(args.len() - arg_count);
         }
         if let Some(this_type) = self.sig_this_type(signature)
-            && self.has_type_variables(this_type)
+            && self.could_contain_type_variables(this_type)
         {
             let this_argument_type = self.this_argument_type(file, s.this_arg);
             context.array_literals.clear();
@@ -1339,7 +1314,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if let Some(param_type) = self.param_type_at(&params, i)
-                && self.has_type_variables(param_type)
+                && self.could_contain_type_variables(param_type)
             {
                 context.array_literals.clear();
                 let arg_type =
@@ -1352,7 +1327,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if let Some(rest) = rest_type
-            && self.has_type_variables(rest)
+            && self.could_contain_type_variables(rest)
         {
             context.array_literals.clear();
             let spread_type =
@@ -1362,8 +1337,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.inference_mapper(context)
     }
 
-    /// `checkExpressionWithContextualType` for an argument. An argument created by
-    /// `createSyntheticExpression` has the type it carries.
+    /// `checkExpressionWithContextualType` for an argument.
     pub(super) fn check_argument(
         &mut self,
         file: FileId,
@@ -1372,19 +1346,43 @@ impl<'p, 's> Checker<'p, 's> {
         inference_context: Option<&mut Inference>,
         check_mode: CheckMode,
     ) -> TypeId {
-        match arg {
+        let (ty, node) = match arg {
             Arg::Expr(e) => {
                 let contextual_type = self.without_no_infer(contextual_type);
-                self.check_expression_with_contextual_type(
+                return self.check_expression_with_contextual_type(
                     file,
                     e,
                     contextual_type,
                     inference_context,
                     check_mode,
-                )
+                );
             }
-            Arg::Type(t, ..) | Arg::Spread(t, ..) => t,
+            // `checkSyntheticExpression`, `checkSpreadExpression`
+            Arg::Type(ty, _, node)
+            | Arg::Spread(ty, _, _, node)
+            | Arg::SpreadElement(ty, _, _, node) => (ty, node),
+        };
+        // FOR SPEED: `instantiateTypeWithSingleGenericCallSignature` returns `ty`, which is not a
+        // fresh literal type.
+        if inference_context.is_none() && !check_mode.contains(CheckMode::SKIP_GENERIC_FUNCTIONS) {
+            return ty;
         }
+        // A synthetic expression is no node here: what is pushed for it is pushed for the node it
+        // is positioned at, in which nothing is checked meanwhile.
+        let contextual_type = self.without_no_infer(contextual_type);
+        self.contextual.push((file, node, contextual_type));
+        let ty = self.check_with_inference_context(
+            file,
+            node,
+            contextual_type,
+            inference_context,
+            check_mode,
+            |c, check_mode| {
+                c.instantiate_type_with_single_generic_call_signature(file, node, ty, check_mode)
+            },
+        );
+        self.contextual.pop();
+        ty
     }
 
     /// `getSignatureInstantiationWithoutFillingInTypeArguments(signature, signature.typeParameters)`
@@ -1670,9 +1668,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !type_args.is_empty() {
             // `getTypeArgumentsFromNodes`: excess type arguments are dropped. A missing one is the
             // default of its type parameter, or its constraint, as declared.
-            let outer = self
-                .sig_decl(candidate)
-                .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
+            let outer = self.mapper_around_sig(candidate);
             let mut filled: Vec<TypeId> =
                 type_args.iter().copied().take(type_params.len()).collect();
             for &param in &type_params[filled.len()..] {
@@ -2193,25 +2189,40 @@ impl<'p, 's> Checker<'p, 's> {
         check_mode: CheckMode,
     ) -> TypeId {
         let is_const = self.is_const_type_variable(rest, 0);
-        // `...x` for `...rest`
-        if let Some(&Arg::Spread(element, list, ..)) = args.last()
-            && index + 1 >= args.len()
-        {
-            if self.is_array_like(list) {
-                return self.mutable_array_or_tuple(list);
-            }
-            return if is_const {
-                self.readonly_array_of(element)
-            } else {
-                self.array_of(element)
+        // "both the parameter and the argument are ...x forms"
+        if index + 1 >= args.len() {
+            let spread_type = match args.last() {
+                Some(&Arg::Spread(_, list, ..)) => Some(list),
+                Some(&Arg::SpreadElement(_, _, operand, _)) => {
+                    let contextual_type = self.without_no_infer(rest);
+                    Some(self.check_expression_with_contextual_type(
+                        file,
+                        operand,
+                        contextual_type,
+                        context.as_deref_mut(),
+                        check_mode,
+                    ))
+                }
+                _ => None,
             };
+            if let Some(spread_type) = spread_type {
+                if self.is_array_like(spread_type) {
+                    return self.mutable_array_or_tuple(spread_type);
+                }
+                let element = self.iterated_type_of_spread(spread_type);
+                return if is_const {
+                    self.readonly_array_of(element)
+                } else {
+                    self.array_of(element)
+                };
+            }
         }
         let length = args.len().saturating_sub(index);
         let mut elems: SmallVec<[TypeId; 8]> = SmallVec::with_capacity(length);
         let mut flags: SmallVec<[ElemFlags; 8]> = SmallVec::with_capacity(length);
         for i in index..args.len() {
             let (ty, flag) = match args[i] {
-                Arg::Spread(element, list, ..) => {
+                Arg::Spread(element, list, ..) | Arg::SpreadElement(element, list, ..) => {
                     if self.is_array_like(list) {
                         (list, ElemFlags::VARIADIC)
                     } else {
@@ -2644,9 +2655,7 @@ impl<'p, 's> Checker<'p, 's> {
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> SigId {
         let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
-        inference.around_source = self
-            .sig_decl(expected)
-            .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
+        inference.around_source = self.mapper_around_sig(expected);
         for (source, target) in self.parameter_type_pairs(expected, sig) {
             self.infer(&mut inference, source, target, 0);
         }
@@ -2716,8 +2725,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `own`. The mapper of a renamed clone (`cloneTypeParameter`) maps the fresh string literal type of the declared name to the string
     /// literal type of the new name. Instantiation only looks up type parameters, so that entry never reaches a type.
     /// `clone_mapper` resolves the siblings of a clone with the mapper of the clone, so if a type parameter is renamed, its siblings
-    /// (those of the same function with the same mapper) are cloned with the same mapper, and those that keep their name only
-    /// change identity.
+    /// (those of the same function, class or interface with the same mapper) are cloned with the same mapper, and those that keep
+    /// their name only change identity.
     /// `None`: the renamed clones cannot be represented.
     pub(super) fn unique_type_params(
         &self,
@@ -2766,10 +2775,9 @@ impl<'p, 's> Checker<'p, 's> {
         if renames.is_empty() {
             return Some(own.to_vec());
         }
-        // The entries are keyed by declared name, so only siblings share them. Only the type parameters of a function know their
-        // siblings (`clone_mapper`).
-        let mut sibling_sets: Vec<(FileId, crate::bind::ScopeId, MapperId)> =
-            Vec::with_capacity(own.len());
+        // The entries are keyed by declared name, so only siblings share them. The type parameters of a signature are those of a
+        // function, or of the class or interface that a construct signature belongs to: `clone_mapper` knows their siblings.
+        let mut sibling_sets: Vec<(FileId, ScopeId, MapperId)> = Vec::with_capacity(own.len());
         for &param in own {
             let TypeData::TypeParam(file, tp, around) = *self.data(param) else {
                 return None;
@@ -2778,7 +2786,7 @@ impl<'p, 's> Checker<'p, 's> {
             if scope.is_none()
                 || !matches!(
                     self.bound(file).scopes[scope.idx()].kind,
-                    crate::bind::ScopeKind::Fn(_)
+                    ScopeKind::Fn(_) | ScopeKind::Class(_) | ScopeKind::Interface(_)
                 )
             {
                 return None;

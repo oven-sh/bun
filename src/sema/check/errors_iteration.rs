@@ -584,21 +584,41 @@ impl Checker<'_, '_> {
             let initializer_type = self.type_of_expr(file, initializer);
             self.check_non_null_non_void_type(initializer_type, error_node);
         }
-        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters of a
-        // function argument while the call is being resolved, when the contextual type still refers
-        // to the type parameters of the callee.
-        if let PatParent::Param(q) = bound.pat_parent[pat.idx()] {
+        // `getContextuallyTypedParameterType`
+        let mut contextually_typed = None;
+        if let PatParent::Param(q) = bound.pat_parent[pat.idx()]
+            && hir[q].ty.is_none()
+        {
             let func = bound.param_fn[q.idx()];
             let index = (q.0 - hir[func].params.start) as usize;
-            if hir[q].ty.is_none()
-                && self.iife_param_type(file, func, index).is_none()
-                && self.contextual_param_type(file, func, index).is_some()
+            if self
+                .param_type_of_full_signature(file, func, index)
+                .is_none()
             {
-                return;
+                contextually_typed = self.contextual_param_type(file, func, index);
+            }
+            // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters
+            // while `getContextualSignature` still returns the signature that the inference
+            // context then instantiates. Only the instantiated one is stored.
+            if contextually_typed.is_some() && self.iife_param_type(file, func, index).is_none() {
+                let assigned = self.assigned_contextual_signature(file, func);
+                let is_as_declared = assigned.is_some_and(|sig| {
+                    matches!(*self.types().sig(sig), SigData::Decl { mapper, .. }
+                        if !self.is_instantiating(mapper))
+                });
+                if !is_as_declared {
+                    return;
+                }
+            }
+            if hir[q].flags.contains(Flags::OPTIONAL) {
+                contextually_typed = contextually_typed.map(|ty| self.optional(ty));
             }
         }
         // `getWidenedTypeForVariableLikeDeclaration`. An annotated type is not widened.
-        let mut widened_type = self.type_of_pat(file, pat);
+        let mut widened_type = match contextually_typed {
+            Some(ty) => ty,
+            None => self.type_of_pat(file, pat),
+        };
         let is_annotated = match root {
             PatParent::Var(d) => hir[d].ty.is_some(),
             PatParent::Param(q) => hir[q].ty.is_some(),

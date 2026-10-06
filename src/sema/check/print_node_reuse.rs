@@ -34,18 +34,17 @@ impl<'p> Printer<'_, 'p, '_> {
     /// `symbolToParameterDeclaration`: the type of `parameter`.
     pub(super) fn serialize_type_of_parameter(&mut self, parameter: &Parameter) -> Node {
         match parameter.declaration {
-            Some((file, declaration)) if self.reuses_nodes() => self
-                .serialize_type_for_declaration(
-                    file,
-                    self.c.hir(file).node(declaration),
-                    parameter.ty,
-                    SerializeTypeOptions {
-                        try_reuse: true,
-                        is_unwidened: false,
-                        is_optional_reverse_mapped: false,
-                    },
-                ),
-            _ => self.type_to_node(parameter.ty),
+            Some((file, declaration)) => self.serialize_type_for_declaration(
+                file,
+                self.c.hir(file).node(declaration),
+                parameter.ty,
+                SerializeTypeOptions {
+                    try_reuse: true,
+                    is_unwidened: false,
+                    is_optional_reverse_mapped: false,
+                },
+            ),
+            None => self.type_to_node(parameter.ty),
         }
     }
 
@@ -73,9 +72,7 @@ impl<'p> Printer<'_, 'p, '_> {
         prop: &Prop,
         ty: TypeId,
     ) -> Node {
-        if self.reuses_nodes()
-            && let Some((file, declaration)) = self.value_declaration_of_property(prop)
-        {
+        if let Some((file, declaration)) = self.value_declaration_of_property(prop) {
             // The properties of an unwidened object literal are unwidened too.
             let is_unwidened = matches!(
                 self.c.data(owner),
@@ -108,50 +105,6 @@ impl<'p> Printer<'_, 'p, '_> {
                     try_reuse: true,
                     is_unwidened,
                     is_optional_reverse_mapped,
-                },
-            );
-        }
-        self.type_to_node(ty)
-    }
-
-    /// `addPropertyToElementList`: the return type of the getter of `prop` or the parameter type of
-    /// its setter, selected by `kind`. That type is `ty`.
-    pub(super) fn serialize_type_of_accessor(
-        &mut self,
-        prop: &Prop,
-        kind: MemberKind,
-        ty: TypeId,
-    ) -> Node {
-        // `GetDeclarationOfKind`
-        let declaration = match prop.source {
-            PropSource::Symbol(symbol) => (self.c.members_of_symbol(symbol).iter())
-                .find(|&&(file, member)| self.c.hir(file)[member].kind == kind)
-                .map(|&(file, member)| (file, self.c.hir(file).node(member))),
-            PropSource::Literal(file, p) => {
-                let kind = match kind {
-                    MemberKind::Getter => PropKind::Getter,
-                    _ => PropKind::Setter,
-                };
-                self.c
-                    .bound(file)
-                    .declarations_of_literal_member(p)
-                    .into_iter()
-                    .find(|&declaration| self.c.hir(file)[declaration].kind == kind)
-                    .map(|declaration| (file, self.c.hir(file).node(declaration)))
-            }
-            _ => None,
-        };
-        if self.reuses_nodes()
-            && let Some((file, declaration)) = declaration
-        {
-            return self.serialize_type_for_declaration(
-                file,
-                declaration,
-                ty,
-                SerializeTypeOptions {
-                    try_reuse: true,
-                    is_unwidened: false,
-                    is_optional_reverse_mapped: false,
                 },
             );
         }
@@ -349,6 +302,9 @@ impl<'p> Printer<'_, 'p, '_> {
         is_unwidened: bool,
         requires_undefined: bool,
     ) -> Node {
+        if !self.reuses_nodes() {
+            return self.type_to_node(ty);
+        }
         let hir = self.c.hir(file);
         let accessor = hir
             .function_of(node)
@@ -570,7 +526,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let outer_scope = self.enter_scope_of_function(file, *func);
                 let head = self.pseudo_signature_head(file, *func, params);
                 let returns = self.pseudo_type_to_node(file, returns);
-                self.leave_scope(outer_scope);
+                self.leave_scope(&outer_scope);
                 Node::function(&cat!(head, b" => "), returns)
             }
             Pseudo::Tuple(elements) => {
@@ -586,22 +542,26 @@ impl<'p> Printer<'_, 'p, '_> {
             Pseudo::Object(elements) => self.pseudo_object_literal_to_node(file, elements),
             Pseudo::Literal(e) => {
                 let hir = self.c.hir(file);
-                match hir[*e].kind {
-                    ExprKind::String(value) => {
-                        let quote = match hir.text.get(hir[*e].pos as usize) {
-                            Some(b'\'') => b'\'',
-                            Some(b'`') => b'`',
-                            _ => b'"',
-                        };
-                        Node::simple(quoted(self.c.atoms().bytes(value), quote, false))
-                    }
-                    ExprKind::Template { exprs } if exprs.is_empty() => {
-                        let text = hir.id_at(hir.template_texts(exprs), 0);
-                        Node::simple(quoted(&self.text(text), b'`', false))
-                    }
-                    // A number is printed in its canonical form, as its type is.
-                    _ => self.type_of_pseudo_type_to_node(file, pt),
-                }
+                let existing = self.range_of_node(file, hir.node(*e));
+                let reused = self.try_reuse_existing_node_helper(file, existing, |printer| {
+                    Some(match hir[*e].kind {
+                        ExprKind::String(value) => {
+                            let quote = match hir.text.get(hir[*e].pos as usize) {
+                                Some(b'\'') => b'\'',
+                                Some(b'`') => b'`',
+                                _ => b'"',
+                            };
+                            Node::simple(quoted(printer.c.atoms().bytes(value), quote, false))
+                        }
+                        ExprKind::Template { exprs } if exprs.is_empty() => {
+                            let text = hir.id_at(hir.template_texts(exprs), 0);
+                            Node::simple(quoted(&printer.text(text), b'`', false))
+                        }
+                        // A number is printed in its canonical form, as its type is.
+                        _ => printer.type_of_pseudo_type_to_node(file, pt),
+                    })
+                });
+                reused.unwrap_or_else(|| Node::simple(b"any"))
             }
         }
     }
@@ -688,7 +648,8 @@ impl<'p> Printer<'_, 'p, '_> {
         let function = hir[func];
         let mut type_parameters = Vec::with_capacity(function.type_params.len());
         for tp in function.type_params.iter() {
-            let reused = self.try_reuse_existing_node_helper(|printer| {
+            let existing = self.range_of_node(file, hir.node(tp));
+            let reused = self.try_reuse_existing_node_helper(file, existing, |printer| {
                 printer.visit_type_parameter_declaration(file, tp)
             });
             let declaration = match reused {
@@ -849,7 +810,7 @@ impl<'p> Printer<'_, 'p, '_> {
                     let outer_scope = self.enter_scope_of_function(file, *func);
                     let head = self.pseudo_signature_head(file, *func, params);
                     let returns = self.pseudo_type_to_node(file, returns);
-                    self.leave_scope(outer_scope);
+                    self.leave_scope(&outer_scope);
                     if is_const {
                         cat!(b"readonly ", name, b": ", head, b" => ", returns.text, b";")
                     } else {
@@ -907,26 +868,49 @@ fn emit_postfix_type_operand(operand: Node) -> Vec<u8> {
 }
 
 impl<'p> Printer<'_, 'p, '_> {
-    /// `tryReuseExistingNodeHelper`, except for the length. `visit`: the visitor, applied to the
-    /// node.
+    /// Where the first token of `node` of `file` starts, and `node.End()`.
+    fn range_of_node(&self, file: FileId, node: hir::Node) -> (u32, u32) {
+        (self.c.hir(file).start(node), self.c.end_of_node(file, node))
+    }
+
+    /// `tryReuseExistingNodeHelper`. `existing`: `range_of_node` of the node, which is in `file`.
+    /// `visit`: the visitor, applied to the node. Nothing is counted where the text is not
+    /// retained, in the default library.
     fn try_reuse_existing_node_helper<T>(
         &mut self,
+        file: FileId,
+        existing: (u32, u32),
         visit: impl FnOnce(&mut Self) -> Option<T>,
     ) -> Option<T> {
         self.create_recovery_boundary();
         let transformed = visit(self);
-        if self.finalize_boundary(transformed.is_none()) {
-            transformed
-        } else {
-            None
+        if !self.finalize_boundary(transformed.is_none()) {
+            return None;
+        }
+        self.count_length_of_existing_node(file, existing);
+        transformed
+    }
+
+    /// `b.ctx.approximateLength += existing.End() - existing.Pos()`
+    fn count_length_of_existing_node(&mut self, file: FileId, existing: (u32, u32)) {
+        if !self.c.hir(file).text.is_empty() {
+            let pos = self.full_start(file, existing.0 as usize);
+            self.approximate_length += (existing.1 as usize).saturating_sub(pos);
         }
     }
 
-    /// `reuseNode` for a type node.
+    /// `reuseNode` for a type node. The outermost `ParenthesizedType` around `node` is that node.
     pub(super) fn try_reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
-        self.try_reuse_existing_node_helper(|printer| {
+        let outermost = self.c.parenthesized_types_around(file, node, 0).last();
+        let start = outermost.map_or_else(|| self.c.hir(file)[node].pos, |start| start as u32);
+        let existing = (start, self.c.end_of_type_node_from(file, node, 0));
+        let reused = self.try_reuse_existing_node_helper(file, existing, |printer| {
             printer.visit_existing_type_node(file, node, 0)
-        })
+        })?;
+        if self.c.hir(file).text.is_empty() {
+            self.approximate_length += reused.text.len() + 1;
+        }
+        Some(reused)
     }
 
     /// `reuseTypeNode`
@@ -934,25 +918,8 @@ impl<'p> Printer<'_, 'p, '_> {
         if node.is_none() {
             return Node::simple(b"any");
         }
-        // `finalizeBoundary`, `tryReuseExistingNodeHelper`: the length counted is the node's length
-        // in the source, leading trivia included. The text of the default library is not retained.
-        let length_before = self.approximate_length;
-        let reused = self.try_reuse_existing_node_helper(|printer| {
-            printer.visit_existing_type_node(file, node, 0)
-        });
-        self.approximate_length = length_before;
-        match reused {
-            Some(reused) => {
-                let text = &self.c.hir(file).text;
-                self.approximate_length += if text.is_empty() {
-                    reused.text.len() + 1
-                } else {
-                    let start = self.c.hir(file)[node].pos as usize;
-                    let pos = super::spans::start_of_leading_trivia(text, start);
-                    (self.c.end_of_type_node(file, node) as usize).saturating_sub(pos)
-                };
-                reused
-            }
+        match self.try_reuse_type_node(file, node) {
+            Some(reused) => reused,
             None => {
                 self.report_inference_fallback(file, self.c.hir(file).node(node));
                 self.resolved_type_node_to_node(file, node)
@@ -1059,9 +1026,10 @@ impl<'p> Printer<'_, 'p, '_> {
     /// `getModuleSpecifierOverride` for the import type `node` of `file`. `None`: the literal is
     /// left unchanged.
     fn get_module_specifier_override(&mut self, file: FileId, node: TypeNodeId) -> Option<Vec<u8>> {
-        let at = self
-            .enclosing_declaration
-            .filter(|enclosing| enclosing.file != file)?;
+        let enclosing_file = self.enclosing_declaration.map(|enclosing| enclosing.file);
+        if enclosing_file == Some(file) {
+            return None;
+        }
         let (hir, files) = (self.c.hir(file), self.c.files());
         let TypeNodeKind::Import {
             spec,
@@ -1089,12 +1057,8 @@ impl<'p> Printer<'_, 'p, '_> {
             SymFlags::TYPE
         };
         let parent = match resolved {
-            Some(symbol) if self.c.is_symbol_accessible_at(symbol, meaning, false, at) => {
-                self.track_symbol(symbol, meaning);
-                let (starts_with_global_this, chain) =
-                    self.c
-                        .lookup_symbol_chain_at(symbol, is_typeof, true, at, Vec::new());
-                (!starts_with_global_this).then(|| chain[0])
+            Some(symbol) if self.is_symbol_accessible(symbol, meaning) => {
+                Some(self.lookup_symbol_chain(symbol, meaning, YieldModuleSymbol::Yes)[0])
             }
             _ => None,
         };
@@ -1102,9 +1066,8 @@ impl<'p> Printer<'_, 'p, '_> {
         let module = parent
             .filter(|&parent| self.c.is_external_module_symbol(parent))
             .unwrap_or(target);
-        let name = self
-            .c
-            .specifier_for_module_symbol(module, at.file, ResolutionMode::None);
+        let importing = enclosing_file.unwrap_or(Enclosing::NONE.file);
+        let name = self.c.specifier_for_module_symbol(module, importing, mode);
         if bun_core::strings::contains(&name, b"/node_modules/") {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(name.clone(), Vec::new()));
@@ -1192,6 +1155,27 @@ impl<'p> Printer<'_, 'p, '_> {
         cat!(b", { ", keyword, b": ", list, b" }")
     }
 
+    /// Whether `FindAncestor` from the type node `node` of `file` finds
+    /// `getEnclosingDeclarationIgnoringFakeScope()`, which the fields of `Enclosing` other than
+    /// `fake_scope` describe.
+    fn is_in_enclosing_declaration(&self, file: FileId, node: TypeNodeId) -> bool {
+        let Some(at) = self.enclosing_declaration.filter(|at| at.file == file) else {
+            return false;
+        };
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        if at.variable.is_some() {
+            let declaration = hir.node(at.variable);
+            return hir
+                .find_ancestor(hir.node(node), |ancestor| ancestor == declaration)
+                .is_some();
+        }
+        let mut scope = bound.type_scope[node.idx()];
+        while scope.is_some() && scope != at.scope {
+            scope = bound.scopes[scope.idx()].parent;
+        }
+        scope.is_some()
+    }
+
     /// `visitExistingNodeTreeSymbolsWorker`, combined with the printer's emit of the result.
     fn visit_existing_type_node_worker(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
         let hir = self.c.hir(file);
@@ -1254,9 +1238,12 @@ impl<'p> Printer<'_, 'p, '_> {
                 text.extend_from_slice(&type_arguments_text(arguments));
                 Node::simple(text)
             }
-            // Outside its declaring scope it is printed from its type, which produces the same
-            // text.
-            TypeNodeKind::UniqueSymbol => Node::new(b"unique symbol", TYPE_OPERATOR),
+            TypeNodeKind::UniqueSymbol => {
+                if !self.is_transformer && !self.is_in_enclosing_declaration(file, node) {
+                    return None;
+                }
+                Node::new(b"unique symbol", TYPE_OPERATOR)
+            }
             // `getLiteralTextOfNode`: a literal of the file is printed with its source text.
             TypeNodeKind::StringLit(_) | TypeNodeKind::NumberLit(_)
                 if self.is_transformer && !hir.text.is_empty() =>
@@ -1409,7 +1396,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let outer_scope = self.enter_scope_of_function(file, f);
                 let head = self.visit_signature_head(file, f);
                 let returned = self.visit_existing_type_node(file, hir[f].ret, 0);
-                self.leave_scope(outer_scope);
+                self.leave_scope(&outer_scope);
                 let (head, returned) = (head?, returned?);
                 let keywords: &[u8] = match hir[f].kind {
                     FnKind::ConstructorType if hir[f].flags.contains(Flags::ABSTRACT) => {
@@ -1444,7 +1431,7 @@ impl<'p> Printer<'_, 'p, '_> {
                         .map(|f| self.enter_scope_of_function(file, f));
                     let element = self.visit_type_element(file, m, scope);
                     if let Some(outer_scope) = outer_scope {
-                        self.leave_scope(outer_scope);
+                        self.leave_scope(&outer_scope);
                     }
                     let Some(element) = element else {
                         self.indent = outer;
@@ -1476,7 +1463,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let outer_scope = self.enter_new_scope(&[], &infer_type_parameters, None, false);
                 let extends = self.visit_existing_type_node(file, extends, 0);
                 let yes = self.visit_existing_type_node(file, yes, 0);
-                self.leave_scope(outer_scope);
+                self.leave_scope(&outer_scope);
                 let (extends, yes) = (extends?, yes?);
                 let no = self.visit_existing_type_node(file, no, 0)?;
                 Node::new(
@@ -1516,7 +1503,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let name_type = self.visit_existing_type_node(file, mapped.name_ty, 0);
                 let template = self.visit_existing_type_node(file, mapped.ty, 0);
                 self.indent = outer;
-                self.leave_scope(outer_scope);
+                self.leave_scope(&outer_scope);
                 let (constraint, name_type, template) = (constraint?, name_type?, template?);
                 let renamed = if mapped.name_ty.is_some() {
                     cat!(b" as ", name_type.text)
@@ -2060,14 +2047,16 @@ impl<'p> Printer<'_, 'p, '_> {
         };
         let scope = self.c.enclosing_scope_of_expr(file, name);
         let node = hir.node(name);
-        self.try_reuse_existing_node_helper(|printer| {
+        let computed_property_name = hir.node(self.c.bound(file).expr_parent[name.idx()]);
+        let existing = self.range_of_node(file, computed_property_name);
+        self.try_reuse_existing_node_helper(file, existing, |printer| {
             let introduces_error =
                 printer.track_existing_entity_name(file, node, scope, first, SymFlags::VALUE);
-            (!introduces_error).then_some(())
-        })?;
-        let text = cat!(b"[", self.entity_name_text(file, name)?, b"]");
-        self.approximate_length += text.len();
-        Some(text)
+            match introduces_error {
+                true => None,
+                false => Some(cat!(b"[", printer.entity_name_text(file, name)?, b"]")),
+            }
+        })
     }
 
     /// `trackExistingEntityName` for the name `node` that starts with `first` and occurs in `scope`

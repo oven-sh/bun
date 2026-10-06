@@ -143,6 +143,7 @@ impl<'f, 's> Binder<'f, 's> {
             class_scope: vec![ScopeId::NONE; f.classes.len()],
             interface_symbol: vec![SymbolId::NONE; f.interfaces.len()],
             interface_scope: vec![ScopeId::NONE; f.interfaces.len()],
+            interface_contains_this: vec![false; f.interfaces.len()],
             enum_scope: vec![ScopeId::NONE; f.enums.len()],
             module_scope: vec![ScopeId::NONE; f.modules.len()],
             alias_symbol: vec![SymbolId::NONE; f.aliases.len()],
@@ -787,22 +788,12 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    /// `containsNarrowableReference`
     fn contains_narrowable_reference(&self, e: ExprId) -> bool {
-        if self.is_narrowable_reference(e) {
-            return true;
-        }
-        match self.f[e].kind {
-            ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. }
-                if chain != Chain::No =>
-            {
-                self.contains_narrowable_reference(obj)
-            }
-            ExprKind::Call(c) if self.f[c].chain != Chain::No => {
-                self.contains_narrowable_reference(self.f[c].callee)
-            }
-            ExprKind::NonNull(x) => self.contains_narrowable_reference(x),
-            _ => false,
-        }
+        self.is_narrowable_reference(e)
+            || self
+                .chain_of(e)
+                .is_some_and(|(inner, _)| self.contains_narrowable_reference(inner))
     }
 
     /// `isNarrowingExpression`: `x as T` and `x satisfies T` are not narrowing expressions.
@@ -882,6 +873,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
     }
 
+    /// `isNarrowableOperand`
     fn is_narrowable_operand(&self, e: ExprId) -> bool {
         match self.f[e].kind {
             ExprKind::Assign {
@@ -892,7 +884,6 @@ impl<'f, 's> Binder<'f, 's> {
                 right,
                 ..
             } => self.is_narrowable_operand(right),
-            ExprKind::NonNull(x) => self.is_narrowable_operand(x),
             _ => self.contains_narrowable_reference(e),
         }
     }
@@ -997,47 +988,64 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    /// `bindAssignmentTargetFlow`
     fn assignment_target(&mut self, e: ExprId) {
+        self.assignment_target_in(e, true);
+    }
+
+    /// `is_bound`: `bindAssignmentTargetFlow` gets as far as `e`. It enters neither a
+    /// parenthesized pattern, nor `x!`, nor an assignment. `GetAssignmentTarget` climbs out of all
+    /// three, so for `markNodeAssignmentsWorker` the names in there are assigned as well.
+    fn assignment_target_in(&mut self, e: ExprId, is_bound: bool) {
+        let enters = is_bound && !is_parenthesized(self.f, e);
         match self.f[e].kind {
             ExprKind::Array(items) => {
                 for item in self.f.ids(items) {
-                    match self.f[item].kind {
-                        ExprKind::Spread(x) => self.assignment_target(x),
-                        ExprKind::Assign {
-                            op: None, target, ..
-                        } => self.assignment_target(target),
-                        _ => self.assignment_target(item),
-                    }
+                    let target = match self.f[item].kind {
+                        ExprKind::Spread(x) => x,
+                        _ => self.destructuring_target(item),
+                    };
+                    self.assignment_target_in(target, enters);
                 }
+                return;
             }
             ExprKind::Object(props) => {
                 for p in props.iter() {
-                    let value = self.f[p].value;
+                    let (kind, value) = (self.f[p].kind, self.f[p].value);
                     if value.is_none() {
                         continue;
                     }
-                    match self.f[value].kind {
-                        ExprKind::Assign {
-                            op: None, target, ..
-                        } => self.assignment_target(target),
-                        _ => self.assignment_target(value),
-                    }
+                    let target = match kind {
+                        PropKind::Spread => value,
+                        _ => self.destructuring_target(value),
+                    };
+                    self.assignment_target_in(target, enters);
                 }
+                return;
             }
-            ExprKind::NonNull(x) => self.assignment_target(x),
+            ExprKind::NonNull(x) | ExprKind::Assign { target: x, .. } => {
+                self.assignment_target_in(x, false);
+            }
+            ExprKind::Ident(_) => self.assigned.push(e),
             // `(x as T) = v` is not an assignment to `x` as far as `GetAssignmentTarget` and
             // `isNarrowableReference` are concerned.
-            _ => {
-                if let ExprKind::Ident(_) = self.f[e].kind {
-                    self.assigned.push(e);
-                }
-                if self.is_narrowable_reference(e) {
-                    self.flow_mutation(Flow::Assign {
-                        before: self.flow,
-                        target: FlowTarget::Expr(e),
-                    });
-                }
-            }
+            _ => {}
+        }
+        if is_bound && self.is_narrowable_reference(e) {
+            self.flow_mutation(Flow::Assign {
+                before: self.flow,
+                target: FlowTarget::Expr(e),
+            });
+        }
+    }
+
+    /// `bindDestructuringTargetFlow`: the target in `target = default`.
+    fn destructuring_target(&self, e: ExprId) -> ExprId {
+        match self.f[e].kind {
+            ExprKind::Assign {
+                op: None, target, ..
+            } if !is_parenthesized(self.f, e) => target,
+            _ => e,
         }
     }
 
@@ -1703,7 +1711,7 @@ impl<'f, 's> Binder<'f, 's> {
                 );
                 // `ContainerFlagsIsInterface`: a `this` inside it does not affect the enclosing
                 // container.
-                let seen_this = self.seen_this;
+                let seen_this = std::mem::replace(&mut self.seen_this, false);
                 self.b.interface_scope[interface.idx()] =
                     self.push_scope(ScopeKind::Interface(interface), SymbolId::NONE);
                 self.type_params(i.type_params, FnId::NONE);
@@ -1715,6 +1723,7 @@ impl<'f, 's> Binder<'f, 's> {
                 self.is_unchecked = around;
                 self.members(i.members, MemberOwner::Interface(interface));
                 self.pop_scope();
+                self.b.interface_contains_this[interface.idx()] = self.seen_this;
                 self.seen_this = seen_this;
             }
             StmtKind::TypeAlias(alias) => {
@@ -2591,22 +2600,19 @@ impl<'f, 's> Binder<'f, 's> {
         match self.f[pat].kind {
             PatKind::Missing => {}
             // `bindVariableDeclarationOrBindingElement`, `bindParameter`
-            PatKind::Ident(_)
-                if flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
-                    && self.b.required_by(self.f, pat).is_none() =>
-            {
-                let excludes = SymFlags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
-                self.bind_block_scoped_declaration(Decl::Var(pat), flags, excludes);
-            }
             PatKind::Ident(_) => {
-                let (decl, flags, excludes) = if flags.contains(SymFlags::PARAMETER) {
-                    (Decl::Param(pat), flags, SymFlags::PARAMETER_EXCLUDES)
-                } else if self.b.required_by(self.f, pat).is_some() {
+                let (decl, flags, excludes) = if self.b.required_by(self.f, pat).is_some() {
                     (
                         Decl::Require(pat),
                         SymFlags::ALIAS,
                         SymFlags::ALIAS_EXCLUDES,
                     )
+                } else if flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
+                    let excludes = SymFlags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
+                    self.bind_block_scoped_declaration(Decl::Var(pat), flags, excludes);
+                    return;
+                } else if flags.contains(SymFlags::PARAMETER) {
+                    (Decl::Param(pat), flags, SymFlags::PARAMETER_EXCLUDES)
                 } else {
                     if self.b.container_scope(self.scope) != self.scope {
                         self.b.hoisted_vars.push((pat, self.scope));
@@ -2638,10 +2644,9 @@ impl<'f, 's> Binder<'f, 's> {
                     if flags.contains(SymFlags::PARAMETER) {
                         self.associated_declaration.0 = prop.value;
                     }
-                    if prop.default.is_some() {
-                        self.conditional_default(prop.default, Parent::PatPropDefault(p));
-                    }
-                    self.pat(prop.value, PatParent::Prop(pat, p), flags);
+                    let element = PatParent::Prop(pat, p);
+                    self.element_default(prop.value, element, Parent::PatPropDefault(p));
+                    self.pat(prop.value, element, flags);
                     self.associated_declaration.0 = associated;
                     self.scope_change_of = scope_change_of;
                 }
@@ -2653,14 +2658,28 @@ impl<'f, 's> Binder<'f, 's> {
                     if flags.contains(SymFlags::PARAMETER) {
                         self.associated_declaration.0 = elem.pat;
                     }
-                    if elem.default.is_some() {
-                        self.conditional_default(elem.default, Parent::PatElemDefault(e));
-                    }
-                    self.pat(elem.pat, PatParent::Elem(pat, e), flags);
+                    let element = PatParent::Elem(pat, e);
+                    self.element_default(elem.pat, element, Parent::PatElemDefault(e));
+                    self.pat(elem.pat, element, flags);
                     self.associated_declaration.0 = associated;
                 }
             }
         }
+    }
+
+    /// The default of the binding element `element`, whose name is `name`.
+    /// `checkVariableLikeDeclaration` returns before it reaches the default of an alias.
+    fn element_default(&mut self, name: PatId, element: PatParent, parent: Parent) {
+        let default = element.initializer(self.f);
+        if default.is_none() {
+            return;
+        }
+        self.b.pat_parent[name.idx()] = element;
+        let around = self.is_unchecked;
+        self.is_unchecked |= matches!(self.f[name].kind, PatKind::Ident(_))
+            && self.b.required_by(self.f, name).is_some();
+        self.conditional_default(default, parent);
+        self.is_unchecked = around;
     }
 
     /// `bindInitializer`: a default may or may not be evaluated.
@@ -3028,15 +3047,10 @@ impl<'f, 's> Binder<'f, 's> {
     fn class(&mut self, id: ClassId, owner: ClassOwner) {
         let c = &self.f[id];
         self.b.class_owner[id.idx()] = owner;
-        // The decorators of the class cannot see its type parameters.
-        for i in 0..self.f.decorators.len() {
-            let (of, e) = self.f.decorators[i];
-            if of == DecoratorOwner::Class(id) {
-                self.expr(e, Parent::Decorator(id, of));
-                if !self.can_be_decorated(of, id, owner) {
-                    self.b.refused_decorators.push(e);
-                }
-            }
+        // `Resolve`, `KindDecorator`: only from a decorator of a class declaration does the search
+        // skip the class. A decorator of a class expression sees its name and type parameters.
+        if let ClassOwner::Stmt(_) = owner {
+            self.class_decorators(id, owner);
         }
         let scope = self.push_scope(ScopeKind::Class(id), SymbolId::NONE);
         self.b.class_scope[id.idx()] = scope;
@@ -3047,6 +3061,7 @@ impl<'f, 's> Binder<'f, 's> {
             } else {
                 self.bind_anonymous_declaration(decl, flags, Atom::NONE);
             }
+            self.class_decorators(id, owner);
         }
         // `bindClassLikeDeclaration`: "Every class automatically contains a static property member named 'prototype'".
         let symbol = self.b.class_symbol[id.idx()];
@@ -3146,7 +3161,20 @@ impl<'f, 's> Binder<'f, 's> {
         self.pop_scope();
     }
 
-    /// `nodeCanBeDecorated`
+    /// The decorators of the class itself.
+    fn class_decorators(&mut self, id: ClassId, owner: ClassOwner) {
+        for i in 0..self.f.decorators.len() {
+            let (of, e) = self.f.decorators[i];
+            if of == DecoratorOwner::Class(id) {
+                self.expr(e, Parent::Decorator(id, of));
+                if !self.can_be_decorated(of, id, owner) {
+                    self.b.refused_decorators.push(e);
+                }
+            }
+        }
+    }
+
+    /// `NodeCanBeDecorated`
     fn can_be_decorated(&self, of: DecoratorOwner, class: ClassId, owner: ClassOwner) -> bool {
         let legacy = self.f.legacy_decorators;
         let is_declaration = matches!(owner, ClassOwner::Stmt(_));
@@ -3160,10 +3188,16 @@ impl<'f, 's> Binder<'f, 's> {
                     return false;
                 }
                 match member.kind {
+                    // `HasAmbientModifier`: the property itself has `declare`. Every member of an
+                    // ambient class has `Flags::AMBIENT`.
                     MemberKind::Property => {
                         in_a_fitting_class
                             && (legacy
-                                || !member.flags.intersects(Flags::ABSTRACT | Flags::AMBIENT))
+                                || !member.flags.contains(Flags::ABSTRACT)
+                                    && self
+                                        .f
+                                        .find_modifier(member.modifiers, Flags::AMBIENT)
+                                        .is_none())
                     }
                     MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
                         in_a_fitting_class && has_body(member.func)
@@ -3185,7 +3219,7 @@ impl<'f, 's> Binder<'f, 's> {
                         self.f[m].kind,
                         MemberKind::Constructor | MemberKind::Method | MemberKind::Setter
                     )
-                    && !matches!(self.f[self.f[p].pat].kind, PatKind::Ident(known::this))
+                    && self.f.split_this_parameter(self.f[self.f[m].func].params).0 != p
             }
         }
     }
@@ -4053,6 +4087,10 @@ impl<'f, 's> Binder<'f, 's> {
                 };
                 self.has_flow_effects |= saved_effects;
             }
+            // `bindNonNullExpressionFlow`
+            ExprKind::NonNull(_) if self.chain_of(id).is_some() => {
+                self.optional_chain_flow(id, parent, targets);
+            }
             ExprKind::Spread(e)
             | ExprKind::Await(e)
             | ExprKind::AsConst(e)
@@ -4173,12 +4211,20 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
-    /// The expression before the last link of the optional chain `e`, and whether that link is a
-    /// `?.`.
+    /// `IsOptionalChain`: the expression before the last link of the optional chain `e`, and
+    /// whether that link is a `?.` (`IsOptionalChainRoot`).
+    /// `tryReparseOptionalChain`: `x!` is a link if a link without `?.` follows it, which its
+    /// parent tells. `enter_expr` records the parent.
     fn chain_of(&self, e: ExprId) -> Option<(ExprId, bool)> {
         let (inner, chain) = match self.f[e].kind {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             ExprKind::Call(c) => (self.f[c].callee, self.f[c].chain),
+            ExprKind::NonNull(x) => {
+                let Parent::Expr(parent) = self.b.expr_parent[e.idx()] else {
+                    return None;
+                };
+                return (self.chain_of(parent) == Some((e, false))).then_some((x, false));
+            }
             _ => return None,
         };
         (chain != Chain::No).then_some((inner, chain == Chain::Start))

@@ -25,9 +25,8 @@ use bun_sema::messages;
 use bun_sema::program::{FileId, Files};
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
-    is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, to_path,
+    Host, Options, Phase, ancestors, contains_path, inside, is_javascript, is_javascript_file,
+    is_relative, is_same_path, join, output_declaration_file_name, to_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -412,7 +411,7 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
             };
             (name.clone(), value)
         })
-        .chain((!is_build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
+        .chain((!is_build && !request.build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
         .collect()
 }
 
@@ -434,6 +433,8 @@ pub struct Request<'a> {
     pub cwd: &'a [u8],
     /// `--project`: a configuration file, or a directory with a `tsconfig.json` in it.
     pub project: Option<&'a [u8]>,
+    /// `-b`: `tscBuildCompilation`, also for a project without `references`.
+    pub build: bool,
     /// Files and directories to check instead of all the files of the project. The options are
     /// still the project's.
     pub paths: &'a [Vec<u8>],
@@ -552,6 +553,14 @@ pub struct StepReport {
     pub foreign_evaluations: [u64; FOREIGN_EVALUATION_KINDS.len()],
 }
 
+/// `taskResult.builder`: how much of a `Report` one task of a build has printed.
+#[derive(Clone, Copy)]
+pub struct TaskOutput {
+    pub resolution_trace: usize,
+    pub diagnostics: usize,
+    pub listed_files: usize,
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
@@ -567,10 +576,16 @@ pub struct Report {
     scripts_elsewhere: Vec<Vec<u8>>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
-    /// `listFiles`, `listFilesOnly`: the files of the program, in program order.
+    /// `--quiet`, which only a command line can say: no diagnostic is printed.
+    pub is_quiet: bool,
+    /// `listFiles`: the lines. Under `explainFiles` what `ExplainFiles` prints, else under
+    /// `listFiles` or `listFilesOnly` the files of the program, in program order.
     pub listed_files: Vec<Vec<u8>>,
     /// `traceResolution`: the lines, in order.
     pub resolution_trace: Vec<Vec<u8>>,
+    /// The tasks of a build, in build order. Theirs are the last of `resolution_trace`, of
+    /// `diagnostics` and of `listed_files`, and what a task has printed is printed together.
+    pub tasks: Vec<TaskOutput>,
     pub files_loaded: usize,
     pub files_checked: usize,
     /// Those that were to be checked in a program with an error in its syntax, its options or its
@@ -611,6 +626,7 @@ impl Report {
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
+        self.tasks.extend(other.tasks);
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
@@ -621,6 +637,16 @@ impl Report {
             *phase += more;
         }
         self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
+    }
+
+    /// `BuildTask.report`
+    fn report_task(&mut self, task: Report) {
+        self.tasks.push(TaskOutput {
+            resolution_trace: task.resolution_trace.len(),
+            diagnostics: task.diagnostics.len(),
+            listed_files: task.listed_files.len(),
+        });
+        self.merge(task);
     }
 }
 
@@ -771,6 +797,8 @@ pub fn check_provided_then<R>(
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
     report.is_case_sensitive = disk.is_case_sensitive();
+    report.is_quiet = (request.compiler_options.iter())
+        .any(|CompilerOption(name, value)| name == b"quiet" && *value == Json::Bool(true));
     report.not_installed = dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
     if cfg!(windows) {
         for reported in &mut report.diagnostics {
@@ -1023,10 +1051,9 @@ fn project_without_config(
 ) -> config::Project {
     let mut options = default_compiler_options();
     if let Json::Object(options) = &mut options {
-        for option in request.compiler_options {
-            options.retain(|(name, _)| *name != option.0);
-            options.push((option.0.clone(), option.1.clone()));
-        }
+        let specified = request.compiler_options.iter().cloned();
+        let specified = specified.map(|CompilerOption(name, value)| (name, value));
+        config::merge_compiler_options(options, specified.collect());
     }
     config::without_config(disk, cwd, options, files.to_vec())
 }
@@ -1077,7 +1104,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             ..*request
         };
         report.merge(check_paths(disk, &of_pages));
-        sort_as_one_project(&mut report.diagnostics);
+        sort_as_one_project(&mut report);
     }
 }
 
@@ -1103,8 +1130,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             if disk.is_dir(&path) {
                 let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
-                    let shown = host::with_root(&path);
-                    report.diagnostics.push(global(5057, &[shown]));
+                    report.diagnostics.push(global(5081, &[&inside]));
                     return report;
                 }
                 Some(inside)
@@ -1125,13 +1151,18 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         let nearest = || config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
         explicit.clone().or_else(nearest)
     };
+    // The project that `tsc` compiles in a directory. Where it finds none, the nearest there is.
+    let project_in = |dir: &[u8]| {
+        let found = || config::find_config_file(disk, dir).or_else(|| config_in(dir));
+        explicit.clone().or_else(found)
+    };
     let mut projects = Projects {
         // By its name, as `include` finds it.
         counts_javascript: request.are_entry_points && paths.iter().any(|it| is_javascript(it)),
         ..Default::default()
     };
     if paths.is_empty() {
-        match config_in(&cwd) {
+        match project_in(&cwd) {
             Some(config) => {
                 let of = OfProject {
                     config: Some(&config),
@@ -1171,7 +1202,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         // checked from there without an argument, so that `bun check .` is `bun check`.
         // The projects know their files. A configuration file there is checked too.
         let is_in_directory = |file: &Vec<u8>| contains_path(path, file, is_case_sensitive);
-        if let Some(config) = config_in(path) {
+        if let Some(config) = project_in(path) {
             let (mut configs, mut files) = (Vec::new(), Vec::new());
             projects.files_of_graph(disk, request, &config, &mut configs, &mut files);
             files.retain(is_in_directory);
@@ -1267,7 +1298,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     if !is_one {
-        sort_as_one_project(&mut report.diagnostics);
+        sort_as_one_project(&mut report);
     }
     report
 }
@@ -1349,7 +1380,7 @@ fn check_project_of(
     if request.are_entry_points && named.is_some_and(names_javascript) {
         project.options.allow_js = true;
     }
-    if !project.references.is_empty() {
+    if request.build || !project.references.is_empty() {
         check_with_references(disk, project, request, report, started, named, of.elsewhere)
     } else {
         // All of its files: the project, with what no file imports.
@@ -1762,8 +1793,7 @@ fn check_with_references(
     };
     let mut expected = Expected::default();
     for index in (0..count).filter(|&index| writes_declaration_files(index)) {
-        let sources = roots[index].iter();
-        for source in sources.filter(|path| !is_declaration_file_name(path)) {
+        for source in &roots[index] {
             if let Some(path) = output_declaration_file_name(source, output_of(index)) {
                 expected.add(path, index);
             }
@@ -1792,15 +1822,16 @@ fn check_with_references(
         } else {
             project.errors.append(&mut about_references);
         }
+        // `initMapperWorker`: the references in order, each project before its own references.
         let mut is_referenced = vec![false; roots.len()];
-        let mut pending = references[index].clone();
+        let mut referenced: Vec<usize> = Vec::new();
+        let mut pending: Vec<usize> = references[index].iter().rev().copied().collect();
         while let Some(i) = pending.pop() {
             if !std::mem::replace(&mut is_referenced[i], true) {
-                pending.extend(&references[i]);
+                referenced.push(i);
+                pending.extend(references[i].iter().rev());
             }
         }
-        // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`
-        let referenced: Vec<usize> = (0..roots.len()).filter(|&i| is_referenced[i]).collect();
         let mut host = WithOutputs {
             disk: host,
             files: FxHashMap::default(),
@@ -1819,15 +1850,11 @@ fn check_with_references(
             .iter()
             .map(|&i| options_of_projects[i].clone())
             .collect();
-        project.options.referenced_sources = (referenced.iter().enumerate())
+        // `ParseInputOutputNames`, `getOutputDeclarationAndSourceFileNames`
+        let mut sources: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, u32)> = (referenced.iter().enumerate())
             .flat_map(|(at, &i)| {
-                let output = outputs[i]
-                    .as_ref()
-                    .map(|it| (it.0.as_slice(), it.1.as_slice()));
-                let sources = roots[i]
-                    .iter()
-                    .filter(|path| !is_declaration_file_name(path));
-                sources.map(move |source| {
+                let output = output_of(i);
+                roots[i].iter().map(move |source| {
                     let output_dts = output_declaration_file_name(source, output);
                     let path = to_path(source, is_case_sensitive).into_owned();
                     (
@@ -1839,18 +1866,19 @@ fn check_with_references(
                 })
             })
             .collect();
-        project.options.use_case_sensitive_file_names = is_case_sensitive;
-        project.options.referenced_sources.sort_unstable();
-        project
-            .options
-            .referenced_sources
-            .dedup_by(|a, b| a.0 == b.0);
-        project.options.referenced_output_dts = (project.options.referenced_sources.iter())
-            .enumerate()
+        // `maps.Copy`: of the projects that have a file, the last one has the entry.
+        sources.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(b.3.cmp(&a.3)));
+        sources.dedup_by(|a, b| a.0 == b.0);
+        let mut output_dts: Vec<(Vec<u8>, u32)> = (sources.iter().enumerate())
             .filter(|(_, it)| !it.2.is_empty())
             .map(|(index, it)| (to_path(&it.2, is_case_sensitive).into_owned(), index as u32))
             .collect();
-        project.options.referenced_output_dts.sort_unstable();
+        let walked = |it: &(Vec<u8>, u32)| sources[it.1 as usize].3;
+        output_dts.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(walked(b).cmp(&walked(a))));
+        output_dts.dedup_by(|a, b| a.0 == b.0);
+        project.options.use_case_sensitive_file_names = is_case_sensitive;
+        project.options.referenced_sources = sources;
+        project.options.referenced_output_dts = output_dts;
         let own: FxHashSet<&[u8]> = root_paths[index].iter().map(Vec::as_slice).collect();
         let owned_elsewhere: FxHashSet<&[u8]> = (0..roots.len())
             .filter(|&i| is_referenced[i])
@@ -1974,13 +2002,16 @@ fn check_with_references(
     let mut not_found = not_found.into_iter().peekable();
     for (index, mut checked) in reports.into_iter().enumerate() {
         while let Some((_, d)) = not_found.next_if(|it| it.0 <= index) {
-            report.diagnostics.push(d);
+            report.report_task(Report {
+                diagnostics: vec![d],
+                ..Default::default()
+            });
         }
         if let Some(mut checked) = checked.get_mut().take() {
             for d in &mut checked.diagnostics {
                 d.project = index as u32;
             }
-            report.merge(checked);
+            report.report_task(checked);
             report.projects_checked += 1;
         }
     }
@@ -1990,11 +2021,12 @@ fn check_with_references(
 
 /// For what `tsc` has no command for: files that are named, or found in a page, and that are
 /// checked in projects that have nothing to do with each other.
-fn sort_as_one_project(diagnostics: &mut Vec<Diagnostic>) {
-    for d in diagnostics.iter_mut() {
+fn sort_as_one_project(report: &mut Report) {
+    report.tasks.clear();
+    for d in &mut report.diagnostics {
         d.project = 0;
     }
-    sort_and_deduplicate(diagnostics);
+    sort_and_deduplicate(&mut report.diagnostics);
 }
 
 /// `SortAndDeduplicateDiagnostics`, with `CompareDiagnostics`.
@@ -2147,7 +2179,12 @@ fn check_named_files(
     if let Some(loaded) = request.loaded {
         loaded(program);
     }
-    if is_true(b"listFiles") || is_true(b"listFilesOnly") {
+    if is_true(b"explainFiles") {
+        let (cwd, is_case_sensitive) = (host::from_native(request.cwd), host.is_case_sensitive());
+        report.listed_files = program.files.explain_files(host, &|file_name: &[u8]| {
+            format::get_relative_path_from_directory(&cwd, file_name, is_case_sensitive).into()
+        });
+    } else if is_true(b"listFiles") || is_true(b"listFilesOnly") {
         let path = |&file: &FileId| program.files.module(file).file_name().to_vec();
         report.listed_files = program.files.order.iter().map(path).collect();
     }

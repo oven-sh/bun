@@ -166,7 +166,7 @@ pub(super) struct PropertyAccess {
     pub(super) writing: bool,
 }
 
-impl Checker<'_, '_> {
+impl<'p> Checker<'p, '_> {
     /// `a[k]`, property lookups by binding patterns and indexed access types, and misplaced private
     /// names. Errors in `a.b` are reported where its type is computed (`type_of_property_access`).
     pub(super) fn check_property_accesses(&mut self, file: FileId) {
@@ -364,33 +364,24 @@ impl Checker<'_, '_> {
         let (code, first) = match *self.data(key) {
             TypeData::EnumLit { .. } => (2339, cat!(b"[", self.type_to_string(key), b"]")),
             TypeData::UniqueSymbol { symbol, name } => {
-                // `getFullyQualifiedName` of the symbol, as seen from the access.
-                let at = Some(Enclosing::at_scope(file, ScopeId(0)));
-                let parent = match symbol {
-                    UniqueSymbolDeclaration::Variable(variable) => {
-                        self.files().symbol_parent(variable)
-                    }
+                // `indexType.symbol`
+                let symbol = match symbol {
+                    UniqueSymbolDeclaration::Variable(variable) => Some(variable),
                     UniqueSymbolDeclaration::Member(file, member) => {
-                        self.symbol_of_member_owner(file, member)
+                        Some(self.symbol_of_member(file, member))
                     }
-                    UniqueSymbolDeclaration::SymbolConstructor => {
-                        self.global_type_symbol(known::SymbolConstructor)
-                    }
+                    UniqueSymbolDeclaration::SymbolConstructor => self
+                        .global_type_symbol(known::SymbolConstructor)
+                        .and_then(|constructor| self.files().member(constructor, name)),
                 };
-                let name = self.atom_text(name);
-                (
-                    2339,
-                    match parent {
-                        Some(parent) => cat!(
-                            b"[",
-                            fully_qualified_name(self, parent, at),
-                            b".",
-                            name,
-                            b"]"
-                        ),
-                        None => cat!(b"[", name, b"]"),
-                    },
-                )
+                let symbol_name = match symbol {
+                    Some(symbol) => {
+                        let at = Some(Enclosing::at_scope(file, ScopeId(0)));
+                        fully_qualified_name(self, symbol, at)
+                    }
+                    None => self.atom_text(name),
+                };
+                (2339, cat!(b"[", symbol_name, b"]"))
             }
             TypeData::StringLit { .. } | TypeData::NumberLit { .. } => {
                 match self.property_name_of_type(key) {
@@ -418,7 +409,7 @@ impl Checker<'_, '_> {
             ExprKind::Ident(name) => Some(self.atom_text(name)),
             ExprKind::Dot { obj, name, .. } => {
                 let receiver = self.access_to_string(file, obj)?;
-                Some(cat!(receiver, b".", self.atoms().bytes(name)))
+                Some(cat!(receiver, b".", as_written(self.atoms().bytes(name))))
             }
             // `IsPropertyName`
             ExprKind::Index { obj, index, .. } if !is_parenthesized(self.hir(file), index) => {
@@ -766,7 +757,7 @@ impl Checker<'_, '_> {
         else {
             return false;
         };
-        let Some((prop, mapper)) = self.prop_ref(object, name) else {
+        let Some((prop, mapper)) = self.get_property_of_object_type(object, name) else {
             return false;
         };
         let ty = self.type_of_prop(prop, mapper);
@@ -1200,22 +1191,22 @@ impl Checker<'_, '_> {
         self.bound(file).is_write_access(self.hir(file), e)
     }
 
-    /// `getDeclarationModifierFlagsFromSymbolEx` for a property backed by a single symbol. Uses the setter's modifiers for a write
-    /// access, otherwise the getter's, otherwise those of the value declaration.
-    fn get_declaration_modifier_flags_from_symbol_ex(
+    /// `getDeclarationModifierFlagsFromSymbolEx`: the setter's modifiers for a write access,
+    /// otherwise the getter's, otherwise those of the value declaration.
+    pub(super) fn get_declaration_modifier_flags_from_symbol_ex(
         &mut self,
         prop: &Prop,
         writing: bool,
     ) -> Flags {
-        match &prop.source {
-            PropSource::Symbol(sym) => {
-                let flags = match self.files().value_declaration(*sym) {
+        match (Self::value_declaration(prop), &prop.source) {
+            (Some(&PropSource::Symbol(sym)), _) => {
+                let flags = match self.files().value_declaration(sym) {
                     Some((f, Decl::ParameterProperty(p))) => self.hir(f)[p].flags,
                     // Only accessors need the declaration list: the accessor in use determines the flags.
                     Some((f, Decl::Member(m)))
-                        if self.files().flags(*sym).intersects(SymFlags::ACCESSOR) =>
+                        if self.files().flags(sym).intersects(SymFlags::ACCESSOR) =>
                     {
-                        let declared = self.members_of_symbol(*sym);
+                        let declared = self.members_of_symbol(sym);
                         let of_kind = |kind: MemberKind| {
                             (declared.iter().copied()).find(|&(f, m)| self.hir(f)[m].kind == kind)
                         };
@@ -1234,14 +1225,51 @@ impl Checker<'_, '_> {
                 };
                 // Accessibility modifiers only apply to class members.
                 let accessibility = Flags::PRIVATE | Flags::PROTECTED | Flags::PUBLIC;
-                if flags.intersects(accessibility) && self.declaring_class(prop).is_none() {
+                if flags.intersects(accessibility) && self.declaring_class_of_symbol(sym).is_none()
+                {
                     flags.difference(accessibility)
                 } else {
                     flags
                 }
             }
+            (None, PropSource::Intersected(..)) => {
+                let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
+                super::relate::for_each_property(prop, &mut |p| parts.push(p));
+                self.modifier_flags_of_synthetic_property(&parts)
+            }
             _ => Flags::empty(),
         }
+    }
+
+    /// `getDeclarationModifierFlagsFromSymbolEx` where `CheckFlagsSynthetic`: private if one of
+    /// `parts` is, else public if one is, else protected, and static if one is.
+    fn modifier_flags_of_synthetic_property(&mut self, parts: &[&Prop]) -> Flags {
+        let (mut some, mut is_public) = (Flags::empty(), false);
+        for part in parts {
+            let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, false);
+            some |= modifiers;
+            is_public |= !modifiers.intersects(Flags::PRIVATE | Flags::PROTECTED);
+        }
+        let access = if some.contains(Flags::PRIVATE) {
+            Flags::PRIVATE
+        } else if is_public {
+            Flags::empty()
+        } else {
+            Flags::PROTECTED
+        };
+        access | (some & Flags::STATIC)
+    }
+
+    /// `getPropertyOfObjectType`
+    pub(super) fn get_property_of_object_type(
+        &mut self,
+        ty: TypeId,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        if self.flags(ty) & tf::OBJECT == 0 {
+            return None;
+        }
+        self.prop_ref(ty, name)
     }
 
     /// `checkPropertyAccessibility` for the `a.b` at `e`, whose name is at `name_pos`.
@@ -1302,26 +1330,12 @@ impl Checker<'_, '_> {
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // If all of them share one declaration, its modifiers are used
-        // (`createUnionOrIntersectionProperty`). Otherwise it is private if any of them is, else
-        // public if any is, else protected, and static if any is.
+        // (`createUnionOrIntersectionProperty`).
         let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
         let flags = if is_declared_once {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
-            let (mut some, mut is_public) = (Flags::empty(), false);
-            for part in &parts {
-                let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(part, false);
-                some |= modifiers;
-                is_public |= !modifiers.intersects(hidden);
-            }
-            let access = if some.contains(Flags::PRIVATE) {
-                Flags::PRIVATE
-            } else if is_public {
-                Flags::empty()
-            } else {
-                Flags::PROTECTED
-            };
-            access | (some & Flags::STATIC)
+            self.modifier_flags_of_synthetic_property(&parts)
         };
         let is_static = flags.contains(Flags::STATIC);
         if is_super {

@@ -5,7 +5,7 @@
 //! For everything else: TypeScript's plain format, which editors, continuous integration and other
 //! tools already parse.
 
-use crate::{Category, Diagnostic, Report};
+use crate::{Category, Diagnostic, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
@@ -65,11 +65,20 @@ fn display_path(path: &[u8], style: &Style) -> BString {
 
 /// `ConvertToRelativePath`
 fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
+    get_relative_path_from_directory(from, path, style.is_case_sensitive)
+}
+
+/// `GetRelativePathFromDirectory`
+pub(crate) fn get_relative_path_from_directory(
+    from: &[u8],
+    path: &[u8],
+    is_case_sensitive: bool,
+) -> BString {
     // It has another root.
     if crate::host::is_bundled(path) {
         return crate::host::to_native(path).into();
     }
-    if style.is_case_sensitive || path.starts_with(from) {
+    if is_case_sensitive || path.starts_with(from) {
         return relative_normalized::<Posix, true>(from, path).into();
     }
     // `GetPathComponentsRelativeTo`: the names that both begin with are compared as the file system
@@ -450,32 +459,56 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
 
 /// Writes the diagnostics, in order.
 pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
-    for line in &report.resolution_trace {
-        out.extend_from_slice(line);
-        out.push(b'\n');
+    fn take<'a, T>(rest: &mut &'a [T], count: usize) -> &'a [T] {
+        let (taken, after) = rest.split_at(count.min(rest.len()));
+        *rest = after;
+        taken
     }
-    if should_group(report, style) {
-        write_grouped(out, report, style);
-    } else {
-        for d in &report.diagnostics {
-            match style.layout {
-                Layout::Pretty => {
-                    write_pretty(out, d, &[], style);
-                    out.push(b'\n');
+    // A group is of the whole report.
+    let is_grouped = !report.is_quiet && should_group(report, style);
+    let tasks: &[TaskOutput] = if is_grouped { &[] } else { &report.tasks };
+    let (mut trace, mut diagnostics, mut listed_files) = (
+        &report.resolution_trace[..],
+        &report.diagnostics[..],
+        &report.listed_files[..],
+    );
+    let of_tasks = |count: fn(&TaskOutput) -> usize| tasks.iter().map(count).sum::<usize>();
+    let before_the_tasks = TaskOutput {
+        resolution_trace: trace.len() - of_tasks(|it| it.resolution_trace).min(trace.len()),
+        diagnostics: diagnostics.len() - of_tasks(|it| it.diagnostics).min(diagnostics.len()),
+        listed_files: listed_files.len() - of_tasks(|it| it.listed_files).min(listed_files.len()),
+    };
+    for task in std::iter::once(&before_the_tasks).chain(tasks) {
+        for line in take(&mut trace, task.resolution_trace) {
+            out.extend_from_slice(line);
+            out.push(b'\n');
+        }
+        let diagnostics = take(&mut diagnostics, task.diagnostics);
+        // `QuietDiagnosticReporter`
+        let diagnostics: &[Diagnostic] = if report.is_quiet { &[] } else { diagnostics };
+        if is_grouped {
+            write_grouped(out, report, style);
+        } else {
+            for d in diagnostics {
+                match style.layout {
+                    Layout::Pretty => {
+                        write_pretty(out, d, &[], style);
+                        out.push(b'\n');
+                    }
+                    Layout::Plain => write_plain(out, d, style),
+                    Layout::Agent => write_agent(out, d, &[], style),
                 }
-                Layout::Plain => write_plain(out, d, style),
-                Layout::Agent => write_agent(out, d, &[], style),
             }
         }
-    }
-    if style.github_annotations {
-        for d in &report.diagnostics {
-            write_github_annotation(out, d, style);
+        if style.github_annotations {
+            for d in diagnostics {
+                write_github_annotation(out, d, style);
+            }
         }
-    }
-    for path in &report.listed_files {
-        out.extend_from_slice(crate::host::to_native(path));
-        out.push(b'\n');
+        for path in take(&mut listed_files, task.listed_files) {
+            out.extend_from_slice(crate::host::to_native(path));
+            out.push(b'\n');
+        }
     }
 }
 

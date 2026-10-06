@@ -5,17 +5,42 @@
 //! 7.0.2's checker.go, and `checkStrictModeLabeledStatement` of its binder.go.
 
 use super::*;
-use crate::bind::{Decl, Parent, PatParent, ScopeKind};
+use crate::bind::{Decl, Parent, PatParent, ScopeKind, SymbolId, string_literal_text};
 
-/// What `getSymbolAtLocation` finds for the name in `a.name`.
-enum SymbolAtName<'p> {
-    /// The properties of a mapped type have one source.
+/// What `getSymbolAtLocation` returns.
+#[derive(PartialEq, Eq)]
+enum SymbolAtLocation<'p> {
+    /// `getMergedSymbol` of a symbol of the binder.
+    Symbol(Sym),
+    /// A property that has no symbol of the binder. The properties of a mapped type have one
+    /// source.
     Property(&'p PropSource<'p>, Atom),
     /// `IndexInfo.indexSymbol` of the index signature of that type.
     Index(TypeId, (FileId, MemberId)),
     /// `findApplicableIndexInfo` makes another `IndexInfo` every time that several apply, so this
     /// one is the same as no other.
     IndexOfSeveral,
+    /// `signature.thisParameter` of that function.
+    ThisParameter(FileId, FnId),
+    /// `__object`, `__type`, `__function`: the symbol that only that node declares.
+    Anonymous(FileId, Node),
+}
+
+/// `a == b`
+fn is_same_symbol<'p>(a: &Option<SymbolAtLocation<'p>>, b: &Option<SymbolAtLocation<'p>>) -> bool {
+    a == b && !matches!(a, Some(SymbolAtLocation::IndexOfSeveral))
+}
+
+/// `IsModuleExportsAccessExpression` for `e` without the parentheses around it.
+fn is_module_exports_access_expression(hir: &File, e: ExprId) -> bool {
+    let (obj, name) = match hir[e].kind {
+        ExprKind::Dot { obj, name, .. } => (obj, name),
+        ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
+        _ => return false,
+    };
+    name == known::exports
+        && matches!(hir[obj].kind, ExprKind::Ident(known::module))
+        && !is_parenthesized(hir, obj)
 }
 
 impl<'p> Checker<'p, '_> {
@@ -76,6 +101,10 @@ impl<'p> Checker<'p, '_> {
         body: Parent,
     ) {
         if self.p.files.options.strict_null_checks {
+            let body = match body {
+                Parent::Expr(e) => self.hir(file).child(e),
+                body => self.hir(file).node(body),
+            };
             self.check_known_truthy_types(file, cond_expr, cond_expr, body);
         }
     }
@@ -108,25 +137,19 @@ impl<'p> Checker<'p, '_> {
         }
         let body = match parent {
             Parent::Stmt(s) if s.is_some() => match hir[s].kind {
-                StmtKind::If { yes, .. } => Some(Parent::Stmt(yes)),
+                StmtKind::If { yes, .. } => Some(hir.node(yes)),
                 _ => None,
             },
             _ => None,
         };
         if is_and || body.is_some() {
-            self.check_known_truthy_types(file, left, left, body.unwrap_or(Parent::None));
+            self.check_known_truthy_types(file, left, left, body.unwrap_or(Node::NONE));
         }
     }
 
     /// `checkTestingKnownTruthyTypes`. `whole`: the condition the check was first called with,
     /// whose type is `condType`.
-    fn check_known_truthy_types(
-        &mut self,
-        file: FileId,
-        test: ExprId,
-        whole: ExprId,
-        body: Parent,
-    ) {
+    fn check_known_truthy_types(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Node) {
         let hir = self.hir(file);
         let mut test = test;
         self.check_known_truthy_type(file, test, whole, body);
@@ -142,8 +165,8 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// `checkTestingKnownTruthyType`
-    fn check_known_truthy_type(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Parent) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn check_known_truthy_type(&mut self, file: FileId, test: ExprId, whole: ExprId, body: Node) {
+        let hir = self.hir(file);
         let is_logical = |e: ExprId| {
             matches!(
                 hir[e].kind,
@@ -161,6 +184,9 @@ impl<'p> Checker<'p, '_> {
             } => right,
             _ => test,
         };
+        if is_module_exports_access_expression(hir, location) {
+            return;
+        }
         if is_logical(location) {
             return self.check_known_truthy_types(file, location, whole, body);
         }
@@ -204,43 +230,20 @@ impl<'p> Checker<'p, '_> {
         if self.signatures(ty, false).is_empty() && !is_promise {
             return;
         }
-        let is_named = matches!(
-            hir[location].kind,
-            ExprKind::Ident(_) | ExprKind::Dot { .. }
-        );
-        // `testedSymbol == nil`
-        let is_named = is_named
-            && (matches!(hir[location].kind, ExprKind::Ident(_))
-                || self.symbol_at_name(file, location).is_some());
-        if !is_named && !is_promise {
+        let (cond_expr, location_node) = (hir.node(test), hir.node(location));
+        let tested_node = match hir.kind(location_node) {
+            Kind::Identifier => location_node,
+            Kind::PropertyAccessExpression => hir.name(location_node),
+            _ => Node::NONE,
+        };
+        let tested_symbol = self.get_symbol_at_location(file, tested_node);
+        if tested_symbol.is_none() && !is_promise {
             return;
         }
-        // Testing an optional method or property that is narrowed here is legitimate.
-        let is_used = is_named && {
-            let mut used = false;
-            // The operands to its right in a chain of `&&`. Parentheses end the chain.
-            let mut chain = if is_parenthesized(self.hir(file), test) {
-                Parent::None
-            } else {
-                bound.expr_parent[test.idx()]
-            };
-            while let Parent::Expr(p) = chain
-                && let ExprKind::Binary {
-                    op: BinOp::And,
-                    right,
-                    ..
-                } = hir[p].kind
-            {
-                used |= self.is_mentioned_within(file, location, test, Parent::Expr(right), true);
-                chain = if is_parenthesized(self.hir(file), p) {
-                    Parent::None
-                } else {
-                    bound.expr_parent[p.idx()]
-                };
-            }
-            used || !matches!(body, Parent::None)
-                && self.is_mentioned_within(file, location, test, body, false)
-        };
+        let (chain, target) = (hir.parent(cond_expr), Some((cond_expr, tested_node)));
+        let is_used = tested_symbol.is_some()
+            && (self.is_symbol_used_in_binary_expression_chain(file, chain, &tested_symbol)
+                || body.is_some() && self.is_symbol_used_below(file, body, &tested_symbol, target));
         if !is_used {
             let at = (file, start, self.end_inside_parentheses(file, location));
             if is_promise {
@@ -291,109 +294,238 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// `isSymbolUsedInConditionBody`, `isSymbolUsedInBinaryExpressionChain`: whether the symbol
-    /// `tested` names is referenced again inside `container`. `by_name_alone`: on any receiver.
-    fn is_mentioned_within(
+    /// `isSymbolUsedInBinaryExpressionChain`
+    fn is_symbol_used_in_binary_expression_chain(
         &mut self,
         file: FileId,
-        tested: ExprId,
-        test: ExprId,
-        container: Parent,
-        by_name_alone: bool,
+        mut node: Node,
+        tested_symbol: &Option<SymbolAtLocation<'p>>,
     ) -> bool {
         let hir = self.hir(file);
-        // `IsIdentifier`: only identifiers are considered, and a private name is not one.
-        let is_visited = match hir[tested].kind {
-            ExprKind::Dot { name, .. } => !self.is_private_name(name),
-            ExprKind::Ident(_) => true,
-            _ => false,
-        };
-        // The name of an `a.b` is a child of it.
-        let is_access = |e: ExprId| matches!(hir[e].kind, ExprKind::Dot { .. });
-        is_visited
-            && (matches!(container, Parent::Expr(e) if is_access(e) && self.is_mention_of(file, tested, test, e, by_name_alone))
-                || self.is_mentioned_below(file, tested, test, hir.node(container), by_name_alone))
-    }
-
-    /// `node.ForEachChild(visit)`
-    fn is_mentioned_below(
-        &mut self,
-        file: FileId,
-        tested: ExprId,
-        test: ExprId,
-        node: Node,
-        by_name_alone: bool,
-    ) -> bool {
-        let hir = self.hir(file);
-        !self.is_stack_low()
-            && hir.for_each_child(node, &mut |child| {
-                matches!(hir.data(child), NodeData::Expr(e) if self.is_mention_of(file, tested, test, e, by_name_alone))
-                    || self.is_mentioned_below(file, tested, test, child, by_name_alone)
-            })
-    }
-
-    /// `visit` for the name `child`, or for the `a.b` whose name it is.
-    fn is_mention_of(
-        &mut self,
-        file: FileId,
-        tested: ExprId,
-        test: ExprId,
-        child: ExprId,
-        by_name_alone: bool,
-    ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let same_variable = |a: ExprId, b: ExprId| matches!((hir[a].kind, hir[b].kind), (ExprKind::Ident(x), ExprKind::Ident(y)) if x == y && bound.expr_symbol[a.idx()] == bound.expr_symbol[b.idx()]);
-        // Every name that an index signature applies to has the symbol of that index signature.
-        let may_be_the_same = same_variable(tested, child)
-            || matches!(
-                (hir[tested].kind, hir[child].kind),
-                (ExprKind::Dot { .. }, ExprKind::Dot { .. })
-            );
-        if child == tested
-            || !may_be_the_same
-            // `getSymbolAtLocation`: the name in `{ name }` resolves to the property.
-            || matches!(bound.expr_parent[child.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
-            || !self.same_property(file, tested, child)
+        while let NodeData::Expr(e) = hir.data(node)
+            && let ExprKind::Binary {
+                op: BinOp::And,
+                right,
+                ..
+            } = hir[e].kind
         {
-            return false;
-        }
-        if by_name_alone || matches!(hir[test].kind, ExprKind::Ident(_)) {
-            return true;
-        }
-        let (ExprKind::Dot { obj: mut a, .. }, ExprKind::Dot { obj: mut b, .. }) =
-            (hir[tested].kind, hir[child].kind)
-        else {
-            // `IsBinaryExpression(testedNode.Parent)`: a name that is an operand of the test. A
-            // parenthesized name is not one, and nothing matches it.
-            return !is_parenthesized(hir, tested);
-        };
-        // On the same receiver, with the same syntax.
-        while !is_parenthesized(hir, a) && !is_parenthesized(hir, b) {
-            match (hir[a].kind, hir[b].kind) {
-                (ExprKind::Ident(_), ExprKind::Ident(_)) => return same_variable(a, b),
-                (ExprKind::This, ExprKind::This) => return true,
-                (ExprKind::Dot { obj: x, .. }, ExprKind::Dot { obj: y, .. })
-                    if self.same_property(file, a, b) =>
-                {
-                    (a, b) = (x, y)
-                }
-                (ExprKind::Call(x), ExprKind::Call(y)) => (a, b) = (hir[x].callee, hir[y].callee),
-                _ => break,
+            if self.is_symbol_used_below(file, hir.child(right), tested_symbol, None) {
+                return true;
             }
+            node = hir.parent(node);
         }
         false
     }
 
-    /// `getSymbolAtLocation` of the name in `a.name`
-    fn symbol_at_name(&mut self, file: FileId, e: ExprId) -> Option<SymbolAtName<'p>> {
+    /// `node.ForEachChild(visit)`, for the `visit` of `isSymbolUsedInBinaryExpressionChain`, and
+    /// with `target`, which is `expr` and `testedNode`, for that of `isSymbolUsedInConditionBody`.
+    fn is_symbol_used_below(
+        &mut self,
+        file: FileId,
+        node: Node,
+        tested_symbol: &Option<SymbolAtLocation<'p>>,
+        target: Option<(Node, Node)>,
+    ) -> bool {
+        let hir = self.hir(file);
+        !self.is_stack_low()
+            && hir.for_each_child(node, &mut |child| {
+                if hir.kind(child) != Kind::Identifier {
+                    return self.is_symbol_used_below(file, child, tested_symbol, target);
+                }
+                let child_symbol = self.get_symbol_at_location(file, child);
+                is_same_symbol(&child_symbol, tested_symbol)
+                    && target.is_none_or(|(expr, tested_node)| {
+                        self.is_called_on_same_target(file, expr, tested_node, child)
+                    })
+            })
+    }
+
+    /// The rest of the `visit` of `isSymbolUsedInConditionBody`, for a `childNode` that has the
+    /// tested symbol.
+    fn is_called_on_same_target(
+        &mut self,
+        file: FileId,
+        expr: Node,
+        tested_node: Node,
+        child_node: Node,
+    ) -> bool {
+        let hir = self.hir(file);
+        let mut tested_expression = hir.parent(tested_node);
+        if hir.kind(expr) == Kind::Identifier
+            || hir.kind(tested_node) == Kind::Identifier
+                && hir.kind(tested_expression) == Kind::BinaryExpression
+        {
+            return true;
+        }
+        let mut child_expression = hir.parent(child_node);
+        while tested_expression.is_some() && child_expression.is_some() {
+            match (hir.kind(tested_expression), hir.kind(child_expression)) {
+                (Kind::Identifier, Kind::Identifier) | (Kind::ThisKeyword, Kind::ThisKeyword) => {
+                    return self.have_same_symbol(file, tested_expression, child_expression);
+                }
+                (Kind::PropertyAccessExpression, Kind::PropertyAccessExpression) => {
+                    let (tested, child) = (hir.name(tested_expression), hir.name(child_expression));
+                    if !self.have_same_symbol(file, tested, child) {
+                        return false;
+                    }
+                }
+                (Kind::CallExpression, Kind::CallExpression) => {}
+                _ => return false,
+            }
+            tested_expression = hir.expression(tested_expression);
+            child_expression = hir.expression(child_expression);
+        }
+        false
+    }
+
+    /// `getSymbolAtLocation(a) == getSymbolAtLocation(b)`
+    fn have_same_symbol(&mut self, file: FileId, a: Node, b: Node) -> bool {
+        let a = self.get_symbol_at_location(file, a);
+        is_same_symbol(&a, &self.get_symbol_at_location(file, b))
+    }
+
+    /// `getSymbolAtLocation` for an identifier or a `this`. The name of a member, of a property of
+    /// an object literal, of a label or of a declared type, and the right side of a qualified name
+    /// in a type reference, have a symbol that no tested expression has: `None`.
+    fn get_symbol_at_location(&mut self, file: FileId, node: Node) -> Option<SymbolAtLocation<'p>> {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        if node.is_none() || hir.is_in_with(hir.start(node)) {
+            return None;
+        }
+        let parent = hir.parent(node);
+        if hir.is_declaration_name(node) {
+            // `getSymbolOfDeclaration(parent)`
+            let declared = match (hir.data(node), hir.kind(parent)) {
+                (NodeData::Pat(name), _) => bound.pat_symbol[name.idx()],
+                (_, Kind::FunctionDeclaration | Kind::FunctionExpression) => {
+                    bound.fn_symbol[hir.function_of(parent).idx()]
+                }
+                (_, Kind::ClassDeclaration | Kind::ClassExpression) => {
+                    bound.class_symbol[hir.class_of(parent).idx()]
+                }
+                _ => SymbolId::NONE,
+            };
+            return Some(SymbolAtLocation::Symbol(files.sym(file, declared.some()?)));
+        }
+        match hir.data(node) {
+            NodeData::Expr(e) => match hir[e].kind {
+                // `getSymbolOfNameOrPropertyAccessExpression`
+                ExprKind::Ident(name) => {
+                    let symbol = self.resolve_identifier(file, e, name, true).ok()??;
+                    Some(SymbolAtLocation::Symbol(files.canonical(symbol)))
+                }
+                ExprKind::This => {
+                    let container = hir.get_this_container(node, false, false);
+                    if hir.kind(container).is_function_like()
+                        && let Some(function) = hir.function_of(container).some()
+                    {
+                        let signature = self.sig_of_fn(file, function);
+                        if self.sig_this_parameter(signature).is_some() {
+                            return Some(SymbolAtLocation::ThisParameter(file, function));
+                        }
+                    }
+                    let ty = self.type_of_expr(file, e);
+                    self.symbol_of_type(ty)
+                }
+                _ => None,
+            },
+            // `IsRightSideOfQualifiedNameOrPropertyAccess`: `links.resolvedSymbol` of the access.
+            NodeData::Part(Part::Name, access) => match hir.data(access) {
+                NodeData::Expr(e) => self.symbol_at_name(file, e),
+                _ => None,
+            },
+            // `{ name: local }`: the property of the type of the pattern.
+            NodeData::Part(Part::PropertyName, element) => {
+                let NodeData::PatProp(p) = hir.data(element) else {
+                    return None;
+                };
+                let (PropKey::Name(name), PatParent::Prop(pattern, _)) =
+                    (hir[p].key, bound.pat_parent[hir[p].value.idx()])
+                else {
+                    return None;
+                };
+                let ty = self.type_of_pat(file, pattern);
+                self.symbol_of_property(ty, name)
+            }
+            // `isTypeReferenceIdentifier`
+            NodeData::Name(name) if hir.name(parent) != node => {
+                let mut reference = parent;
+                while hir.kind(reference) == Kind::QualifiedName {
+                    reference = hir.parent(reference);
+                }
+                let NodeData::Type(ty) = hir.data(reference) else {
+                    return None;
+                };
+                if hir.kind(reference) != Kind::TypeReference {
+                    return None;
+                }
+                let meaning = if reference == parent {
+                    SymFlags::TYPE
+                } else {
+                    SymFlags::NAMESPACE
+                };
+                let scope = bound.type_scope[ty.idx()];
+                let symbol = files.resolve_name(file, scope, hir[name].text, meaning)?;
+                Some(SymbolAtLocation::Symbol(files.canonical(symbol)))
+            }
+            _ => None,
+        }
+    }
+
+    /// `t.symbol`
+    fn symbol_of_type(&self, ty: TypeId) -> Option<SymbolAtLocation<'p>> {
+        let files = self.files();
+        Some(match *self.data(ty) {
+            TypeData::ThisParam(symbol) | TypeData::Enum { symbol, .. } => {
+                SymbolAtLocation::Symbol(symbol)
+            }
+            TypeData::Ref { target, .. } => SymbolAtLocation::Symbol(target),
+            TypeData::EnumLit { member, .. } => SymbolAtLocation::Symbol(member),
+            TypeData::TypeParam(file, parameter, _) => {
+                let symbol = self.bound(file).type_param_symbol[parameter.idx()].some()?;
+                SymbolAtLocation::Symbol(files.sym(file, symbol))
+            }
+            TypeData::Anon { origin, .. } => match origin {
+                Origin::ClassStatic(symbol)
+                | Origin::Function(symbol)
+                | Origin::EnumObject(symbol)
+                | Origin::Module(symbol)
+                | Origin::Namespace { module: symbol, .. } => SymbolAtLocation::Symbol(symbol),
+                Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
+                    SymbolAtLocation::Anonymous(file, self.hir(file).node(e))
+                }
+                Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
+                    SymbolAtLocation::Anonymous(file, self.hir(file).node(node))
+                }
+                Origin::GlobalThis => SymbolAtLocation::Symbol(files.global_this_symbol),
+            },
+            TypeData::Fns { ref decls, .. } => {
+                let &(file, function) = decls.first()?;
+                SymbolAtLocation::Anonymous(file, self.hir(file).node(function))
+            }
+            _ => return None,
+        })
+    }
+
+    /// `getPropertyOfType(ty, name)`
+    fn symbol_of_property(&mut self, ty: TypeId, name: Atom) -> Option<SymbolAtLocation<'p>> {
+        let (prop, _) = self.get_property_of_type(ty, name)?;
+        Some(match prop.source {
+            PropSource::Symbol(symbol) => SymbolAtLocation::Symbol(self.files().canonical(symbol)),
+            ref source => SymbolAtLocation::Property(source, name),
+        })
+    }
+
+    /// `links.resolvedSymbol` of the property access or the qualified name `e`, as
+    /// `getSymbolOfNameOrPropertyAccessExpression` leaves it.
+    fn symbol_at_name(&mut self, file: FileId, e: ExprId) -> Option<SymbolAtLocation<'p>> {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
             return None;
         };
         let receiver = self.type_of_expr(file, obj);
         let ty = self.non_nullable(receiver);
-        let ty = self.apparent_type(ty);
-        if let Some((prop, _)) = self.prop_ref(ty, name) {
-            return Some(SymbolAtName::Property(&prop.source, name));
+        if let Some(property) = self.symbol_of_property(ty, name) {
+            return Some(property);
         }
         // `getApplicableIndexSymbol`: there is one only if an index signature is declared.
         let ty = self.reduced(receiver);
@@ -401,25 +533,13 @@ impl<'p> Checker<'p, '_> {
         let members = self.members(ty)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
         if let Some(declaration) = info.declaration {
-            return Some(SymbolAtName::Index(ty, declaration));
+            return Some(SymbolAtLocation::Index(ty, declaration));
         }
         let key_type = self.string_literal(name, false);
         let is_declared = members.shape().index.iter().any(|info| {
             info.declaration.is_some() && self.is_applicable_index_type(key_type, info.key)
         });
-        is_declared.then_some(SymbolAtName::IndexOfSeveral)
-    }
-
-    /// Whether the names in `a.name` and `b.name` have the same symbol.
-    fn same_property(&mut self, file: FileId, a: ExprId, b: ExprId) -> bool {
-        match (self.symbol_at_name(file, a), self.symbol_at_name(file, b)) {
-            (Some(SymbolAtName::Property(x, n)), Some(SymbolAtName::Property(y, m))) => {
-                n == m && x == y
-            }
-            (Some(SymbolAtName::Index(x, i)), Some(SymbolAtName::Index(y, j))) => (x, i) == (y, j),
-            (None, None) => true,
-            _ => false,
-        }
+        is_declared.then_some(SymbolAtLocation::IndexOfSeveral)
     }
 
     /// `isValidSpreadType`
@@ -443,21 +563,27 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// `getBaseConstraintOfType`. `None`: no constraint, which differs from `unknown`. A type
-    /// without a constraint may turn out to be an object. A type constrained to `unknown` can be
-    /// anything.
-    fn base_constraint_if_any(&mut self, ty: TypeId, depth: u32) -> Option<TypeId> {
-        match self.data(ty) {
-            TypeData::TypeParam(..) => {
-                // A cycle.
-                if depth > 16 {
-                    return None;
-                }
-                let constraint = self.constraint_of_type_param(ty)?;
+    /// `getNextBaseConstraint`. `None`: `noConstraintType` or `circularConstraintType`, which
+    /// `base_constraint` does not tell from the constraint `unknown`. A type without a constraint
+    /// may turn out to be an object. A type constrained to `unknown` can be anything.
+    pub(super) fn base_constraint_if_any(&mut self, ty: TypeId, depth: u32) -> Option<TypeId> {
+        let constraint = self.base_constraint(ty);
+        if constraint != TypeId::UNKNOWN || !self.has_type_variables(ty) {
+            return Some(constraint);
+        }
+        // A cycle.
+        if depth > 16 {
+            return None;
+        }
+        // `computeBaseConstraint`, for the kinds of types whose constraint can be `unknown`.
+        let simplified = self.simplified(ty, false);
+        match *self.data(simplified) {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
+                let constraint = self.constraint_of_type_param(simplified)?;
                 self.base_constraint_if_any(constraint, depth + 1)
             }
-            // `computeBaseConstraint`: built from the members that have a constraint.
-            TypeData::Intersection(parts) => {
+            // Built from the members that have a constraint.
+            TypeData::Intersection(ref parts) => {
                 let mut constraints = Vec::with_capacity(parts.len());
                 for &part in parts.iter() {
                     constraints.extend(self.base_constraint_if_any(part, depth + 1));
@@ -469,39 +595,37 @@ impl<'p> Checker<'p, '_> {
                 }
             }
             // Every member must have a constraint.
-            TypeData::Union(parts) => {
+            TypeData::Union(ref parts) => {
                 let mut constraints = Vec::with_capacity(parts.len());
                 for &part in parts.iter() {
                     constraints.push(self.base_constraint_if_any(part, depth + 1)?);
                 }
                 Some(self.union(&constraints))
             }
-            _ if self.is_deferred(ty) => {
-                let constraint = self.base_constraint(ty);
-                if constraint != TypeId::UNKNOWN {
-                    return Some(constraint);
-                }
-                // Only for `T[K]` is a missing constraint distinguished from `unknown`.
-                // `computeBaseConstraint`: the object type and the index type both have a
-                // constraint, and indexing the first by the second yields a type.
-                let TypeData::IndexedAccess {
-                    obj,
-                    index,
-                    undefined,
-                } = *self.data(ty)
-                else {
-                    return None;
+            TypeData::IndexedAccess {
+                obj,
+                index,
+                undefined,
+            } => {
+                let access = match self.substitute_indexed_mapped(obj, index) {
+                    Some(template) => template,
+                    None => {
+                        let base_object = self.base_constraint_if_any(obj, depth + 1)?;
+                        let base_index = self.base_constraint_if_any(index, depth + 1)?;
+                        self.indexed_access_flagged(base_object, base_index, undefined, None)?
+                    }
                 };
-                if depth > 16 {
-                    return None;
-                }
-                let base_object = self.base_constraint_if_any(obj, depth + 1)?;
-                let base_index = self.base_constraint_if_any(index, depth + 1)?;
-                let access =
-                    self.indexed_access_flagged(base_object, base_index, undefined, None)?;
                 self.base_constraint_if_any(access, depth + 1)
             }
-            _ => Some(ty),
+            TypeData::Cond { .. } => {
+                let constraint = self.get_constraint_of_conditional_type(simplified);
+                self.base_constraint_if_any(constraint, depth + 1)
+            }
+            TypeData::Substitution { base, constraint } => {
+                let both = self.substitution_intersection(base, constraint);
+                self.base_constraint_if_any(both, depth + 1)
+            }
+            _ => None,
         }
     }
 

@@ -19,45 +19,79 @@ impl Checker<'_, '_> {
         self.check_index_signatures(file);
     }
 
-    /// The end of `onSuccessfullyResolvedSymbol`: the default of a parameter, and the names in its
-    /// pattern, are evaluated before the parameter, and the declarations that follow it in the
-    /// function, exist.
+    /// `check_reference_in_parameter` for the identifiers of `file`.
     fn check_parameter_references(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for &(id, within, func) in bound.identifiers_in_parameters.iter() {
-            let i = id.idx();
-            let ExprKind::Ident(name) = hir.exprs[i].kind else {
-                continue;
-            };
-            let local = bound.expr_symbol[i];
-            if local.is_none() || bound.is_in_type_query(id) || bound.is_unchecked(i) {
+        for &(id, within, _) in bound.identifiers_in_parameters.iter() {
+            let local = bound.expr_symbol[id.idx()];
+            if local.is_none() || bound.is_in_type_query(id) || bound.is_unchecked(id.idx()) {
                 continue;
             }
-            // `candidate.ValueDeclaration`: its position, and the pattern that binds it if it is a
-            // parameter.
-            let (declared, declared_pos) = match bound.symbols[local.idx()].decls.first() {
-                Some(&Decl::Param(p)) => (p, hir[p].pos),
-                Some(&Decl::Var(p)) => (PatId::NONE, hir[p].pos),
-                Some(&Decl::Fn(f)) => (PatId::NONE, hir[f].start),
-                Some(&Decl::Module(m)) => (PatId::NONE, hir[m].name_pos),
-                _ => continue,
-            };
-            // `root.Parent.Locals()`: a local of the function whose parameter it is.
-            let scope = bound.fns[func.idx()].scope;
-            if bound.lookup(
-                bound.scopes[scope.idx()].locals,
-                bound.symbols[local.idx()].name,
-            ) != Some(local)
-            {
-                continue;
-            }
-            if declared == within {
-                self.error_at((file, hir.exprs[i].pos, 0), 2372, &[Arg::Atom(name)]);
-            } else if declared_pos > hir[within].pos {
-                let written = hir[within].pos as usize..self.end_of_pat(file, within) as usize;
-                let args = [Arg::Bytes(&hir.text[written]), Arg::Atom(name)];
-                self.error_at((file, hir.exprs[i].pos, 0), 2373, &args);
-            }
+            let candidate = self.files().sym(file, local);
+            let associated_declaration = hir.node(Decl::Param(within));
+            self.check_reference_in_parameter(
+                file,
+                hir.node(id),
+                candidate,
+                associated_declaration,
+            );
+        }
+    }
+
+    /// `onSuccessfullyResolvedSymbol`: "If we're in a parameter initializer or binding name, we
+    /// can't reference the values of the parameter whose initializer we're within or parameters to
+    /// the right". `associated_declaration`:
+    /// `associatedDeclarationForContainingInitializerOrBindingName`, where the name is not
+    /// `withinDeferredContext` and is resolved as a value.
+    pub(super) fn check_reference_in_parameter(
+        &mut self,
+        file: FileId,
+        error_location: Node,
+        candidate: Sym,
+        associated_declaration: Node,
+    ) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let name = hir.name(associated_declaration);
+        // `bindParameter` declares the property last: it is the symbol of a parameter property.
+        let property = match hir.data(associated_declaration) {
+            NodeData::Param(p) => bound.symbol_of_declaration(Decl::ParameterProperty(p)),
+            _ => SymbolId::NONE,
+        };
+        let declared = match hir.data(name) {
+            _ if property.is_some() => property,
+            NodeData::Pat(name) => bound.pat_symbol[name.idx()],
+            _ => SymbolId::NONE,
+        };
+        // `DeclarationNameToString`
+        let text_of = |c: &Self, node: Node| {
+            let written = hir.start(node) as usize..c.end_of_node(file, node) as usize;
+            hir.text.get(written).unwrap_or_default()
+        };
+        if declared.is_some() && candidate == files.sym(file, declared) {
+            let args = [Arg::Bytes(text_of(self, name))];
+            self.error(file, error_location, 2372, &args);
+            return;
+        }
+        let root = hir.get_root_declaration(associated_declaration);
+        let function = hir.function_of(hir.parent(root));
+        let is_declared_after =
+            files
+                .value_declaration(candidate)
+                .is_some_and(|(of, declaration)| {
+                    of == file
+                        && hir.start(hir.node(declaration)) > hir.start(associated_declaration)
+                });
+        if !is_declared_after || function.is_none() {
+            return;
+        }
+        let locals = bound.scopes[bound.fns[function.idx()].scope.idx()].locals;
+        let local = bound.lookup(locals, files.symbol(candidate).name);
+        if local.map(|local| files.sym(file, local)) == Some(candidate) {
+            let args = [
+                Arg::Bytes(text_of(self, name)),
+                Arg::Bytes(text_of(self, error_location)),
+            ];
+            self.error(file, error_location, 2373, &args);
         }
     }
 

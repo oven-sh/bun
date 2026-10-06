@@ -6,6 +6,7 @@
 //! blocks, and the arity a spread argument implies for `[...T, ...U]`.
 
 use super::*;
+use crate::bind::{Decl, ScopeKind};
 use smallvec::{SmallVec, smallvec};
 
 /// The members of a union or an intersection during iteration.
@@ -94,7 +95,7 @@ pub(super) struct Inference {
     pub(super) around_source: MapperId,
     /// Without a signature, for `infer`: the mapper for the outer type parameters of the
     /// conditional type. The constraints of the parameters may mention them.
-    around: MapperId,
+    pub(super) around: MapperId,
     /// `propagationType`
     propagated: Option<TypeId>,
     /// `returnMapper`. `IDENTITY`: nil.
@@ -256,7 +257,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromTypes`
     fn infer_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        if !self.has_type_variables(target) || self.is_no_infer(target) {
+        if !self.could_contain_type_variables(target) || self.is_no_infer(target) {
             return;
         }
         // It is inferred for every type parameter in `target`.
@@ -315,41 +316,20 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut targets = self.sorted_parts(target);
                 let (whole_source, whole_target) = (source, target);
                 let (source_count, target_count) = (sources.len(), targets.len());
-                // Identical members on both sides are matched (`isTypeOrBaseIdenticalTo`), then
-                // those instantiated from the same generic type or alias
-                // (`isTypeCloselyMatchedBy`).
-                self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
-                    if t == TypeId::MISSING {
-                        return s == t;
-                    }
-                    // Enum members have `TypeFlagsStringLiteral` or `TypeFlagsNumberLiteral` too.
-                    c.with_freshness(s, false).plain() == t.plain()
-                        || t == TypeId::STRING && c.string_literal_value(s).is_some()
-                        || t == TypeId::NUMBER
-                            && matches!(
-                                c.data(s),
-                                TypeData::NumberLit { .. }
-                                    | TypeData::EnumLit {
-                                        value: EnumValue::Number(_),
-                                        ..
-                                    }
-                            )
-                        || c.is_object_type(s) && c.is_object_type(t) && c.is_identical(s, t)
-                });
-                self.infer_from_matching(n, &mut sources, &mut targets, |c, s, t| {
-                    match (c.data(s), c.data(t)) {
-                        (TypeData::Ref { target: a, .. }, TypeData::Ref { target: b, .. }) => {
-                            a == b
-                        }
-                        (TypeData::Anon { origin: a, .. }, TypeData::Anon { origin: b, .. }) => {
-                            a == b
-                        }
-                        (TypeData::Fns { decls: a, .. }, TypeData::Fns { decls: b, .. }) => a == b,
-                        _ => c
-                            .same_alias(s, t)
-                            .is_some_and(|(.., has_type_arguments)| has_type_arguments),
-                    }
-                });
+                // Identical members on both sides are matched, then those instantiated from the
+                // same generic type or alias.
+                self.infer_from_matching(
+                    n,
+                    &mut sources,
+                    &mut targets,
+                    Self::is_type_or_base_identical_to,
+                );
+                self.infer_from_matching(
+                    n,
+                    &mut sources,
+                    &mut targets,
+                    Self::is_type_closely_matched_by,
+                );
                 if targets.is_empty() {
                     return;
                 }
@@ -399,8 +379,9 @@ impl<'p, 's> Checker<'p, 's> {
         target = self.actual_type_variable(target);
         if self.is_type_variable(target) {
             if let Some(index) = n.index_of(target) {
-                // `ObjectFlagsNonInferrableType`: a type with omitted parts is not a candidate.
-                if self.is_non_inferrable(source, 0) {
+                // `ObjectFlagsNonInferrableType`: a type with omitted parts is not a candidate. Nor
+                // is `nonInferrableAnyType`, which lacks the flag: a type that contains it is one.
+                if self.is_non_inferrable(source, 0) || source == TypeId::NON_INFERRABLE_ANY {
                     return;
                 }
                 let candidate = n.propagated.unwrap_or(source);
@@ -520,7 +501,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && (matches!(self.data(source), TypeData::Intersection(_))
                         || self.is_instantiable(source)))
                 {
-                    let apparent = self.apparent_type_for_relation(source);
+                    let apparent = self.apparent_type(source);
                     // The constraint of a type parameter can be any type.
                     if apparent != source
                         && !(self.is_object_type(apparent)
@@ -551,6 +532,7 @@ impl<'p, 's> Checker<'p, 's> {
         if n.candidates[index].fixed.is_none() {
             let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
             let is_array_literal = n.array_literals.contains(&candidate);
+            let mut has_changed = false;
             let c = &mut n.candidates[index];
             if priority < c.priority {
                 c.covariant.clear();
@@ -565,6 +547,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if contra {
                     if !c.contravariant.contains(&candidate) {
                         c.contravariant.push(candidate);
+                        has_changed = true;
                     }
                 } else {
                     let found = (0..c.covariant.len()).find(|&i| {
@@ -584,6 +567,7 @@ impl<'p, 's> Checker<'p, 's> {
                         c.covariant.insert(at, candidate);
                         c.depths.insert(at, depth);
                         c.array_literals.insert(at, is_array_literal);
+                        has_changed = true;
                     }
                 }
             }
@@ -596,8 +580,11 @@ impl<'p, 's> Checker<'p, 's> {
                 && !self.is_type_parameter_at_top_level(n.original_target, target, 0)
             {
                 n.candidates[index].top_level = false;
+                has_changed = true;
             }
-            n.clear_cached_inferences();
+            if has_changed {
+                n.clear_cached_inferences();
+            }
         }
         n.inference_priority = n.inference_priority.min(n.priority as i32);
     }
@@ -903,7 +890,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut generic: SmallVec<[TypeId; 2]> = SmallVec::new();
         for branch in [self.cond_true(target), self.cond_false(target)] {
-            if !self.has_type_variables(branch) {
+            if !self.could_contain_type_variables(branch) {
                 continue;
             }
             // `infer_types` goes on to each part of such an intersection, and none is a naked
@@ -918,7 +905,11 @@ impl<'p, 's> Checker<'p, 's> {
                 && (parts.iter())
                     .all(|&t| self.is_object_type(t) && !self.is_generic_mapped_type(t))
             {
-                generic.extend(parts.into_iter().filter(|&t| self.has_type_variables(t)));
+                generic.extend(
+                    parts
+                        .into_iter()
+                        .filter(|&t| self.could_contain_type_variables(t)),
+                );
             } else {
                 generic.push(branch);
             }
@@ -930,14 +921,10 @@ impl<'p, 's> Checker<'p, 's> {
     fn infer_to_conditional_type(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
         if matches!(self.data(source), TypeData::Cond { .. }) {
             for which in 0..4 {
-                let (s, t) = if which == 2 {
-                    (self.cond_true(source), self.cond_true(target))
-                } else {
-                    (
-                        self.cond_piece(source, which),
-                        self.cond_piece(target, which),
-                    )
-                };
+                let (s, t) = (
+                    self.cond_piece(source, which),
+                    self.cond_piece(target, which),
+                );
                 self.infer_types(n, s, t);
             }
             return;
@@ -1181,6 +1168,17 @@ impl<'p, 's> Checker<'p, 's> {
                 return;
             }
         }
+        // FOR SPEED: a target that is no object type has no properties to infer to
+        // (`getPropertiesOfObjectType`), and the signatures and index signatures are those of its
+        // constraint. Without type variables in that, `inferFromTypes` returns at once for each,
+        // whatever `typesDefinitelyUnrelated` answers, and that lists every property of the 509
+        // tuples that `Commands[Method]["paramsType"]` of devtools-protocol is constrained to.
+        if !self.is_object_type(target) {
+            let apparent = self.reduced_apparent_type(target);
+            if !self.has_type_variables(apparent) {
+                return;
+            }
+        }
         // Only if the two types may be related.
         if self.types_definitely_unrelated(source, target) {
             return;
@@ -1197,8 +1195,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.infer_from_properties(n, source, target);
-        self.infer_from_signatures_of(n, source, target, false);
-        self.infer_from_signatures_of(n, source, target, true);
+        self.infer_from_signatures(n, source, target, false);
+        self.infer_from_signatures(n, source, target, true);
         self.infer_from_index_types(n, source, target);
     }
 
@@ -1469,30 +1467,88 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         match_discriminant_properties: bool,
     ) -> bool {
-        let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
+        // `getPropertyOfType(source, name)` makes the properties of a union one by one, as they are
+        // asked for.
+        let source = self.reduced_apparent_type(source);
+        let sm = match self.is_union(source) {
+            true => None,
+            false => self.members(source),
+        };
+        let Some(tm) = self.members_of_reduced_apparent_type(target) else {
             return false;
         };
-        for tp in &tm.shape().props {
-            if tp.flags.contains(PropFlags::OPTIONAL) {
-                continue;
-            }
-            let Some((sp, source_mapper)) = self.property_in(&sm, tp.name) else {
-                return true;
-            };
-            if match_discriminant_properties {
-                let expected = self.type_of_prop(tp, tm.mapper);
-                if self.is_unit(expected) {
-                    let actual = self.type_of_prop(sp, source_mapper);
-                    if !(self.is_any(actual)
-                        || self.with_freshness(actual, false)
-                            == self.with_freshness(expected, false))
-                    {
-                        return true;
-                    }
-                }
-            }
+        (tm.shape().props.iter()).any(|tp| {
+            let of_target = (tp, tm.mapper);
+            self.is_unmatched_property(
+                source,
+                sm.as_ref(),
+                of_target,
+                match_discriminant_properties,
+            )
+        })
+    }
+
+    /// The body of the loop of `getUnmatchedPropertiesWorker`, without `requireOptionalProperties`.
+    fn is_unmatched_property(
+        &mut self,
+        source: TypeId,
+        source_members: Option<&Members<'p>>,
+        (tp, target_mapper): (&Prop<'p>, MapperId),
+        match_discriminant_properties: bool,
+    ) -> bool {
+        let partial = PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL;
+        if self.is_static_private_name(tp) || tp.flags.intersects(PropFlags::OPTIONAL | partial) {
+            return false;
         }
-        false
+        let source_prop = match source_members {
+            Some(members) => self.property_in(members, tp.name),
+            None => self.get_property_of_type(source, tp.name),
+        };
+        let Some((sp, source_mapper)) = source_prop else {
+            return true;
+        };
+        if !match_discriminant_properties {
+            return false;
+        }
+        let expected = self.type_of_prop(tp, target_mapper);
+        if !self.is_unit(expected) {
+            return false;
+        }
+        let actual = self.type_of_prop(sp, source_mapper);
+        !(self.is_any(actual)
+            || self.with_freshness(actual, false) == self.with_freshness(expected, false))
+    }
+
+    /// `resolveStructuredTypeMembers(getReducedApparentType(ty))`: where `getPropertiesOfType`,
+    /// `getPropertyOfType` and `getIndexInfosOfType` look.
+    fn members_of_reduced_apparent_type(&mut self, ty: TypeId) -> Option<Members<'p>> {
+        let apparent = self.reduced_apparent_type_as_object(ty);
+        self.members(apparent)
+    }
+
+    /// `isTypeOrBaseIdenticalTo`
+    fn is_type_or_base_identical_to(&mut self, s: TypeId, t: TypeId) -> bool {
+        if t == TypeId::MISSING {
+            return s == t;
+        }
+        self.is_identical(s, t)
+            || self.flags(t) & tf::STRING != 0 && self.flags(s) & tf::STRING_LITERAL != 0
+            || self.flags(t) & tf::NUMBER != 0 && self.flags(s) & tf::NUMBER_LITERAL != 0
+    }
+
+    /// `isTypeCloselyMatchedBy`
+    fn is_type_closely_matched_by(&mut self, s: TypeId, t: TypeId) -> bool {
+        // `s.symbol != nil && s.symbol == t.symbol`
+        let has_symbol_of = match (self.data(s), self.data(t)) {
+            (TypeData::Ref { target: a, .. }, TypeData::Ref { target: b, .. }) => a == b,
+            (TypeData::Anon { origin: a, .. }, TypeData::Anon { origin: b, .. }) => a == b,
+            (TypeData::Fns { decls: a, .. }, TypeData::Fns { decls: b, .. }) => a == b,
+            _ => false,
+        };
+        has_symbol_of
+            || self
+                .same_alias(s, t)
+                .is_some_and(|(.., has_type_arguments)| has_type_arguments)
     }
 
     /// `inferFromProperties`
@@ -1507,59 +1563,46 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             };
             let actual = self.type_of_prop_as_read(sp, source_mapper);
-            // A `NoInfer<T>` in the declaration is preserved.
-            let expected = self.type_of_prop(tp, tm.mapper);
-            if !self.has_type_variables(expected) || self.is_no_infer(expected) {
-                continue;
-            }
-            // `removeMissingType`, as `type_of_prop_as_read` does it.
-            let expected = if !tp.flags.contains(PropFlags::OPTIONAL) {
-                expected
-            } else if self.p.files.options.exact_optional_property_types {
-                self.remove_missing_type(expected, true)
-            } else {
-                self.optional(expected)
-            };
+            let expected = self.type_of_prop_as_read(tp, tm.mapper);
             self.infer_types(n, actual, expected);
         }
     }
 
     /// `inferFromSignatures`
-    fn infer_from_signatures_of(
+    fn infer_from_signatures(
         &mut self,
         n: &mut Inference,
         source: TypeId,
         target: TypeId,
         construct: bool,
     ) {
-        let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
+        // FOR SPEED: few object types have signatures, and `signatures` stores a list for every
+        // type it is asked for.
+        if self.is_object_type(source)
+            && self.members(source).is_some_and(|members| {
+                let shape = members.shape();
+                if construct {
+                    shape.construct.is_empty()
+                } else {
+                    shape.call.is_empty()
+                }
+            })
+        {
             return;
-        };
-        let (ss, ts) = if construct {
-            (&sm.shape().construct, &tm.shape().construct)
-        } else {
-            (&sm.shape().call, &tm.shape().call)
-        };
-        if ss.is_empty() {
+        }
+        let source_signatures = self.signatures(source, construct);
+        let source_len = source_signatures.len();
+        if source_len == 0 {
             return;
         }
         // `returnOnlyType`: a context sensitive function, retained only for its return type.
         let return_only = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::Partial);
         // From the last signature to the first. If the source has fewer, its first signature is
         // paired with the remaining target signatures.
-        for (i, &t) in ts.iter().enumerate() {
-            let source_index = (ss.len() + i).saturating_sub(ts.len());
-            let s = if ss.len() == 1 {
-                self.instantiate_only_sig(source, construct, ss[0], sm.mapper)
-            } else {
-                self.instantiate_sig(ss[source_index], sm.mapper)
-            };
-            let t = if ts.len() == 1 {
-                self.instantiate_only_sig(target, construct, t, tm.mapper)
-            } else {
-                self.instantiate_sig(t, tm.mapper)
-            };
-            self.infer_from_signatures(n, s, t, return_only);
+        let target_signatures = self.signatures(target, construct);
+        for (i, &t) in target_signatures.iter().enumerate() {
+            let source_index = (source_len + i).saturating_sub(target_signatures.len());
+            self.infer_from_signature(n, source_signatures[source_index], t, return_only);
         }
     }
 
@@ -1631,7 +1674,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `inferFromSignature(getBaseSignature(source), getErasedSignature(target))`. `return_only`: `SignatureFlagsIsNonInferrable`
-    fn infer_from_signatures(
+    fn infer_from_signature(
         &mut self,
         n: &mut Inference,
         source: SigId,
@@ -1639,9 +1682,8 @@ impl<'p, 's> Checker<'p, 's> {
         return_only: bool,
     ) {
         let source = self.base_sig(source);
-        // `target.declaration`: the signature of a union has the declaration of the first signature
-        // it represents.
-        let is_method = match self.sig_decl(self.types().sig_origin(target)) {
+        let declared = self.declared_sig(target);
+        let is_method = match self.sig_decl(declared) {
             Some((file, func, _)) => matches!(
                 self.hir(file)[func].kind,
                 FnKind::Method | FnKind::Constructor
@@ -1752,7 +1794,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A `NoInfer<T>` in the declaration is preserved.
         let t = self.sig_return(target);
-        if !self.has_type_variables(t) {
+        if !self.could_contain_type_variables(t) {
             return None;
         }
         let s = self.sig_return(source);
@@ -1761,7 +1803,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromIndexTypes`
     fn infer_from_index_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
+        let (Some(sm), Some(tm)) = (
+            self.members(source),
+            self.members_of_reduced_apparent_type(target),
+        ) else {
             return;
         };
         if tm.shape().index.is_empty() {
@@ -1792,9 +1837,6 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_object_type_with_inferable_index(looks) {
             for info in &tm.shape().index {
                 let expected = self.instantiate(info.value, tm.mapper);
-                if !self.has_type_variables(expected) {
-                    continue;
-                }
                 let mut types = Parts::new();
                 for prop in &sm.shape().props {
                     if self.is_property_applicable_to_index(source, prop, info.key) {
@@ -1819,13 +1861,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for info in &tm.shape().index {
-            let expected = self.instantiate(info.value, tm.mapper);
-            if self.has_type_variables(expected)
-                && let Some(actual) = self
-                    .applicable_index_info(&sm, info.key)
-                    .map(|info| info.value)
-            {
-                self.infer_with_priority(n, actual, expected, priority);
+            if let Some(source_info) = self.applicable_index_info(&sm, info.key) {
+                let expected = self.instantiate(info.value, tm.mapper);
+                self.infer_with_priority(n, source_info.value, expected, priority);
             }
         }
     }
@@ -1944,7 +1982,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         of: TypeId,
     ) -> Option<TypeId> {
-        let members = self.members(source)?;
+        let members = self.members_of_reduced_apparent_type(source)?;
         // It requires a string index signature, or properties that are not all omitted.
         if !(members
             .shape()
@@ -1968,13 +2006,14 @@ impl<'p, 's> Checker<'p, 's> {
             flags, readonly, ..
         } = self.data(source)
         {
-            let elems = self.type_arguments(source);
-            let mut types = Vec::with_capacity(elems.len());
-            for &e in elems.iter() {
-                types.push(self.infer_reverse_mapped_type(e, target, of)?);
-            }
+            let element_types: SmallVec<[Option<TypeId>; 8]> = self
+                .type_arguments(source)
+                .iter()
+                .map(|&e| self.infer_reverse_mapped_type(e, target, of))
+                .collect();
+            let element_types: Parts = element_types.into_iter().collect::<Option<_>>()?;
             let adds_optional = self.mapped_optional_modifier(target) == MappedModifier::Add;
-            let flags: Vec<ElemFlags> = flags
+            let element_infos: SmallVec<[ElemFlags; 8]> = flags
                 .iter()
                 .map(|&f| {
                     if adds_optional && f.contains(ElemFlags::OPTIONAL) {
@@ -1984,7 +2023,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 })
                 .collect();
-            return Some(self.tuple(&types, &flags, *readonly));
+            return Some(self.normalized_tuple(&element_types, &element_infos, *readonly));
         }
         // Its members are resolved on demand.
         Some(self.intern(TypeData::ReverseMapped {
@@ -2009,9 +2048,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 if self.is_non_inferrable(ty, depth + 1))
                         })
             }
-            TypeData::Intrinsic(
-                Intrinsic::Auto | Intrinsic::SilentNever | Intrinsic::NonInferrableAny,
-            ) => true,
+            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
             // `checkObjectLiteral` propagates the flag from the member types (`look_at_members`), and
             // `getWidenedTypeOfObjectLiteral` keeps it. The contextual type of a call is widened (`without_pattern_marks`).
             TypeData::Anon {
@@ -2061,17 +2098,19 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_non_inferrable(ty, 0) {
             return true;
         }
-        match self.data(ty) {
-            TypeData::Synth(shape) => shape.props.iter().any(|p| {
-                let ty = self.type_of_prop(p, MapperId::IDENTITY);
-                self.is_partially_inferable(ty)
-            }),
-            TypeData::Tuple { .. } => self
+        if self.is_object_literal_type(ty) {
+            return self.members(ty).is_some_and(|members| {
+                members.shape().props.iter().any(|p| {
+                    let ty = self.type_of_prop(p, members.mapper);
+                    self.is_partially_inferable(ty)
+                })
+            });
+        }
+        self.is_tuple(ty)
+            && self
                 .type_arguments(ty)
                 .iter()
-                .any(|&e| self.is_partially_inferable(e)),
-            _ => false,
-        }
+                .any(|&e| self.is_partially_inferable(e))
     }
 
     /// `resolveReverseMappedTypeMembers`, of `ty`.
@@ -2083,13 +2122,29 @@ impl<'p, 's> Checker<'p, 's> {
         of: TypeId,
     ) -> Shape<'s> {
         let mut shape = Shape::new_in(self.arena);
-        let Some(members) = self.members(source) else {
+        let Some(members) = self.members_of_reduced_apparent_type(source) else {
             return shape;
         };
         let adds_optional = self.mapped_optional_modifier(target) == MappedModifier::Add;
         let adds_readonly = self.mapped_origin(target).is_some_and(|(file, node, _)| {
             self.mapped_decl(file, node).readonly == MappedModifier::Add
         });
+        if let Some(info) = members
+            .shape()
+            .index
+            .iter()
+            .find(|i| i.key == TypeId::STRING)
+        {
+            let value = self.instantiate(info.value, members.mapper);
+            let value = self
+                .infer_reverse_mapped_type(value, target, of)
+                .unwrap_or(TypeId::UNKNOWN);
+            shape.index.push(IndexInfo::new(
+                TypeId::STRING,
+                value,
+                !adds_readonly && info.readonly,
+            ));
+        }
         let limited = self.limited_constraint(target, of);
         for prop in &members.shape().props {
             // Properties that the rest of the constraint filters out would not have passed through
@@ -2119,22 +2174,6 @@ impl<'p, 's> Checker<'p, 's> {
                 mapper: MapperId::IDENTITY,
             });
         }
-        if let Some(info) = members
-            .shape()
-            .index
-            .iter()
-            .find(|i| i.key == TypeId::STRING)
-        {
-            let value = self.instantiate(info.value, members.mapper);
-            let value = self
-                .infer_reverse_mapped_type(value, target, of)
-                .unwrap_or(TypeId::UNKNOWN);
-            shape.index.push(IndexInfo::new(
-                TypeId::STRING,
-                value,
-                !adds_readonly && info.readonly,
-            ));
-        }
         shape
     }
 
@@ -2143,7 +2182,7 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::ReverseMapped { source, mapped, of } = *self.data(ty) else {
             return TypeId::UNRESOLVED;
         };
-        let Some(members) = self.members(source) else {
+        let Some(members) = self.members_of_reduced_apparent_type(source) else {
             return TypeId::UNRESOLVED;
         };
         let Some(prop) = members.resolved.prop(name) else {
@@ -2247,83 +2286,59 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn rest_type_at_position(
         &mut self,
         params: &[SigParam],
-        from: usize,
+        pos: usize,
         readonly: bool,
     ) -> TypeId {
-        // Position by position: `...args: [a: A, b?: B, ...c: C[]]` is equivalent to `a: A, b?: B,
-        // ...c: C[]`.
-        let mut elems = Parts::new();
-        // `getNameableDeclarationAtPosition`: the name of each.
-        let mut labels: SmallVec<[Atom; 8]> = SmallVec::new();
-        let mut rest = None;
-        let mut rest_label = Atom::NONE;
-        for p in params {
-            if !p.rest {
-                elems.push(p.ty);
-                labels.push(p.label());
-                continue;
+        let parameter_count = self.parameter_count(params);
+        let min_argument_count = self.min_argument_count(params);
+        let rest_type = self.effective_rest_type(params);
+        if let Some(rest_type) = rest_type
+            && pos + 1 >= parameter_count
+        {
+            if pos + 1 == parameter_count {
+                return rest_type;
             }
-            let TypeData::Tuple {
-                flags: tf,
-                readonly: tr,
-                ..
-            } = self.data(p.ty)
-            else {
-                rest = Some(if self.is_any(p.ty) {
-                    self.array_of(p.ty)
-                } else {
-                    p.ty
-                });
-                rest_label = p.label();
-                continue;
+            let element = self.indexed_access(rest_type, TypeId::NUMBER);
+            return self.array_of(element);
+        }
+        let mut types = Parts::new();
+        let mut infos: SmallVec<[ElemFlags; 8]> = SmallVec::new();
+        for i in pos..parameter_count {
+            let (ty, flags) = match rest_type {
+                Some(rest_type) if i + 1 == parameter_count => (rest_type, ElemFlags::VARIADIC),
+                _ => (
+                    self.param_type_at(params, i).unwrap_or(TypeId::ANY),
+                    if i < min_argument_count {
+                        ElemFlags::REQUIRED
+                    } else {
+                        ElemFlags::OPTIONAL
+                    },
+                ),
             };
-            let te = self.type_arguments(p.ty);
-            let fixed = tf
-                .iter()
-                .take_while(|f| !f.intersects(ElemFlags::REST | ElemFlags::VARIADIC))
-                .count();
-            elems.extend_from_slice(&te[..fixed]);
-            labels.extend(tf[..fixed].iter().map(|f| f.label()));
-            if fixed < te.len() {
-                rest_label = tf[fixed].label();
-                let tail = self.normalized_tuple(&te[fixed..], &tf[fixed..], *tr);
-                rest = Some(match self.data(tail) {
-                    TypeData::Tuple { flags, .. }
-                        if flags.len() == 1 && flags[0].contains(ElemFlags::REST) =>
-                    {
-                        let element = self.type_arguments(tail)[0];
-                        self.array_of(element)
-                    }
-                    _ => tail,
-                });
-            }
+            types.push(ty);
+            infos.push(flags.with_label(self.nameable_declaration_at_position(params, i)));
         }
-        // Parameters that need no argument are optional, regardless of which are declared with a
-        // `?`.
-        let min = self.min_argument_count(params);
-        let mut flags: SmallVec<[ElemFlags; 8]> = (0..elems.len())
-            .map(|i| {
-                let flag = if i < min {
-                    ElemFlags::REQUIRED
-                } else {
-                    ElemFlags::OPTIONAL
-                };
-                flag.with_label(labels[i])
-            })
-            .collect();
-        if let Some(rest) = rest {
-            if from == elems.len() {
-                return rest;
-            }
-            if from > elems.len() {
-                let element = self.indexed_access(rest, TypeId::NUMBER);
-                return self.array_of(element);
-            }
-            elems.push(rest);
-            flags.push(ElemFlags::VARIADIC.with_label(rest_label));
+        self.normalized_tuple(&types, &infos, readonly)
+    }
+
+    /// `getNameableDeclarationAtPosition`: its name.
+    fn nameable_declaration_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
+        let Some(last) = params.last() else {
+            return Atom::NONE;
+        };
+        let param_count = params.len() - usize::from(last.rest);
+        if pos < param_count {
+            return params[pos].label();
         }
-        let from = from.min(elems.len());
-        self.normalized_tuple(&elems[from..], &flags[from..], readonly)
+        if !last.rest {
+            return Atom::NONE;
+        }
+        match self.data(last.ty) {
+            TypeData::Tuple { flags, .. } => flags
+                .get(pos - param_count)
+                .map_or(Atom::NONE, |info| info.label()),
+            _ => last.label(),
+        }
     }
 
     /// `getBaseSignature`: `sig` with each of its type parameters replaced by its base constraint.
@@ -2332,9 +2347,7 @@ impl<'p, 's> Checker<'p, 's> {
         if params.is_empty() {
             return sig;
         }
-        let outer = self
-            .sig_decl(sig)
-            .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
+        let outer = self.mapper_around_sig(sig);
         let mut bases: SmallVec<[TypeId; 4]> = params
             .iter()
             .map(|&p| match self.constraint_of_type_param(p) {
@@ -2652,13 +2665,17 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let c = &n.candidates[index];
         let param = n.params[index];
+        if param == TypeId::ERROR {
+            return param;
+        }
         // The type containing the signature has been instantiated. A clone already reflects that.
         let outer = if self.is_cloned_type_param(param) {
             MapperId::IDENTITY
         } else {
-            n.sig
-                .and_then(|sig| self.sig_decl(sig))
-                .map_or(n.around, |(_, _, mapper)| mapper)
+            match n.sig {
+                Some(sig) => self.mapper_around_sig(sig),
+                None => n.around,
+            }
         };
         let mut inferred = None;
         let mut fallback = None;
@@ -2891,7 +2908,83 @@ impl<'p, 's> Checker<'p, 's> {
         self.any_type_in(ty, false, |t| t == param)
     }
 
-    /// `couldContainTypeVariables`: whether instantiating `ty` may map a type parameter.
+    /// `couldContainTypeVariables`. It holds wherever `has_type_variables`, which is exact, does,
+    /// and for every type that the original does not look into. Inference to such a type finds no
+    /// candidate, but resolves the parts of the source that it visits.
+    pub(super) fn could_contain_type_variables(&self, ty: TypeId) -> bool {
+        if self.has_type_variables(ty) || self.is_instantiable(ty) {
+            return true;
+        }
+        let some = |types: &[TypeId]| types.iter().any(|&t| self.could_contain_type_variables(t));
+        let generic_kinds = SymFlags::FUNCTION
+            | SymFlags::METHOD
+            | SymFlags::CLASS
+            | SymFlags::TYPE_LITERAL
+            | SymFlags::OBJECT_LITERAL;
+        let (mapper, could_contain) = match self.data(ty) {
+            TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
+                TypeArguments::Given(actual) => (MapperId::IDENTITY, some(actual)),
+                TypeArguments::Deferred(deferred) => (deferred.mapper, true),
+            },
+            TypeData::Anon { origin, mapper } => {
+                let could_contain = match *origin {
+                    Origin::TypeLiteral(..)
+                    | Origin::Mapped(..)
+                    | Origin::ObjectLiteral(..)
+                    | Origin::WidenedLiteral(..) => true,
+                    Origin::ClassStatic(symbol)
+                    | Origin::Function(symbol)
+                    | Origin::EnumObject(symbol)
+                    | Origin::Module(symbol)
+                    | Origin::Namespace { module: symbol, .. } => {
+                        self.files().flags(symbol).intersects(generic_kinds)
+                    }
+                    Origin::GlobalThis => false,
+                };
+                (*mapper, could_contain)
+            }
+            TypeData::Fns { mapper, .. } => (*mapper, true),
+            TypeData::ReverseMapped { .. } => (MapperId::IDENTITY, true),
+            TypeData::Union(types) | TypeData::Intersection(types) => (
+                MapperId::IDENTITY,
+                self.flags(ty) & tf::ENUM_LITERAL == 0 && some(types),
+            ),
+            // Not exact for `Synth`, which records neither its symbol nor whether it is an
+            // instantiation.
+            _ => return false,
+        };
+        // `getObjectTypeInstantiation`: an instantiation could contain what the type arguments for
+        // its outer type parameters could.
+        if mapper != MapperId::IDENTITY {
+            let mut type_arguments = self.types().mapping(mapper).iter().map(|pair| pair.1);
+            return type_arguments.any(|t| self.could_contain_type_variables(t));
+        }
+        could_contain && !self.is_non_generic_top_level_type(ty)
+    }
+
+    /// `isNonGenericTopLevelType`
+    fn is_non_generic_top_level_type(&self, ty: TypeId) -> bool {
+        let Some(alias) = self.alias_symbol_of_type(ty) else {
+            return false;
+        };
+        let declarations = self.files().decls_of(alias);
+        let Some((file, declaration)) = declarations.iter().find_map(|&(file, decl)| match decl {
+            Decl::Alias(declaration) => Some((file, declaration)),
+            _ => None,
+        }) else {
+            return false;
+        };
+        // Declared there, it has type arguments exactly if it has type parameters.
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let parent = bound.scope_of_declaration(hir, Decl::Alias(declaration));
+        hir[declaration].type_params.is_empty()
+            && bound
+                .scopes
+                .get(parent.idx())
+                .is_some_and(|scope| scope.kind == ScopeKind::File)
+    }
+
+    /// Whether instantiating `ty` may map a type parameter.
     fn may_mention_type_parameter(&self, ty: TypeId) -> bool {
         self.types()
             .object_flags(ty)

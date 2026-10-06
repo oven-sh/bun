@@ -7,6 +7,7 @@
 use super::explain_relation::{
     Chain, ErrorState, chain_depth, is_same_chain, visibility_to_string,
 };
+use super::infer::{Inference, PRIORITY_ALWAYS_STRICT, PRIORITY_NO_CONSTRAINTS};
 use super::related::Place;
 use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::*;
@@ -393,6 +394,7 @@ fn is_primitive_kind(data: &TypeData) -> bool {
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
                 | Intrinsic::ImplicitNever
+                | Intrinsic::UniqueLiteral
                 | Intrinsic::Object
         ),
         TypeData::StringLit { .. }
@@ -771,6 +773,7 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
         match members.resolved.prop(name) {
+            Some(_) if self.is_type_only_member(ty, name) => None,
             Some(prop) => Some((prop, members.mapper)),
             None => self.augmented_property(ty, inherited, name),
         }
@@ -810,11 +813,14 @@ impl<'p, 's> Checker<'p, 's> {
         members: &Members<'p>,
         name: Atom,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
-        if let Some(prop) = members.resolved.prop(name) {
-            return Some((prop, members.mapper));
+        match members.resolved.prop(name) {
+            Some(_) if self.is_type_only_member(ty, name) => None,
+            Some(prop) => Some((prop, members.mapper)),
+            None => {
+                let mut inherited = self.inherited_of(members.shape());
+                self.augmented_property(ty, &mut inherited, name)
+            }
         }
-        let mut inherited = self.inherited_of(members.shape());
-        self.augmented_property(ty, &mut inherited, name)
     }
 
     /// `getPropertyOfType(ty, name)` where `ty` does not have `name` itself. `inherited`:
@@ -1825,51 +1831,34 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getInferredTrueTypeFromConditionalType`: the true branch instantiated with
-    /// `combinedMapper`, that is with the inferences `getConditionalType` made before it deferred
-    /// the conditional type. Nothing is inferred from a type that is itself deferred: the inferred
-    /// type parameters are then as wide as possible.
+    /// `combinedMapper`. `getConditionalType` creates it before it defers the conditional type,
+    /// here it is created again.
     fn cond_inferred_true(&mut self, t: TypeId) -> TypeId {
         let params = self.cond_infer_params(t);
-        let (file, _, mapper, nodes) = self.cond_origin(t);
         if params.is_empty() {
             return self.cond_true(t);
         }
+        let (file, _, mapper, nodes) = self.cond_origin(t);
         // `instantiateType(getActualTypeVariable(root.checkType), mapper)`
         let check = self.type_from_node(file, nodes[0]);
         let check = self.actual_type_variable(check);
         let check = self.instantiate(check, mapper);
+        let check_tuples = self
+            .simple_tuple_len(file, nodes[0])
+            .is_some_and(|len| self.simple_tuple_len(file, nodes[1]) == Some(len));
         // `isDeferredType(checkType, checkTuples)`
-        let hir = self.hir(file);
-        let simple_tuple_len = |node: TypeNodeId| match hir[node].kind {
-            TypeNodeKind::Tuple(elems)
-                if !elems.is_empty() && elems.iter().all(|e| !hir[e].optional && !hir[e].rest) =>
-            {
-                Some(elems.iter().count())
-            }
-            _ => None,
-        };
-        let check_tuples =
-            simple_tuple_len(nodes[0]).is_some_and(|len| simple_tuple_len(nodes[1]) == Some(len));
-        let check_is_deferred = self.is_generic(check)
-            || check_tuples
-                && self.is_tuple(check)
-                && self
-                    .type_arguments(check)
-                    .iter()
-                    .any(|&e| self.is_generic(e));
-        let mut pairs = self.types().mapping(mapper).to_vec();
-        if check_is_deferred {
-            for &param in &params {
-                let widest = match self.constraint_of_type_param(param) {
-                    Some(constraint) => self.instantiate(constraint, mapper),
-                    None => TypeId::UNKNOWN,
-                };
-                pairs.push((param, widest));
-            }
-        } else {
+        let check_type_deferred =
+            self.is_generic(check) || check_tuples && self.has_generic_element(check);
+        let mut context = Inference::for_params(&params, None);
+        context.around = mapper;
+        if !check_type_deferred {
             let extends = self.cond_extends(t);
-            let inferred = self.infer_from_types(&params, check, extends, mapper);
-            pairs.extend(params.iter().copied().zip(inferred));
+            let priority = PRIORITY_NO_CONSTRAINTS | PRIORITY_ALWAYS_STRICT;
+            self.infer(&mut context, check, extends, priority);
+        }
+        let mut pairs = self.types().mapping(mapper).to_vec();
+        for (i, &param) in params.iter().enumerate() {
+            pairs.push((param, self.get_inferred_type(&context, i, false)));
         }
         let combined = self.types().mapper(pairs);
         let declared = self.type_from_node(file, nodes[2]);
@@ -1891,17 +1880,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getConstraintOfDistributiveConditionalType`, computed once (`resolvedConstraintOfDistributive`).
     pub(super) fn constraint_of_distributive_conditional(&mut self, t: TypeId) -> Option<TypeId> {
-        // A type that `getRestrictiveInstantiation` returned has none. A conditional type inside
-        // one has.
-        if self
-            .restrictive_operands
-            .last()
-            .is_some_and(|&(source, target)| t == source || t == target)
-        {
-            return None;
-        }
         if let Some(&cached) = self.cond_distributive_memo.get(&t) {
             return cached;
+        }
+        // A type that `getRestrictiveInstantiation` has returned by now has none. A conditional
+        // type inside one has.
+        if self.restrictive_instantiations.contains(&t) {
+            self.cond_distributive_memo.insert(t, None);
+            return None;
         }
         let cycles_before = self.cycles;
         let result = self.constraint_of_distributive_conditional_worker(t);
@@ -1937,11 +1923,23 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         let (file, _, _, nodes) = self.cond_origin(t);
-        let probe = self.mapper_from(&[param], &[TypeId::MARKER_OTHER]);
-        [nodes[2], nodes[3]].into_iter().any(|node| {
-            let declared = self.type_from_node(file, node);
-            self.instantiate(declared, probe) != declared
-        })
+        self.is_type_parameter_possibly_referenced(param, file, nodes[2])
+            || self.is_type_parameter_possibly_referenced(param, file, nodes[3])
+    }
+
+    /// `isTypeParameterPossiblyReferenced`
+    fn is_type_parameter_possibly_referenced(
+        &mut self,
+        tp: TypeId,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> bool {
+        if node.is_none() {
+            return false;
+        }
+        let scope = self.bound(file).type_scope[node.idx()];
+        let referenced = self.identity_mapper_for_node(file, scope, node);
+        self.types().map(referenced, tp).is_some()
     }
 
     // ───────────────────────────── mapped types ─────────────────────────────
@@ -2055,15 +2053,16 @@ impl<'p, 's> Checker<'p, 's> {
         // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. A non-public property has the
         // key type `never`.
         let mut key_types: Vec<TypeId> = Vec::new();
+        let owner = self.reduced_apparent_type_as_object(apparent);
         if self.is_any(apparent) {
             key_types.push(TypeId::STRING);
-        } else if let Some(members) = self.members(apparent) {
+        } else if let Some(members) = self.members(owner) {
             for prop in &members.shape().props {
                 let is_public = !prop
                     .flags
                     .intersects(PropFlags::PRIVATE | PropFlags::PROTECTED);
                 key_types.push(if is_public {
-                    self.key_type_of_name(prop.name).unwrap_or(TypeId::NEVER)
+                    self.key_type_of_prop(owner, prop).unwrap_or(TypeId::NEVER)
                 } else {
                     TypeId::NEVER
                 });
@@ -2906,9 +2905,12 @@ impl<'p, 's> Checker<'p, 's> {
                     let error_target =
                         self.filter(reduced_target, |c, m| c.is_excess_property_check_target(m));
                     let args = [Arg::Prop(prop), Arg::Type(error_target)];
-                    if is_jsx {
+                    if self.is_in_jsx_opening_like_element(r.error_node) {
+                        // `ast.IsJsxAttribute(prop.ValueDeclaration)`
                         if let Some(&PropSource::Literal(file, p)) = Self::value_declaration(prop)
                             && r.error_node.0 == file
+                            && let Some(owner) = self.bound(file).prop_owner[p.idx()].some()
+                            && matches!(self.hir(file)[owner].kind, ExprKind::Jsx(_))
                         {
                             let p = self.bound(file).declarations_of_literal_member(p)[0];
                             let end = self.end_of_jsx_attr_name(file, p);
@@ -2970,6 +2972,17 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    /// `ast.IsJsxOpeningLikeElement(node) || ast.IsJsxOpeningLikeElement(node.Parent)` for the error
+    /// node at `place`: an opening fragment, or the tag name of an opening element. No error node
+    /// is a `JsxAttributes`.
+    fn is_in_jsx_opening_like_element(&self, place: Place) -> bool {
+        let hir = self.hir(place.0);
+        hir.jsx.iter().any(|jsx| match jsx.tag.some() {
+            Some(tag) => (hir[tag].pos, hir[tag].end) == (place.1, place.2),
+            None => jsx.opening_end == place.2,
+        })
+    }
+
     /// `isTypeSubsetOf(globalObjectType, target)`
     pub(super) fn contains_global_object_type(&self, target: TypeId) -> bool {
         self.parts(target)
@@ -2980,15 +2993,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getTypeOfPropertyInType`
     pub(super) fn type_of_property_in_type(&mut self, t: TypeId, name: Atom) -> TypeId {
         let t = self.apparent_type(t);
-        let Some(members) = self.members(t) else {
+        let prop = match self.data(t) {
+            // `getPropertyOfUnionOrIntersectionType`
+            TypeData::Union(_) => self
+                .union_property(t, name)
+                .filter(|prop| !prop.flags.contains(PropFlags::READ_PARTIAL))
+                .map(|prop| (prop, MapperId::IDENTITY)),
+            TypeData::Intersection(_) => match self.members(t) {
+                Some(members) => self.property_in_type(t, &members, name),
+                None => None,
+            },
+            // `getPropertyOfObjectType`
+            _ => self
+                .members(t)
+                .and_then(|members| Some((members.resolved.prop(name)?, members.mapper))),
+        };
+        if let Some((prop, mapper)) = prop {
+            return self.type_of_prop_with_missing(prop, mapper);
+        }
+        let Some(members) = self.members_for_index_infos(t) else {
             return TypeId::UNDEFINED;
         };
-        if let Some(prop) = members.resolved.prop(name) {
-            return self.type_of_prop_with_missing(prop, members.mapper);
-        }
         self.applicable_index_info_for_name(&members, name)
-            .map(|info| info.value)
-            .unwrap_or(TypeId::UNDEFINED)
+            .map_or(TypeId::UNDEFINED, |info| info.value)
     }
 
     /// `isExcessPropertyCheckTarget`
@@ -3044,29 +3071,21 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isWeakType`: properties, all of them optional, and nothing else.
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
-        let data = self.data(t);
-        if let TypeData::Intersection(parts) = data {
-            return parts.iter().all(|&p| self.is_weak_type(p));
+        match self.data(t) {
+            data if is_object_kind(data) => self.members(t).is_some_and(|m| {
+                let s = m.shape();
+                !s.props.is_empty()
+                    && s.call.is_empty()
+                    && s.construct.is_empty()
+                    && s.index.is_empty()
+                    && s.props
+                        .iter()
+                        .all(|p| p.flags.contains(PropFlags::OPTIONAL))
+            }),
+            TypeData::Substitution { base, .. } => self.is_weak_type(*base),
+            TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_weak_type(p)),
+            _ => false,
         }
-        if let TypeData::Substitution { base, .. } = data {
-            return self.is_weak_type(*base);
-        }
-        // `isWeakType` does not ask whether a mapped type is generic, see `is_generic`.
-        if !is_object_kind(data)
-            || is_mapped_kind(data) && self.has_type_variables(t) && self.is_generic(t)
-        {
-            return false;
-        }
-        self.members(t).is_some_and(|m| {
-            let s = m.shape();
-            !s.props.is_empty()
-                && s.call.is_empty()
-                && s.construct.is_empty()
-                && s.index.is_empty()
-                && s.props
-                    .iter()
-                    .all(|p| p.flags.contains(PropFlags::OPTIONAL))
-        })
     }
 
     /// `hasCommonProperties`
@@ -4065,12 +4084,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .any(|&p| self.has_matching_recursion_identity(p, identity)),
-            // Fast path: the identity of a reference is either the type itself or its target symbol.
-            TypeData::Ref { target, .. }
-                if identity != (0, t.0, 0) && identity != (1, target.file.0, target.id.0) =>
-            {
-                false
-            }
+            // Fast path: the identity of a reference that is not deferred is either the type
+            // itself or its target symbol.
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(_),
+            } if identity != (0, t.0, 0) && identity != (1, target.file.0, target.id.0) => false,
             data => self.recursion_identity_as(t, data) == identity,
         }
     }
@@ -4112,13 +4131,28 @@ impl<'p, 's> Checker<'p, 's> {
     /// `data`: the `TypeData` of `t`.
     fn recursion_identity_as(&self, t: TypeId, data: &TypeData) -> RecursionId {
         match data {
+            // `t.AsTypeReference().node != nil`
+            TypeData::Ref {
+                args: TypeArguments::Deferred(deferred),
+                ..
+            }
+            | TypeData::Tuple {
+                elems: TypeArguments::Deferred(deferred),
+                ..
+            } => (2, deferred.file.0, deferred.node.0),
             // `ObjectFlagsFromTypeNode`, `isObjectOrArrayLiteralType`
             TypeData::Ref { .. } | TypeData::Tuple { .. }
                 if self.types().is_from_type_node(t) || self.holds_object_literals(t, data) =>
             {
                 (0, t.0, 0)
             }
-            TypeData::Ref { target, .. } => (1, target.file.0, target.id.0),
+            // The `this` type has the symbol of its class or interface.
+            TypeData::Ref { target: sym, .. }
+            | TypeData::Anon {
+                origin: Origin::Function(sym) | Origin::EnumObject(sym) | Origin::Module(sym),
+                ..
+            }
+            | TypeData::ThisParam(sym) => (1, sym.file.0, sym.id.0),
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                 ..
@@ -4128,11 +4162,9 @@ impl<'p, 's> Checker<'p, 's> {
                 origin: Origin::WidenedLiteral(file, e, ..),
                 ..
             } => (6, file.0, e.0),
-            TypeData::Anon {
-                origin: Origin::Function(sym) | Origin::EnumObject(sym) | Origin::Module(sym),
-                ..
-            } => (3, sym.file.0, sym.id.0),
             TypeData::Fns { decls, .. } => (4, decls[0].0.0, decls[0].1.0),
+            // All clones of a type parameter have its symbol.
+            TypeData::TypeParam(file, tp, _) => (3, file.0, tp.0),
             TypeData::Tuple {
                 flags, readonly, ..
             } => {
@@ -4263,26 +4295,19 @@ impl<'p, 's> Checker<'p, 's> {
             let apparent = members.first().copied().unwrap_or(source);
             // `getPropertyOfType` finds nothing in a type that is not an object type: `any`, which
             // `T & U` resolves to where `U` extends `any`.
-            if self.members(apparent).is_none() {
-                let none = self.synth(Shape::new_in(self.arena));
-                return self.properties_related_to_noting::<REPORT>(
-                    r,
-                    source,
-                    Some(none),
-                    target,
-                    &[],
-                    optionals_only,
-                    state,
-                    &mut None,
-                );
-            }
-            return self.properties_related_to::<REPORT>(
+            let properties = match self.members(apparent) {
+                Some(_) => apparent,
+                None => self.synth(Shape::new_in(self.arena)),
+            };
+            return self.properties_related_to_noting::<REPORT>(
                 r,
-                apparent,
+                source,
+                Some(properties),
                 target,
                 &[],
                 optionals_only,
                 state,
+                &mut None,
             );
         }
         // `getPropertiesOfUnionOrIntersectionType`: "The properties of a union type are those that are present in all constituent
@@ -5805,10 +5830,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let provisional = self.provisional_shapes.len();
-        let (Some(sm), Some(tm)) = (
-            self.members(properties.unwrap_or(source)),
-            self.members(target),
-        ) else {
+        let has_properties = properties.unwrap_or(source);
+        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
             return Ternary::FALSE;
         };
         // A cached shape does not change.
@@ -5828,37 +5851,35 @@ impl<'p, 's> Checker<'p, 's> {
         // `getUnmatchedProperty`
         for tp in &tm.shape().props {
             if !(require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
-                || sm.resolved.prop(tp.name).is_some()
+                || (self.property_among(has_properties, &sm, &mut inherited, tp.name)).is_some()
                 // `isStaticPrivateIdentifierProperty`
                 || self.is_static_private_name(tp)
             {
                 continue;
             }
-            if self.inherited_property(&mut inherited, tp.name).is_none() {
-                // `shouldReportUnmatchedPropertyError`: a function type that lacks the properties
-                // of an object type is a mismatch of kind, not a missing property.
-                let (s, t) = (sm.shape(), tm.shape());
-                if REPORT
-                    && (s.call.is_empty() && s.construct.is_empty()
-                        || !s.props.is_empty() && self.is_object_type(source)
-                        || !t.call.is_empty() && !s.call.is_empty()
-                        || !t.construct.is_empty() && !s.construct.is_empty())
-                {
-                    // `getUnmatchedProperties`
-                    let mut unmatched: Vec<&Prop> = Vec::new();
-                    for tp in &t.props {
-                        if !self.is_static_private_name(tp)
-                            && (require_optional_properties
-                                || !tp.flags.contains(PropFlags::OPTIONAL))
-                            && self.property_in(&sm, tp.name).is_none()
-                        {
-                            unmatched.push(tp);
-                        }
+            // `shouldReportUnmatchedPropertyError`: a function type that lacks the properties of an
+            // object type is a mismatch of kind, not a missing property.
+            let (s, t) = (sm.shape(), tm.shape());
+            if REPORT
+                && (s.call.is_empty() && s.construct.is_empty()
+                    || !s.props.is_empty() && self.is_object_type(source)
+                    || !t.call.is_empty() && !s.call.is_empty()
+                    || !t.construct.is_empty() && !s.construct.is_empty())
+            {
+                // `getUnmatchedProperties`
+                let mut unmatched: Vec<&Prop> = Vec::new();
+                for tp in &t.props {
+                    if !self.is_static_private_name(tp)
+                        && (require_optional_properties || !tp.flags.contains(PropFlags::OPTIONAL))
+                        && (self.property_among(has_properties, &sm, &mut inherited, tp.name))
+                            .is_none()
+                    {
+                        unmatched.push(tp);
                     }
-                    self.report_unmatched_property(r, source, target, &sm, &unmatched);
                 }
-                return Ternary::FALSE;
+                self.report_unmatched_property(r, source, target, &sm, &unmatched);
             }
+            return Ternary::FALSE;
         }
         if is_object_literal_kind(td) {
             for sp in &sm.shape().props {
@@ -5903,7 +5924,6 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 continue;
             }
-            let has_properties = properties.unwrap_or(source);
             let Some((sp, source_mapper)) =
                 self.property_among(has_properties, &sm, &mut inherited, tp.name)
             else {
@@ -6179,19 +6199,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// The `private` or `protected` modifier, or neither, of the constructor declaration of `sig`.
     /// `None`: it has no declaration.
     pub(super) fn constructor_accessibility(&mut self, sig: SigId) -> Option<Flags> {
-        let mut sig = sig;
-        for _ in 0..64 {
-            match *self.types().sig(self.types().sig_origin(sig)) {
-                SigData::Construct { file, func, .. } | SigData::Decl { file, func, .. } => {
-                    return Some(self.hir(file)[func].flags & (Flags::PRIVATE | Flags::PROTECTED));
-                }
-                // `getDefaultConstructSignatures`: a clone of a signature of the base class, with
-                // the same declaration.
-                SigData::DefaultConstruct { base, .. } => sig = base?,
-                _ => return None,
-            }
-        }
-        None
+        let declared = self.declared_sig(sig);
+        let (file, func, _) = self.sig_decl(declared)?;
+        Some(self.hir(file)[func].flags & (Flags::PRIVATE | Flags::PROTECTED))
     }
 
     /// `signaturesRelatedTo`
@@ -6521,37 +6531,124 @@ impl<'p, 's> Checker<'p, 's> {
         self.has_any_flag(ret) || ret == TypeId::UNKNOWN
     }
 
-    /// `isInstantiatedGenericParameter`. `target`: `Signature.target` of `sig`, once it has been
-    /// requested.
-    fn is_instantiated_generic_parameter_of(
+    /// `getCanonicalSignature`
+    fn canonical_sig(&mut self, sig: SigId) -> SigId {
+        let params = self.sig_type_params(sig);
+        if params.is_empty() {
+            return sig;
+        }
+        let mut type_arguments: SmallVec<[TypeId; 8]> = SmallVec::from_slice(&params);
+        for argument in &mut type_arguments {
+            if let TypeData::TypeParam(file, tp, around) = *self.data(*argument)
+                && around != MapperId::IDENTITY
+            {
+                let declared = self.type_param(file, tp);
+                if self.constraint_of_type_param(declared).is_none() {
+                    *argument = declared;
+                }
+            }
+        }
+        self.with_own_type_params(sig, &params, &type_arguments)
+    }
+
+    /// `isInstantiatedGenericParameter`. `target`: `Signature.target` of `sig`, once it is known.
+    fn is_instantiated_generic_parameter(
         &mut self,
         target: &mut Option<Option<SigId>>,
         sig: SigId,
         index: usize,
     ) -> bool {
-        let declared = match *target {
-            Some(known) => known,
-            None => {
-                let found = self.sig_instantiated_from(sig);
-                *target = Some(found);
-                found
-            }
-        };
-        let Some(declared) = declared else {
+        let Some(target) = *target.get_or_insert_with(|| self.sig_target(sig)) else {
             return false;
         };
-        let params = self.sig_params(declared);
+        let params = self.sig_params(target);
         self.param_type_at(&params, index)
             .is_some_and(|ty| self.is_generic(ty))
     }
 
-    /// The declared signature that `sig` is an instantiation of.
-    fn sig_instantiated_from(&mut self, sig: SigId) -> Option<SigId> {
-        // `cloneSignature` preserves the target.
-        let sig = self.types().sig_origin(sig);
-        let (file, func, _) = self.sig_decl(sig)?;
-        let declared = self.sig_of_fn(file, func);
-        (declared != sig).then_some(declared)
+    /// `Signature.target`: the signature that `sig` was instantiated from, one step back. A
+    /// signature is stored as a declaration with a single mapper. Type arguments for its own type
+    /// parameters are the last step: `getErasedSignature`, `getCanonicalSignature` and
+    /// `getSignatureInstantiation` apply them to a signature that has its outer mapping already.
+    fn sig_target(&mut self, sig: SigId) -> Option<SigId> {
+        match *self.types().sig(sig) {
+            // `cloneSignature` preserves the target.
+            SigData::WithReturn { sig: inner, .. } => self.sig_target(inner),
+            SigData::Synth { ref of, .. } => match of[..] {
+                [only] => self.sig_target(only),
+                // `createUnionSignature`, `combineUnionOrIntersectionMemberSignatures`
+                _ => None,
+            },
+            SigData::Decl { file, func, mapper } => {
+                let declared = self.sig_of_fn(file, func);
+                let own = self.hir(file)[func].type_params;
+                if own
+                    .iter()
+                    .all(|tp| self.open_type_param(file, func, tp, mapper).is_some())
+                {
+                    return (declared != sig).then_some(declared);
+                }
+                let outer = (self.types().mapping(mapper).iter().copied())
+                    .filter(|pair| !self.is_declared_among(pair.0, file, own))
+                    .collect();
+                let outer = self.types().mapper(outer);
+                Some(self.instantiate_sig(declared, outer))
+            }
+            SigData::Construct {
+                class,
+                file,
+                func,
+                mapper,
+            } => match self.without_type_arguments_of_class(class, mapper) {
+                Some(mapper) => Some(self.types().intern_sig(SigData::Construct {
+                    class,
+                    file,
+                    func,
+                    mapper,
+                })),
+                None => {
+                    let declared = self.sig_of_fn(file, func);
+                    (declared != sig).then_some(declared)
+                }
+            },
+            SigData::DefaultConstruct {
+                class,
+                base,
+                mapper,
+            } => {
+                let mapper = match self.without_type_arguments_of_class(class, mapper) {
+                    Some(mapper) => mapper,
+                    None if self.is_instantiating(mapper) => {
+                        let declared = (self.types().mapping(mapper).iter())
+                            .map(|pair| (pair.0, pair.0))
+                            .collect();
+                        self.types().mapper(declared)
+                    }
+                    // `getDefaultConstructSignatures`: an instantiation of a generic signature of
+                    // the base constructor type, a clone of any other.
+                    None => return self.sig_target(base?),
+                };
+                Some(self.types().intern_sig(SigData::DefaultConstruct {
+                    class,
+                    base,
+                    mapper,
+                }))
+            }
+        }
+    }
+
+    /// The mapper of a construct signature of `class` before its type parameters, which are those
+    /// of the class, got the type arguments that `mapper` has for them. `None`: it has none.
+    fn without_type_arguments_of_class(&self, class: Sym, mapper: MapperId) -> Option<MapperId> {
+        let own = self.local_type_params_of_symbol(class);
+        let mapping = self.types().mapping(mapper);
+        if !mapping.iter().any(|pair| own.contains(&pair.0)) {
+            return None;
+        }
+        let outer = (mapping.iter().copied())
+            .filter(|pair| !own.contains(&pair.0))
+            .collect();
+        Some(self.types().mapper(outer))
     }
 
     /// `elementInfos` of the tuple type of the rest parameter, if it has one.
@@ -6676,8 +6773,8 @@ impl<'p, 's> Checker<'p, 's> {
         if source_is_top && !target_is_top {
             return Ternary::FALSE;
         }
-        let mut source = source;
-        let tp = self.sig_params(target);
+        let (mut source, mut target) = (source, target);
+        let mut tp = self.sig_params(target);
         let target_count = self.parameter_count(&tp);
         {
             let sp = self.sig_params(source);
@@ -6696,11 +6793,20 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::FALSE;
             }
         }
+        // `instantiateSignatureEx`: `result.target = sig`
+        let mut signature_targets = (
+            (source != as_passed.0).then_some(Some(as_passed.0)),
+            (target != as_passed.1).then_some(Some(as_passed.1)),
+        );
         let source_type_params = self.sig_type_params(source);
-        let mut source_instantiated_from = None;
         if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
-            // `instantiateSignature`: `result.target = signature`
-            source_instantiated_from = Some(Some(source));
+            let canonical = self.canonical_sig(target);
+            if canonical != target {
+                signature_targets.1 = Some(Some(target));
+                target = canonical;
+                tp = self.sig_params(target);
+            }
+            signature_targets.0 = Some(Some(source));
             source = self.instantiate_sig_in_context(source, target, true, &mut |c, s, t| {
                 c.is_related_to_ex::<false>(r, s, t, REC_BOTH, state) != Ternary::FALSE
             });
@@ -6713,7 +6819,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.report_unreliable(rest);
         }
         // Method parameters are compared bivariantly, all other parameters contravariantly.
-        let is_method = match self.sig_decl(target) {
+        let declared = self.declared_sig(target);
+        let is_method = match self.sig_decl(declared) {
             Some((file, func, _)) => matches!(
                 self.hir(file)[func].kind,
                 FnKind::Method | FnKind::Constructor
@@ -6760,7 +6867,6 @@ impl<'p, 's> Checker<'p, 's> {
             List::Own(_) => self.sig_params_compared_up_to(sig, param_count),
             stored => stored,
         });
-        let mut actual_from = (source_instantiated_from, None);
         for i in 0..param_count {
             let (source_type, target_type) = if Some(i) == rest_index {
                 (
@@ -6780,31 +6886,32 @@ impl<'p, 's> Checker<'p, 's> {
             // however it uses it. Two callback parameters are compared signature to signature in
             // the reverse direction: the parameters of a callback are outputs, like a return value.
             // That keeps `Promise<T>` covariant and not bivariant.
-            let mut callbacks = None;
-            if check_mode & CALLBACK == 0
-                && !self.is_instantiated_generic_parameter_of(&mut actual_from.0, as_passed.0, i)
-                && !self.is_instantiated_generic_parameter_of(&mut actual_from.1, as_passed.1, i)
-            {
-                let nullish = |c: &Self, ty: TypeId| {
-                    (
-                        c.some_type(ty, |_, m| m.is_undefined()),
-                        c.some_type(ty, |_, m| m.is_null()),
-                    )
-                };
-                if nullish(self, source_type) == nullish(self, target_type) {
-                    let (a, b) = (
-                        self.non_nullable(source_type),
-                        self.non_nullable(target_type),
-                    );
-                    if let (Some(a), Some(b)) =
-                        (self.single_call_signature(a), self.single_call_signature(b))
-                        && self.sig_predicate(a).is_none()
-                        && self.sig_predicate(b).is_none()
-                    {
-                        callbacks = Some((a, b));
-                    }
+            let (mut source_sig, mut target_sig) = (None, None);
+            if check_mode & CALLBACK == 0 {
+                if !self.is_instantiated_generic_parameter(&mut signature_targets.0, source, i) {
+                    let non_nullable = self.non_nullable(source_type);
+                    source_sig = self.single_call_signature(non_nullable);
+                }
+                if !self.is_instantiated_generic_parameter(&mut signature_targets.1, target, i) {
+                    let non_nullable = self.non_nullable(target_type);
+                    target_sig = self.single_call_signature(non_nullable);
                 }
             }
+            // `TypeFactsIsUndefinedOrNull` of a function type, or a union of one with others that
+            // `GetNonNullableType` removes.
+            let nullish = |c: &Self, ty: TypeId| {
+                (
+                    c.some_type(ty, |_, m| m.is_undefined()),
+                    c.some_type(ty, |_, m| m.is_null()),
+                )
+            };
+            let callbacks = source_sig
+                .zip(target_sig)
+                .filter(|&(source_sig, target_sig)| {
+                    self.sig_predicate(source_sig).is_none()
+                        && self.sig_predicate(target_sig).is_none()
+                        && nullish(self, source_type) == nullish(self, target_type)
+                });
             let mut related = match callbacks {
                 Some((source_sig, target_sig)) => {
                     let mode = check_mode & STRICT_ARITY
@@ -7170,47 +7277,64 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isObjectTypeWithInferableIndex`: known to have no properties other than the visible ones.
     pub(super) fn is_object_type_with_inferable_index(&mut self, t: TypeId) -> bool {
-        match self.data(t) {
+        // `t.symbol.Flags`
+        let flags = match *self.data(t) {
+            TypeData::Intersection(ref parts) => {
+                return parts
+                    .iter()
+                    .all(|&p| self.is_object_type_with_inferable_index(p));
+            }
             // It has no symbol.
-            TypeData::Synth(shape)
-                if matches!(
-                    shape.literal,
-                    Literalness::OfUnknown | Literalness::AutoArray | Literalness::OfLiteralKeyof
-                ) || Self::is_any_function_shape(shape) =>
-            {
-                false
-            }
-            TypeData::Intersection(parts) => parts
-                .iter()
-                .all(|&p| self.is_object_type_with_inferable_index(p)),
-            // `cloneTypeAsModuleType`: its symbol has the flags of the imported symbol, and the
-            // signatures are dropped.
-            TypeData::Anon {
-                origin: Origin::Namespace { module, .. },
-                ..
-            } => {
-                let flags = self.files().flags(*module);
-                flags.intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE)
-                    && !flags.contains(SymFlags::CLASS)
-            }
-            // Determined by its source type.
             TypeData::ReverseMapped { source, .. } => {
-                self.is_object_type_with_inferable_index(*source)
+                return self.is_object_type_with_inferable_index(source);
             }
+            TypeData::Synth(ref shape)
+                if shape.has_no_instantiable_symbol
+                    || matches!(
+                        shape.literal,
+                        Literalness::OfUnknown
+                            | Literalness::AutoArray
+                            | Literalness::OfLiteralKeyof
+                    )
+                    || Self::is_any_function_shape(shape) =>
+            {
+                return false;
+            }
+            // Or it has `ObjectFlagsObjectRestType`.
+            TypeData::Synth(_)
+            | TypeData::Anon {
+                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                ..
+            } => SymFlags::OBJECT_LITERAL,
+            TypeData::Anon {
+                origin: Origin::TypeLiteral(..) | Origin::Mapped(..),
+                ..
+            } => SymFlags::TYPE_LITERAL,
+            TypeData::Anon {
+                origin: Origin::GlobalThis,
+                ..
+            } => SymFlags::VALUE_MODULE,
+            // `cloneTypeAsModuleType`: its symbol has the flags of the imported symbol.
             TypeData::Anon {
                 origin:
-                    Origin::ObjectLiteral(..)
-                    | Origin::WidenedLiteral(..)
-                    | Origin::TypeLiteral(..)
-                    | Origin::Mapped(..)
-                    | Origin::EnumObject(_)
-                    | Origin::Module(_)
-                    | Origin::GlobalThis,
+                    Origin::ClassStatic(symbol)
+                    | Origin::Function(symbol)
+                    | Origin::EnumObject(symbol)
+                    | Origin::Module(symbol)
+                    | Origin::Namespace { module: symbol, .. },
                 ..
             }
-            | TypeData::Synth(_) => !self.has_call_or_construct_signatures(t),
-            _ => false,
-        }
+            | TypeData::Ref { target: symbol, .. }
+            | TypeData::Enum { symbol, .. } => self.files().flags(symbol),
+            _ => return false,
+        };
+        flags.intersects(
+            SymFlags::OBJECT_LITERAL
+                | SymFlags::TYPE_LITERAL
+                | SymFlags::ENUM
+                | SymFlags::VALUE_MODULE,
+        ) && !flags.contains(SymFlags::CLASS)
+            && !self.has_call_or_construct_signatures(t)
     }
 
     /// `isApplicableIndexType(getLiteralTypeFromProperty(prop, ..), key)`. `owner`: the type that

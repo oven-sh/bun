@@ -1,7 +1,8 @@
 //! Enums and names: where a `const` enum may be used, and the specialized diagnostics for names
 //! that resolve, or fail to resolve, in particular ways.
 //!
-//! 2475 2476, 2397, 1281, 2311 18004, 2690, 2686.
+//! 2475 2476, 2397, 1281, 2311 18004, 2690, 2686; at a JSX tag and at the first name of an import
+//! alias also 2448 2449 2450, 2372 2373.
 //!
 //! Follows `isBlockScopedNameDeclaredBeforeUse`, `checkConstEnumAccess`,
 //! `checkElementAccessExpression`, `initializeChecker`,
@@ -30,6 +31,7 @@ impl Checker<'_, '_> {
         self.check_x_built_in_global_names(file);
         self.check_x_names_from_other_files(file);
         self.check_x_umd_globals(file);
+        self.check_x_jsx_factories(file);
     }
 
     // ───────────────────────────── `const` enums ─────────────────────────────
@@ -229,62 +231,113 @@ impl Checker<'_, '_> {
     /// `onSuccessfullyResolvedSymbol`: 2686, the UMD global name of a module is only for scripts.
     fn check_x_umd_globals(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        let resolves_to_umd_global = |name: Atom, scope: ScopeId, meaning: SymFlags| {
-            resolves_to_umd_global(files, file, scope, name, meaning)
-        };
         for &(e, scope) in &bound.free_idents {
             if let ExprKind::Ident(name) = hir[e].kind
                 && !bound.is_unchecked(e.idx())
-                && resolves_to_umd_global(name, scope, SymFlags::VALUE)
+                && resolves_to_umd_global(files, file, scope, name, SymFlags::VALUE)
             {
                 self.error_at((file, hir[e].pos, 0), 2686, &[Arg::Atom(name)]);
             }
         }
-        // `markJsxAliasReferenced`: the JSX factory is resolved at every tag, and at a fragment the
-        // fragment factory too.
+    }
+
+    /// `markJsxAliasReferenced`, where a name it looks up resolves: the JSX factory at every tag
+    /// name, and at an opening fragment the fragment factory too.
+    fn check_x_jsx_factories(&mut self, file: FileId) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let options = &files.options;
-        if hir.jsx.is_empty()
-            || options.jsx != crate::resolve::JsxEmit::React
-            || crate::program::jsx_runtime_of(options, hir, &files.atoms).is_some()
-        {
+        // `jsxFactoryRefErr`: otherwise `Resolve` reports nothing.
+        if hir.jsx.is_empty() || options.jsx != crate::resolve::JsxEmit::React {
+            return;
+        }
+        // `getJsxNamespaceContainerForImplicitImport`
+        let path = files.module(file).file_name();
+        let implicit_import = crate::program::jsx_runtime_of(options, hir, &files.atoms)
+            .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
+            .and_then(|spec| files.module_of_specifier(file, self.atoms().intern(&spec)));
+        if implicit_import.is_some() {
             return;
         }
         let (factory, fragment_factory) = (
             super::errors_jsx::jsx_namespace(files, self.atoms(), hir, false),
             super::errors_jsx::jsx_namespace(files, self.atoms(), hir, true),
         );
-        // The scope of a tag is not recorded, so any declaration of that name anywhere in the file
-        // may be the referent.
-        let is_umd_global = |name: Atom| {
-            resolves_to_umd_global(name, ScopeId(0), SymFlags::VALUE)
-                && !bound.symbols.iter().any(|s| {
-                    s.name == name
-                        && s.flags.intersects(SymFlags::VALUE | SymFlags::ALIAS)
-                        && !s.flags.intersects(SymFlags::CLASS_MEMBER)
-                        && !s.flags.contains(SymFlags::TRANSIENT)
-                })
-        };
-        let of_elements = is_umd_global(factory);
-        let of_fragments = of_elements || is_umd_global(fragment_factory);
-        if !of_fragments {
-            return;
-        }
-        for (i, x) in hir.exprs.iter().enumerate() {
-            let ExprKind::Jsx(jsx) = x.kind else { continue };
-            if bound.is_unchecked(i) {
+        let looks_up_fragment_factory =
+            fragment_factory != factory && self.atoms().bytes(fragment_factory) != b"null";
+        let index = self.exprs_by_kind(file);
+        for &e in index.of(ExprTag::Jsx) {
+            let ExprKind::Jsx(jsx) = hir[e].kind else {
+                continue;
+            };
+            if bound.is_unchecked(e.idx()) {
                 continue;
             }
-            if hir[jsx].tag.is_none() {
-                let looked_up = if is_umd_global(fragment_factory) {
-                    fragment_factory
-                } else {
-                    factory
-                };
-                let end = hir[jsx].opening_end;
-                self.error_at((file, x.pos, end), 2686, &[Arg::Atom(looked_up)]);
-            } else if of_elements {
-                self.error(file, hir[jsx].tag, 2686, &[Arg::Atom(factory)]);
+            let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
+            let is_opening_fragment = hir[jsx].tag.is_none();
+            let jsx_factory_location = if is_opening_fragment {
+                hir.node(e).with(Part::Opening)
+            } else {
+                hir.node(hir[jsx].tag)
+            };
+            let names = [
+                (is_opening_fragment && looks_up_fragment_factory).then_some(fragment_factory),
+                Some(factory),
+            ];
+            for name in names.into_iter().flatten() {
+                let meaning = SymFlags::VALUE;
+                if let Some(result) = files.resolve_name(file, scope, name, meaning) {
+                    self.on_successfully_resolved_symbol(
+                        file,
+                        jsx_factory_location,
+                        scope,
+                        result,
+                        meaning,
+                    );
+                }
             }
+        }
+    }
+
+    /// `onSuccessfullyResolvedSymbol` for `result`, which a name looked up from `scope` resolved
+    /// to, at an `error_location` that is not an identifier expression: those are checked by the
+    /// passes over the identifiers of a file. 1361 and 1362 at a tag name are reported by
+    /// `check_type_only_jsx_factory`; the first name of an import alias is a valid use site.
+    pub(super) fn on_successfully_resolved_symbol(
+        &mut self,
+        file: FileId,
+        error_location: Node,
+        scope: ScopeId,
+        result: Sym,
+        meaning: SymFlags,
+    ) {
+        let (hir, files) = (self.hir(file), self.files());
+        let classes_and_enums = SymFlags::CLASS | SymFlags::ENUM;
+        if meaning.intersects(SymFlags::BLOCK_SCOPED_VARIABLE)
+            || meaning.intersects(classes_and_enums) && meaning.contains(SymFlags::VALUE)
+        {
+            let export_or_local_symbol = files.export_symbol_of_value_symbol_if_exported(result);
+            if files
+                .flags(export_or_local_symbol)
+                .intersects(SymFlags::BLOCK_SCOPED_VARIABLE | classes_and_enums)
+            {
+                self.check_resolved_block_scoped_variable(
+                    file,
+                    export_or_local_symbol,
+                    error_location,
+                );
+            }
+        }
+        if !meaning.contains(SymFlags::VALUE) {
+            return;
+        }
+        let name = files.symbol(result).name;
+        if resolves_to_umd_global(files, file, scope, name, meaning) {
+            self.error(file, error_location, 2686, &[Arg::Atom(name)]);
+        }
+        let associated_declaration =
+            associated_declaration_for_containing_initializer_or_binding_name(hir, error_location);
+        if associated_declaration.is_some() {
+            self.check_reference_in_parameter(file, error_location, result, associated_declaration);
         }
     }
 }
@@ -351,6 +404,66 @@ pub(super) fn resolves_to_umd_global(
                 && flags != SymFlags::all()
                 && flags.intersects(meaning)
         })
+}
+
+/// `Resolve`: `associatedDeclarationForContainingInitializerOrBindingName` of a name looked up from
+/// `location`. `NONE`: it has none, or it is `withinDeferredContext` by then.
+fn associated_declaration_for_containing_initializer_or_binding_name(
+    hir: &hir::File,
+    mut location: Node,
+) -> Node {
+    let mut last_location = Node::NONE;
+    while location.is_some() {
+        if get_is_deferred_context(hir, location, last_location) {
+            return Node::NONE;
+        }
+        match hir.kind(location) {
+            Kind::Decorator => {
+                if hir.kind(hir.parent(location)) == Kind::Parameter {
+                    location = hir.parent(location);
+                }
+                let parent = hir.kind(hir.parent(location));
+                if parent.is_class_element() || parent == Kind::ClassDeclaration {
+                    location = hir.parent(location);
+                }
+            }
+            Kind::Parameter | Kind::BindingElement
+                if last_location.is_some()
+                    && (last_location == hir.initializer(location)
+                        || last_location == hir.name(location)
+                            && matches!(
+                                hir.kind(last_location),
+                                Kind::ObjectBindingPattern | Kind::ArrayBindingPattern
+                            ))
+                    && hir.kind(hir.get_root_declaration(location)) == Kind::Parameter =>
+            {
+                return location;
+            }
+            _ => {}
+        }
+        last_location = location;
+        location = hir.parent(location);
+    }
+    Node::NONE
+}
+
+/// `getIsDeferredContext`
+fn get_is_deferred_context(hir: &hir::File, location: Node, last_location: Node) -> bool {
+    let kind = hir.kind(location);
+    let is_in_name = last_location.is_some() && last_location == hir.name(location);
+    if !matches!(kind, Kind::ArrowFunction | Kind::FunctionExpression) {
+        return kind == Kind::TypeQuery
+            || (kind.is_function_like_declaration()
+                || kind == Kind::PropertyDeclaration && !hir.is_static(location))
+                && !is_in_name;
+    }
+    !is_in_name
+        && (hir
+            .flags(location)
+            .intersects(Flags::ASYNC | Flags::GENERATOR)
+            || hir
+                .get_immediately_invoked_function_expression(location)
+                .is_none())
 }
 
 /// The global symbol named `name`, if it is declared only by `export as namespace name`.

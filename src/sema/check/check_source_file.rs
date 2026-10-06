@@ -200,12 +200,14 @@ impl<'s> Checker<'_, 's> {
             self.task.withhold_tables_of_records();
         }
         self.has_ambient_context = true;
+        self.save_deferred_diagnostics = true;
         let hir = self.hir(file);
         for s in hir.ids(hir.body) {
             if (from..to).contains(&hir[s].start) {
                 self.check_source_element(file, s);
             }
         }
+        self.produce_type_not_iterable_errors(0);
         self.reported.clear();
         self.task.diagnostics.retain(|(owner, _)| owner.is_some());
         let is_cut_short = self.ran_out_of_stack.replace(false)
@@ -551,7 +553,7 @@ impl<'s> Checker<'_, 's> {
         }
         let ty = self.reduced(ty);
         let list = self.readonly_array_of(TypeId::ANY);
-        if !matches!(self.data(ty), TypeData::Cond { .. }) && !self.is_assignable(ty, list) {
+        if !self.is_assignable(ty, list) {
             self.error(file, p, 2370, &[]);
         }
     }
@@ -647,6 +649,12 @@ impl<'s> Checker<'_, 's> {
                     }
                     self.check_binding_element_accessibility(file, pat, hir[p].value);
                     let (name, prop) = (hir[p].value, &hir[p]);
+                    // "For a commonjs `const x = require`, validate the alias and exit"
+                    if matches!(hir[name].kind, PatKind::Ident(_))
+                        && self.bound(file).required_by(hir, name).is_some()
+                    {
+                        continue;
+                    }
                     // `{ a: b }` in a signature gets TS2842 (unused renaming) instead of TS2371.
                     if self.check_name_and_initializer(file, name, prop.default, is_bodiless)
                         && (prop.is_rest
@@ -676,6 +684,12 @@ impl<'s> Checker<'_, 's> {
                         );
                     }
                     self.check_binding_element_accessibility(file, pat, hir[e].pat);
+                    // "For a commonjs `const x = require`, validate the alias and exit"
+                    if matches!(hir[hir[e].pat].kind, PatKind::Ident(_))
+                        && self.bound(file).required_by(hir, hir[e].pat).is_some()
+                    {
+                        continue;
+                    }
                     if self.check_name_and_initializer(
                         file,
                         hir[e].pat,
@@ -1558,9 +1572,18 @@ impl<'s> Checker<'_, 's> {
                     }
                     if matches!(hir[p].kind, PropKind::Getter | PropKind::Setter) {
                         self.check_node_deferred(file, hir[p].value);
-                    } else {
-                        self.check_expression(file, hir[p].value);
+                        continue;
                     }
+                    // `checkShorthandPropertyAssignment`
+                    let expr = match hir.exprs.get(hir[p].value.idx()).map(|value| value.kind) {
+                        Some(ExprKind::Assign { target, value, .. })
+                            if self.is_name_with_object_assignment_initializer(file, target) =>
+                        {
+                            value
+                        }
+                        _ => hir[p].value,
+                    };
+                    self.check_expression(file, expr);
                 }
             }
             // `checkFunctionExpressionOrObjectLiteralMethod`: the signature now, and its return
@@ -1730,6 +1753,24 @@ impl<'s> Checker<'_, 's> {
             ExprKind::Jsx(_) => self.check_node_deferred(file, e),
             _ => {}
         }
+    }
+
+    /// Whether `e` is the name of `{ e = 1 }` outside a destructuring pattern, where
+    /// `checkShorthandPropertyAssignment` checks the `ObjectAssignmentInitializer` in its place:
+    /// nothing resolves the name.
+    pub(super) fn is_name_with_object_assignment_initializer(
+        &self,
+        file: FileId,
+        e: ExprId,
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Some(&Parent::Expr(assignment)) = bound.expr_parent.get(e.idx()) else {
+            return false;
+        };
+        matches!(hir[assignment].kind, ExprKind::Assign { op: None, target, .. } if target == e)
+            && matches!(bound.expr_parent[assignment.idx()], Parent::Prop(p)
+                if hir[p].kind == PropKind::Shorthand
+                    && bound.get_assignment_target(hir, bound.prop_owner[p.idx()]).is_none())
     }
 
     /// `checkDestructuringAssignment`, restricted to what it visits: a literal is destructured, and

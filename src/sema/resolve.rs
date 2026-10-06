@@ -301,7 +301,12 @@ impl Options {
     }
 
     /// The index of the file with this name in a table that is sorted by `tspath.Path`.
-    fn find_by_path<T>(&self, table: &[T], path: fn(&T) -> &Vec<u8>, name: &[u8]) -> Option<usize> {
+    pub(crate) fn find_by_path<T>(
+        &self,
+        table: &[T],
+        path: fn(&T) -> &Vec<u8>,
+        name: &[u8],
+    ) -> Option<usize> {
         let find = |name: &[u8]| table.binary_search_by(|it| path(it)[..].cmp(name)).ok();
         if table.is_empty() {
             return None;
@@ -442,6 +447,8 @@ pub struct Options {
     /// `strict`, which defaults to true.
     pub strict_null_checks: bool,
     pub no_implicit_any: bool,
+    /// `NoImplicitAny.DefaultIfUnknown(Strict).IsTrue()`: without the default of `strict`.
+    pub specifies_no_implicit_any: bool,
     pub strict_function_types: bool,
     pub strict_bind_call_apply: bool,
     pub use_unknown_in_catch_variables: bool,
@@ -534,7 +541,7 @@ pub struct Options {
     pub specifies_module_resolution: bool,
     /// `GetEmitModuleDetectionKind`: the effective `moduleDetection`, specified or defaulted.
     pub module_detection: ModuleDetection,
-    /// The entries of `files`, as absolute paths.
+    /// `FileNames`: the root files.
     pub files: Vec<Vec<u8>>,
     pub jsx_import_source: Vec<u8>,
     /// The module that every source file imports implicitly: `react/jsx-runtime`. Empty if there is
@@ -725,6 +732,8 @@ impl Options {
         options.strict_builtin_iterator_return = strict_flag(b"strictBuiltinIteratorReturn");
         options.strict_null_checks = strict_flag(b"strictNullChecks");
         options.no_implicit_any = strict_flag(b"noImplicitAny");
+        options.specifies_no_implicit_any =
+            specified(b"noImplicitAny").or_else(|| specified(b"strict")) == Some(true);
         options.strict_function_types = strict_flag(b"strictFunctionTypes");
         options.strict_bind_call_apply = strict_flag(b"strictBindCallApply");
         options.use_unknown_in_catch_variables = strict_flag(b"useUnknownInCatchVariables");
@@ -1063,6 +1072,8 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
 
 struct Package<'h> {
     json: Json,
+    /// `Name` and `Version`, if both are strings: without them `getPackageId` makes no id.
+    name_and_version: Option<(&'h [u8], &'h [u8])>,
     /// `readPackageJsonPeerDependencies`
     peer_dependencies: std::sync::OnceLock<&'h [u8]>,
 }
@@ -1111,15 +1122,12 @@ struct Outcome {
     found_package: Cell<bool>,
     /// `IsExternalLibraryImport`
     is_external: Cell<bool>,
-    /// `resolved.packageId` stays empty: `nodeLoadModuleByRelativeName` sets it for a file, and
-    /// `loadNodeModuleFromDirectory` does not.
-    lacks_package_id: Cell<bool>,
-    /// `PackageDirectory` of the `packageInfo` that `getPackageId` is called with, before symlinks
-    /// are resolved. Empty until a file is found.
-    package_directory: RefCell<Vec<u8>>,
-    /// `resolved.path` before symlinks are resolved, which `getPackageId` is called with. Only kept
-    /// for the log.
-    found_at: RefCell<Vec<u8>>,
+    /// `resolved.packageId`, as what `getPackageId` has made it of: `PackageDirectory` of the
+    /// `packageInfo`, and `resolved.path`, both before symlinks are resolved. `None`: it is empty,
+    /// as it is in every `resolved` that `tryFile` has found the file of.
+    package_id: RefCell<Option<(Vec<u8>, Vec<u8>)>>,
+    /// `resolved.originalPath != ""`
+    has_original_path: Cell<bool>,
 }
 
 /// `resolutionState`: the parameters of a lookup.
@@ -1263,6 +1271,26 @@ enum IsImports {
     Yes,
 }
 
+/// `module.PackageId`, with a `Name`. The texts live as long as the resolver.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PackageId<'h> {
+    pub name: &'h [u8],
+    pub sub_module_name: &'h [u8],
+    pub version: &'h [u8],
+    pub peer_dependencies: &'h [u8],
+}
+
+impl PackageId<'_> {
+    /// `PackageId.String`
+    pub fn to_bytes(self) -> Vec<u8> {
+        let (version, peers) = (self.version, self.peer_dependencies);
+        match self.sub_module_name {
+            b"" => [self.name, b"@", version, peers].concat(),
+            sub_module_name => [self.name, b"/", sub_module_name, b"@", version, peers].concat(),
+        }
+    }
+}
+
 /// `module.ResolvedModule`. The paths live as long as the resolver.
 #[derive(Copy, Clone, Debug)]
 pub struct ResolvedModule<'h> {
@@ -1278,6 +1306,7 @@ pub struct ResolvedModule<'h> {
     pub alternate_result: Option<&'h [u8]>,
     /// `file_name` replaces a declaration file, and `Extension` is that of the declaration file.
     pub is_project_reference_redirect: bool,
+    pub package_id: Option<PackageId<'h>>,
     /// `PackageId.Name`, unless it is empty.
     pub package_name: Option<&'h [u8]>,
 }
@@ -1294,6 +1323,9 @@ pub struct Resolver<'h> {
     /// Cache of the results of `resolve_module_name`. The key is the directory, `//`, the mode as a
     /// digit, and the specifier. No directory contains `//`.
     resolved: ShardedMap<&'h [u8], Option<ResolvedModule<'h>>>,
+    /// `parseTaskData.packageId`, by the `tspath.Path` of `ResolvedFileName`: the first id that a
+    /// resolution to the file has.
+    package_ids: ShardedMap<&'h [u8], PackageId<'h>>,
     /// `resolutionState.diagnostics` of all lookups: whether it concerns `imports`, the entry, and
     /// the `package.json`.
     ambiguous_roots: bun_threading::Guarded<Vec<(bool, &'h [u8], &'h [u8]), &'h Session>>,
@@ -1514,6 +1546,7 @@ impl<'h> Resolver<'h> {
             dirs: ShardedMap::default(),
             files: ShardedMap::default(),
             resolved: ShardedMap::default(),
+            package_ids: ShardedMap::default(),
             ambiguous_roots: bun_threading::Guarded::new(Vec::new_in(session)),
             links: bun_threading::Guarded::new(Vec::new_in(session)),
             linked_packages: ShardedMap::default(),
@@ -1544,12 +1577,25 @@ impl<'h> Resolver<'h> {
     pub fn redirect_for_resolution<'a>(&'a self, path: &'a [u8]) -> (&'a Resolver<'h>, &'a [u8]) {
         let sources = &self.options.referenced_sources;
         let outputs = &self.options.referenced_output_dts;
-        let index = match self.options.find_by_path(sources, |it| &it.0, path) {
-            Some(index) => index,
-            None => match self.options.find_by_path(outputs, |it| &it.0, path) {
-                Some(index) => outputs[index].1 as usize,
-                None => return (self, path),
-            },
+        let from_output_dts = |path: &[u8]| {
+            let index = self.options.find_by_path(outputs, |it| &it.0, path)?;
+            Some(outputs[index].1 as usize)
+        };
+        // `getSourceToDtsIfSymlink`
+        let if_symlink = || {
+            if !self.options.preserve_symlinks
+                || outputs.is_empty()
+                || !strings::contains(path, b"/node_modules/")
+            {
+                return None;
+            }
+            from_output_dts(&self.host.realpath(path))
+        };
+        let index = (self.options.find_by_path(sources, |it| &it.0, path))
+            .or_else(|| from_output_dts(path))
+            .or_else(if_symlink);
+        let Some(index) = index else {
+            return (self, path);
         };
         let (_, source, _, project) = &sources[index];
         (&self.redirected[*project as usize], source)
@@ -1569,6 +1615,7 @@ impl<'h> Resolver<'h> {
         if is_same_path(&real, found, self.host.is_case_sensitive()) {
             return found.to_vec();
         }
+        look.outcome.has_original_path.set(true);
         self.links.lock().push((self.keep(found), self.keep(&real)));
         real
     }
@@ -1678,8 +1725,11 @@ impl<'h> Resolver<'h> {
             let text = self.host.read(&path);
             let json =
                 text.and_then(|text| (self.host).parse_package_json(self.session.arena(), &text));
+            let json = json.unwrap_or(Json::Null);
+            let kept = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {
-                json: json.unwrap_or(Json::Null),
+                name_and_version: kept(b"name").zip(kept(b"version")),
+                json,
                 peer_dependencies: Default::default(),
             }
         });
@@ -1740,37 +1790,15 @@ impl<'h> Resolver<'h> {
         mode: ResolutionMode,
         tracer: Option<&Tracer>,
     ) -> Option<ResolvedModule<'h>> {
-        Some(self.resolve_module_name_and_id(spec, from, mode, tracer)?.0)
-    }
-
-    /// The same, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
-    pub fn resolve_module_name_with_package_id(
-        &self,
-        spec: &[u8],
-        from: &[u8],
-        mode: ResolutionMode,
-    ) -> Option<(ResolvedModule<'h>, Option<Vec<u8>>)> {
-        self.resolve_module_name_and_id(spec, from, mode, Some(&Tracer::default()))
-    }
-
-    /// The id is only made for the log.
-    fn resolve_module_name_and_id(
-        &self,
-        spec: &[u8],
-        from: &[u8],
-        mode: ResolutionMode,
-        tracer: Option<&Tracer>,
-    ) -> Option<(ResolvedModule<'h>, Option<Vec<u8>>)> {
         let key = resolution_key(spec, from, mode);
         if tracer.is_none()
             && let Some(&known) = self.resolved.get_ref(key.as_slice())
         {
-            return Some((known?, None));
+            return known;
         }
         let outcome = Outcome::default();
         let look = self.look(mode, true, &outcome);
         let look = Look { tracer, ..look };
-        let mut package_id = None;
         look.trace(6086, &[spec, from]);
         self.trace_resolution_using_project_reference(look);
         let options = self.options;
@@ -1783,37 +1811,48 @@ impl<'h> Resolver<'h> {
         look.trace(if is_specified { 6087 } else { 6088 }, &[kind]);
         let found = self.resolve_node_like(spec, from, look);
         let found = found.map(|(path, alternate_result)| {
-            let package_name = match outcome.lacks_package_id.get() {
-                true => None,
-                false => self.package_name(&outcome.package_directory.borrow()),
-            };
+            let package_id = self.package_id_of(look);
             if tracer.is_some() {
-                package_id = self.package_id_text(look);
-                match &package_id {
-                    Some(id) => look.trace(6218, &[spec, &path, id]),
+                match package_id {
+                    Some(id) => look.trace(6218, &[spec, &path, &id.to_bytes()]),
                     None => look.trace(6089, &[spec, &path]),
                 }
             }
             // `getSourceOfProjectReferenceRedirect`. Also applies when the output exists: a build
             // would first bring it up to date with the source.
             let source = self.source_of_project_reference_redirect(&path);
+            let is_project_reference_redirect = source.is_some();
+            let file_name = self.keep(&source.unwrap_or(path));
+            self.propagate_package_id(file_name, package_id);
             ResolvedModule {
-                is_project_reference_redirect: source.is_some(),
-                file_name: self.keep(&source.unwrap_or(path)),
+                is_project_reference_redirect,
+                file_name,
                 using_ts_extension: outcome.using_ts_extension.get(),
                 has_arbitrary_extension: outcome.arbitrary_extension.get(),
                 is_external_library_import: outcome.is_external.get(),
                 alternate_result: alternate_result.map(|types| self.keep(&types)),
-                package_name,
+                package_id,
+                package_name: package_id.map(|id| id.name),
             }
         });
         if tracer.is_some() {
             if found.is_none() {
                 look.trace(6090, &[spec]);
             }
-            return Some((found?, package_id));
+            return found;
         }
-        Some(((*self.resolved.insert_ref(self.keep(&key), found))?, None))
+        *self.resolved.insert_ref(self.keep(&key), found)
+    }
+
+    /// The same, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
+    pub fn resolve_module_name_with_package_id(
+        &self,
+        spec: &[u8],
+        from: &[u8],
+        mode: ResolutionMode,
+    ) -> Option<(ResolvedModule<'h>, Option<Vec<u8>>)> {
+        let resolved = self.resolve_module_name(spec, from, mode)?;
+        Some((resolved, resolved.package_id.map(PackageId::to_bytes)))
     }
 
     /// `traceResolutionUsingProjectReference`
@@ -1823,31 +1862,37 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// `PackageId.String` of the file that `look` has found. `None`: `PackageId.Name` is empty.
-    fn package_id_text(&self, look: Look) -> Option<Vec<u8>> {
-        let directory = look.outcome.package_directory.borrow().clone();
-        if look.outcome.lacks_package_id.get() || directory.is_empty() {
-            return None;
-        }
-        let package = self.package(&directory)?;
-        let name = package.json.get(b"name")?.as_str()?;
-        let version = package.json.get(b"version")?.as_str()?;
-        let peers = *package.peer_dependencies.get_or_init(|| {
+    /// `resolved.packageId` of the file that `look` has found. `None`: `PackageId.Name` is empty.
+    fn package_id_of(&self, look: Look) -> Option<PackageId<'h>> {
+        let made_of = look.outcome.package_id.borrow();
+        let (directory, found) = made_of.as_ref()?;
+        let package = self.package(directory)?;
+        let (name, version) = package.name_and_version.filter(|it| !it.0.is_empty())?;
+        let peer_dependencies = *package.peer_dependencies.get_or_init(|| {
             let look = Look {
                 tracer: None,
                 ..look
             };
-            self.keep(&self.read_package_json_peer_dependencies(&directory, &package.json, look))
+            self.keep(&self.read_package_json_peer_dependencies(directory, &package.json, look))
         });
-        // `PackageName`
-        Some(
-            match look.outcome.found_at.borrow().get(directory.len() + 1..) {
-                None | Some(b"") => [name, b"@", version, peers].concat(),
-                Some(sub_module_name) => {
-                    [name, b"/", sub_module_name, b"@", version, peers].concat()
-                }
-            },
-        )
+        Some(PackageId {
+            name,
+            sub_module_name: self.keep(found.get(directory.len() + 1..).unwrap_or_default()),
+            version,
+            peer_dependencies,
+        })
+    }
+
+    /// `filesParser.start`: "Propagate packageId to data if we have one and data doesn't yet".
+    fn propagate_package_id(&self, file_name: &[u8], package_id: Option<PackageId<'h>>) {
+        let Some(package_id) = package_id else {
+            return;
+        };
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(file_name, self.host.is_case_sensitive(), &mut buffer[..]);
+        if self.package_ids.get_ref(&*path).is_none() {
+            self.package_ids.insert_ref(self.keep(&path), package_id);
+        }
     }
 
     /// `resolveNodeLike`: `ResolvedFileName` and `AlternateResult`.
@@ -1936,21 +1981,9 @@ impl<'h> Resolver<'h> {
         let real = |found: Vec<u8>| {
             let is_in_package = strings::contains(&found, b"/node_modules/");
             look.outcome.is_external.set(is_in_package);
-            let is_known = !look.outcome.package_directory.borrow().is_empty();
-            if !is_known && let Some(directory) = parse_node_module_from_path(&found) {
-                look.outcome.package_directory.replace(directory.to_vec());
-            }
-            // `resolved.originalPath != ""`: a target of `imports` names a module, and resolving
-            // that has followed a symlink. To follow again changes nothing but the log.
-            let mut is_followed = false;
-            if look.tracer.is_some() {
-                let mut found_at = look.outcome.found_at.borrow_mut();
-                match found_at.is_empty() {
-                    true => found_at.clone_from(&found),
-                    false => is_followed = *found_at != found,
-                }
-            }
-            if follows_links && is_in_package && !is_followed {
+            // It has one if a target of `imports` names a module, and resolving that has followed
+            // a symlink.
+            if follows_links && is_in_package && !look.outcome.has_original_path.get() {
                 self.followed(&found, look)
             } else {
                 found
@@ -2034,7 +2067,7 @@ impl<'h> Resolver<'h> {
 
     /// The format that the `package.json` nearest to `path` declares for its `.js` files: `Import`
     /// for `"type": "module"`, `Require` for `"type": "commonjs"`.
-    fn package_type(&self, path: &[u8]) -> ResolutionMode {
+    pub(crate) fn package_type(&self, path: &[u8]) -> ResolutionMode {
         match self.package_scope(dirname::<Posix>(path)) {
             Some((_, package)) => match package.json.get(b"type").and_then(Json::as_str) {
                 Some(b"module") => ResolutionMode::Import,
@@ -2077,73 +2110,37 @@ impl<'h> Resolver<'h> {
         format == ResolutionMode::Import
     }
 
-    /// `GetImpliedNodeFormatForEmitWorker` over `loadSourceFileMetaData`: the emit format of the
-    /// file at `path`, if its name or its package determines it. Under `module: node16` and later
-    /// they always do, except for JSON.
-    pub fn implied_format(&self, path: &[u8]) -> ResolutionMode {
-        let specified = format_by_extension(path);
-        if specified != ResolutionMode::None
-            || !file_extension_is_one_of(path, &[b".ts", b".tsx", b".js", b".jsx"])
-        {
-            return specified;
-        }
-        // The package is consulted only when modules are resolved as Node does, and for installed
-        // packages.
-        let package_type =
-            if self.options.resolves_like_node || strings::contains(path, b"/node_modules/") {
-                self.package_type(path)
-            } else {
-                ResolutionMode::None
-            };
-        if self.options.module.is_node() && package_type != ResolutionMode::Import {
-            return ResolutionMode::Require;
-        }
-        package_type
-    }
-
-    /// `getPackageId`: `name@version+peer@version/path/in/package` for a file of a package. Two
-    /// copies of the same version of a package with the same peers have the same id.
+    /// `parseTaskData.packageId` of the file at `path`, as a key: `collectFiles` has one file in
+    /// the program for all that have the same. `None`: no resolution to the file has an id.
     pub fn package_id(&self, path: &[u8]) -> Option<Vec<u8>> {
-        let directory = parse_node_module_from_path(path)?;
-        let subpath = path.get(directory.len() + 1..).unwrap_or_default();
-        let package = self.package(directory)?;
-        let version = package.json.get(b"version")?.as_str()?;
-        let declared = package.json.get(b"name")?.as_str()?;
-        let peers = *package.peer_dependencies.get_or_init(|| {
-            let outcome = Outcome::default();
-            let look = self.look(ResolutionMode::None, false, &outcome);
-            self.keep(&self.read_package_json_peer_dependencies(directory, &package.json, look))
-        });
-        Some([declared, b"@", version, peers, b"/", subpath].concat())
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(path, self.host.is_case_sensitive(), &mut buffer[..]);
+        // The resolver of a referenced project resolves the imports of its files.
+        let id = std::iter::once(self)
+            .chain(&self.redirected)
+            .find_map(|resolver| resolver.package_ids.get_ref(&*path))?;
+        let (version, peers) = (id.version, id.peer_dependencies);
+        Some([id.name, b"@", version, peers, b"/", id.sub_module_name].concat())
     }
 
-    /// `resolved.packageId = getPackageId(..)` with the `package.json` in `directory`, which has
-    /// been looked up. The id is made from `look.outcome.package_directory` when it is needed. What
-    /// making it logs is logged here.
-    fn get_package_id(&self, directory: &[u8], look: Look) {
-        look.outcome.lacks_package_id.set(false);
-        look.outcome.package_directory.replace(directory.to_vec());
+    /// `resolved.packageId = getPackageId(resolved.path, packageInfo)` for the file at `found`.
+    /// `package` is `packageInfo`, the `package.json` in `directory`. `package_id_of` makes the id
+    /// when the search is over. What making it logs is logged here.
+    fn get_package_id(
+        &self,
+        found: &[u8],
+        directory: &[u8],
+        package: Option<&Package<'h>>,
+        look: Look,
+    ) {
+        let package = package.filter(|package| package.name_and_version.is_some());
+        let made_of = package.map(|_| (directory.to_vec(), found.to_vec()));
+        look.outcome.package_id.replace(made_of);
         if look.tracer.is_some()
-            && let Some(package) = self.package(directory)
-            && package.json.get(b"name").and_then(Json::as_str).is_some()
-            && package
-                .json
-                .get(b"version")
-                .and_then(Json::as_str)
-                .is_some()
+            && let Some(package) = package
         {
             self.read_package_json_peer_dependencies(directory, &package.json, look);
         }
-    }
-
-    /// `getPackageId(..).Name` for the package in `directory`.
-    fn package_name(&self, directory: &[u8]) -> Option<&'h [u8]> {
-        if directory.is_empty() {
-            return None;
-        }
-        let package = self.package(directory)?;
-        package.json.get(b"version")?.as_str()?;
-        Some(self.keep(package.json.get(b"name")?.as_str()?))
     }
 
     /// `readPackageJsonPeerDependencies`: `+name@version` for each peer of the package in `directory` that is installed next to it.
@@ -2211,19 +2208,18 @@ impl<'h> Resolver<'h> {
         from: &[u8],
         mode: ResolutionMode,
     ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
-        let tracer = Tracer::default();
-        let (found, _, id) = self.resolve_type_reference_and_id(name, from, mode, Some(&tracer))?;
-        Some((found, id))
+        let (found, _, id) = self.resolve_type_reference_and_id(name, from, mode, None)?;
+        Some((found, id.map(PackageId::to_bytes)))
     }
 
-    /// The id is only made for the log.
+    /// `ResolvedFileName`, `IsExternalLibraryImport` and `PackageId`.
     fn resolve_type_reference_and_id(
         &self,
         name: &[u8],
         from: &[u8],
         mode: ResolutionMode,
         tracer: Option<&Tracer>,
-    ) -> Option<(Vec<u8>, bool, Option<Vec<u8>>)> {
+    ) -> Option<(Vec<u8>, bool, Option<PackageId<'h>>)> {
         let from_dir = dirname::<Posix>(from);
         // `ResolvedTypeReferenceDirective` has no `ResolvedUsingTsExtension`.
         let outcome = Outcome::default();
@@ -2267,9 +2263,6 @@ impl<'h> Resolver<'h> {
             return None;
         };
         let is_external = strings::contains(&found, b"/node_modules/");
-        if tracer.is_some() {
-            outcome.found_at.replace(found.clone());
-        }
         let source = self.source_of_project_reference_redirect(&found);
         // The real path of a file that its source replaces is only logged.
         let found = if self.options.preserve_symlinks || source.is_some() && tracer.is_none() {
@@ -2277,17 +2270,18 @@ impl<'h> Resolver<'h> {
         } else {
             self.followed(&found, look)
         };
+        let package_id = self.package_id_of(look);
         // `traceTypeReferenceDirectiveResult`
-        let mut package_id = None;
         if tracer.is_some() {
             let primary: &[u8] = if is_primary { b"true" } else { b"false" };
-            package_id = self.package_id_text(look);
-            match &package_id {
-                Some(id) => look.trace(6219, &[name, &found, id, primary]),
+            match package_id {
+                Some(id) => look.trace(6219, &[name, &found, &id.to_bytes(), primary]),
                 None => look.trace(6119, &[name, &found, primary]),
             }
         }
-        Some((source.unwrap_or(found), is_external, package_id))
+        let found = source.unwrap_or(found);
+        self.propagate_package_id(&found, package_id);
+        Some((found, is_external, package_id))
     }
 
     /// The search of `resolveTypeReferenceDirective` and of `resolveFromTypeRoot` in type roots: a
@@ -2311,12 +2305,9 @@ impl<'h> Resolver<'h> {
                 continue;
             }
             if from_config && let Some(found) = self.file(&candidate, look) {
-                // Without a tracer, `resolve_with` finds the same directory.
-                if look.tracer.is_some()
-                    && let Some(directory) = parse_node_module_from_path(&found)
-                {
-                    self.get_package_json_info(directory, look);
-                    self.get_package_id(directory, look);
+                if let Some(directory) = parse_node_module_from_path(&found) {
+                    let package = self.get_package_json_info(directory, look);
+                    self.get_package_id(&found, directory, package, look);
                 }
                 return Some(found);
             }
@@ -2325,7 +2316,6 @@ impl<'h> Resolver<'h> {
             if self.is_dir(&candidate)
                 && let Some(found) = self.package_entry(&candidate, look)
             {
-                look.outcome.lacks_package_id.set(true);
                 return Some(found);
             }
         }
@@ -2353,9 +2343,7 @@ impl<'h> Resolver<'h> {
                 ending_from_config: look.ending_from_config || !known_extension(target).is_empty(),
                 ..look
             };
-            // `tryLoadModuleUsingPaths` returns what `tryFile` finds as it is.
             self.very_file(target, &path, look)
-                .inspect(|_| look.outcome.lacks_package_id.set(true))
                 .or_else(|| match filled.ends_with(b"/") {
                     true => self.directory(&path, look),
                     false => self.file_or_directory(&path, look),
@@ -2367,14 +2355,10 @@ impl<'h> Resolver<'h> {
     /// at `path` exactly. That file is then the result, regardless of the requested kinds of file,
     /// before the extension is interpreted.
     fn very_file(&self, written: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
-        let extension = known_extension(written);
-        // Without `resolveJsonModule` a JSON file is unusable (`GetResolutionDiagnostic`), so it is
-        // treated as not found, and only looked up for the log.
-        let is_unusable = extension == b".json" && !self.options.resolve_json_module;
-        if extension.is_empty() || is_unusable && look.tracer.is_none() {
+        if known_extension(written).is_empty() {
             return None;
         }
-        self.try_file(path, look).filter(|_| !is_unusable)
+        self.try_file(path, look)
     }
 
     /// `tryLoadModuleUsingRootDirs`: a candidate inside one of `rootDirs` is tried there, and then
@@ -2461,7 +2445,6 @@ impl<'h> Resolver<'h> {
                 look.trace(6093, &[target, &filled]);
                 let path = join(dir, &filled);
                 self.very_file(target, &path, look)
-                    .inspect(|_| look.outcome.lacks_package_id.set(true))
                     .or_else(|| load(&path, !known_extension(target).is_empty()))
             })
     }
@@ -2534,20 +2517,19 @@ impl<'h> Resolver<'h> {
             }
             // By that very name it is a source file. For a name that TypeScript knows, `a.ts` and
             // `a.d.ts` come before `a.js`, whatever language that is.
-            if ScriptKind::from_file_name(path).is_none()
+            let is_source_file = ScriptKind::from_file_name(path).is_none()
                 && self.host.script_kind(path).is_some()
-                && self.is_file(path)
-            {
-                return Some(path.to_vec());
-            }
-            if let Some(found) = self.file(path, look) {
-                // Without a tracer, `resolve_with` finds the same directory.
-                if is_traced
-                    && consider_package_json
+                && self.is_file(path);
+            let resolved_from_file = match is_source_file {
+                true => Some(path.to_vec()),
+                false => self.file(path, look),
+            };
+            if let Some(found) = resolved_from_file {
+                if consider_package_json
                     && let Some(directory) = parse_node_module_from_path(&found)
                 {
-                    self.get_package_json_info(directory, look);
-                    self.get_package_id(directory, look);
+                    let package = self.get_package_json_info(directory, look);
+                    self.get_package_id(&found, directory, package, look);
                 }
                 return Some(found);
             }
@@ -2563,9 +2545,7 @@ impl<'h> Resolver<'h> {
         if !consider_package_json {
             return self.directory_entry(path, None, true, look);
         }
-        let found = self.package_entry(path, look)?;
-        look.outcome.lacks_package_id.set(true);
-        Some(found)
+        self.package_entry(path, look)
     }
 
     /// `tryFile`: `path`, if it is a file. With `moduleSuffixes`, the first existing file among
@@ -2578,16 +2558,21 @@ impl<'h> Resolver<'h> {
             look.trace(if exists { 6097 } else { 6096 }, &[path]);
             exists
         };
-        if self.options.module_suffixes.is_empty() {
-            return lookup(path).then(|| path.to_vec());
-        }
-        let extension = known_extension(path);
-        let stem = &path[..path.len() - extension.len()];
-        self.options
-            .module_suffixes
-            .iter()
-            .map(|suffix| [stem, &suffix[..], extension].concat())
-            .find(|c| lookup(c))
+        let found = if self.options.module_suffixes.is_empty() {
+            lookup(path).then(|| path.to_vec())
+        } else {
+            let extension = known_extension(path);
+            let stem = &path[..path.len() - extension.len()];
+            self.options
+                .module_suffixes
+                .iter()
+                .map(|suffix| [stem, &suffix[..], extension].concat())
+                .find(|c| lookup(c))
+        }?;
+        // It is the file of a new `resolved`.
+        look.outcome.package_id.replace(None);
+        look.outcome.has_original_path.set(false);
+        Some(found)
     }
 
     /// `projectReferenceDtsFakingVfs.FileExists`: the source file from which a referenced project would emit the declaration file
@@ -2969,11 +2954,10 @@ impl<'h> Resolver<'h> {
             // the package declares `exports`.
             if exports.is_none() {
                 if let Some(found) = self.file(&candidate, look) {
-                    look.outcome.lacks_package_id.set(true);
                     return Found::File(found);
                 }
                 if let Some(found) = self.directory_entry(&candidate, Some(nested), true, look) {
-                    self.get_package_id(&candidate, look);
+                    self.get_package_id(&found, &candidate, Some(nested), look);
                     return Found::File(found);
                 }
             }
@@ -3023,7 +3007,7 @@ impl<'h> Resolver<'h> {
                         None
                     }
                 })?;
-            self.get_package_id(&package_dir, look);
+            self.get_package_id(&found, &package_dir, package, look);
             Some(found)
         };
         if !rest.is_empty()
@@ -3208,8 +3192,13 @@ impl<'h> Resolver<'h> {
                     Found::No => Found::of(self.named_file(&named, target_string, look)),
                     found => found,
                 };
-                if !matches!(found, Found::No) {
-                    self.get_package_id(package_dir, look);
+                let path: Option<&[u8]> = match &found {
+                    Found::File(file) => Some(file),
+                    Found::Blocked => Some(b""),
+                    Found::No => None,
+                };
+                if let Some(path) = path {
+                    self.get_package_id(path, package_dir, self.package(package_dir), look);
                 }
                 found
             }

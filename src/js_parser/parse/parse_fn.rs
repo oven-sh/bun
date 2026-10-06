@@ -1092,14 +1092,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// `parseParenthesizedArrowFunctionExpression`: with neither "=>" nor "{", the body is
-    /// `parseIdentifier()`. Its diagnostic for the missing identifier is dropped: the "=>" was
-    /// reported as missing at the same position.
+    /// `parseIdentifier()`.
     #[cold]
     #[inline(never)]
     fn parse_arrow_body_without_arrow(&mut self) -> Result<Expr, Error> {
         let p = self;
         let loc = p.lexer.loc();
-        if !p.is_identifier_in_context() {
+        if p.lexer.token == T::TPrivateIdentifier {
+            // `createIdentifierWithDiagnostic`: it is reported, and still used as the name.
+            let range = p.lexer.range();
+            p.lexer.ts_error(range, 18016);
+        } else if !p.is_identifier_in_context() {
+            p.lexer.expected(T::TIdentifier)?;
             return Ok(p.new_expr(E::Missing {}, loc));
         }
         let ref_ = p.store_name_in_ref(p.lexer.identifier);

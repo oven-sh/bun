@@ -27,7 +27,7 @@ use crate::parser::{
     AsyncPrefixExpression, AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc,
     ExprOrLetStmt, FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
     ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList,
+    StmtList, TypeParameterFlag,
 };
 use crate::sema::Mark;
 use bun_ast as js_ast;
@@ -128,50 +128,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(())
     }
 
+    /// `parseYieldExpression`, after the "yield" at `loc`.
     pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
         let p = self;
-        // Parse a yield-from expression, which yields from an iterator
-        let is_star = p.lexer.token == T::TAsterisk;
-
-        if is_star {
-            if p.lexer.has_newline_before {
-                // `parseYieldExpression`: nothing after a line break belongs to the "yield".
-                if p.is_tolerant() {
-                    return Ok(p.new_expr(
-                        E::Yield {
-                            value: None,
-                            is_star: false,
-                        },
-                        loc,
-                    ));
-                }
-                p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
-            }
-            p.lexer.next()?;
-        }
-
+        let mut is_star = false;
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon
-                // `parseYieldExpression`: after "*" the operand is parsed whatever follows (1109).
-                if !(is_star && p.is_tolerant()) => {}
-            _ => {
-                // `parseYieldExpression`: without "*" there is an operand only if the token can start an expression.
-                if is_star
-                    || (!p.lexer.has_newline_before
-                        && (!p.is_tolerant() || p.is_start_of_expression_or_shift_assign()))
-                {
-                    value = Some(p.parse_expr(Level::Yield)?);
-                }
+        // Nothing after a line break belongs to the "yield".
+        if !p.lexer.has_newline_before {
+            // Parse a yield-from expression, which yields from an iterator
+            is_star = p.lexer.token == T::TAsterisk;
+            if is_star {
+                p.lexer.next()?;
+            }
+            // After "*" the operand is parsed whatever follows.
+            if is_star || p.is_start_of_expression_or_shift_assign() {
+                value = Some(p.parse_expr(Level::Yield)?);
             }
         }
 
+        // `parseAssignmentExpressionOrHigher` returns it as it is: like the body of an arrow
+        // function it ends the assignment expression.
+        p.after_arrow_body_loc = p.lexer.loc();
         Ok(p.new_expr(E::Yield { value, is_star }, loc))
     }
 
@@ -2369,12 +2346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[inline(never)]
     fn parse_missing_binding_name(&mut self) -> Result<Binding, Error> {
         let loc = self.lexer.full_start();
-        if self.lexer.token == T::TEndOfFile {
-            // At the end of the file the error is reported there too.
-            self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1003);
-        } else {
-            self.lexer.expect(T::TIdentifier)?;
-        }
+        self.lexer.expect(T::TIdentifier)?;
         Ok(Binding {
             loc,
             data: B::B::BMissing(B::Missing {}),
@@ -3295,38 +3267,91 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 },
             );
         }
-        // `parsePossibleParenthesizedArrowFunctionExpression`. Its `notParenthesizedArrow` entries
-        // are cached together with the outcomes of the other speculative parses, which are keyed by
-        // the position of a ":": no "async" is at such a position.
-        let key = loc.start as u32;
         if verdict.is_none()
-            && p.ts_conditional_arrow_attempts
-                .binary_search_by_key(&key, |&packed| packed >> 1)
-                .is_err()
+            && let Some(arrow) = p.parse_possible_arrow_fn(loc, |p| {
+                p.lexer.next()?;
+                p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::ArrowOrBacktrack)
+            })?
         {
-            let snapshot = p.parser_snapshot();
-            p.lexer.next()?;
-            match p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::ArrowOrBacktrack) {
-                // Stack and memory exhaustion are not outcomes of the speculative parse
-                Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
-                Err(_) => {
-                    p.restore_parser_snapshot(snapshot);
-                    // Speculative parses nested in this one may have added entries of their own.
-                    if let Err(insert_at) = p
-                        .ts_conditional_arrow_attempts
-                        .binary_search_by_key(&key, |&packed| packed >> 1)
-                    {
-                        p.ts_conditional_arrow_attempts.insert(insert_at, key << 1);
-                    }
-                }
-                arrow => {
-                    p.release_parser_snapshot(&snapshot);
-                    return arrow;
-                }
-            }
+            return Ok(arrow);
         }
         p.lexer.next()?;
         p.parse_paren_expr_as(loc, level, opts, ArrowAttempt::NeverArrow)
+    }
+
+    /// `tryParseParenthesizedArrowFunctionExpression`, at the "<" at `loc` in a file without JSX.
+    /// `None`: no arrow function starts there, and nothing was consumed.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn try_parse_generic_arrow_fn(
+        &mut self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> Result<Option<Expr>, Error> {
+        // `nextIsParenthesizedArrowFunctionExpression`
+        if !self.next_token_matches(|p| p.is_identifier_in_context() || p.lexer.token == T::TConst)
+        {
+            return Ok(None);
+        }
+        self.parse_possible_arrow_fn(loc, |p| {
+            let type_parameters =
+                p.parse_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            let open_paren = p.lexer.loc();
+            if p.lexer.token != T::TOpenParen {
+                return Err(Error::Backtrack);
+            }
+            p.lexer.next()?;
+            let mut arrow = p.parse_paren_expr_as(
+                loc,
+                level,
+                ParenExprOpts { open_paren, ..opts },
+                ArrowAttempt::ArrowOrBacktrack,
+            )?;
+            p.note_type_parameters(&mut arrow.loc, type_parameters);
+            Ok(arrow)
+        })
+    }
+
+    /// `parsePossibleParenthesizedArrowFunctionExpression`, between the `mark` and the `rewind` of
+    /// its caller. `attempt` parses the arrow function that may start at `loc`, or fails. `None`:
+    /// none starts there, and nothing was consumed.
+    fn parse_possible_arrow_fn(
+        &mut self,
+        loc: bun_ast::Loc,
+        attempt: impl FnOnce(&mut Self) -> Result<Expr, Error>,
+    ) -> Result<Option<Expr>, Error> {
+        let p = self;
+        // The `notParenthesizedArrow` entries are cached together with the outcomes of the other
+        // speculative parses, which are keyed by the position of a ":": no "async" and no "<" is
+        // at such a position.
+        let key = loc.start as u32;
+        if p.ts_conditional_arrow_attempts
+            .binary_search_by_key(&key, |&packed| packed >> 1)
+            .is_ok()
+        {
+            return Ok(None);
+        }
+        let snapshot = p.parser_snapshot();
+        match attempt(p) {
+            // Stack and memory exhaustion are not outcomes of the speculative parse
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+            Err(_) => {
+                p.restore_parser_snapshot(snapshot);
+                // Speculative parses nested in this one may have added entries of their own.
+                if let Err(insert_at) = p
+                    .ts_conditional_arrow_attempts
+                    .binary_search_by_key(&key, |&packed| packed >> 1)
+                {
+                    p.ts_conditional_arrow_attempts.insert(insert_at, key << 1);
+                }
+                Ok(None)
+            }
+            Ok(arrow) => {
+                p.release_parser_snapshot(&snapshot);
+                Ok(Some(arrow))
+            }
+        }
     }
 
     /// Whether `item`, just parsed as an expression inside parentheses, was a modifier of the

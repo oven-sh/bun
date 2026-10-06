@@ -130,7 +130,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Intrinsic::Never
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
-                | Intrinsic::ImplicitNever,
+                | Intrinsic::ImplicitNever
+                | Intrinsic::UniqueLiteral,
             ) => {}
             // `TypeFlagsAny`: the union is `anyType`.
             TypeData::Intrinsic(
@@ -166,6 +167,7 @@ impl<'p, 's> Checker<'p, 's> {
                             | TypeId::SILENT_NEVER
                             | TypeId::UNREACHABLE_NEVER
                             | TypeId::IMPLICIT_NEVER
+                            | TypeId::UNIQUE_LITERAL
                     ) =>
             {
                 return a;
@@ -445,10 +447,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         self.types().intern_key_with(
             TypeKey::Union(members),
-            ProvenanceKey {
+            &ProvenanceKey {
                 alias: None,
                 origin,
                 is_enum: false,
+                stored_under: None,
             },
         )
     }
@@ -833,10 +836,11 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         self.types().intern_key_with(
                             TypeKey::Union(&kept),
-                            ProvenanceKey {
+                            &ProvenanceKey {
                                 alias: None,
                                 origin: new_origin,
                                 is_enum: false,
+                                stored_under: None,
                             },
                         )
                     }
@@ -846,7 +850,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Intrinsic::Never
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
-                | Intrinsic::ImplicitNever,
+                | Intrinsic::ImplicitNever
+                | Intrinsic::UniqueLiteral,
             ) => ty,
             _ => {
                 if keep(self, ty) {
@@ -937,7 +942,8 @@ impl<'p, 's> Checker<'p, 's> {
                 Intrinsic::Never
                 | Intrinsic::SilentNever
                 | Intrinsic::UnreachableNever
-                | Intrinsic::ImplicitNever,
+                | Intrinsic::ImplicitNever
+                | Intrinsic::UniqueLiteral,
             ) => ty,
             _ => f(self, ty),
         }
@@ -1703,9 +1709,7 @@ impl<'p, 's> Checker<'p, 's> {
         some_first(place(s), place(t))
     }
 
-    /// `compareTypeNames`. Two aliases with the same name are ordered by their symbols, and an
-    /// alias sorts before another symbol with its name. In those cases `CompareTypes` falls through
-    /// to the structure of the types, and is not a valid ordering.
+    /// `compareTypeNames`
     fn compare_type_names(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         // FOR SPEED: the alias type arguments are computed only for two instantiations of one alias.
         let (x, y) = (self.alias_symbol_of_type(a), self.alias_symbol_of_type(b));
@@ -1714,19 +1718,55 @@ impl<'p, 's> Checker<'p, 's> {
                 let arguments = |ty: TypeId| self.alias_of_type(ty).map_or(Vec::new(), |it| it.1);
                 self.compare_type_lists(&arguments(a), &arguments(b))
             }
-            (Some(s), Some(t)) => self.compare_symbols(s, t),
-            _ => y.is_some().cmp(&x.is_some()),
+            _ => std::cmp::Ordering::Equal,
         })
     }
 
-    /// `compareTypeMappers` for instantiations of the same declaration: by the types they map the
-    /// type parameters to, in the declaration order of the type parameters.
-    fn compare_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
+    /// `compareTypeLists` of the types that two mappers map to, in the declaration order of the
+    /// type parameters.
+    fn compare_targets_of_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
         let targets = |mapper: MapperId| -> Vec<TypeId> {
             let pairs = self.mapping_in_declaration_order(mapper);
             pairs.iter().map(|pair| pair.1).collect()
         };
         self.compare_type_lists(&targets(x), &targets(y))
+    }
+
+    /// `compareTypeMappers` for a `SimpleTypeMapper` or an `ArrayTypeMapper` of instantiations of
+    /// the same declaration, which have the same sources. A declared type has no mapper, which
+    /// comes last. Here it has one of identity pairs.
+    fn compare_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
+        match (self.is_instantiating(x), self.is_instantiating(y)) {
+            (true, true) => self.compare_targets_of_type_mappers(x, y),
+            (is_x, is_y) => is_y.cmp(&is_x),
+        }
+    }
+
+    /// `compareTypeMappers` for the mappers of two conditional types of the same root, each with
+    /// `TypeData::Cond::distributed_over`. A `MergedTypeMapper` comes after the other kinds.
+    fn compare_type_mappers_of_conditional_types(
+        &self,
+        (x, x_over): (MapperId, MapperId),
+        (y, y_over): (MapperId, MapperId),
+    ) -> std::cmp::Ordering {
+        let kind = |mapper: MapperId, over: MapperId| match self.is_instantiating(mapper) {
+            true => u8::from(over != MapperId::IDENTITY),
+            false => 2,
+        };
+        let by_kind = kind(x, x_over).cmp(&kind(y, y_over));
+        if by_kind.is_ne() || x_over == MapperId::IDENTITY {
+            return by_kind.then_with(|| self.compare_type_mappers(x, y));
+        }
+        // `m1`: the check type, mapped to the member of the union.
+        let member = |mapper: MapperId, over: MapperId| {
+            let mut pairs = self.types().mapping(mapper).iter();
+            pairs.find(|pair| self.types().map(over, pair.0) != Some(pair.1))
+        };
+        let by_member = match (member(x, x_over), member(y, y_over)) {
+            (Some(s), Some(t)) => self.compare_types_without_ids(s.1, t.1),
+            _ => std::cmp::Ordering::Equal,
+        };
+        by_member.then_with(|| self.compare_type_mappers(x_over, y_over))
     }
 
     /// `CompareTypes` without its final fallback, the ids.
@@ -1949,6 +1989,22 @@ impl<'p, 's> Checker<'p, 's> {
                     (x, y) => y.is_some().cmp(&x.is_some()),
                 },
             },
+            (
+                TypeData::Cond {
+                    mapper: x,
+                    distributed_over: m,
+                    ..
+                },
+                TypeData::Cond {
+                    mapper: y,
+                    distributed_over: n,
+                    ..
+                },
+            ) => self.compare_type_mappers_of_conditional_types((*x, *m), (*y, *n)),
+            // tsgo orders a type parameter and its clones by id. The declared one comes first.
+            (TypeData::TypeParam(_, _, x), TypeData::TypeParam(_, _, y)) => {
+                self.compare_targets_of_type_mappers(*x, *y)
+            }
             // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: a type without a mapper
             // comes last.
             (x, y) => {
@@ -1963,10 +2019,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 let kind_of_both_is_mapped = kind(x) == 1 && kind(y) == 1;
                 let mapper = |data: &TypeData| match *data {
-                    TypeData::Anon { mapper, .. }
-                    | TypeData::Fns { mapper, .. }
-                    | TypeData::Cond { mapper, .. }
-                    | TypeData::TypeParam(_, _, mapper) => Some(mapper),
+                    TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => Some(mapper),
                     _ => None,
                 };
                 kind(x)

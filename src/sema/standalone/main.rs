@@ -292,6 +292,7 @@ fn main() {
                 compiler_options: &compiler_options,
                 cwd: cwd.as_bytes(),
                 project: project.as_deref().map(str::as_bytes),
+                build: has("--build"),
                 paths: &paths,
                 are_entry_points: false,
                 threads: args

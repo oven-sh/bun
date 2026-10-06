@@ -23,8 +23,9 @@ impl Checker<'_, '_> {
                 declared_by[local.idx()] = self.end_of_declaring_statement(file, local);
             }
             if declared_by[local.idx()] == 0 {
+                let result = self.files().sym(file, local);
                 let statement = hir
-                    .find_ancestor(self.block_scoped_declaration(file, local), |n| {
+                    .find_ancestor(self.block_scoped_declaration(file, result), |n| {
                         matches!(hir.data(n), NodeData::Stmt(_))
                     });
                 declared_by[local.idx()] = match hir.data(statement) {
@@ -34,8 +35,12 @@ impl Checker<'_, '_> {
                     _ => u32::MAX,
                 };
             }
-            if hir[e].pos + 1 < declared_by[local.idx()] && !bound.is_unchecked(e.idx()) {
-                self.check_resolved_block_scoped_variable(file, e);
+            if hir[e].pos + 1 < declared_by[local.idx()]
+                && !bound.is_unchecked(e.idx())
+                && !self.is_name_with_object_assignment_initializer(file, e)
+            {
+                let result = self.files().sym(file, local);
+                self.check_resolved_block_scoped_variable(file, result, hir.node(e));
             }
         }
         // In a file without a class, only the contents of member initializers and static blocks are
@@ -106,11 +111,11 @@ impl Checker<'_, '_> {
         hir[statement].loc.end + 1
     }
 
-    /// The declaration `checkResolvedBlockScopedVariable` checks. `NONE`: it checks none.
-    fn block_scoped_declaration(&self, file: FileId, local: SymbolId) -> Node {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let symbol = &bound.symbols[local.idx()];
-        let flags = symbol.flags;
+    /// The declaration `checkResolvedBlockScopedVariable` checks for `result`. `NONE`: it checks
+    /// none, or one in another file than `file`, where the order cannot be determined.
+    fn block_scoped_declaration(&self, file: FileId, result: Sym) -> Node {
+        let files = self.files();
+        let flags = files.flags(result);
         let is_function =
             SymFlags::FUNCTION | SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::ASSIGNMENT;
         if !flags.intersects(SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM)
@@ -118,48 +123,37 @@ impl Checker<'_, '_> {
         {
             return Node::NONE;
         }
-        // `mergeSymbol`: a declaration that conflicts with one from an earlier file is not merged,
-        // and the name still resolves to the earlier one. A declaration in another file counts as
-        // declared.
-        if flags.contains(SymFlags::MERGED) {
-            let sym = self.files().sym(file, local);
-            let first = self
-                .files()
-                .decls(sym)
-                .into_iter()
-                .find(|&(of, d)| match d {
-                    Decl::Var(_) | Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) => true,
-                    // A non-empty namespace merges with a class or an enum, not with a variable.
-                    Decl::Module(m) => {
-                        flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE)
-                            && self.bound(of).module_instance_state[m.idx()]
-                                != ModuleInstanceState::NonInstantiated
-                    }
-                    _ => false,
-                });
-            if first.is_none_or(|(of, _)| of != file) {
-                return Node::NONE;
-            }
+        let declarations = files.decls_of(result);
+        let declaration = declarations
+            .iter()
+            .map(|&(of, d)| (of, files.hir(of).node(d)))
+            .find(|&(of, d)| {
+                let hir = files.hir(of);
+                hir.is_block_or_catch_scoped(d)
+                    || hir.kind(d).is_class_like()
+                    || hir.kind(d) == Kind::EnumDeclaration
+            });
+        match declaration {
+            Some((of, declaration)) if of == file => declaration,
+            _ => Node::NONE,
         }
-        let declaration = symbol.decls.iter().map(|&d| hir.node(d)).find(|&d| {
-            hir.is_block_or_catch_scoped(d)
-                || hir.kind(d).is_class_like()
-                || hir.kind(d) == Kind::EnumDeclaration
-        });
-        declaration.unwrap_or(Node::NONE)
     }
 
-    /// `checkResolvedBlockScopedVariable` for a name that does not appear after its declaring
-    /// statement.
-    fn check_resolved_block_scoped_variable(&mut self, file: FileId, e: ExprId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let local = bound.expr_symbol[e.idx()];
+    /// `checkResolvedBlockScopedVariable`
+    pub(super) fn check_resolved_block_scoped_variable(
+        &mut self,
+        file: FileId,
+        result: Sym,
+        error_location: Node,
+    ) {
+        let hir = self.hir(file);
         let (flags, declaration) = (
-            bound.symbols[local.idx()].flags,
-            self.block_scoped_declaration(file, local),
+            self.files().flags(result),
+            self.block_scoped_declaration(file, result),
         );
-        if hir.is_ambient(declaration)
-            || self.is_block_scoped_name_declared_before_use(file, declaration, hir.node(e))
+        if declaration.is_none()
+            || hir.is_ambient(declaration)
+            || self.is_block_scoped_name_declared_before_use(file, declaration, error_location)
         {
             return;
         }
@@ -172,16 +166,17 @@ impl Checker<'_, '_> {
         } else {
             return;
         };
+        let at = self.get_error_range_for_node(file, error_location);
         let name = hir.start(hir.name(declaration));
-        self.report_use_before_declaration(file, hir[e].pos, code, name, declaration);
+        self.report_use_before_declaration(file, at, code, name, declaration);
     }
 
-    /// Reports the error `code` at `start`, with the source text at `name` as its argument, and the
+    /// Reports the error `code` at `at`, with the source text at `name` as its argument, and the
     /// related information `'{0}' is declared here.` at `declaration`.
     fn report_use_before_declaration(
         &mut self,
         file: FileId,
-        start: u32,
+        at: (u32, u32),
         code: u32,
         name: u32,
         declaration: Node,
@@ -189,7 +184,7 @@ impl Checker<'_, '_> {
         let (from, to) = self.get_error_range_for_node(file, declaration);
         let name = self.declaration_name_at(file, name);
         let related = self.declared_here((file, from, to), name.clone());
-        self.error_at((file, start, 0), code, &[Arg::Bytes(&name)])
+        self.error_at((file, at.0, at.1), code, &[Arg::Bytes(&name)])
             .add_related_info(related);
     }
 
@@ -523,7 +518,7 @@ impl Checker<'_, '_> {
         } else {
             return;
         };
-        self.report_use_before_declaration(file, name_pos, code, name_pos, declaration);
+        self.report_use_before_declaration(file, (name_pos, 0), code, name_pos, declaration);
     }
 
     /// `isPropertyDeclaredInAncestorClass` for the property `name` that `declaration` declares.

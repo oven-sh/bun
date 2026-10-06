@@ -19,8 +19,9 @@ const EXPORT_TYPE: u8 = 2;
 const EXPORT_NAMESPACE: u8 = 4;
 
 impl Checker<'_, '_> {
-    /// The checks that `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration` and the
-    /// callers of `checkExportsOnMergedDeclarations` run on the declarations of `file`.
+    /// The checks that `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration`,
+    /// `checkClassLikeDeclaration` and the callers of `checkExportsOnMergedDeclarations` run on the
+    /// declarations of `file`.
     pub(super) fn check_overloads(&mut self, file: FileId) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         if hir.has_errors || hir.kind == FileKind::Json {
@@ -61,10 +62,14 @@ impl Checker<'_, '_> {
                 continue;
             }
             // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a duplicate", but
-            // "run check on export symbol" (`symbol.Parent != nil`).
+            // "run check on export symbol" (`symbol.Parent != nil`). `checkClassLikeDeclaration` checks its symbol in every file.
             if hir.is_js
                 && symbol.parent.is_none()
-                && files.decls_of(sym).iter().all(|d| self.hir(d.0).is_js)
+                && files.decls_of(sym).iter().all(|&(of, d)| {
+                    let is_class_of_symbol = matches!(d, Decl::Class(_))
+                        && files.sym(of, self.bound(of).symbol_of_declaration(d)) == sym;
+                    self.hir(of).is_js && !is_class_of_symbol
+                })
             {
                 continue;
             }

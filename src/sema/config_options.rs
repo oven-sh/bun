@@ -236,9 +236,8 @@ fn is_lib(name: &[u8]) -> bool {
     crate::resolve::LIBS.contains(&name.to_ascii_lowercase())
 }
 
-/// The rest of `convertJsonOption`, for a value of the right type. An enum-valued option that is
-/// `""` is `null`. A list is without the elements for which `is_invalid` holds and, unless
-/// `listPreserveFalsyValues`, without the falsy ones.
+/// The rest of `convertJsonOption`, for a value of the right type. A list is without the elements
+/// for which `is_invalid` holds and, unless `listPreserveFalsyValues`, without the falsy ones.
 pub fn converted(name: &[u8], value: &Json, is_invalid: impl Fn(usize) -> bool) -> Json {
     let is_falsy = |item: &Json| match item {
         Json::Null | Json::Bool(false) => true,
@@ -247,7 +246,6 @@ pub fn converted(name: &[u8], value: &Json, is_invalid: impl Fn(usize) -> bool) 
         _ => false,
     };
     match (kind_of(name), value) {
-        (Some(Kind::OneOf(..)), Json::String(text)) if text.is_empty() => Json::Null,
         (Some(Kind::List(_)), Json::Array(items)) => Json::Array(
             (items.iter().enumerate())
                 .filter(|(index, item)| !is_invalid(*index) && !is_falsy(item))
@@ -285,7 +283,7 @@ pub enum In {
     CompilerOptions {
         as_typescript_does: bool,
     },
-    /// `tsconfigRootOptionsMap`. What it does not have is not an error.
+    /// `tsconfigRootOptionsMap`. What it does not have is not an error, but for `excludes`.
     Root,
     TypeAcquisition,
 }
@@ -395,6 +393,16 @@ pub fn problems(
                 index: None,
                 code: 6266,
                 args: vec![name.clone()],
+                span: span_of(name, false),
+            });
+            continue;
+        }
+        if within == In::Root && name == b"excludes" {
+            out.push(Problem {
+                name: name.clone(),
+                index: None,
+                code: 6114,
+                args: Vec::new(),
                 span: span_of(name, false),
             });
             continue;

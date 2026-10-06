@@ -141,6 +141,9 @@ pub(crate) struct ClassName {
 }
 
 pub(crate) struct ImportSpecifier {
+    /// Position of its first token: `type`, or the first name.
+    pub(crate) start: u32,
+    pub(crate) is_type_only: bool,
     pub(crate) imported: StoreStr,
     pub(crate) imported_pos: u32,
     pub(crate) local: StoreStr,
@@ -939,12 +942,23 @@ impl<'p, 'a> Reader<'p, 'a> {
                     }
                 } else {
                     // `parseNamedImports`
-                    for item in p.parse_import_clause()?.items.iter() {
+                    p.parse_import_clause()?;
+                    let syntax = p.type_syntax_mut();
+                    let specifiers = syntax.module_syntax.last().and_then(|kept| kept.specifiers);
+                    for specifier in specifiers.unwrap_or_default().iter() {
+                        let specifier = syntax.b.ts[specifier];
+                        let local = specifier.name;
+                        if local.text.is_empty() || local.is_string {
+                            continue;
+                        }
+                        let imported = specifier.property_name.unwrap_or(local);
                         import.named.push(ImportSpecifier {
-                            imported: item.alias,
-                            imported_pos: item.alias_loc.start.max(0) as u32,
-                            local: item.original_name,
-                            local_pos: item.name.loc.start.max(0) as u32,
+                            start: specifier.loc.start.max(0) as u32,
+                            is_type_only: specifier.is_type_only,
+                            imported: imported.text,
+                            imported_pos: imported.loc.start.max(0) as u32,
+                            local: local.text,
+                            local_pos: local.loc.start.max(0) as u32,
                         });
                     }
                 }

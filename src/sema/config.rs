@@ -152,12 +152,25 @@ pub fn resolve_config_file_name_of_project_reference(path: &[u8]) -> Vec<u8> {
 
 const CONFIG_DIR_TEMPLATE: &[u8] = b"${configDir}";
 
-/// `findConfigFile`: the `tsconfig.json` in `dir` or in its nearest ancestor directory. A
-/// `jsconfig.json` is used if the same directory has no `tsconfig.json`.
-pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+/// `findConfigFile`, as `tscCompilation` calls it: the `tsconfig.json` in `dir` or in its nearest
+/// ancestor directory that has one.
+pub fn find_config_file(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     ancestors(dir)
-        .flat_map(|dir| [b"tsconfig.json", b"jsconfig.json"].map(|name| join(dir, name)))
+        .map(|dir| join(dir, b"tsconfig.json"))
         .find(|candidate| host.is_file(candidate))
+}
+
+/// `computeConfigFileName`, for a file in `dir`: the `tsconfig.json`, or else the `jsconfig.json`,
+/// in `dir` or in its nearest ancestor directory that has either.
+pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    for dir in ancestors(dir) {
+        let candidates = [b"tsconfig.json", b"jsconfig.json"].map(|name| join(dir, name));
+        let found = candidates.into_iter().find(|it| host.is_file(it));
+        if found.is_some() || dir.ends_with(b"/node_modules") {
+            return found;
+        }
+    }
+    None
 }
 
 /// One configuration file with its extended configuration files merged in.
@@ -241,9 +254,13 @@ fn absolute_unless_template(value: &[u8], base: &[u8]) -> Vec<u8> {
 }
 
 /// `mergeCompilerOptions`: the values of `source` take precedence. `null` unsets an earlier value,
-/// so it is preserved until everything is merged.
-fn merge_compiler_options(target: &mut Vec<(Vec<u8>, Json)>, source: Vec<(Vec<u8>, Json)>) {
+/// so it is preserved until everything is merged. `""` is the zero value of its field, which is to
+/// every reader an option that is not specified, and is not copied.
+pub fn merge_compiler_options(target: &mut Vec<(Vec<u8>, Json)>, source: Vec<(Vec<u8>, Json)>) {
     for (key, value) in source {
+        if value.as_str() == Some(b"") {
+            continue;
+        }
         target.retain(|(k, _)| *k != key);
         target.push((key, value));
     }
@@ -815,9 +832,10 @@ fn file_names_from_specs(
     let mut literal_files = OrderedFiles::default();
     let mut wildcard_files = OrderedFiles::default();
     let mut wildcard_json_files = OrderedFiles::default();
+    // The key is the entry as it is written. What is asked below is a path, so only an entry that
+    // is one is found.
     for name in literal {
-        let file = join(base, name);
-        literal_files.insert(key(&file), file);
+        literal_files.insert(key(name), join(base, name));
     }
     if !include.is_empty() {
         let mut extensions: Vec<&[u8]> = supported.iter().flat_map(|g| g.iter().copied()).collect();

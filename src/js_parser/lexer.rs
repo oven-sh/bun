@@ -1564,10 +1564,15 @@ impl<'a> Lexer<'a> {
     /// `ScanJsxTokenEx`: whether the `<` the lexer is at, in JSX text that starts at `text_start`,
     /// starts a conflict marker. The marker is reported and skipped to the end of its line
     /// (`scanConflictMarkerTrivia`), and the token, which starts where the text starts, terminates
-    /// the JSX children.
+    /// the JSX children. It keeps the `tokenFlags` of the token before the text, of which
+    /// `had_newline_before` is one.
     #[cold]
     #[inline(never)]
-    fn jsx_text_meets_conflict_marker(&mut self, text_start: usize) -> bool {
+    fn jsx_text_meets_conflict_marker(
+        &mut self,
+        text_start: usize,
+        had_newline_before: bool,
+    ) -> bool {
         let (text, pos) = (self.contents, self.end);
         if self.is_log_disabled || !is_conflict_marker(text, pos) {
             return false;
@@ -1588,16 +1593,19 @@ impl<'a> Lexer<'a> {
         self.step();
         self.start = text_start;
         self.token = T::TSyntaxError;
+        self.has_newline_before = had_newline_before;
         true
     }
 
     /// Call after reporting an error without consuming the token. `before`: the position of the previous error. Fails after too many
     /// errors in a row at one position, which stops a loop that makes no progress. The limit is above any nesting depth the stack
-    /// allows, because every open bracket reports one error at the end of the file while the parser unwinds.
+    /// allows, because every open bracket reports one error at the end of the file while the parser unwinds. There some errors
+    /// are reported at the end of the last token (`createIdentifierWithDiagnostic`).
     #[cold]
     #[inline(never)]
     pub(crate) fn put_up_with(&mut self, before: Loc) -> Result<(), Error> {
-        if before.eql(self.loc()) {
+        if before.eql(self.loc()) || (self.token == T::TEndOfFile && before.eql(self.full_start()))
+        {
             self.stuck += 1;
             if self.stuck > 1 << 20 {
                 return Err(Error::SyntaxError);
@@ -2671,6 +2679,11 @@ impl<'a> Lexer<'a> {
     pub(crate) fn expected(&mut self, token: T) -> Result<(), Error> {
         if self.is_log_disabled {
             return Err(Error::Backtrack);
+        } else if token == T::TIdentifier && self.token == T::TEndOfFile && self.tolerant {
+            // `createIdentifierWithDiagnostic`: at the end of the last token.
+            let loc = self.full_start();
+            self.ts_error(Range { loc, len: 0 }, 1003);
+            Ok(())
         } else if !tokenToString_get(token).is_empty() {
             self.expected_string(tokenToString_get(token))
         } else {
@@ -3404,6 +3417,9 @@ impl<'a> Lexer<'a> {
                     self.token = T::TDot;
                 }
                 0x3D => {
+                    if self.skip_conflict_marker_inside_jsx_element(b'=') {
+                        continue;
+                    }
                     self.step();
                     self.token = T::TEquals;
                 }
@@ -3416,10 +3432,16 @@ impl<'a> Lexer<'a> {
                     self.token = T::TCloseBrace;
                 }
                 0x3C => {
+                    if self.skip_conflict_marker_inside_jsx_element(b'<') {
+                        continue;
+                    }
                     self.step();
                     self.token = T::TLessThan;
                 }
                 0x3E => {
+                    if self.skip_conflict_marker_inside_jsx_element(b'>') {
+                        continue;
+                    }
                     self.step();
                     self.token = T::TGreaterThan;
                 }
@@ -3593,6 +3615,13 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
+    /// Inside a tag TypeScript scans with `Scan`, for which a conflict marker is trivia. Call at
+    /// the character `ch`, which starts the token being scanned.
+    #[inline]
+    fn skip_conflict_marker_inside_jsx_element(&mut self, ch: u8) -> bool {
+        self.tolerant && self.contents.get(self.current) == Some(&ch) && self.skip_conflict_marker()
+    }
+
     /// Inside a tag TypeScript scans with `Scan`, so a character that `next_inside_jsx_element` has no token for starts an
     /// ordinary token. Call before stepping over that character.
     #[cold]
@@ -3724,6 +3753,7 @@ impl<'a> Lexer<'a> {
 
     pub(crate) fn next_jsx_element_child(&mut self) -> Result<(), Error> {
         self.token_full_start = self.end;
+        let had_newline_before = self.has_newline_before;
         self.has_newline_before = false;
         let original_start = self.end;
 
@@ -3762,7 +3792,10 @@ impl<'a> Lexer<'a> {
                             0x7B | 0x3C => {
                                 if self.tolerant
                                     && self.code_point == 0x3C
-                                    && self.jsx_text_meets_conflict_marker(original_start)
+                                    && self.jsx_text_meets_conflict_marker(
+                                        original_start,
+                                        had_newline_before,
+                                    )
                                 {
                                     return Ok(());
                                 }

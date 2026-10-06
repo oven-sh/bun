@@ -342,7 +342,8 @@ pub struct Program<'s> {
     mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>, Buffered, &'s Session>,
 }
 
-/// No id: the arguments are printed when it is created.
+/// No id: the arguments are printed when it is created, and `take_reported_from` gives no table a
+/// callback (`Reported::deferred`).
 impl crate::types::Follow for Reported {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
         visitor.plain(&(self.file.0, self.start, self.end, self.code));
@@ -564,6 +565,7 @@ impl<'s> Program<'s> {
             non_circular_returns: Vec::new(),
             contextual_binding_patterns: Vec::new(),
             late_bound_members: Default::default(),
+            this_types: Default::default(),
             late_binding_exports: Vec::new(),
             reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
@@ -579,6 +581,7 @@ impl<'s> Program<'s> {
             printing_closes_cycles: false,
             reprinting: false,
             printing_floors: Vec::new(),
+            serialized_types: Default::default(),
             context_free_level: usize::MAX,
             found_cycle: false,
             left_a_cycle: false,
@@ -679,7 +682,7 @@ impl<'s> Program<'s> {
             flow_analysis_disabled_in: None,
             inline_level: 0,
             walk_declared: TypeId::NEVER,
-            constant_depth: 0,
+            constants_in_evaluation: Vec::new(),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             awaiting: Vec::new(),
@@ -702,6 +705,7 @@ impl<'s> Program<'s> {
             unresolved_identifiers: Vec::new(),
             is_deferred_node: Default::default(),
             deferred_diagnostics: Vec::new(),
+            save_deferred_diagnostics: false,
             node_check_flags: Default::default(),
             within_unreachable_code: false,
             reported_unreachable_nodes: Vec::new(),
@@ -714,7 +718,7 @@ impl<'s> Program<'s> {
             resolved_signatures: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
-            restrictive_operands: Vec::new(),
+            restrictive_instantiations: Default::default(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -967,6 +971,8 @@ pub struct Checker<'p, 's> {
     contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
     /// `membersAndExportsLinks`, keyed by container and side.
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
+    /// `has_this_type` of an interface.
+    this_types: FxHashMap<Sym, bool>,
     /// The classes whose static members with computed names `getExportsOfSymbol` is binding, for
     /// `resolveAnonymousTypeMembers`. See `origin_shape_in_the_meantime`.
     late_binding_exports: Vec<Sym>,
@@ -974,8 +980,8 @@ pub struct Checker<'p, 's> {
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// `resolveDeclaredMembers` is at `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
     /// For each one in progress: the depth of `stack` at that point, with the `Query::Shape` on
-    /// top, and the first member of the declaration whose computed name is some string, number or
-    /// symbol.
+    /// top if `resolveObjectTypeMembers` is the caller, and the first member of the declaration
+    /// whose computed name is some string, number or symbol.
     declared_index_infos_in_progress: Vec<(usize, FileId, MemberId)>,
     /// The classes and interfaces whose shapes are at the members of their base types, by the key
     /// of the shape. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the declared
@@ -1004,11 +1010,11 @@ pub struct Checker<'p, 's> {
     /// prints.
     printing_closes_cycles: bool,
     /// A message is being recreated that was dropped with a result that was not cached: its types
-    /// are printed behind the barrier, and do not count as a level. tsgo creates it once. Or tsgo
-    /// creates the message after the check of the file (`addDeferredDiagnostic`).
+    /// are printed behind the barrier, and do not count as a level. tsgo creates it once.
     reprinting: bool,
     /// The height of `stack` when each `typeToStringEx` in progress began.
     printing_floors: Vec<usize>,
+    serialized_types: print::SerializedTypes,
     /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` rechecks an
     /// expression: diagnostics reported then are kept.
     context_free_level: usize,
@@ -1172,7 +1178,7 @@ pub struct Checker<'p, 's> {
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of unions and intersections.
     generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
-    generic_mapped_types_in_progress: Vec<TypeId>,
+    generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// Those for which it has ended at the limit of `instantiation_count` since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
     /// The entries most recently found in `Program::members`, in the signature tables and in
@@ -1236,7 +1242,8 @@ pub struct Checker<'p, 's> {
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.
     walk_declared: TypeId,
-    constant_depth: u32,
+    /// The constants whose initializers `evaluateEntity` is evaluating.
+    constants_in_evaluation: Vec<(FileId, VarDeclId)>,
     /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
     /// of the signature id.
     recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
@@ -1290,8 +1297,11 @@ pub struct Checker<'p, 's> {
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
     is_deferred_node: crate::util::FxHashSet<ExprId>,
     /// `deferredDiagnosticCallbacks`: the declarations for which `checkWeakMapSetCollision` or
-    /// `checkReflectCollision` is deferred.
+    /// `checkReflectCollision` is deferred. The other callbacks are in `reported`
+    /// (`Reported::deferred`).
     deferred_diagnostics: Vec<Node>,
+    /// `saveDeferredDiagnostics`
+    save_deferred_diagnostics: bool,
     /// `nodeLinks.flags` for the file being checked.
     node_check_flags: FxHashMap<Node, u8>,
     /// `withinUnreachableCode`
@@ -1341,9 +1351,9 @@ pub struct Checker<'p, 's> {
     /// `resolvedSignature = result`, while `resolveCall` reports the errors of a call that no
     /// candidate accepts.
     resolved_meanwhile: Vec<(FileId, ExprId, call::ResolvedCall)>,
-    /// The two types of each restrictive comparison in progress, innermost last: the results of
-    /// `getRestrictiveInstantiation`.
-    restrictive_operands: Vec<(TypeId, TypeId)>,
+    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
+    /// `getRestrictiveInstantiation` has returned.
+    restrictive_instantiations: crate::util::FxHashSet<TypeId>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),

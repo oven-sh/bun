@@ -1314,6 +1314,30 @@ async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
+// Small programs about which `bun check` and tsc once said something else, each named after where it was found.
+differential("programs about which the two once differed", async () => {
+  type Case = { files: Record<string, string>; build?: true };
+  const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
+  const cases = Object.entries(all).filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0);
+  const files: Record<string, string> = {};
+  for (const [name, it] of cases) for (const path in it.files) files[`${name}/${path}`] = it.files[path];
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  const different: Record<string, object> = {};
+  await inTurns(cases, async ([name, it]) => {
+    const cwd = join(root, name);
+    // In this order: `tsc -b` writes files.
+    const ours = await linesOf([bunExe(), "check"], cwd, root);
+    const theirs = await linesOf(
+      [tsc!, ...(it.build ? ["-b"] : []), "--pretty", "false", "--singleThreaded"],
+      cwd,
+      root,
+    );
+    if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
+  });
+  expect(different).toEqual({});
+});
+
 differential("values of compiler options", async () => {
   // Valid, formerly valid, misspelled, empty and of the wrong type.
   const values: Record<string, unknown[]> = {
@@ -1608,7 +1632,7 @@ differential("what a project with references imports, and whether it may", async
       compilerOptions: { ...base, composite: true },
       files: ["l.ts"],
     });
-    files[`${index}/lib/l.ts`] = `export const l = 1;\n`;
+    files[`${index}/lib/l.ts`] = `import "./inner/i";\nexport const l = 1;\n`;
     files[`${index}/lib/inner/i.ts`] = `export const i = 1;\n`;
     files[`${index}/unrelated/tsconfig.json`] = JSON.stringify({ compilerOptions: { ...base, composite: true } });
     files[`${index}/unrelated/u.ts`] = `export const u = 1;\n`;
@@ -1617,7 +1641,7 @@ differential("what a project with references imports, and whether it may", async
   const root = String(dir);
   const different: Record<string, object> = {};
   await inTurns(
-    [...combinations.keys()].filter(index => index % everyProject === 0),
+    [...combinations.keys()].filter(index => index % everyConfiguration === 0),
     async index => {
       const cwd = join(root, String(index));
       // In this order: `tsc -b` writes files.

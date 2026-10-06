@@ -590,15 +590,15 @@ impl Checker<'_, '_> {
         })
     }
 
-    /// `getBindAndCheckDiagnosticsWithChecker`: whether the checker of `file` has visited `other`
-    /// when it collects the diagnostics of `file`, so that `file` has what the check of `other`
-    /// reports in it.
-    pub(super) fn is_checked_no_later_than(&self, other: FileId, file: FileId) -> bool {
+    /// `getBindAndCheckDiagnosticsWithChecker`: whether the checker of `collected` has visited
+    /// `visited` when it collects the diagnostics of `collected`, so that `collected` has what the
+    /// check of `visited` reports in it.
+    pub(super) fn is_checked_no_later_than(&self, visited: FileId, collected: FileId) -> bool {
         let (files, checker_count) = (self.files(), self.task.checker_count);
-        let (rank, last) = (files.rank_of_file(other), files.rank_of_file(file));
+        let (rank, last) = (files.rank_of_file(visited), files.rank_of_file(collected));
         rank <= last
             && rank.checked_rem(checker_count) == last.checked_rem(checker_count)
-            && self.reports_semantic_errors(other)
+            && self.reports_semantic_errors(visited)
     }
 
     /// For the members of each class, interface and type literal.

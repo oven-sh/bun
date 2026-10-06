@@ -13,7 +13,6 @@ static NO_ORIGIN: UnionOrigin = UnionOrigin::None;
 /// The alias passed to `instantiateMappedType`.
 #[derive(Clone, Copy)]
 pub(super) enum NewAlias<'a> {
-    None,
     /// `getObjectTypeInstantiation` without an alias: `instantiateTypeAlias(t.alias, m)` for a type
     /// that stores no alias. It is the alias whose body is the node, instantiated with the mapper.
     OfNode,
@@ -34,10 +33,11 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn with_origin(&self, union: TypeId, origin: OriginKey<'_>) -> TypeId {
         self.types().intern_key_with(
             TypeKey::Data(self.data(union)),
-            ProvenanceKey {
+            &ProvenanceKey {
                 alias: None,
                 origin,
                 is_enum: false,
+                stored_under: None,
             },
         )
     }
@@ -52,10 +52,11 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
         self.types().intern_key_with(
             TypeKey::Data(self.data(ty)),
-            ProvenanceKey {
+            &ProvenanceKey {
                 alias: Some((alias, type_arguments)),
                 origin: self.origin(ty).into(),
                 is_enum: self.files().flags(alias).intersects(SymFlags::ENUM),
+                stored_under: None,
             },
         )
     }
@@ -84,8 +85,9 @@ impl<'p, 's> Checker<'p, 's> {
             alias: Some((alias, type_arguments)),
             origin: OriginKey::Union(&origin),
             is_enum: false,
+            stored_under: None,
         };
-        (self.types()).intern_key_with(TypeKey::Data(self.data(created)), provenance)
+        (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance)
     }
 
     /// `t.alias`. A type identified by its type node has the alias whose body is that node, with

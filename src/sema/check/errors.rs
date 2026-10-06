@@ -66,7 +66,9 @@ impl Program<'_> {
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
             used.sort_unstable();
-            out.retain(|d| d.directive == NO_DIRECTIVE);
+            // `FilterNoEmitSemanticDiagnostics` comes after the directives.
+            let no_emit = self.files.options.no_emit;
+            out.retain(|d| d.directive == NO_DIRECTIVE && !(no_emit && d.skipped_on_no_emit));
             let expected = checked.expected_errors.into_iter();
             out.extend(expected.filter(|unused| used.binary_search(&unused.start).is_err()));
             out.extend(checked.include);
@@ -211,6 +213,8 @@ impl Checker<'_, '_> {
                 d.by_emit = true;
             }
         }
+        self.save_deferred_diagnostics = true;
+        let logged = self.task.diagnostics.len();
         self.check_source_file(file);
         self.check_declare_modifiers(file);
         self.check_empty_declaration_lists(file);
@@ -253,6 +257,7 @@ impl Checker<'_, '_> {
         if self.p.files.options.emits_first && self.elides_imports(file) {
             self.mark_identifier_aliases_referenced(file, true);
         }
+        self.produce_type_not_iterable_errors(logged);
         self.check_circular_mapped_properties();
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript
@@ -560,7 +565,8 @@ impl Checker<'_, '_> {
             Decl::ImportSpec(s) => (hir[s].imported_pos, files.module(file).default_mode),
             Decl::ExportSpec(s) => (hir[s].local_pos, files.module(file).default_mode),
             Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
-                PatParent::Prop(_, p) => (hir[p].pos, ResolutionMode::Require),
+                PatParent::Prop(_, p) => (hir[p].key_pos, ResolutionMode::Require),
+                PatParent::Elem(..) => (hir[pat].pos, ResolutionMode::Require),
                 _ => return,
             },
             _ => (0, files.module(file).default_mode),
@@ -699,25 +705,33 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// `getTargetOfModuleDefault`: whether `module` has a default export, its own or a synthetic
-    /// one. `usage`: the syntax the specifier is emitted as
-    /// (`getEmitSyntaxForModuleSpecifierExpression`), regardless of the resolution mode it
-    /// specifies.
+    /// `getTargetOfModuleDefault`: whether `module` has a default export: its export
+    /// `"module.exports"`, its own default or a synthetic one. `usage`: the syntax the specifier is
+    /// emitted as (`getEmitSyntaxForModuleSpecifierExpression`), regardless of the resolution mode
+    /// it specifies.
     fn module_has_default(&mut self, usage: ResolutionMode, module: Sym) -> bool {
         let files = self.files();
-        if files.is_only_importable_as_default(usage, module)
-            || self.can_have_synthetic_default(usage, module)
+        if files.is_commonjs_import_of_esm_file(usage, module)
+            && let Some(module_exports) = files.module_exports_name()
+            && self.has_export_by_name(module, module_exports)
         {
             return true;
         }
-        // `resolveExportByName`: for a module with `export =`, the property `default` of the
-        // exported value.
+        files.is_only_importable_as_default(usage, module)
+            || self.can_have_synthetic_default(usage, module)
+            || self.has_export_by_name(module, known::default)
+    }
+
+    /// `resolveExportByName(module, name, ..) != nil`: for a module with `export =`, a property of
+    /// the exported value.
+    fn has_export_by_name(&mut self, module: Sym, name: Atom) -> bool {
+        let files = self.files();
         let value = files.module_value(module);
         if value == module {
-            return files.export(module, known::default).is_some();
+            return files.export(module, name).is_some();
         }
         let ty = self.type_of_symbol(value);
-        self.type_of_own_property(ty, known::default).is_some()
+        self.type_of_own_property(ty, name).is_some()
     }
 
     /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`,
@@ -725,7 +739,7 @@ impl Checker<'_, '_> {
     /// `error_no_module_member_symbol`. 2724 comes with the suggested name, 2460 with the name it
     /// is exported as.
     fn why_no_module_member(
-        &self,
+        &mut self,
         from: FileId,
         module: Sym,
         target: Sym,
@@ -768,16 +782,14 @@ impl Checker<'_, '_> {
         if files.export(module, known::default).is_some() {
             return (2614, None);
         }
-        let local = self.local_of_module(module, name);
-        let Some(local) = local else {
+        let Some(local) = self.local_of_module(module, name) else {
             return (2305, None);
         };
-        // `getSymbolIfSameReference`
-        let resolve = |s: Sym| files.resolve_alias(s).map(|target| files.canonical(target));
-        let local = resolve(local);
+        let local = self.merged_resolved_symbol(local);
         let own = files.exports(module);
         let Some(equals) = files.export(module, known::export_equals) else {
-            return match own.iter().find(|&&(_, e)| resolve(e) == local) {
+            let mut own = own.iter();
+            return match own.find(|&&(_, e)| self.merged_resolved_symbol(e) == local) {
                 Some(&(_, exported)) => (2460, Some(exported)),
                 None => (2459, None),
             };
@@ -790,7 +802,7 @@ impl Checker<'_, '_> {
                     .flags(s)
                     .intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
         });
-        let code = if local.is_none() || is_more_than_an_alias || resolve(equals) != local {
+        let code = if is_more_than_an_alias || self.merged_resolved_symbol(equals) != local {
             2305
         } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
             2595
@@ -800,6 +812,16 @@ impl Checker<'_, '_> {
             2616
         };
         (code, None)
+    }
+
+    /// `getMergedSymbol(resolveSymbol(getMergedSymbol(symbol)))`, which `getSymbolIfSameReference`
+    /// compares.
+    fn merged_resolved_symbol(&mut self, symbol: Sym) -> AliasTarget {
+        let files = self.files();
+        match self.resolve_symbol(files.canonical(symbol)) {
+            AliasTarget::Symbol(target) => AliasTarget::Symbol(files.canonical(target)),
+            target => target,
+        }
     }
 
     /// `errorOnImplicitAnyModule` with `isError`: 7016 at `at` for `spec`, which is one of the
@@ -973,14 +995,24 @@ impl Checker<'_, '_> {
         }
         // `isNeverInitialized`: its assignments by the time this code runs are unknown, unless it
         // is never assigned.
-        let is_local_let = decl.kind == VarKind::Let
-            && !decl.flags.contains(Flags::EXPORT)
-            && (hir.has_module_syntax || !matches!(declared_in, Parent::File));
-        !(is_local_let
-            && decl.pat == pat
-            && decl.init.is_none()
+        !(decl.pat == pat
             && !self.declares_loop_variable(file, stmt)
+            && decl.init.is_none()
+            && self.is_mutable_local_variable_declaration(file, d)
             && !bound.is_symbol_assigned_definitely(hir, symbol))
+    }
+
+    /// `isMutableLocalVariableDeclaration`
+    pub(super) fn is_mutable_local_variable_declaration(&self, file: FileId, d: VarDeclId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let stmt = bound.var_stmt[d.idx()];
+        hir[d].kind == VarKind::Let
+            && !hir[d].flags.contains(Flags::EXPORT)
+            // `IsGlobalSourceFile`
+            && !(stmt.is_some()
+                && matches!(hir[stmt].kind, StmtKind::Var(_))
+                && matches!(bound.stmt_parent[stmt.idx()], Parent::File)
+                && !self.files().module(file).is_module())
     }
 
     /// 2564: a property that requires a value has no initializer and is not definitely assigned in
@@ -2022,7 +2054,10 @@ fn similar_in_scope_and_where(
     meaning: SymFlags,
 ) -> Option<(SpellingSuggestion, bool)> {
     let files = c.files();
-    let try_resolve_alias = &mut |sym| Some(files.symbol_flags(sym));
+    let try_resolve_alias = &mut |sym| {
+        let target = files.resolve_alias(sym);
+        Some(target.map_or(SymFlags::all(), |target| files.flags(target)))
+    };
     let name = (name, c.atoms().bytes(name));
     let suggested = files.suggested_symbol_for_nonexistent_symbol(
         file,
@@ -2094,6 +2129,10 @@ impl Files<'_> {
                     let s = &bound.scopes[scope.idx()];
                     // `IsGlobalSourceFile`: the declarations of a script are globals.
                     if s.kind == ScopeKind::File && s.symbol.is_none() {
+                        return None;
+                    }
+                    // `KindInferType`: no table either, `Resolve` compares the name directly.
+                    if s.kind == ScopeKind::InferConstraint {
                         return None;
                     }
                     let locals = bound.table(s.locals).iter().filter(is_in_table);
@@ -2198,7 +2237,7 @@ fn module_name_as_imported(c: &mut Checker<'_, '_>, module: Sym, from: FileId) -
     let decls = c.files().decls_of(module);
     if decls.iter().any(|d| matches!(d.1, Decl::File)) {
         let specifier = c.specifier_for_module_symbol(module, from, ResolutionMode::None);
-        cat!(b"\"", specifier, b"\"")
+        super::print::quoted(&specifier, b'"', true)
     } else {
         c.symbol_to_string(module)
     }
@@ -2545,9 +2584,11 @@ impl Checker<'_, '_> {
         left: ExprId,
         right: ExprId,
     ) {
+        // `evaluateEnumMember` reports errors of its own.
+        let rhs_eval = self.constant_value(file, right);
         let is_error = matches!(self.bound(file).expr_parent[e.idx()], Parent::EnumInit(_));
         if (is_error || self.captures_suggestions())
-            && let Some(EnumValue::Number(bits)) = self.constant_value(file, right)
+            && let Some(EnumValue::Number(bits)) = rhs_eval
             && f64::from_bits(bits).abs() >= 32.0
         {
             let is_assignment = matches!(self.hir(file)[e].kind, ExprKind::Assign { .. });

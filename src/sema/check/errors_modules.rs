@@ -998,12 +998,12 @@ impl Checker<'_, '_> {
             // As a value, the first name may resolve to a declaration in a nearer scope that is not
             // a namespace.
             let expected = SymFlags::VALUE | SymFlags::NAMESPACE;
-            if resolves_to_umd_global(files, cx.file, scope, first.text, expected) {
-                self.error(cx.file, names.at(0), 2686, &[Arg::Atom(first.text)]);
+            let found = files.resolve_name(cx.file, scope, first.text, expected);
+            if let Some(result) = found {
+                let module_name = hir.node(names.at(0));
+                self.on_successfully_resolved_symbol(cx.file, module_name, scope, result, expected);
             }
-            let nearest = files
-                .resolve_name(cx.file, scope, first.text, expected)
-                .and_then(|found| files.resolve_alias_as(found, expected));
+            let nearest = found.and_then(|found| files.resolve_alias_as(found, expected));
             if let Some(nearest) = nearest
                 && !files.flags(nearest).intersects(SymFlags::NAMESPACE)
             {

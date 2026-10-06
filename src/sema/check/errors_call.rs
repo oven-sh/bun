@@ -165,10 +165,6 @@ impl Checker<'_, '_> {
                 return;
             }
             if call_sigs.is_empty() {
-                // A method of `A[] | B[]` is called as that of `(A | B)[]`.
-                if resolved.sig.is_some() && self.is_union(apparent) {
-                    return;
-                }
                 if !construct_sigs.is_empty() {
                     let node_start = self.start_inside_parentheses(file, e);
                     let end = self.end_inside_parentheses(file, e);
@@ -459,8 +455,12 @@ impl Checker<'_, '_> {
         if data.chain == Chain::Start
             || !matches!(self.bound(file).expr_parent[e.idx()], Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::Expr(_)))
             || is_parenthesized(hir, e)
-            || !self.sig_predicate(sig).is_some_and(|p| p.asserts)
         {
+            return;
+        }
+        // `getOptionalCallSignature`: `void | undefined` after a `?.` that may short-circuit.
+        let return_type = self.type_of_expr(file, e);
+        if self.flags(return_type) & tf::VOID == 0 || self.sig_predicate(sig).is_none() {
             return;
         }
         let code = if !is_dotted_name(hir, data.callee) {
@@ -839,7 +839,7 @@ impl Checker<'_, '_> {
         if let Some(&last) = s.candidates_for_argument_error.last() {
             let from = self.reported.len();
             self.is_signature_applicable(s, last, Relation::Assignable, CheckMode::empty(), true);
-            let reported = self.reported.split_off(from);
+            let reported = self.take_reported_from(from);
             let is_overloaded = s.candidates_for_argument_error.len() > 1;
             let related = if reported.is_empty() {
                 Vec::new()
@@ -1010,9 +1010,7 @@ impl Checker<'_, '_> {
     ) -> Result<Option<(usize, TypeId, TypeId)>, ()> {
         let filled = self.fill_sig_type_args(sig, type_params, type_args);
         let mapper = self.mapper_from(type_params, &filled);
-        let outer = self
-            .sig_decl(sig)
-            .map_or(MapperId::IDENTITY, |(_, _, mapper)| mapper);
+        let outer = self.mapper_around_sig(sig);
         for i in 0..type_args.len().min(type_params.len()) {
             let Some(constraint) = self.constraint_of_type_param(type_params[i]) else {
                 continue;
@@ -1054,7 +1052,6 @@ impl Checker<'_, '_> {
         }
         let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);
-        let params = self.sig_params(sig);
         // The arguments of a decorator are synthetic (`createSyntheticExpression`): an error about
         // one is reported at the decorator expression.
         let decorator = match node {
@@ -1081,6 +1078,8 @@ impl Checker<'_, '_> {
                 return false;
             }
         }
+        // `getTypeAtPosition(signature, i)` for every argument.
+        let params = self.sig_params_up_to(sig, args.len());
         let rest = self.non_array_rest_type(&params);
         let count = if rest.is_some() {
             (self.parameter_count(&params) - 1).min(args.len())
@@ -1344,7 +1343,7 @@ impl Checker<'_, '_> {
     /// `head`: `headMessage`.
     fn report_argument_arity(&mut self, s: &CallState<'_>, sigs: &[SigId], head: Option<u32>) {
         let (file, e, node, args) = (s.file, s.call, s.node, s.args);
-        if let Some(spread) = args.iter().find(|a| matches!(a, Arg::Spread(..))) {
+        if let Some(spread) = args.iter().find(|a| a.is_spread()) {
             let start = self.start_of(file, spread.node());
             self.error_at(
                 (file, start, self.end_of_expr(file, spread.node())),

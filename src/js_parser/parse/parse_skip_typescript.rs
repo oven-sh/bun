@@ -131,7 +131,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let keeps = self.should_save_types();
         let pos = if keeps { self.token_start() } else { 0 };
         match self.lexer.token {
-            T::TIdentifier | T::TThis => {
+            // `parseIdentifierOrPattern`: for TypeScript "this" is no name. `parseParameterEx`
+            // takes it as the name of a parameter before it parses one.
+            T::TIdentifier | T::TThis
+                if self.lexer.token == T::TIdentifier || !self.is_tolerant() =>
+            {
                 if keeps {
                     self.emit_identifier_binding();
                 }
@@ -315,7 +319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             && !self.lexer.is_log_disabled
             && !matches!(
                 self.lexer.token,
-                T::TIdentifier | T::TThis | T::TOpenBracket | T::TOpenBrace
+                T::TIdentifier | T::TOpenBracket | T::TOpenBrace
             )
     }
 
@@ -361,10 +365,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             parameter.full_start = self.lexer.full_start();
             // "(public a)": `parseParameterEx` accepts modifiers on every parameter, and the
             // checker reports them (2369).
+            let mut first_modifier = None;
             if self.is_tolerant() && self.lexer.token == T::TIdentifier {
-                self.skip_parameter_modifiers(&mut parameter)?;
+                first_modifier = self.skip_parameter_modifiers(&mut parameter)?;
             }
             let has_modifiers = !parameter.flags.is_empty();
+            // "(this: any)": `parseParameterEx` parses the name and a type annotation, no more.
+            let is_this = self.lexer.token == T::TThis && self.is_tolerant();
             // "(...a)"
             if self.lexer.token == T::TDotDotDot {
                 parameter.rest_loc = self.lexer.loc();
@@ -372,7 +379,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 parameter.flags |= Flags::REST;
             }
 
-            if self.starts_no_binding_name() {
+            if is_this {
+                self.skip_this_as_parameter_name()?;
+            } else if self.starts_no_binding_name() {
                 self.skip_missing_binding_name(has_modifiers)?;
             } else {
                 self.skip_type_script_binding()?;
@@ -382,7 +391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
 
             // "(a?)"
-            if self.lexer.token == T::TQuestion {
+            if self.lexer.token == T::TQuestion && !is_this {
                 parameter.question_loc = self.lexer.loc();
                 self.lexer.next()?;
                 parameter.flags |= Flags::OPTIONAL;
@@ -398,9 +407,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     is_complete = parameter.ty.is_some();
                 }
             }
+            if is_this && let Some(first_modifier) = first_modifier {
+                self.lexer.ts_error(first_modifier, 1433);
+            }
             // "(a = 1)": `parseParameterEx` accepts an initializer on every parameter, and the
             // checker reports it (2371).
-            if self.lexer.token == T::TEquals && self.is_tolerant() {
+            if self.lexer.token == T::TEquals && self.is_tolerant() && !is_this {
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
@@ -497,20 +509,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let parameter_start = self.lexer.loc();
             let mut parameter = Param::at(parameter_start);
             parameter.full_start = self.lexer.full_start();
+            let mut first_modifier = None;
             if self.lexer.token == T::TIdentifier {
-                self.skip_parameter_modifiers(&mut parameter)?;
+                first_modifier = self.skip_parameter_modifiers(&mut parameter)?;
             }
+            let is_this = self.lexer.token == T::TThis;
             if self.lexer.token == T::TDotDotDot {
                 parameter.rest_loc = self.lexer.loc();
                 self.lexer.next()?;
                 parameter.flags |= Flags::REST;
             }
 
-            if matches!(
-                self.lexer.token,
-                T::TIdentifier | T::TThis | T::TOpenBracket | T::TOpenBrace
-            ) {
-                self.skip_type_script_binding()?;
+            if is_this
+                || matches!(
+                    self.lexer.token,
+                    T::TIdentifier | T::TOpenBracket | T::TOpenBrace
+                )
+            {
+                if is_this {
+                    self.skip_this_as_parameter_name()?;
+                } else {
+                    self.skip_type_script_binding()?;
+                }
                 if keeps {
                     parameter.pattern = self.type_syntax_mut().last_binding;
                 }
@@ -521,7 +541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
                 self.lexer.expect(T::TIdentifier)?;
             }
-            if self.lexer.token == T::TQuestion {
+            if self.lexer.token == T::TQuestion && !is_this {
                 parameter.question_loc = self.lexer.loc();
                 self.lexer.next()?;
                 parameter.flags |= Flags::OPTIONAL;
@@ -535,7 +555,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     is_complete = parameter.ty.is_some();
                 }
             }
-            if self.lexer.token == T::TEquals {
+            if is_this && let Some(first_modifier) = first_modifier {
+                self.lexer.ts_error(first_modifier, 1433);
+            }
+            if self.lexer.token == T::TEquals && !is_this {
                 parameter.default = Some(self.skip_initializer_in_signature()?);
             }
             if keeps {
@@ -570,11 +593,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         ))
     }
 
-    /// `parseModifiers` at the start of a parameter. A modifier keyword is a modifier if a parameter can continue after it
-    /// (`nextTokenCanFollowModifier`): on the same line, except after "static".
+    /// `createIdentifier(true)` at the "this" that `parseParameterEx` takes as the name of a
+    /// parameter. Keep mode stores it in `TypeSyntax::last_binding`.
     #[cold]
     #[inline(never)]
-    fn skip_parameter_modifiers(&mut self, parameter: &mut Param) -> Result<(), Error> {
+    fn skip_this_as_parameter_name(&mut self) -> Result<(), Error> {
+        if self.should_save_types() {
+            self.emit_identifier_binding();
+        }
+        self.lexer.next()?;
+        Ok(())
+    }
+
+    /// `parseModifiers` at the start of a parameter. A modifier keyword is a modifier if a parameter can continue after it
+    /// (`nextTokenCanFollowModifier`): on the same line, except after "static". Returns `Loc` of the first modifier.
+    #[cold]
+    #[inline(never)]
+    fn skip_parameter_modifiers(
+        &mut self,
+        parameter: &mut Param,
+    ) -> Result<Option<bun_ast::Range>, Error> {
+        let full_start = self.lexer.full_start();
+        let mut first = None;
         let mut modifiers: Vec<crate::sema::ts_syntax::Modifier> = Vec::new();
         while self.lexer.token == T::TIdentifier
             && let Some(flag) = crate::lexer::PropertyModifierKeyword::find(self.lexer.raw())
@@ -600,12 +640,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 loc: self.lexer.loc(),
                 decorator: None,
             });
+            first.get_or_insert_with(|| bun_ast::Range {
+                loc: full_start,
+                len: self.lexer.range().end().start - full_start.start,
+            });
             self.lexer.next()?;
         }
         if self.should_save_types() {
             parameter.modifiers = self.add_param_modifiers(&modifiers);
         }
-        Ok(())
+        Ok(first)
     }
 
     /// Runs `parse` on an expression or a function body that appears inside a type, and returns the
@@ -1306,6 +1350,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut typeof_pos = None;
         // The type starts with "(". Parentheses have no node.
         let mut is_parenthesized = false;
+        // `parsePostfixTypeOrHigher`: whether what was skipped last is its operand. The result of
+        // an operator ("keyof", "infer", "|", "extends") is not.
+        let mut allows_postfix = true;
         // Returns from the function, closing any pending union or intersection first.
         macro_rules! finish {
             () => {{
@@ -1697,6 +1744,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     Metadata::MObject;
                             }
 
+                            allows_postfix = false;
                             break;
                         }
                         TsIdentKind::PrefixReadonly => {
@@ -1732,6 +1780,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     Metadata::MArray;
                             }
 
+                            allows_postfix = false;
                             break;
                         }
                         TsIdentKind::Infer => {
@@ -1766,6 +1815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 }
                             }
 
+                            allows_postfix = false;
                             break;
                         }
                         TsIdentKind::Unique => {
@@ -1800,6 +1850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     let any = TypeNodeKind::Keyword(Keyword::Any);
                                     self.emit_type_if_complete(&[ty], any, pos);
                                 }
+                                allows_postfix = false;
                                 break;
                             }
                             if KEEP {
@@ -2302,6 +2353,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if KEEP {
                 self.finish_last_type();
             }
+            if !allows_postfix
+                && self.is_tolerant()
+                && matches!(
+                    self.lexer.token,
+                    T::TExclamation | T::TQuestion | T::TDot | T::TOpenBracket
+                )
+            {
+                finish!();
+            }
             match self.lexer.token {
                 T::TBar => {
                     if level.gte(Level::BitwiseOr) {
@@ -2366,6 +2426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if KEEP {
                         self.push_type_list_item();
                     }
+                    allows_postfix = false;
                 }
                 T::TAmpersand => {
                     if level.gte(Level::BitwiseAnd) {
@@ -2423,6 +2484,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if KEEP {
                         self.push_type_list_item();
                     }
+                    allows_postfix = false;
                 }
                 T::TExclamation => {
                     // A postfix "!" is allowed in JSDoc types in TypeScript, which are only
@@ -2588,6 +2650,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if KEEP && level != Level::Lowest {
                         finish!();
                     }
+                    allows_postfix = false;
 
                     if KEEP {
                         self.finish_union_and_intersection(
@@ -2704,13 +2767,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 kept.end_member(self.lexer.full_start());
             }
             // `parseMappedType` parses "[K in T]: X" itself, before the member list.
-            let is_mapped_type = core::mem::take(&mut starts_mapped_type);
-            if !is_mapped_type {
-                match self.classify_list_token(ListKind::TypeMembers)? {
-                    ListStep::Element => {}
-                    ListStep::Skipped => continue,
-                    ListStep::Over => break,
+            if core::mem::take(&mut starts_mapped_type) {
+                let member = self.skip_mapped_type_head()?;
+                if keeps {
+                    self.finish_type_member(&member, &mut kept);
                 }
+                // `parseSemicolon`, which takes no comma.
+                self.lexer.expect_or_insert_semicolon()?;
+                continue;
+            }
+            match self.classify_list_token(ListKind::TypeMembers)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
             }
             // `parseTypeMember`: the only member that may have a body.
             let is_accessor = tolerant && self.is_at_accessor_in_type();
@@ -2740,11 +2809,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // parse an initializer.
             let mut is_indexer = false;
             let mut is_optional = false;
+            let mut word_count = 0;
             while self.lexer.is_identifier_or_keyword()
                 || self.lexer.token == T::TStringLiteral
                 || self.lexer.token == T::TNumericLiteral
                 // `isLiteralPropertyName`. The checker reports it (1539).
                 || (self.lexer.token == T::TBigIntegerLiteral && tolerant)
+                // `parsePropertyName`. The checker reports it (18016).
+                || (self.lexer.token == T::TPrivateIdentifier && is_accessor)
             {
                 if keeps {
                     let word = self.read_member_word();
@@ -2752,11 +2824,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
                 self.lexer.next()?;
                 found_key = true;
+                word_count += 1;
+                // `parseAccessorDeclaration`: "get" or "set", and the name.
+                if is_accessor && word_count == 2 {
+                    break;
+                }
             }
 
             if self.lexer.token == T::TOpenBracket
                 && tolerant
-                && !is_mapped_type
                 && !is_accessor
                 && self.is_unambiguously_index_signature()
             {
@@ -2768,7 +2844,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 continue;
             }
 
-            if self.lexer.token == T::TOpenBracket {
+            if self.lexer.token == T::TOpenBracket && !(is_accessor && word_count == 2) {
                 // Index signature or computed property
                 if keeps {
                     member.bracket_pos = self.token_start();
@@ -2783,12 +2859,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let can_be_mapped_type =
                     !is_interface_body && kept.is_empty() && member.has_only_readonly();
                 // `parseTypeMember`: a member that is not an index signature has a computed name.
-                if keeps
-                    && (if tolerant {
-                        !is_mapped_type
-                    } else {
-                        self.is_start_of_computed_member_name(can_be_mapped_type)
-                    })
+                if keeps && (tolerant || self.is_start_of_computed_member_name(can_be_mapped_type))
                 {
                     // `parseComputedPropertyName`
                     member.computed_name = Some(self.parse_detached(|p| {
@@ -2863,6 +2934,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // "?" indicates an optional property
             // "!" indicates an initialization assertion
             if found_key
+                && !is_accessor
                 && (self.lexer.token == T::TQuestion || self.lexer.token == T::TExclamation)
             {
                 is_optional = true;
@@ -2878,19 +2950,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if keeps && type_parameters != SkipTypeParameterResult::DidNotSkipAnything {
                 member.type_parameters = Some(self.type_syntax_mut().last_type_params.take());
             }
-            if type_parameters != SkipTypeParameterResult::DidNotSkipAnything
-                && self.lexer.token != T::TOpenParen
-                && tolerant
-            {
-                self.skip_signature_without_parameters(&mut member)?;
-                if keeps {
-                    self.finish_type_member(&member, &mut kept);
-                }
-                self.skip_type_member_separator()?;
-                continue;
-            }
+            // `parseAccessorDeclaration`, and `parsePropertyOrMethodSignature` after type parameters:
+            // `parseParameters` comes next.
+            let is_signature =
+                is_accessor || type_parameters != SkipTypeParameterResult::DidNotSkipAnything;
 
             match self.lexer.token {
+                token if is_signature && token != T::TOpenParen && tolerant => {
+                    takes_initializer = false;
+                    self.skip_signature_without_parameters(&mut member)?;
+                }
                 T::TColon => {
                     // Regular property
                     if !found_key {
@@ -2994,6 +3063,84 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.finish_object_type(ObjectTypeBuilder::default());
         }
         Ok(())
+    }
+
+    /// `parseMappedType`, from the token after the "{" up to the `parseSemicolon` that precedes the
+    /// member list. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn skip_mapped_type_head(&mut self) -> Result<TypeMemberParts, Error> {
+        let keeps = self.should_save_types();
+        let mut member = TypeMemberParts::default();
+        if keeps {
+            member.start = self.token_start();
+            member.full_start = self.lexer.token_full_start as u32;
+        }
+        let has_sign = matches!(self.lexer.token, T::TPlus | T::TMinus);
+        if has_sign {
+            member.leading_sign = Some(self.lexer.token == T::TPlus);
+            self.lexer.next()?;
+        }
+        if has_sign || self.lexer.is_contextual_keyword(b"readonly") {
+            if keeps {
+                let word = self.read_member_word();
+                member.add_word(word);
+            }
+            self.lexer.expect_contextual_keyword(b"readonly")?;
+        }
+        if keeps {
+            member.bracket_pos = self.token_start();
+            member.bracket_full_start = self.lexer.token_full_start as u32;
+        }
+        self.lexer.expect(T::TOpenBracket)?;
+
+        // `parseMappedTypeParameter`: it ends at the end of its constraint.
+        if keeps {
+            member.bracket_name = self.read_member_word();
+        }
+        if self.lexer.is_identifier_or_keyword() {
+            self.lexer.next()?;
+        } else {
+            self.lexer.expect(T::TIdentifier)?;
+        }
+        self.lexer.expect(T::TIn)?;
+        self.skip_type_script_type(Level::Lowest)?;
+        let (constraint, parameter_end) = if keeps {
+            (self.last_type(), self.lexer.full_start())
+        } else {
+            (TypeId::NONE, bun_ast::Loc::EMPTY)
+        };
+
+        let mut name_type = Some(TypeId::NONE);
+        if self.lexer.is_contextual_keyword(b"as") {
+            self.lexer.next()?;
+            self.skip_type_script_type(Level::Lowest)?;
+            if keeps {
+                name_type = Some(self.last_type()).filter(|ty| ty.is_some());
+            }
+        }
+        member.bracket_kind = BracketKind::Mapped(constraint, name_type, parameter_end);
+        self.lexer.expect(T::TCloseBracket)?;
+
+        if matches!(self.lexer.token, T::TPlus | T::TMinus) {
+            member.trailing_sign = Some(self.lexer.token == T::TPlus);
+            self.lexer.next()?;
+            member.is_optional = self.lexer.token == T::TQuestion;
+            self.lexer.expect(T::TQuestion)?;
+        } else if self.lexer.token == T::TQuestion {
+            member.is_optional = true;
+            self.lexer.next()?;
+        }
+
+        // `parseTypeAnnotation`
+        if self.lexer.token == T::TColon {
+            self.lexer.next()?;
+            self.skip_type_script_type(Level::Lowest)?;
+            if keeps {
+                member.ty = Some(self.last_type());
+            }
+        }
+        Ok(member)
     }
 
     /// `nextIsStartOfMappedType`, at the token after the "{". Lookahead only.

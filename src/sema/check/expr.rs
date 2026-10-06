@@ -117,7 +117,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `instantiateTypeWithSingleGenericCallSignature`, after its first rule.
     #[inline(never)]
-    fn instantiate_type_with_single_generic_call_signature(
+    pub(super) fn instantiate_type_with_single_generic_call_signature(
         &mut self,
         file: FileId,
         e: ExprId,
@@ -709,7 +709,20 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         match self.data(ty) {
-            &TypeData::TypeParam(f, tp, ..) => self.hir(f)[tp].flags.contains(Flags::CONST),
+            // `core.Some(t.symbol.Declarations, ..)`: the type parameters of one name in the
+            // declarations of a class or an interface are one symbol.
+            &TypeData::TypeParam(f, tp, ..) => {
+                let symbol = self.bound(f).type_param_symbol[tp.idx()];
+                if symbol.is_none() {
+                    return self.hir(f)[tp].flags.contains(Flags::CONST);
+                }
+                let files = self.files();
+                let declarations = files.decls_of(files.sym(f, symbol));
+                declarations.iter().any(|&(of, declaration)| {
+                    matches!(declaration, Decl::TypeParam(p)
+                        if self.hir(of)[p].flags.contains(Flags::CONST))
+                })
+            }
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
                 parts.iter().any(|&p| self.is_const_type_variable(p, depth))
             }
@@ -965,9 +978,18 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((declared, how)) = found else {
             // A cycle whose head is this expression or a caller: the members are not all known. One
             // that began and ended in the lookup, as two interfaces that extend each other, is
-            // final.
+            // final. So is any for an enum object that is resolved: its members are the exports of
+            // its symbol, and only its index signature depends on what
+            // `resolveAnonymousTypeMembers` requests.
             if self.cycles != cycles_before
                 && self.lowest_taint_since(work_before + 1) <= self.frames.len()
+                && !(matches!(
+                    self.data(apparent),
+                    TypeData::Anon {
+                        origin: Origin::EnumObject(_),
+                        ..
+                    }
+                ) && !self.stack.contains(&Query::Shape(apparent)))
             {
                 return (TypeId::UNRESOLVED, stops);
             }
@@ -1287,7 +1309,7 @@ impl<'p, 's> Checker<'p, 's> {
             key
         };
         // `AccessFlagsNoIndexSignatures`
-        let no_index_signatures = target.definite
+        let no_index_signatures = target.written
             && self.is_generic_object_type(receiver)
             && !matches!(self.data(receiver), TypeData::ThisParam(_));
         let cycles_before = self.cycles;
@@ -1696,6 +1718,14 @@ impl<'p, 's> Checker<'p, 's> {
                         self.first_jsx.2 = self.first_jsx.2.or(Some(e));
                     }
                 }
+                // `checkJsxFragment` defers nothing: `checkJsxOpeningLikeElementOrOpeningFragment`,
+                // then `checkJsxChildren(node, CheckModeNormal)`.
+                if is_fragment {
+                    self.resolved_signature(file, e);
+                    let outer = self.suspend_recheck();
+                    self.jsx_child_types(file, e);
+                    self.end_recheck(outer);
+                }
                 match self.jsx_element_type(file) {
                     // `checkJsxFragment`: `any` where `getJsxElementTypeAt` is the error type.
                     ty if is_fragment && self.is_error_type(ty) => TypeId::ANY,
@@ -2001,28 +2031,30 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let flags = self.files().flags(sym);
         let target = self.target_kind(file, e);
-        // Only a non-constant variable can be assigned.
-        if (!flags.intersects(SymFlags::VARIABLE) || flags.contains(SymFlags::CONST))
-            && target.written
-        {
+        if target.written {
             let assignment_error = if flags.intersects(SymFlags::VARIABLE) {
-                2588
+                // `isReadonlySymbol`
+                flags.contains(SymFlags::CONST).then_some(2588)
+            } else if self.hir(file).is_js && flags.contains(SymFlags::VALUE_MODULE) {
+                None
             } else if flags.intersects(SymFlags::ENUM) {
-                2628
+                Some(2628)
             } else if flags.contains(SymFlags::CLASS) {
-                2629
+                Some(2629)
             } else if flags.intersects(SymFlags::MODULE) {
-                2631
+                Some(2631)
             } else if flags.contains(SymFlags::FUNCTION) {
-                2630
+                Some(2630)
             } else if flags.contains(SymFlags::ALIAS) {
-                2632
+                Some(2632)
             } else {
-                2539
+                Some(2539)
             };
-            let node = self.place_of_token(file, self.hir(file)[e].pos);
-            self.error_at(node, assignment_error, &[Arg::Atom(name)]);
-            return TypeId::ERROR;
+            if let Some(assignment_error) = assignment_error {
+                let node = self.place_of_token(file, self.hir(file)[e].pos);
+                self.error_at(node, assignment_error, &[Arg::Atom(name)]);
+                return TypeId::ERROR;
+            }
         }
         // An import is narrowed like a variable.
         if !flags.intersects(SymFlags::VARIABLE | SymFlags::ALIAS) || target.definite {
@@ -2491,15 +2523,21 @@ impl<'p, 's> Checker<'p, 's> {
                     self.apparent_type_of_contextual_type(file, containing, ContextFlags::empty());
                 let (mut literal, mut expected) = (containing, context);
                 while let Some(ty) = expected {
+                    // `getThisTypeFromContextualType` is a `mapType`.
+                    if ty.is_never() {
+                        return Some(ty);
+                    }
                     let mut marked = Vec::new();
                     for &part in self.parts(ty) {
                         let pieces: &[TypeId] = match self.data(part) {
                             TypeData::Intersection(pieces) => pieces,
                             _ => std::slice::from_ref(&part),
                         };
-                        if let Some(&[this]) = pieces
+                        // `getThisTypeArgument`: the first one. The apparent type of an
+                        // intersection has the `this` argument after it.
+                        if let Some(&this) = pieces
                             .iter()
-                            .find_map(|&piece| self.is_global_ref(piece, known::ThisType))
+                            .find_map(|&piece| self.is_global_ref(piece, known::ThisType)?.first())
                         {
                             marked.push(this);
                         }
@@ -3500,6 +3538,10 @@ impl<'p, 's> Checker<'p, 's> {
             } else if is_written {
                 self.object_literal_in_flow_loop(file, e, kept)
             } else {
+                // `createObjectLiteralType`: `getObjectLiteralIndexInfo` requests the types of the
+                // members, accessors too, while the literal is checked. The members of `kept` are
+                // resolved when they are read.
+                self.index_infos_of_object_literal(file, props, props, false);
                 kept
             };
         }
@@ -4325,9 +4367,9 @@ impl<'p, 's> Checker<'p, 's> {
         if !expected.contains(&true) {
             return ArenaVec::new_in(self.arena);
         }
-        // The type of each member, `isSymbolWithSymbolName`, `isSymbolWithNumericName`, and
-        // `prop.Declarations[0]` if `isSymbolWithComputedName`.
-        let mut held: Vec<(TypeId, bool, bool, Option<PropId>)> = Vec::with_capacity(run.len());
+        // For each member: the one that determines its type, `isSymbolWithSymbolName`,
+        // `isSymbolWithNumericName`, and `prop.Declarations[0]` if `isSymbolWithComputedName`.
+        let mut held: Vec<(PropId, bool, bool, Option<PropId>)> = Vec::with_capacity(run.len());
         for p in run.iter() {
             let prop = &hir[p];
             let mut source = p;
@@ -4360,7 +4402,7 @@ impl<'p, 's> Checker<'p, 's> {
             let has_computed_name = matches!(hir[first].key, PropKey::Computed(_))
                 || hir.text.get(hir[first].pos as usize) == Some(&b'[');
             held.push((
-                self.check_literal_member(file, source),
+                source,
                 is_symbol,
                 is_numeric,
                 has_computed_name.then_some(first),
@@ -4374,18 +4416,20 @@ impl<'p, 's> Checker<'p, 's> {
             if !expected[i] {
                 continue;
             }
-            let counts = |h: &&(TypeId, bool, bool, Option<PropId>)| match i {
-                0 => !h.1,
-                1 => h.2,
-                _ => h.1,
-            };
-            let values: Vec<TypeId> = held.iter().filter(counts).map(|h| h.0).collect();
-            let components: Vec<IndexComponent> = held
-                .iter()
-                .filter(counts)
-                .filter_map(|h| h.3)
-                .map(|p| IndexComponent::Property(file, p))
-                .collect();
+            let mut values: Vec<TypeId> = Vec::new();
+            let mut components: Vec<IndexComponent> = Vec::new();
+            for &(source, is_symbol, is_numeric, computed) in &held {
+                let counts = match i {
+                    0 => !is_symbol,
+                    1 => is_numeric,
+                    _ => is_symbol,
+                };
+                if counts {
+                    // `getTypeOfSymbol(prop)`, of no other member.
+                    values.push(self.check_literal_member(file, source));
+                    components.extend(computed.map(|p| IndexComponent::Property(file, p)));
+                }
+            }
             let value = if values.is_empty() {
                 TypeId::UNDEFINED
             } else {
@@ -4711,15 +4755,19 @@ impl<'p, 's> Checker<'p, 's> {
                 if annotation.is_some() {
                     return self.type_from_node(file, annotation);
                 }
-                if self.is_const_context(file, prop.value) {
-                    return self.regular(ty);
-                }
-                // An assertion has the asserted type.
-                if matches!(
-                    hir[prop.value].kind,
-                    ExprKind::As { .. } | ExprKind::AsConst(_)
-                ) {
-                    return ty;
+                // `checkJsxAttribute` passes the initializer: a `JsxExpression` is neither a valid
+                // argument of a const assertion nor an assertion.
+                if jsx_expression_around(hir, prop.value).is_none() {
+                    if self.is_const_context(file, prop.value) {
+                        return self.regular(ty);
+                    }
+                    // An assertion has the asserted type.
+                    if matches!(
+                        hir[prop.value].kind,
+                        ExprKind::As { .. } | ExprKind::AsConst(_)
+                    ) {
+                        return ty;
+                    }
                 }
                 let expected = self.instantiated_contextual_type(file, prop.value);
                 self.widen_literal_for_context(ty, expected)

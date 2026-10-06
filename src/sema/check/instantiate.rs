@@ -285,7 +285,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
     /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
-        self.instantiate_type_parameters(t, |c, param| match c.data(param) {
+        let result = self.instantiate_type_parameters(t, |c, param| match c.data(param) {
             TypeData::Marker(
                 Marker::Super | Marker::Other | Marker::SuperForCheck | Marker::Restrictive(_),
             ) => param,
@@ -298,7 +298,12 @@ impl<'p, 's> Checker<'p, 's> {
                 param
             }
             _ => c.intern(TypeData::Marker(Marker::Restrictive(param))),
-        })
+        });
+        // Only `getConstraintOfDistributiveConditionalType` asks.
+        if matches!(self.data(result), TypeData::Cond { .. }) {
+            self.restrictive_instantiations.insert(result);
+        }
+        result
     }
 
     /// `getPermissiveInstantiation`
@@ -306,15 +311,17 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate_type_parameters(t, |_, _| TypeId::WILDCARD)
     }
 
+    /// `instantiateType(t, c.uniqueLiteralMapper)`
+    pub(super) fn unique_literal_filled_instantiation(&mut self, t: TypeId) -> TypeId {
+        self.instantiate_type_parameters(t, |_, _| TypeId::UNIQUE_LITERAL)
+    }
+
     pub(super) fn is_assignable_restrictive(&mut self, source: TypeId, target: TypeId) -> bool {
         let (source, target) = (
             self.restrictive_instantiation(source),
             self.restrictive_instantiation(target),
         );
-        self.restrictive_operands.push((source, target));
-        let result = self.is_assignable(source, target);
-        self.restrictive_operands.pop();
-        result
+        self.is_assignable(source, target)
     }
 
     pub(super) fn is_assignable_permissive(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -534,7 +541,10 @@ impl<'p, 's> Checker<'p, 's> {
                 mapper: own,
             } => {
                 let new = self.map_mapper(*own, mapper);
-                if new == *own {
+                // A declared type has no mapper in tsgo. Here it has one of identity pairs.
+                let is_under_its_own_key = (self.types().provenance(ty))
+                    .is_none_or(|provenance| provenance.stored_under.is_none());
+                if new == *own && (is_under_its_own_key || !self.is_instantiating(mapper)) {
                     return ty;
                 }
                 if let Origin::Mapped(file, node) = *origin {
@@ -799,6 +809,24 @@ impl<'p, 's> Checker<'p, 's> {
         (ty, self.types().mapper_of(&[(ty, arguments)]))
     }
 
+    /// The test of `couldContainTypeVariables` for the type `getOrCreateTypeFromSignature` creates
+    /// for `sig`, which has the symbol of `sig.declaration`: whether that is a function, a method
+    /// or a type literal. A call or construct signature, a constructor and an accessor are not.
+    pub(super) fn has_instantiable_symbol(&self, sig: SigId) -> bool {
+        let declared = self.sig_decl(self.types().sig_origin(sig));
+        declared.is_some_and(|(file, func, _)| {
+            matches!(
+                self.hir(file)[func].kind,
+                FnKind::Decl
+                    | FnKind::Expr
+                    | FnKind::Arrow
+                    | FnKind::Method
+                    | FnKind::FunctionType
+                    | FnKind::ConstructorType
+            )
+        })
+    }
+
     /// `getSignatureInstantiation` with `inferredTypeParameters`: the type of `sig`, the clone of the signature of `returned`
     /// (`ObjectFlagsSingleSignatureType`), with `inferred` as its mapper (`instantiatedSignature.mapper`).
     pub(super) fn single_signature_type(
@@ -809,9 +837,16 @@ impl<'p, 's> Checker<'p, 's> {
         inferred: MapperId,
     ) -> TypeId {
         let created = self.type_of_signature(sig, construct);
-        let (TypeData::Fns { mapper: outer, .. }, TypeData::Synth(shape)) =
-            (self.data(returned), self.data(created))
-        else {
+        let TypeData::Synth(shape) = self.data(created) else {
+            return created;
+        };
+        if !self.has_instantiable_symbol(sig) {
+            return self.synth(Shape {
+                has_no_instantiable_symbol: true,
+                ..(**shape).clone_in(self.arena)
+            });
+        }
+        let TypeData::Fns { mapper: outer, .. } = self.data(returned) else {
             return created;
         };
         let arguments: Vec<TypeId> = (self.mapping_in_declaration_order(*outer).iter())
@@ -965,7 +1000,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether `ty` is one of the type parameters `list` of `file`, as declared.
-    fn is_declared_among(&self, ty: TypeId, file: FileId, list: Span<TypeParamId>) -> bool {
+    pub(super) fn is_declared_among(
+        &self,
+        ty: TypeId,
+        file: FileId,
+        list: Span<TypeParamId>,
+    ) -> bool {
         matches!(*self.data(ty), TypeData::TypeParam(f, tp, MapperId::IDENTITY) if f == file && list.range().contains(&tp.idx()))
     }
 

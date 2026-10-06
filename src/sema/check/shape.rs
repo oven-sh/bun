@@ -290,23 +290,22 @@ struct Builder<'s> {
     shape: Shape<'s>,
     /// Position of each property, while there are more than `FEW`. Empty otherwise.
     names: Names<Box<[u32]>>,
-    /// The keys of the index signatures that computed names implied.
-    implied: Vec<TypeId>,
-    /// The static members with computed names and those with other names, by name: the arguments
-    /// of `add_index_signatures_of_computed_names`, which the static side of a class calls once all
-    /// its members are in place.
-    static_names: Option<StaticNames>,
+    /// `lateBindIndexSignature`: the members with a computed name that names no property, of every
+    /// declaration added so far. `add_index_signatures_of_computed_names` takes them once all the
+    /// members are in place.
+    computed_names: Vec<(FileId, MemberId)>,
+    /// Whether the member table also holds a symbol that is no property and has an ordinary name: a
+    /// type parameter, a constructor, a signature, a type that a merged namespace exports.
+    holds_more: bool,
 }
-
-type StaticNames = (FileId, Vec<MemberId>, Vec<(Atom, SmallVec<[MemberId; 4]>)>);
 
 impl<'s> Builder<'s> {
     fn new_in(arena: &'s Arena) -> Builder<'s> {
         Builder {
             shape: Shape::new_in(arena),
             names: Names::default(),
-            implied: Vec::new(),
-            static_names: None,
+            computed_names: Vec::new(),
+            holds_more: false,
         }
     }
     /// Position of the property `name`.
@@ -639,7 +638,7 @@ impl<'p, 's> Checker<'p, 's> {
         // signatures. Resolving them again in the meantime is not a circular resolution: nothing is
         // pushed, and the result returned is provisional.
         if (self.declared_index_infos_in_progress.iter())
-            .any(|it| self.stack.get(it.0 - 1) == Some(&Query::Shape(key)))
+            .any(|it| it.0 > 0 && self.stack.get(it.0 - 1) == Some(&Query::Shape(key)))
         {
             let mut shape = build(self);
             // `resolveAnonymousTypeMembers` computes the index signatures of the static side of a
@@ -797,17 +796,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.unresolved_members_hits += 1;
         self.mark_tainted_by_pattern_from(self.unresolved_members[at].1 as usize);
         self.note_members_in_place();
-        let shape = self.build_declared_shape(
-            target,
-            MapperId::IDENTITY,
-            MemberBinding::Late,
-            BaseMembers::Omitted,
-            None,
-        );
+        let shape = self.resolve_declared_members(target);
         Some(Members {
             resolved: self.provisional_shape(shape).resolved,
             mapper,
         })
+    }
+
+    /// `resolveDeclaredMembers`: the members that the class or interface `sym` declares itself. The
+    /// members of its base types are not resolved.
+    pub(super) fn resolve_declared_members(&mut self, sym: Sym) -> Shape<'s> {
+        let (binding, bases) = (MemberBinding::Late, BaseMembers::Omitted);
+        self.build_declared_shape(sym, MapperId::IDENTITY, binding, bases, None)
     }
 
     /// `members` for a type with no cached entry.
@@ -1166,8 +1166,6 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some_and(|m| self.is_declared_outside_classes(file, m));
         // Declarations with one name form one property.
         let mut groups: Vec<(Atom, SmallVec<[MemberId; 4]>)> = Vec::new();
-        // Members whose computed name resolves to any string, number or symbol.
-        let mut computed: Vec<MemberId> = Vec::new();
         for m in members.iter() {
             let member = &hir[m];
             if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
@@ -1190,7 +1188,15 @@ impl<'p, 's> Checker<'p, 's> {
                 | MemberKind::Getter
                 | MemberKind::Setter => {
                     let Some(name) = self.declared_member_name(file, member.key) else {
-                        computed.push(m);
+                        b.computed_names.push((file, m));
+                        // `getMembersOfSymbol`: the instance member table also holds the type
+                        // parameters.
+                        b.holds_more |= !want_static
+                            && match self.bound(file).member_owner[m.idx()] {
+                                MemberOwner::Class(c) => !hir[c].type_params.is_empty(),
+                                MemberOwner::Interface(i) => !hir[i].type_params.is_empty(),
+                                _ => false,
+                            };
                         continue;
                     };
                     match groups.iter_mut().find(|g| g.0 == name) {
@@ -1199,9 +1205,11 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 MemberKind::CallSignature => {
+                    b.holds_more = true;
                     b.shape.call.push(self.sig_of_fn(file, member.func));
                 }
                 MemberKind::ConstructSignature => {
+                    b.holds_more = true;
                     b.shape.construct.push(self.sig_of_fn(file, member.func));
                 }
                 MemberKind::IndexSignature => {
@@ -1246,16 +1254,9 @@ impl<'p, 's> Checker<'p, 's> {
                             declaration: Some((file, m)),
                             components: ComponentsId::NONE,
                         };
-                        match b.shape.index.iter().position(|i| i.key == key) {
-                            None => b.shape.index.push(info),
-                            // The first index signature for a key type wins, unless it was implied
-                            // by computed names: a declared one takes precedence.
-                            Some(at) => {
-                                if let Some(implied) = b.implied.iter().position(|&k| k == key) {
-                                    b.implied.swap_remove(implied);
-                                    b.shape.index[at] = info;
-                                }
-                            }
+                        // The first index signature for a key type wins.
+                        if !b.shape.index.iter().any(|i| i.key == key) {
+                            b.shape.index.push(info);
                         }
                     }
                 }
@@ -1263,6 +1264,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if want_static {
                         continue;
                     }
+                    b.holds_more = true;
                     for p in hir[member.func].params.iter() {
                         let param = &hir[p];
                         if !param.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -1302,44 +1304,6 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 MemberKind::StaticBlock => {}
-            }
-        }
-        // A caller that resolves the members while their index signatures are being resolved gets
-        // the members without index signatures.
-        if !computed.is_empty()
-            && !(self.declared_index_infos_in_progress.iter())
-                .any(|it| (it.1, it.2) == (file, computed[0]))
-        {
-            // `getMembersOfSymbol`: the instance member table also holds the type parameters, the
-            // constructor and the signatures.
-            let has_type_params = match self.bound(file).member_owner[computed[0].idx()] {
-                MemberOwner::Class(c) => !hir[c].type_params.is_empty(),
-                MemberOwner::Interface(i) => !hir[i].type_params.is_empty(),
-                _ => false,
-            };
-            let has_nameless = |m: MemberId| {
-                matches!(
-                    hir[m].kind,
-                    MemberKind::Constructor
-                        | MemberKind::CallSignature
-                        | MemberKind::ConstructSignature
-                )
-            };
-            if want_static {
-                b.static_names = Some((file, computed, groups.clone()));
-            } else {
-                let holds_more = has_type_params || members.iter().any(has_nameless);
-                self.declared_index_infos_in_progress
-                    .push((self.stack.len(), file, computed[0]));
-                self.add_index_signatures_of_computed_names(
-                    b,
-                    file,
-                    &computed,
-                    &groups,
-                    holds_more,
-                    &[],
-                );
-                self.declared_index_infos_in_progress.pop();
             }
         }
         b.reserve(groups.len());
@@ -1512,31 +1476,42 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getIndexInfosOfIndexSymbol`: `[k] = v` with a `k` of type string, number or symbol implies
-    /// an index signature for that key type, together with the sibling members whose names match
-    /// that key type. `holds_more`: the siblings also include something that is not a property.
-    /// `others`: the siblings that are not among `named`, with their types.
-    fn add_index_signatures_of_computed_names(
+    /// `getIndexInfosOfIndexSymbol`, for the declarations that `lateBindIndexSignature` has added
+    /// to the index symbol: `[k] = v` with a `k` of type string, number or symbol implies an index
+    /// signature for that key type, together with the sibling members whose names match that key
+    /// type. `b` has the members and the index signatures of all declarations of the symbol: its
+    /// properties are the siblings.
+    fn add_index_signatures_of_computed_names(&mut self, b: &mut Builder<'s>) {
+        let computed = std::mem::take(&mut b.computed_names);
+        let Some(&first) = computed.first() else {
+            return;
+        };
+        // A caller that resolves the members while their index signatures are being resolved gets
+        // the members without index signatures.
+        if (self.declared_index_infos_in_progress.iter()).any(|it| (it.1, it.2) == first) {
+            return;
+        }
+        self.declared_index_infos_in_progress
+            .push((self.stack.len(), first.0, first.1));
+        self.add_index_signatures_implied_by(b, &computed);
+        self.declared_index_infos_in_progress.pop();
+    }
+
+    /// `add_index_signatures_of_computed_names` for the members `computed`.
+    fn add_index_signatures_implied_by(
         &mut self,
         b: &mut Builder<'s>,
-        file: FileId,
-        computed: &[MemberId],
-        named: &[(Atom, SmallVec<[MemberId; 4]>)],
-        holds_more: bool,
-        others: &[(Atom, TypeId)],
+        computed: &[(FileId, MemberId)],
     ) {
-        let hir = self.hir(file);
-        // For string, number and symbol keys: the value types, and whether all contributing members
-        // are readonly.
-        let mut found: [(TypeId, Vec<TypeId>, bool, bool); 3] = [
-            (TypeId::STRING, Vec::new(), true, false),
-            (TypeId::NUMBER, Vec::new(), true, false),
-            (TypeId::SYMBOL, Vec::new(), true, false),
-        ];
-        // `components`, for each of the three.
-        let mut components: [Vec<IndexComponent>; 3] = Default::default();
-        for &m in computed {
-            let PropKey::Computed(e) = hir[m].key else {
+        // For string, number and symbol keys.
+        let keys = [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL];
+        let (mut has_computed, mut readonly) = ([false; 3], [true; 3]);
+        // `propertySymbols` before the siblings, with `isSymbolWithNumericName` and
+        // `isSymbolWithSymbolName`.
+        let mut declaring: Vec<(IndexComponent, bool, bool)> = Vec::new();
+        for &(file, m) in computed {
+            let member = &self.hir(file)[m];
+            let PropKey::Computed(e) = member.key else {
                 continue;
             };
             // `isLateBindableIndexSignature`
@@ -1544,6 +1519,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let key = self.type_of_expr(file, e);
+            // "Explicit index for key type takes priority"
             if b.shape.index.iter().any(|i| i.key == key) {
                 continue;
             }
@@ -1553,91 +1529,86 @@ impl<'p, 's> Checker<'p, 's> {
             } else if self.is_assignable(key, TypeId::SYMBOL) {
                 2
             } else {
-                let any_key = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+                let any_key = self.union(&keys);
                 if !self.is_assignable(key, any_key) {
                     continue;
                 }
                 0
             };
-            found[kind].3 = true;
-            found[kind].2 &= hir[m].flags.contains(Flags::READONLY);
-            let value = self.type_of_index_component(IndexComponent::Member(file, m));
-            // `getObjectLiteralIndexInfo`: the string index signature covers every member that is
-            // not named by a symbol (`isSymbolWithSymbolName`), including those named by a number.
+            has_computed[kind] = true;
+            readonly[kind] &= member.flags.contains(Flags::READONLY);
             // An `any` key can be a number and a symbol.
-            if kind == 1 {
-                found[1].1.push(value);
-                components[1].push(IndexComponent::Member(file, m));
-            }
             let is_symbol = kind == 2 || kind == 1 && self.is_assignable(key, TypeId::SYMBOL);
-            found[if is_symbol { 2 } else { 0 }].1.push(value);
-            components[if is_symbol { 2 } else { 0 }].push(IndexComponent::Member(file, m));
+            declaring.push((IndexComponent::Member(file, m), kind == 1, is_symbol));
         }
-        if !found.iter().any(|f| f.3) {
+        if !has_computed.contains(&true) {
             return;
         }
-        // `getTypeOfSymbol` of a type parameter, a constructor or a signature is the error type.
-        // None of them is named by a number or a symbol.
-        if holds_more {
-            found[0].1.push(TypeId::ERROR);
+        // `getObjectLiteralIndexInfo`: the string index signature covers every member that is not
+        // named by a symbol (`isSymbolWithSymbolName`), including those named by a number.
+        let mut values: [Vec<TypeId>; 3] = Default::default();
+        let mut components: [Vec<IndexComponent>; 3] = Default::default();
+        let mut add = |value: TypeId,
+                       component: Option<IndexComponent>,
+                       is_numeric: bool,
+                       is_symbol: bool| {
+            for (kind, covers) in [!is_symbol, is_numeric, is_symbol].into_iter().enumerate() {
+                if covers && has_computed[kind] {
+                    values[kind].push(value);
+                    components[kind].extend(component);
+                }
+            }
+        };
+        for (component, is_numeric, is_symbol) in declaring {
+            let value = self.type_of_index_component(component);
+            add(value, Some(component), is_numeric, is_symbol);
         }
-        for (name, group) in named {
-            let is_symbol = self.atoms().is_symbol_name(*name);
-            let is_numeric = self.is_numeric_name(*name);
-            if !(found[0].3 && !is_symbol || found[1].3 && is_numeric || found[2].3 && is_symbol) {
+        // `getTypeOfSymbol` of a symbol that is no property is the error type.
+        if b.holds_more {
+            add(TypeId::ERROR, None, false, false);
+        }
+        for prop in &b.shape.props {
+            let is_symbol = self.atoms().is_symbol_name(prop.name);
+            let is_numeric = self.is_numeric_name(prop.name);
+            if !(has_computed[0] && !is_symbol
+                || has_computed[1] && is_numeric
+                || has_computed[2] && is_symbol)
+            {
                 continue;
             }
-            let prop = Prop {
-                name: *name,
-                flags: Self::member_flags(&hir[group[0]]),
-                source: PropSource::Symbol(self.symbol_of_member(file, group[0])),
-                mapper: MapperId::IDENTITY,
-            };
-            let value = self.type_of_prop(&prop, MapperId::IDENTITY);
+            let value = self.type_of_prop(prop, MapperId::IDENTITY);
             // `isSymbolWithComputedName`. `["a"]` is stored as a plain name.
-            let name_start = hir[group[0]].name_pos;
-            let has_computed_name = matches!(hir[group[0]].key, PropKey::Computed(_))
-                || hir.text.get(name_start as usize) == Some(&b'[');
-            let component = has_computed_name.then_some(IndexComponent::Member(file, group[0]));
-            if is_symbol {
-                found[2].1.push(value);
-                components[2].extend(component);
-            } else {
-                found[0].1.push(value);
-                components[0].extend(component);
-                if is_numeric {
-                    found[1].1.push(value);
-                    components[1].extend(component);
+            let first = match prop.source {
+                PropSource::Symbol(sym) => self.declarations_of_property(sym).first().copied(),
+                _ => None,
+            };
+            let component = match first {
+                Some((file, Decl::Member(m))) => {
+                    let hir = self.hir(file);
+                    let has_computed_name = matches!(hir[m].key, PropKey::Computed(_))
+                        || hir.text.get(hir[m].name_pos as usize) == Some(&b'[');
+                    has_computed_name.then_some(IndexComponent::Member(file, m))
                 }
-            }
+                _ => None,
+            };
+            add(value, component, is_numeric, is_symbol);
         }
-        for &(name, value) in others {
-            if self.atoms().is_symbol_name(name) {
-                found[2].1.push(value);
-            } else {
-                found[0].1.push(value);
-                if self.is_numeric_name(name) {
-                    found[1].1.push(value);
-                }
-            }
-        }
-        for (kind, (key, values, readonly, exists)) in found.into_iter().enumerate() {
-            if !exists || b.shape.index.iter().any(|i| i.key == key) {
+        for (kind, key) in keys.into_iter().enumerate() {
+            if !has_computed[kind] || b.shape.index.iter().any(|i| i.key == key) {
                 continue;
             }
-            let value = if values.is_empty() {
+            let value = if values[kind].is_empty() {
                 TypeId::UNDEFINED
             } else {
-                self.union_reduced(&values)
+                self.union_reduced(&values[kind])
             };
             b.shape.index.push(IndexInfo {
                 key,
                 value,
-                readonly,
+                readonly: readonly[kind],
                 declaration: None,
                 components: self.types().intern_components(&components[kind]),
             });
-            b.implied.push(key);
         }
     }
 
@@ -1713,12 +1684,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// It is appended to the type arguments of a reference, where `members` finds it. An
     /// intersection is mapped member by member.
     pub(super) fn type_with_this_argument(&mut self, ty: TypeId, this_argument: TypeId) -> TypeId {
+        self.type_with_this_argument_ex(ty, this_argument, false)
+    }
+
+    /// `need_apparent_type`: a type that takes no `this` argument is replaced by its apparent type.
+    fn type_with_this_argument_ex(
+        &mut self,
+        ty: TypeId,
+        this_argument: TypeId,
+        need_apparent_type: bool,
+    ) -> TypeId {
         match self.data(ty) {
             TypeData::Ref { target, .. } => {
                 let declared = self.declared_type(*target);
                 let args = self.type_arguments(ty);
                 if !matches!(self.data(declared), TypeData::Ref { .. })
                     || self.type_arguments(declared).len() != args.len()
+                    || args.is_empty() && !self.has_this_type(*target)
                 {
                     return ty;
                 }
@@ -1732,9 +1714,13 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(parts) => {
                 let with_this: Vec<TypeId> = parts
                     .iter()
-                    .map(|&part| self.type_with_this_argument(part, this_argument))
+                    .map(|&part| {
+                        self.type_with_this_argument_ex(part, this_argument, need_apparent_type)
+                    })
                     .collect();
-                if with_this[..] == parts[..] {
+                // The reference created for a tuple is another type, so the intersection is too.
+                let is_tuple = |&part: &TypeId| matches!(self.data(part), TypeData::Tuple { .. });
+                if with_this[..] == parts[..] && !parts.iter().any(is_tuple) {
                     ty
                 } else {
                     self.intersection(&with_this)
@@ -1743,8 +1729,54 @@ impl<'p, 's> Checker<'p, 's> {
             // It has no slot for the argument (`tuple_members_with_this`). Recreated, it has no
             // alias.
             TypeData::Tuple { .. } => self.without_alias_of_reference(ty),
+            _ if need_apparent_type => self.apparent_type(ty),
             _ => ty,
         }
+    }
+
+    /// Whether the declared type of the class or interface `sym` is a type reference, which has a
+    /// `thisType` (`getDeclaredTypeOfClassOrInterface`).
+    pub(super) fn has_this_type(&mut self, sym: Sym) -> bool {
+        if self.files().flags(sym).contains(SymFlags::CLASS) {
+            return true;
+        }
+        if let Some(&known) = self.this_types.get(&sym) {
+            return known;
+        }
+        // `links.declaredType` is assigned first: an interface that extends itself finds its type
+        // without a `thisType`.
+        self.this_types.insert(sym, false);
+        let has_this_type = !self.local_type_params_of_symbol(sym).is_empty()
+            || !self.outer_type_params_of_symbol(sym).is_empty()
+            || !self.is_thisless_interface(sym);
+        self.this_types.insert(sym, has_this_type);
+        has_this_type
+    }
+
+    /// `isThislessInterface`
+    fn is_thisless_interface(&mut self, sym: Sym) -> bool {
+        for (file, decl) in self.files().decls(sym) {
+            let Decl::Interface(i) = decl else { continue };
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            if bound.interface_contains_this[i.idx()] {
+                return false;
+            }
+            for node in hir.ids(hir[i].extends) {
+                // `ast.IsEntityNameExpression(node.Expression())`
+                let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
+                    continue;
+                };
+                let scope = bound.type_scope[node.idx()];
+                let base = self.resolve_type_reference_name(file, scope, name, true);
+                if !base.is_some_and(|base| {
+                    self.files().flags(base).contains(SymFlags::INTERFACE)
+                        && !self.has_this_type(base)
+                }) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// `resolveTypeReferenceMembers` for a tuple: the shape `createTupleTargetType` builds, cached
@@ -1913,6 +1945,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.add_this_properties(&mut b, file, c, false);
             }
         }
+        self.add_index_signatures_of_computed_names(&mut b);
         let this = self.intern(TypeData::ThisParam(sym));
         let bases = self.base_types(sym);
         let own = b.shape.props.len();
@@ -2212,6 +2245,16 @@ impl<'p, 's> Checker<'p, 's> {
                             .into_iter()
                             .any(|b| self.has_base(b, sym, depth + 1))
             }
+            // `getBaseTypes` of a tuple target is `getTupleBaseType`.
+            TypeData::Tuple {
+                ref flags,
+                readonly,
+                ..
+            } => {
+                let elems = self.type_arguments(ty);
+                let base = self.tuple_base_type(elems, flags, readonly);
+                self.has_base(base, sym, depth + 1)
+            }
             TypeData::Intersection(ref parts) => {
                 parts.iter().any(|&p| self.has_base(p, sym, depth + 1))
             }
@@ -2274,10 +2317,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 let Some(base) = valid else { continue };
                 if !self.has_base(base, sym, 0) {
-                    let bases = &mut self.base_types_so_far[so_far].1;
-                    if !bases.contains(&base) {
-                        bases.push(base);
-                    }
+                    self.base_types_so_far[so_far].1.push(base);
                 } else if let Some(err) = self.circular_base_type(sym, file, decl) {
                     self.add_diagnostic(err);
                 }
@@ -2461,31 +2501,43 @@ impl<'p, 's> Checker<'p, 's> {
     /// its `extending_declaration`.
     fn base_instance_type(&mut self, sym: Sym, file: FileId, c: ClassId) -> TypeId {
         let hir = self.hir(file);
-        let class = &hir[c];
-        let args = self.types_from_nodes(file, class.extends_args);
+        let type_arguments = hir[c].extends_args;
         let constructor = self.base_constructor_type_of_class(sym);
-        // `baseType = baseConstructorType`
+        // `baseType = baseConstructorType`, which has no symbol.
         if self.has_any_flag(constructor) {
             return constructor;
         }
         // "if baseConstructorType.flags&(TypeFlagsObject|TypeFlagsIntersection|TypeFlagsAny) == 0":
         // a union of constructor types gives no base type and no error.
-        let apparent = self.apparent_type(constructor);
-        if !self.is_object_type(apparent) && !self.is_intersection(apparent) {
+        let constructor = self.apparent_type(constructor);
+        if !self.is_object_type(constructor) && !self.is_intersection(constructor) {
             return TypeId::ERROR;
         }
+        // `baseConstructorType.symbol.Flags&ast.SymbolFlagsClass != 0`
+        let class = match *self.data(constructor) {
+            TypeData::Anon {
+                origin: Origin::ClassStatic(base),
+                ..
+            } => Some(base),
+            TypeData::Ref { target, .. }
+                if self.files().flags(target).contains(SymFlags::CLASS) =>
+            {
+                Some(target)
+            }
+            _ => None,
+        };
         // `areAllOuterTypeParametersApplied`, applied to the declared type: a class declared inside
         // a generic declaration is resolved through its construct signatures.
-        if let TypeData::Anon {
-            origin: Origin::ClassStatic(base),
-            ..
-        } = *self.data(constructor)
+        if let Some(base) = class
             && self.outer_type_params_of_symbol(base).is_empty()
         {
-            // With the error type the class has no base type.
-            let Some(most) = self.check_type_argument_count(base, args.len(), file, Err(c)) else {
+            // `getTypeFromClassOrInterfaceReference`. With the error type the class has no base
+            // type.
+            let count = type_arguments.len();
+            let Some(most) = self.check_type_argument_count(base, count, file, Err(c)) else {
                 return TypeId::ERROR;
             };
+            let args = self.types_from_nodes(file, type_arguments);
             // `fillMissingTypeArguments`
             if hir.is_js && most > 0 {
                 let params = self.type_params_of_symbol(base);
@@ -2495,6 +2547,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.type_reference(base, &args);
         }
         let sigs = self.signatures(constructor, true);
+        let args = self.types_from_nodes(file, type_arguments);
         match self
             .constructors_taking(&sigs, &args, hir.is_js, false)
             .first()
@@ -2550,9 +2603,13 @@ impl<'p, 's> Checker<'p, 's> {
             return (false, Vec::new());
         };
         let hir = self.hir(file);
-        let args = self.types_from_nodes(file, hir[c].extends_args);
         let constructor = self.base_constructor_type_of_class(class);
         let sigs = self.signatures(constructor, true);
+        // `getDefaultConstructSignatures` returns before `getTypeArgumentsFromNode`.
+        if for_default_constructor && sigs.is_empty() {
+            return (false, Vec::new());
+        }
+        let args = self.types_from_nodes(file, hir[c].extends_args);
         (
             !sigs.is_empty(),
             self.constructors_taking(
@@ -2571,31 +2628,20 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getWidenedProperty` (`is_widening`) and `transformTypeOfMembers` call `getTypeOfSymbol` for
-    /// the properties of the object literal type `ty`. Here a property is widened or made regular
-    /// when it is read (`PropFlags::WIDEN`, `PropFlags::REGULAR`). `checkObjectLiteral` has resolved
-    /// the type of a member of the literal by then, so this resolves the symbols that
+    /// the properties of the object literal type `ty`, and go on with the type of each. Here a
+    /// property is widened or made regular when it is read (`PropFlags::WIDEN`,
+    /// `PropFlags::REGULAR`). `checkObjectLiteral` has resolved the type of a member of the literal
+    /// by then, unless it is an accessor, so this resolves the accessors and the symbols that
     /// `get_spread_symbol` has left unresolved. A cycle through one of them is found here.
-    /// Returns the property types that contain the type of a literal, where both go on.
-    fn resolve_spread_symbols(&mut self, ty: TypeId, is_widening: bool) -> SmallVec<[TypeId; 4]> {
-        let mut nested = SmallVec::new();
-        let mut add = |c: &Self, member: TypeId| {
-            let flags = c.types().object_flags(member);
-            if flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL) {
-                nested.push(member);
-            }
-        };
+    fn resolve_spread_symbols(&mut self, ty: TypeId, is_widening: bool) {
         match self.data(ty) {
             &TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
             } => {
-                let hir = self.hir(file);
-                if let ExprKind::Object(props) = hir[e].kind {
+                if let ExprKind::Object(props) = self.hir(file)[e].kind {
                     for p in props.iter() {
-                        if matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) {
-                            let member = self.type_of_literal_prop(file, p);
-                            add(self, member);
-                        }
+                        self.resolve_member_of_literal(file, p, is_widening);
                     }
                 }
             }
@@ -2603,16 +2649,10 @@ impl<'p, 's> Checker<'p, 's> {
                 for prop in &shape.props {
                     match prop.source {
                         PropSource::Type(member) | PropSource::Copy(member, ..) => {
-                            add(self, member);
+                            self.resolve_spread_symbols_in(member, is_widening);
                         }
-                        PropSource::Literal(file, p)
-                            if matches!(
-                                self.hir(file)[p].kind,
-                                PropKind::Init | PropKind::Shorthand
-                            ) =>
-                        {
-                            let member = self.type_of_literal_prop(file, p);
-                            add(self, member);
+                        PropSource::Literal(file, p) => {
+                            self.resolve_member_of_literal(file, p, is_widening);
                         }
                         // `prop.Flags&ast.SymbolFlagsProperty == 0`
                         PropSource::Symbol(symbol)
@@ -2630,14 +2670,53 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => {}
         }
-        nested
+    }
+
+    /// `resolve_spread_symbols` for the property that the member `p` of an object literal declares.
+    fn resolve_member_of_literal(&mut self, file: FileId, p: PropId, is_widening: bool) {
+        let hir = self.hir(file);
+        let prop = &hir[p];
+        match prop.kind {
+            PropKind::Init | PropKind::Shorthand => {
+                let member = self.type_of_literal_prop(file, p);
+                self.resolve_spread_symbols_in(member, is_widening);
+            }
+            // `getTypeOfAccessors`, where the getter comes first. `getWidenedProperty` returns at
+            // `prop.Flags&ast.SymbolFlagsProperty == 0`.
+            PropKind::Getter | PropKind::Setter
+                if !is_widening && self.member_name(file, prop.key).is_some() =>
+            {
+                let getter = match hir[prop.value].kind {
+                    ExprKind::Fn(setter) if prop.kind == PropKind::Setter => {
+                        self.sibling_accessor(file, setter, FnKind::Getter)
+                    }
+                    _ => None,
+                };
+                match getter {
+                    Some(getter) => self.return_type_of_fn(file, getter),
+                    None => self.type_of_literal_prop(file, p),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    /// `resolve_spread_symbols` goes on with `member`, the type of a property.
+    fn resolve_spread_symbols_in(&mut self, member: TypeId, is_widening: bool) {
+        let flags = self.types().object_flags(member);
+        if !flags.contains(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL) {
+            return;
+        }
+        if is_widening {
+            self.get_widened_type(member);
+        } else {
+            self.resolve_spread_symbols_of_regular_literal(member);
+        }
     }
 
     /// The loop over the properties in `getWidenedTypeOfObjectLiteral`, see `resolve_spread_symbols`.
     pub(super) fn resolve_spread_symbols_of_widened_literal(&mut self, ty: TypeId) {
-        for member in self.resolve_spread_symbols(ty, true) {
-            self.get_widened_type(member);
-        }
+        self.resolve_spread_symbols(ty, true);
     }
 
     /// `transformTypeOfMembers(t, c.getRegularTypeOfObjectLiteral)`, see `resolve_spread_symbols`.
@@ -2651,9 +2730,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if is_fresh {
-            for member in self.resolve_spread_symbols(ty, false) {
-                self.resolve_spread_symbols_of_regular_literal(member);
-            }
+            self.resolve_spread_symbols(ty, false);
         }
     }
 
@@ -2721,6 +2798,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let TypeNodeKind::Object(members) = self.hir(file)[node].kind {
                     let side = ClassSide::Instance;
                     self.add_members(&mut b, file, members, side, MemberBinding::Late);
+                    self.add_index_signatures_of_computed_names(&mut b);
                 }
             }
             Origin::ObjectLiteral(file, expr, .., is_fresh) => {
@@ -2868,34 +2946,17 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 // `getIndexInfosOfIndexSymbol`: on this side, the siblings of a computed name are
-                // the whole member table.
-                if let Some((file, computed, named)) = b.static_names.take() {
-                    // The members are in place by now, and the signatures are not: that is what a
-                    // query made here finds if it re-enters this type (`shape_memo_or`).
-                    self.declared_index_infos_in_progress.push((
-                        self.stack.len(),
-                        file,
-                        computed[0],
-                    ));
-                    let mut others: Vec<(Atom, TypeId)> = Vec::new();
-                    for prop in &b.shape.props[own..] {
-                        let ty = self.type_of_prop(prop, MapperId::IDENTITY);
-                        others.push((prop.name, ty));
-                    }
-                    // A type exported by a merged namespace is in the table too, and
-                    // `getTypeOfSymbol` of it is the error type.
-                    if self.files().flags(sym).intersects(SymFlags::MODULE) {
-                        for (name, _) in self.exports_in_order(sym) {
-                            if !b.has(name) {
-                                others.push((name, TypeId::ERROR));
-                            }
-                        }
-                    }
-                    self.add_index_signatures_of_computed_names(
-                        &mut b, file, &computed, &named, false, &others,
-                    );
-                    self.declared_index_infos_in_progress.pop();
+                // the whole member table. A type exported by a merged namespace is in it too. The
+                // members are in place by now, and the signatures are not: that is what a query
+                // made there finds if it re-enters this type (`shape_memo_or`).
+                if !b.computed_names.is_empty()
+                    && self.files().flags(sym).intersects(SymFlags::MODULE)
+                {
+                    let mut exports = self.files().each_export(sym);
+                    let exports_types = exports.any(|export| !b.has(export.0));
+                    b.holds_more |= exports_types;
                 }
+                self.add_index_signatures_of_computed_names(&mut b);
                 // `anyBaseTypeIndexInfo`, where the class has no static index signature at all.
                 if b.shape.index.is_empty() && self.extends_any(sym) {
                     b.shape
@@ -3720,6 +3781,25 @@ impl<'p, 's> Checker<'p, 's> {
         copy(ty, is_readonly == readonly)
     }
 
+    /// `isReadonlySymbol` for a getter written in an object literal: it has no setter. `None`:
+    /// `prop` is not such a getter.
+    fn is_readonly_getter_of_literal(&mut self, prop: &Prop) -> Option<bool> {
+        let PropSource::Literal(file, p) = prop.source else {
+            return None;
+        };
+        let hir = self.hir(file);
+        if hir[p].kind != PropKind::Getter {
+            return None;
+        }
+        let ExprKind::Fn(getter) = hir[hir[p].value].kind else {
+            return None;
+        };
+        Some(
+            self.sibling_accessor(file, getter, FnKind::Setter)
+                .is_none(),
+        )
+    }
+
     /// The members of the union `ty` in the order `mapType` visits them.
     fn members_in_map_type_order(&self, ty: TypeId, members: &mut Vec<TypeId>) {
         let types: &[TypeId] = match self.origin(ty) {
@@ -3914,6 +3994,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let is_write_only = prop.flags.contains(PropFlags::WRITE_ONLY);
             if right_is_written && !is_write_only && is_written(prop) {
+                // `getSpreadSymbol`: `links.resolvedType = c.getTypeOfSymbol(prop)`. Of the members
+                // written in a literal only an accessor can differ from `readonly`.
+                if self
+                    .is_readonly_getter_of_literal(prop)
+                    .is_some_and(|is_readonly| is_readonly != readonly)
+                {
+                    self.type_of_prop(prop, r.mapper);
+                }
                 b.remove(prop.name);
                 b.add_new(prop.clone_in(self.arena));
                 continue;
@@ -4070,7 +4158,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         };
-        let ty = if self.has_type_variables(base) {
+        let is_instantiated = self.has_type_variables(base)
+            && match prop.source {
+                PropSource::Symbol(sym) => !self.is_thisless_for_this_mapper(sym),
+                _ => true,
+            };
+        let ty = if is_instantiated {
             // `getTypeOfInstantiatedSymbol`: for an inherited member, the mapper of the base type
             // that `resolveObjectTypeMembers` has instantiated.
             let mapper = self.compose(own_mapper, outer);
@@ -4089,6 +4182,46 @@ impl<'p, 's> Checker<'p, 's> {
             self.cached_optional_property(ty)
         } else {
             ty
+        }
+    }
+
+    /// `m.MapsThisOnly() && isThisless(symbol)`: whether `instantiateSymbol` returns the member
+    /// `sym` of a class or an interface itself. `m` is the mapper of `resolveObjectTypeMembers`,
+    /// whose sources are the type parameters of the class or interface, the outer ones too, and
+    /// its `this` type.
+    fn is_thisless_for_this_mapper(&mut self, sym: Sym) -> bool {
+        let Some((file, Decl::Member(m))) = self.files().value_declaration(sym) else {
+            return false;
+        };
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (type_params, owner) = match bound.member_owner[m.idx()] {
+            MemberOwner::Class(c) => (hir[c].type_params, bound.class_symbol[c.idx()]),
+            MemberOwner::Interface(i) => (hir[i].type_params, bound.interface_symbol[i.idx()]),
+            _ => return false,
+        };
+        type_params.is_empty()
+            && owner.is_some()
+            && self.is_thisless(sym)
+            && self
+                .outer_type_params_of_symbol(self.files().sym(file, owner))
+                .is_empty()
+    }
+
+    /// `isThisless`, for a member of a class or an interface.
+    fn is_thisless(&mut self, sym: Sym) -> bool {
+        let declarations = self.declarations_of_property(sym);
+        let [(file, Decl::Member(m))] = declarations[..] else {
+            return false;
+        };
+        let hir = self.hir(file);
+        let member = &hir[m];
+        match member.kind {
+            // `isThislessVariableLikeDeclaration`
+            MemberKind::Property if member.ty.is_some() => {
+                super::errors_unused::is_thisless_type(hir, member.ty)
+            }
+            MemberKind::Property => member.init.is_none(),
+            _ => super::errors_unused::is_thisless(hir, m),
         }
     }
 
@@ -4546,20 +4679,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getWriteTypeOfSymbol`: the type that may be assigned to `prop`, which was found in a type
     /// whose mapper is `outer`.
     pub fn write_type_of_prop(&mut self, prop: &Prop, outer: MapperId) -> TypeId {
-        // For an intersection: the type accepted by all the members that have the property.
-        if let PropSource::Intersected(whole, parts) = &prop.source
-            && parts.iter().any(|p| {
-                p.flags.contains(PropFlags::ACCESSOR)
-                    || matches!(p.source, PropSource::Intersected(..))
-            })
-        {
-            let mut types = Vec::with_capacity(parts.len());
+        // `links.writeType`, else `links.resolvedType`: `createUnionOrIntersectionProperty` has
+        // `writeTypes` as soon as the write type of a constituent is not its type.
+        if let PropSource::Intersected(whole, parts) = &prop.source {
+            let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+            let mut has_write_types = false;
             // `writeTypes` has no `indexTypes`.
             for part in parts
                 .iter()
                 .filter(|part| !part.flags.contains(PropFlags::WRITE_PARTIAL))
             {
-                types.push(self.write_type_of_prop(part, MapperId::IDENTITY));
+                let write_type = self.write_type_of_prop(part, MapperId::IDENTITY);
+                has_write_types |= write_type != self.type_of_prop(part, MapperId::IDENTITY);
+                types.push(write_type);
+            }
+            if !has_write_types {
+                return self.type_of_prop(prop, outer);
             }
             let all = if self.is_union(*whole) {
                 self.union(&types)
@@ -4646,16 +4781,12 @@ impl<'p, 's> Checker<'p, 's> {
             MemberKind::Property if !self.has_get_or_set_accessor(members) => {
                 // `reportErrors`: set when the caller is `getTypeOfSymbol`. For a later declaration
                 // alone the call is `getWidenedTypeForVariableLikeDeclaration(node, false)`.
-                let value_declaration = (file, crate::bind::Decl::Member(first));
+                let value_declaration = (file, Decl::Member(first));
+                let symbol = self.bound(file).symbol_of_declaration(value_declaration.1);
                 let reports_errors = members.len() > 1
-                    || self
-                        .files()
-                        .decls_of(self.files().sym(
-                            file,
-                            self.bound(file).symbol_of_declaration(value_declaration.1),
-                        ))
-                        .first()
-                        .is_none_or(|&it| it == value_declaration);
+                    || (self.files())
+                        .value_declaration(self.files().sym(file, symbol))
+                        .is_none_or(|it| it == value_declaration);
                 let value_declaration = UntypedProperty::Member(first);
                 // `getTypeOfAccessors`: `core.Find(symbol.Declarations,
                 // ast.IsAutoAccessorPropertyDeclaration)` determines the type.
@@ -4667,19 +4798,10 @@ impl<'p, 's> Checker<'p, 's> {
                 let hir = self.hir(file);
                 let member = &hir[first];
                 let owner = self.bound(file).member_owner[first.idx()];
-                // `isValidESSymbolDeclaration`: `readonly` in an interface or a type literal,
-                // `static readonly` in a class. For any other property a `unique symbol` is a
-                // `symbol`.
-                let unique_symbol_name = match member.key.name() {
-                    Some(name)
-                        if member.flags.contains(Flags::READONLY)
-                            && (member.flags.contains(Flags::STATIC)
-                                || !matches!(owner, MemberOwner::Class(_))) =>
-                    {
-                        Some(name)
-                    }
-                    _ => None,
-                };
+                // For any other property a `unique symbol` is a `symbol`.
+                let unique_symbol_name = self
+                    .is_valid_es_symbol_declaration(file, first)
+                    .then(|| Self::name_of_unique_symbol(member));
                 if member.ty.is_some() {
                     let has_unique_keyword =
                         matches!(hir[member.ty].kind, TypeNodeKind::UniqueSymbol);
@@ -4914,10 +5036,29 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `isValidESSymbolDeclaration` for the member `m`: a property that is `readonly` in an
+    /// interface or a type literal, `static readonly` in a class, whatever its name.
+    pub(super) fn is_valid_es_symbol_declaration(&self, file: FileId, m: MemberId) -> bool {
+        let member = &self.hir(file)[m];
+        member.kind == MemberKind::Property
+            && member.flags.contains(Flags::READONLY)
+            && (member.flags.contains(Flags::STATIC)
+                || !matches!(
+                    self.bound(file).member_owner[m.idx()],
+                    MemberOwner::Class(_)
+                ))
+    }
+
+    /// The `name` of the `TypeData::UniqueSymbol` that `member` declares. `property_name_of_type`
+    /// makes a property name of it that `key_type_of_name` takes apart, so it has no `@`.
+    pub(super) fn name_of_unique_symbol(member: &Member) -> Atom {
+        member.key.name().unwrap_or(known::computed)
+    }
+
     /// `getESSymbolLikeTypeForNode` caches one `unique symbol` per symbol: among the declarations
     /// of the property `name` in the class or the interface that contains the member `m`, the first
     /// one annotated `unique symbol` represents all.
-    fn unique_symbol_declaration(
+    pub(super) fn unique_symbol_declaration(
         &self,
         file: FileId,
         m: MemberId,
@@ -4995,16 +5136,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Parent::MemberInit(m) if hir[m].init == call => {
                 let member = &hir[m];
-                let Some(name) = member.key.name() else {
-                    return TypeId::SYMBOL;
-                };
-                if member.kind != MemberKind::Property
-                    || !member.flags.contains(Flags::READONLY)
-                    || !member.flags.contains(Flags::STATIC)
-                        && matches!(bound.member_owner[m.idx()], MemberOwner::Class(_))
-                {
+                if !self.is_valid_es_symbol_declaration(file, m) {
                     return TypeId::SYMBOL;
                 }
+                let name = Self::name_of_unique_symbol(member);
                 let symbol = if member.ty.is_some()
                     && matches!(hir[member.ty].kind, TypeNodeKind::UniqueSymbol)
                 {
@@ -5030,11 +5165,9 @@ impl<'p, 's> Checker<'p, 's> {
             _ => hir[call].callee,
         };
         matches!(hir[callee].kind, ExprKind::Ident(known::Symbol))
-            && self.bound(file).expr_symbol[callee.idx()].is_none()
-            && self
-                .files()
-                .global(known::Symbol, SymFlags::VALUE)
-                .is_some()
+            && (self.files().global(known::Symbol, SymFlags::VALUE)).is_some_and(|global| {
+                self.resolve_identifier(file, callee, known::Symbol, true) == Ok(Some(global))
+            })
     }
 
     /// The apparent type of `ty` for a property access: the wrapper of a primitive, the constraint
@@ -5064,33 +5197,24 @@ impl<'p, 's> Checker<'p, 's> {
                 origin: Origin::Mapped(..),
                 ..
             } => return self.apparent_type_of_mapped(ty),
-            // `getApparentTypeOfIntersectionType`: the intersection of the apparent types of its
-            // members, so `T & {}` of a `T extends A | undefined` is `A`. Where every member has an
-            // object apparent type the intersection is left unchanged: its shape is built from
-            // those apparent types, which is where `this` is handled.
+            // `getApparentTypeOfIntersectionType`: the intersection of its members, each with the
+            // `this` argument or else its apparent type, so `T & {}` of a `T extends A | undefined`
+            // is `A`. FOR SPEED, where every type variable has an object apparent type the
+            // intersection is left unchanged: its shape is built from those types.
             TypeData::Intersection(parts) => {
-                if parts.iter().any(|&p| self.is_deferred(p)) {
-                    let mut distributes = false;
-                    let mut looks: SmallVec<[TypeId; 8]> = SmallVec::new();
-                    for &p in parts.iter() {
-                        let look = if self.is_deferred(p) {
-                            self.apparent_type(p)
-                        } else {
-                            p
-                        };
-                        distributes |= look != p
+                let distributes = parts.iter().any(|&p| {
+                    self.is_deferred(p) && {
+                        let look = self.apparent_type(p);
+                        look != p
                             && !self.is_object_type(look)
-                            && !matches!(self.data(look), TypeData::Intersection(_));
-                        looks.push(look);
+                            && !matches!(self.data(look), TypeData::Intersection(_))
                     }
-                    if distributes {
-                        let whole = self.intersection(&looks);
-                        if whole != ty {
-                            return self.apparent_type(whole);
-                        }
-                    }
-                }
-                return ty;
+                });
+                return if distributes {
+                    self.type_with_this_argument_ex(ty, original_type, true)
+                } else {
+                    ty
+                };
             }
             TypeData::Intrinsic(Intrinsic::String)
             | TypeData::StringLit { .. }
@@ -5125,7 +5249,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getResolvedBaseConstraint`: the widest type `ty` can be, with no type parameter at the top
     /// level. `unknown`: no constraint.
     pub fn base_constraint(&mut self, ty: TypeId) -> TypeId {
-        if !self.has_type_variables(ty) {
+        if self.is_own_base_constraint(ty) {
             return ty;
         }
         // A call from outside starts a new stack.
@@ -5133,6 +5257,27 @@ impl<'p, 's> Checker<'p, 's> {
         let result = self.next_base_constraint(ty);
         self.constraint_stack = around;
         result
+    }
+
+    /// FOR SPEED: whether `computeBaseConstraint` leaves `ty` as it is, decided without an entry in
+    /// `constraints`. Of the types without type variables it changes a string mapping type, such as
+    /// `Uppercase<string>`, into `string`, and so whatever is made of one.
+    fn is_own_base_constraint(&self, ty: TypeId) -> bool {
+        !self.has_type_variables(ty) && !self.contains_string_mapping(ty)
+    }
+
+    /// Whether `ty` is a string mapping type, or a template literal type, a union or an
+    /// intersection with one in it.
+    fn contains_string_mapping(&self, ty: TypeId) -> bool {
+        match self.data(ty) {
+            TypeData::StringMapping { .. } => true,
+            TypeData::Template { types, .. }
+            | TypeData::Union(types)
+            | TypeData::Intersection(types) => {
+                types.iter().any(|&t| self.contains_string_mapping(t))
+            }
+            _ => false,
+        }
     }
 
     /// Whether `getBaseConstraintOfType(ty)` is `unknown`. `base_constraint` is `unknown` also for a
@@ -5161,7 +5306,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getNextBaseConstraint`: the same, as part of the constraint computation in progress.
     pub(super) fn next_base_constraint(&mut self, ty: TypeId) -> TypeId {
-        if !self.has_type_variables(ty) {
+        if self.is_own_base_constraint(ty) {
             return ty;
         }
         // `getBaseConstraintOfType`: the kinds that have one.
@@ -5284,14 +5429,9 @@ impl<'p, 's> Checker<'p, 's> {
                             let found = self
                                 .indexed_access_flagged(obj, index, undefined, None)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            // `getNextBaseConstraint`: the result is resolved in turn. Only `ty` is
-                            // being resolved: a `t` that `getSimplifiedType` produced from it has
-                            // its own constraint.
-                            let found = if found != t || t != ty {
-                                self.next_base_constraint(found)
-                            } else {
-                                found
-                            };
+                            // `getNextBaseConstraint`: the result is resolved in turn. If it is
+                            // `ty` itself the constraint is circular.
+                            let found = self.next_base_constraint(found);
                             if self.is_deferred(found) {
                                 TypeId::UNKNOWN
                             } else {
@@ -6055,6 +6195,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `singleProp` is the first.
         let mut prop_set: SmallVec<[Prop<'s>; 4]> = SmallVec::new();
         let mut index_types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        // `prop != singleProp`, `propSet.Add(prop)`: a symbol that many members inherit is
+        // considered once.
+        let mut symbols: SmallVec<[(*const Prop<'p>, MapperId); 8]> = SmallVec::new();
         let (mut flags, mut is_public, mut first_owner) =
             (PropFlags::empty(), false, containing_type);
         for &current in self.parts(containing_type) {
@@ -6063,6 +6206,11 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if let Some((prop, mapper)) = self.get_property_of_type(current, name) {
+                let symbol = (std::ptr::from_ref(prop), mapper);
+                if symbols.contains(&symbol) {
+                    continue;
+                }
+                symbols.push(symbol);
                 let mut prop = prop.clone_in(self.arena);
                 self.instantiate_prop(&mut prop, mapper);
                 // `prop.Flags&SymbolFlagsClassMember`: a variable of a module or of `globalThis` is
@@ -6087,11 +6235,10 @@ impl<'p, 's> Checker<'p, 's> {
                         if accessors(&prop) != accessors(single) {
                             flags.remove(accessor);
                         }
-                        // `isInstantiation`: instantiations of one property that have the same type are one property.
-                        let is_same = *single == prop
-                            || single.source == prop.source
-                                && self.type_of_prop(single, MapperId::IDENTITY)
-                                    == self.type_of_prop(&prop, MapperId::IDENTITY);
+                        // `isInstantiation`: instantiations of one property that
+                        // `compareProperties` finds equal are one property.
+                        let is_same =
+                            single.source == prop.source && self.compare_properties(single, &prop);
                         if !is_same && !prop_set.contains(&prop) {
                             prop_set.push(prop);
                         }
@@ -6171,6 +6318,35 @@ impl<'p, 's> Checker<'p, 's> {
             source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
             mapper: MapperId::IDENTITY,
         })
+    }
+
+    /// `compareProperties(sourceProp, targetProp, compareTypesEqual)`
+    fn compare_properties(&mut self, source: &Prop<'s>, target: &Prop<'s>) -> bool {
+        if source == target {
+            return true;
+        }
+        let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
+        let accessibility = source.flags & access;
+        if accessibility != target.flags & access {
+            return false;
+        }
+        if !accessibility.is_empty() {
+            // `getTargetSymbol`
+            if source.source != target.source {
+                return false;
+            }
+        } else if (source.flags ^ target.flags).contains(PropFlags::OPTIONAL) {
+            return false;
+        }
+        if self.is_readonly_symbol(source) != self.is_readonly_symbol(target) {
+            return false;
+        }
+        // `getNonMissingTypeOfSymbol`
+        let [source, target] = [source, target].map(|prop| {
+            let ty = self.type_of_prop(prop, MapperId::IDENTITY);
+            self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL))
+        });
+        source == target
     }
 
     /// `hasCommonDeclaration`
@@ -6778,7 +6954,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// parameters of a method are already instantiated with it (`cloneTypeParameter`). Those of a
     /// class, which are those of its construct signatures, are not recreated: their constraints and
     /// defaults are read through this mapper.
-    fn mapper_around_sig(&mut self, sig: SigId) -> MapperId {
+    pub(super) fn mapper_around_sig(&mut self, sig: SigId) -> MapperId {
         match *self.types().sig(sig) {
             SigData::Decl { mapper, .. }
             | SigData::Construct { mapper, .. }

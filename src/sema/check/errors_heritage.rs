@@ -60,11 +60,9 @@ impl Checker<'_, '_> {
                     let static_type = self.type_of_symbol(sym);
                     let base_constructor = self.base_constructor_type_of_class(sym);
                     let static_base = self.apparent_type(base_constructor);
-                    if let Some(properties) = self.type_without_signatures(static_base)
-                        && !self.is_assignable(static_type, properties)
-                    {
+                    if !self.is_assignable_to_type_without_signatures(static_type, static_base) {
                         let at = (file, name_or_node, 0);
-                        self.report_static_side(at, static_type, static_base, properties);
+                        self.report_static_side(at, static_type, static_base);
                     }
                 }
             }
@@ -113,14 +111,31 @@ impl Checker<'_, '_> {
         members
     }
 
+    /// `isTypeAssignableTo(source, getTypeWithoutSignatures(ty))`. A source is related to an
+    /// intersection if it is related to each member (`typeRelatedToEachType`) and has the
+    /// properties of the whole (`propertiesRelatedTo`).
+    fn is_assignable_to_type_without_signatures(&mut self, source: TypeId, ty: TypeId) -> bool {
+        if !self.is_intersection(ty) {
+            let target = self.type_without_signatures(ty);
+            return self.is_assignable(source, target);
+        }
+        for &member in self.constituents(ty) {
+            let target = self.type_without_signatures(member);
+            if !self.is_assignable(source, target) {
+                return false;
+            }
+        }
+        let properties = self.type_of_properties(ty);
+        self.is_assignable(source, properties)
+    }
+
     /// 2417: `checkTypeAssignableTo(staticType, getTypeWithoutSignatures(staticBaseType), ..)` has
-    /// failed. `properties`: `type_without_signatures(static_base)`.
+    /// failed.
     fn report_static_side(
         &mut self,
         at: (FileId, u32, u32),
         static_type: TypeId,
         static_base: TypeId,
-        properties: TypeId,
     ) {
         let members = self.members_of_type_without_signatures(static_base);
         let printed: SmallVec<[TypeId; 4]> = members.iter().map(|member| member.1).collect();
@@ -144,7 +159,7 @@ impl Checker<'_, '_> {
         let (target, shown, head, level) = match (unrelated, &members[..]) {
             (Some((bare, shown)), _) => (bare, shown, None, 1),
             (None, &[(bare, shown)]) => (bare, shown, Some(2417), 0),
-            (None, _) => (properties, printed, Some(2417), 0),
+            (None, _) => (self.type_of_properties(static_base), printed, Some(2417), 0),
         };
         let (lines, related) = self.relation_lines_with_related(
             static_type,
@@ -196,10 +211,8 @@ impl Checker<'_, '_> {
         };
         let mut members: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
         for t in types {
-            let resolved = self.members(t).filter(|resolved| {
-                !(resolved.shape().call.is_empty() && resolved.shape().construct.is_empty())
-            });
-            let (Some(resolved), Some(bare)) = (resolved, self.type_without_signatures(t)) else {
+            let bare = self.type_without_signatures(t);
+            let Some(resolved) = self.members(t).filter(|_| bare != t) else {
                 members.push((t, t));
                 continue;
             };
@@ -240,12 +253,23 @@ impl Checker<'_, '_> {
         members
     }
 
-    /// `getTypeWithoutSignatures` for the type a class extends. `None`: it cannot be extended,
-    /// which is a separate error (`getBaseConstructorTypeOfClass`).
-    fn type_without_signatures(&mut self, ty: TypeId) -> Option<TypeId> {
-        // Among non-object types only `null` can be extended, and it is returned unchanged.
+    /// `getTypeWithoutSignatures` of a type that is not an intersection.
+    fn type_without_signatures(&mut self, ty: TypeId) -> TypeId {
+        let has_signatures = self.flags(ty) & tf::OBJECT != 0
+            && self.members(ty).is_some_and(|resolved| {
+                !(resolved.shape().call.is_empty() && resolved.shape().construct.is_empty())
+            });
+        if has_signatures {
+            self.type_of_properties(ty)
+        } else {
+            ty
+        }
+    }
+
+    /// An object type that has the properties of `ty` and nothing else.
+    fn type_of_properties(&mut self, ty: TypeId) -> TypeId {
         let Some(members) = self.members(ty) else {
-            return (ty == self.null_widening()).then_some(ty);
+            return ty;
         };
         let mut shape = Shape::new_in(self.arena);
         for prop in &members.shape().props {
@@ -264,7 +288,7 @@ impl Checker<'_, '_> {
             self.instantiate_prop(&mut own, members.mapper);
             shape.props.push(own);
         }
-        Some(self.synth(shape))
+        self.synth(shape)
     }
 
     /// `getTypeWithThisArgument` of `ty` and of `base`, with `this` for both. `None`: the first is assignable to the second.
@@ -347,70 +371,118 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The members that declare `prop`, if it is declared by members of classes or interfaces.
-    fn declarations_of_prop(&mut self, prop: &Prop) -> SmallVec<[(FileId, MemberId); 2]> {
-        match prop.source {
-            PropSource::Symbol(sym) => self.members_of_symbol(sym),
-            _ => SmallVec::new(),
-        }
-    }
-
-    /// The symbol flags `checkKindsOfPropertyMemberOverrides` tests on a property: whether it is a
-    /// property, has a getter, has a setter, is a method. `None`: its declarations do not determine
-    /// them.
-    fn kinds_of_prop(&mut self, prop: &Prop) -> Option<(bool, bool, bool, bool)> {
-        match &prop.source {
-            PropSource::Symbol(sym) => {
-                let flags = self.flags_of_property(*sym);
-                // A property declared by an assignment does not determine them.
-                let tells = flags.intersects(SymFlags::CLASS_MEMBER)
-                    && !self.is_declared_by_assignment(*sym);
-                tells.then_some((
-                    flags.contains(SymFlags::PROPERTY),
-                    flags.contains(SymFlags::GET_ACCESSOR),
-                    flags.contains(SymFlags::SET_ACCESSOR),
-                    flags.contains(SymFlags::METHOD),
-                ))
-            }
-            // `createUnionOrIntersectionProperty`: accessors if all the members of the intersection
-            // have the same ones, else a property.
-            // Also a method (`CheckFlagsSyntheticMethod`) if it is one in all of them.
-            PropSource::Intersected(_, parts) => {
-                let mut all: Option<(bool, bool, bool, bool)> = None;
-                for part in parts.iter() {
-                    let (_, getter, setter, method) = self.kinds_of_prop(part)?;
-                    all = Some(match all {
-                        None => (!(getter || setter), getter, setter, method),
-                        Some((false, g, s, m)) if (g, s) == (getter, setter) => {
-                            (false, g, s, m && method)
-                        }
-                        Some((_, _, _, m)) => (true, false, false, m && method),
-                    });
+    /// `prop.Declarations`
+    fn declarations_of_prop(&mut self, prop: &Prop) -> SmallVec<[(FileId, Decl); 2]> {
+        let mut declarations = SmallVec::new();
+        for declared in Self::declared_properties(&[prop], self.arena) {
+            match declared.source {
+                PropSource::Symbol(sym) => {
+                    declarations.extend_from_slice(&self.declarations_of_property(sym));
                 }
-                all
+                PropSource::Literal(file, written) => {
+                    declarations.push((file, Decl::Property(written)));
+                }
+                _ => {}
             }
-            _ => None,
+        }
+        declarations
+    }
+
+    /// `getTargetSymbol`. `createUnionOrIntersectionProperty` returns `singleProp` where the
+    /// members of an intersection all have that symbol, or instantiations of it that
+    /// `compareProperties` finds equal.
+    fn target_symbol<'a>(&mut self, prop: &'a Prop<'a>) -> &'a Prop<'a> {
+        if let PropSource::Intersected(_, parts) = &prop.source
+            && let Some((single_prop, others)) = parts.split_first()
+            && others
+                .iter()
+                .all(|other| other.source == single_prop.source)
+        {
+            let ty = self.type_of_prop(single_prop, MapperId::IDENTITY);
+            if (others.iter()).all(|other| self.type_of_prop(other, MapperId::IDENTITY) == ty) {
+                return self.target_symbol(single_prop);
+            }
+        }
+        prop
+    }
+
+    /// `prop.Flags&SymbolFlagsClassMember`. It has `SymbolFlagsMethod` for
+    /// `CheckFlagsSyntheticMethod` too (`isPrototypeProperty`).
+    fn kinds_of_prop(&mut self, prop: &Prop) -> SymFlags {
+        match &prop.source {
+            PropSource::Symbol(sym) => self.flags_of_property(*sym) & SymFlags::CLASS_MEMBER,
+            // `checkObjectLiteral`: an accessor is the symbol of the member. For any other member
+            // it creates a symbol with `SymbolFlagsProperty | member.Flags`.
+            PropSource::Literal(file, written) => {
+                let bound = self.bound(*file);
+                let member = bound.symbol_of_declaration(Decl::Property(*written));
+                let flags = match member.is_some() {
+                    true => bound.symbols[member.idx()].flags & SymFlags::CLASS_MEMBER,
+                    false => SymFlags::empty(),
+                };
+                match flags.intersects(SymFlags::ACCESSOR) {
+                    true => flags,
+                    false => flags | SymFlags::PROPERTY,
+                }
+            }
+            // `createSymbolWithType`
+            PropSource::Copy(_, of, true) => self.kinds_of_prop(&of[0]),
+            // `createUnionOrIntersectionProperty`: `propFlags` and `syntheticFlag`.
+            PropSource::Intersected(_, parts) => {
+                let (mut flags, mut is_method) = (SymFlags::empty(), true);
+                for part in parts.iter() {
+                    let of_part = self.kinds_of_prop(part);
+                    let accessors = of_part & SymFlags::ACCESSOR;
+                    flags = match flags.is_empty() || flags == accessors {
+                        true if !accessors.is_empty() => accessors,
+                        _ => SymFlags::PROPERTY,
+                    };
+                    is_method &= of_part.contains(SymFlags::METHOD);
+                }
+                match is_method {
+                    true => flags | SymFlags::METHOD,
+                    false => flags,
+                }
+            }
+            PropSource::Type(_)
+            | PropSource::Mapped(..)
+            | PropSource::Copy(_, _, false)
+            | PropSource::ReverseMapped(..) => SymFlags::PROPERTY,
         }
     }
 
-    /// Whether an interface declares `prop`, or one of the properties an intersection combines into
-    /// it.
-    fn is_declared_in_interface(&self, prop: &Prop) -> bool {
-        match &prop.source {
-            PropSource::Symbol(sym) => {
-                let members = members_among(&self.files().decls_of(*sym));
-                members.iter().any(|&(f, m)| {
-                    matches!(
-                        self.bound(f).member_owner[m.idx()],
-                        MemberOwner::Interface(_)
-                    )
-                })
-            }
-            PropSource::Intersected(_, parts) => {
-                parts.iter().any(|part| self.is_declared_in_interface(part))
-            }
-            _ => false,
+    /// `arePropertiesAbstractOrInterface`
+    fn are_properties_abstract_or_interface(
+        &mut self,
+        base: &Prop,
+        base_declaration_flags: Flags,
+    ) -> bool {
+        let declarations = self.declarations_of_prop(base);
+        let is_abstract_or_interface = |&declaration: &(FileId, Decl)| {
+            self.is_property_abstract_or_interface(declaration, base_declaration_flags)
+        };
+        // `CheckFlagsSynthetic`
+        match base.source {
+            PropSource::Intersected(..) => declarations.iter().any(is_abstract_or_interface),
+            _ => declarations.iter().all(is_abstract_or_interface),
         }
+    }
+
+    /// `isPropertyAbstractOrInterface`
+    fn is_property_abstract_or_interface(
+        &self,
+        (file, declaration): (FileId, Decl),
+        base_declaration_flags: Flags,
+    ) -> bool {
+        let Decl::Member(m) = declaration else {
+            return base_declaration_flags.contains(Flags::ABSTRACT);
+        };
+        let member = &self.hir(file)[m];
+        matches!(
+            self.bound(file).member_owner[m.idx()],
+            MemberOwner::Interface(_)
+        ) || base_declaration_flags.contains(Flags::ABSTRACT)
+            && (member.kind != MemberKind::Property || member.init.is_none())
     }
 
     /// `checkKindsOfPropertyMemberOverrides`
@@ -420,137 +492,123 @@ impl Checker<'_, '_> {
         c: ClassId,
         sym: Sym,
         class_type: TypeId,
-        base: TypeId,
+        base_type: TypeId,
     ) {
         let hir = self.hir(file);
         // `getPropertiesOfType`
-        let apparent_base = self.apparent_type(base);
+        let apparent_base = self.apparent_type(base_type);
         let (Some(base_members), Some(own_members)) =
             (self.members(apparent_base), self.members(class_type))
         else {
             return;
         };
-        let is_abstract_class = hir[c].flags.contains(Flags::ABSTRACT);
-        let mut not_implemented = 0;
-        let mut missed: Vec<&Prop> = Vec::new();
-        for inherited in &base_members.shape().props {
-            let Some(derived) = own_members.resolved.prop(inherited.name) else {
+        let property_or_accessor = SymFlags::PROPERTY | SymFlags::ACCESSOR;
+        let mut missed_properties: Vec<&Prop> = Vec::new();
+        'base_property_check: for base_property in &base_members.shape().props {
+            let base = self.target_symbol(base_property);
+            // `SymbolFlagsPrototype`
+            if base.name == known::prototype && matches!(base.source, PropSource::Type(_)) {
+                continue;
+            }
+            let Some(derived) = own_members.resolved.prop(base.name) else {
                 continue;
             };
-            let base_decls = self.declarations_of_prop(inherited);
-            // Only with a grammar error.
-            let is_abstract_parameter = match inherited.source {
-                PropSource::Symbol(symbol) => match self.files().value_declaration(symbol) {
-                    Some((f, Decl::ParameterProperty(p))) => {
-                        self.hir(f)[p].flags.contains(Flags::ABSTRACT)
-                    }
-                    _ => false,
-                },
-                _ => false,
-            };
-            let is_abstract = is_abstract_parameter
-                || base_decls
-                    .iter()
-                    .any(|&(f, m)| self.hir(f)[m].flags.contains(Flags::ABSTRACT));
-            if derived.source == inherited.source {
+            let derived = self.target_symbol(derived);
+            let base_declaration_flags =
+                self.get_declaration_modifier_flags_from_symbol_ex(base, false);
+            if derived.source == base.source {
                 // Inherited unchanged. An abstract member must be implemented, unless the class is
                 // abstract as well.
-                if is_abstract && !is_abstract_class {
-                    let elsewhere = self.base_types(sym).iter().any(|&other| {
-                        other != base
-                            && self
-                                .prop_ref(other, inherited.name)
-                                .is_some_and(|(p, _)| p.source != inherited.source)
-                    });
-                    if !elsewhere {
-                        not_implemented += 1;
-                        missed.push(inherited);
+                if base_declaration_flags.contains(Flags::ABSTRACT)
+                    && !hir[c].flags.contains(Flags::ABSTRACT)
+                {
+                    for &other_base_type in self.base_types(sym).iter() {
+                        if other_base_type != base_type
+                            && let Some((base_symbol, _)) =
+                                self.get_property_of_object_type(other_base_type, base.name)
+                            && self.target_symbol(base_symbol).source != base.source
+                        {
+                            continue 'base_property_check;
+                        }
                     }
+                    missed_properties.push(base_property);
                 }
                 continue;
             }
-            // `getDeclarationModifierFlagsFromSymbol`: a property shared by several members of an
-            // intersection is private if it is private in any of them.
-            let is_private_somewhere = matches!(&inherited.source, PropSource::Intersected(_, parts) if parts.iter().any(|part| part.flags.contains(PropFlags::PRIVATE)));
-            if (inherited.flags | derived.flags).contains(PropFlags::PRIVATE)
-                || is_private_somewhere
-            {
+            let derived_declaration_flags =
+                self.get_declaration_modifier_flags_from_symbol_ex(derived, false);
+            if (base_declaration_flags | derived_declaration_flags).contains(Flags::PRIVATE) {
                 continue;
             }
-            // The name of `derived.ValueDeclaration`.
-            let PropSource::Symbol(sym) = derived.source else {
-                continue;
-            };
-            let Some((derived_file, declaration)) = self.files().value_declaration(sym) else {
-                continue;
-            };
-            let Some(start) = self.declaration_name_start(derived_file, declaration) else {
-                continue;
-            };
-            if derived_file != file {
-                continue;
-            }
-            let (Some(base_kinds), Some(derived_kinds)) =
-                (self.kinds_of_prop(inherited), self.kinds_of_prop(derived))
-            else {
-                continue;
-            };
-            let (base_property, base_getter, base_setter, base_method) = base_kinds;
-            let (derived_property, derived_getter, derived_setter, derived_method) = derived_kinds;
-            let (base_accessor, derived_accessor) =
-                (base_getter || base_setter, derived_getter || derived_setter);
-            if (base_property || base_accessor) && (derived_property || derived_accessor) {
-                // `arePropertiesAbstractOrInterface`: all the declarations, or one of the
-                // properties an intersection combines.
-                let is_abstract_or_interface = match &inherited.source {
-                    PropSource::Intersected(..) => self.is_declared_in_interface(inherited),
-                    _ => {
-                        (is_abstract_parameter || !base_decls.is_empty())
-                            && base_decls.iter().all(|&(f, m)| {
-                                matches!(
-                                    self.bound(f).member_owner[m.idx()],
-                                    MemberOwner::Interface(_)
-                                ) || is_abstract
-                                    && (self.hir(f)[m].kind != MemberKind::Property
-                                        || self.hir(f)[m].init.is_none())
-                            })
-                    }
-                };
-                if is_abstract_or_interface {
+            let value_declaration = self.value_declaration_of_prop(derived);
+            let (base_flags, derived_flags) =
+                (self.kinds_of_prop(base), self.kinds_of_prop(derived));
+            let base_property_flags = base_flags & property_or_accessor;
+            let derived_property_flags = derived_flags & property_or_accessor;
+            let code = if !base_property_flags.is_empty() && !derived_property_flags.is_empty() {
+                let is_binary_expression = matches!(
+                    value_declaration,
+                    Some((of, Decl::Expando(e) | Decl::ThisProperty(e)))
+                        if matches!(self.hir(of)[e].kind, ExprKind::Assign { .. })
+                );
+                // `CheckFlagsMapped`
+                if matches!(base.source, PropSource::Mapped(..))
+                    || is_binary_expression
+                    || self.are_properties_abstract_or_interface(base, base_declaration_flags)
+                {
                     continue;
                 }
-                if base_accessor && !base_property && derived_property && !derived_accessor {
-                    self.report_override((file, start), 2610, inherited, base, class_type);
-                } else if base_property && !base_accessor && derived_accessor {
-                    self.report_override((file, start), 2611, inherited, base, class_type);
+                if base_property_flags != SymFlags::PROPERTY
+                    && derived_property_flags == SymFlags::PROPERTY
+                {
+                    2610
+                } else if base_property_flags == SymFlags::PROPERTY
+                    && derived_property_flags != SymFlags::PROPERTY
+                {
+                    2611
                 } else if self.p.files.options.use_define_for_class_fields
-                    && !is_abstract
+                    && !(base_declaration_flags | derived_declaration_flags)
+                        .contains(Flags::ABSTRACT)
                     && self.is_redefined_without_initializer(file, c, derived, class_type)
                 {
-                    let end = self.end_of_name_at(file, start);
-                    {
-                        let arg0 = self.prop_to_string(inherited);
-                        self.error_at(
-                            (file, start, end),
-                            2612,
-                            &[Arg::Bytes(&arg0), Arg::Type(base)],
-                        );
-                    }
+                    2612
+                } else {
+                    continue;
                 }
-            } else if base_method {
-                if !(derived_method || derived_property) {
-                    self.report_override((file, start), 2423, inherited, base, class_type);
+            } else if base_flags.contains(SymFlags::METHOD) {
+                if derived_flags.intersects(SymFlags::METHOD | SymFlags::PROPERTY) {
+                    continue;
                 }
-            } else if base_accessor {
-                self.report_override((file, start), 2426, inherited, base, class_type);
+                2423
+            } else if base_flags.intersects(SymFlags::ACCESSOR) {
+                2426
             } else {
-                self.report_override((file, start), 2425, inherited, base, class_type);
+                2425
+            };
+            // The name of `derived.ValueDeclaration`, in whatever file it is. The diagnostics of a
+            // file that was checked before this one have been collected.
+            let Some((of, declaration)) = value_declaration else {
+                continue;
+            };
+            let Some(start) = self.declaration_name_start(of, declaration) else {
+                continue;
+            };
+            if !self.is_checked_no_later_than(file, of) {
+                continue;
             }
+            let at = (of, start, self.end_of_name_at(of, start));
+            let name = Arg::Prop(base);
+            let (base_name, type_name) = (Arg::Type(base_type), Arg::Type(class_type));
+            match code {
+                2610 | 2611 => self.error_at(at, code, &[name, base_name, type_name]),
+                2612 => self.error_at(at, code, &[name, base_name]),
+                _ => self.error_at(at, code, &[base_name, name, type_name]),
+            };
         }
-        if not_implemented > 0 {
+        if !missed_properties.is_empty() {
             let is_expression =
                 matches!(self.bound(file).class_owner[c.idx()], ClassOwner::Expr(_));
-            let code = match (not_implemented, is_expression) {
+            let code = match (missed_properties.len(), is_expression) {
                 (1, false) => 2515,
                 (1, true) => 2653,
                 (2..=5, false) => 2654,
@@ -558,46 +616,43 @@ impl Checker<'_, '_> {
                 (_, false) => 2655,
                 (_, true) => 2650,
             };
-            let start = hir[c].name_pos;
-            {
-                let names: Vec<Vec<u8>> = missed
+            let names: Vec<Vec<u8>> = missed_properties
+                .iter()
+                .map(|prop| self.prop_to_string(prop))
+                .collect();
+            let listed = if names.len() > 5 { 4 } else { names.len() };
+            let list = match &names[..] {
+                [only] => only.clone(),
+                _ => names[..listed]
                     .iter()
-                    .map(|prop| self.prop_to_string(prop))
-                    .collect();
-                let listed = if names.len() > 5 { 4 } else { names.len() };
-                let list = match &names[..] {
-                    [only] => only.clone(),
-                    _ => names[..listed]
-                        .iter()
-                        .map(|name| cat!(b"'", name, b"'"))
-                        .collect::<Vec<_>>()
-                        .join(&b", "[..]),
-                };
-                let mut args = Vec::new();
-                if !is_expression {
-                    args.push(self.type_to_string(class_type));
-                }
-                let base_name = self.type_to_string(base);
-                if names.len() == 1 {
-                    args.extend([list, base_name]);
-                } else {
-                    args.extend([base_name, list]);
-                }
-                if names.len() > 5 {
-                    args.push(super::sink::number_text(names.len() - 4));
-                }
-                self.add_diagnostic(super::sink::Reported::new(
-                    (file, start, 0),
-                    code,
-                    held(args),
-                ));
+                    .map(|name| cat!(b"'", name, b"'"))
+                    .collect::<Vec<_>>()
+                    .join(&b", "[..]),
+            };
+            let mut args = Vec::new();
+            if !is_expression {
+                args.push(self.type_to_string(class_type));
             }
+            let base_name = self.type_to_string(base_type);
+            if names.len() == 1 {
+                args.extend([list, base_name]);
+            } else {
+                args.extend([base_name, list]);
+            }
+            if names.len() > 5 {
+                args.push(super::sink::number_text(names.len() - 4));
+            }
+            self.add_diagnostic(super::sink::Reported::new(
+                (file, hir[c].name_pos, 0),
+                code,
+                held(args),
+            ));
         }
     }
 
     /// The end of `checkKindsOfPropertyMemberOverrides`, under `useDefineForClassFields`: whether a
-    /// declaration of `derived` in the class `c` has no initializer, so that it redefines the
-    /// property, and the constructor does not assign to it either.
+    /// declaration of `derived`, a property of the class `c`, has no initializer, so that it
+    /// redefines the property, and the constructor does not assign to it either.
     fn is_redefined_without_initializer(
         &mut self,
         file: FileId,
@@ -606,21 +661,10 @@ impl Checker<'_, '_> {
         class_type: TypeId,
     ) -> bool {
         let hir = self.hir(file);
-        let decls = self.declarations_of_prop(derived);
-        if decls.is_empty()
-            || hir.kind == FileKind::Declaration
-            || hir[c].flags.contains(Flags::AMBIENT)
-            || decls.iter().any(|&(f, m)| {
-                let member = &self.hir(f)[m];
-                // `SymbolFlagsTransient`: `lateBindMember` created the symbol.
-                member.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT)
-                    || matches!(member.key, PropKey::Computed(name) if is_dynamic_name(self.hir(f), name))
-            })
-        {
-            return false;
-        }
+        let declarations = self.declarations_of_prop(derived);
+        let members = members_among(&declarations);
         // `IsPropertyDeclaration`: of a class, not of an interface that is merged with it.
-        let uninitialized = decls.iter().find(|&&(f, m)| {
+        let uninitialized = members.iter().find(|&&(f, m)| {
             let member = &self.hir(f)[m];
             member.kind == MemberKind::Property
                 && member.init.is_none()
@@ -629,6 +673,13 @@ impl Checker<'_, '_> {
         let Some(&(of, uninitialized)) = uninitialized else {
             return false;
         };
+        // `SymbolFlagsTransient`: `lateBindMember` created the symbol.
+        if members.iter().any(|&(f, m)| {
+            matches!(self.hir(f)[m].key, PropKey::Computed(name) if is_dynamic_name(self.hir(f), name))
+        }) || (declarations.iter()).any(|&(f, d)| self.hir(f).is_ambient(self.hir(f).node(d)))
+        {
+            return false;
+        }
         let member = &self.hir(of)[uninitialized];
         let is_identifier = !member.flags.contains(Flags::LITERAL_NAME)
             && self.hir(of).text.get(member.name_pos as usize) != Some(&b'[');
@@ -644,23 +695,6 @@ impl Checker<'_, '_> {
         member.flags.contains(Flags::DEFINITE)
             || !self.p.files.options.strict_null_checks
             || !self.is_assigned_in_constructor(file, hir[constructor].func, name, class_type)
-    }
-
-    /// Reports a `checkKindsOfPropertyMemberOverrides` error at the name of the member that overrides `inherited`.
-    fn report_override(
-        &mut self,
-        (file, start): (FileId, u32),
-        code: u32,
-        inherited: &Prop,
-        base: TypeId,
-        heir: TypeId,
-    ) {
-        let (name, base, heir) = (Arg::Prop(inherited), Arg::Type(base), Arg::Type(heir));
-        let args = match code {
-            2610 | 2611 => [name, base, heir],
-            _ => [base, name, heir],
-        };
-        self.error_at((file, start, self.end_of_name_at(file, start)), code, &args);
     }
 
     pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {
@@ -744,21 +778,12 @@ impl Checker<'_, '_> {
         if bases.len() < 2 {
             return true;
         }
-        // A property it declares itself resolves any conflict.
-        let mut own: Vec<Atom> = Vec::new();
-        for (f, d) in self.files().decls(sym) {
-            let members = match d {
-                Decl::Interface(id) => self.hir(f)[id].members,
-                Decl::Class(c) => self.hir(f)[c].members,
-                _ => continue,
-            };
-            for m in members.iter() {
-                let key = self.hir(f)[m].key;
-                if let Some(name) = self.member_name(f, key) {
-                    own.push(name);
-                }
-            }
-        }
+        // `resolveDeclaredMembers(t).declaredMembers`: a property it declares itself resolves any
+        // conflict. Not `members(ty)`: it is a base type `M<t>` that requests those first, below,
+        // which leaves `t` without the members of `M<t>`.
+        let own: Vec<Atom> = (self.resolve_declared_members(sym).props.iter())
+            .map(|prop| prop.name)
+            .collect();
         let this = self.intern(TypeData::ThisParam(sym));
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         // For a private or protected property, also its declaration.

@@ -26,6 +26,10 @@
 //! Diagnostics that belong to the task and are located in the file of its `check_file` stay in
 //! `reported` until that ends, and go to `finish_file`.
 //!
+//! A callback of `addDeferredDiagnostic` whose message prints a type is a `Reported` too, with
+//! `Reported::deferred` in place of the arguments. So it belongs to the task or to a query, and is
+//! dropped with a frame, like a diagnostic. `produce_type_not_iterable_errors` creates the message.
+//!
 //! A diagnostic that leaves its task is settled (`Checker::settle`): every field that only the HIR
 //! of its file can provide has been filled in. The HIR of a file that nothing imports is freed at
 //! the end of its task, and `finish_file` reads no HIR.
@@ -83,6 +87,8 @@ pub(super) struct Reported {
     pub(super) related_information: Vec<Reported>,
     /// `CategorySuggestion`
     pub(super) is_suggestion: bool,
+    /// `SkippedOnNoEmit`
+    pub(super) skipped_on_no_emit: bool,
     /// Once settled: the start of the `@ts-ignore` or `@ts-expect-error` directive that suppresses
     /// it. `NO_DIRECTIVE`: none does.
     pub(super) directive: u32,
@@ -91,6 +97,18 @@ pub(super) struct Reported {
     /// `Emit` reported it, before the check (`Options::emits_first`). It stays where
     /// `checkSourceFile` never comes.
     pub(super) by_emit: bool,
+    /// It is a callback of `addDeferredDiagnostic` that has not been called: `args` is empty.
+    pub(super) deferred: Option<TypeNotIterable>,
+}
+
+/// What a callback of `getIterationTypesOfIterableWorker` passes to `reportTypeNotIterableError`
+/// with the error node.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) struct TypeNotIterable {
+    pub(super) ty: TypeId,
+    pub(super) allows_async: bool,
+    /// The error node is the iterated expression of a `for..of`.
+    pub(super) is_of_for_of: bool,
 }
 
 pub(super) const NO_DIRECTIVE: u32 = u32::MAX;
@@ -112,9 +130,11 @@ impl Reported {
             message_chain: Vec::new(),
             related_information: Vec::new(),
             is_suggestion: false,
+            skipped_on_no_emit: false,
             directive: NO_DIRECTIVE,
             was_bare: false,
             by_emit: false,
+            deferred: None,
         }
     }
 
@@ -401,6 +421,22 @@ impl Checker<'_, '_> {
         }
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
+    }
+
+    /// `c.addDeferredDiagnostic`. `callback`: see `Reported::deferred`.
+    pub(super) fn add_deferred_diagnostic(&mut self, callback: Reported) {
+        if self.save_deferred_diagnostics {
+            self.reported.push(callback);
+        }
+    }
+
+    /// The diagnostics reported from index `from` on, for a caller that stores or rewrites them. A
+    /// callback of `addDeferredDiagnostic` stays.
+    pub(super) fn take_reported_from(&mut self, from: usize) -> Vec<Reported> {
+        let taken = self.reported.split_off(from).into_iter();
+        let (callbacks, reported): (Vec<_>, Vec<_>) = taken.partition(|d| d.deferred.is_some());
+        self.reported.extend(callbacks);
+        reported
     }
 
     /// The diagnostics of `frame`, the frame of `q`, which `leave` has just popped.

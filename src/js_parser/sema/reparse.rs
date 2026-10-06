@@ -708,11 +708,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .named
                     .iter()
                     .map(|specifier| ImportSpec {
-                        start: specifier.imported_pos,
+                        start: specifier.start,
                         imported: self.b.atom(&specifier.imported),
                         local: self.b.atom(&specifier.local),
                         pos: specifier.local_pos,
-                        type_only: false,
+                        type_only: specifier.is_type_only,
                         imported_pos: specifier.imported_pos,
                         end: specifier.local_pos + specifier.local.len() as u32,
                         import: ImportId(self.b.file.imports.len() as u32),

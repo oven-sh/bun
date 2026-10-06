@@ -257,12 +257,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // There is no declaration order between files: constants of two files may be initialized
         // with each other.
-        if self.constant_depth <= 16
-            && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
+        if let Some((of, d)) = self.constant_variable_declaration(symbol, location)
+            && !self.constants_in_evaluation.contains(&(of, d))
         {
-            self.constant_depth += 1;
+            self.constants_in_evaluation.push((of, d));
             let result = self.evaluate(of, self.hir(of)[d].init, Location::Variable(of, d));
-            self.constant_depth -= 1;
+            self.constants_in_evaluation.pop();
             if location.file() != of {
                 return Evaluated {
                     value: result.value,
@@ -1517,6 +1517,8 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = bound.type_param_scope[tp.idx()];
         let list = match scope.is_some().then(|| bound.scopes[scope.idx()].kind) {
             Some(ScopeKind::Fn(f)) => hir[f].type_params,
+            Some(ScopeKind::Class(c)) => hir[c].type_params,
+            Some(ScopeKind::Interface(i)) => hir[i].type_params,
             _ => Span::new(tp.0, 1),
         };
         let fresh: SmallVec<[(TypeId, TypeId); 4]> = list
@@ -1739,13 +1741,12 @@ impl<'p, 's> Checker<'p, 's> {
         is_js: bool,
     ) -> Vec<TypeId> {
         let mut filled = self.fill_type_args_as(params, args, is_js);
-        if let Some((_, _, outer)) = self.sig_decl(sig) {
-            for (ty, &param) in filled.iter_mut().zip(params).skip(args.len()) {
-                // The default of a cloned type parameter is already instantiated with them.
-                if matches!(*self.data(param), TypeData::TypeParam(_, _, around) if around == MapperId::IDENTITY)
-                {
-                    *ty = self.instantiate(*ty, outer);
-                }
+        let outer = self.mapper_around_sig(sig);
+        for (ty, &param) in filled.iter_mut().zip(params).skip(args.len()) {
+            // The default of a cloned type parameter is already instantiated with them.
+            if matches!(*self.data(param), TypeData::TypeParam(_, _, around) if around == MapperId::IDENTITY)
+            {
+                *ty = self.instantiate(*ty, outer);
             }
         }
         filled
@@ -2397,13 +2398,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Keyword::Symbol => TypeId::SYMBOL,
                 Keyword::Object => TypeId::OBJECT,
                 Keyword::Intrinsic => TypeId::INTRINSIC_MARKER,
-                Keyword::This => {
-                    let this = self.this_type_at(file, node, scope);
-                    if this == TypeId::ERROR {
-                        self.error_at(self.place_of_token(file, hir[node].pos), 2526, &[]);
-                    }
-                    this
-                }
+                Keyword::This => self.get_this_type(file, node, scope),
             },
             TypeNodeKind::StringLit(value) => self.string_literal(value, false),
             TypeNodeKind::NumberLit(n) => self.number_literal(hir.numbers[n as usize], false),
@@ -2418,7 +2413,10 @@ impl<'p, 's> Checker<'p, 's> {
                 })
             }
             TypeNodeKind::BoolLit(value) => self.bool_literal(value, false),
-            TypeNodeKind::UniqueSymbol => TypeId::SYMBOL,
+            // `getTypeFromTypeOperatorNode`
+            TypeNodeKind::UniqueSymbol => {
+                self.es_symbol_like_type_for_declaration(file, hir.parent(hir.node(node)))
+            }
             TypeNodeKind::JSDoc { ty, kind, .. } => {
                 let of = self.type_from_node(file, ty);
                 match kind {
@@ -2536,9 +2534,10 @@ impl<'p, 's> Checker<'p, 's> {
                     .indexed_access_of_type_node(obj, index, (file, node), alias)
                     .unwrap_or(TypeId::ERROR);
                 // `getPropertyTypeForIndexType`: in the indexed access type `T["p"]`, the missing
-                // type becomes `undefined`.
+                // type becomes `undefined`. The union over the members of an index has the alias.
                 if self.contains_missing_type(ty) {
-                    self.union(&[ty, TypeId::UNDEFINED])
+                    let alias = alias.filter(|_| self.stored_alias(ty).is_some());
+                    self.union_with_alias(&[ty, TypeId::UNDEFINED], alias)
                 } else {
                     ty
                 }
@@ -2991,19 +2990,83 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// `getThisType`: the `this` type node `node` in `scope`. Where no `this` type is available an
-    /// error is reported and the result is the error type.
-    pub(super) fn this_type_at(
-        &mut self,
+    /// `getESSymbolLikeTypeForNode`
+    fn es_symbol_like_type_for_declaration(&mut self, file: FileId, node: Node) -> TypeId {
+        use crate::bind::{MemberOwner, Parent};
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `isValidESSymbolDeclaration`
+        match hir.data(node) {
+            NodeData::VarDecl(d) => {
+                let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
+                match hir[decl.pat].kind {
+                    PatKind::Ident(name)
+                        if decl.kind == VarKind::Const
+                            && stmt.is_some()
+                            && matches!(hir[stmt].kind, StmtKind::Var(_))
+                            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(parent) if parent.is_some() && matches!(hir[parent].kind, StmtKind::For { init, .. } if init == stmt)) =>
+                    {
+                        self.unique_symbol_of_variable(file, decl.pat, name)
+                    }
+                    _ => TypeId::SYMBOL,
+                }
+            }
+            NodeData::Member(m) => {
+                let (member, owner) = (&hir[m], bound.member_owner[m.idx()]);
+                let Some(name) = member.key.name() else {
+                    return TypeId::SYMBOL;
+                };
+                if member.kind != MemberKind::Property
+                    || !member.flags.contains(Flags::READONLY)
+                    || !member.flags.contains(Flags::STATIC)
+                        && matches!(owner, MemberOwner::Class(_))
+                {
+                    return TypeId::SYMBOL;
+                }
+                let symbol = match owner {
+                    // By symbol: `declare global { interface SymbolConstructor }` counts.
+                    MemberOwner::Interface(i)
+                        if bound.interface_symbol[i.idx()].is_some()
+                            && self.global_type_symbol(known::SymbolConstructor)
+                                == Some(
+                                    self.files().sym(file, bound.interface_symbol[i.idx()]),
+                                ) =>
+                    {
+                        UniqueSymbolDeclaration::SymbolConstructor
+                    }
+                    _ => self.unique_symbol_declaration(file, m, name),
+                };
+                self.intern(TypeData::UniqueSymbol { symbol, name })
+            }
+            _ => TypeId::SYMBOL,
+        }
+    }
+
+    /// `getThisType` for the `this` type node `node` in `scope`.
+    fn get_this_type(&mut self, file: FileId, node: TypeNodeId, scope: ScopeId) -> TypeId {
+        match self.class_or_interface_of_this_type(file, node, scope) {
+            Some(sym) if self.has_this_type(sym) => self.intern(TypeData::ThisParam(sym)),
+            Some(_) => TypeId::ERROR,
+            None => {
+                let at = self.place_of_token(file, self.hir(file)[node].pos);
+                self.error_at(at, 2526, &[]);
+                TypeId::ERROR
+            }
+        }
+    }
+
+    /// The conditions of `getThisType`: the symbol of `container.Parent`. `None`: no `this` type is
+    /// available at `node`.
+    fn class_or_interface_of_this_type(
+        &self,
         file: FileId,
         node: TypeNodeId,
         mut scope: ScopeId,
-    ) -> TypeId {
+    ) -> Option<Sym> {
         use crate::bind::{FnOwner, MemberOwner};
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetThisContainer`: the walk stops at a member of a type literal.
         if bound.this_in_type_literal.contains(&node) {
-            return TypeId::ERROR;
+            return None;
         }
         let pos = hir[node].pos;
         // A type in a JSDoc comment precedes its host in the text, so the positions that the walk
@@ -3019,21 +3082,20 @@ impl<'p, 's> Checker<'p, 's> {
                         .find_ancestor(this, |n| n == hir.body(container))
                         .is_none()
             {
-                return TypeId::ERROR;
+                return None;
             }
-            let sym = self.class_sym(file, class);
-            return self.intern(TypeData::ThisParam(sym));
+            return Some(self.class_sym(file, class));
         }
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
             match s.kind {
                 ScopeKind::Fn(f) => match hir[f].kind {
                     FnKind::Arrow | FnKind::FunctionType | FnKind::ConstructorType => {}
-                    FnKind::Decl | FnKind::Expr | FnKind::StaticBlock => return TypeId::ERROR,
+                    FnKind::Decl | FnKind::Expr | FnKind::StaticBlock => return None,
                     kind => {
                         // A method or an accessor of an object literal is not a member.
                         let FnOwner::Member(m) = bound.fns[f.idx()].owner else {
-                            return TypeId::ERROR;
+                            return None;
                         };
                         // For a constructor only the body qualifies. Its parameters and body share
                         // one scope.
@@ -3045,9 +3107,9 @@ impl<'p, 's> Checker<'p, 's> {
                             )
                             || kind == FnKind::Constructor && !is_in_body
                         {
-                            return TypeId::ERROR;
+                            return None;
                         }
-                        return self.this_type_in_scope(file, s.parent);
+                        return self.class_or_interface_around(file, s.parent);
                     }
                 },
                 // Not inside a method body: in a property declaration, or else in the class head or in a method name, which
@@ -3057,45 +3119,51 @@ impl<'p, 's> Checker<'p, 's> {
                         && hir[m].kind == MemberKind::Property
                     {
                         return if hir[m].flags.contains(Flags::STATIC) {
-                            TypeId::ERROR
+                            None
                         } else {
-                            self.this_type_in_scope(file, scope)
+                            self.class_or_interface_around(file, scope)
                         };
                     }
                 }
                 ScopeKind::Interface(i) => {
                     if hir[i].members.iter().any(|m| hir[m].start <= pos) {
-                        return self.this_type_in_scope(file, scope);
+                        return self.class_or_interface_around(file, scope);
                     }
                 }
                 ScopeKind::Module(_) | ScopeKind::Enum(_) | ScopeKind::File => {
-                    return TypeId::ERROR;
+                    return None;
                 }
                 _ => {}
             }
             scope = s.parent;
         }
-        TypeId::ERROR
+        None
     }
 
-    /// The `this` type of the class or interface enclosing `scope`.
-    pub fn this_type_in_scope(&mut self, file: FileId, mut scope: ScopeId) -> TypeId {
+    /// The symbol of the class or interface enclosing `scope`.
+    fn class_or_interface_around(&self, file: FileId, mut scope: ScopeId) -> Option<Sym> {
         let bound = self.bound(file);
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
             match s.kind {
                 ScopeKind::Class(c) => {
-                    let sym = self.files().sym(file, bound.class_symbol[c.idx()]);
-                    return self.intern(TypeData::ThisParam(sym));
+                    return Some(self.files().sym(file, bound.class_symbol[c.idx()]));
                 }
                 ScopeKind::Interface(i) => {
-                    let sym = self.files().sym(file, bound.interface_symbol[i.idx()]);
-                    return self.intern(TypeData::ThisParam(sym));
+                    return Some(self.files().sym(file, bound.interface_symbol[i.idx()]));
                 }
                 _ => scope = s.parent,
             }
         }
-        TypeId::UNRESOLVED
+        None
+    }
+
+    /// The `this` type of the class or interface enclosing `scope`.
+    pub fn this_type_in_scope(&mut self, file: FileId, scope: ScopeId) -> TypeId {
+        match self.class_or_interface_around(file, scope) {
+            Some(sym) => self.intern(TypeData::ThisParam(sym)),
+            None => TypeId::UNRESOLVED,
+        }
     }
 
     /// `getTypeFromTypeAliasReference` for the generic alias `sym`, after the type argument count
@@ -3643,6 +3711,18 @@ impl<'p, 's> Checker<'p, 's> {
             } => Some((file, func, mapper)),
             SigData::WithReturn { sig: inner, .. } => self.sig_decl(inner),
             _ => None,
+        }
+    }
+
+    /// `Signature.mapper`: it maps the type parameters around the declaration of `sig`. `None`: it
+    /// is synthesized.
+    pub(super) fn mapper_of_signature(&self, sig: SigId) -> Option<MapperId> {
+        match *self.types().sig(sig) {
+            SigData::Decl { mapper, .. }
+            | SigData::Construct { mapper, .. }
+            | SigData::DefaultConstruct { mapper, .. } => Some(mapper),
+            SigData::WithReturn { sig: inner, .. } => self.mapper_of_signature(inner),
+            SigData::Synth { .. } => None,
         }
     }
 

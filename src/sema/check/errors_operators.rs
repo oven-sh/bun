@@ -285,20 +285,11 @@ pub(super) fn has_empty_object_intersection(c: &mut Checker<'_, '_>, ty: TypeId)
         if part == TypeId::UNKNOWN_EMPTY_OBJECT {
             return true;
         }
-        let TypeData::Intersection(members) = c.data(part) else {
+        if !matches!(c.data(part), TypeData::Intersection(_)) {
             continue;
-        };
-        // `T & {}` is `T` where `T extends {}`.
-        let mut is_reducible = false;
-        for &m in members.iter() {
-            if c.is_deferred(m)
-                && let Some(constraint) = c.base_constraint_of(m)
-            {
-                is_reducible |= c.is_empty_anonymous_object_type(constraint);
-            }
         }
         let base = c.base_constraint_of(part).unwrap_or(part);
-        if !is_reducible && c.is_empty_anonymous_object_type(base) {
+        if c.is_empty_anonymous_object_type(base) {
             return true;
         }
     }
@@ -348,7 +339,7 @@ pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprI
         return;
     };
     let f = &hir[func];
-    if f.ret.is_some() {
+    if c.return_type_from_annotation(file, func).is_some() {
         return;
     }
     // `getContextualIterationType`

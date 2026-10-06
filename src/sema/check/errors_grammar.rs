@@ -345,7 +345,7 @@ impl Checker<'_, '_> {
         }
         let code = if hir.text(node) != known::r#await {
             self.strict_mode_message(file, node, [1213, 1214, 1212])
-        } else if self.files().module(file).is_module() && hir.is_in_top_level_context(node) {
+        } else if hir.has_module_syntax && hir.is_in_top_level_context(node) {
             1262
         } else if hir.await_context(node) == Ok(true) {
             1359

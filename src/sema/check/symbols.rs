@@ -7,7 +7,7 @@ use super::mapped::AccessNode;
 use super::related::Place;
 use super::shape::SpreadSymbolOptions;
 use super::*;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind, UNREACHABLE};
+use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, UNREACHABLE};
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -106,6 +106,14 @@ pub(super) enum IterationUse {
 }
 
 impl IterationUse {
+    fn yield_star(is_async: bool) -> IterationUse {
+        if is_async {
+            IterationUse::AsyncYieldStar
+        } else {
+            IterationUse::YieldStar
+        }
+    }
+
     /// `IterationUseAllowsSyncIterablesFlag`
     fn allows_sync(self) -> bool {
         self != IterationUse::AsyncGeneratorReturnType
@@ -136,6 +144,11 @@ impl IterationUse {
             IterationUse::GeneratorReturnType | IterationUse::AsyncGeneratorReturnType => None,
         }
     }
+}
+
+/// The message of `reportTypeNotIterableError`.
+fn type_not_iterable_code(allows_async: bool) -> u32 {
+    if allows_async { 2504 } else { 2488 }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1590,9 +1603,15 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else {
             return ty;
         };
+        // `Types::object_flags` finds the type variables of a property that stays unresolved in its
+        // mapper, and `members.mapper` leaves out one that maps every type parameter to itself.
+        let mapper = match self.data(ty) {
+            TypeData::Anon { mapper, .. } => *mapper,
+            _ => members.mapper,
+        };
         let mut shape = Shape::new_in(self.arena);
         for prop in &members.shape().props {
-            let widened = self.get_widened_property(prop, members.mapper, context);
+            let widened = self.get_widened_property(prop, mapper, context);
             shape.props.push(widened);
         }
         for &prop in self.get_properties_of_context(context).iter() {
@@ -1626,15 +1645,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getWidenedProperty`
     fn get_widened_property(&mut self, prop: &Prop, mapper: MapperId, context: usize) -> Prop<'s> {
-        let original = self.type_of_prop(prop, mapper);
-        let stays = prop
+        // `prop.Flags&SymbolFlagsProperty == 0`: the symbol stays, and its type is not resolved.
+        if prop
             .flags
-            .intersects(PropFlags::METHOD | PropFlags::ACCESSOR);
-        let widened = if stays || !self.may_require_widening(original) {
-            original
-        } else {
+            .intersects(PropFlags::METHOD | PropFlags::ACCESSOR)
+        {
+            return Prop {
+                mapper: self.compose(prop.mapper, mapper),
+                ..prop.clone_in(self.arena)
+            };
+        }
+        let original = self.type_of_prop(prop, mapper);
+        let widened = if self.may_require_widening(original) {
             let prop_context = self.get_child_context(context, prop.name);
             self.get_widened_type_with_context(original, Some(prop_context))
+        } else {
+            original
         };
         Prop {
             name: prop.name,
@@ -1954,6 +1980,14 @@ impl<'p, 's> Checker<'p, 's> {
             PatParent::None => TypeId::UNRESOLVED,
             PatParent::Var(d) => self.type_of_var_decl(file, d),
             PatParent::Param(p) => self.type_of_param_uncached(file, p),
+            // `getTypeOfAlias`: a name directly in the pattern of `const { a } = require("m")`.
+            PatParent::Prop(..) | PatParent::Elem(..)
+                if matches!(hir[pat].kind, PatKind::Ident(_))
+                    && self.bound(file).required_by(hir, pat).is_some() =>
+            {
+                let symbol = self.bound(file).pat_symbol[pat.idx()];
+                self.type_of_alias(self.files().sym(file, symbol))
+            }
             PatParent::Prop(parent, _) | PatParent::Elem(parent, _) => {
                 let parent_ty = self.type_for_binding_element_parent(file, pat, parent);
                 let ty = self.type_of_binding_element(file, pat, parent_ty, false);
@@ -1988,19 +2022,17 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 self.type_from_node(file, hir[p].ty)
             }
-            // The default as it is, not widened. Only the parameters of function expressions and of
+            // `links.resolvedType == nil`: only the parameters of function expressions and of
             // object literal methods are typed (`assignParameterType`, widened) before their
-            // patterns are checked. For a setter the getter determines the type.
+            // patterns are checked.
             PatParent::Param(p)
                 if hir[p].ty.is_none()
-                    && hir[p].default.is_some()
-                    && hir[bound.param_fn[p.idx()]].kind != FnKind::Setter
                     && !matches!(
                         bound.fns[bound.param_fn[p.idx()].idx()].owner,
                         FnOwner::Expr(_)
                     ) =>
             {
-                self.type_from_param_default(file, p)
+                self.type_for_parameter_of_declaration(file, p)
             }
             // `links.resolvedType == nil` while `assignParameterType` widens the type of the
             // parameter: `getTypeForVariableLikeDeclaration`, which does not widen.
@@ -2029,6 +2061,45 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `getTypeForVariableLikeDeclaration(declaration, false /*includeOptionality*/, ..)`, which
+    /// does not widen, for the parameter `p`: it has no annotation, its name is a pattern, and its
+    /// function is a declaration or a member of a class, which has no contextual type.
+    fn type_for_parameter_of_declaration(&mut self, file: FileId, p: ParamId) -> TypeId {
+        let hir = self.hir(file);
+        let func = self.bound(file).param_fn[p.idx()];
+        if hir[func].kind == FnKind::Setter
+            && let Some(getter) = self.sibling_accessor(file, func, FnKind::Getter)
+        {
+            return self.return_type_of_fn(file, getter);
+        }
+        let index = (p.0 - hir[func].params.start) as usize;
+        if let Some(ty) = self.param_type_of_full_signature(file, func, index) {
+            return ty;
+        }
+        if hir[p].default.is_some() {
+            return self.type_from_param_default(file, p);
+        }
+        self.type_from_binding_pattern_of_param(file, func, p)
+            .unwrap_or(TypeId::ANY)
+    }
+
+    /// `getTypeFromBindingPattern(declaration.Name(), false /*includePatternInType*/, true
+    /// /*reportErrors*/)` for the parameter `p` of `func`. `None` for a plain name.
+    fn type_from_binding_pattern_of_param(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        p: ParamId,
+    ) -> Option<TypeId> {
+        let report_errors = if self.is_parameter_type_never_requested(file, func, p) {
+            ReportErrors::No
+        } else {
+            ReportErrors::Yes
+        };
+        let pat = self.hir(file)[p].pat;
+        self.implied_by_pattern(file, pat, IncludePatternInType::No, report_errors)
+    }
+
     /// The head of `getBindingElementTypeFromParentType`: the type `pattern` destructures, given
     /// that its declaration has type `ty`. Under strictNullChecks, a parameter of an ambient
     /// declaration is assumed to be present, and a declaration whose initializer cannot be
@@ -2044,23 +2115,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `IsPartOfParameterDeclaration`
-        if let PatParent::Param(p) = root_declaration(bound, pattern) {
-            // `NodeFlagsAmbient`
-            let mut is_ambient = hir.kind == FileKind::Declaration;
-            let mut scope = bound.fns[bound.param_fn[p.idx()].idx()].scope;
-            while !is_ambient && scope.is_some() {
-                let s = &bound.scopes[scope.idx()];
-                is_ambient = match s.kind {
-                    ScopeKind::Module(m) => hir[m].flags.contains(Flags::AMBIENT),
-                    ScopeKind::Fn(f) => hir[f].flags.contains(Flags::AMBIENT),
-                    ScopeKind::Class(c) => hir[c].flags.contains(Flags::AMBIENT),
-                    _ => false,
-                };
-                scope = s.parent;
-            }
-            if is_ambient {
-                return self.non_nullable(ty);
-            }
+        if matches!(root_declaration(bound, pattern), PatParent::Param(_))
+            && hir.is_ambient(hir.node(pattern))
+        {
+            return self.non_nullable(ty);
         }
         let initializer = bound.pat_parent[pattern.idx()].initializer(hir);
         if initializer.is_none() {
@@ -2768,15 +2826,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getTypeFromBindingPattern`, for a rest parameter too: `any[]` is only for one with no
         // type information at all.
-        let report_errors = if self.is_parameter_type_never_requested(file, func, p) {
-            ReportErrors::No
-        } else {
-            ReportErrors::Yes
-        };
-        if let Some(implied) =
-            self.implied_by_pattern(file, param.pat, IncludePatternInType::No, report_errors)
-        {
-            return implied;
+        if let Some(implied) = self.type_from_binding_pattern_of_param(file, func, p) {
+            return self.get_widened_type(implied);
         }
         // `widenTypeForVariableLikeDeclaration` with no type. `hasBindableName`: the property a
         // setter belongs to may not be known.
@@ -2829,46 +2880,53 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         match hir[pat].kind {
             PatKind::Object(props) if self.is_object_literal_type(ty) => {
+                let mut missing_elements = Vec::new();
+                for p in props.iter() {
+                    let prop = &hir[p];
+                    if prop.default.is_none() {
+                        continue;
+                    }
+                    // `getPropertyNameFromBindingElement`: `PropertyNameOrName` of a rest element
+                    // is the name it binds.
+                    let name = match (prop.key, hir[prop.value].kind) {
+                        (PropKey::None, PatKind::Ident(name)) => Some(name),
+                        (key, _) => self.member_name(file, key),
+                    };
+                    if let Some(name) = name
+                        && self.get_property_of_type(ty, name).is_none()
+                    {
+                        missing_elements.push((name, prop.value, prop.default));
+                    }
+                }
+                if missing_elements.is_empty() {
+                    return ty;
+                }
                 let Some(members) = self.members(ty) else {
                     return ty;
                 };
-                let mut missing = Vec::new();
-                for p in props.iter() {
-                    let prop = &hir[p];
-                    if prop.default.is_some()
-                        && !prop.is_rest
-                        && let Some(name) = self.member_name(file, prop.key)
-                        && members.shape().prop(name).is_none()
-                    {
-                        missing.push((name, prop.value, prop.default));
-                    }
-                }
-                if missing.is_empty() {
-                    return ty;
-                }
-                // It keeps its kind of literal: with a spread in it, its other properties are still
-                // unknown.
-                let literal = match self.data(ty) {
-                    TypeData::Synth(shape) => shape.literal,
-                    _ => Literalness::Literal,
+                // `result.objectFlags = t.objectFlags`
+                let (literal, mapper) = match self.data(ty) {
+                    TypeData::Synth(shape) => (shape.literal, members.mapper),
+                    // See `get_widened_type_of_object_literal`.
+                    TypeData::Anon { mapper, .. } => (Literalness::Literal, *mapper),
+                    _ => (Literalness::Literal, members.mapper),
                 };
                 let mut shape = Shape {
                     literal,
                     is_regular: !self.is_fresh_object_literal_type(ty),
                     contains_widening_type: self.contains_widening_type(ty, 0),
+                    is_js_literal: self.has_js_literal_flag(ty),
                     symbol_declared_at: self.symbol_declaration_of_object_type(ty),
                     ..Shape::new_in(self.arena)
                 };
                 for prop in &members.shape().props {
-                    let ty = self.type_of_prop(prop, members.mapper);
+                    let mapper = self.compose(prop.mapper, mapper);
                     shape.props.push(Prop {
-                        name: prop.name,
-                        flags: prop.flags,
-                        source: Self::copy_of(ty, &[prop], true, self.arena),
-                        mapper: MapperId::IDENTITY,
+                        mapper,
+                        ..prop.clone_in(self.arena)
                     });
                 }
-                for (name, value, default) in missing {
+                for (name, value, default) in missing_elements {
                     let ty = self.type_from_defaulted_element(file, value, default);
                     shape.props.push(Prop {
                         name,
@@ -3072,17 +3130,7 @@ impl<'p, 's> Checker<'p, 's> {
         let check_mode = check_mode - CheckMode::SKIP_GENERIC_FUNCTIONS;
         let hir = self.hir(file);
         let f = &hir[func];
-        if f.ret.is_some() {
-            return self.type_from_node(file, f.ret);
-        }
-        // `getReturnTypeFromAnnotation`: a getter without an annotation uses the annotated
-        // parameter type of its setter.
-        if f.kind == FnKind::Getter
-            && let Some(ty) = self.annotated_setter_type(file, func)
-        {
-            return ty;
-        }
-        if let Some(ty) = self.return_type_of_full_signature(file, func) {
+        if let Some(ty) = self.return_type_from_annotation(file, func) {
             return ty;
         }
         match f.kind {
@@ -3116,45 +3164,10 @@ impl<'p, 's> Checker<'p, 's> {
                     ty
                 }
             }
-            // `checkAndAggregateReturnExpressionTypes`
             FnBody::Block(_) => {
-                let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
-                let mut without_expression =
-                    info.end != UNREACHABLE && self.is_reachable(file, info.end);
-                let mut returns_never = false;
-                for stmt in self.bound(file).ids(info.returns) {
-                    let StmtKind::Return(e) = hir[stmt].kind else {
-                        continue;
-                    };
-                    if e.is_none() {
-                        without_expression = true;
-                        continue;
-                    }
-                    // "`return await` is also safe to unwrap here"
-                    let e = match hir[e].kind {
-                        ExprKind::Await(operand) if is_async => operand,
-                        _ => e,
-                    };
-                    if self.is_call_of_the_function_itself(file, func, e, is_async) {
-                        returns_never = true;
-                        continue;
-                    }
-                    let mut ty = self.check_expression_cached_ex(file, e, check_mode);
-                    if is_async {
-                        let error_node = self.place_of_signature_declaration(file, func);
-                        ty = self.check_awaited_type(ty, true, error_node, 1058);
-                    }
-                    if ty.is_never() {
-                        returns_never = true;
-                    }
-                    ty = self.regular_in_const_context(file, e, ty);
-                    if !types.contains(&ty) {
-                        types.push(ty);
-                    }
-                }
-                let may_return_never = matches!(f.kind, FnKind::Expr | FnKind::Arrow)
-                    || (f.kind == FnKind::Method && matches!(info.owner, FnOwner::Expr(_)));
-                if types.is_empty() && !without_expression && (returns_never || may_return_never) {
+                let (types, is_never_returning) =
+                    self.check_and_aggregate_return_expression_types(file, func, check_mode);
+                if is_never_returning {
                     TypeId::NEVER
                 } else if types.is_empty() {
                     // `undefinedType` if the contextual return type includes `undefined`. A
@@ -3171,9 +3184,6 @@ impl<'p, 's> Checker<'p, 's> {
                         TypeId::VOID
                     }
                 } else {
-                    if without_expression && self.p.files.options.strict_null_checks {
-                        types.push(TypeId::UNDEFINED);
-                    }
                     self.union_reduced(&types)
                 }
             }
@@ -3200,8 +3210,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ret = self.get_widened_type(ret);
             if is_async {
-                // `unwrapAwaitedType`: a promise of `Awaited<T>` is a promise of `T`.
-                let ret = self.map_type(ret, |c, m| c.awaited_argument(m).unwrap_or(m));
+                // `createPromiseType`: a promise of `Awaited<T>` is a promise of `T`.
+                let ret = self.unwrap_awaited_type(ret);
                 return self.promise_of(ret);
             }
             return ret;
@@ -3221,25 +3231,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let ty = self.check_expression_cached_ex(file, value, check_mode);
                 self.regular_in_const_context(file, value, ty)
             };
-            // `getYieldedTypeOfYieldExpression`: an async generator awaits what it yields, `yield*` or not.
-            let mut ty = if star {
-                self.iterated_type(operand, is_async)
-            } else {
-                operand
-            };
-            if is_async {
-                ty = self.awaited(ty);
-            }
-            if !yields.contains(&ty) {
+            let yielded =
+                self.get_yielded_type_of_yield_expression(file, e, operand, TypeId::ANY, is_async);
+            if let Some(ty) = yielded
+                && !yields.contains(&ty)
+            {
                 yields.push(ty);
             }
             // The next type: the contextual types of the `yield` expressions.
             let next = if star {
-                let usage = if is_async {
-                    IterationUse::AsyncYieldStar
-                } else {
-                    IterationUse::YieldStar
-                };
+                let usage = IterationUse::yield_star(is_async);
                 self.iterable_types(operand, usage, None).n
             } else {
                 self.contextual_type(file, e, ContextFlags::empty())
@@ -3338,50 +3339,117 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.instantiate_contextual_type(returned, file, owner, ContextFlags::empty()))
     }
 
-    /// `return f(..)` in `f`, or `return await f(..)`: its type is that of the other return
-    /// statements. `checkAndAggregateReturnExpressionTypes` finds out with
-    /// `checkExpressionCached(expr.Expression())`, for any callee that is an identifier. That is
-    /// outside `getResolvedSignature`, which resets the resolution stack: a resolution in progress
-    /// that the callee re-enters is a cycle.
-    fn is_call_of_the_function_itself(
+    /// `checkAndAggregateReturnExpressionTypes`: the types of the returned expressions, and whether
+    /// the function never returns.
+    fn check_and_aggregate_return_expression_types(
         &mut self,
         file: FileId,
         func: FnId,
-        mut e: ExprId,
-        is_async: bool,
-    ) -> bool {
+        check_mode: CheckMode,
+    ) -> (SmallVec<[TypeId; 4]>, bool) {
         let hir = self.hir(file);
-        if is_async && let ExprKind::Await(operand) = hir[e].kind {
-            e = operand;
+        let f = &hir[func];
+        let info = self.bound(file).fns[func.idx()];
+        let is_async = f.flags.contains(Flags::ASYNC);
+        let mut aggregated_types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        // `functionHasImplicitReturn`
+        let mut has_return_with_no_expression =
+            info.end != UNREACHABLE && self.is_reachable(file, info.end);
+        let mut has_return_of_type_never = false;
+        for stmt in self.bound(file).ids(info.returns) {
+            let StmtKind::Return(expr) = hir[stmt].kind else {
+                continue;
+            };
+            if expr.is_none() {
+                has_return_with_no_expression = true;
+                continue;
+            }
+            // "`return await` is also safe to unwrap here"
+            let expr = match hir[expr].kind {
+                ExprKind::Await(operand) if is_async => operand,
+                _ => expr,
+            };
+            if self.is_call_of_the_function_itself(file, func, expr) {
+                has_return_of_type_never = true;
+                continue;
+            }
+            let mut ty = self.check_expression_cached_ex(file, expr, check_mode);
+            if is_async {
+                let error_node = self.place_of_signature_declaration(file, func);
+                ty = self.check_awaited_type(ty, false, error_node, 1058);
+                ty = self.unwrap_awaited_type(ty);
+            }
+            if ty.is_never() {
+                has_return_of_type_never = true;
+            }
+            ty = self.regular_in_const_context(file, expr, ty);
+            if !aggregated_types.contains(&ty) {
+                aggregated_types.push(ty);
+            }
         }
+        // `mayReturnNever`
+        let may_return_never = matches!(f.kind, FnKind::Expr | FnKind::Arrow)
+            || (f.kind == FnKind::Method && matches!(info.owner, FnOwner::Expr(_)));
+        if aggregated_types.is_empty()
+            && !has_return_with_no_expression
+            && (has_return_of_type_never || may_return_never)
+        {
+            return (aggregated_types, true);
+        }
+        if self.p.files.options.strict_null_checks
+            && !aggregated_types.is_empty()
+            && has_return_with_no_expression
+            && !aggregated_types.contains(&TypeId::UNDEFINED)
+        {
+            aggregated_types.push(TypeId::UNDEFINED);
+        }
+        (aggregated_types, false)
+    }
+
+    /// `checkAndAggregateReturnExpressionTypes`: "Bare calls to this same function don't contribute
+    /// to inference". `checkExpressionCached(expr.Expression())` runs for any callee that is an
+    /// identifier, outside `getResolvedSignature`, which resets the resolution stack: a resolution
+    /// in progress that the callee re-enters is a cycle.
+    fn is_call_of_the_function_itself(&mut self, file: FileId, func: FnId, e: ExprId) -> bool {
+        let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else {
             return false;
         };
         let callee = hir[call].callee;
-        if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
+        if !matches!(hir[callee].kind, ExprKind::Ident(_)) || is_parenthesized(hir, callee) {
             return false;
         }
         let ty = self.check_expression_cached_ex(file, callee, CheckMode::empty());
-        let symbol = self.bound(file).expr_symbol[callee.idx()];
-        if symbol.is_none() {
-            return false;
-        }
-        match hir[func].kind {
-            FnKind::Decl => self.bound(file).symbols[symbol.idx()]
-                .decls
-                .contains(&Decl::Fn(func)),
-            FnKind::Expr | FnKind::Arrow => {
-                if !self.is_constant_name(file, symbol) {
-                    return false;
-                }
-                // The function expression's own name.
-                if self.bound(file).symbols[symbol.idx()]
-                    .decls
-                    .contains(&Decl::Fn(func))
-                {
+        self.is_type_of_function_symbol(ty, file, func)
+            && (!matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow)
+                || (self.reference_of(file, callee))
+                    .is_some_and(|reference| self.is_constant_reference(&reference)))
+    }
+
+    /// `ty.symbol == getMergedSymbol(fn.Symbol())`
+    fn is_type_of_function_symbol(&mut self, ty: TypeId, file: FileId, func: FnId) -> bool {
+        match self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::Function(symbol),
+                ..
+            } => {
+                let own = self.bound(file).fn_symbol[func.idx()];
+                own.is_some() && *symbol == self.files().sym(file, own)
+            }
+            TypeData::Fns { decls, .. } => {
+                if decls.contains(&(file, func)) {
                     return true;
                 }
-                matches!(self.data(ty), TypeData::Fns { decls, .. } if decls.len() == 1 && decls[0] == (file, func))
+                // The implementation of an overloaded method is not among `decls`.
+                let (FnOwner::Member(member), Some(&(first_file, first))) =
+                    (self.bound(file).fns[func.idx()].owner, decls.first())
+                else {
+                    return false;
+                };
+                let FnOwner::Member(first) = self.bound(first_file).fns[first.idx()].owner else {
+                    return false;
+                };
+                self.symbol_of_member(file, member) == self.symbol_of_member(first_file, first)
             }
             _ => false,
         }
@@ -3508,6 +3576,11 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.instantiate(param, mapper))
     }
 
+    /// `unwrapAwaitedType`
+    fn unwrap_awaited_type(&mut self, ty: TypeId) -> TypeId {
+        self.map_type(ty, |c, m| c.awaited_argument(m).unwrap_or(m))
+    }
+
     /// `checkAwaitedType`: the type of `await` applied to a value of type `ty`. `message`: the
     /// error reported at `error_node` for a type that has a callable `then` and is not a promise.
     pub(super) fn check_awaited_type(
@@ -3547,8 +3620,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.report_global_error(2318, vec![b"Awaited".to_vec()]);
                 return Some(awaited);
             };
-            // `unwrapAwaitedType`: `Awaited<T | U>` does for `Awaited<Awaited<T> | U>`.
-            let unwrapped = self.map_type(awaited, |c, m| c.awaited_argument(m).unwrap_or(m));
+            // `Awaited<T | U>` does for `Awaited<Awaited<T> | U>`.
+            let unwrapped = self.unwrap_awaited_type(awaited);
             return Some(self.type_reference(alias, &[unwrapped]));
         }
         Some(awaited)
@@ -3696,11 +3769,14 @@ impl<'p, 's> Checker<'p, 's> {
         match self.base_constraint_of(ty) {
             Some(constraint) => {
                 self.is_any(constraint)
-                    || constraint == TypeId::UNKNOWN
                     || self.is_empty_object_type(constraint)
                     || self.parts(constraint).iter().any(|&m| self.is_thenable(m))
             }
-            None => self.maybe_type_of_kind(ty, Self::is_type_variable),
+            // `base_constraint_of` has no constraint where `getBaseConstraintOfType` has `unknown`.
+            None => {
+                self.maybe_type_of_kind(ty, Self::is_type_variable)
+                    || self.has_unknown_base_constraint(ty, 0)
+            }
         }
     }
 
@@ -3961,7 +4037,7 @@ impl<'p, 's> Checker<'p, 's> {
             let any_async_iterable = self.global_ref(known::AsyncIterable, &[TypeId::ANY; 3]);
             suggests_await = self.is_assignable(ty, any_async_iterable);
         }
-        let code = if allows_async { 2504 } else { 2488 };
+        let code = type_not_iterable_code(allows_async);
         let mut diagnostic = self.new_diagnostic(error_node, code, &[Arg::Type(ty)]);
         if suggests_await {
             diagnostic.add_related_info(Reported::bare(error_node, 2773));
@@ -3980,10 +4056,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(func) = self.containing_generator(file, e) else {
             return TypeId::ANY;
         };
-        let f = &self.hir(file)[func];
-        let is_async = f.flags.contains(Flags::ASYNC);
+        let is_async = self.hir(file)[func].flags.contains(Flags::ASYNC);
         // "There is no point in doing an assignability check if the function has no explicit return type"
-        let mut return_type = f.ret.is_some().then(|| self.type_from_node(file, f.ret));
+        let mut return_type = self.return_type_from_annotation(file, func);
         if let Some(declared) = return_type
             && self.is_union(declared)
         {
@@ -4002,47 +4077,29 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.undefined_widening()
         };
-        // `getYieldedTypeOfYieldExpression`
-        let error_node = |c: &Self| {
-            if value.is_some() {
-                (
-                    file,
-                    c.error_start_of(file, value),
-                    c.error_end_of(file, value),
-                )
-            } else {
-                c.place_of_token(file, c.hir(file)[e].pos)
-            }
-        };
-        let mut yielded_type = Some(yield_expression_type);
-        let usage = if is_async {
-            IterationUse::AsyncYieldStar
-        } else {
-            IterationUse::YieldStar
-        };
-        if star && !self.is_any(yield_expression_type) {
-            let sent = iteration_types.n.unwrap_or(TypeId::ANY);
-            let error_node = Some(error_node(self));
-            yielded_type =
-                self.iterated_type_or_element_type(usage, yield_expression_type, sent, error_node);
-        }
-        if is_async {
-            yielded_type = yielded_type.map(|yielded| self.awaited(yielded));
-        }
+        let yielded_type = self.get_yielded_type_of_yield_expression(
+            file,
+            e,
+            yield_expression_type,
+            iteration_types.n.unwrap_or(TypeId::ANY),
+            is_async,
+        );
         if return_type.is_some()
             && let Some(yielded_type) = yielded_type
         {
+            let error_node = self.error_node_of_yield(file, e, value);
             self.check_type_assignable_to_and_optionally_elaborate(
                 yielded_type,
                 iteration_types.y.unwrap_or(TypeId::ANY),
-                Some(error_node(self)),
-                (value.is_some() && !star).then_some((file, value)),
+                Some(error_node),
+                value.is_some().then_some((file, value)),
                 false,
                 None,
                 None,
             );
         }
         if star {
+            let usage = IterationUse::yield_star(is_async);
             let types = self.iterable_types(yield_expression_type, usage, None);
             return types.r.unwrap_or(TypeId::ANY);
         }
@@ -4056,6 +4113,47 @@ impl<'p, 's> Checker<'p, 's> {
                 types.n.unwrap_or(TypeId::ANY)
             }
             None => TypeId::ANY,
+        }
+    }
+
+    /// `getYieldedTypeOfYieldExpression`
+    fn get_yielded_type_of_yield_expression(
+        &mut self,
+        file: FileId,
+        node: ExprId,
+        expression_type: TypeId,
+        sent_type: TypeId,
+        is_async: bool,
+    ) -> Option<TypeId> {
+        let ExprKind::Yield { value, star } = self.hir(file)[node].kind else {
+            return None;
+        };
+        if !star && !is_async {
+            return Some(expression_type);
+        }
+        let error_node = self.error_node_of_yield(file, node, value);
+        // "A `yield*` expression effectively yields everything that its operand yields"
+        let yielded_type = if star {
+            // `checkIteratedTypeOrElementType`
+            let usage = IterationUse::yield_star(is_async);
+            self.iterated_type_or_element_type(usage, expression_type, sent_type, Some(error_node))
+                .unwrap_or(TypeId::ANY)
+        } else {
+            expression_type
+        };
+        if !is_async {
+            return Some(yielded_type);
+        }
+        let message = if star { 1322 } else { 1321 };
+        self.awaited_type_ex(yielded_type, Some((error_node, message)))
+    }
+
+    /// `core.OrElse(node.Expression(), node)` of the `yield` expression `node`.
+    fn error_node_of_yield(&self, file: FileId, node: ExprId, value: ExprId) -> Place {
+        if value.is_some() {
+            self.span_of_parenthesized_expr(file, value)
+        } else {
+            self.place_of_token(file, self.hir(file)[node].pos)
         }
     }
 
@@ -4236,9 +4334,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The end of `getIterationTypesOfIterableWorker`: `ty` is not iterable, and `diags` becomes
-    /// the related information of that error. tsgo defers it (`addDeferredDiagnostic`) so that
-    /// printing the type cannot cause a cycle: nothing is being resolved by then. Outside
-    /// `checkSourceFile` it is dropped (`saveDeferredDiagnostics`).
+    /// the related information of that error. "We defer the diagnostic because TypeToString may
+    /// attempt to resolve symbols that are already being resolved".
     fn report_type_not_iterable(
         &mut self,
         error_node: Option<Place>,
@@ -4247,15 +4344,55 @@ impl<'p, 's> Checker<'p, 's> {
         for_of: bool,
         diags: Vec<Reported>,
     ) {
-        if let Some(error_node) = error_node
-            && !self.is_emitting
-        {
-            let reprinting = std::mem::replace(&mut self.reprinting, true);
-            let mut diagnostic = self.type_not_iterable_error(error_node, ty, allows_async, for_of);
-            self.reprinting = reprinting;
-            diagnostic.related_information.extend(diags);
-            self.add_diagnostic(diagnostic);
+        if let Some(error_node) = error_node {
+            let mut callback = Reported::bare(error_node, type_not_iterable_code(allows_async));
+            callback.deferred = Some(super::sink::TypeNotIterable {
+                ty,
+                allows_async,
+                is_of_for_of: for_of,
+            });
+            callback.related_information = diags;
+            self.add_deferred_diagnostic(callback);
         }
+    }
+
+    /// `produceDeferredDiagnostics`, for the callbacks of `report_type_not_iterable`. No query is
+    /// in progress: those of the task are in `reported`, those of queries in `task.diagnostics`.
+    /// `logged`: the length of `task.diagnostics` when `save_deferred_diagnostics` was set.
+    pub(super) fn produce_type_not_iterable_errors(&mut self, logged: usize) {
+        self.save_deferred_diagnostics = false;
+        for i in 0..self.reported.len() {
+            if self.reported[i].deferred.is_some() {
+                let diagnostic = self.call_deferred_diagnostic(self.reported[i].clone());
+                self.reported[i] = diagnostic;
+            }
+        }
+        for i in logged..self.task.diagnostics.len() {
+            if self.task.diagnostics[i].1.deferred.is_some() {
+                let diagnostic = self.call_deferred_diagnostic(self.task.diagnostics[i].1.clone());
+                self.task.diagnostics[i].1 = diagnostic;
+            }
+        }
+    }
+
+    /// Calls `callback`, and returns it as the diagnostic.
+    fn call_deferred_diagnostic(&mut self, mut callback: Reported) -> Reported {
+        let Some(deferred) = callback.deferred.take() else {
+            return callback;
+        };
+        let diagnostic = self.type_not_iterable_error(
+            (callback.file, callback.start, callback.end),
+            deferred.ty,
+            deferred.allows_async,
+            deferred.is_of_for_of,
+        );
+        callback.args = diagnostic.args;
+        let diags = std::mem::replace(
+            &mut callback.related_information,
+            diagnostic.related_information,
+        );
+        callback.related_information.extend(diags);
+        callback
     }
 
     /// `getBuiltinIteratorReturnType`

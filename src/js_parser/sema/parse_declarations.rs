@@ -422,7 +422,7 @@ pub(crate) struct ModuleSyntax {
     /// Position of the token after `*`, or after `as`.
     star_name_loc: Loc,
     /// `None` without `{ }`.
-    specifiers: Option<ts::Span<ts::Specifier>>,
+    pub(crate) specifiers: Option<ts::Span<ts::Specifier>>,
     module: Option<ts::ModuleSpecifier>,
 }
 

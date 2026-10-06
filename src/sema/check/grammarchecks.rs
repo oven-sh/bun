@@ -36,6 +36,21 @@ impl Checker<'_, '_> {
         is_reported
     }
 
+    /// `grammarErrorOnNodeSkippedOnNoEmit`
+    fn grammar_error_on_node_skipped_on_no_emit(
+        &mut self,
+        file: FileId,
+        node: impl ToNode,
+        code: u32,
+        args: &[Arg<'_>],
+    ) -> bool {
+        let is_reported = !has_parse_diagnostics(self.hir(file));
+        if is_reported {
+            self.error(file, node, code, args).skipped_on_no_emit = true;
+        }
+        is_reported
+    }
+
     /// `grammarErrorOnNode` for the token `token` immediately before `pos`.
     fn grammar_error_on_token_before(
         &mut self,
@@ -233,9 +248,9 @@ impl Checker<'_, '_> {
                 if i != f.params.len() - 1 {
                     return self.grammar_error_on_token_before(file, name, b"...", 1014);
                 }
-                // `checkGrammarForDisallowedTrailingComma`
-                if f.kind != FnKind::Arrow
-                    && hir.text.get(f.anchor as usize) == Some(&b'(')
+                // `checkGrammarForDisallowedTrailingComma`. A signature that the reparser makes of
+                // JSDoc tags has no written list.
+                if (f.kind == FnKind::Arrow || hir.text.get(f.anchor as usize) == Some(&b'('))
                     && !hir.is_ambient(hir.node(p))
                 {
                     let end = self.end_of_param(file, p);
@@ -702,9 +717,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let elements: SmallVec<[PatId; 8]> = match hir[name].kind {
             PatKind::Ident(known::__esModule) => {
-                // `grammarErrorOnNodeSkippedOnNoEmit`
-                return !self.p.files.options.no_emit
-                    && self.grammar_error_on_node(file, name, 1216, &[]);
+                return self.grammar_error_on_node_skipped_on_no_emit(file, name, 1216, &[]);
             }
             PatKind::Object(properties) => properties.iter().map(|p| hir[p].value).collect(),
             PatKind::Array(elements) => elements.iter().map(|e| hir[e].pat).collect(),

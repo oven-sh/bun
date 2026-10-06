@@ -1413,14 +1413,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if Self::IS_TYPESCRIPT_ENABLED {
             // This is either an old-style type cast or a generic lambda function
 
-            // `parseSimpleUnaryExpression`: an arrow function starts an assignment expression. In an operand "<" can
-            // only open a type assertion, which has one type between the brackets (`parseTypeAssertion`).
-            let only_a_cast =
-                level.gt(Level::Assign) && p.is_tolerant() && !p.lexer.is_log_disabled;
+            let is_tolerant = p.is_tolerant() && !p.lexer.is_log_disabled;
 
             // "<T>(x)"
             // "<T>(x) => {}"
-            let skipped = if only_a_cast {
+            let skipped = if is_tolerant && level.gt(Level::Assign) {
+                // `parseSimpleUnaryExpression`: an arrow function starts an assignment expression. In an operand "<" can
+                // only open a type assertion, which has one type between the brackets (`parseTypeAssertion`).
+                SkipTypeParameterResult::DidNotSkipAnything
+            } else if is_tolerant && !Self::pfx_is_name_in_angle_brackets(p) {
+                let opts = ParenExprOpts {
+                    is_after_question_and_before_colon: flags
+                        == EFlags::AfterQuestionAndBeforeColon,
+                    full_start,
+                    ..Default::default()
+                };
+                if let Some(arrow) = p.try_parse_generic_arrow_fn(loc, level, opts)? {
+                    return Ok(arrow);
+                }
                 SkipTypeParameterResult::DidNotSkipAnything
             } else {
                 p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()?
@@ -1492,6 +1502,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Err(crate::Error::SyntaxError)
     }
 
+    /// Whether the `<` the lexer is at opens `<T>`, which is the same tokens as the type parameters
+    /// of an arrow function and as the type of a type assertion: it need not be parsed twice.
+    #[cold]
+    #[inline(never)]
+    fn pfx_is_name_in_angle_brackets(p: &mut Self) -> bool {
+        p.look_ahead(|p| {
+            p.step() && p.is_identifier_in_context() && p.step() && p.lexer.token == T::TGreaterThan
+        })
+    }
+
     /// `parseUpdateExpression` and `parseSimpleUnaryExpression` at a `<` in a file with JSX.
     #[cold]
     #[inline(never)]
@@ -1543,9 +1563,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
         p.lexer.next_inside_jsx_element()?;
         let element = p.parse_jsx_element(less_than, full_start)?;
-        // The last ">" is left to the caller, and so is the conflict marker that ended the children, which is a syntax
-        // error token. Nothing is consumed for a ">" that is missing.
-        if matches!(p.lexer.token, T::TGreaterThan | T::TSyntaxError) {
+        // The last ">" is left to the caller. Nothing is consumed for a ">" that is missing: a
+        // conflict marker that ended the children stays the current token.
+        if p.lexer.token == T::TGreaterThan {
             p.lexer.next()?;
         }
         if must_be_unary || p.lexer.token != T::TLessThan || p.lexer.is_less_than_slash() {
@@ -1800,9 +1820,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let at: bun_ast::Loc = p.lexer.full_start();
         let (here, before) = (p.lexer.loc(), p.lexer.prev_error_loc);
         p.lexer.ts_error(bun_ast::Range { loc: at, len: 0 }, 1109);
-        // A repeat of this error counts as no progress, like a repeat at the token.
-        p.lexer
-            .put_up_with(if before.eql(at) { here } else { before })?;
+        p.lexer.put_up_with(before)?;
         Ok(p.new_expr(E::Missing {}, here))
     }
 }

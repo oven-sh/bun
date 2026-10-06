@@ -1288,12 +1288,14 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
         alias: Some((target, &members)),
         origin: OriginKey::Union(&members),
         is_enum: true,
+        stored_under: None,
     };
-    let id = types.intern_key_with(TypeKey::Union(&members), borrowed);
+    let id = types.intern_key_with(TypeKey::Union(&members), &borrowed);
     let owned = Provenance {
         alias: Some((target, list())),
         origin: UnionOrigin::Union(list()),
         is_enum: true,
+        stored_under: None,
     };
     assert_eq!(types.intern_with(TypeData::Union(list()), owned), id);
     assert_ne!(types.intern_key(TypeKey::Union(&members)), id);

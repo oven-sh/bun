@@ -12,10 +12,11 @@
 //! `getCandidateForOverloadFailure` of its checker.go.
 
 use super::call::{CallLike, ExpectsReturn};
-use super::explain::NOWHERE;
+use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
 use super::infer::Inference;
 use super::jsx::{JsxName, JsxReferenceKind};
 use super::relate::Relation;
+use super::symbols::IterationUse;
 use super::*;
 use crate::bind::ScopeId;
 use crate::resolve::JsxEmit;
@@ -142,7 +143,10 @@ impl Checker<'_, '_> {
             // `resolveName`, starting at the tag. The error `checkAndReportErrorForMissingPrefix`
             // reports for a tag with the same spelling as the name being resolved is not reported.
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
-            let factory_is_missing = checks_factory && is_missing(self, scope, factory);
+            let jsx_factory_sym = checks_factory
+                .then(|| self.files().resolve_name(file, scope, factory, meaning))
+                .flatten();
+            let factory_is_missing = checks_factory && jsx_factory_sym.is_none();
             if element.tag.is_none() {
                 let provides_fragment_type = checks_fragment_type && first_fragment == Some(e);
                 let fragment_factory_is_missing = (checks_factory || provides_fragment_type)
@@ -183,6 +187,9 @@ impl Checker<'_, '_> {
             if factory_is_missing {
                 let at = (hir[element.tag].pos, hir[element.tag].end);
                 self.explain_missing_jsx_factory(file, e, scope, at, factory, 2874);
+            }
+            if let Some(result) = jsx_factory_sym {
+                self.check_type_only_jsx_factory(file, j, result);
             }
             for p in element.attrs.iter() {
                 if hir[p].kind != PropKind::Spread {
@@ -226,6 +233,41 @@ impl Checker<'_, '_> {
                 }
             }
         }
+    }
+
+    /// `onSuccessfullyResolvedSymbol` for `result`, the first name of the factory, which
+    /// `markJsxAliasReferenced` resolved at the tag name of `j`: 1361, 1362. An opening fragment is
+    /// no expression node, so it is a valid use site.
+    fn check_type_only_jsx_factory(&mut self, file: FileId, j: JsxId, result: Sym) {
+        let (hir, files) = (self.hir(file), self.files());
+        let flags = files.flags(result);
+        if !flags.contains(SymFlags::ALIAS) || flags.intersects(SymFlags::VALUE) {
+            return;
+        }
+        let tag = hir[j].tag;
+        let use_site = hir.node(tag);
+        // `IsExpressionNode`
+        let is_expression_node = match hir.kind(use_site) {
+            Kind::JsxNamespacedName => false,
+            // `IsInExpressionContext`: a `JsxOpeningElement` is no expression node.
+            Kind::ThisKeyword => hir[j].close_pos == u32::MAX,
+            _ => true,
+        };
+        if !is_expression_node || is_valid_type_only_alias_use_site(hir, use_site) {
+            return;
+        }
+        let type_only = files.type_only_alias_declaration_ex(result, SymFlags::VALUE);
+        let Some(type_only) = type_only else {
+            return;
+        };
+        let (name, is_export) = (files.symbol(result).name, type_only.is_export());
+        self.aliases_error_about_type_only(
+            (file, hir[tag].pos, hir[tag].end),
+            if is_export { 1362 } else { 1361 },
+            &[Arg::Atom(name)],
+            Some((type_only, is_export)),
+            name,
+        );
     }
 
     /// `createJsxAttributesTypeFromAttributesProperty`: 2710 for `explicitlySpecifyChildrenAttribute`.
@@ -482,22 +524,24 @@ impl Checker<'_, '_> {
         if hir[j].tag.is_none() {
             return None;
         }
-        // `getContextualTypeForArgumentAtIndex`: no contextual type while the signature is `resolvingSignature`. That state belongs to
-        // this checker, so it is read from its own query stack.
+        // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` is not resolved again. That state belongs to this checker, so it
+        // is read from its own query stack. Like `anySignature` and `unknownSignature`, it has no parameters.
         let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
             && self.stack.contains(&Query::Call(file, e))
         {
-            return None;
+            let signature = self.any_signature();
+            return Some(self.jsx_effective_first_argument(file, e, signature));
         }
         // Cache: queried once per attribute and per child.
         if let Some(cached) = (self.p.jsx_attributes_types).get(&self.task, &(file, j)) {
             return Some(cached);
         }
-        let signature = self.resolved_signature(file, e).sig?;
+        let resolved = self.resolved_signature(file, e).sig;
+        let signature = resolved.unwrap_or_else(|| self.any_signature());
         let ty = self.jsx_effective_first_argument(file, e, signature);
         // Cacheable only if computed from the cached signature.
-        if self.p.calls.get(&self.task, &(file, e)) == Some(Some(signature)) {
+        if self.p.calls.get(&self.task, &(file, e)) == Some(resolved) {
             (self.p.jsx_attributes_types).insert(&self.task, (file, j), ty);
         }
         Some(ty)
@@ -679,12 +723,26 @@ impl Checker<'_, '_> {
         if self.related(source, target, relation) {
             return true;
         }
+        // `elaborateError`: a fragment has no attributes to elaborate into.
         if error_node.is_some()
-            && (hir[j].tag.is_none() || !self.elaborate_jsx_components(file, e, source, target))
+            && (hir[j].tag.is_none()
+                || self.is_or_has_generic_conditional(target)
+                || !self.elaborate_jsx_components(file, e, source, target))
         {
-            self.check_type_related_to_ex(source, target, relation, error_node, None, None);
+            return self.check_type_related_to_ex(source, target, relation, error_node, None, None);
         }
         false
+    }
+
+    /// `isOrHasGenericConditional`
+    pub(super) fn is_or_has_generic_conditional(&self, t: TypeId) -> bool {
+        match self.data(t) {
+            TypeData::Cond { .. } => true,
+            TypeData::Intersection(types) => {
+                types.iter().any(|&t| self.is_or_has_generic_conditional(t))
+            }
+            _ => false,
+        }
     }
 
     /// `onFailedToResolveSymbol` for `name`, the factory for the tag `e`. It is resolved from
@@ -820,79 +878,93 @@ impl Checker<'_, '_> {
                 self.add_diagnostic(diagnostic);
             }
         }
-        let children = self.jsx_child_types(file, e);
-        if children.is_empty() {
+        // `IsJsxOpeningElement(node.Parent)`
+        if hir[j].close_pos == u32::MAX {
             return reported;
         }
-        let name = match self.jsx_children_property_name(file) {
+        let children_prop_name = match self.jsx_children_property_name(file) {
             JsxName::Name(name) => name,
             JsxName::Missing => known::children,
-            JsxName::Empty => return reported,
+            JsxName::Empty => known::empty,
         };
-        let Some(expected_type) = self.type_of_property(target, name) else {
+        let name_type = self.string_literal(children_prop_name, false);
+        let children_target_type = self.indexed_access(target, name_type);
+        // `GetSemanticJsxChildren`
+        let mut valid_children = hir
+            .ids(hir[j].children)
+            .filter(|&child| !matches!(hir[child].kind, ExprKind::Missing));
+        let Some(child) = valid_children.next() else {
             return reported;
         };
+        let more_than_one_real_children = valid_children.next().is_some();
         // Where there is no `Iterable`, a list is an array-like or tuple-like type.
         let has_iterable = self.global_type_symbol(known::Iterable).is_some();
         let any_iterable = self.global_ref(
             known::Iterable,
             &[TypeId::ANY, TypeId::VOID, TypeId::UNDEFINED],
         );
-        let is_list = |c: &mut Self, m: TypeId| {
+        let is_list = |c: &mut Self, t: TypeId| {
             if has_iterable {
-                c.is_assignable(m, any_iterable)
+                c.is_assignable(t, any_iterable)
             } else {
-                c.is_array_like(m) || c.is_tuple_like(m)
+                c.is_array_like(t) || c.is_tuple_like(t)
             }
         };
-        let lists = self.filter(expected_type, |c, m| is_list(c, m));
-        let others = self.filter(expected_type, |c, m| !is_list(c, m));
-        // A missing type is `unknown`.
-        let is_related = |c: &mut Self| {
-            let actual = c.type_of_property(source, name).unwrap_or(TypeId::UNKNOWN);
-            c.is_assignable(actual, expected_type)
-        };
-        let diagnostic = if children.len() > 1 && !lists.is_never() {
-            let expected = (name, expected_type);
-            return reported | self.elaborate_jsx_children(file, e, &children, lists, expected);
-        } else if children.len() == 1 && !others.is_never() {
-            // `getElaborationElementForJsxChild`
-            let (child, _) = children[0];
-            let (start, end) = range_of_jsx_child(hir, child);
-            if !is_jsx_text(hir, child) {
-                let inner = match hir[child].kind {
-                    ExprKind::Spread(x) => x,
-                    _ => child,
-                };
-                let at = (file, start, end);
-                let name_type = self.string_literal(name, false);
-                return reported
-                    | self.elaborate_element(
-                        source, target, at, inner, false, name_type, None, None,
-                    );
+        let array_like_target_parts = self.filter(children_target_type, |c, t| is_list(c, t));
+        let non_array_like_target_parts = self.filter(children_target_type, |c, t| !is_list(c, t));
+        let expected = (children_prop_name, children_target_type);
+        let arity_mismatch = if more_than_one_real_children {
+            if array_like_target_parts != TypeId::NEVER {
+                let child_types: Vec<TypeId> = (self.jsx_child_types(file, e).iter())
+                    .map(|child| child.1)
+                    .collect();
+                let flags = vec![ElemFlags::REQUIRED; child_types.len()];
+                let real_source = self.tuple(&child_types, &flags, false);
+                let children = self.generate_jsx_children(file, j);
+                let elaborated = self.elaborate_iterable_or_array_like_target_elementwise(
+                    file,
+                    e,
+                    &children,
+                    real_source,
+                    array_like_target_parts,
+                    expected,
+                );
+                return elaborated || reported;
             }
-            // `elaborateElement`, with nothing to elaborate into: JSX text always gets the same
-            // message, whatever the mismatch.
-            if self.is_generic_object_type(target)
-                || matches!(self.data(expected_type), TypeData::IndexedAccess { .. })
-                || self.type_of_property(source, name).is_none()
-                || is_related(self)
-            {
-                return reported;
-            }
-            let mut diagnostic =
-                self.invalid_textual_child_diagnostic(file, e, (start, end), (name, expected_type));
-            let related = self.expected_property(target, name);
-            let related = related.filter(|related| related.file != NOWHERE.0);
-            diagnostic.related_information.extend(related);
-            diagnostic
-        } else if !is_related(self) {
-            let at = (file, hir[hir[j].tag].pos, hir[hir[j].tag].end);
-            let code = if children.len() > 1 { 2746 } else { 2745 };
-            self.new_diagnostic(at, code, &[Arg::Atom(name), Arg::Type(expected_type)])
+            2746
         } else {
-            return reported;
+            if non_array_like_target_parts != TypeId::NEVER {
+                let element = get_elaboration_element_for_jsx_child(hir, child, name_type);
+                let at = element.error_node;
+                let (prop, next) = ((file, at.0, at.1), element.inner_expression);
+                let mut diags = Vec::new();
+                let output = element.is_text.then_some(&mut diags);
+                let elaborated = self
+                    .elaborate_element(source, target, prop, next, false, name_type, None, output);
+                // `diagnosticFactory`: the diagnostic about text takes the place of the one about
+                // the two types.
+                for replaced in diags {
+                    let mut diagnostic =
+                        self.invalid_textual_child_diagnostic(file, e, at, expected);
+                    diagnostic.related_information = replaced.related_information;
+                    self.add_diagnostic(diagnostic);
+                }
+                return elaborated || reported;
+            }
+            2745
         };
+        let children_source_type = self.indexed_access(source, name_type);
+        if self.is_assignable(children_source_type, children_target_type) {
+            return reported;
+        }
+        let tag = hir[hir[j].tag];
+        let args = [
+            Arg::Atom(children_prop_name),
+            Arg::Type(children_target_type),
+        ];
+        let diagnostic = self.new_diagnostic((file, tag.pos, tag.end), arity_mismatch, &args);
+        // `c.error` reports it by itself, and `reportDiagnostic` among the errors of the candidate.
+        (self.call_resolution_errors.get_or_insert_default()).push(diagnostic.clone());
         self.add_diagnostic(diagnostic);
         true
     }
@@ -919,73 +991,132 @@ impl Checker<'_, '_> {
         self.new_diagnostic((file, start, end), 2747, &args)
     }
 
-    /// `elaborateIterableOrArrayLikeTargetElementwise` over `generateJsxChildren`: each of the
-    /// `children` of `e` is checked against the type `target`, a list, has at its index. `{}`,
-    /// which tsgo counts in the numbering, is not stored and is not counted here.
+    /// `generateJsxChildren`. Text of white space only, which raises `memberOffset`, is not stored
+    /// among the children.
+    fn generate_jsx_children(&self, file: FileId, j: JsxId) -> Vec<JsxElaborationElement> {
+        let hir = self.hir(file);
+        let children = hir.ids(hir[j].children).enumerate();
+        children
+            .map(|(i, child)| {
+                let name_type = self.number_literal(i as f64, false);
+                get_elaboration_element_for_jsx_child(hir, child, name_type)
+            })
+            .collect()
+    }
+
+    /// `elaborateIterableOrArrayLikeTargetElementwise` for the children of `e`.
     /// `expected`: the name of the children attribute, and the whole type the tag accepts for it.
-    fn elaborate_jsx_children(
+    fn elaborate_iterable_or_array_like_target_elementwise(
         &mut self,
         file: FileId,
         e: ExprId,
-        children: &[(ExprId, TypeId)],
+        iterator: &[JsxElaborationElement],
+        source: TypeId,
         target: TypeId,
         expected: (Atom, TypeId),
     ) -> bool {
-        let hir = self.hir(file);
         // `isArrayOrTupleLikeType`
-        let arrays = self.filter(target, |c, m| c.is_array_like(m) || c.is_tuple_like(m));
-        let iterables = self.filter(target, |c, m| !(c.is_array_like(m) || c.is_tuple_like(m)));
-        let yielded = (!iterables.is_never()).then(|| self.iterated_type(iterables, false));
-        let types: Vec<TypeId> = children.iter().map(|c| c.1).collect();
-        let source = self.tuple(&types, &vec![ElemFlags::REQUIRED; types.len()], false);
+        let arrays = self.filter(target, |c, t| c.is_array_like(t) || c.is_tuple_like(t));
+        let iterables = self.filter(target, |c, t| !(c.is_array_like(t) || c.is_tuple_like(t)));
+        // `getIterationTypeOfIterable`
+        let iteration_type = if iterables == TypeId::NEVER || self.is_any(iterables) {
+            None
+        } else {
+            self.iterable_types(iterables, IterationUse::ForOf, None).y
+        };
         let mut reported_error = false;
-        for (i, &(child, actual)) in children.iter().enumerate() {
-            let key = self.number_literal(i as f64, false);
-            // `getBestMatchIndexedAccessTypeOrUndefined`
-            let mut indexed = None;
-            if !arrays.is_never() {
-                indexed = self.indexed_access_if_any(arrays, key, false);
-                if indexed.is_none()
-                    && self.is_union(arrays)
-                    && let Some(best) = self
-                        .best_matching_type(source, arrays, &mut |c, s, t| c.is_assignable(s, t))
-                {
-                    indexed = self.indexed_access_if_any(best, key, false);
-                }
-            }
-            let indexed =
-                indexed.filter(|&t| !matches!(self.data(t), TypeData::IndexedAccess { .. }));
-            let expected_type = match (yielded, indexed) {
+        for element in iterator {
+            let (next, name_type) = (element.inner_expression, element.name_type);
+            let prop = (file, element.error_node.0, element.error_node.1);
+            let target_indexed_prop_type = if arrays == TypeId::NEVER {
+                None
+            } else {
+                self.get_best_match_indexed_access_type_or_undefined(source, arrays, name_type)
+                    .filter(|&t| !matches!(self.data(t), TypeData::IndexedAccess { .. }))
+            };
+            let target_prop_type = match (iteration_type, target_indexed_prop_type) {
                 (Some(a), Some(b)) => self.union(&[a, b]),
                 (Some(a), None) | (None, Some(a)) => a,
                 (None, None) => continue,
             };
-            if self.is_assignable(actual, expected_type) {
+            let source_prop_type = self.indexed_access_if_any(source, name_type, false);
+            let Some(source_prop_type) = source_prop_type else {
+                continue;
+            };
+            if self.is_assignable(source_prop_type, target_prop_type) {
                 continue;
             }
             reported_error = true;
-            let (at, end) = range_of_jsx_child(hir, child);
-            if is_jsx_text(hir, child) {
-                let diagnostic =
-                    self.invalid_textual_child_diagnostic(file, e, (at, end), expected);
-                self.add_diagnostic(diagnostic);
+            if next.is_some()
+                && self.elaborate_error(
+                    file,
+                    next,
+                    false,
+                    source_prop_type,
+                    target_prop_type,
+                    None,
+                    None,
+                )
+            {
                 continue;
             }
-            let inner = match hir[child].kind {
-                ExprKind::Spread(x) => x,
-                _ => child,
+            let specific_source = if next.is_some() {
+                self.check_expression_for_mutable_location_with_contextual_type(
+                    file,
+                    next,
+                    source_prop_type,
+                )
+            } else {
+                source_prop_type
             };
-            if !self.elaborate_error(file, inner, false, actual, expected_type, None, None) {
-                // `removeMissingType`
-                let name = self.number_name(i as f64);
-                let target_is_optional = self
-                    .get_property_of_type(arrays, name)
-                    .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::OPTIONAL));
-                let expected_type = self.remove_missing_type(expected_type, target_is_optional);
-                self.check_type_assignable_to(actual, expected_type, Some((file, at, end)), None);
+            if element.is_text {
+                let diagnostic =
+                    self.invalid_textual_child_diagnostic(file, e, element.error_node, expected);
+                self.add_diagnostic(diagnostic);
+            } else if self.is_exact_optional_property_mismatch(specific_source, target_prop_type) {
+                let args = [Arg::Type(specific_source), Arg::Type(target_prop_type)];
+                self.error_at(prop, 2412, &args);
+            } else {
+                let prop_name = self.property_name_of_type(name_type);
+                let is_optional_in = |c: &mut Self, t: TypeId| {
+                    prop_name
+                        .and_then(|name| c.get_property_of_type(t, name))
+                        .is_some_and(|(prop, _)| prop.flags.contains(PropFlags::OPTIONAL))
+                };
+                let target_is_optional = is_optional_in(self, arrays);
+                let source_is_optional = is_optional_in(self, source);
+                let target_prop_type =
+                    self.remove_missing_type(target_prop_type, target_is_optional);
+                let source_prop_type = self.remove_missing_type(
+                    source_prop_type,
+                    target_is_optional && source_is_optional,
+                );
+                let at = Some(prop);
+                if self.check_type_assignable_to(specific_source, target_prop_type, at, None)
+                    && specific_source != source_prop_type
+                {
+                    self.check_type_assignable_to(source_prop_type, target_prop_type, at, None);
+                }
             }
         }
         reported_error
+    }
+
+    /// `getBestMatchIndexedAccessTypeOrUndefined`
+    pub(super) fn get_best_match_indexed_access_type_or_undefined(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        name_type: TypeId,
+    ) -> Option<TypeId> {
+        if let Some(idx) = self.indexed_access_if_any(target, name_type, false) {
+            return Some(idx);
+        }
+        if !self.is_union(target) {
+            return None;
+        }
+        let best = self.best_matching_type(source, target, &mut |c, s, t| c.is_assignable(s, t))?;
+        self.indexed_access_if_any(best, name_type, false)
     }
 
     /// `checkSpreadPropOverrides`: 2783 for a property that is overwritten by a later spread.
@@ -1188,4 +1319,39 @@ fn is_jsx_text(hir: &hir::File, child: ExprId) -> bool {
 /// The span of the `child` of an element, including its braces if it has any.
 fn range_of_jsx_child(hir: &hir::File, child: ExprId) -> (u32, u32) {
     jsx_expression_around(hir, child).unwrap_or((hir[child].pos, hir[child].end))
+}
+
+/// `JsxElaborationElement`
+#[derive(Copy, Clone)]
+struct JsxElaborationElement {
+    /// The span of `errorNode`.
+    error_node: (u32, u32),
+    /// `NONE`: there is none.
+    inner_expression: ExprId,
+    name_type: TypeId,
+    /// `createDiagnostic != nil`
+    is_text: bool,
+}
+
+/// `getElaborationElementForJsxChild`
+fn get_elaboration_element_for_jsx_child(
+    hir: &hir::File,
+    child: ExprId,
+    name_type: TypeId,
+) -> JsxElaborationElement {
+    let is_text = is_jsx_text(hir, child);
+    let inner_expression = match hir[child].kind {
+        // `{}`
+        ExprKind::Missing => ExprId::NONE,
+        ExprKind::String(_) if is_text => ExprId::NONE,
+        // `{...x}`
+        ExprKind::Spread(x) => x,
+        _ => child,
+    };
+    JsxElaborationElement {
+        error_node: range_of_jsx_child(hir, child),
+        inner_expression,
+        name_type,
+        is_text,
+    }
 }

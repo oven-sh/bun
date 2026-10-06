@@ -425,6 +425,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             item = p.new_expr(E::Spread { value: item }, loc);
                         }
                         children.push(item);
+                    } else if p.is_tolerant() {
+                        // As for an attribute, the missing expression is placed at the opening
+                        // brace.
+                        children.push(p.new_expr(E::Missing {}, open_brace));
                     }
 
                     // `parseJsxExpression`

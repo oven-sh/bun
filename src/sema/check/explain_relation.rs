@@ -481,78 +481,150 @@ impl<'p, 's> Checker<'p, 's> {
 // ───────────────────────────── names ─────────────────────────────
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `getParameterNameAtPosition`. An unlabeled element of a rest parameter is named after the
-    /// parameter and its index (`getTupleElementLabel`).
+    /// `getParameterNameAtPosition` for a caller that has the parameters of a signature and not the
+    /// signature. The name of a rest parameter stands in for its declaration.
     pub(super) fn parameter_name_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
-        let atoms = &self.atoms();
-        let numbered = |name: &[u8], index: usize| {
-            let mut digits = bun_core::fmt::ItoaBuf::new();
-            atoms.intern(&[name, b"_", bun_core::fmt::itoa(&mut digits, index)].concat())
-        };
-        let name_of = |index: usize| match params[index].name {
-            Atom::NONE => numbered(b"_", index),
-            name => name,
-        };
-        let fixed = params.len() - usize::from(params.last().is_some_and(|p| p.rest));
-        if pos < fixed {
-            return name_of(pos);
-        }
-        if fixed >= params.len() {
-            return known::empty;
-        }
-        let rest = name_of(fixed);
-        match self.data(params[fixed].ty) {
-            TypeData::Tuple { flags, .. } => {
-                let index = pos - fixed;
-                if let Some(flag) = flags.get(index)
-                    && flag.label().is_some()
-                {
-                    return flag.label();
-                }
-                let is_variable = flags
-                    .get(index)
-                    .is_some_and(|f| f.intersects(ElemFlags::REST | ElemFlags::VARIADIC));
-                // `getTupleElementLabelFromBindingElement`, which accepts a rest parameter that has
-                // a declaration.
-                if is_variable && params[fixed].has_declaration {
-                    rest
-                } else {
-                    numbered(atoms.bytes(rest), index)
-                }
-            }
-            _ => rest,
-        }
+        self.parameter_name_at(None, params, pos)
     }
 
-    /// `parameter_name_at_position` for the signature `sig`, whose parameters are `params`. The
-    /// label of a rest parameter element is read from the parameter's type annotation, if that is a
-    /// tuple type node with the same number of elements.
+    /// `getParameterNameAtPosition`. `params`: the parameters of `sig`.
     pub(super) fn labeled_parameter_name_at_position(
         &self,
-        sig: SigId,
+        mut sig: SigId,
         params: &[SigParam],
         pos: usize,
     ) -> Atom {
-        if let Some((rest, fixed)) = params.split_last().filter(|split| split.0.rest)
-            && pos >= fixed.len()
-            && let TypeData::Tuple { flags, .. } = self.data(rest.ty)
-            && let Some((file, func, _)) = self.sig_decl(sig)
-        {
-            let hir = self.hir(file);
-            let (declared, index) = (hir[func].params, pos - fixed.len());
-            if declared.len() == params.len() {
-                let node = hir[declared.at(fixed.len())].ty;
-                if node.is_some()
-                    && let TypeNodeKind::Tuple(written) = hir[node].kind
-                    && written.len() == flags.len()
-                    && index < written.len()
-                    && hir[written.at(index)].name.is_some()
-                {
-                    return hir[written.at(index)].name;
+        // The function whose parameters are the `ValueDeclaration` of the parameter symbols.
+        let declaration = loop {
+            sig = match *self.types().sig(sig) {
+                SigData::Decl { file, func, .. } | SigData::Construct { file, func, .. } => {
+                    break Some((file, func));
+                }
+                SigData::WithReturn { sig: inner, .. }
+                | SigData::DefaultConstruct {
+                    base: Some(inner), ..
+                } => inner,
+                SigData::DefaultConstruct { base: None, .. } | SigData::Synth { .. } => break None,
+            };
+        };
+        self.parameter_name_at(declaration, params, pos)
+    }
+
+    /// `declaration`: the function that declares `params`, if the caller has it.
+    fn parameter_name_at(
+        &self,
+        declaration: Option<(FileId, FnId)>,
+        params: &[SigParam],
+        pos: usize,
+    ) -> Atom {
+        // `bindParameter` names a pattern after its index among the declared parameters, and those
+        // include `this`.
+        let name_of = |index: usize| match params[index].name {
+            Atom::NONE => {
+                let has_this = declaration
+                    .is_some_and(|(file, func)| self.hir(file)[func].this_param.is_some());
+                self.numbered_name(b"_", index + usize::from(has_this))
+            }
+            name => name,
+        };
+        let param_count = params.len() - usize::from(params.last().is_some_and(|p| p.rest));
+        if pos < param_count {
+            return name_of(pos);
+        }
+        let Some(rest_parameter) = params.get(param_count) else {
+            return known::empty;
+        };
+        let TypeData::Tuple { flags, .. } = self.data(rest_parameter.ty) else {
+            return name_of(param_count);
+        };
+        // `getTupleElementLabel`
+        let index = pos - param_count;
+        let element_flags = flags.get(index).copied().unwrap_or_default();
+        if element_flags.label().is_some() {
+            return element_flags.label();
+        }
+        match declaration {
+            Some((file, func)) if rest_parameter.has_declaration => {
+                let hir = self.hir(file);
+                let node = &hir[hir[func].params.at(param_count)];
+                let has_dot_dot_dot = node.flags.contains(Flags::REST);
+                self.tuple_element_label_from_binding_element(
+                    file,
+                    node.pat,
+                    has_dot_dot_dot,
+                    index,
+                    element_flags,
+                )
+            }
+            None if rest_parameter.has_declaration
+                && element_flags.intersects(ElemFlags::REST | ElemFlags::VARIADIC) =>
+            {
+                name_of(param_count)
+            }
+            _ => self.numbered_name(self.atoms().bytes(name_of(param_count)), index),
+        }
+    }
+
+    /// `getTupleElementLabelFromBindingElement`. `pat`: `node.Name()`.
+    fn tuple_element_label_from_binding_element(
+        &self,
+        file: FileId,
+        pat: PatId,
+        has_dot_dot_dot: bool,
+        index: usize,
+        element_flags: ElemFlags,
+    ) -> Atom {
+        let hir = self.hir(file);
+        match hir[pat].kind {
+            PatKind::Ident(name) => {
+                let text = self.atoms().bytes(name);
+                return if has_dot_dot_dot {
+                    if element_flags.intersects(ElemFlags::REST | ElemFlags::VARIADIC) {
+                        name
+                    } else {
+                        self.numbered_name(text, index)
+                    }
+                } else if element_flags.intersects(ElemFlags::REQUIRED | ElemFlags::OPTIONAL) {
+                    name
+                } else {
+                    self.atoms().intern(&[text, b"_n"].concat())
+                };
+            }
+            PatKind::Array(elements) if has_dot_dot_dot => {
+                let last = elements.iter().next_back();
+                let rest = last.filter(|&last| hir[last].is_rest);
+                let element_count = elements.len() - usize::from(rest.is_some());
+                if index < element_count {
+                    let element = &hir[elements.at(index)];
+                    if !matches!(hir[element.pat].kind, PatKind::Missing) {
+                        return self.tuple_element_label_from_binding_element(
+                            file,
+                            element.pat,
+                            element.is_rest,
+                            index,
+                            element_flags,
+                        );
+                    }
+                } else if let Some(rest) = rest {
+                    return self.tuple_element_label_from_binding_element(
+                        file,
+                        hir[rest].pat,
+                        true,
+                        index - element_count,
+                        element_flags,
+                    );
                 }
             }
+            _ => {}
         }
-        self.parameter_name_at_position(params, pos)
+        self.numbered_name(b"arg", index)
+    }
+
+    /// `name + "_" + strconv.Itoa(index)`
+    fn numbered_name(&self, name: &[u8], index: usize) -> Atom {
+        let mut digits = bun_core::fmt::ItoaBuf::new();
+        let digits = bun_core::fmt::itoa(&mut digits, index);
+        self.atoms().intern(&[name, b"_", digits].concat())
     }
 
     /// `typePredicateToString`. `params`: the parameters of the signature it is the predicate of.
@@ -561,21 +633,23 @@ impl<'p, 's> Checker<'p, 's> {
         predicate: &super::decl::Predicate,
         params: &[SigParam],
     ) -> Vec<u8> {
+        use super::print::{IGNORE_ERRORS, USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE};
         let mut text = Vec::new();
         if predicate.asserts {
             text.extend_from_slice(b"asserts ");
         }
         match predicate.param {
+            // `parameterName` is the name of the parameter it was found by.
             Some(index) if index < params.len() => {
-                let name = self.parameter_name_at_position(params, index);
-                text.extend_from_slice(self.atoms().bytes(name));
+                text.extend_from_slice(self.atoms().bytes(params[index].name));
             }
             Some(_) => {}
             None => text.extend_from_slice(b"this"),
         }
         if let Some(ty) = predicate.ty {
+            let flags = USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE | IGNORE_ERRORS;
             text.extend_from_slice(b" is ");
-            text.extend(self.type_to_string(ty));
+            text.extend(self.type_to_type_node(ty, None, flags, None));
         }
         text
     }
@@ -617,10 +691,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSuggestedTypeForNonexistentStringLiteralType`
     fn suggested_string_literal_type(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
-        let value = |t: TypeId| match *self.data(t) {
-            TypeData::StringLit { value, .. } => Some(self.atoms().bytes(value)),
-            _ => None,
-        };
+        let value = |t: TypeId| Some(self.atoms().bytes(self.string_literal_value(t)?));
         let types = self.parts(target);
         let get_name = |i: usize| value(types[i]).unwrap_or_default();
         get_spelling_suggestion(value(source)?, 0..types.len(), get_name, |a, b| a.cmp(&b))
@@ -638,6 +709,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSingleBaseForNonAugmentingSubtype`
     pub(super) fn single_base_for_non_augmenting_subtype(&mut self, ty: TypeId) -> Option<TypeId> {
+        use crate::bind::Decl;
         let TypeData::Ref { target, .. } = *self.data(ty) else {
             return None;
         };
@@ -645,13 +717,46 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.equivalent_base_types.get(&self.task, &ty) {
             return known;
         }
+        let (mut has_heritage_clause, mut extends_entity_name, mut has_members) =
+            (false, true, false);
+        for &(file, decl) in self.files().decls_of(target).iter() {
+            let hir = self.hir(file);
+            match decl {
+                Decl::Class(c) => {
+                    let class = &hir[c];
+                    // `getMembersOfSymbol`: type parameters, the constructor, whatever is not static.
+                    has_members |= !class.type_params.is_empty()
+                        || class.members.iter().any(|m| {
+                            !hir[m].flags.contains(Flags::STATIC)
+                                && hir[m].kind != MemberKind::StaticBlock
+                        });
+                    if class.extends.is_some() {
+                        has_heritage_clause = true;
+                        extends_entity_name = matches!(
+                            hir[class.extends].kind,
+                            ExprKind::Ident(_) | ExprKind::Dot { .. }
+                        ) && !is_parenthesized(hir, class.extends);
+                    }
+                }
+                Decl::Interface(i) => {
+                    has_members |= !hir[i].type_params.is_empty() || !hir[i].members.is_empty();
+                    has_heritage_clause |= !hir[i].extends.is_empty();
+                }
+                _ => {}
+            }
+        }
         let scope = self.begin_scope();
-        let (base, is_final) = if !self.is_non_augmenting_declaration(target) {
+        // FOR SPEED: without a heritage clause `getBaseTypes` resolves nothing and finds nothing.
+        let (base, is_final) = if !has_heritage_clause
+            || !extends_entity_name
+            // `ObjectFlagsReference`
+            || !self.is_declared_as_reference(target, 0)
+        {
             (None, true)
         } else {
             let bases = self.base_types(target);
             let base = match bases[..] {
-                [mut base] if self.is_declared_as_reference(target, 0) => {
+                [mut base] if !has_members => {
                     let args = self.type_arguments(ty);
                     let params = self.all_type_params_of_symbol(target);
                     if !params.is_empty() && args.len() >= params.len() {
@@ -670,7 +775,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. It is
             // final only if it was computed from the cached base types.
             let cached = self.p.base_types.get_ref(&self.task, &target);
-            (base, cached.map(|it| &it[..]) == Some(&bases[..]))
+            let is_final = has_members || cached.map(|it| &it[..]) == Some(&bases[..]);
+            (base, is_final)
         };
         match self.end_scope_as(scope, !is_final) {
             Ok(stored) => (self.p.equivalent_base_types).insert(&self.task, ty, base, stored),
@@ -688,20 +794,14 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         head: Option<u32>,
     ) {
-        let source = if self.has_alias(original_source)
-            || self
-                .single_base_for_non_augmenting_subtype(original_source)
-                .is_some()
-        {
+        let source_base = self.single_base_for_non_augmenting_subtype(original_source);
+        let target_base = self.single_base_for_non_augmenting_subtype(original_target);
+        let source = if self.has_alias(original_source) || source_base.is_some() {
             original_source
         } else {
             source
         };
-        let target = if self.has_alias(original_target)
-            || self
-                .single_base_for_non_augmenting_subtype(original_target)
-                .is_some()
-        {
+        let target = if self.has_alias(original_target) || target_base.is_some() {
             original_target
         } else {
             target
@@ -833,7 +933,7 @@ impl<'p, 's> Checker<'p, 's> {
             for part in parts.iter() {
                 list.push(self.type_of_prop(part, MapperId::IDENTITY));
             }
-            if !list.iter().any(|t| t.is_never())
+            if !(list.iter()).any(|&t| t.is_never() && t != TypeId::UNIQUE_LITERAL)
                 && list.iter().any(|&t| t != list[0])
                 && list.iter().any(|&t| {
                     self.is_boolean(t)
@@ -916,15 +1016,12 @@ impl<'p, 's> Checker<'p, 's> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            // `unknown` is an ordinary constraint when it is declared: `T extends unknown`, `T
-            // extends any`.
-            let base_constraint = match self.base_constraint_of(target) {
-                None if self.constraint_of_type_param(target) == Some(TypeId::UNKNOWN) => {
-                    Some(TypeId::UNKNOWN)
-                }
-                base_constraint => base_constraint,
+            // `base_constraint_of` is `None` for the constraint `unknown` too.
+            let constraint = match self.base_constraint_of(target) {
+                None => self.base_constraint_if_any(target, 0),
+                constraint => constraint,
             };
-            match base_constraint {
+            match constraint {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
                     let args = [generalized_source_name, target_name, Arg::Type(constraint)];
                     self.report_error(r, 5075, &args);

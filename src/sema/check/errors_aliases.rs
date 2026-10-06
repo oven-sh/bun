@@ -1,6 +1,7 @@
 //! Aliases, module specifier resolution, and a few file-level checks:
 //! 2303; 18042 18043; 1205 1269 1288 1293 1448 1484 1485 2748 2865; 2866; 1272; 1379 1380; 2308;
-//! 1544; 6137 6142 2846 5097 2876 2877, 1471 1479 1541 1542; 7036; 1470 17013; 1006; 2578.
+//! 1544; 6137 6142 7042 2846 5097 2876 2877 2878, 1471 1479 1541 1542; 7036; 1470 17013; 1006;
+//! 2578.
 //!
 //! Follows `checkAliasSymbol`, `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`,
 //! `getExportsOfModuleWorker`, `getExternalModuleMember`, `resolveExternalModule`,
@@ -17,16 +18,16 @@ use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, SymbolId};
-use crate::program::TypeOnlyDeclaration;
+use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
-    ModuleKind, has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
-    try_extract_ts_extension,
+    ModuleKind, Options, has_ts_implementation_extension, is_declaration_file_name, join,
+    path_is_relative, try_extract_ts_extension,
 };
 use crate::verify::relative_from_file;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::resolve_path::{dirname, relative_normalized};
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -508,7 +509,7 @@ impl Checker<'_, '_> {
                 Decl::ImportSpec(s) => hir[s].imported_pos,
                 Decl::ExportSpec(s) => hir[s].local_pos,
                 Decl::ImportEquals(x) => hir[x].name_pos,
-                _ => binding_element.map_or(start, |p| hir[p].pos),
+                _ => binding_element.map_or(start, |p| hir[p].key_pos),
             };
             let at = self.place_of_token(file, name_start);
             if is_export_specifier {
@@ -652,7 +653,8 @@ impl Checker<'_, '_> {
             }
         }
         let is_import_equals = matches!(decl, Decl::ImportEquals(_));
-        let is_variable_declaration = matches!(decl, Decl::Require(_)) && binding_element.is_none();
+        let is_variable_declaration = matches!(decl, Decl::Require(pat)
+            if matches!(bound.pat_parent[pat.idx()], PatParent::Var(_)));
         if !is_import_equals && self.modules_emits_commonjs(file) {
             if is_verbatim && !hir.is_js {
                 let code = self.verbatim_module_syntax_error_message(file);
@@ -711,26 +713,24 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// A `const enum` whose first declaration is ambient.
+    /// What `checkAliasSymbol` and `checkConstEnumAccess` ask before 2748: whether `sym` is a
+    /// `const enum` whose `ValueDeclaration` is ambient, unless it is in the output of a referenced
+    /// project that preserves its `const` enums.
     pub(super) fn aliases_is_ambient_const_enum(&self, sym: Sym) -> bool {
         let files = self.files();
-        files.flags(sym).intersects(SymFlags::ENUM)
-            && files
-                .decls(sym)
-                .iter()
-                .find_map(|&(f, d)| {
-                    if let Decl::Enum(e) = d {
-                        Some((f, e))
-                    } else {
-                        None
-                    }
-                })
-                .is_some_and(|(f, e)| {
-                    let flags = self.hir(f)[e].flags;
-                    flags.contains(Flags::CONST)
-                        && (flags.contains(Flags::AMBIENT)
-                            || self.hir(f).kind == FileKind::Declaration)
-                })
+        if !files.flags(sym).contains(SymFlags::CONST_ENUM) {
+            return false;
+        }
+        let Some((file, declaration)) = files.value_declaration(sym) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        if hir.kind != FileKind::Declaration && !hir.is_ambient(hir.node(declaration)) {
+            return false;
+        }
+        // `ShouldPreserveConstEnums`
+        project_reference_from_output_dts(files.options, files.module(file).file_name())
+            .is_none_or(|redirect| !redirect.preserve_const_enums && !redirect.isolated_modules)
     }
 
     /// The end of `onSuccessfullyResolvedSymbol`: 2866 at an import that does not resolve to a
@@ -1023,16 +1023,23 @@ impl Checker<'_, '_> {
             return true;
         }
         let target = importing.imports.get(&key);
-        // `GetResolutionDiagnostic`, `needJsx`: reported whether or not the file is in the program for another reason.
-        let mut needs_jsx = importing.jsx_imports.iter();
-        if let Some(&(.., path)) = needs_jsx.find(|r| (r.0, r.1) == key) {
-            self.error_at(at, 6142, &[Arg::Atom(spec), Arg::Atom(path)]);
-            if target.is_none() {
-                return false;
-            }
-        }
+        // `ResolvedFileName`, in a table that has it for some specifiers.
+        let resolved_file_name_in = |table: &[(Atom, ResolutionMode, Atom)]| {
+            let mut table = table.iter();
+            table.find(|r| (r.0, r.1) == key).map(|r| r.2)
+        };
+        // `GetResolutionDiagnostic`, `needJsx`
+        let needs_jsx = resolved_file_name_in(&importing.jsx_imports);
         if let Some(&target) = target {
             let target = files.module(target);
+            // "we need to report it even if a sourceFile is found"
+            if let Some(path) = needs_jsx {
+                self.error_at(at, 6142, &[Arg::Atom(spec), Arg::Atom(path)]);
+            }
+            let resolved_file_name = match resolved_file_name_in(&importing.redirected_imports) {
+                Some(path) => self.atoms().bytes(path),
+                None => target.file_name(),
+            };
             // `ResolvedUsingTsExtension`
             let using_ts_extension = importing.ts_extension_imports.contains(&key);
             let is_declaration_name = (using_ts_extension
@@ -1075,31 +1082,49 @@ impl Checker<'_, '_> {
                 && kind != SpecifierKind::ImportType
                 && !site.is_type_only
             {
-                // `ShouldRewriteModuleSpecifier`, `SourceFileMayBeEmitted`. 2878 needs project references, which are not supported.
+                // `ShouldRewriteModuleSpecifier`
                 let should_rewrite =
                     path_is_relative(text) && has_ts_implementation_extension(text);
-                let may_be_emitted = target.hir.kind != FileKind::Declaration
-                    && !strings::contains(target.file_name(), b"/node_modules/");
                 if !using_ts_extension && should_rewrite {
-                    let path = relative_from_file(importing.file_name(), target.file_name());
+                    let path = relative_from_file(importing.file_name(), resolved_file_name);
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
-                } else if using_ts_extension && !should_rewrite && may_be_emitted {
+                } else if using_ts_extension
+                    && !should_rewrite
+                    && source_file_may_be_emitted(options, target, files.is_case_sensitive)
+                {
                     // `GetAnyExtensionFromPath`
                     let base =
                         &text[strings::last_index_of_char(text, b'/').map_or(0, |i| i + 1)..];
                     let extension =
                         strings::last_index_of_char(base, b'.').map_or(&b""[..], |i| &base[i..]);
                     self.error_at(at, 2877, &[Arg::Bytes(extension)]);
+                } else if using_ts_extension
+                    && should_rewrite
+                    && let Some(redirect) = target.redirect_for_resolution
+                {
+                    let own_root_dir = common_source_directory(options);
+                    let other_root_dir = common_source_directory(redirect);
+                    let own_out_dir = match &options.out_dir[..] {
+                        b"" => own_root_dir,
+                        out_dir => out_dir,
+                    };
+                    let other_out_dir = match &redirect.out_dir[..] {
+                        b"" => other_root_dir,
+                        out_dir => out_dir,
+                    };
+                    // A copy: `relative_normalized` returns a slice of a per-thread buffer.
+                    let root_dir_path =
+                        relative_normalized::<Posix, true>(own_root_dir, other_root_dir).to_vec();
+                    let out_dir_path =
+                        relative_normalized::<Posix, true>(own_out_dir, other_out_dir);
+                    if root_dir_path != out_dir_path {
+                        self.error_at(at, 2878, &[]);
+                    }
                 }
             }
             if !target.is_module() {
                 if !is_side_effect && !site.is_not_validated {
-                    let mut redirected = importing.redirected_imports.iter();
-                    let path = match redirected.find(|r| (r.0, r.1) == key) {
-                        Some(r) => Arg::Atom(r.2),
-                        None => Arg::Bytes(target.file_name()),
-                    };
-                    self.error_at(at, 2306, &[path]);
+                    self.error_at(at, 2306, &[Arg::Bytes(resolved_file_name)]);
                 }
                 return false;
             }
@@ -1118,7 +1143,10 @@ impl Checker<'_, '_> {
             {
                 let (code, details) = match kind {
                     SpecifierKind::Require => (1471, None),
-                    SpecifierKind::Import if site.is_type_only_import => {
+                    // The `JSImportDeclaration` of an `@import` tag is no `ImportDeclaration`.
+                    SpecifierKind::Import
+                        if site.is_type_only_import && !self.hir(file).is_in_jsdoc(start) =>
+                    {
                         (1541, self.create_mode_mismatch_details(file, at))
                     }
                     SpecifierKind::ImportType => {
@@ -1131,19 +1159,14 @@ impl Checker<'_, '_> {
             }
             return true;
         }
-        // `GetResolutionDiagnostic`, `needAllowArbitraryExtensions`
-        let mut arbitrary = importing.arbitrary_extension_imports.iter();
-        if let Some(index) = arbitrary.position(|&u| u == key) {
-            let path = importing.arbitrary_extension_files[index];
-            self.error_at(at, 6263, &[Arg::Atom(spec), Arg::Atom(path)]);
-            return false;
-        }
         // The specifier resolves to JavaScript that is not in the program.
-        if let Some(index) = importing.untyped_imports.iter().position(|&u| u == key) {
+        if needs_jsx.is_none()
+            && let Some(index) = importing.untyped_imports.iter().position(|&u| u == key)
+        {
             if site.is_for_augmentation {
                 let path = importing.untyped_import_files[index].0;
                 self.error_at(at, 2665, &[Arg::Atom(spec), Arg::Atom(path)]);
-            } else if options.no_implicit_any && !is_side_effect {
+            } else if options.no_implicit_any && !site.is_not_validated && !is_side_effect {
                 self.error_on_implicit_any_module(file, spec, mode, at);
             }
             return false;
@@ -1155,6 +1178,18 @@ impl Checker<'_, '_> {
         let mut unbuilt = importing.unbuilt_imports.iter();
         if let Some(&(.., output, source)) = unbuilt.find(|u| (u.0, u.1) == key) {
             self.error_at(at, 6305, &[Arg::Atom(output), Arg::Atom(source)]);
+            return false;
+        }
+        // `GetResolutionDiagnostic`
+        let mut arbitrary = importing.arbitrary_extension_imports.iter();
+        let resolution_diagnostic = (needs_jsx.map(|path| (6142, path)))
+            .or_else(|| resolved_file_name_in(&importing.json_imports).map(|path| (7042, path)))
+            .or_else(|| {
+                let index = arbitrary.position(|&u| u == key)?;
+                Some((6263, importing.arbitrary_extension_files[index]))
+            });
+        if let Some((code, path)) = resolution_diagnostic {
+            self.error_at(at, code, &[Arg::Atom(spec), Arg::Atom(path)]);
             return false;
         }
         let mut extensionless = importing.extensionless_imports.iter();
@@ -1396,6 +1431,23 @@ fn is_erased(hir: &hir::File, node: Node) -> bool {
         }
     };
     hir.is_in_ambient_or_type_node(node) || hir.find_ancestor(node, is_dropped).is_some()
+}
+
+/// `GetProjectReferenceFromOutputDts(path).Resolved.CompilerOptions()`
+fn project_reference_from_output_dts<'a>(options: &'a Options, path: &[u8]) -> Option<&'a Options> {
+    let outputs = &options.referenced_output_dts;
+    let index = options.find_by_path(outputs, |it| &it.0, path)?;
+    let project = options.referenced_sources[outputs[index].1 as usize].3;
+    Some(&options.referenced_options[project as usize])
+}
+
+/// `GetCommonSourceDirectory` without the `/` at its end, for a project that has a configuration
+/// file: every project that references another one, or is referenced.
+fn common_source_directory(options: &Options) -> &[u8] {
+    match &options.root_dir[..] {
+        b"" => dirname::<Posix>(&options.config_path),
+        root_dir => root_dir,
+    }
 }
 
 /// `(position, index)` for each of `positions`, sorted.

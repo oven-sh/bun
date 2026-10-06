@@ -1201,21 +1201,8 @@ pub mod ssl_wrapper {
                                 .set_handshake_state(HandshakeState::HandshakeCompleted);
                         }
 
-                        // flush the reading
-                        if read > 0 {
-                            log!("triggering data callback (read {})", read);
-                            // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
-                            self.trigger_data_callback(unsafe { buffer.filled(read) });
-                            // The data callback may have closed the connection
-                            if self.ssl.get().is_none() || self.flags.closed_notified() {
-                                return false;
-                            }
-                        }
-                        // A NewSessionTicket/keylog line that rode in ahead of the
-                        // peer's close_notify is still parked; deliver it before the
-                        // close tears the wrapper down (mirrors the C ZERO_RETURN path).
-                        self.flush_pending_events();
-                        if self.ssl.get().is_none() || self.flags.closed_notified() {
+                        // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+                        if !self.dispatch_read(unsafe { buffer.filled(read) }) {
                             return false;
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {
@@ -1255,27 +1242,23 @@ pub mod ssl_wrapper {
                     );
                     // we filled the buffer
                     // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
-                    self.trigger_data_callback(unsafe { buffer.filled(read) });
-                    // The callback may have closed the connection - check before continuing
-                    // Check ssl first as a proxy for whether we were deinited
-                    if self.ssl.get().is_none() || self.flags.closed_notified() {
+                    if !self.dispatch_read(unsafe { buffer.filled(read) }) {
                         return false;
                     }
                     read = 0;
                 }
             }
-            // we finished reading
-            if read > 0 {
-                log!("triggering data callback (read {})", read);
-                // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
-                self.trigger_data_callback(unsafe { buffer.filled(read) });
-                // The callback may have closed the connection
-                // Check ssl first as a proxy for whether we were deinited
-                if self.ssl.get().is_none() || self.flags.closed_notified() {
-                    return false;
-                }
+            // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
+            self.dispatch_read(unsafe { buffer.filled(read) })
+        }
+
+        /// Wire order: what `SSL_read` parked came before these bytes. False once a callback closed the wrapper.
+        fn dispatch_read(&self, data: &[u8]) -> bool {
+            self.flush_pending_events();
+            if !data.is_empty() && self.ssl.get().is_some() {
+                self.trigger_data_callback(data);
             }
-            true
+            self.ssl.get().is_some() && !self.flags.closed_notified()
         }
 
         fn handle_writing(&self, buffer: &mut IoBuffer) {
@@ -1364,13 +1347,7 @@ pub mod ssl_wrapper {
                     return;
                 }
 
-                // The SSL_do_handshake/SSL_read calls above may have parked
-                // new-session tickets / keylog lines (BoringSSL surfaces them
-                // mid-read, where dispatching JS could free the SSL out from
-                // under the caller). The stack has unwound here, so hand them
-                // to the owner - same ordering as the C path's
-                // ssl_flush_pending_session: handshake/data callbacks first,
-                // then sessions.
+                // What SSL_do_handshake parked. `dispatch_read` hands over what SSL_read parks.
                 self.flush_pending_events();
             } else {
                 debug_assert!(
@@ -1382,7 +1359,7 @@ pub mod ssl_wrapper {
 
         /// Hand the parked sessions and keylog lines to the owner. The callbacks run JS, which may close the wrapper.
         fn flush_pending_events(&self) {
-            while self.ssl.get().is_some() {
+            while self.ssl.get().is_some() && !self.flags.closed_notified() {
                 let Some(entry) = self.callbacks.sessions.borrow_mut().pop_front() else {
                     break;
                 };
@@ -1391,7 +1368,7 @@ pub mod ssl_wrapper {
                     on_session(handlers.ctx, &entry);
                 }
             }
-            while self.ssl.get().is_some() {
+            while self.ssl.get().is_some() && !self.flags.closed_notified() {
                 let Some(entry) = self.callbacks.keylog.borrow_mut().pop_front() else {
                     break;
                 };

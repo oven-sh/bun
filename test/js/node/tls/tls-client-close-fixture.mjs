@@ -196,18 +196,19 @@ async function secondConnection() {
 
 // A TLS connection of this process whose peer never reads, with more written than the kernel takes.
 export async function stalledConnection() {
-  const server = tls.createServer({ key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") }, socket => {
-    socket.on("error", () => {});
-    socket.pause();
-  });
+  const server = tls.createServer({ key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const socket = tls.connect({ host: "127.0.0.1", port: server.address().port, rejectUnauthorized: false });
   socket.on("error", () => {});
-  await once(socket, "secureConnect");
+  const [[accepted]] = await Promise.all([once(server, "secureConnection"), once(socket, "secureConnect")]);
+  accepted.on("error", () => {}).pause();
   socket.write(Buffer.alloc(32 * 1024 * 1024));
   return {
+    socket,
+    // Both ends: what the client could not send would wait for a peer that is still there, into the next test.
     close() {
       socket.destroy();
+      accepted.destroy();
       server.close();
     },
   };
@@ -452,10 +453,13 @@ export async function report(mode, version) {
     }
   }
 
-  const [saw] = await Promise.all([serverSaw.promise, closed]);
-  second?.close();
-  stalled?.close();
-  relay.close();
-  server.close();
-  return { client, server: saw, ...wire(Buffer.concat(fromClient)) };
+  try {
+    const [saw] = await Promise.all([serverSaw.promise, closed]);
+    return { client, server: saw, ...wire(Buffer.concat(fromClient)) };
+  } finally {
+    second?.close();
+    stalled?.close();
+    relay.close();
+    server.close();
+  }
 }

@@ -182,7 +182,8 @@ impl Options {
                     opts.minimum_release_age_ms = Some(Self::validate_minimum_release_age(value));
                     opts.minimum_release_age = Some(value);
                 } else if positional == b"--help" || positional == b"-h" {
-                    BunxCommand::exit_with_usage();
+                    crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
+                    Global::exit(0);
                 } else if positional != b"--" && positional != b"--yes" && positional != b"-y" {
                     // Nothing else is forwarded to `bun add`; say so instead of
                     // dropping the flag silently.

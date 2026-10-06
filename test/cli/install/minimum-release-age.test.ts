@@ -2645,7 +2645,7 @@ export const scanner = {
   // Regression test for https://github.com/oven-sh/bun/issues/30748 —
   // `bunx --minimum-release-age` used to be silently accepted without being
   // forwarded to the `bun add` subprocess, so the age gate had no effect.
-  describe("bunx", () => {
+  describe.concurrent("bunx", () => {
     // `bunx` caches installs under TMPDIR and packages under BUN_INSTALL_CACHE_DIR;
     // both must be isolated per test so the age-gated subprocess actually runs
     // (a hit in either cache would let `bunx` skip the install step entirely).
@@ -3148,6 +3148,18 @@ export const scanner = {
       expect(stderr).toContain("--registry=http://127.0.0.1:9/");
       expect(stderr).not.toContain("--yes");
       expect(exitCode).not.toBe(0);
+
+      // Explicit --help is a success, like every other subcommand.
+      await using help = Bun.spawn({
+        cmd: [bunExe(), "x", "--help"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [helpOut, helpErr, helpExit] = await Promise.all([help.stdout.text(), help.stderr.text(), help.exited]);
+      expect(helpOut + helpErr).toContain("--minimum-release-age");
+      expect(helpExit).toBe(0);
     });
 
     // Runs on every platform: no pre-seeded cache and no uid assumption, and the

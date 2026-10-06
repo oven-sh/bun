@@ -478,9 +478,14 @@ describe.concurrent("--inspect-brk", () => {
     await session.send("Debugger.resume");
     await session.output("stdout", /^first$/m);
 
-    writeFileSync(join(session.cwd, "entry.mjs"), `console.log("second");\n`);
     // A second pause would hold the reloaded entry before it prints.
+    writeFileSync(join(session.cwd, "entry.mjs"), `console.log("second");\n`);
     await session.output("stdout", /^second$/m);
+    // The same after a reload that failed to parse.
+    writeFileSync(join(session.cwd, "entry.mjs"), `console.log("third";\n`);
+    await session.output("stderr", /error: /);
+    writeFileSync(join(session.cwd, "entry.mjs"), `console.log("fourth");\n`);
+    await session.output("stdout", /^fourth$/m);
     expect(session.pauses).toHaveLength(1);
   });
 

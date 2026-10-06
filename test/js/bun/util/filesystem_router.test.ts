@@ -1,7 +1,8 @@
 import { FileSystemRouter } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import os from "os";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -1098,3 +1099,335 @@ it("an absolute dir with '..' in it names routes like its normalized spelling", 
     exitCode: 0,
   });
 });
+
+// The directory-entry cache is process-global and keyed by path. Each case
+// builds its own tree, so what one case makes the resolver cache cannot reach
+// another.
+describe("a route's path does not depend on what the resolver cached first", () => {
+  const primers: Record<string, (pages: string, files: string[]) => void | Promise<unknown>> = {
+    "nothing": () => {},
+    "Bun.resolveSync": (pages, files) => {
+      for (const file of files) Bun.resolveSync(path.join(pages, file), pages);
+    },
+    "Bun.build": (pages, files) =>
+      Bun.build({ entrypoints: files.map(file => path.join(pages, file)), target: "bun", throw: false }),
+  };
+
+  it.each(Object.keys(primers))("routes dir reached through a symlink, after %s", async primer => {
+    using dir = tempDir("fsr-symlinked-dir", {
+      "real/pages/index.tsx": "export default 0;\n",
+      "real/pages/a.tsx": "export default 1;\n",
+      "real/pages/sub/d.tsx": "export default 2;\n",
+      "shared/e.tsx": "export default 3;\n",
+      "other/x.tsx": "export default 4;\n",
+    });
+    const root = String(dir).replaceAll("\\", "/");
+    fs.symlinkSync(path.join(root, "real"), path.join(root, "link"), "junction");
+    fs.symlinkSync(path.join(root, "other"), path.join(root, "real", "pages", "linked"), "junction");
+    fs.symlinkSync(path.join(root, "shared", "e.tsx"), path.join(root, "real", "pages", "c.tsx"), "file");
+    const pages = path.join(root, "link", "pages");
+    const files = ["index.tsx", "a.tsx", "c.tsx", "sub/d.tsx", "linked/x.tsx"];
+
+    await primers[primer](pages, files);
+    const router = new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+
+    const routes = {
+      "/": `${root}/real/pages/index.tsx`,
+      "/a": `${root}/real/pages/a.tsx`,
+      "/c": `${root}/shared/e.tsx`,
+      "/sub/d": `${root}/real/pages/sub/d.tsx`,
+      "/linked/x": `${root}/other/x.tsx`,
+    };
+    expect({
+      routes: router.routes,
+      a: { filePath: router.match("/a")!.filePath, src: router.match("/a")!.src },
+      d: { filePath: router.match("/sub/d")!.filePath, src: router.match("/sub/d")!.src },
+      // The resolver loads each route file under the path the router reports.
+      resolved: files.map(file => Bun.resolveSync(path.join(pages, file), pages).replaceAll("\\", "/")),
+    }).toEqual({
+      routes,
+      a: { filePath: routes["/a"], src: "a.tsx" },
+      d: { filePath: routes["/sub/d"], src: "sub/d.tsx" },
+      resolved: Object.values(routes),
+    });
+  });
+
+  it.each(Object.keys(primers))(
+    "a symlinked file and a symlinked subdirectory in a plain routes dir, after %s and across reload()",
+    async primer => {
+      using dir = tempDir("fsr-links-below-root", {
+        "pages/a.tsx": "export default 1;\n",
+        "shared/e.tsx": "export default 2;\n",
+        "other/x.tsx": "export default 3;\n",
+      });
+      const root = String(dir).replaceAll("\\", "/");
+      const pages = path.join(root, "pages");
+      fs.symlinkSync(path.join(root, "shared", "e.tsx"), path.join(pages, "c.tsx"), "file");
+      fs.symlinkSync(path.join(root, "other"), path.join(pages, "linked"), "junction");
+
+      await primers[primer](pages, ["a.tsx", "c.tsx", "linked/x.tsx"]);
+      const router = new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+      const read = () => ({ routes: router.routes, src: router.match("/a")!.src });
+      const first = read();
+      router.reload();
+
+      const expected = {
+        routes: {
+          "/a": `${root}/pages/a.tsx`,
+          "/c": `${root}/shared/e.tsx`,
+          "/linked/x": `${root}/other/x.tsx`,
+        },
+        src: "a.tsx",
+      };
+      expect({ first, afterReload: read() }).toEqual({ first: expected, afterReload: expected });
+    },
+  );
+
+  it("no symlink, after an import that spells the file name in another letter case", () => {
+    using dir = tempDir("fsr-case-import", {
+      "pages/a.tsx": "export default 1;\n",
+      "pages/b.tsx": "export default 2;\n",
+    });
+    const root = String(dir).replaceAll("\\", "/");
+    const pages = path.join(root, "pages");
+
+    // The resolver finds `b.tsx` for `B` (its directory lookup ignores case) and
+    // caches the spelling of the import. A file system that tells `B.tsx` from
+    // `b.tsx` has no such file, so the resolve is allowed to fail.
+    try {
+      Bun.resolveSync(path.join(pages, "B"), pages);
+    } catch {}
+    const router = new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+    const first = router.routes;
+    router.reload();
+
+    const expected = {
+      "/a": `${root}/pages/a.tsx`,
+      "/b": `${root}/pages/b.tsx`,
+    };
+    expect({ first, afterReload: router.routes }).toEqual({ first: expected, afterReload: expected });
+  });
+});
+
+it("a router does not change which tsconfig.json the bundler applies to a route file", async () => {
+  // `proj/link` points outside `proj`. The bundler takes tsconfig.json from the
+  // directories above the path as imported (`proj/`), not from those above the
+  // real path, so the JSX import source below applies to the route file.
+  async function jsxImportSource(routerFirst: boolean) {
+    using dir = tempDir("fsr-tsconfig", {
+      "proj/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "custom-src" } }),
+      "elsewhere/real/pages/b.tsx": "export default <div />;\n",
+    });
+    const root = String(dir);
+    fs.symlinkSync(path.join(root, "elsewhere", "real"), path.join(root, "proj", "link"), "junction");
+    const pages = path.join(root, "proj", "link", "pages");
+
+    if (routerFirst) new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+    const build = await Bun.build({ entrypoints: [path.join(pages, "b.tsx")], target: "bun", external: ["*"] });
+    const output = await build.outputs[0].text();
+    return output.match(/from "([^"/]+)\/jsx/)?.[1];
+  }
+
+  expect({
+    buildOnly: await jsxImportSource(false),
+    routerFirst: await jsxImportSource(true),
+  }).toEqual({
+    buildOnly: "custom-src",
+    routerFirst: "custom-src",
+  });
+});
+
+// The symlinked file is compared with what the resolver returns in the same
+// process: whether --preserve-symlinks keeps a file's link is the resolver's rule.
+it.each(["the router", "Bun.resolveSync"])(
+  "with --preserve-symlinks a route's path is the one the resolver returns, %s first",
+  async first => {
+    using dir = tempDir("fsr-preserve-symlinks", {
+      "real/pages/a.tsx": "export default 1;\n",
+      "shared/e.tsx": "export default 2;\n",
+      "fixture.ts": /* ts */ `
+        import path from "path";
+        const pages = path.join(import.meta.dir, "link", "pages");
+        const resolve = () =>
+          ["a.tsx", "c.tsx"].map(file => Bun.resolveSync(path.join(pages, file), pages).replaceAll("\\\\", "/"));
+        const before = process.argv[2] === "Bun.resolveSync" ? resolve() : undefined;
+        const router = new Bun.FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+        const read = () => ({ routes: router.routes, src: router.match("/a")!.src });
+        const constructed = read();
+        router.reload();
+        console.log(JSON.stringify({ constructed, reloaded: read(), resolved: before ?? resolve() }));
+      `,
+    });
+    const root = String(dir).replaceAll("\\", "/");
+    fs.symlinkSync(path.join(root, "real"), path.join(root, "link"), "junction");
+    fs.symlinkSync(path.join(root, "shared", "e.tsx"), path.join(root, "real", "pages", "c.tsx"), "file");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preserve-symlinks", "fixture.ts", first],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { resolved = [], ...routers } = stdout ? JSON.parse(stdout) : {};
+
+    const linkA = `${root}/link/pages/a.tsx`;
+    expect([`${root}/shared/e.tsx`, `${root}/link/pages/c.tsx`]).toContain(resolved[1]);
+    const expected = { routes: { "/a": linkA, "/c": resolved[1] }, src: "a.tsx" };
+    expect({ ...routers, resolved, stderr, exitCode }).toEqual({
+      constructed: expected,
+      reloaded: expected,
+      resolved: [linkA, resolved[1]],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+it("a dangling symlink is a route, as the resolver resolves it to its own path", async () => {
+  using dir = tempDir("fsr-dangling-link", {
+    "pages/ok.tsx": "export default 1;\n",
+  });
+  const root = String(dir).replaceAll("\\", "/");
+  const pages = path.join(root, "pages");
+  fs.symlinkSync(path.join(root, "missing.tsx"), path.join(pages, "dead.tsx"), "file");
+
+  const router = new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+  const first = router.routes;
+  router.reload();
+
+  const expected = {
+    "/dead": `${root}/pages/dead.tsx`,
+    "/ok": `${root}/pages/ok.tsx`,
+  };
+  expect({
+    first,
+    afterReload: router.routes,
+    resolved: Bun.resolveSync(path.join(pages, "dead.tsx"), pages).replaceAll("\\", "/"),
+  }).toEqual({ first: expected, afterReload: expected, resolved: expected["/dead"] });
+  await expect(import(expected["/dead"])).rejects.toThrow("ENOENT");
+});
+
+// On Windows a backslash separates directories, so no file has one in its name.
+it.skipIf(isWindows)("a file name with a backslash is a route under its own path", () => {
+  using dir = tempDir("fsr-backslash-name", {
+    "pages/ok.tsx": "export default 1;\n",
+  });
+  const root = String(dir);
+  fs.writeFileSync(path.join(root, "pages", "a\\b.tsx"), "export default 2;\n");
+
+  const router = new FileSystemRouter({ dir: path.join(root, "pages"), style: "nextjs", fileExtensions: [".tsx"] });
+  expect(router.routes).toEqual({
+    "/a\\b": `${root}/pages/a\\b.tsx`,
+    "/ok": `${root}/pages/ok.tsx`,
+  });
+});
+
+it("a new router reads the directory listing the resolver cached, reload() reads the disk", () => {
+  using dir = tempDir("fsr-cached-listing", {
+    "pages/keep.tsx": "export default 1;\n",
+    "pages/gone.tsx": "export default 2;\n",
+  });
+  const pages = path.join(String(dir), "pages");
+
+  Bun.resolveSync(path.join(pages, "keep.tsx"), pages);
+  fs.rmSync(path.join(pages, "gone.tsx"));
+  fs.writeFileSync(path.join(pages, "new.tsx"), "export default 3;\n");
+
+  const router = new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+  const first = Object.keys(router.routes).sort();
+  router.reload();
+  expect({ first, afterReload: Object.keys(router.routes).sort() }).toEqual({
+    first: ["/gone", "/keep"],
+    afterReload: ["/keep", "/new"],
+  });
+});
+
+// Only a file system that ignores letter case lets `dir` name the directory in another case.
+const tmp = fs.realpathSync(os.tmpdir());
+const fileSystemIgnoresCase = fs.existsSync(tmp.toUpperCase()) && fs.existsSync(tmp.toLowerCase());
+it.skipIf(!fileSystemIgnoresCase)("filePath keeps the letter case of the dir option, like the resolver", () => {
+  using dir = tempDir("fsr-dir-case", {
+    "pages/a.tsx": "export default 1;\n",
+  });
+  const root = String(dir).replaceAll("\\", "/");
+  const pages = path.join(root, "PAGES");
+
+  const router = new FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+  expect({
+    routes: router.routes,
+    resolved: Bun.resolveSync(path.join(pages, "a.tsx"), pages).replaceAll("\\", "/"),
+  }).toEqual({
+    routes: { "/a": `${root}/PAGES/a.tsx` },
+    resolved: `${root}/PAGES/a.tsx`,
+  });
+});
+
+// A save by rename reaches the hot reloader as an event on the directory. It
+// used to find the watched module through the resolver's cached path of the
+// directory entry, which `reload()` clears and only refilled for route files.
+// Windows cannot rename over an open file and reports these changes on the
+// file, so it has no such event.
+it.skipIf(isWindows)(
+  "--hot reloads a module saved by rename after reload() re-read its directory",
+  async () => {
+    using dir = tempDir("fsr-hot-after-reload", {
+      "pages/a.tsx": `export default "a1";\n`,
+      "pages/helper.ts": `export default "h1";\n`,
+      "server.ts": /* ts */ `
+        import helper from "./pages/helper.ts";
+        const router = new Bun.FileSystemRouter({
+          dir: import.meta.dir + "/pages",
+          style: "nextjs",
+          fileExtensions: [".tsx"],
+        });
+        const route = (await import(router.match("/a")!.filePath)).default;
+        router.reload();
+        console.log(route, helper);
+      `,
+    });
+    const root = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "server.ts"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    // The next line that differs from `previous`: one save can reload twice.
+    async function lineAfter(previous: string | undefined) {
+      while (true) {
+        const newline = buffered.indexOf("\n");
+        if (newline !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (line !== previous) return line;
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`--hot exited after ${JSON.stringify(previous)}`);
+        buffered += decoder.decode(value, { stream: true });
+      }
+    }
+    function saveByRename(file: string, text: string) {
+      fs.writeFileSync(path.join(root, file + ".tmp"), text);
+      fs.renameSync(path.join(root, file + ".tmp"), path.join(root, file));
+    }
+
+    const first = await lineAfter(undefined);
+    saveByRename("pages/helper.ts", `export default "h2";\n`);
+    const second = await lineAfter(first);
+    saveByRename("pages/a.tsx", `export default "a2";\n`);
+    const third = await lineAfter(second);
+
+    expect([first, second, third]).toEqual(["a1 h1", "a1 h2", "a2 h2"]);
+  },
+  30_000,
+);

@@ -33,6 +33,7 @@ fn wyhash(input: &[u8]) -> u64 {
 // name the real `FileSystem` / `Entry` / `DirEntry` / `DirnameStore` types.
 use bun_resolver::DirInfo;
 use bun_resolver::DirInfoRef;
+use bun_resolver::RealPath;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::FileSystem;
 
@@ -579,9 +580,8 @@ impl<'a> RouteLoader<'a> {
             // SAFETY: no other live borrow of `*entry_ptr` here;
             // `resolver.fs_impl()` points at the process-global RealFS.
             let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
-            // SAFETY: shared read-only borrow for the match arms; the only
-            // subsequent mutation is via `Route::parse` which takes the raw
-            // pointer and reborrows internally.
+            // SAFETY: EntryStore-owned, valid for process lifetime; nothing
+            // below takes a `&mut` to it.
             let entry: &Fs::Entry = unsafe { &*entry_ptr };
             match kind {
                 Fs::EntryKind::Dir => {
@@ -622,18 +622,14 @@ impl<'a> RouteLoader<'a> {
                             // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                             let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
-                            // SAFETY: `entry_ptr` is EntryStore-owned (process
-                            // lifetime) with no other live `&mut` borrow here.
-                            let route = unsafe {
-                                Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                )
-                            };
+                            let route = Route::parse(
+                                entry,
+                                extname,
+                                &resolver.real_path_of(root_dir_info, entry),
+                                self.log,
+                                public_dir,
+                                self.route_dirname_len,
+                            );
                             if let Some(route) = route {
                                 self.append_route(route);
                             }
@@ -714,33 +710,15 @@ pub struct Route {
 impl Route {
     pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    /// # Safety
-    /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
-    /// other active `&mut` borrow for the duration of the call. `base_` and
-    /// `extname` may borrow `(*entry).base_`; see the NOTE below.
-    pub(crate) unsafe fn parse(
-        base_: &[u8],
+    pub(crate) fn parse(
+        entry: &Fs::Entry,
         extname: &[u8],
-        entry: *mut Fs::Entry,
+        real_path: &RealPath,
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry`
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
-        // SAFETY: caller passes an EntryStore-owned pointer valid for the
-        // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
-        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
-            b""
-        } else {
-            entry_abs_path
-        };
-
+        let base_ = entry.base();
         let base = &base_[0..base_.len() - extname.len()];
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
@@ -804,11 +782,38 @@ impl Route {
             let mut validation_result = pattern::ValidationResult::default();
             let is_index = name.is_empty();
 
+            let dirname_store = FileSystem::instance().dirname_store();
+            // The path the resolver loads this file under, so never `Entry.abs_path`.
+            let abs_path: &'static [u8] = if let &RealPath::Whole(path) = real_path {
+                #[cfg(windows)]
+                let path = dirname_store
+                    .append(bun_paths::resolve_path::platform_to_posix_buf(
+                        path,
+                        &mut bufs.normalized_abs_path_buf,
+                    ))
+                    .expect("unreachable");
+                path
+            } else {
+                let dir = if let &RealPath::Dir(dir) = real_path {
+                    dir
+                } else {
+                    entry.dir()
+                };
+                #[cfg(windows)]
+                let dir = bun_paths::resolve_path::platform_to_posix_buf(
+                    dir,
+                    &mut bufs.normalized_abs_path_buf,
+                );
+                let sep: &[u8] = if dir.ends_with(b"/") { b"" } else { b"/" };
+                dirname_store
+                    .append_parts(&[dir, sep, entry.base()])
+                    .expect("unreachable")
+            };
+
             let mut has_uppercase = false;
             // NOTE: reshaped for borrowck — both arms intern via DirnameStore
             // (process-lifetime arena → `&'static`), so the post-if bindings are
-            // 'static and the route_file_buf borrow is dropped before the
-            // abs-path block below needs it mutably.
+            // 'static.
             let (name, match_name): (&'static [u8], &'static [u8]) = if !name.is_empty() {
                 validation_result = match Pattern::validate(&name[1..], log) {
                     Some(v) => v,
@@ -828,9 +833,12 @@ impl Route {
                 // lifetime arena), so rebinding here drops the borrow on
                 // `route_file_buf` and avoids needing lifetime transmutes
                 // below.
-                let dirname_store = FileSystem::instance().dirname_store();
-                let public_path: &'static [u8] =
-                    dirname_store.append(public_path).expect("unreachable");
+                // The public path is the tail of the absolute path unless a symlink is below the routes directory.
+                let public_path: &'static [u8] = if abs_path.ends_with(public_path) {
+                    &abs_path[abs_path.len() - public_path.len()..]
+                } else {
+                    dirname_store.append(public_path).expect("unreachable")
+                };
                 let name: &'static [u8] = &public_path[name_offset..][0..name_len];
                 let match_name: &'static [u8] = if has_uppercase {
                     dirname_store
@@ -847,118 +855,12 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
-                // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
-                // becomes a scopeguard owning the Option<File>; `needs_close` is a
-                // Cell so the drop closure can read it while the body still mutates.
-                // The guard is inverted: when the fd belongs to the cache
-                // (`needs_close == false`), `into_raw()` so we do not close
-                // someone else's fd.
-                let needs_close = core::cell::Cell::new(true);
-                let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
-                    if !needs_close.get() {
-                        if let Some(f) = f {
-                            let _ = f.into_raw();
-                        }
-                    }
-                });
-
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
-                    *file = Some(bun_sys::File::from_fd(valid));
-                    needs_close.set(false);
-                } else {
-                    // SAFETY: see fn-level NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
-                    let parts = [entry_r.dir(), entry_r.base()];
-                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
-                    // Rebind so the later getFdPath error
-                    // message prints the computed path instead of `b""`.
-                    // SAFETY: lifetime-laundered raw view into route_file_buf
-                    // (same pattern as `public_path` above) so the buffer can
-                    // be reborrowed mutably for the NUL write / open below.
-                    abs_path_str =
-                        unsafe { core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len) };
-                    route_file_buf[abs_len] = 0;
-                    // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
-                    let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
-                    match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
-                        Ok(f) => {
-                            *file = Some(f);
-                        }
-                        Err(err) => {
-                            needs_close.set(false);
-                            log.add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "{} opening route: {}",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(&route_file_buf[..abs_len])
-                                ),
-                            );
-                            return None;
-                        }
-                    }
-                    FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
-                }
-
-                let fd = file.as_ref().unwrap().handle();
-                let _abs = match bun_sys::get_fd_path(fd, route_file_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} resolving route: {}",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(abs_path_str)
-                            ),
-                        );
-                        return None;
-                    }
-                };
-
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
-
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
-            }
-
-            #[cfg(windows)]
-            let abs_path: AbsPath = {
-                // Intern into DirnameStore so the slice is genuinely `'static`
-                // and the `Interned` widen is sound on Windows.
-                let normalized = bun_paths::resolve_path::platform_to_posix_buf(
-                    abs_path_str,
-                    &mut bufs.normalized_abs_path_buf,
-                );
-                let interned: &'static [u8] = FileSystem::instance()
-                    .dirname_store()
-                    .append(normalized)
-                    .expect("unreachable");
-                Interned::from_static(interned)
-            };
-            #[cfg(not(windows))]
-            let abs_path = Interned::from_static(abs_path_str);
-
             #[cfg(all(debug_assertions, windows))]
             {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(abs_path, b'\\').is_some());
+                debug_assert!(!strings::index_of_char(entry.base(), b'\\').is_some());
             }
 
             Some(Route {
@@ -971,7 +873,7 @@ impl Route {
                 },
                 param_count: validation_result.param_count,
                 kind: validation_result.kind,
-                abs_path,
+                abs_path: Interned::from_static(abs_path),
                 has_uppercase,
             })
         })
@@ -1136,6 +1038,8 @@ pub trait ResolverLike {
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;
+    /// `Resolver::real_path_of`.
+    fn real_path_of(&self, dir: &DirInfo, entry: &Fs::Entry) -> RealPath;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

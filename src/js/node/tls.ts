@@ -331,6 +331,7 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -340,6 +341,7 @@ const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
+const ArrayPrototypeSort = Array.prototype.sort;
 
 const ObjectFreeze = Object.freeze;
 
@@ -717,6 +719,8 @@ var InternalSecureContext = class SecureContext {
 function SecureContext(options): void {
   return createSecureContext(options) as never;
 }
+SecureContext.prototype = InternalSecureContext.prototype;
+InternalSecureContext.prototype.constructor = SecureContext;
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
@@ -1703,7 +1707,9 @@ function onConnectStart() {
 }
 
 function getCiphers() {
-  return getDefaultCiphers().split(":");
+  const ciphers = ["tls_aes_128_gcm_sha256", "tls_aes_256_gcm_sha384", "tls_chacha20_poly1305_sha256"];
+  for (const name of getValidCiphersSet()) ArrayPrototypePush.$call(ciphers, StringPrototypeToLowerCase.$call(name));
+  return ArrayPrototypeSort.$call(ciphers);
 }
 
 // Convert protocols array into valid OpenSSL protocols list

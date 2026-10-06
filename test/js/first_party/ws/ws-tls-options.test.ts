@@ -4,12 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls as serverIdentity } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
-import type { TLSSocket } from "node:tls";
+import tls, { type TLSSocket } from "node:tls";
 import WebSocket, { WebSocketServer } from "ws";
 
 const isBun = !!process.versions.bun;
@@ -31,6 +32,33 @@ async function serve(options?: https.ServerOptions) {
     url: `wss://localhost:${(server.address() as AddressInfo).port}`,
     [Symbol.dispose]() {
       for (const client of wss.clients) client.terminate();
+      server.close();
+    },
+  };
+}
+
+/** Tells each client the protocol version and the cipher of its connection. */
+async function serveNegotiated(options?: tls.TlsOptions) {
+  const server = tls.createServer({ ...serverIdentity, ...options }, socket => {
+    let head = "";
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      const key = /sec-websocket-key: (.*)\r\n/i.exec(head)![1];
+      const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+      const message = `${socket.getProtocol()} ${socket.getCipher().name}`;
+      socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+      socket.write(Buffer.concat([Buffer.from([0x81, message.length]), Buffer.from(message)]));
+    });
+  });
+  server.on("tlsClientError", () => {});
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  return {
+    url: `wss://localhost:${(server.address() as AddressInfo).port}`,
+    [Symbol.dispose]() {
       server.close();
     },
   };
@@ -129,6 +157,35 @@ describe.concurrent("ws TLS options", () => {
       max12to13: await dial(tls13.url, { ca, maxVersion: "TLSv1.2" }),
       min13to13: await dial(tls13.url, { ca, minVersion: "TLSv1.3" }),
     }).toEqual({ min13to12: "refused", max12to12: anonymous, max12to13: "refused", min13to13: anonymous });
+  });
+
+  test("ciphers", async () => {
+    using server = await serveNegotiated();
+    using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    const version = (negotiated: string) => negotiated.split(" ")[0];
+    expect({
+      // BoringSSL has no list of TLS 1.3 suites to restrict, so only Node negotiates the one that is named.
+      only13: version(await dial(server.url, { ca, ciphers: "TLS_AES_256_GCM_SHA384" })),
+      only13Agent: version(
+        await dial(server.url, { agent: new https.Agent({ ca, ciphers: "TLS_AES_256_GCM_SHA384" }) }),
+      ),
+      only13To12: await dial(tls12.url, { ca, ciphers: "TLS_AES_256_GCM_SHA384" }),
+      only13Max12: await dial(server.url, { ca, ciphers: "TLS_AES_256_GCM_SHA384", maxVersion: "TLSv1.2" }),
+      mixed: version(await dial(server.url, { ca, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` })),
+      mixedTo12: await dial(tls12.url, { ca, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }),
+      only12: version(await dial(server.url, { ca, ciphers: aes256 })),
+      only12To12: await dial(tls12.url, { ca, ciphers: aes256 }),
+    }).toEqual({
+      only13: "TLSv1.3",
+      only13Agent: "TLSv1.3",
+      only13To12: "refused",
+      only13Max12: "refused",
+      mixed: "TLSv1.3",
+      mixedTo12: `TLSv1.2 ${aes256}`,
+      only12: "TLSv1.3",
+      only12To12: `TLSv1.2 ${aes256}`,
+    });
   });
 
   test("an option that tls.connect() rejects throws", () => {

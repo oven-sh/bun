@@ -14,6 +14,7 @@ const {
   secureProtocolToVersionRange,
   normalizePemKeyOption,
   processPfxOptions,
+  stripTls13CipherNames,
   validateSecureContextOptions,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
@@ -223,7 +224,6 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
-const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 
 const ObjectFreeze = Object.freeze;
@@ -1694,22 +1694,6 @@ function getCACertificates(type = "default") {
     default:
       throw $ERR_INVALID_ARG_VALUE("type", type);
   }
-}
-
-function tlsCipherFilter(a: string) {
-  return !StringPrototypeStartsWith.$call(a, "TLS_");
-}
-
-// Node's processCiphers splits into cipherList (<=1.2) and cipherSuites (1.3);
-// when only 1.3 suites were given it forces minVersion = TLSv1.3 so the empty
-// 1.2 list does not leave the handshake with nothing to offer:
-// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L117
-function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only: boolean } {
-  if (!StringPrototypeIncludes.$call(ciphers, "TLS_")) return { cipherList: ciphers, tls13Only: false };
-  const parts = StringPrototypeSplit.$call(ciphers, ":");
-  const kept = ArrayPrototypeFilter.$call(parts, tlsCipherFilter);
-  const cipherList = ArrayPrototypeJoin.$call(kept, ":");
-  return { cipherList, tls13Only: cipherList === "" && kept.length !== parts.length };
 }
 
 function getDefaultCiphers() {

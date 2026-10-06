@@ -506,8 +506,8 @@ mod visit_map {
             }
         }
 
-        pub(crate) fn get(&self, value: &JSValue) -> Option<&Expr> {
-            self.exprs.get(value)
+        pub(crate) fn get(&self, value: JSValue) -> Option<&Expr> {
+            self.exprs.get(&value)
         }
 
         pub(crate) fn get_or_put(
@@ -686,7 +686,7 @@ impl<'a> Run<'a> {
             T::Null => return Ok(Expr::init(E::Null {}, self.caller.loc)),
             T::Private => {
                 self.is_top_level = false;
-                if let Some(cached) = self.visited.get(&value) {
+                if let Some(cached) = self.visited.get(value) {
                     return Ok(*cached);
                 }
 
@@ -875,7 +875,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::Promise => {
-                if let Some(cached) = self.visited.get(&value) {
+                if let Some(cached) = self.visited.get(value) {
                     return Ok(*cached);
                 }
 

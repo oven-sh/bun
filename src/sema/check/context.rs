@@ -658,7 +658,7 @@ impl<'p, 's> Checker<'p, 's> {
                         context_flags,
                     )?;
                     let name = self.member_name(file, prop.key)?;
-                    return self.contextual_property_of_value(file, e, props, name);
+                    return self.contextual_property_of_value(file, e, props, name, None);
                 }
                 // The contextual type of a spread expression is that of the literal, unmodified: a
                 // type parameter stays a type parameter.
@@ -668,7 +668,16 @@ impl<'p, 's> Checker<'p, 's> {
                 let context = self.apparent_type_of_contextual_type(file, owner, context_flags)?;
                 match self.member_name(file, prop.key) {
                     Some(name) => {
-                        let found = self.contextual_property_of_value(file, e, context, name);
+                        // `nameType` of a symbol that is bound late: `[zero]` is a number.
+                        let name_type = match prop.key {
+                            PropKey::Computed(k) if is_entity_name_expression(hir, k) => {
+                                let key = self.type_of_expr(file, k);
+                                Some(self.regular(key))
+                            }
+                            _ => None,
+                        };
+                        let found =
+                            self.contextual_property_of_value(file, e, context, name, name_type);
                         // `hasBindableName`: `[(0)]` is neither a name nor bound late. Where no
                         // property has its name, it goes by its type, which is a number.
                         match prop.key {
@@ -803,28 +812,40 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         context: TypeId,
         name: Atom,
+        name_type: Option<TypeId>,
     ) -> Option<TypeId> {
         if !matches!(
             self.hir(file)[e].kind,
             ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_)
         ) || !self.contextual_binding_patterns.is_empty()
         {
-            return self.contextual_property(context, name);
+            return self.contextual_property_ex(context, name, name_type);
         }
-        if let Some(&found) = self.contextual_properties.get(&(context, name)) {
+        let key = (context, name, name_type);
+        if let Some(&found) = self.contextual_properties.get(&key) {
             return found;
         }
         let before = self.non_cacheable_mark();
-        let found = self.contextual_property(context, name);
+        let found = self.contextual_property_ex(context, name, name_type);
         if self.is_cacheable_since(before) {
-            self.contextual_properties.insert((context, name), found);
+            self.contextual_properties.insert(key, found);
         }
         found
     }
 
-    /// `getTypeOfPropertyOfContextualType`: the type of the property `name` in each member of
-    /// `context`.
+    /// `getTypeOfPropertyOfContextualType`
     pub(super) fn contextual_property(&mut self, context: TypeId, name: Atom) -> Option<TypeId> {
+        self.contextual_property_ex(context, name, None)
+    }
+
+    /// `getTypeOfPropertyOfContextualTypeEx`: the type of the property `name` in each member of
+    /// `context`. `name_type`: what an index signature is looked for with, if not the name.
+    fn contextual_property_ex(
+        &mut self,
+        context: TypeId,
+        name: Atom,
+        name_type: Option<TypeId>,
+    ) -> Option<TypeId> {
         if self.is_any(context) {
             return None;
         }
@@ -841,7 +862,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.apparent_type(written)
             };
             if self.is_union(part) {
-                if let Some(t) = self.contextual_property(part, name) {
+                if let Some(t) = self.contextual_property_ex(part, name, name_type) {
                     types.push(t);
                 }
                 continue;
@@ -850,15 +871,20 @@ impl<'p, 's> Checker<'p, 's> {
             // parameter.
             let this = self.is_deferred(written).then_some(written);
             let found = if self.is_intersection(part) {
-                self.contextual_property_of_intersection(part, this.unwrap_or(part), name)
+                self.contextual_property_of_intersection(
+                    part,
+                    this.unwrap_or(part),
+                    name,
+                    name_type,
+                )
             } else if !self.is_object_type(part) {
                 None
             } else if self.is_generic_mapped_without_remapping(part) {
-                self.contextual_property_of_generic_mapped(part, name)
+                self.contextual_property_of_generic_mapped(part, name, name_type)
             } else {
                 match self.concrete_contextual_property(part, name, this) {
                     Some(declared) => Some(declared),
-                    None => self.contextual_type_from_index_infos(part, name),
+                    None => self.contextual_type_from_index_infos(part, name, name_type),
                 }
             };
             if let Some(t) = found {
@@ -880,6 +906,7 @@ impl<'p, 's> Checker<'p, 's> {
         whole: TypeId,
         this: TypeId,
         name: Atom,
+        name_type: Option<TypeId>,
     ) -> Option<TypeId> {
         let TypeData::Intersection(members) = self.data(whole) else {
             return None;
@@ -898,7 +925,7 @@ impl<'p, 's> Checker<'p, 's> {
             return if distributed == whole {
                 None
             } else {
-                self.contextual_property(distributed, name)
+                self.contextual_property_ex(distributed, name, name_type)
             };
         }
         // `appendContextualPropertyTypeConstituent`: `any` carries no information, and must not
@@ -918,7 +945,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A generic mapped type contributes no index signatures.
             if self.is_generic_mapped_without_remapping(m) {
-                let property = self.contextual_property_of_generic_mapped(m, name);
+                let property = self.contextual_property_of_generic_mapped(m, name, name_type);
                 found.extend(property.map(|t| reported(self, t)));
                 continue;
             }
@@ -933,7 +960,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for m in candidates {
-            let indexed = self.contextual_type_from_index_infos(m, name);
+            let indexed = self.contextual_type_from_index_infos(m, name, name_type);
             found.extend(indexed.map(|t| reported(self, t)));
         }
         match found[..] {
@@ -960,13 +987,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getIndexedMappedTypeSubstitutedTypeOfContextualType`: the property type a generic mapped
     /// type produces for the key `name`.
-    fn contextual_property_of_generic_mapped(&mut self, t: TypeId, name: Atom) -> Option<TypeId> {
-        // A symbol name represents that symbol.
-        let is_symbol = self.atoms().is_symbol_name(name);
-        let key = if is_symbol {
-            self.key_type_of_name(name)?
-        } else {
-            self.string_literal(name, false)
+    fn contextual_property_of_generic_mapped(
+        &mut self,
+        t: TypeId,
+        name: Atom,
+        name_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let key = match name_type {
+            Some(key) => key,
+            // A symbol name represents that symbol.
+            None if self.atoms().is_symbol_name(name) => self.key_type_of_name(name)?,
+            None => self.string_literal(name, false),
         };
         let keys = self.mapped_keys(t);
         if let Some(renamed) = self.mapped_name_type(t)
@@ -1047,7 +1078,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeFromIndexInfosOfContextualType`
-    fn contextual_type_from_index_infos(&mut self, part: TypeId, name: Atom) -> Option<TypeId> {
+    fn contextual_type_from_index_infos(
+        &mut self,
+        part: TypeId,
+        name: Atom,
+        name_type: Option<TypeId>,
+    ) -> Option<TypeId> {
         // An index past the fixed prefix of a tuple falls in the part covered by its rest element.
         if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
@@ -1060,14 +1096,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let members = self.members(part)?;
-        // A symbol name uses the index signature for symbols.
-        if self.atoms().is_symbol_name(name) {
-            self.applicable_index_info(&members, TypeId::SYMBOL)
-                .map(|info| info.value)
-        } else {
-            self.applicable_index_info_for_name(&members, name)
-                .map(|info| info.value)
-        }
+        let info = match name_type {
+            Some(key) => self.applicable_index_info(&members, key),
+            // A symbol name uses the index signature for symbols.
+            None if self.atoms().is_symbol_name(name) => {
+                self.applicable_index_info(&members, TypeId::SYMBOL)
+            }
+            None => self.applicable_index_info_for_name(&members, name),
+        };
+        Some(info?.value)
     }
 
     /// `getApplicableIndexInfo`, member by member, for a name of which only the type `key` is known.

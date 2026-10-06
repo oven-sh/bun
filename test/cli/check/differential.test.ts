@@ -586,6 +586,7 @@ const indexDeclarations = [
   "declare const u: unique symbol; declare const str: string; declare const num: number; declare const sym: symbol;",
   "declare const tpl: `a${string}`; declare const nstr: `${number}`;",
   "declare const bstr: string & {}; declare const bnum: number & {}; declare const bsym: symbol & {};",
+  `declare const zero: 0; declare const szero: "0"; declare enum E { A = 0 }`,
 ];
 const indexedBy = [
   "0",
@@ -637,6 +638,11 @@ const literalNames = [
   `["a"]`,
   "[(0)]",
   "[0n]",
+  // Bound late: the name is that of the value, and its type is the type of the expression.
+  "[zero]",
+  "[szero]",
+  "[E.A]",
+  "[u]",
 ];
 const destructurings = [
   "const { L: v } = s; const n: never = v;",
@@ -695,14 +701,9 @@ const indexAccesses = [
   ...[...product(indexKeys, literalNames, destructurings)].map(
     ([key, name, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use.replace(/\bL\b/g, () => name)} }`,
   ),
-  // In these messages `bun check` has `0.5` for the name `.5`.
-  ...[
-    ...product(
-      indexKeys,
-      literalNames.filter(name => name !== ".5"),
-      literalsWithNames,
-    ),
-  ].map(([key, name, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use.replace(/\bL\b/g, () => name)} }`),
+  ...[...product(indexKeys, literalNames, literalsWithNames)].map(
+    ([key, name, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use.replace(/\bL\b/g, () => name)} }`,
+  ),
 ];
 const indexRelations = [
   ...[...product(indexSources, indexKeys)].flatMap(([source, key]) => [

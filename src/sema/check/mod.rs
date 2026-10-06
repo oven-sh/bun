@@ -1278,7 +1278,7 @@ pub struct Checker<'p, 's> {
     /// literal and a union, where it is final.
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// See `contextual_property_of_value`.
-    contextual_properties: FxHashMap<(TypeId, Atom), Option<TypeId>>,
+    contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
     /// The next target to be related to is a member of an intersection.
     /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
     /// them only together with the entry of `calls`.

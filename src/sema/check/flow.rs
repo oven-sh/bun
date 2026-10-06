@@ -5939,16 +5939,20 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     return None;
                 }
+                // `getTypeOfDestructuredProperty`
                 let name = self.member_name(file, hir[prop].key)?;
                 let ty = self.assigned_type(file, owner)?;
                 if let Some(found) = self.type_of_property(ty, name) {
                     return Some(found);
                 }
-                let key = self.string_literal(name, false);
-                Some(
-                    self.indexed_access_if_any(ty, key, true)
-                        .unwrap_or(TypeId::ERROR),
-                )
+                let members = self.members_for_index_infos(ty)?;
+                let info = self.applicable_index_info_for_name(&members, name)?;
+                // `includeUndefinedInIndexSignature`
+                Some(if self.p.files.options.no_unchecked_indexed_access {
+                    self.with_missing(info.value)
+                } else {
+                    info.value
+                })
             }
             Parent::Stmt(left) => self.initial_type_of_for_head(file, left),
             _ => None,

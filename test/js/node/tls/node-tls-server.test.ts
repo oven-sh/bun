@@ -3633,3 +3633,104 @@ describe("key/cert arrays", () => {
     }
   });
 });
+
+// close() keeps the connections it accepted, and each selects its context when its ClientHello arrives.
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)", version => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent = (n: number) => ({ key: fixture(`agent${n}-key.pem`), cert: fixture(`agent${n}-cert.pem`) });
+
+  // `count` connections the server has accepted and that have not sent a TLS byte yet.
+  async function acceptRaw(server: Server, count: number) {
+    server.on("secureConnection", socket => socket.on("error", () => {}).end());
+    server.on("tlsClientError", () => {});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const accepted = Promise.withResolvers<void>();
+    let connections = 0;
+    server.on("connection", () => ++connections === count && accepted.resolve());
+    const raws = Array.from({ length: count }, () => net.connect(port, "127.0.0.1").on("error", () => {}));
+    await accepted.promise;
+    return raws;
+  }
+
+  // The CN of the certificate the server presents, or "no handshake".
+  function servedCN(socket: net.Socket, servername: string) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const options = { socket, servername, rejectUnauthorized: false, minVersion: version, maxVersion: version };
+    const client = connect(options, () => {
+      resolve((client.getPeerCertificate() as PeerCertificate).subject.CN);
+      client.destroy();
+    });
+    client.on("error", () => {});
+    client.on("close", () => resolve("no handshake"));
+    return promise;
+  }
+
+  // Bun only: in Node a user SNICallback replaces the addContext() entries, so this is agent2 there.
+  it("an SNICallback that is pending at close() and then selects nothing falls back to addContext()", async () => {
+    const pending = Promise.withResolvers<Function>();
+    const server: Server = createServer({ ...agent(2), SNICallback: (_, cb) => pending.resolve(cb) });
+    server.addContext("a.example", agent(3));
+    const [raw] = await acceptRaw(server, 1);
+    const served = servedCN(raw, "a.example");
+    const cb = await pending.promise;
+    server.close();
+    cb(null, null);
+    expect(await served).toBe("agent3");
+  });
+
+  it("close() from inside the SNICallback does not end it for the other connections", async () => {
+    let calls = 0;
+    const server: Server = createServer({
+      ...agent(2),
+      SNICallback(_, cb) {
+        calls++;
+        if (server.listening) server.close();
+        cb(null, tls.createSecureContext(agent(1)));
+      },
+    });
+    const raws = await acceptRaw(server, 3);
+    const served: string[] = [];
+    for (const raw of raws) served.push(await servedCN(raw, "a.example"));
+    expect({ served, calls }).toEqual({ served: ["agent1", "agent1", "agent1"], calls: 3 });
+  });
+
+  it("an accepted connection sees addContext() and keeps its default across setSecureContext()", async () => {
+    const server: Server = createServer(agent(2));
+    // Node looks names up only on connections accepted while the server had an entry.
+    server.addContext("early.example", agent(1));
+    const raws = await acceptRaw(server, 2);
+    server.addContext("late.example", agent(3));
+    server.setSecureContext(agent(1));
+    server.close();
+    expect(await Promise.all([servedCN(raws[0], "late.example"), servedCN(raws[1], "other.example")])).toEqual([
+      "agent3",
+      "agent2",
+    ]);
+  });
+
+  it("the names last as long as the connections, and no longer", async () => {
+    Bun.gc(true);
+    const before = sslCtxLiveCount();
+    // Nothing here outlives the call but the raw client sockets.
+    const raws = await (async () => {
+      const server: Server = createServer({ ...agent(2), sessionTimeout: 4001 });
+      for (let i = 0; i < 4; i++) {
+        server.addContext(`${i}.example`, tls.createSecureContext({ ...agent(1), sessionTimeout: 4002 + i }));
+      }
+      const raws = await acceptRaw(server, 4);
+      server.close();
+      return raws;
+    })();
+    Bun.gc(true);
+    expect(sslCtxLiveCount() - before).toBeGreaterThanOrEqual(5);
+    expect(await Promise.all(raws.map((raw, i) => servedCN(raw, `${i}.example`)))).toEqual(Array(4).fill("agent1"));
+    // Finalizers run on GC, so wait for the condition.
+    for (let i = 0; i < 100 && sslCtxLiveCount() > before; i++) {
+      Bun.gc(true);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
+  });
+});

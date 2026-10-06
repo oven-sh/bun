@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { tls as validCert } from "harness";
+import { bunEnv, bunExe, tempDir, tls as validCert } from "harness";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -238,5 +239,137 @@ describe("https.createServer forwards every TLS server option", () => {
   ])("throws on an invalid %s like tls.createServer", (name, value, code) => {
     expect(() => https.createServer({ ...validCert, [name]: value })).toThrow(expect.objectContaining({ code }));
     expect(() => https.createServer({ [name]: value })).toThrow(expect.objectContaining({ code }));
+  });
+});
+
+describe("server.blockList", () => {
+  type ServerWithBlockList = http.Server & { blockList?: net.BlockList };
+
+  function blockListOf(address: string) {
+    const blockList = new net.BlockList();
+    blockList.addAddress(address);
+    return blockList;
+  }
+
+  function get(mod: typeof http | typeof https, options: https.RequestOptions) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    mod
+      .get({ host: "127.0.0.1", agent: false, rejectUnauthorized: false, ...options }, res => {
+        let body = "";
+        res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
+      })
+      .on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+    return promise;
+  }
+
+  test.each<[string, (options: https.ServerOptions, listener: http.RequestListener) => ServerWithBlockList]>([
+    ["https.createServer()", (options, listener) => https.createServer(options, listener)],
+    ["new https.Server()", (options, listener) => new https.Server(options, listener)],
+  ])("%s closes a peer on options.blockList without an event", async (_label, construct) => {
+    const blockList = blockListOf("127.0.0.1");
+    const events: string[] = [];
+    await using server = construct({ ...validCert, blockList }, (_req, res) => {
+      events.push("request");
+      res.end("served");
+    });
+    for (const event of ["connection", "secureConnection", "drop"]) server.on(event, () => events.push(event));
+    expect(server.blockList).toBe(blockList);
+    const port = await listen(server);
+
+    expect(await get(https, { port })).toBe("ECONNRESET");
+    expect(events).toEqual([]);
+
+    server.blockList = blockListOf("10.0.0.1");
+    expect(await get(https, { port })).toBe("served");
+    expect(events).toEqual(["connection", "secureConnection", "request"]);
+  });
+
+  test("https.createServer() rejects a blockList that is not a net.BlockList, with or without a certificate", () => {
+    const blockList = { check: () => true } as any;
+    const error = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => https.createServer({ ...validCert, blockList })).toThrow(error);
+    expect(() => https.createServer({ blockList })).toThrow(error);
+  });
+
+  test("http.Server ignores the option and enforces an assigned list on the next connection", async () => {
+    let requests = 0;
+    function listener(_req: http.IncomingMessage, res: http.ServerResponse) {
+      requests++;
+      res.end("served");
+    }
+    await using server: ServerWithBlockList = http.createServer(
+      { blockList: blockListOf("127.0.0.1") } as any,
+      listener,
+    );
+    expect(server.blockList).toBeUndefined();
+    const port = await listen(server);
+    expect(await get(http, { port })).toBe("served");
+
+    server.blockList = blockListOf("127.0.0.1");
+    expect(await get(http, { port })).toBe("ECONNRESET");
+    expect(requests).toBe(1);
+
+    server.blockList = undefined;
+    expect(await get(http, { port })).toBe("served");
+
+    // A unix socket peer has no address to check.
+    using dir = tempDir("http-blocklist", {});
+    const socketPath = join(String(dir), "server.sock");
+    await using unix: ServerWithBlockList = http.createServer(listener);
+    unix.blockList = blockListOf("127.0.0.1");
+    await once(unix.listen(socketPath), "listening");
+    expect(await get(http, { socketPath })).toBe("served");
+  });
+
+  test("matches an IPv4 rule against the IPv4-mapped peer of a dual-stack listener", async () => {
+    await using server: ServerWithBlockList = http.createServer((req, res) => res.end(req.socket.remoteAddress));
+    await once(server.listen(0, "::"), "listening");
+    const { port } = server.address() as AddressInfo;
+    expect(await get(http, { port })).toBe("::ffff:127.0.0.1");
+
+    server.blockList = blockListOf("127.0.0.1");
+    expect(await get(http, { port })).toBe("ECONNRESET");
+  });
+
+  // Node never serves the peer either, but leaks the accepted handle instead of closing it.
+  test.skipIf(!process.versions.bun)("closes the connection when check() throws", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `
+        const errors = [];
+        process.on("uncaughtException", err => errors.push(err.message));
+        async function run(name, options) {
+          const mod = require(name);
+          let requests = 0;
+          const server = mod.createServer(options, (req, res) => { requests++; res.end("served"); });
+          server.blockList = { check() { throw new Error(name + " check failed"); } };
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          const outcome = await new Promise(resolve =>
+            mod.get({ host: "127.0.0.1", port: server.address().port, agent: false, rejectUnauthorized: false }, res => resolve(res.statusCode))
+              .on("error", err => resolve(err.code)));
+          server.close();
+          return { outcome, requests };
+        }
+        (async () => {
+          const results = [await run("node:http", {}), await run("node:https", JSON.parse(process.env.TEST_TLS))];
+          console.log(JSON.stringify({ results, errors }));
+        })();
+        `,
+      ],
+      { env: { ...bunEnv, TEST_TLS: JSON.stringify(validCert) }, stdio: ["ignore", "pipe", "inherit"] },
+    );
+    let stdout = "";
+    child.stdout.on("data", chunk => (stdout += chunk));
+    const [exitCode] = await once(child, "exit");
+    expect(JSON.parse(stdout)).toEqual({
+      results: [
+        { outcome: "ECONNRESET", requests: 0 },
+        { outcome: "ECONNRESET", requests: 0 },
+      ],
+      errors: ["node:http check failed", "node:https check failed"],
+    });
+    expect(exitCode).toBe(0);
   });
 });

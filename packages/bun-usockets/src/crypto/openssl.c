@@ -2427,43 +2427,19 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
   s = ssl_close_if_fatal(s);
   if (!s || ssl_gone(s)) return s;
-  {
-    /* Ciphertext from a partial batch flush goes out before anything else;
-     * while it is pending nothing new may be written for this socket. */
-    unsigned int spill_off_before = loop_ssl_data->ssl_spill_off;
-    loop_ssl_data->ssl_send_error = 0;
-    if (!ssl_drain_spill(loop_ssl_data, s)) {
-      /* A writable event that moves zero spill bytes after the peer's
-       * readable side has already ended means the peer is gone (send()
-       * hit EPIPE/ECONNRESET, folded to 0 by us_socket_raw_write) and
-       * this spill will never drain. Returning here would spin the
-       * re-armed writable poll on kqueue, since EPOLLERR is not delivered
-       * there. Mark the SSL fatal so us_internal_ssl_write returns 0 (the
-       * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
-       * nothing is buffered, then closes the connection on this dispatch)
-       * and dispatch directly, bypassing the is_shut_down gate below that
-       * ssl_fatal_error would otherwise trip. On the libuv backend zero
-       * progress does not prove death (a stale SEND completion can run
-       * after this loop turn refilled the buffer), so confirm with the
-       * kernel before declaring the spill undrainable. */
-      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before &&
-          us_socket_stalled_write_means_peer_gone(s)) {
-        ssl_release_spill(s->group->loop, s);
-        s->ssl_fatal_error = 1;
-        return ssl_close_if_fatal(us_dispatch_writable(s));
-      }
-      return s;
-    }
-    if (loop_ssl_data->ssl_send_error) return ssl_close_after_rejected_send(s, loop_ssl_data->ssl_send_error);
-    if (s->ssl_shutdown_after_spill) {
-      s->ssl_shutdown_after_spill = 0;
-      us_internal_ssl_shutdown(s);
-      if (ssl_gone(s)) return s;
-    }
-    if (s->ssl_close_after_spill) {
-      s->ssl_close_after_spill = 0;
-      return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
-    }
+  /* Ciphertext from a partial batch flush goes out before anything else;
+   * while it is pending nothing new may be written for this socket. */
+  loop_ssl_data->ssl_send_error = 0;
+  if (!ssl_drain_spill(loop_ssl_data, s)) return s;
+  if (loop_ssl_data->ssl_send_error) return ssl_close_after_rejected_send(s, loop_ssl_data->ssl_send_error);
+  if (s->ssl_shutdown_after_spill) {
+    s->ssl_shutdown_after_spill = 0;
+    us_internal_ssl_shutdown(s);
+    if (ssl_gone(s)) return s;
+  }
+  if (s->ssl_close_after_spill) {
+    s->ssl_close_after_spill = 0;
+    return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
   }
   ssl_update_handshake(s, 0);
   if (ssl_gone(s)) return s;

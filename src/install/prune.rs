@@ -102,8 +102,7 @@ impl Plan {
         }
     }
 
-    /// Takes a workspace folder out of the plan when it is the root `node_modules` under another path (the root is a
-    /// link into it, or both are one mount): it holds the root's packages. Only folders the plan touches are checked.
+    /// Takes out of the plan a workspace folder that is the root `node_modules` under another path: it holds the root's packages.
     fn spare_root_aliases(&mut self, quiet: bool) {
         let id = |st: sys::Stat| (st.st_dev as u64, st.st_ino as u64);
         let mut root: Option<Option<(u64, u64)>> = None;
@@ -1590,8 +1589,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
     Some(join(path, b"node_modules"))
 }
 
-/// The one way to open a workspace's `node_modules`. A link there leads into a folder the workspace does not own,
-/// the root's or one outside the project: it is not opened, and `linked_folders` gets its path.
+/// The one way to open a workspace's `node_modules`. It does not open a link: `linked_folders` gets the path.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
     let is_link = || {
         sys::lstat(ZStr::from_slice_with_nul(&zname(folder)))

@@ -1,6 +1,7 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
+const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -300,6 +301,7 @@ interface Server extends NodeHTTPServer {
   httpValidation?: "strict" | "relaxed" | "insecure";
   requireHostHeader: boolean;
   httpAllowHalfOpen: boolean;
+  blockList?: import("node:net").BlockList;
 }
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -1274,6 +1276,25 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     socket.destroy();
     this.emit("drop", data);
     return;
+  }
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2338-L2346
+  const blockList = this.blockList;
+  if (blockList) {
+    const remoteAddress = socket.remoteAddress;
+    const addressType = isIP(remoteAddress);
+    if (addressType) {
+      let blocked = true;
+      try {
+        blocked = !!blockList.check(remoteAddress, `ipv${addressType}`);
+      } finally {
+        if (blocked) {
+          tracked?.delete(socket);
+          socket.destroy();
+        }
+      }
+      if (blocked) return;
+    }
   }
 
   // Node's connectionListener attaches the HTTPParser (socket.parser) before

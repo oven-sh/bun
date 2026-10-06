@@ -468,3 +468,8 @@ describe.each(readonlyRows)("describe.each", (...args) => {
 
 test.skip("only a label");
 describe.skip("only a label");
+// ...and `Parameters<>` still reads (label, fn, options?) for `skip` and `todo`
+expectType<Parameters<typeof test.skip>>(["label", () => {}, 1000]);
+expectType<Parameters<typeof test.todo>>(["label", () => {}]);
+expectType<Parameters<typeof describe.skip>>(["label", () => {}]);
+expectType<Parameters<typeof describe.todo>>(["label", () => {}]);

@@ -239,11 +239,11 @@ declare module "bun:test" {
     /**
      * Skips this group of tests.
      */
-    skip: Describe<T> & ((label: DescribeLabel) => void);
+    skip: ((label: DescribeLabel) => void) & Describe<T>;
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
-    todo: Describe<T> & ((label: DescribeLabel) => void);
+    todo: ((label: DescribeLabel) => void) & Describe<T>;
     /**
      * Marks this group of tests to be executed concurrently.
      */
@@ -521,7 +521,7 @@ declare module "bun:test" {
     /**
      * Skips this test.
      */
-    skip: Test<T> & ((label: string) => void);
+    skip: ((label: string) => void) & Test<T>;
     /**
      * Marks this test as to be written or to be fixed.
      *
@@ -529,7 +529,7 @@ declare module "bun:test" {
      * a `.todo` test that passes is marked as `fail` in the results: remove
      * the `.todo` or check that the test is implemented correctly.
      */
-    todo: Test<T> & ((label: string) => void);
+    todo: ((label: string) => void) & Test<T>;
     /**
      * Marks this test as failing.
      *

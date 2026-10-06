@@ -1499,9 +1499,7 @@ class ChildProcess extends EventEmitter {
           }
 
           const onExit = (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err);
-          // libuv runs a child's exit callback after the other I/O callbacks of the same poll, so 'exit' finds what the
-          // child wrote in its pipes: https://github.com/libuv/libuv/blob/v1.51.0/src/unix/linux.c#L1558-L1566
-          // Here the socket of an extra pipe (index >= 3) can get its turn after the exit. Let that poll finish first.
+          // After the other I/O of this poll, as libuv orders it: an extra pipe (index >= 3) then has what the child wrote.
           if (this.#hasExtraPipe()) setImmediate(onExit, exitCode, signalCode, err);
           else process.nextTick(onExit, exitCode, signalCode, err);
         },

@@ -1277,16 +1277,18 @@ test("a pooled HTTPS proxy tunnel does not keep the memory of a large request bo
 // into the kernel's buffers. release() reads again.
 async function startHoldingRelay(target: number, asProxy: boolean) {
   const clients: net.Socket[] = [];
-  const server = net.createServer(client => {
+  const server = net.createServer({ allowHalfOpen: true }, client => {
     clients.push(client);
-    const upstream = net.connect(target, "127.0.0.1");
+    const upstream = net.connect({ port: target, host: "127.0.0.1", allowHalfOpen: true });
     client.on("error", () => {});
     upstream.on("error", () => {});
     client.on("close", () => upstream.destroy());
     upstream.on("close", () => client.destroy());
     const relay = () => {
       client.on("data", chunk => upstream.write(chunk));
+      client.on("end", () => upstream.end());
       upstream.on("data", chunk => client.write(chunk));
+      upstream.on("end", () => client.end());
     };
     if (!asProxy) return relay();
     client.once("data", () => {
@@ -1297,6 +1299,7 @@ async function startHoldingRelay(target: number, asProxy: boolean) {
   await once(server.listen(0, "127.0.0.1"), "listening");
   return {
     port: (server.address() as net.AddressInfo).port,
+    connections: () => clients.length,
     hold: () => clients.forEach(client => client.pause()),
     release: () => clients.forEach(client => client.resume()),
     [Symbol.dispose]() {
@@ -1305,6 +1308,10 @@ async function startHoldingRelay(target: number, asProxy: boolean) {
     },
   };
 }
+
+// A round trip through the HTTP thread. A write or a drain that was due for
+// another request has happened when it resolves.
+const throughHttpThread = async () => void (await (await fetch(httpServer.url)).arrayBuffer());
 
 test("a request body stream through an HTTPS proxy tunnel is held back where a direct one is", async () => {
   // The TLS engine of a tunnel sealed every byte it was given and counted it as
@@ -1321,10 +1328,6 @@ test("a request body stream through an HTTPS proxy tunnel is held back where a d
       return new Response();
     },
   });
-
-  // A round trip through the HTTP thread. A write or a drain that was due for
-  // another request has happened when it resolves.
-  const throughHttpThread = async () => void (await (await fetch(httpServer.url)).arrayBuffer());
 
   const chunk = new Uint8Array(64 * 1024).fill(97);
   // POSTs an endless body to `url`. The relay stops reading once the origin has
@@ -1389,6 +1392,184 @@ test("a request body stream through an HTTPS proxy tunnel is held back where a d
     limit,
   );
   expect(tunnelled).toBeLessThanOrEqual(limit);
+});
+
+test("an upload through an HTTPS proxy tunnel outlives its idle timeout while the proxy takes bytes", async () => {
+  // Every byte of the body was sealed and counted as sent at once, so the idle
+  // timer ran from that moment however long the proxy took to read the rest.
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      let received = 0;
+      for await (const chunk of req.body!) received += chunk.byteLength;
+      return new Response(String(received));
+    },
+  });
+  const MiB = 1024 * 1024;
+  // `timeout: 1000` fires 4 to 8 seconds after the last write. The proxy reads
+  // 2 MiB per second for 9.5 seconds. What follows is more than the kernel
+  // holds, so the client still writes when the proxy starts to read it at once.
+  const rate = 2 * MiB;
+  const paced = 19 * MiB;
+  const size = 32 * MiB;
+  const timers = new Set<ReturnType<typeof setInterval>>();
+  const clients = new Set<net.Socket>();
+  const proxy = net.createServer(client => {
+    clients.add(client);
+    const upstream = net.connect(origin.port, "127.0.0.1");
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+    upstream.on("close", () => client.destroy());
+    client.once("data", () => {
+      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      upstream.on("data", chunk => client.write(chunk));
+      const start = performance.now();
+      let read = 0;
+      const allowed = () => ((performance.now() - start) / 1000) * rate;
+      client.on("data", chunk => {
+        upstream.write(chunk);
+        read += chunk.length;
+        if (read < paced && read > allowed()) client.pause();
+      });
+      const timer = setInterval(() => {
+        if (read >= paced || read <= allowed()) client.resume();
+      }, 10);
+      timers.add(timer);
+      client.on("close", () => {
+        clearInterval(timer);
+        timers.delete(timer);
+        upstream.destroy();
+      });
+    });
+  });
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
+  try {
+    const post = (body: BodyInit) =>
+      fetch(origin.url, {
+        method: "POST",
+        body,
+        proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+        timeout: 1000,
+        tls: { rejectUnauthorized: false },
+      }).then(
+        res => res.text(),
+        e => e.name as string,
+      );
+    const chunk = new Uint8Array(64 * 1024).fill(97);
+    let pulled = 0;
+    const stream = new ReadableStream({
+      pull(controller) {
+        if (pulled === size) return controller.close();
+        controller.enqueue(chunk);
+        pulled += chunk.length;
+      },
+    });
+    expect(await Promise.all([post(Buffer.alloc(size, "a")), post(stream)])).toEqual([String(size), String(size)]);
+  } finally {
+    for (const timer of timers) clearInterval(timer);
+    for (const client of clients) client.destroy();
+    proxy.close();
+  }
+}, 30_000);
+
+test("an upgraded request through an HTTPS proxy tunnel sends its whole body before it ends its side", async () => {
+  // The origin answers 101, counts what follows until the client ends its
+  // side, and sends the count back.
+  const upgraded = Promise.withResolvers<void>();
+  const origin = tls.createServer({ ...tlsCert, allowHalfOpen: true }, socket => {
+    let head = "";
+    let received = -1;
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      if (received >= 0) return void (received += chunk.length);
+      head += chunk.toString("latin1");
+      const end = head.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      received = head.length - end - 4;
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: foo\r\nConnection: Upgrade\r\n\r\n");
+      upgraded.resolve();
+    });
+    socket.on("end", () => socket.end(String(received)));
+  });
+  await once(origin.listen(0, "127.0.0.1"), "listening");
+  try {
+    const originPort = (origin.address() as net.AddressInfo).port;
+    using proxy = await startHoldingRelay(originPort, true);
+    const chunk = new Uint8Array(64 * 1024).fill(97);
+    // More than the kernel holds for a proxy that does not read.
+    const size = 32 * 1024 * 1024;
+    let pulled = 0;
+    const response = fetch(`https://127.0.0.1:${originPort}/`, {
+      proxy: `http://127.0.0.1:${proxy.port}`,
+      headers: { Upgrade: "foo", Connection: "Upgrade" },
+      tls: { rejectUnauthorized: false },
+      async *body() {
+        for (; pulled < size; pulled += chunk.length) yield chunk;
+      },
+    } as RequestInit);
+    response.catch(() => {});
+    await Promise.race([upgraded.promise, response]);
+    // The proxy reads nothing until the body stops: at its end, or where the
+    // tunnel holds it back. Then the end of the body is in the client's hands.
+    proxy.hold();
+    let before: number;
+    do {
+      before = pulled;
+      await throughHttpThread();
+      await throughHttpThread();
+    } while (pulled !== before);
+    proxy.release();
+    const res = await response;
+    expect({ status: res.status, received: await res.text() }).toEqual({ status: 101, received: String(size) });
+  } finally {
+    origin.close();
+  }
+});
+
+test("an HTTPS proxy tunnel that still holds request bytes when the response ends is not reused", async () => {
+  // The origin answers a POST at its head, keeps the connection, and drops the body.
+  const answered = Promise.withResolvers<void>();
+  const origin = tls.createServer(tlsCert, socket => {
+    let head = "";
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      if (head.includes("\r\n\r\n")) return;
+      head += chunk.toString("latin1");
+      if (!head.includes("\r\n\r\n")) return;
+      if (head.startsWith("POST ")) {
+        socket.write("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n");
+        answered.resolve();
+      } else {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+      }
+    });
+  });
+  await once(origin.listen(0, "127.0.0.1"), "listening");
+  try {
+    const originPort = (origin.address() as net.AddressInfo).port;
+    using proxy = await startHoldingRelay(originPort, true);
+    const init = { proxy: `http://127.0.0.1:${proxy.port}`, tls: { rejectUnauthorized: false } };
+    const early = fetch(`https://127.0.0.1:${originPort}/`, {
+      ...init,
+      method: "POST",
+      body: Buffer.alloc(32 * 1024 * 1024, "a"),
+    });
+    early.catch(() => {});
+    // The proxy stops reading, so part of the body is still with the client when the 413 arrives.
+    await Promise.race([answered.promise, early]);
+    proxy.hold();
+    const first = await early;
+    await first.arrayBuffer();
+    const second = await fetch(`https://127.0.0.1:${originPort}/`, init);
+    expect({ first: first.status, second: await second.text(), connections: proxy.connections() }).toEqual({
+      first: 413,
+      second: "ok",
+      connections: 2,
+    });
+  } finally {
+    origin.close();
+  }
 });
 
 test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {

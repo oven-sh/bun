@@ -417,6 +417,140 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     }
   });
 
+  // "direct" is the reference: the same server behind a relay that is not a proxy.
+  test.each(["direct", "http"])(
+    "a close() that waits behind queued messages keeps its code when the connection is dropped (%s)",
+    async route => {
+      using server = Bun.serve({
+        port: 0,
+        tls: { key: tlsCerts.key, cert: tlsCerts.cert },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Expected WebSocket", { status: 400 });
+        },
+        websocket: { maxPayloadLength: 64 * 1024 * 1024, message() {} },
+      });
+      const relay =
+        route === "direct"
+          ? net.createServer(client => {
+              const target = net.connect(server.port, "127.0.0.1");
+              client.on("data", chunk => target.write(chunk));
+              target.on("data", chunk => client.write(chunk));
+              client.on("error", () => {});
+              target.on("error", () => {});
+              client.on("close", () => target.destroy());
+              target.on("close", () => client.destroy());
+            })
+          : createConnectProxy();
+      const clients: net.Socket[] = [];
+      relay.on("connection", client => clients.push(client));
+      const relayPort = await startProxy(relay);
+      try {
+        const ws =
+          route === "direct"
+            ? new WebSocket(`wss://127.0.0.1:${relayPort}`, { tls: { rejectUnauthorized: false } })
+            : new WebSocket(`wss://127.0.0.1:${server.port}`, {
+                proxy: `http://127.0.0.1:${relayPort}`,
+                tls: { rejectUnauthorized: false },
+              });
+        const events = clientEvents(ws);
+        await once(ws, "open");
+        // The relay stops reading, so the first message backs up and the Close
+        // frame waits behind the second. Then the relay drops the connection.
+        clients[0].pause();
+        ws.send(Buffer.alloc(16 * 1024 * 1024, "a"));
+        ws.send(Buffer.alloc(1000, "b"));
+        ws.close(4321, "bye");
+        clients[0].destroy();
+        expect(await events).toEqual([{ code: 4321, reason: "bye", wasClean: true }]);
+      } finally {
+        relay.close();
+      }
+    },
+  );
+
+  // The WebSocket is attached to its tunnel after the open handler returns. A
+  // handler that sends and then spins the event loop lets the proxy socket
+  // become writable before that, with nothing attached for the event to wake.
+  test.each(["in the handler", "after the handler"])(
+    "frames sent from an open handler that spins the event loop arrive whole and in order, close() %s",
+    async closeWhen => {
+      const large = Buffer.alloc(16 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      const small = Buffer.alloc(1000, "b");
+      const received: (string | { length: number; intact: boolean })[] = [];
+      const smallArrived = Promise.withResolvers<void>();
+      const serverClosed = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        tls: { key: tlsCerts.key, cert: tlsCerts.cert },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Expected WebSocket", { status: 400 });
+        },
+        websocket: {
+          maxPayloadLength: 64 * 1024 * 1024,
+          message(_, message) {
+            const expected = message.length === large.length ? large : small;
+            received.push({ length: message.length, intact: expected.equals(message as Buffer) });
+            if (message.length === small.length) smallArrived.resolve();
+          },
+          ping() {
+            received.push("ping");
+          },
+          close(_, code) {
+            received.push(`close ${code}`);
+            smallArrived.resolve();
+            serverClosed.resolve();
+          },
+        },
+      });
+      const proxy = createConnectProxy();
+      let fromClient = 0;
+      proxy.on("connection", client => client.on("data", chunk => (fromClient += chunk.length)));
+      const proxyPort = await startProxy(proxy);
+      const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, {
+        proxy: `http://127.0.0.1:${proxyPort}`,
+        tls: { rejectUnauthorized: false },
+      });
+      try {
+        const events = clientEvents(ws);
+        // Resolves once the proxy has read nothing new from the client for ten
+        // turns of the event loop: what the socket took of the large message has
+        // arrived, and the socket has told the client that it can take more.
+        const quiet = Promise.withResolvers<void>();
+        const watch = (seen: number, turns: number) => {
+          if (fromClient !== seen) setImmediate(watch, fromClient, 0);
+          else if (turns === 10) quiet.resolve();
+          else setImmediate(watch, seen, turns + 1);
+        };
+        ws.onopen = () => {
+          ws.send(large);
+          setImmediate(watch, fromClient, 0);
+          expect(quiet.promise).resolves.toBeUndefined();
+          // The rest of the large message still waits. These go behind it.
+          ws.ping();
+          ws.send(small);
+          if (closeWhen === "in the handler") ws.close(1000);
+        };
+        await smallArrived.promise;
+        if (closeWhen === "after the handler") ws.close(1000);
+        await serverClosed.promise;
+        expect({ received, client: await events }).toEqual({
+          received: [
+            { length: large.length, intact: true },
+            "ping",
+            { length: small.length, intact: true },
+            "close 1000",
+          ],
+          client: [{ code: 1000, reason: "", wasClean: true }],
+        });
+      } finally {
+        ws.terminate();
+        proxy.close();
+      }
+    },
+  );
+
   test("server-initiated ping survives through TLS tunnel proxy", async () => {
     // Regression test: sendPong checked socket.isClosed() on the detached tcp
     // field instead of using hasTCP(). For wss:// through HTTP proxy, the

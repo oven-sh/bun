@@ -4303,11 +4303,15 @@ config:
         expect(parsed).toEqual([{ a: 1, c: 2 }, { y: 3 }, { valid: "data" }]);
       });
 
+      // Several times the depth that overflows the stack. A debug or ASAN build
+      // needs seconds to build the longer chain.
+      const overflowDepth = isDebug || isASAN ? 200_000 : 1_000_000;
+
       test("handles stack overflow protection", () => {
         // Create deeply nested structure approaching stack limit
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 1000000; i++) {
+        for (let i = 0; i < overflowDepth; i++) {
           current.next = {};
           current = current.next;
         }
@@ -4319,7 +4323,7 @@ config:
       test("stack overflow protection in the write pass", () => {
         let deep = {};
         let current = deep;
-        for (let i = 0; i < 1000000; i++) {
+        for (let i = 0; i < overflowDepth; i++) {
           current.next = {};
           current = current.next;
         }

@@ -11,6 +11,7 @@ const {
   checkShouldUseProxy,
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
+  isTlsSymbol,
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
@@ -514,12 +515,9 @@ Agent.prototype._evictSession = function _evictSession(key) {
 
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
-// Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
-// when neither ALPNProtocols nor ALPNCallback was given, and store the
-// normalized protocol list / callback on the server instance the way
-// tls.Server does (test-https-argument-of-creating.js).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
-function createServer(options, requestListener) {
+function Server(options, requestListener): void {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
   if (typeof options === "function") {
     requestListener = options;
     options = {};
@@ -534,13 +532,20 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  const server = http.createServer(options, requestListener);
+  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
   }
-  server.ALPNCallback = options.ALPNCallback;
-  return server;
+  this.ALPNCallback = options.ALPNCallback;
+  return this;
+}
+$toClass(Server, "Server", http.Server);
+// A listener of this class speaks TLS whatever its options hold.
+Server.prototype[isTlsSymbol] = true;
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
 }
 
 var https = {
@@ -551,7 +556,7 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
+  Server,
   createServer,
   get,
   request,

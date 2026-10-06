@@ -1980,11 +1980,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
-// node records every compared pair for its cycle check. The other modes record an entry only when it is a Set or a Map, because a cycle can run through such entries alone.
-static ALWAYS_INLINE bool entryJoinsCycleStack(bool checkPrototypes, JSValue left)
+// An entry that is a Set or a Map joins the cycle stack, because a cycle can run through such entries alone.
+static ALWAYS_INLINE bool entryJoinsCycleStack(JSValue left)
 {
-    if (checkPrototypes)
-        return true;
     if (!left.isCell())
         return false;
     uint8_t type = left.asCell()->type();
@@ -2045,7 +2043,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 if (key1.isPrimitive() && key2.isPrimitive()) {
                     continue;
                 }
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, entryJoinsCycleStack(checkPrototypes, key1));
+                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, entryJoinsCycleStack(key1));
                 RETURN_IF_EXCEPTION(scope, {});
                 if (equal) {
                     foundMatchingKey = true;
@@ -2083,7 +2081,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             JSValue value2 = mapValueOrEmpty(globalObject, map2, key1);
             RETURN_IF_EXCEPTION(scope, {});
             if (!value2.isEmpty()) {
-                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, entryJoinsCycleStack(checkPrototypes, value1));
+                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, entryJoinsCycleStack(value1));
                 RETURN_IF_EXCEPTION(scope, {});
                 if (valuesEqual) {
                     continue;
@@ -2104,12 +2102,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 if (key1 == key2 || (key1.isPrimitive() && key2.isPrimitive())) {
                     continue;
                 }
-                bool entryEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, entryJoinsCycleStack(checkPrototypes, key1));
+                bool entryEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, entryJoinsCycleStack(key1));
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!entryEqual) {
                     continue;
                 }
-                entryEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, entryJoinsCycleStack(checkPrototypes, value1));
+                entryEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, entryJoinsCycleStack(value1));
                 RETURN_IF_EXCEPTION(scope, {});
                 if (entryEqual) {
                     foundMatchingEntry = true;

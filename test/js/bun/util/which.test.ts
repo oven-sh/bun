@@ -304,8 +304,11 @@ test("a command, PATH entry or cwd with a NUL byte finds nothing", () => {
 test.skipIf(isWindows)("a PATH from a .env file with a NUL byte finds no command", async () => {
   using dir = tempDir("which-nul-dotenv", {
     "tool": "#!/bin/sh\necho ran-tool\n",
-    ".env": "PATH=tool\0\n",
+    "bin/other": "#!/bin/sh\necho ran-other\n",
+    ".env": "PATH=tool\0:bin\n",
     "which-fixture.js": `
+      import { join } from "node:path";
+
       let ranTool;
       try {
         ranTool = Bun.spawnSync(["zz"]).stdout.toString() === "ran-tool\\n";
@@ -313,10 +316,18 @@ test.skipIf(isWindows)("a PATH from a .env file with a NUL byte finds no command
         // The error of a command that is not found belongs to Bun.spawnSync.
         ranTool = false;
       }
-      console.log(JSON.stringify({ which: Bun.which("zz"), ranTool }));
+      console.log(
+        JSON.stringify({
+          which: Bun.which("zz"),
+          ranTool,
+          // The process has no other PATH, so this shows that the PATH of the .env file is the one in use.
+          findsLaterEntry: Bun.which("other") === join(process.cwd(), "bin", "other"),
+        }),
+      );
     `,
   });
   chmodSync(join(String(dir), "tool"), 0o755);
+  chmodSync(join(String(dir), "bin", "other"), 0o755);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "which-fixture.js"],
@@ -328,7 +339,7 @@ test.skipIf(isWindows)("a PATH from a .env file with a NUL byte finds no command
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: '{"which":null,"ranTool":false}\n',
+    stdout: '{"which":null,"ranTool":false,"findsLaterEntry":true}\n',
     stderr: "",
     exitCode: 0,
   });

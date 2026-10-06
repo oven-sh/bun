@@ -1643,7 +1643,7 @@ test.concurrent("a parked rewrite that dies with its handler promise does not re
 // native half. The pipe then used the freed stream (ASAN: heap-use-after-free
 // in ByteStream::on_data for the output, in ByteStream::detach_sink for the
 // input). Only ASAN builds observe the stale access, so release lanes skip it.
-test.skipIf(!isASAN).each([
+test.concurrent.skipIf(!isASAN).each([
   ["a string", "string"],
   ["another rewriter's finished output", "chain"],
   ["another rewriter's open output", "openChain"],
@@ -1652,8 +1652,12 @@ test.skipIf(!isASAN).each([
   async (_, input) => {
     using dir = tempDir("hr-abandon-freed-streams", {
       "abandon.js": /* js */ `
-        const N = 1000;
+        import { fullGC, heapStats } from "bun:jsc";
+        import { stat } from "node:fs/promises";
+
+        const N = 64;
         const html = "<div>x</div><div>y";
+        const encoder = new TextEncoder();
         const passThrough = () => new HTMLRewriter().on("div", { element() {} });
         const inputs = {
           string: () => new Response(html),
@@ -1663,39 +1667,55 @@ test.skipIf(!isASAN).each([
             let controller;
             const source = new ReadableStream({ start: c => void (controller = c) });
             const output = passThrough().transform(new Response(source));
-            controller.enqueue(new TextEncoder().encode(html));
+            controller.enqueue(encoder.encode(html));
             return output;
           },
         };
         const input = inputs[process.argv[2]];
-        const tick = () => new Promise(resolve => setImmediate(resolve));
         let parked = 0;
         const never = { element: () => (parked++, new Promise(() => {})) };
-        for (let i = 0; i < N; i++) {
-          // The output stream exists, nobody reads it, and nothing is kept.
-          new HTMLRewriter().on("div", never).transform(input()).body;
-          // Ordinary garbage, and no Bun.gc(true): that sweeps at once, so no dead cell waits for its sweep.
-          if (i % 20 === 19) new Array(20000).fill({});
-          if (i % 8 === 7) await tick();
-        }
-        for (let i = 0; i < 5; i++) await tick();
-        process.stdout.write(JSON.stringify({ rewrites: N, parked }));
+        const park = body => new HTMLRewriter().on("div", never).transform(body);
+
+        // Kept: a rewrite that has not parked yet, and a parked one whose output stream does not exist yet.
+        let controller;
+        const unparked = park(new Response(new ReadableStream({ start: c => void (controller = c) })));
+        const unread = park(new Response(html));
+
+        // Each of these parks, its output stream exists, and nothing keeps it.
+        for (let i = 0; i < N; i++) park(input()).body;
+        await new Promise(resolve => setImmediate(resolve));
+
+        // Go on from an event-loop task: the tasks queued below then run before any timer, and
+        // JavaScriptCore's incremental sweeper is a timer.
+        await stat(".");
+        // Collects. The dead cells wait for their sweep: an allocation sweeps those of its own type first.
+        fullGC();
+        // A new output stream: the dead ones free their native halves.
+        unread.body;
+        // A new promise context, when the pump parks this rewrite: the dead ones queue their abandon tasks.
+        controller.enqueue(encoder.encode("<div>"));
+        // Those tasks run now. No transform cell was allocated, so the dead ones are still unswept.
+        await stat(".");
+
+        process.stdout.write(JSON.stringify({ parked, alive: heapStats().objectTypeCounts.HTMLRewriterTransform }));
       `,
     });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "abandon.js", input],
-      env: bunEnv,
+      // A debug build takes longer to symbolize a report than the test may run.
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(withoutAsanWarning(stderr)).toBe("");
-    expect(stdout).toBe(JSON.stringify({ rewrites: 1000, parked: 1000 }));
+    expect(stdout).toMatch(/^\{"parked":66,"alive":\d+\}$/);
     expect(exitCode).toBe(0);
+    // The two kept rewrites are alive. The collection found the 64 others dead, or all but a few.
+    expect(JSON.parse(stdout).alive).toBeLessThan(8);
   },
-  30_000,
 );
 
 // The handler's promise is collected while script still holds the Response, so

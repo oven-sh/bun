@@ -1,7 +1,7 @@
 import cluster from "cluster";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, tls as cert1, isASAN, isDebug, isWindows, tempDir } from "harness";
 import http from "http";
 import http2 from "http2";
 import https from "https";
@@ -4073,6 +4073,63 @@ it("tls.DEFAULT_CIPHERS applies to every context built without a ciphers option"
     connect: "EPROTO",
     tlsTrue: [0xc02f],
     tls13Only: ["ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION", "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION"],
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", async () => {
+  using dir = tempDir("tls-default-ciphers", { "ca.pem": cert1.cert });
+  const script = `
+    import tls from "node:tls";
+    import { once } from "node:events";
+    const cert = ${JSON.stringify({ key: cert1.key, cert: cert1.cert })};
+    const AES128 = "ECDHE-RSA-AES128-GCM-SHA256", AES256 = "ECDHE-RSA-AES256-GCM-SHA384";
+
+    // Prefers AES128, as every client does until it is told otherwise.
+    let seen;
+    const server = tls.createServer({ ...cert, maxVersion: "TLSv1.2", ciphers: AES128 + ":" + AES256 }, socket => {
+      seen.resolve(socket.getCipher().name);
+      socket.on("error", () => {});
+      socket.once("data", () => socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"));
+    });
+    server.on("tlsClientError", error => seen.resolve(error.code));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address();
+    const url = "https://localhost:" + port + "/";
+
+    const clients = {
+      "fetch, rejectUnauthorized": () => fetch(url, { keepalive: false, tls: { rejectUnauthorized: false } }),
+      "fetch, ca": () => fetch(url, { keepalive: false, tls: { ca: cert.cert } }),
+      "WebSocket, rejectUnauthorized": () => void new WebSocket(url.replace("https", "wss"), { tls: { rejectUnauthorized: false } }),
+      "Bun.connect, tls: true": () => Bun.connect({ hostname: "localhost", port, tls: true, socket: { data() {}, error() {} } }),
+    };
+    const results = {};
+    for (const list of [undefined, AES256, "TLS_AES_128_GCM_SHA256"]) {
+      if (list) tls.DEFAULT_CIPHERS = list;
+      for (const [name, connect] of Object.entries(clients)) {
+        seen = Promise.withResolvers();
+        Promise.resolve(connect()).catch(() => {});
+        (results[name] ??= []).push(await seen.promise);
+      }
+    }
+    console.log(JSON.stringify(results));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Nothing assigned, a TLS 1.2 suite, TLS 1.3 suites only (which this TLS 1.2 server cannot serve).
+  const row = ["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "ERR_SSL_UNSUPPORTED_PROTOCOL"];
+  expect(JSON.parse(stdout)).toEqual({
+    "fetch, rejectUnauthorized": row,
+    "fetch, ca": row,
+    "WebSocket, rejectUnauthorized": row,
+    "Bun.connect, tls: true": row,
   });
   expect(exitCode).toBe(0);
 });

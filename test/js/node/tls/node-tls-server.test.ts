@@ -3872,3 +3872,75 @@ it("addContext() with a NUL in the name registers nothing under the part before 
     server.close();
   }
 });
+
+it("tls.DEFAULT_CIPHERS applies to every context built without a ciphers option", async () => {
+  // Without the Bun rows this script prints the same on Node.js v26.3.0.
+  const script = `
+    import tls from "node:tls";
+    import https from "node:https";
+    import net from "node:net";
+    import { once } from "node:events";
+    const cert = ${JSON.stringify({ key: cert1.key, cert: cert1.cert })};
+    const AES128 = "ECDHE-RSA-AES128-GCM-SHA256", AES256 = "ECDHE-RSA-AES256-GCM-SHA384";
+
+    function probe(port, ciphers) {
+      return new Promise(resolve => {
+        const c = tls.connect({ port, host: "127.0.0.1", ciphers, maxVersion: "TLSv1.2", rejectUnauthorized: false });
+        c.on("secureConnect", () => (resolve(c.getCipher().name), c.destroy()));
+        c.on("error", e => resolve(e.code.replace(/^ERR_SSL_(SSLV3|SSL\\/TLS)_/, "")));
+      });
+    }
+    const listen = async server => (await once(server.listen(0, "127.0.0.1"), "listening"), server.address().port);
+    const end = socket => socket.end("x");
+
+    const ports = { before: await listen(tls.createServer(cert, end)) };
+    tls.DEFAULT_CIPHERS = AES128;
+    ports.tls = await listen(tls.createServer(cert, end));
+    ports.https = await listen(https.createServer(cert, (req, res) => res.end("x")));
+    const injected = tls.createServer(cert, end);
+    ports.injected = await listen(net.createServer(raw => injected.emit("connection", raw)));
+    ports.explicit = await listen(tls.createServer({ ...cert, ciphers: AES256 }, end));
+    const results = {};
+    if (typeof Bun !== "undefined") {
+      ports.serve = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: cert, fetch: () => new Response("x") }).port;
+      ports.listen = Bun.listen({ port: 0, hostname: "127.0.0.1", tls: cert, socket: { data() {} } }).port;
+      results.connect = await new Promise(resolve =>
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: ports.explicit,
+          tls: { rejectUnauthorized: false, maxVersion: 0x0303 },
+          socket: {
+            handshake: (socket, success, error) => resolve(socket.getCipher().name ?? error.code),
+            close: () => resolve("closed"),
+            data() {},
+            error() {},
+          },
+        }),
+      );
+    }
+    for (const [name, port] of Object.entries(ports)) results[name] = [await probe(port, AES256), await probe(port, AES128)];
+
+    tls.DEFAULT_CIPHERS = "TLS_AES_128_GCM_SHA256";
+    const tls13Only = await listen(tls.createServer(cert, end));
+    results.tls13Only = [await probe(tls13Only, AES256), await probe(tls13Only, AES128)];
+    console.log(JSON.stringify(results));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const AES128 = "ECDHE-RSA-AES128-GCM-SHA256";
+  const AES256 = "ECDHE-RSA-AES256-GCM-SHA384";
+  expect(JSON.parse(stdout)).toEqual({
+    before: [AES256, AES128],
+    tls: ["ALERT_HANDSHAKE_FAILURE", AES128],
+    https: ["ALERT_HANDSHAKE_FAILURE", AES128],
+    injected: ["ALERT_HANDSHAKE_FAILURE", AES128],
+    explicit: [AES256, "ALERT_HANDSHAKE_FAILURE"],
+    serve: ["ALERT_HANDSHAKE_FAILURE", AES128],
+    listen: ["ALERT_HANDSHAKE_FAILURE", AES128],
+    connect: "EPROTO",
+    tls13Only: ["ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION", "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION"],
+  });
+  expect(exitCode).toBe(0);
+});

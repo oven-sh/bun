@@ -217,8 +217,6 @@ impl UpgradedDuplex {
         js_wrapper.ensure_still_alive();
 
         (self.handlers.on_close)(self.handlers.ctx);
-        // Left paused, a net.Socket transport never reads its peer's FIN and stays open.
-        self.call_origin("resume");
         // closes the underlying duplex
         self.call_write_or_end(None, false);
 

@@ -63,6 +63,54 @@ test("server.fetch rejects instead of throwing when the body cannot be converted
   await expect((server as any).fetch("/", { body: body as any })).rejects.toBe(error);
 });
 
+test("server.fetch hands the handler the method it is given", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: request => new Response(request.method),
+  });
+  const seen: Record<string, string> = {};
+  // DELETE, GET, HEAD, OPTIONS, POST and PUT are normalized from any case. Every
+  // other token is the method as written.
+  for (const method of ["Put", "pOsT", "PatCh", "Propfind", "BREW"]) {
+    seen[method] = await (await (server as any).fetch("/", { method })).text();
+  }
+  seen["Request"] = await (await server.fetch(new Request(server.url.href, { method: "BREW" }))).text();
+  expect(seen).toEqual({
+    Put: "PUT",
+    pOsT: "POST",
+    PatCh: "PatCh",
+    Propfind: "Propfind",
+    BREW: "BREW",
+    Request: "BREW",
+  });
+});
+
+test("server.fetch rejects a method that is not a token, and one that Fetch forbids", async () => {
+  let calls = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      calls++;
+      return new Response("Hello World!");
+    },
+  });
+  // Not an async function: a thrown error would leave this callback.
+  const errorOf = (method: string): Promise<unknown> =>
+    (server as any).fetch("/", { method }).then(
+      () => "no error",
+      (e: any) => ({ name: e.name, code: e.code, message: e.message }),
+    );
+  const notTokens = ["GET POST", " GET", "GET\r\nX-Injected: 1", "caf\u00e9"];
+  // "CONNECT" and "TRACE" are in the method table and stay accepted.
+  const forbidden = ["TRACK", "Trace", "Connect"];
+  const typeError = (message: string) => ({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE", message });
+  expect(await Promise.all([...notTokens, ...forbidden].map(errorOf))).toEqual([
+    ...notTokens.map(method => typeError(`${JSON.stringify(method)} is not a valid HTTP method.`)),
+    ...forbidden.map(method => typeError(`${JSON.stringify(method)} HTTP method is unsupported.`)),
+  ]);
+  expect(calls).toBe(0);
+});
+
 // server.fetch() returns an already-rejected promise for all of these. Like any
 // other rejected promise, it has to be reported when nothing handles it.
 describe.concurrent("server.fetch early rejections are tracked", () => {
@@ -107,6 +155,12 @@ describe.concurrent("server.fetch early rejections are tracked", () => {
       respond,
       `const body = []; Object.defineProperty(body, 0, { get() { throw new Error("body getter threw"); } }); server.fetch("/", { body })`,
       "body getter threw",
+    ],
+    [
+      "a method that is not a token",
+      respond,
+      `server.fetch("/", { method: "GET POST" })`,
+      '"GET POST" is not a valid HTTP method.',
     ],
   ])("%s is reported as an unhandled rejection", async (_, serveOptions, call, expected) => {
     const { stderr, exitCode } = await runChild(`

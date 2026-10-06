@@ -10,11 +10,11 @@ use bun_event_loop::{
     Task, Taskable,
 };
 use bun_http as http;
-use bun_http::Method;
 use bun_http::{
     AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers,
     Signals, ThreadSafeStreamBuffer,
 };
+use bun_http::{Method, MethodRef};
 use bun_io::KeepAlive;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -2771,7 +2771,8 @@ impl FetchTasklet {
 }
 
 pub(crate) struct FetchOptions {
-    pub method: Method,
+    /// A token points into `headers.buf`.
+    pub method: MethodRef,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
     /// For a `ReadableStream` body; `transfer_encoding` points into `headers.buf`.

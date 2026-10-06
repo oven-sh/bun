@@ -175,3 +175,152 @@ describe("RequestInit signal presence", () => {
     });
   });
 });
+
+// https://fetch.spec.whatwg.org/#dom-request: a method is any RFC 9110 token.
+describe("Request method", () => {
+  const url = "http://example.com/";
+
+  // https://fetch.spec.whatwg.org/#concept-method-normalize
+  test("DELETE, GET, HEAD, OPTIONS, POST and PUT are normalized from any case", () => {
+    const methods = ["Delete", "gEt", "hEaD", "oPtIoNs", "pOsT", "Put"];
+    expect(methods.map(method => new Request(url, { method }).method)).toEqual([
+      "DELETE",
+      "GET",
+      "HEAD",
+      "OPTIONS",
+      "POST",
+      "PUT",
+    ]);
+  });
+
+  const tokens = ["PatCh", "Propfind", "BREW", "LIST", "M-search", "!#$%&'*+-.^_`|~09AZaz"];
+
+  test.each(tokens)("every other token is the method as written: %p", method => {
+    const request = new Request(url, { method });
+    expect({
+      method: request.method,
+      again: request.method,
+      clone: request.clone().method,
+      cloneOfClone: request.clone().clone().method,
+      copy: new Request(request).method,
+      copyWithInit: new Request(request, { headers: { a: "b" } }).method,
+      asInit: new Request(url, request).method,
+      fromObject: new Request({ url, method } as any).method,
+      overDelete: new Request(new Request(url, { method: "DELETE" }), { method }).method,
+      replaced: new Request(request, { method: "Put" }).method,
+    }).toEqual({
+      method,
+      again: method,
+      clone: method,
+      cloneOfClone: method,
+      copy: method,
+      copyWithInit: method,
+      asInit: method,
+      fromObject: method,
+      overDelete: method,
+      replaced: "PUT",
+    });
+  });
+
+  // WebIDL converts the member to a string. `false` is what `cond && "POST"` gives.
+  test.each([
+    [false, "false"],
+    [0, "0"],
+    [NaN, "NaN"],
+    [0n, "0"],
+    [123, "123"],
+  ])("a method that is not a string is converted to one: %p", (method, expected) => {
+    expect(new Request(url, { method } as any).method).toBe(expected);
+  });
+
+  test("console.log shows a token", () => {
+    expect(Bun.inspect(new Request(url, { method: "BREW" }))).toContain('method: "BREW"');
+  });
+
+  test("a token outlives the Request it was cloned from", () => {
+    let request = new Request(url, { method: "BREW" });
+    for (let i = 0; i < 64; i++) {
+      request = i % 2 ? request.clone() : new Request(request);
+    }
+    Bun.gc(true);
+    expect(request.method).toBe("BREW");
+  });
+
+  const construct: [string, (method: any) => Request][] = [
+    ["new Request(url, { method })", method => new Request(url, { method })],
+    ["new Request(request, { method })", method => new Request(new Request(url, { method: "DELETE" }), { method })],
+    ["new Request({ url, method })", method => new Request({ url, method } as any)],
+  ];
+
+  const notTokens: [method: unknown, asString: string][] = [
+    ["GET POST", "GET POST"],
+    [" GET", " GET"],
+    ["GET ", "GET "],
+    ["GET\r\nX-Injected: 1", "GET\r\nX-Injected: 1"],
+    ["G\0T", "G\0T"],
+    ["caf\u00e9", "caf\u00e9"],
+    ["\u0100", "\u0100"],
+    ["(GET)", "(GET)"],
+    ["GET/1", "GET/1"],
+    [[], ""],
+    [{}, "[object Object]"],
+    [new String(""), ""],
+  ];
+
+  describe.each(construct)("%s", (_, construct) => {
+    test.each(notTokens)("throws a TypeError for a method that is not a token: %p", (method, asString) => {
+      expect(() => construct(method)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: `${JSON.stringify(asString)} is not a valid HTTP method.`,
+        }),
+      );
+    });
+
+    // https://fetch.spec.whatwg.org/#forbidden-method. Bun's table holds CONNECT
+    // and TRACE in all-upper and all-lower case. Those two spellings stay accepted.
+    test.each(["TRACK", "track", "tRaCk", "Trace", "Connect"])("throws a TypeError for %p", method => {
+      expect(() => construct(method)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: `${JSON.stringify(method)} HTTP method is unsupported.`,
+        }),
+      );
+    });
+  });
+
+  test("undefined, null and the empty string name no method", () => {
+    expect([undefined, null, ""].map(method => new Request(url, { method } as any).method)).toEqual([
+      "GET",
+      "GET",
+      "GET",
+    ]);
+  });
+
+  test("a method of the table keeps its treatment", () => {
+    // All-lower spellings are upper-cased, and CONNECT and TRACE are accepted.
+    const methods = ["patch", "propfind", "m-search", "CONNECT", "connect", "TRACE", "trace"];
+    expect(methods.map(method => new Request(url, { method }).method)).toEqual([
+      "PATCH",
+      "PROPFIND",
+      "M-SEARCH",
+      "CONNECT",
+      "CONNECT",
+      "TRACE",
+      "TRACE",
+    ]);
+  });
+
+  test("a Response does not give a Request a method", () => {
+    // A ResponseInit has no `method`. One with it must still construct.
+    const response = new Response("", { method: "POST" } as any);
+    const invalid = new Response("", { method: "GET POST" } as any);
+    expect({
+      response: new Request(url, response).method,
+      invalid: new Request(url, invalid).method,
+      fromRequest: new Request(url, new Response("", new Request(url, { method: "BREW" }) as any)).method,
+    }).toEqual({ response: "GET", invalid: "GET", fromRequest: "GET" });
+  });
+});

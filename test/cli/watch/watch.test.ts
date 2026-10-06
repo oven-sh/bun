@@ -30,6 +30,14 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
     },
     release: () => reader.releaseLock(),
     output: () => output,
+    // Everything the process wrote, once it has closed the stream.
+    end: async () => {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return output;
+        output += decoder.decode(value, { stream: true });
+      }
+    },
   };
 }
 
@@ -269,6 +277,66 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(exitCode).not.toBe(0);
 });
 
+// On Windows a --watch process does not replace itself. The first process
+// stays as a manager and starts the script in a child process, again after
+// every file change, from the path the manager was started from. Windows lets
+// a running executable be renamed, so by then that path can be gone or hold
+// another file (an upgrade in progress, a package manager or a version
+// manager that swapped it) and CreateProcessW fails. That is the state of the
+// machine, so it is reported as an error, not as a panic with a crash report.
+for (const [state, replacement, cause] of [
+  ["is gone", undefined, "ENOENT: No such file or directory"],
+  // ERROR_EXE_MACHINE_TYPE_MISMATCH: Windows takes a text file named .exe for a 16-bit program.
+  ["is not an executable any more", "not an executable", "Win32 error 216"],
+] as const) {
+  it.skipIf(!isWindows)(
+    `--watch reports an error when the executable it was started from ${state} at a restart`,
+    async () => {
+      // Not `using`: Windows can keep the renamed executable mapped for a
+      // moment after the manager exits, and a failed delete is not a failed test.
+      const dir = tempDir("watch-exe-gone", {
+        "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+      });
+      try {
+        // The copy sits outside the watched directory.
+        const exe = join(String(dir), basename(bunExe()));
+        copyFileSync(bunExe(), exe);
+        await using proc = spawn({
+          cmd: [exe, "--watch", "entry.js"],
+          cwd: join(String(dir), "app"),
+          env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const out = stdoutWaiter(proc);
+        await out.waitFor("iter first");
+
+        renameSync(exe, exe + ".renamed");
+        if (replacement !== undefined) await Bun.write(exe, replacement);
+        await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+        const [stdout, stderr, exitCode] = await Promise.all([out.end(), proc.stderr.text(), proc.exited]);
+        expect({
+          stdout,
+          stderr: stderr.replaceAll("\r\n", "\n"),
+          exitCode,
+          signalCode: proc.signalCode,
+        }).toEqual({
+          stdout: "iter first\n",
+          stderr: `error: Failed to reload "${exe}": ${cause} (CreateProcessW)\n`,
+          exitCode: 1,
+          signalCode: null,
+        });
+      } finally {
+        try {
+          rmSync(String(dir), { recursive: true, force: true });
+        } catch {}
+      }
+    },
+  );
+}
+
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload
 // to the JS thread first (so listeners can run), but forces the reload itself
@@ -404,56 +472,6 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
   expect(afterReload).toContain("iter second");
   expect(await stderr).toContain(clearScreen);
 }, 30000);
-
-// On Windows a --watch process does not replace itself. The first process
-// stays as a manager and starts the script in a child process, again after
-// every file change, from the path the manager was started from. Windows lets
-// a running executable be renamed, so that path can be gone by then (bun
-// uninstalled, an upgrade in progress, a version manager switched versions)
-// and CreateProcessW fails. That is the user's environment, so it is reported
-// as an error, not as a panic with a crash report.
-it.skipIf(!isWindows)(
-  "--watch reports an error when the executable it was started from is gone at a restart",
-  async () => {
-    // Not `using`: Windows can keep the renamed executable mapped for a moment
-    // after the manager exits, so a scoped delete races it.
-    const dir = tempDir("watch-exe-gone", {
-      "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
-    });
-    try {
-      // The copy sits outside the watched directory.
-      const exe = join(String(dir), basename(bunExe()));
-      copyFileSync(bunExe(), exe);
-      await using proc = spawn({
-        cmd: [exe, "--watch", "entry.js"],
-        cwd: join(String(dir), "app"),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "ignore",
-      });
-      const { waitFor, release } = stdoutWaiter(proc);
-      await waitFor("iter first");
-      release();
-
-      renameSync(exe, exe + ".renamed");
-      await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
-
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ stderr, exitCode }).toEqual({
-        stderr:
-          `error: Failed to reload "${exe}": ENOENT: No such file or directory (CreateProcessW)\n` +
-          `note: Run the command again to restart.\n`,
-        exitCode: 1,
-      });
-    } finally {
-      try {
-        rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-      } catch {}
-    }
-  },
-  30000,
-);
 
 // execve replaces the process without reaching on_exit(), so the compile
 // cache must be flushed explicitly on the reload path; otherwise

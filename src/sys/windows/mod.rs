@@ -1561,20 +1561,10 @@ pub fn become_watcher_manager() -> ! {
         ));
     }
 
+    let mut restarting = false;
     loop {
-        if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
-            bun_core::handle_error_return_trace(err);
-            if err == bun_errno::SystemErrno::EIO {
-                // This read is best-effort — Drop guards inside
-                // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops
-                // via HeapFree) may have clobbered the thread's last-error
-                // before we get here. A proper fix would thread the captured
-                // Win32 code through the error payload, which requires
-                // changing `spawn_watcher_child`'s return type.
-                let last = Win32Error::get();
-                bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
-            }
-            bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
+        if let Err(code) = spawn_watcher_child(&mut procinfo, job) {
+            watcher_spawn_failed(code, restarting);
         }
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
         // (by-value `HANDLE`/`DWORD` only); check `WAIT_FAILED` inline.
@@ -1601,6 +1591,7 @@ pub fn become_watcher_manager() -> ! {
 
         // magic exit code to indicate that the child process should be re-spawned
         if exit_code == WATCHER_RELOAD_EXIT {
+            restarting = true;
             continue;
         } else {
             bun_core::Global::exit(exit_code);
@@ -1608,10 +1599,34 @@ pub fn become_watcher_manager() -> ! {
     }
 }
 
+/// The executable can be renamed away or replaced while `--watch` runs: an error, not a bug.
+#[cold]
+fn watcher_spawn_failed(code: Win32Error, restarting: bool) -> ! {
+    struct Cause(Win32Error);
+    impl core::fmt::Display for Cause {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            let name = <&'static str>::from(self.0.to_system_errno());
+            match bun_core::coreutils_error_map::get_by_name(name) {
+                Some(label) => write!(f, "{name}: {label}"),
+                None => write!(f, "Win32 error {}", self.0.int()),
+            }
+        }
+    }
+    bun_core::err_generic!(
+        "Failed to {} \"<b>{}<r>\": {} <d>(CreateProcessW)<r>",
+        if restarting { "reload" } else { "start" },
+        bun_core::fmt::utf16(exe_path_w().as_slice()),
+        Cause(code),
+    );
+    bun_core::Output::flush();
+    bun_core::Global::exit(1)
+}
+
+/// `Err` is the `GetLastError()` of `CreateProcessW`.
 pub(crate) fn spawn_watcher_child(
     procinfo: &mut PROCESS_INFORMATION,
     job: HANDLE,
-) -> Result<(), bun_errno::SystemErrno> {
+) -> Result<(), Win32Error> {
     // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
     let mut attr_size: usize = 0;
     // SAFETY: query size with null buffer
@@ -1623,7 +1638,11 @@ pub(crate) fn spawn_watcher_child(
     if unsafe { externs::InitializeProcThreadAttributeList(p.as_mut_ptr(), 1, 0, &mut attr_size) }
         == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        let err = Win32Error::get();
+        bun_core::Output::panic(format_args!(
+            "Could not create watcher attribute list: {:?}",
+            err
+        ));
     }
     let mut job_local = job;
     // SAFETY: p initialized above; job_local valid for sizeof(HANDLE)
@@ -1639,7 +1658,11 @@ pub(crate) fn spawn_watcher_child(
         )
     } == 0
     {
-        return Err(bun_errno::SystemErrno::EIO);
+        let err = Win32Error::get();
+        bun_core::Output::panic(format_args!(
+            "Could not configure watcher attribute list: {:?}",
+            err
+        ));
     }
 
     // The win32 layer exposes these as DWORD constants — assemble the raw mask.
@@ -1735,7 +1758,7 @@ pub(crate) fn spawn_watcher_child(
         )
     };
     if rc == 0 {
-        return Err(bun_errno::SystemErrno::EIO);
+        return Err(Win32Error::get());
     }
     let mut is_in_job: BOOL = 0;
     let _ = kernel32_2::IsProcessInJob(procinfo.hProcess, job, &mut is_in_job);

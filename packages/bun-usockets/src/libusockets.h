@@ -389,6 +389,8 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * server that fails verification. Must run before the handshake is driven
  * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
 void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
+/* For an owner that refuses the peer in its handshake callback: drops the flight held across that callback. */
+void us_socket_release_held_flight(us_socket_r s) nonnull_fn_decl;
 /* Call it from on_open. A shutdown before the first handshake step sends its FIN after that step. */
 void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
 

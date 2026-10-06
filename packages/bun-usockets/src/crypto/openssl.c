@@ -555,17 +555,11 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     return length;
   }
 
-  if (loop_ssl_data->ssl_write_batching &&
-      loop_ssl_data->ssl_write_batch_len &&
-      loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket) {
-    /* The batch holds another socket's records (a JS callback in this
-     * dispatch wrote to a second TLS socket on the same loop while the
-     * first socket's flight was held). Deliver them to their owner first so
-     * each socket's records stay in order. */
-    ssl_flush_write_batch(loop_ssl_data, loop_ssl_data->ssl_write_batch_owner);
-  }
+  /* A JS callback wrote to this socket while another socket's flight is held. That flight stays: its owner can still refuse the peer. */
+  int batch_is_foreign = loop_ssl_data->ssl_write_batch_len &&
+                         loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket;
 
-  if (loop_ssl_data->ssl_write_batching && loop_ssl_data->ssl_spill_owner == NULL) {
+  if (loop_ssl_data->ssl_write_batching && !batch_is_foreign && loop_ssl_data->ssl_spill_owner == NULL) {
     /* Append the sealed record; the batch hits the kernel once, after
      * SSL_write returns. Reporting the full length keeps BoringSSL sealing
      * the next record instead of parking a partial one. Skipped while a
@@ -1220,6 +1214,16 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
   s->ssl_inline_reject = 1;
   SSL_set_verify(s_ssl(s), SSL_VERIFY_PEER, us_inline_reject_verify_callback);
+}
+
+/* node drops its pending output in destroy(): https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1310-L1331 */
+void us_socket_release_held_flight(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || !loop_ssl_data->ssl_write_batch_len || loop_ssl_data->ssl_write_batch_owner != s) return;
+  ssl_release_batch(s->group->loop, s);
+  /* The peer never gets our Finished, so it cannot read a close_notify. */
+  s->ssl_fatal_error = 1;
 }
 
 void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {

@@ -1047,6 +1047,37 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+describe.each([
+  ["entries", () => [tls, { serverName: "a.test", ...tls }]],
+  ["empty", () => []],
+  ["Proxy around an array", () => new Proxy([tls], {})],
+])("tls option is an array (%s)", (_label, makeTls) => {
+  const socket = { data() {}, open() {}, close() {} };
+  const message = "TLSOptions must be an object";
+
+  it("Bun.listen throws instead of starting a plaintext listener", () => {
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: makeTls() as any, socket })).toThrow(message);
+  });
+
+  it("Bun.connect throws instead of opening a plaintext connection", () => {
+    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
+  });
+
+  it("upgradeTLS throws", async () => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket });
+    const raw = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket });
+    try {
+      expect(() => raw.upgradeTLS({ tls: makeTls() as any, socket })).toThrow(message);
+    } finally {
+      raw.terminate();
+    }
+  });
+
+  it("fetch rejects", async () => {
+    expect(fetch("https://127.0.0.1:1/", { tls: makeTls() as any })).rejects.toThrow(message);
+  });
+});
+
 it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
   // Client-mode Handlers is heap-allocated per-connect and freed in
   // markInactive once the socket closes. `socket.listener` read

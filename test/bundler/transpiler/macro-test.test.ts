@@ -596,3 +596,102 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+// docs/bundler/macros.mdx, "Arguments": a macro argument may be a constant or the result of
+// another macro. The runtime transpiler and `--minify-syntax` inline constants, plain
+// `bun build` does not, so each mode takes a different path to the same answer.
+describe("constant arguments", () => {
+  const macroFile = `
+    export function id(x) { return x; }
+    export function getFoo() { return "foo"; }
+    export function getObj() { return { a: 1, b: "two" }; }
+  `;
+  const header = `import { id, getFoo, getObj } from "./m.ts" with { type: "macro" };\n`;
+
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const modes = [
+    { mode: "bun run", build: null },
+    { mode: "bun build", build: ["--target=bun"] },
+    { mode: "bun build --minify-syntax", build: ["--target=bun", "--minify-syntax"] },
+  ];
+
+  // Debug builds print "[macro] call id" to stdout, so only the last line is compared.
+  async function lastLineOf(entry: string, build: string[] | null) {
+    using dir = tempDir("macro-constant-arguments", { "m.ts": macroFile, "entry.ts": header + entry });
+    let file = "entry.ts";
+    if (build) {
+      const built = await bun(String(dir), "build", ...build, "entry.ts", "--outfile=out.js");
+      if (built.exitCode !== 0) return built;
+      file = "out.js";
+    }
+    const ran = await bun(String(dir), "run", file);
+    return { ...ran, stdout: ran.stdout.trimEnd().split("\n").at(-1) };
+  }
+
+  const accepted = `
+    const out = [];
+    const lead = 5;
+    out.push(id(lead));
+    const fromMacro = getFoo();
+    out.push(id(fromMacro));
+    const { a } = getObj();
+    out.push(id(a));
+    console.log("a statement");
+    const N = 5;
+    out.push(id(N), id(N + 1), id({ a: N, b: [N] }));
+    const foo = getFoo();
+    out.push(id(foo), id(\`https://example.com/\${foo}\`), id("a/" + foo));
+    const n = 42;
+    out.push(id(\`n=\${n}\`));
+    {
+      const M = 7;
+      out.push(id(N + M));
+    }
+    function inFunction() {
+      console.log("a statement");
+      const data = 40;
+      return id(data);
+    }
+    out.push(inFunction());
+    console.log(JSON.stringify(out));
+  `;
+
+  test.concurrent.each(modes)("$mode accepts a const in any statement position", async ({ build }) => {
+    expect(await lastLineOf(accepted, build)).toEqual({
+      stdout: JSON.stringify([
+        5,
+        "foo",
+        1,
+        5,
+        6,
+        { a: 5, b: [5] },
+        "foo",
+        "https://example.com/foo",
+        "a/foo",
+        "n=42",
+        12,
+        40,
+      ]),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  const rejected = [
+    { what: "a let binding", entry: `let N = 5; console.log(id(N));` },
+    { what: "a var binding", entry: `var N = 5; console.log(id(N));` },
+    { what: "a let binding that holds a macro result", entry: `let x = getFoo(); x = "bar"; console.log(id(x));` },
+  ];
+
+  test.concurrent.each(rejected)("bun build rejects $what", async ({ entry }) => {
+    expect(await lastLineOf(entry, ["--target=bun"])).toMatchObject({
+      stderr: expect.stringContaining('"Cannot convert identifier to JS. Try a statically-known value" error in macro'),
+      exitCode: 1,
+    });
+  });
+});

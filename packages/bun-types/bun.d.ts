@@ -6852,20 +6852,19 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Shuts down one half of the connection.
+     * With no argument, sends a FIN: the socket can still receive data but can no longer send it.
+     * With `true`, stops receiving data.
      * Calls the `shutdown(2)` syscall internally.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
      * socket.shutdown();
+     *
+     * // Stop receiving data
+     * socket.shutdown(true);
      * ```
      */
     shutdown(halfClose?: boolean): void;

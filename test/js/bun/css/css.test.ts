@@ -7805,7 +7805,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            background: background linear-gradient(#41001b, #da3671);
+            background: background linear-gradient(#42001b, #da3671);
             background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
           }
         `,
@@ -7837,7 +7837,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            background: linear-gradient(currentColor, #008675);
+            background: linear-gradient(currentColor, #008975);
             background: linear-gradient(currentColor, lch(50% 50 180));
           }
         `,
@@ -7853,7 +7853,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            background: buttonface linear-gradient(#008675, canvas);
+            background: buttonface linear-gradient(#008975, canvas);
             background: buttonface linear-gradient(lch(50% 50 180), canvas);
           }
         `,
@@ -7884,7 +7884,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            text-shadow: 0 0, 0 0 #008675;
+            text-shadow: 0 0, 0 0 #008975;
             text-shadow: 0 0, 0 0 lch(50% 50 180);
           }
         `,

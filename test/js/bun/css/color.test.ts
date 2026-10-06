@@ -350,13 +350,13 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
 describe("gamut mapping keeps the most saturated chroma under the JND (#44640)", () => {
   // Expected values are colorjs.io 0.7.1 `toGamut({ method: "css" })`, the CSS
   // Color 4 binary search. Stopping at the first chroma under the JND gave
-  // #fffbac, #fffea7 and #bcff61 for the first three.
+  // #fffbac and #bcff61 for the first two.
   const outOfGamut: [string, string][] = [
     ["lab(98.2504% -7.697 88.7581)", "#fffc44"],
-    ["color(prophoto-rgb 0.9784 0.9925 0.3037)", "#ffff6d"],
     ["lch(94.4698% 111.9227 117.6737deg)", "#b0ff00"],
     ["lch(50.998% 135.363 338)", "#f000c0"],
-    ["color(display-p3 0 1 0)", "#00fb29"],
+    ["lch(8% 76 2)", "#42001b"],
+    ["lch(50% 50 180)", "#008975"],
     // Near white, but not within the lightness epsilon of pure white.
     ["oklch(99.995% .01 0)", "#fffcff"],
   ];

@@ -283,31 +283,59 @@ error: Hello World`,
     },
     run: { stdout: "Hello from cjs!" },
   });
-  // The browser chunk of an HTML import is loaded as a module script, so it
-  // keeps `import.meta`. Only the server chunk is wrapped.
-  itBundled("bun/ImportMetaFormatCjsHtmlImport", {
-    target: "bun",
+  // The browser chunk of an HTML import is a module script in any server
+  // build, so it keeps `import.meta`. Only bun's server chunk is wrapped.
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`bun/ImportMetaFormatCjsHtmlImport${target === "bun" ? "" : "+node"}`, {
+      target,
+      format: "cjs",
+      outdir: "/out",
+      entryPoints: ["/server.ts"],
+      files: {
+        "/server.ts": /* js */ `
+          import html from "./index.html";
+          console.log(typeof html, import.meta.path === Bun.main);
+        `,
+        "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
+        "/client.ts": /* js */ `
+          console.log(typeof import.meta.env, import.meta.url, import.meta);
+        `,
+      },
+      onAfterBundle(api) {
+        const server = api.readFile("/out/server.js");
+        if (target === "bun") expect(server).toStartWith(bunCjsWrapper("", ", $Bun_import_meta"));
+        else expect(server).not.toContain("import.meta");
+        const browserChunk = readdirSync(api.outdir).find(name => name !== "server.js" && name.endsWith(".js"))!;
+        const browser = api.readFile("/out/" + browserChunk);
+        expect(browser).toContain("typeof import.meta.env, import.meta.url, import.meta");
+        expect(browser).not.toContain("$Bun_import_meta");
+        expect(browser).not.toContain(api.root);
+      },
+      ...(target === "bun" ? { run: { stdout: "object true" } } : {}),
+    });
+  }
+  // An entry with a bun hashbang is wrapped even in a node build, and it can
+  // also be bundled into another entry's chunk, which is not.
+  itBundled("bun/ImportMetaFormatCjsHashbangEntryInNodeBuild", {
+    target: "node",
     format: "cjs",
     outdir: "/out",
-    entryPoints: ["/server.ts"],
+    entryPoints: ["/a.ts", "/b.ts"],
     files: {
-      "/server.ts": /* js */ `
-        import html from "./index.html";
-        console.log(typeof html, import.meta.path === Bun.main);
-      `,
-      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
-      "/client.ts": /* js */ `
-        console.log(typeof import.meta.env, import.meta);
-      `,
+      "/a.ts": `#!/usr/bin/env bun\nexport const dir = import.meta.dir;\nconsole.log("a", typeof dir);\n`,
+      "/b.ts": `import { dir } from "./a.ts";\nconsole.log("b", typeof dir);\n`,
     },
     onAfterBundle(api) {
-      expect(api.readFile("/out/server.js")).toStartWith(bunCjsWrapper("", ", $Bun_import_meta"));
-      const browserChunk = readdirSync(api.outdir).find(name => name !== "server.js" && name.endsWith(".js"))!;
-      const browser = api.readFile("/out/" + browserChunk);
-      expect(browser).toContain("typeof import.meta.env, import.meta");
-      expect(browser).not.toContain("$Bun_import_meta");
+      for (const file of ["/out/a.js", "/out/b.js"]) {
+        const out = api.readFile(file);
+        expect(out).not.toContain("import.meta");
+        expect(out).not.toContain("$Bun_import_meta");
+      }
     },
-    run: { stdout: "object true" },
+    run: [
+      { file: "/out/a.js", stdout: "a string" },
+      { file: "/out/b.js", stdout: "a string\nb string" },
+    ],
   });
   // `bun build --compile --bytecode` is the documented production command.
   // https://github.com/oven-sh/bun/issues/21097

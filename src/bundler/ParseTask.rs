@@ -2651,9 +2651,12 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
-        // For bun, cjs output gets import.meta from the `@bun-cjs` wrapper instead.
+        // Not for bun (its cjs wrapper has import.meta) or a server build's browser files (module scripts).
+        let build_target = worker_ctx.transpiler().options.target;
         opts.inline_import_meta_paths = topts.framework.is_some()
-            || (output_format == options::Format::Cjs && !target.is_bun());
+            || (output_format == options::Format::Cjs
+                && !build_target.is_bun()
+                && topts.target == build_target);
 
         opts.tree_shaking = if task.source_index.is_runtime() {
             true

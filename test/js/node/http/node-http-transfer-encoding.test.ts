@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { createServer, request } from "http";
+import { bunEnv, bunExe, isASAN, isDebug, tls as tlsCert } from "harness";
+import { Agent, createServer, request, type ClientRequest } from "http";
 import { createServer as createHttpsServer } from "https";
-import { AddressInfo, connect, Server } from "net";
-import type { Duplex } from "stream";
+import { AddressInfo, connect, Server, type Socket } from "net";
+import { Duplex, Readable } from "stream";
 import { connect as tlsConnect } from "tls";
 // The llhttp binding. It has no type declarations, like in node-http-parser.test.ts.
 const { HTTPParser, calculateLenientFlags } = require("node:_http_common");
@@ -1932,6 +1932,343 @@ describe("res.useChunkedEncodingByDefault = false makes the response close-delim
       bodyLength: body.length,
       tail: "aaaaaaaa",
       closedByServer: true,
+    });
+  });
+});
+
+describe("a chunked request body reaches the peer whole, in order and ahead of the last chunk", () => {
+  type Arrived = (bytes: string) => Promise<unknown>;
+
+  // Runs a call order such as "cork write:aaaa end:cc" on a request. "arrive:aaaa" waits until the peer holds aaaa.
+  async function run(req: ClientRequest, order: string, arrived?: Arrived) {
+    for (const step of order.split(" ")) {
+      const [op, arg] = step.split(":");
+      if (op === "write") req.write(arg);
+      else if (op === "end") req.end(arg);
+      else if (op === "pipe") Readable.from(arg.split(",")).pipe(req);
+      else if (op === "laterUncork") process.nextTick(() => req.uncork());
+      else if (op === "trailers") req.addTrailers({ "X-T": "v" });
+      else if (op === "expect") req.setHeader("Expect", "100-continue");
+      else if (op === "arrive") await arrived!(arg);
+      else req[op as "cork" | "uncork" | "flushHeaders"]();
+    }
+  }
+
+  // Splits what follows a request head into the sizes of the data chunks, the de-chunked body, the trailer
+  // section and whatever comes after the message. Nothing may follow the last chunk and its trailer section.
+  function dechunk(wire: string) {
+    const chunks: number[] = [];
+    let body = "";
+    for (;;) {
+      const lineEnd = wire.indexOf("\r\n");
+      const size = parseInt(wire.slice(0, lineEnd), 16);
+      if (lineEnd < 0 || Number.isNaN(size)) return { chunks, body, trailers: "", after: "no last chunk: " + wire };
+      if (size === 0) {
+        const end = wire.indexOf("\r\n\r\n", lineEnd);
+        if (end < 0) return { chunks, body, trailers: "", after: "no end of the trailer section: " + wire };
+        return { chunks, body, trailers: wire.slice(lineEnd + 2, end), after: wire.slice(end + 4) };
+      }
+      chunks.push(size);
+      body += wire.slice(lineEnd + 2, lineEnd + 2 + size);
+      wire = wire.slice(lineEnd + 2 + size + 2);
+    }
+  }
+
+  // Sends one POST to a raw TCP peer and returns what followed the request head. The peer answers
+  // when it has read a last chunk. The client (agent: false sends Connection: close) then closes,
+  // and its FIN marks the point where every byte it wrote has arrived.
+  async function send(
+    drive: string | ((req: ClientRequest, arrived: Arrived) => unknown),
+    connected: boolean,
+    onConnected?: (socket: Socket) => void,
+  ) {
+    const done = Promise.withResolvers<string>();
+    done.promise.catch(() => {});
+    const waiting: [bytes: string, resolve: () => void][] = [];
+    let raw = "";
+    let answered = false;
+    await using peer = new Server(socket => {
+      socket.setEncoding("latin1");
+      socket.on("error", done.reject);
+      socket.on("data", chunk => {
+        raw += chunk;
+        for (const [bytes, resolve] of waiting) if (raw.includes(bytes)) resolve();
+        if (answered || !/\r\n0\r\n(?:[^\r\n]+\r\n)*\r\n/.test(raw)) return;
+        answered = true;
+        socket.write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+      });
+      socket.on("end", () => {
+        socket.end();
+        done.resolve(raw.slice(raw.indexOf("\r\n\r\n") + 4));
+      });
+    });
+    await once(peer.listen(0, "127.0.0.1"), "listening");
+    const arrived: Arrived = bytes => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      waiting.push([bytes, resolve]);
+      if (raw.includes(bytes)) resolve();
+      return Promise.race([promise, done.promise]);
+    };
+
+    const { port } = peer.address() as AddressInfo;
+    const req = request({ host: "127.0.0.1", port, method: "POST", agent: false });
+    req.on("error", done.reject);
+    req.on("response", res => res.resume());
+    if (connected) {
+      const [socket] = await once(req, "socket");
+      if (socket.connecting) await once(socket, "connect");
+      onConnected?.(socket);
+    }
+    await (typeof drive === "string" ? run(req, drive, arrived) : drive(req, arrived));
+    return dechunk(await done.promise);
+  }
+
+  // Every order of up to `depth` cork(), uncork(), write() and flushHeaders() calls.
+  const calls = ["cork", "uncork", "write", "flushHeaders"] as const;
+  function orders(depth: number) {
+    const all: (typeof calls)[number][][] = [[]];
+    for (let from = 0, to = 1; depth > 0; depth--, from = to, to = all.length) {
+      for (let i = from; i < to; i++) for (const call of calls) all.push([...all[i], call]);
+    }
+    return all;
+  }
+
+  // Runs one order on a request whose socket is an in-memory Duplex, then end() or end(chunk).
+  async function sendInMemory(order: (typeof calls)[number][], endChunk: string | undefined, connected: boolean) {
+    let wire = "";
+    const socket = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        wire += chunk.toString("latin1");
+        callback();
+      },
+    });
+    const req = request({ method: "POST", createConnection: () => socket as unknown as Socket });
+    const finished = Promise.withResolvers<void>();
+    req.on("error", finished.reject);
+    if (connected) await once(req, "socket");
+    const want = { body: "", after: "", callbacks: [] as string[] };
+    const callbacks: string[] = [];
+    for (const call of order) {
+      if (call !== "write") {
+        req[call]();
+        continue;
+      }
+      const data = Buffer.alloc(3, 97 + want.callbacks.length).toString();
+      want.body += data;
+      want.callbacks.push(data);
+      req.write(data, () => callbacks.push(data));
+    }
+    want.body += endChunk ?? "";
+    want.callbacks.push("finish");
+    req.end(endChunk, () => {
+      callbacks.push("finish");
+      finished.resolve();
+    });
+    await finished.promise;
+    req.destroy();
+    const head = wire.indexOf("\r\n\r\n");
+    // end(chunk) as the first call sends a Content-Length body.
+    const { body, after } = /^transfer-encoding: chunked/im.test(wire.slice(0, head))
+      ? dechunk(wire.slice(head + 4))
+      : { body: wire.slice(head + 4), after: "" };
+    return { got: { body, after, callbacks }, want };
+  }
+
+  describe.each([
+    ["before the socket is assigned", false],
+    ["on a connected socket", true],
+  ])("%s", (_, connected) => {
+    // Four calls deep is 1,364 requests: about 2 s for each test on a debug build, 20 ms on a release build.
+    const depth = isDebug || isASAN ? 3 : 4;
+    test.each([
+      ["end()", undefined],
+      ["end(chunk)", "ZZ"],
+    ])("every order of a few cork, uncork, write and flushHeaders calls, then %s", async (_, endChunk) => {
+      const all = orders(depth);
+      const failures: string[] = [];
+      for (const order of all) {
+        const { got, want } = await sendInMemory(order, endChunk, connected);
+        if (!Bun.deepEquals(got, want)) failures.push(`${order.join(" ")}: ${JSON.stringify(got)}`);
+      }
+      expect({ orders: all.length, failures }).toEqual({ orders: depth === 3 ? 85 : 341, failures: [] });
+    });
+
+    // Orders that the enumeration does not cover: more calls, an uncork() on a later tick, an Expect head,
+    // trailers, a pipe, and a chunk that must arrive before end(). These go to a raw TCP peer.
+    test.concurrent.each([
+      ["cork write:aaaa write:bbbbbb uncork end", "aaaabbbbbb", ""],
+      ["cork write:aaaa write:bbbbbb laterUncork end", "aaaabbbbbb", ""],
+      ["expect cork write:aaaa write:bbbbbb end", "aaaabbbbbb", ""],
+      ["cork write:aaaa write:bbbbbb trailers end", "aaaabbbbbb", "X-T: v"],
+      ["cork pipe:aaaa,bbbbbb,cc", "aaaabbbbbbcc", ""],
+      ["flushHeaders cork cork write:aaaa write:bbbbbb uncork write:cc write:dd end", "aaaabbbbbbccdd", ""],
+      // One uncork() more than cork().
+      ["cork write:aaaa uncork uncork write:bbbbbb end", "aaaabbbbbb", ""],
+      ["write:aaaa uncork write:bbbbbb cork write:cc end", "aaaabbbbbbcc", ""],
+      ["write:aaaa uncork write:bbbbbb arrive:bbbbbb end", "aaaabbbbbb", ""],
+    ])("%s", async (order, body, trailers) => {
+      const { chunks, ...message } = await send(order, connected);
+      expect(message).toEqual({ body, trailers, after: "" });
+    });
+
+    test.concurrent("writes under cork() leave as one chunk when the head is already out", async () => {
+      expect(await send("flushHeaders cork write:aaaa write:bbbbbb uncork end", connected)).toEqual({
+        chunks: [10],
+        body: "aaaabbbbbb",
+        trailers: "",
+        after: "",
+      });
+    });
+
+    test.concurrent("write() throws for an unknown encoding and the request stays usable", async () => {
+      let thrown: any;
+      const { chunks, ...message } = await send(req => {
+        req.cork();
+        req.write("aaaa");
+        try {
+          req.write("bbbbbb", "bogus" as BufferEncoding);
+        } catch (error) {
+          thrown = error;
+        }
+        req.end("cc");
+      }, connected);
+      expect({ code: thrown?.code, ...message }).toEqual({
+        code: "ERR_UNKNOWN_ENCODING",
+        body: "aaaacc",
+        trailers: "",
+        after: "",
+      });
+    });
+
+    test.concurrent("'drain' follows an uncork() that flushes a full buffer", async () => {
+      const data = Buffer.alloc(16 * 1024, "a").toString();
+      const atDrain = Promise.withResolvers<{ writableLength: number; writableNeedDrain: boolean }>();
+      let body = "";
+      const message = await send(async req => {
+        req.flushHeaders();
+        req.cork();
+        do body += data;
+        while (req.write(data) && body.length < 1024 * 1024);
+        // On a connected socket uncork() emits 'drain' before it returns.
+        req.once("drain", () =>
+          atDrain.resolve({ writableLength: req.writableLength, writableNeedDrain: req.writableNeedDrain }),
+        );
+        req.uncork();
+        await atDrain.promise;
+        req.end();
+      }, connected);
+      expect({ ...message, atDrain: await atDrain.promise }).toEqual({
+        chunks: [body.length],
+        body,
+        trailers: "",
+        after: "",
+        atDrain: { writableLength: 0, writableNeedDrain: false },
+      });
+    });
+  });
+
+  test.concurrent("a pipe into a corked request continues after uncork()", async () => {
+    const data = Buffer.alloc(16 * 1024, "a").toString();
+    const source = Readable.from(new Array(16).fill(data));
+    const { chunks, ...message } = await send(req => {
+      req.cork();
+      source.pipe(req);
+      // pipe() adds its 'drain' listener after it pauses the source.
+      source.once("pause", () => process.nextTick(() => req.uncork()));
+    }, true);
+    expect(message).toEqual({ body: Buffer.alloc(16 * data.length, "a").toString(), trailers: "", after: "" });
+  });
+
+  test.concurrent("end() while corked hands the whole request to a connected socket in one write", async () => {
+    let writes = 0;
+    let depth = 0;
+    const { chunks, ...message } = await send("cork write:aaaa write:bbbbbb end", true, (socket: any) => {
+      // Counts each hand-over from the Writable to the socket once: Bun's _writev ends in _write.
+      for (const method of ["_write", "_writev"]) {
+        const original = socket[method];
+        socket[method] = function (...args: unknown[]) {
+          if (depth++ === 0) writes++;
+          try {
+            return original.apply(this, args);
+          } finally {
+            depth--;
+          }
+        };
+      }
+    });
+    expect({ ...message, writes }).toEqual({ body: "aaaabbbbbb", trailers: "", after: "", writes: 1 });
+  });
+
+  // One keep-alive socket to a server that answers "/early" on the request head and any other request on the
+  // end of its body. post() resolves with the status and the body of the response.
+  async function keepAliveServer() {
+    const sockets = new Set<Duplex>();
+    const seen: string[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      sockets.add(req.socket);
+      req.setEncoding("latin1");
+      req.on("data", chunk => (body += chunk));
+      if (req.url === "/early") res.end("early");
+      req.on("end", () => {
+        seen.push(`${req.url} ${body}`);
+        if (req.url !== "/early") res.end(`${req.url} ${body}`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+    const post = (path: string, drive: (req: ClientRequest, answered: Promise<string>) => unknown) => {
+      const answered = Promise.withResolvers<string>();
+      const req = request({ host: "127.0.0.1", port, method: "POST", path, agent }, res => {
+        let text = `${res.statusCode} `;
+        res.setEncoding("latin1");
+        res.on("data", chunk => (text += chunk));
+        res.on("end", () => answered.resolve(text));
+      });
+      req.on("error", answered.reject);
+      (async () => drive(req, answered.promise))().catch(answered.reject);
+      return answered.promise;
+    };
+    return {
+      seen,
+      sockets,
+      post,
+      async [Symbol.asyncDispose]() {
+        agent.destroy();
+        await server[Symbol.asyncDispose]();
+      },
+    };
+  }
+
+  test.concurrent("a corked request and the request behind it arrive whole on one keep-alive socket", async () => {
+    await using peer = await keepAliveServer();
+    const answers = await Promise.all([
+      peer.post("/first", req => run(req, "cork write:aaaa write:bbbbbb end")),
+      peer.post("/second", req => req.end("innocent")),
+    ]);
+    expect({ answers, seen: peer.seen, sockets: peer.sockets.size }).toEqual({
+      answers: ["200 /first aaaabbbbbb", "200 /second innocent"],
+      seen: ["/first aaaabbbbbb", "/second innocent"],
+      sockets: 1,
+    });
+  });
+
+  test.concurrent("the request behind one that ends while corked after its response is answered", async () => {
+    await using peer = await keepAliveServer();
+    const answers = await Promise.all([
+      peer.post("/early", (req, answered) => {
+        req.flushHeaders();
+        // The response has ended, so the agent gets the socket back when the request finishes.
+        return answered.then(() => run(req, "cork write:aaaa write:bbbbbb end"));
+      }),
+      peer.post("/second", req => req.end("innocent")),
+    ]);
+    expect({ answers, seen: peer.seen, sockets: peer.sockets.size }).toEqual({
+      answers: ["200 early", "200 /second innocent"],
+      seen: ["/early aaaabbbbbb", "/second innocent"],
+      sockets: 1,
     });
   });
 });

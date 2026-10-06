@@ -330,6 +330,12 @@ OutgoingMessage.prototype.uncork = function uncork() {
 
   this[kChunkedBuffer].length = 0;
   this[kChunkedLength] = 0;
+
+  // If we had a pending drain and flushed all data, emit the drain event. https://github.com/nodejs/node/blob/v26.8.2/lib/_http_outgoing.js#L329-L333
+  if (this[kNeedDrain] && this.writableLength === 0) {
+    this[kNeedDrain] = false;
+    this.emit("drain");
+  }
 };
 
 function runChunkCallbacks(callbacks, err) {
@@ -957,6 +963,11 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
   }
 
+  // A buffered chunk with an unknown encoding makes the flush in uncork() or end() throw half-way. https://github.com/nodejs/node/blob/v26.10.0/lib/_http_outgoing.js#L1020-L1022
+  if (msg.chunkedEncoding && typeof chunk === "string" && encoding && !Buffer.isEncoding(encoding)) {
+    throw $ERR_UNKNOWN_ENCODING(encoding);
+  }
+
   let msgSocket;
   if (!fromEnd && (msgSocket = msg.socket) && !msgSocket.writableCorked) {
     msgSocket.cork();
@@ -966,7 +977,8 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   let ret;
   if (msg.chunkedEncoding && chunk.length !== 0) {
     len ??= typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
-    if (msg[kCorked] && msg._headerSent) {
+    // Node buffers on any non-zero count, so the -1 after a spare uncork() holds every later chunk until end(). https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1002
+    if (msg[kCorked] > 0 && msg._headerSent) {
       msg[kChunkedBuffer].push(chunk, encoding, callback);
       msg[kChunkedLength] += len;
       ret = msg[kChunkedLength] < msg[kHighWaterMark];
@@ -1078,6 +1090,13 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
   let contentLength;
   if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
+  }
+
+  // Flush buffered chunks before terminating the response. https://github.com/nodejs/node/blob/v26.10.0/lib/_http_outgoing.js#L1230-L1235
+  if (this[kChunkedBuffer].length !== 0) {
+    this[kSocket]?.cork();
+    this[kCorked] = 1;
+    this.uncork();
   }
 
   const finish = onFinish.bind(undefined, this);

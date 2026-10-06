@@ -744,7 +744,7 @@ impl Listener {
         // tolerated — the C SNI tree just truncates at the first one. Build the
         // `&CStr` via `from_ptr` to allow that instead of asserting via
         // `ZStr::as_cstr()`. `server_name_z` must outlive the
-        // remove_server_name/add_server_name calls below.
+        // add_server_name call below.
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
         let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
@@ -788,24 +788,11 @@ impl Listener {
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let ls_ref = bun_opaque::opaque_deref_mut(ls);
-        ls_ref.remove_server_name(server_name);
-        let ok = ls_ref.add_server_name(server_name, sni_ctx.as_ptr(), core::ptr::null_mut());
-        if !ok {
-            // Old entry was already removed; failing silently would leave the
-            // hostname with no SNI mapping at all. Surface it.
-            return Err(global.throw_value(
-                global
-                    .err(
-                        jsc::ErrorCode::BORINGSSL,
-                        format_args!(
-                            "Failed to register SNI for '{}'",
-                            bstr::BStr::new(server_name_bytes)
-                        ),
-                    )
-                    .to_js(),
-            ));
-        }
+        bun_opaque::opaque_deref_mut(ls).add_server_name(
+            server_name,
+            sni_ctx.as_ptr(),
+            core::ptr::null_mut(),
+        );
 
         Ok(JSValue::UNDEFINED)
     }

@@ -43,7 +43,7 @@ impl ListenSocket {
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
-    /// that ref on close / `remove_server_name`. `user` is the per-domain handle
+    /// that ref on close, or when `hostname` is registered again. `user` is the per-domain handle
     /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
     /// passes null).
     ///
@@ -59,17 +59,12 @@ impl ListenSocket {
         hostname: &core::ffi::CStr,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
-    ) -> bool {
+    ) {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it); `user` is an opaque caller-owned pointer
         // stored verbatim by C.
-        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
-    }
-
-    pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {
-        // SAFETY: self and hostname are valid for the duration of the call.
-        unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
+        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) }
     }
 
     /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
@@ -98,8 +93,7 @@ unsafe extern "C" {
         hostname: *const c_char,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
-    ) -> c_int;
-    fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    );
     fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,

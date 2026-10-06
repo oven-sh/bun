@@ -781,6 +781,136 @@ describe("Bun.serve SNI", () => {
   });
 });
 
+// Node v26.3.0 compares addContext() names case-sensitively; v26.4.0 and later compile them into /.../i.
+describe("SNI matching is case-insensitive", () => {
+  function servedCN(port: number, servername: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false }, () => {
+      resolve(socket.getPeerCertificate()?.subject?.CN);
+      socket.end();
+    });
+    socket.on("error", reject);
+    return promise;
+  }
+
+  it("tls.Server addContext", async () => {
+    const server = tls.createServer({ key: agent2Key, cert: agent2Cert }, s => s.end());
+    server.addContext("a.example.com", SNIContexts["a.example.com"]); // agent1
+    server.addContext("UPPER.EXAMPLE.COM", SNIContexts["asterisk.test.com"]); // agent3
+    server.addContext("*.test.com", SNIContexts["asterisk.test.com"]); // agent3
+    server.addContext("Twice.example.com", SNIContexts["a.example.com"]); // agent1
+    server.addContext("twice.example.com", SNIContexts["asterisk.test.com"]); // agent3
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, listening.resolve);
+      await listening.promise;
+      const port = (server.address() as AddressInfo).port;
+      expect({
+        exact: await servedCN(port, "a.example.com"),
+        upper: await servedCN(port, "A.EXAMPLE.COM"),
+        mixed: await servedCN(port, "A.Example.Com"),
+        registeredUpper: await servedCN(port, "upper.example.com"),
+        wildcardUpper: await servedCN(port, "B.TEST.COM"),
+        lastOfTwoSpellings: await servedCN(port, "Twice.example.com"),
+        noMatch: await servedCN(port, "other.example.org"),
+      }).toEqual({
+        exact: "agent1",
+        upper: "agent1",
+        mixed: "agent1",
+        registeredUpper: "agent3",
+        wildcardUpper: "agent3",
+        lastOfTwoSpellings: "agent3",
+        noMatch: "agent2",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The context an SNI selects also decides which CA client certificates must chain to.
+  describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s", version => {
+    const inAnyCase = ["strict.example.com", "STRICT.EXAMPLE.COM", "sTrIcT.eXaMpLe.CoM"];
+    const selectsNothing = (_: string, cb: Function) => cb(null, null);
+    it.each([
+      ["in any case", inAnyCase, undefined],
+      // Bun only: Node serves the default context for a name with the root dot.
+      ["with the root dot", ["strict.example.com.", "STRICT.EXAMPLE.COM."], undefined],
+      // Bun only: in Node a user SNICallback replaces the addContext() entries.
+      ["behind an SNICallback that selects nothing", inAnyCase, selectsNothing],
+    ])("a context's client CA applies to its name %s", async (_, spellings, SNICallback) => {
+      const server = tls.createServer({
+        key: agent2Key,
+        cert: agent2Cert,
+        ca: [ca1],
+        requestCert: true,
+        rejectUnauthorized: true,
+        SNICallback,
+      } as any);
+      server.addContext("Strict.Example.com", { key: agent1Key, cert: agent1Cert, ca: [loadPEM("ca5-cert.pem")] });
+      // agent1 chains to ca1, which only the default context trusts; ec10 chains to ca5.
+      const ec10 = [loadPEM("ec10-key.pem"), loadPEM("ec10-cert.pem")] as const;
+      async function verdict(servername: string, key: string, cert: string) {
+        const judged = Promise.race([
+          once(server, "secureConnection").then(() => "accepted"),
+          once(server, "tlsClientError").then(() => "refused"),
+        ]);
+        const socket = tls.connect({
+          host: "127.0.0.1",
+          port: (server.address() as AddressInfo).port,
+          servername,
+          key,
+          cert,
+          rejectUnauthorized: false,
+          minVersion: version,
+          maxVersion: version,
+        });
+        socket.on("error", () => {});
+        try {
+          return await judged;
+        } finally {
+          socket.destroy();
+        }
+      }
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const verdicts: string[][] = [];
+        for (const name of spellings) {
+          verdicts.push([name, await verdict(name, agent1Key, agent1Cert), await verdict(name, ...ec10)]);
+        }
+        expect(verdicts).toEqual(spellings.map(name => [name, "refused", "accepted"]));
+        expect(await verdict("other.example.com", agent1Key, agent1Cert)).toBe("accepted");
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  it("Bun.serve tls array", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: agent2Key, cert: agent2Cert },
+        { serverName: "a.example.com", ...SNIContexts["a.example.com"] },
+        { serverName: "*.test.com", ...SNIContexts["asterisk.test.com"] },
+      ],
+      fetch: () => new Response("OK"),
+    });
+    expect({
+      upper: await servedCN(server.port, "A.EXAMPLE.COM"),
+      mixed: await servedCN(server.port, "a.Example.com"),
+      wildcardUpper: await servedCN(server.port, "B.TEST.COM"),
+      noMatch: await servedCN(server.port, "other.example.org"),
+    }).toEqual({
+      upper: "agent1",
+      mixed: "agent1",
+      wildcardUpper: "agent3",
+      noMatch: "agent2",
+    });
+  });
+});
+
 describe("server certificate chain built from `ca`", () => {
   it("presents an intermediate known only to the default store (NODE_EXTRA_CA_CERTS)", async () => {
     // With no `ca`, Node seeds the context's store with the default roots

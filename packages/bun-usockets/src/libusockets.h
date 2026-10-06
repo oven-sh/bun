@@ -411,12 +411,11 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
- * (uWS stores a per-domain HttpRouter*). user may be NULL. */
-int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
+ * (uWS stores a per-domain HttpRouter*). user may be NULL. The last
+ * registration of a name replaces the earlier one. */
+void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
-void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Returns an owned reference; the caller must release it. */

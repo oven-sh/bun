@@ -168,7 +168,7 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     cert: readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8"),
   };
 
-  type ClientOptions = { key?: string; cert?: string; session?: Buffer };
+  type ClientOptions = { key?: string; cert?: string; session?: Buffer; minVersion?: string; maxVersion?: string };
   function request(port: number, servername: string, clientTls: ClientOptions = {}) {
     const { promise, resolve } = Promise.withResolvers<{ status: string; session: Buffer | undefined }>();
     const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ...clientTls });
@@ -252,6 +252,50 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
   });
 
+  // The client picks the SNI, so a spelling that misses the entry would skip its policy.
+  test.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "a strict entry is enforced for every spelling of its name (%s)",
+    async version => {
+      const strict = { key: serverKey, cert: serverCert, ca: clientCa, requestCert: true, rejectUnauthorized: true };
+      using server = Bun.serve({
+        port: 0,
+        tls: [
+          { key: serverKey, cert: serverCert },
+          { serverName: "Admin.Example.com", ...strict },
+          { serverName: "*.gated.example", ...strict },
+          { serverName: "\u00e9.example", ...strict },
+        ],
+        fetch: () => new Response("served"),
+      });
+      const spellings = [
+        "admin.example.com",
+        "ADMIN.EXAMPLE.COM",
+        "aDmIn.eXaMpLe.CoM",
+        "admin.example.com.",
+        "ADMIN.EXAMPLE.COM.",
+        "a.gated.example",
+        "A.GATED.EXAMPLE",
+        "a.Gated.Example.",
+      ];
+      const pinned = { minVersion: version, maxVersion: version };
+      const outcomes = await Promise.all(
+        spellings.map(async name => [
+          name,
+          (await request(server.port, name, pinned)).status,
+          (await request(server.port, name, { ...pinned, ...untrustedClient })).status,
+          (await request(server.port, name, { ...pinned, ...trustedClient })).status,
+        ]),
+      );
+      const closed = "connection closed without a response";
+      expect(outcomes).toEqual(spellings.map(name => [name, closed, closed, "HTTP/1.1 200 OK"]));
+      // Only A-Z folds: U+00E9 and U+00C9 differ by 0x20 in their last UTF-8 byte and stay two names.
+      expect({
+        registered: (await request(server.port, "\u00e9.example", pinned)).status,
+        other: (await request(server.port, "\u00c9.example", pinned)).status,
+      }).toEqual({ registered: closed, other: "HTTP/1.1 200 OK" });
+    },
+  );
+
   test("a session established on the open default name cannot be resumed to bypass a gated name", async () => {
     using server = Bun.serve({
       port: 0,
@@ -279,6 +323,103 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       defaultResumed: "HTTP/1.1 200 OK",
       gatedResumed: "connection closed without a response",
     });
+  });
+
+  // agent3 (CN agent3) is a second certificate so a test can tell which
+  // entry served the handshake.
+  const otherKey = readFileSync(join(tlsFixtures, "agent3-key.pem"), "utf8");
+  const otherCert = readFileSync(join(tlsFixtures, "agent3-cert.pem"), "utf8");
+  const openEntry = { key: serverKey, cert: serverCert };
+  const gatedEntry = {
+    key: otherKey,
+    cert: otherCert,
+    ca: clientCa,
+    requestCert: true,
+    rejectUnauthorized: true,
+  };
+
+  function peerCN(port: number, servername: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false });
+    socket.on("secureConnect", () => {
+      resolve(socket.getPeerCertificate()?.subject?.CN ?? "-");
+      socket.destroy();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error("closed before the handshake completed")));
+    return promise;
+  }
+
+  // Each case lists two entries for admin.example.com. The later one sets a
+  // client certificate policy. Like tls.Server#addContext(), the later entry
+  // wins: the name serves agent3 and rejects a handshake with no client cert.
+  const duplicateCases: [string, Parameters<typeof Bun.serve>[0]["tls"]][] = [
+    [
+      "a later entry with the same serverName replaces the earlier one",
+      [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "admin.example.com", ...gatedEntry },
+      ],
+    ],
+    [
+      "a serverName with a trailing root dot names the same host",
+      [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "admin.example.com.", ...gatedEntry },
+      ],
+    ],
+    [
+      "a serverName in another case names the same host",
+      [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "ADMIN.Example.com", ...gatedEntry },
+      ],
+    ],
+    [
+      "a later entry replaces the default entry's own serverName",
+      [
+        { ...openEntry, serverName: "admin.example.com" },
+        { serverName: "admin.example.com", ...gatedEntry },
+      ],
+    ],
+  ];
+  for (const [label, tlsConfig] of duplicateCases) {
+    test(label, async () => {
+      using server = Bun.serve({
+        port: 0,
+        tls: tlsConfig,
+        fetch: req => new Response(`served ${req.headers.get("host")}`),
+      });
+      const servedCN = await peerCN(server.port, "admin.example.com");
+      const { status: gatedNoCert } = await request(server.port, "admin.example.com");
+      const { status: gatedTrustedCert } = await request(server.port, "admin.example.com", trustedClient);
+      const { status: defaultNoCert } = await request(server.port, "localhost");
+      expect({ servedCN, gatedNoCert, gatedTrustedCert, defaultNoCert }).toEqual({
+        servedCN: "agent3",
+        gatedNoCert: "connection closed without a response",
+        gatedTrustedCert: "HTTP/1.1 200 OK",
+        defaultNoCert: "HTTP/1.1 200 OK",
+      });
+    });
+  }
+
+  test("the last of three entries for one serverName wins", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...gatedEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "admin.example.com.", key: otherKey, cert: otherCert },
+      ],
+      fetch: () => new Response("served"),
+    });
+    const servedCN = await peerCN(server.port, "admin.example.com");
+    const { status: noCert } = await request(server.port, "admin.example.com");
+    expect({ servedCN, noCert }).toEqual({ servedCN: "agent3", noCert: "HTTP/1.1 200 OK" });
   });
 });
 

@@ -17,8 +17,8 @@
 //     bun_output::scoped_log!(X, "fmt {} {}", a, b);
 //
 // `declare_scope!` expands to a `pub static X: ScopedLogger`; `scoped_log!`
-// gates arg evaluation behind `env::IS_DEBUG` so release builds pay zero
-// cost (see PORTING.md — args MUST sit inside the dead branch).
+// gates arg evaluation behind `env::ENABLE_LOGS` so builds without logs pay
+// zero cost (see PORTING.md: args MUST sit inside the dead branch).
 pub use bun_core::declare_scope;
 pub use bun_core::define_scoped_log;
 pub use bun_core::scoped_log;

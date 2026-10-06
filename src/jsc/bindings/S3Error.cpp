@@ -13,6 +13,8 @@ typedef struct S3Error {
     BunString code;
     BunString message;
     BunString path;
+    // The HTTP status of the response the error was read from; 0 when there is none.
+    uint16_t status;
 } S3Error;
 
 Structure* createS3ErrorStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -57,6 +59,10 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
             result->putDirect(vm, names.pathPublicName(), path,
                 JSC::PropertyAttribute::DontDelete | 0);
         }
+    }
+
+    if (err.status) {
+        result->putDirect(vm, names.statusPublicName(), JSC::jsNumber(err.status), 0);
     }
 
     return JSC::JSValue::encode(result);

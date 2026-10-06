@@ -177,10 +177,7 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
     unsafe {
         let _guard = RefPtr::init_ref(this);
         // (What its callback settles is settled in the stopped context: for nobody.)
-        let _ = (*this).fail(S3Error {
-            code: b"AbortError",
-            message: b"The operation was aborted",
-        });
+        let _ = (*this).fail(S3Error::local(b"AbortError", b"The operation was aborted"));
     }
 });
 
@@ -203,10 +200,10 @@ impl WriterCollected {
     pub(crate) fn run(this: *mut Self) -> bun_jsc::JsResult<()> {
         // SAFETY: adopts the +1 `fail_writer_collected` took; released after `fail`.
         let upload = unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) };
-        upload.fail(S3Error {
-            code: b"UnknownError",
-            message: b"S3 writer was garbage collected before end() was called",
-        })
+        upload.fail(S3Error::local(
+            b"UnknownError",
+            b"S3 writer was garbage collected before end() was called",
+        ))
     }
 }
 
@@ -767,10 +764,10 @@ impl MultiPartUpload {
                         "startMultiPartRequestResult {} failed invalid id",
                         BStr::new(&self_.path)
                     );
-                    self_.fail(S3Error {
-                        code: b"UnknownError",
-                        message: b"Failed to initiate multipart upload",
-                    })?;
+                    self_.fail(S3Error::local(
+                        b"UnknownError",
+                        b"Failed to initiate multipart upload",
+                    ))?;
                     return Ok(());
                 }
                 scoped_log!(
@@ -784,14 +781,11 @@ impl MultiPartUpload {
                 self_.drain_enqueued_parts(0)
             }
             // this is "unreachable" but we cover in case AWS returns 404
-            S3DownloadResult::NotFound(_) => {
+            S3DownloadResult::NotFound(err) => {
                 if failed {
                     return Ok(());
                 }
-                self_.fail(S3Error {
-                    code: b"UnknownError",
-                    message: b"Failed to initiate multipart upload",
-                })
+                self_.fail(err.with_text(b"UnknownError", b"Failed to initiate multipart upload"))
             }
         }
     }

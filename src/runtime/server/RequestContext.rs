@@ -3985,9 +3985,8 @@ where
         if unsafe { (*response).has_s3_redirect() } {
             if let Some(server) = self.server.get() {
                 // SAFETY: as above.
-                let refreshed = unsafe {
-                    (*response).refresh_s3_redirect(Method::HEAD, server.global_this())
-                };
+                let refreshed =
+                    unsafe { (*response).refresh_s3_redirect(Method::HEAD, server.global_this()) };
                 if let Err(err) = refreshed {
                     self.run_error_handler(err);
                     return;

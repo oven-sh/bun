@@ -227,6 +227,10 @@ pub(crate) struct Response {
     abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
 }
 
+// A larger Response leaves the 320-byte size class of mimalloc for the 384-byte one.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(mem::size_of::<Response>() <= 320);
+
 impl Default for Response {
     fn default() -> Self {
         Self {
@@ -1131,18 +1135,17 @@ impl Response {
 
                     let store = blob.store.get().as_ref().unwrap();
                     let signed_at = bun_core::time::timestamp();
-                    let mut result = match super::blob::store::presign_redirect(
-                        store.data.as_s3(),
-                        Method::GET,
-                    ) {
-                        Ok(r) => r,
-                        Err(sign_err) => {
-                            return Err(crate::webcore::s3::client::throw_sign_error(
-                                sign_err.into(),
-                                global_this,
-                            ));
-                        }
-                    };
+                    let mut result =
+                        match super::blob::store::presign_redirect(store.data.as_s3(), Method::GET)
+                        {
+                            Ok(r) => r,
+                            Err(sign_err) => {
+                                return Err(crate::webcore::s3::client::throw_sign_error(
+                                    sign_err.into(),
+                                    global_this,
+                                ));
+                            }
+                        };
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected.set(true);
                     let headers = response.get_or_create_headers(global_this)?;

@@ -2293,7 +2293,10 @@ describe.concurrent("new Response(S3File) on a Bun.serve route", () => {
         expect(status).toBe(302);
         accepted[method] = [];
         for (const replay of ["GET", "HEAD", "PUT", "DELETE"]) {
-          const response = await fetch(location!, { method: replay, body: replay === "PUT" ? "overwritten" : undefined });
+          const response = await fetch(location!, {
+            method: replay,
+            body: replay === "PUT" ? "overwritten" : undefined,
+          });
           await response.arrayBuffer();
           if (response.ok) accepted[method].push(replay);
         }

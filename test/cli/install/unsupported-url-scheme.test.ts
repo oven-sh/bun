@@ -1,9 +1,11 @@
 // The blocking HTTP path (`AsyncHTTP::send_sync`) sends only http:// and https:// URLs. These commands used to send
-// every other URL as plain HTTP, with the registry credentials.
+// every other URL as plain HTTP, the registry commands with the registry credentials.
 // Every run has its own plain HTTP listener. It is also the proxy, so a request that goes out shows up in `requests`.
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { copyFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 const token = "secret-token";
 
@@ -457,5 +459,81 @@ describe.concurrent("bun audit", () => {
       requests: [`POST ${bulk} null`],
       exitCode: 1,
     });
+  });
+});
+
+describe("bun upgrade", () => {
+  // Every os, arch, abi and cpu, so the release has an archive for the machine that runs the test.
+  const assetNames = ["windows", "linux", "darwin"].flatMap(os =>
+    ["x64", "aarch64"].flatMap(arch =>
+      ["", "-musl"].flatMap(abi => ["", "-baseline"].map(cpu => `bun-${os}-${arch}${abi}${cpu}.zip`)),
+    ),
+  );
+
+  test("does not fetch a release archive whose URL is not http:// or https://", async () => {
+    const requests: string[] = [];
+    using plain = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push((URL.parse(req.url)?.pathname ?? req.url).split("/")[1]);
+        return new Response("this is not a real zip archive");
+      },
+    });
+    // `bun upgrade` replaces the binary that runs it, so it runs from a copy.
+    using dir = tempDir("upgrade-url-scheme", {});
+    const execPath = join(String(dir), basename(bunExe()));
+    await copyFile(bunExe(), execPath);
+
+    // `id` is the first path segment, so `requests` shows which upgrade fetched the archive.
+    const upgrade = async (id: string, scheme: string) => {
+      // The release comes from a TLS server. Its archive URL points at the plain listener.
+      using releases = Bun.serve({
+        tls,
+        port: 0,
+        fetch: () =>
+          Response.json({
+            tag_name: "bun-v9.9.6",
+            assets: assetNames.map(name => ({
+              url: "foo",
+              content_type: "application/zip",
+              name,
+              browser_download_url: `${scheme}localhost:${plain.port}/${id}/${name}`,
+            })),
+          }),
+      });
+      await using proc = spawn({
+        cmd: [execPath, "upgrade", "--stable"],
+        cwd: String(dir),
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: {
+          ...bunEnv,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          GITHUB_API_DOMAIN: `${releases.hostname}:${releases.port}`,
+          // A failed upgrade exits with buffers it never frees. LeakSanitizer would turn that exit into an abort.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        },
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const failure = /Bun upgrade failed with error: (\w+)\r?\n\r?\nPlease upgrade manually:/.exec(stderr);
+      return { id, failure: failure?.[1] ?? null, exitCode };
+    };
+
+    expect(
+      await Promise.all([
+        upgrade("ftp", "ftp://"),
+        upgrade("htps", "htps://"),
+        upgrade("none", ""),
+        upgrade("http", "http://"),
+      ]),
+    ).toEqual([
+      { id: "ftp", failure: "UnsupportedProtocol", exitCode: 1 },
+      { id: "htps", failure: "UnsupportedProtocol", exitCode: 1 },
+      { id: "none", failure: "UnsupportedProtocol", exitCode: 1 },
+      // The archive is not a zip file, so this upgrade fails after the download, with another message.
+      { id: "http", failure: null, exitCode: 1 },
+    ]);
+    expect(requests).toEqual(["http"]);
   });
 });

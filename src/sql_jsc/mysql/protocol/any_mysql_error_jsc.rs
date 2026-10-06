@@ -89,6 +89,7 @@ pub(crate) fn mysql_error_to_js(
         "ConnectionFailed" => b"ERR_MYSQL_CONNECTION_FAILED",
         "ConnectionRefused" => b"ERR_MYSQL_CONNECTION_REFUSED",
         "Overflow" => b"ERR_MYSQL_OVERFLOW",
+        "QueryCancelled" => b"ERR_MYSQL_QUERY_CANCELLED",
         "AuthenticationFailed" => b"ERR_MYSQL_AUTHENTICATION_FAILED",
         "UnsupportedAuthPlugin" => b"ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN",
         "UnsupportedProtocolVersion" => b"ERR_MYSQL_UNSUPPORTED_PROTOCOL_VERSION",

@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _,
+    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
@@ -228,6 +228,20 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The server assigns `last_insert_id` as a u64. A number holds it up to
+    /// `Number.MAX_SAFE_INTEGER`. Above that it follows the `bigint` option,
+    /// as a BIGINT column does: a BigInt, or a decimal string without the option.
+    fn last_insert_id_to_js(&self, global: &JSGlobalObject, value: u64) -> JsResult<JSValue> {
+        if value <= bun_jsc::MAX_SAFE_INTEGER as u64 {
+            return Ok(JSValue::js_number_from_uint64(value));
+        }
+        if self.is_bigint_supported() {
+            return JSValue::from_uint64_no_truncate(global, value);
+        }
+        let mut buffer = bun_core::fmt::ItoaBuf::new();
+        bun_string_jsc::create_utf8_for_js(global, bun_core::fmt::itoa(&mut buffer, value))
+    }
+
     pub(crate) fn resolve(&self, queries_array: JSValue, result: &MySQLQueryResult) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
@@ -270,6 +284,20 @@ impl JSMySQLQuery {
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
 
+        // `result()` above accepted this result, so a throw from the BigInt or
+        // string allocation takes that back to reject the query.
+        let global = self.global_object();
+        let last_insert_id = match self.last_insert_id_to_js(global, result.last_insert_id) {
+            Ok(value) => value,
+            Err(err) => {
+                return self.reject_when(
+                    MySQLQuery::fail_accepted_result,
+                    queries_array,
+                    global.take_exception(err),
+                );
+            }
+        };
+
         let pending_value = self.get_pending_value().unwrap_or(JSValue::UNDEFINED);
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
@@ -279,7 +307,7 @@ impl JSMySQLQuery {
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
             function,
-            self.global_object(),
+            global,
             this_value,
             &[
                 target_value,
@@ -292,7 +320,7 @@ impl JSMySQLQuery {
                     queries_array
                 },
                 JSValue::js_boolean(is_last_result),
-                JSValue::js_number(result.last_insert_id as f64),
+                last_insert_id,
                 JSValue::js_number(result.affected_rows as f64),
             ],
         );

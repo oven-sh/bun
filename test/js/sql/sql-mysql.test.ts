@@ -66,6 +66,89 @@ async function assertComputedDecimalsAreStrings(sql: SQL) {
   const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
   expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
+
+// Assertions for `lastInsertRowid` against a real server, used by the
+// docker-backed suite and by the `MYSQL_URL` branch below.
+//
+// The server sends `last_insert_id` as an unsigned 64-bit integer. A number
+// holds it up to Number.MAX_SAFE_INTEGER. Above that it follows the `bigint`
+// option: a decimal string by default, a BigInt with `bigint: true`.
+async function assertLastInsertRowidIsExact(options: Bun.SQL.Options) {
+  // [key the server stores, `lastInsertRowid` by default, `lastInsertRowid` with `bigint: true`]
+  const keys: [key: bigint, byDefault: number | string, withBigint: number | bigint][] = [
+    [2n ** 53n - 1n, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+    [2n ** 53n, "9007199254740992", 9007199254740992n],
+    [2n ** 53n + 1n, "9007199254740993", 9007199254740993n],
+    [2n ** 62n + 7n, "4611686018427387911", 4611686018427387911n],
+    [2n ** 63n, "9223372036854775808", 9223372036854775808n],
+    [2n ** 64n - 1n, "18446744073709551615", 18446744073709551615n],
+  ];
+  const createTable = (table: string, tableOptions = "") =>
+    `CREATE TEMPORARY TABLE \`${table}\` (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, name text) ${tableOptions}`;
+
+  for (const bigint of [false, true]) {
+    await using db = new SQL({ ...options, max: 1, bigint });
+    using sql = await db.reserve();
+    const wide = (key: bigint) => (bigint ? key : String(key));
+
+    // Explicit keys, over the text protocol and the binary protocol.
+    for (const protocol of ["text", "binary"] as const) {
+      const table = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql.unsafe(createTable(table));
+
+      const received: (number | bigint | string)[] = [];
+      for (const [key] of keys) {
+        const result =
+          protocol === "text"
+            ? await sql.unsafe(`INSERT INTO \`${table}\` (id, name) VALUES (${key}, 'x')`).simple()
+            : await sql`INSERT INTO ${sql(table)} (id, name) VALUES (${key}, ${"x"})`;
+        received.push(result.lastInsertRowid);
+      }
+      expect({ bigint, protocol, received }).toEqual({
+        bigint,
+        protocol,
+        received: keys.map(([, byDefault, withBigint]) => (bigint ? withBigint : byDefault)),
+      });
+
+      // Each value goes back as a bind parameter and finds only its own row.
+      const found: unknown[] = [];
+      for (const lastInsertRowid of received) {
+        found.push(...(await sql`SELECT CAST(id AS CHAR) AS id FROM ${sql(table)} WHERE id = ${lastInsertRowid}`));
+      }
+      expect(found).toEqual(keys.map(([key]) => ({ id: String(key) })));
+    }
+
+    // Keys the server generates. 2^62 + 7 and the two keys after it share one
+    // double, 4611686018427388000.
+    const first = 2n ** 62n + 7n;
+    const a = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    const b = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql.unsafe(createTable(a, `AUTO_INCREMENT = ${first}`));
+    await sql.unsafe(createTable(b, "AUTO_INCREMENT = 5"));
+
+    // Each result of a multi-statement query has its own value.
+    const results = await sql
+      .unsafe(`INSERT INTO \`${a}\` (name) VALUES ('a1'), ('a2'); INSERT INTO \`${b}\` (name) VALUES ('b1')`)
+      .simple();
+    expect(
+      results.map(result => ({ lastInsertRowid: result.lastInsertRowid, affectedRows: result.affectedRows })),
+    ).toEqual([
+      { lastInsertRowid: wide(first), affectedRows: 2 },
+      { lastInsertRowid: 5, affectedRows: 1 },
+    ]);
+    const next = await sql`INSERT INTO ${sql(a)} (name) VALUES (${"a3"})`;
+    expect(next.lastInsertRowid).toBe(wide(first + 2n));
+    expect([...(await sql`SELECT name FROM ${sql(a)} WHERE id = ${next.lastInsertRowid}`)]).toEqual([{ name: "a3" }]);
+
+    // A statement that inserts nothing reports the number 0.
+    const rows = await sql`SELECT 1 AS x`;
+    expect({ lastInsertRowid: rows.lastInsertRowid, affectedRows: rows.affectedRows }).toEqual({
+      lastInsertRowid: 0,
+      affectedRows: 0,
+    });
+  }
+}
+
 if (isDockerEnabled()) {
   // Ordered so the suites whose containers become healthy quickly (mysql_plain,
   // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
@@ -209,6 +292,9 @@ if (isDockerEnabled()) {
           const { affectedRows } =
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
+        });
+        test("lastInsertRowid is the key the server assigned", async () => {
+          await assertLastInsertRowidIsExact(getOptions());
         });
         test("MEDIUMINT not in the last column reads following columns correctly", async () => {
           // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
@@ -1261,6 +1347,14 @@ if (isDockerEnabled()) {
       },
     );
   }
+} else {
+  // No docker daemon. The assertions that need a real server run against MYSQL_URL.
+  const url = process.env.MYSQL_URL;
+  describe("mysql (local)", () => {
+    test.skipIf(!url)("lastInsertRowid is the key the server assigned", async () => {
+      await assertLastInsertRowidIsExact({ url: url! });
+    });
+  });
 }
 
 test("MySQL: binary TIME with a very large days field formats without integer wraparound", async () => {

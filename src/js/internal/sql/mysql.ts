@@ -96,7 +96,7 @@ export interface MySQLDotZig {
       count: number,
       queries: any,
       is_last: boolean,
-      last_insert_rowid: number,
+      last_insert_rowid: number | bigint | string,
       affected_rows: number,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,

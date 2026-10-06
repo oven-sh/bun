@@ -279,6 +279,15 @@ describe("RedisClient tls.serverName", () => {
     });
   });
 
+  // The zone id names an interface of the client, so the certificate has the address alone.
+  test("an IPv6 address with a zone id is verified against the IP SAN of the address and is not sent as SNI", async () => {
+    await withServer(localhost, async (port, server) => {
+      const servernames = recordServernames(server);
+      expect(await ping(`rediss://localhost:${port}`, { ca: localhostTls.cert, serverName: "::1%lo" })).toBe("PONG");
+      expect(servernames).toEqual([false]);
+    });
+  });
+
   test("tls: true sends the URL host as SNI", async () => {
     const servernames: string[] = [];
     const SNICallback: tls.TlsOptions["SNICallback"] = (servername, callback) => {

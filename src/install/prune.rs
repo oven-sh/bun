@@ -19,6 +19,7 @@ use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::patch_install::PatchStamp;
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -1051,8 +1052,9 @@ impl<'a> HoistedTree<'a> {
                 return Installed::Mismatch;
             }
             ResolutionTag::Git | ResolutionTag::Github => {
-                sys::File::read_from(package.fd(), b".bun-tag")
-                    .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
+                sys::File::read_from(package.fd(), b".bun-tag").is_ok_and(|tag| {
+                    PatchStamp::bun_tag_resolved(&tag) == res.repository().resolved.slice(buf)
+                })
             }
             ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)

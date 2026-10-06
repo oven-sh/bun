@@ -16,9 +16,10 @@ use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
+use crate::patch_install::PatchStamp;
 use crate::{
-    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    Lockfile, Npm, PackageID, PackageManager, Repository, Resolution, TruncatedPackageNameHash,
+    bun_fs, bun_json, initialize_store, resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -743,40 +744,8 @@ impl UninstallTask {
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 impl<'a> PackageInstall<'a> {
-    ///
-    fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
-        // hash from the .patch file, to be checked against bun tag
-        let patchfile_contents_hash = patch.contents_hash;
-        let mut buf: BuntagHashBuf = BuntagHashBuf::default();
-        let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
-
-        let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(&[
-            self.destination_dir_subpath.as_bytes(),
-            bunhashtag,
-        ]);
-
-        let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
-            return false;
-        };
-        #[cfg(unix)]
-        {
-            if sys::fstatat(&destination_dir, patch_tag_path).is_err() {
-                return false;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            match sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0) {
-                Err(_) => return false,
-                Ok(fd) => fd.close(),
-            }
-        }
-
-        true
-    }
-
     // 1. verify that .bun-tag exists (was it installed from bun?)
-    // 2. check .bun-tag against the resolved version
+    // 2. check .bun-tag against the resolved version and the wanted patch
     fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
         let dest_len = self.destination_dir_subpath.len();
         let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
@@ -803,15 +772,18 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        strings::eql_long(
-            repo.resolved.slice(&self.lockfile.buffers.string_bytes),
+        PatchStamp::bun_tag_matches(
             &bun_tag_file.bytes,
-            true,
+            repo.resolved.slice(&self.lockfile.buffers.string_bytes),
+            self.patch.map(|patch| patch.contents_hash),
         )
     }
 
+    /// Whether the installed package is the wanted build: the resolved version
+    /// with the wanted patch, or with none. Each arm reads one file of the
+    /// package, and a patched copy names its patch in that file (`PatchStamp`).
     pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
-        let verified = match resolution.tag {
+        match resolution.tag {
             resolution::Tag::Git => {
                 self.verify_git_resolution(resolution.git(), root_node_modules_dir)
             }
@@ -830,22 +802,35 @@ impl<'a> PackageInstall<'a> {
                 }
             }
             _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
-        };
-
-        if let Some(patch) = self.patch {
-            if !verified {
-                return false;
-            }
-            return self.verify_patch_hash(patch, root_node_modules_dir);
         }
-        verified
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because
     // it might not exist
     fn verify_transitive_symlinked_folder(&self, root_node_modules_dir: &Dir) -> bool {
-        self.node_modules
-            .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
+        // A linked folder is never a patched copy.
+        self.patch.is_none()
+            && self
+                .node_modules
+                .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
+    }
+
+    /// Whether the package.json of the unpatched cache folder starts with
+    /// `patch_hash` too: a package published from a patched copy does.
+    fn published_with_patch_hash(&self, patch_hash: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let package_json_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            &mut buf.0,
+            &[self.cache_dir_subpath.as_bytes(), b"package.json"],
+        );
+        let Ok(contents) = sys::File::read_from(self.cache_dir, package_json_path.as_bytes())
+        else {
+            return false;
+        };
+        let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), &contents[..]);
+        let mut log = bun_ast::Log::init();
+        let mut checker = bun_json::PackageJSONVersionChecker::init(&source, &mut log);
+        checker.parse().is_ok() && checker.found_patch_hash() == patch_hash
     }
 
     fn get_installed_package_json_source(
@@ -999,9 +984,21 @@ impl<'a> PackageInstall<'a> {
             }
         }
 
-        // lastly, check the name.
-        package_json_checker.found_name()
-            == self.package_name.slice(&self.lockfile.buffers.string_bytes)
+        if package_json_checker.found_name()
+            != self.package_name.slice(&self.lockfile.buffers.string_bytes)
+        {
+            return false;
+        }
+
+        // lastly, check the patch.
+        let found_patch_hash = package_json_checker.found_patch_hash();
+        match self.patch {
+            Some(patch) => {
+                let mut buf = [0u8; 16];
+                found_patch_hash == PatchStamp::hex(&mut buf, patch.contents_hash)
+            }
+            None => found_patch_hash.is_empty() || self.published_with_patch_hash(found_patch_hash),
+        }
     }
 
     // ───────────────────────────── install backends ─────────────────────────────

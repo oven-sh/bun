@@ -64,6 +64,13 @@ bun patch --commit react --patches-dir=mypatches
 bun patch-commit react
 ```
 
+<Note>
+The installed copy of a patched package records the hash of its patch file: Bun adds `"_bunPatchHash"` as the first key of the `package.json` of that copy.
+
+With the hoisted linker, `bun install` uses the hash to install the published package again when the patch is removed from `"patchedDependencies"`, also when `package.json` and `bun.lock` change together in a `git checkout`.
+
+</Note>
+
 ---
 
 <Patch />

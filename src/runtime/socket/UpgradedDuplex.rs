@@ -44,7 +44,7 @@ pub(crate) struct UpgradedDuplex {
     pub on_data_callback: Cell<JSValue>,
     pub on_end_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
-    /// The `cb` of every `origin.write(chunk, cb)` and `origin.end(null, cb)`.
+    /// What the `cb` of every `origin.write(chunk, cb)` and `origin.end(null, cb)` is bound to.
     pub on_write_done_callback: Cell<JSValue>,
     /// Those calls whose `cb` has not run.
     pub in_flight: Cell<u32>,
@@ -328,19 +328,38 @@ impl UpgradedDuplex {
             None => JSValue::NULL,
         };
         chunk.ensure_still_alive();
-        let done = lazy_js_handler(
-            &self.on_write_done_callback,
-            self.js_wrapper,
-            js_TLSSocket::duplex_on_write_done_set_cached,
-            &global,
-            __jsc_host_on_write_done,
-            std::ptr::from_ref(self).cast_mut().cast::<c_void>(),
-        );
+        let done = match self.write_done_callback(&global) {
+            Ok(done) => done,
+            Err(err) => {
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                return;
+            }
+        };
 
         self.in_flight.set(self.in_flight.get() + 1);
         if let Err(err) = write_or_end.call(&global, duplex, &[chunk, done]) {
             (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
+    }
+
+    /// `on_write_done` with its first argument bound, so that no stream can choose it.
+    fn write_done_callback(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if let Some(done) = js_TLSSocket::duplex_on_write_done_get_cached(self.js_wrapper) {
+            return Ok(done);
+        }
+        let target = host_fn::new_function_with_data(
+            global,
+            None,
+            0,
+            __jsc_host_on_write_done,
+            std::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+        );
+        let no_errno = [JSValue::UNDEFINED];
+        let name = bun_core::String::EMPTY;
+        let done = target.bind(global, JSValue::UNDEFINED, &name, 1.0, &no_errno)?;
+        js_TLSSocket::duplex_on_write_done_set_cached(self.js_wrapper, global, done);
+        self.on_write_done_callback.set(target);
+        Ok(done)
     }
 
     /// The wrapped stream has completed every write it was handed.
@@ -802,19 +821,19 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
-/// Node's `done(err)` of `doWrite`. It calls itself on the next tick, with the errno for `finishWrite`.
+/// `(undefined, err)` is node's `done(err)` of `doWrite`. It calls itself on the next tick, with the errno for `finishWrite`.
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");
 
     let function = frame.callee();
-    let [arg] = frame.arguments_as_array::<1>();
+    let [errno, err] = frame.arguments_as_array::<2>();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
-        if arg.is_number() {
-            let errno = arg.to_int32();
+        if errno.is_number() {
+            let errno = errno.to_int32();
             if errno != 0 {
                 let err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::write);
                 let mut err = <bun_sys::Error as bun_jsc::SysErrorJsc>::to_system_error(&err);
@@ -829,8 +848,8 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         let in_flight = this.in_flight.get().saturating_sub(1);
         this.in_flight.set(in_flight);
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L157-L159
-        if !arg.is_undefined_or_null() && !this.is_shutdown() {
-            let errno = JSValue::js_number_from_int32(write_errno(global, arg)? as i32);
+        if err.to_boolean() && !this.is_shutdown() {
+            let errno = JSValue::js_number_from_int32(write_errno(global, err)? as i32);
             JSValue::call_next_tick_1(function, global, errno)?;
         } else if in_flight == 0 {
             JSValue::call_next_tick_1(function, global, JSValue::js_number_from_int32(0))?;

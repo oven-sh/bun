@@ -365,6 +365,58 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     });
   });
 
+  test("messages sent before close() reach the server in order while the tunnel is backed up", async () => {
+    // The proxy stops reading, so the first message backs up in the tunnel and
+    // the next two wait behind it. The Close frame used to go around them.
+    const received: number[] = [];
+    const serverClosed = Promise.withResolvers<number>();
+    using server = Bun.serve({
+      port: 0,
+      tls: { key: tlsCerts.key, cert: tlsCerts.cert },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        maxPayloadLength: 64 * 1024 * 1024,
+        message(_, message) {
+          received.push(message.length);
+        },
+        close(_, code) {
+          serverClosed.resolve(code);
+        },
+      },
+    });
+    const proxy = createConnectProxy();
+    const clients: net.Socket[] = [];
+    proxy.on("connection", client => clients.push(client));
+    const proxyPort = await startProxy(proxy);
+    try {
+      const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, {
+        proxy: `http://127.0.0.1:${proxyPort}`,
+        tls: { rejectUnauthorized: false },
+      });
+      const events = clientEvents(ws);
+      await once(ws, "open");
+      // More than the kernel takes from a client whose peer does not read.
+      const large = Buffer.alloc(16 * 1024 * 1024, "a");
+      clients[0].pause();
+      ws.send(large);
+      ws.send(Buffer.alloc(1000, "b"));
+      ws.send(Buffer.alloc(2000, "c"));
+      ws.close(1000);
+      clients[0].resume();
+
+      expect({ closeCode: await serverClosed.promise, received, client: await events }).toEqual({
+        closeCode: 1000,
+        received: [large.length, 1000, 2000],
+        client: [{ code: 1000, reason: "", wasClean: true }],
+      });
+    } finally {
+      proxy.close();
+    }
+  });
+
   test("server-initiated ping survives through TLS tunnel proxy", async () => {
     // Regression test: sendPong checked socket.isClosed() on the detached tcp
     // field instead of using hasTCP(). For wss:// through HTTP proxy, the

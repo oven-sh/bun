@@ -1272,6 +1272,125 @@ test("a pooled HTTPS proxy tunnel does not keep the memory of a large request bo
   expect(httpProxyServer.log.filter(line => line === `CONNECT localhost:${origin.port}`).length).toBe(1);
 });
 
+// A TCP relay to `target` for one test. As a proxy it answers the client's
+// CONNECT first. hold() stops reading what the client sends, so the client runs
+// into the kernel's buffers. release() reads again.
+async function startHoldingRelay(target: number, asProxy: boolean) {
+  const clients: net.Socket[] = [];
+  const server = net.createServer(client => {
+    clients.push(client);
+    const upstream = net.connect(target, "127.0.0.1");
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+    client.on("close", () => upstream.destroy());
+    upstream.on("close", () => client.destroy());
+    const relay = () => {
+      client.on("data", chunk => upstream.write(chunk));
+      upstream.on("data", chunk => client.write(chunk));
+    };
+    if (!asProxy) return relay();
+    client.once("data", () => {
+      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      relay();
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  return {
+    port: (server.address() as net.AddressInfo).port,
+    hold: () => clients.forEach(client => client.pause()),
+    release: () => clients.forEach(client => client.resume()),
+    [Symbol.dispose]() {
+      for (const client of clients) client.destroy();
+      server.close();
+    },
+  };
+}
+
+test("a request body stream through an HTTPS proxy tunnel is held back where a direct one is", async () => {
+  // The TLS engine of a tunnel sealed every byte it was given and counted it as
+  // sent, so the body's source was pulled to its end while the proxy read nothing.
+  const arrived = new Map<string, () => void>();
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      arrived.get(new URL(req.url).pathname)?.();
+      try {
+        for await (const _ of req.body!);
+      } catch {}
+      return new Response();
+    },
+  });
+
+  // A round trip through the HTTP thread. A write or a drain that was due for
+  // another request has happened when it resolves.
+  const throughHttpThread = async () => void (await (await fetch(httpServer.url)).arrayBuffer());
+
+  const chunk = new Uint8Array(64 * 1024).fill(97);
+  // POSTs an endless body to `url`. The relay stops reading once the origin has
+  // the request. Resolves with how much of the body was pulled when the pulling
+  // stopped, or when it passed `limit`. Then the relay reads again, and this
+  // waits for the pulling to continue.
+  async function pulledWhileHeld(
+    url: string,
+    relay: { hold(): void; release(): void },
+    proxy?: string,
+    limit = Infinity,
+  ) {
+    let pulled = 0;
+    const body = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(chunk);
+        pulled += chunk.length;
+      },
+    });
+    const held = Promise.withResolvers<void>();
+    arrived.set(new URL(url).pathname, () => {
+      relay.hold();
+      held.resolve();
+    });
+    const abort = new AbortController();
+    const response = fetch(url, {
+      method: "POST",
+      body,
+      proxy,
+      signal: abort.signal,
+      tls: { rejectUnauthorized: false },
+    });
+    response.catch(() => {});
+    try {
+      await Promise.race([held.promise, response]);
+      let before: number;
+      do {
+        before = pulled;
+        await throughHttpThread();
+        await throughHttpThread();
+      } while (pulled !== before && pulled <= limit);
+      const whileHeld = pulled;
+      relay.release();
+      while (pulled === whileHeld) await throughHttpThread();
+      return whileHeld;
+    } finally {
+      abort.abort();
+      await response.catch(() => {});
+    }
+  }
+
+  using relay = await startHoldingRelay(origin.port, false);
+  using proxy = await startHoldingRelay(origin.port, true);
+  const direct = await pulledWhileHeld(`https://127.0.0.1:${relay.port}/direct`, relay);
+  // The kernel takes about as much from either client. The allowance is for
+  // what the tunnel itself may hold, and for buffers the kernel sized differently.
+  const limit = 2 * direct + 4 * 1024 * 1024;
+  const tunnelled = await pulledWhileHeld(
+    `https://127.0.0.1:${origin.port}/tunnelled`,
+    proxy,
+    `http://127.0.0.1:${proxy.port}`,
+    limit,
+  );
+  expect(tunnelled).toBeLessThanOrEqual(limit);
+});
+
 test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {
   // Inline raw HTTPS origin: 200 + no Content-Length then close
   const originServer = tls.createServer(

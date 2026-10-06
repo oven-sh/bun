@@ -357,7 +357,7 @@ pub mod registry {
     }
 
     /// Reports that `href`, the URL for `registry`, is not http(s).
-    pub fn report_unsupported_protocol(registry: impl core::fmt::Display, href: &[u8]) {
+    pub fn report_unsupported_protocol(registry: core::fmt::Arguments<'_>, href: &[u8]) {
         Output::err_generic("Registry URL must be http:// or https://", ());
         bun_core::note!("the URL for {} {}", registry, NotHttp::of(href));
     }
@@ -370,7 +370,10 @@ pub mod registry {
         /// Reports that `AsyncHTTP::send_sync` refused a request to this registry.
         pub fn report_unsupported_protocol(&self) {
             if self.name.is_empty() {
-                return report_unsupported_protocol("the default registry", self.url.href());
+                return report_unsupported_protocol(
+                    format_args!("the default registry"),
+                    self.url.href(),
+                );
             }
             report_unsupported_protocol(
                 format_args!("the \"@{}\" registry", bstr::BStr::new(&self.name)),

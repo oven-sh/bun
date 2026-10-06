@@ -442,7 +442,7 @@ function linkUpgraded(self, connection: SocketInstance) {
   self[kupgraded] = connection;
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
-  self.connecting = connection instanceof Socket && (connection.connecting || !connection._handle);
+  self.connecting = isSocket && (connection.connecting || !connection._handle);
   // A listener on a connected net.Socket makes its close synthesize ECONNRESET: that one is listened to once its fd is taken.
   if (self.connecting || !isSocket) forwardUpgradedError(self, connection);
 }
@@ -458,6 +458,8 @@ function attachTLSEngine(self, connection, options) {
   connection.on("end", events[1]);
   connection.on("drain", events[2]);
   connection.on("close", events[3]);
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
+  connection.resume();
   self._handle = handle;
 }
 function adoptTLSPair(self, connection, pair) {
@@ -496,7 +498,7 @@ function adoptServerTLS(self, connection, options) {
       attachTLSEngine(self, connection, options);
     } else {
       // What was read off the fd before the wrap sits in the connection's readable buffer.
-      options.initialData = connection.read() || undefined;
+      options.initialData = connection.read(connection.readableLength) || undefined;
       adoptTLSPair(self, connection, handle.upgradeTLS(options));
     }
   } catch (error) {
@@ -2674,7 +2676,8 @@ Socket.prototype.ref = function ref() {
     this.once("connect", this.ref);
     return this;
   }
-  socket.ref();
+  // Node has one handle under both sockets. Here the TLS socket that adopted the fd holds the loop.
+  (socket[kAdoptedTLSRaw] ?? socket).ref();
   return this;
 };
 
@@ -2871,7 +2874,7 @@ Socket.prototype.unref = function unref() {
     this.once("connect", this.unref);
     return this;
   }
-  socket.unref();
+  (socket[kAdoptedTLSRaw] ?? socket).unref();
   return this;
 };
 

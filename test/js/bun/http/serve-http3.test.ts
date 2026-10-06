@@ -1891,18 +1891,19 @@ describe("Bun.serve HTTP/3 request validation", () => {
   });
 });
 
-// A Response body stream that fails after the status and some bytes went out
-// cannot be replaced by error(). The transport has to tell the client that the
-// message is incomplete: HTTP/1 closes the socket without the last chunk. In
-// HTTP/3 a FIN is a complete message, so the stream has to end with
+// A Response body stream that fails after the status is committed cannot be
+// replaced by error(). The transport has to tell the client that the message
+// is incomplete: HTTP/1 closes the socket without the last chunk. In HTTP/3 a
+// FIN is a complete message, so the stream has to end with
 // RESET_STREAM(H3_INTERNAL_ERROR) instead.
-describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
-  // The body source sends one chunk and then waits. It errors only once the
-  // client, which by then holds the status and that chunk, requests
-  // /release. No timing assumption orders the wire.
+describe("Bun.serve HTTP/3 response body error", () => {
+  // The body source of /mid-body-error sends one chunk and then waits. It
+  // errors only once the client, which by then holds the status and that
+  // chunk, requests /release. No timing assumption orders the wire.
   const script = `
     const tls = ${JSON.stringify(tls)};
     const { promise: released, resolve: release } = Promise.withResolvers();
+    let failedBeforeFirstChunk = 0;
     const server = Bun.serve({
       port: 0, tls, http3: true, http1: false,
       routes: {
@@ -1924,6 +1925,16 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
             },
           }));
         },
+        "/error-before-first-chunk": () => {
+          failedBeforeFirstChunk++;
+          return new Response(new ReadableStream({
+            async pull(c) {
+              await Promise.resolve();
+              c.error(new Error("boom"));
+            },
+          }));
+        },
+        "/error-before-first-chunk/count": () => new Response(String(failedBeforeFirstChunk)),
       },
     });
     console.error("PORT=" + server.port);
@@ -1958,7 +1969,9 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
       (e: Error & { code?: string; errorCode?: bigint }) => ({ code: e.code, errorCode: Number(e.errorCode) }),
     );
     let firstChunkReceived = false;
-    let read = "fin";
+    // Which error the iterator throws depends on whether the stream is
+    // already closed when it pulls again, so only a clean end is recorded.
+    let bodyEndedCleanly = true;
     try {
       for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
         if (!firstChunkReceived) {
@@ -1966,15 +1979,15 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
           await release(port);
         }
       }
-    } catch (e) {
-      read = (e as Error & { code?: string }).code ?? "unknown";
+    } catch {
+      bodyEndedCleanly = false;
     }
-    const result = { status, firstChunkReceived, read, closed: await closed };
+    const result = { status, firstChunkReceived, bodyEndedCleanly, closed: await closed };
     client.close().catch(() => {});
     return result;
   }
 
-  test("fetch() sees the status, then the body read rejects", async () => {
+  test("after the first chunk: fetch() sees the status, then the body read rejects", async () => {
     await withCustomServer(script, async (port, _send, waitForStderr) => {
       const res = await fetchH3(port, "/mid-body-error");
       const reader = res.body!.getReader();
@@ -1997,15 +2010,28 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
     });
   });
 
-  test("the stream ends with RESET_STREAM(H3_INTERNAL_ERROR), not FIN", async () => {
+  test("after the first chunk: the stream ends with RESET_STREAM(H3_INTERNAL_ERROR), not FIN", async () => {
     await withCustomServer(script, async port => {
       const result = await h3ReadBody(port, "/mid-body-error");
       expect(result).toEqual({
         status: "200",
         firstChunkReceived: true,
-        read: "ERR_QUIC_STREAM_RESET",
+        bodyEndedCleanly: false,
         closed: { code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 258 },
       });
+    });
+  });
+
+  // The reset says that the handler ran (H3_INTERNAL_ERROR, not
+  // H3_REQUEST_REJECTED), so fetch() must not send the request a second time.
+  test("before the first chunk: fetch() rejects and the handler runs once", async () => {
+    await withCustomServer(script, async port => {
+      const outcome = await fetchH3(port, "/error-before-first-chunk", { method: "POST", body: "payload" }).then(
+        res => ({ resolved: res.status }),
+        (e: Error & { code?: string }) => ({ rejected: e.code }),
+      );
+      const handlerRuns = await fetchH3(port, "/error-before-first-chunk/count").then(r => r.text());
+      expect({ outcome, handlerRuns }).toEqual({ outcome: { rejected: "HTTP3StreamReset" }, handlerRuns: "1" });
     });
   });
 });

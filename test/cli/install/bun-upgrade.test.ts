@@ -124,6 +124,8 @@ function startReleaseServer(opts: {
   zipPath?: string;
   zipBody?: string;
   digest?: string;
+  // The `browser_download_url` of an asset. The default is the `/download/` route of this server.
+  downloadUrl?: (name: string) => string;
 }): ReleaseServer {
   const assetNames = opts.assetNames ?? allAssetNames();
   const server = Bun.serve({
@@ -143,7 +145,8 @@ function startReleaseServer(opts: {
             content_type: "application/zip",
             name,
             ...(opts.digest ? { digest: opts.digest } : {}),
-            browser_download_url: `https://${server.hostname}:${server.port}/download/${name}`,
+            browser_download_url:
+              opts.downloadUrl?.(name) ?? `https://${server.hostname}:${server.port}/download/${name}`,
           })),
         }),
       );
@@ -383,4 +386,54 @@ it("verifies the downloaded release archive against the digest reported by the r
   expect(matched.stderr).toContain("9.9.8");
   expect(matched.stderr).not.toContain("did not match the checksum reported by the GitHub API for this release");
   expect(matched.exitCode).toBe(1);
+});
+
+it("does not fetch a release archive whose URL is not http:// or https://", async () => {
+  const requests: string[] = [];
+  using plain = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(new URL(req.url).pathname.split("/")[1]);
+      return new Response("this is not a real zip archive");
+    },
+  });
+
+  const cwd = tmpdirSync();
+  const execPath = join(cwd, basename(bunExe()));
+  await copyFile(bunExe(), execPath);
+
+  // `id` is the first path segment, so `requests` shows which upgrade fetched the archive.
+  const upgrade = async (id: string, scheme: string) => {
+    using server = startReleaseServer({
+      tagName: "bun-v9.9.6",
+      downloadUrl: name => `${scheme}localhost:${plain.port}/${id}/${name}`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: server.env,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const failure = /Bun upgrade failed with error: (\w+)\r?\n\r?\nPlease upgrade manually:/.exec(stderr);
+    return { id, failure: failure?.[1] ?? null, exitCode };
+  };
+
+  expect(
+    await Promise.all([
+      upgrade("ftp", "ftp://"),
+      upgrade("htps", "htps://"),
+      upgrade("none", ""),
+      upgrade("http", "http://"),
+    ]),
+  ).toEqual([
+    { id: "ftp", failure: "UnsupportedProtocol", exitCode: 1 },
+    { id: "htps", failure: "UnsupportedProtocol", exitCode: 1 },
+    { id: "none", failure: "UnsupportedProtocol", exitCode: 1 },
+    // The archive is not a zip file, so this upgrade fails after the download, with another message.
+    { id: "http", failure: null, exitCode: 1 },
+  ]);
+  expect(requests).toEqual(["http"]);
 });

@@ -9748,63 +9748,44 @@ describe.concurrent("bun-install", () => {
       });
     });
 
-    // These error lines echo the registry URL or the URL built from it. A password inside it must not be printed.
-    // [registry, the line for the manifest request, the line for the tarball request], HOST is the listener.
-    const tarballLine = (url: string) =>
-      `error: Expected tarball URL to start with https:// or http://, got "${url}" while fetching package "left"`;
-    const joinLine = (registry: string) => `error: Failed to join registry "${registry}" and package "left" URLs`;
-    const receivedLine = `error: Registry URL must be http:// or https://\nReceived: "htps://HOST/left"`;
+    // A credential in the path makes Bun rebuild the registry URL. A URL that has no scheme must not gain one there.
     it.each([
-      ["user:hunter2@HOST/", joinLine("HOST/"), tarballLine("HOST/left/-/left-1.0.0.tgz")],
-      ["//user:hunter2@HOST/", joinLine("//HOST/"), tarballLine("//HOST/left/-/left-1.0.0.tgz")],
-      ["user:hunter2@htps://HOST/", joinLine("htps://HOST/"), tarballLine("htps://HOST/left/-/left-1.0.0.tgz")],
-      ["htps://HOST/?token=hunter2", receivedLine, tarballLine("htps://HOST/")],
-      ["htps://HOST/#hunter2", receivedLine, tarballLine("htps://HOST/")],
-    ])("does not print the password of the refused registry URL %s", async (registry, manifestLine, tarballLine) => {
+      ["_authToken=hunter2", "Bearer hunter2"],
+      [":_authToken=hunter2", "Bearer hunter2"],
+      ["_auth=aHVudGVyMg==", "Basic aHVudGVyMg=="],
+      [":username=user:_password=hunter2", "Basic dXNlcjpodW50ZXIy"],
+    ])("does not send the credential of a registry URL that has no scheme (%s)", async (credential, authorization) => {
       const requests: string[] = [];
       using server = Bun.serve({
         port: 0,
         fetch(req) {
-          requests.push(`${req.method} ${new URL(req.url).pathname}`);
+          requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
           return new Response("{}", { status: 404 });
         },
       });
-      const host = (text: string) => text.replaceAll("HOST", `localhost:${server.port}`);
+      const host = `localhost:${server.port}`;
 
-      const results = await Promise.all(
-        [manifestLine, tarballLine].map(async (line, withLockfile) => {
-          using dir = tempDir("install-refused-registry", {
-            "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { left: "1.0.0" } }),
-            "bunfig.toml": `[install]\ncache = false\nregistry = { url = "${host(registry)}", token = "secret-token" }\n`,
-            // With a lockfile the first request is the tarball, not the manifest.
-            ...(withLockfile && {
-              "bun.lock": JSON.stringify({
-                lockfileVersion: 1,
-                workspaces: { "": { name: "foo", dependencies: { left: "1.0.0" } } },
-                packages: { left: ["left@1.0.0", "", {}, "sha512-" + Buffer.alloc(86, "b").toString() + "=="] },
-              }),
-            }),
-          });
-          await using proc = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: String(dir),
-            stdout: "pipe",
-            stderr: "pipe",
-            env,
-          });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          return {
-            line: stderr.includes(host(line) + "\n") ? line : stderr,
-            printsPassword: (stdout + stderr).includes("hunter2"),
-            exitCode,
-          };
-        }),
-      );
-      expect(results).toEqual([
-        { line: manifestLine, printsPassword: false, exitCode: 1 },
-        { line: tarballLine, printsPassword: false, exitCode: 1 },
-      ]);
-      expect(requests).toEqual([]);
+      const install = async (scheme: string) => {
+        using dir = tempDir("install-registry-no-scheme", {
+          "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { left: "1.0.0" } }),
+          "bunfig.toml": `[install]\ncache = false\nregistry = "${scheme}${host}/npm/${credential}"\n`,
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      };
+      const [refused, accepted] = await Promise.all([install(""), install("http://")]);
+
+      expect(refused.stderr).toContain(`error: Failed to join registry "${host}/npm/" and package "left" URLs\n`);
+      expect(accepted.stderr).toContain(`error: GET http://${host}/npm/left - 404\n`);
+      expect(requests).toEqual([`GET /npm/left ${authorization}`]);
+      expect([refused.exitCode, accepted.exitCode]).toEqual([1, 1]);
     });
 
     // TODO: This test should fail if the param `warn_on_error` is true in

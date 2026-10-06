@@ -232,10 +232,7 @@ pub(crate) struct QuicEndpoint {
     processing: Cell<bool>,
     followup_due: Cell<bool>,
     sessions: JsCell<Vec<*mut QuicSession>>,
-    /// The same pointers as `sessions`, keyed, so `live_session` is a lookup
-    /// and not a scan of every session. `sessions` keeps the arrival order
-    /// the dispatch passes walk in. `register_session` and
-    /// `unregister_session` are the only writers of either.
+    /// `sessions` by pointer, so `live_session` is a lookup and not a scan.
     session_set: JsCell<ArrayHashMap<*mut QuicSession, ()>>,
     pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
     pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,

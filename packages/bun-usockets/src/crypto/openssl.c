@@ -25,13 +25,6 @@
 #include <stdatomic.h>
 #include <time.h>
 
-/* These are in sni_tree.cpp */
-void *sni_new();
-void sni_free(void *sni, void (*cb)(void *));
-int sni_add(void *sni, const char *hostname, void *user);
-void *sni_remove(void *sni, const char *hostname);
-void *sni_find(void *sni, const char *hostname);
-
 #ifdef LIBUS_USE_OPENSSL
 #include <openssl/bio.h>
 #include <openssl/dh.h>
@@ -3273,11 +3266,11 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   return SSL_TLSEXT_ERR_OK;
 }
 
-int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
-                                     const char *hostname_pattern,
-                                     SSL_CTX *ctx, void *user) {
+void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
+                                      const char *hostname_pattern,
+                                      SSL_CTX *ctx, void *user) {
   SSL_CTX *default_ctx = ls->ssl_ctx;
-  if (!default_ctx) return -1;
+  if (!default_ctx) return;
 
   if (!ls->sni) {
     ls->sni = sni_new();
@@ -3295,20 +3288,7 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
   us_ex_idx_ensure();
   SSL_CTX_set_ex_data(ctx, us_sni_ex_idx, user);
 
-  if (sni_add(ls->sni, hostname_pattern, node)) {
-    /* Duplicate hostname — propagate so App.h's `if (result != 0)` rollback
-     * (which frees the per-domain HttpRouter it just built) actually fires. */
-    sni_node_destructor(node);
-    return 1;
-  }
-  return 0;
-}
-
-void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-                                         const char *hostname_pattern) {
-  if (!ls->sni) return;
-  struct sni_node_t *node = (struct sni_node_t *)sni_remove(ls->sni, hostname_pattern);
-  sni_node_destructor(node);
+  sni_node_destructor(sni_add(ls->sni, hostname_pattern, node));
 }
 
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,

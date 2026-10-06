@@ -153,24 +153,30 @@ pub use ssl_wrapper::check_server_identity;
 
 pub mod ssl_wrapper {
     use core::cell::{Cell, RefCell};
-    use core::ffi::{c_char, c_int, c_void};
+    use core::ffi::{c_char, c_int, c_long, c_void};
     use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicPtr, Ordering};
     use std::collections::VecDeque;
+    use std::sync::OnceLock;
+
+    use bun_core::UnwrapOrOom;
 
     // Re-export the canonical BoringSSL FFI surface; the lower-tier crate now
     // declares every symbol SSLWrapper needs, so the old local shim is gone.
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
-            BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX,
-            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
-            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
-            SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER,
-            SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown,
-            SSL_get_verify_result, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending,
-            SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
-            SSL_set_renegotiate_mode, SSL_set_session_id_context, SSL_set_verify, SSL_shutdown,
-            SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            BIO, BIO_CTRL_FLUSH, BIO_METHOD, BIO_TYPE_SOURCE_SINK, BIO_clear_retry_flags,
+            BIO_get_data, BIO_get_new_index, BIO_meth_new, BIO_meth_set_ctrl, BIO_meth_set_read,
+            BIO_meth_set_write, BIO_new, BIO_set_data, BIO_set_init, BIO_set_retry_read,
+            ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
+            SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE,
+            SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free,
+            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
+            SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished,
+            SSL_new, SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
+            SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_session_id_context,
+            SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit,
+            ssl_renegotiate_never,
         };
     }
 
@@ -194,20 +200,101 @@ pub mod ssl_wrapper {
     // the network. write passes the encrypted data that we want to send to
     // the network. on_close is triggered when we want the network connection
     // to be closed (remember to flush before closing).
-    //
-    // Notes:
-    //   SSL_read()  reads unencrypted data which is stored in the input BIO.
-    //   SSL_write() writes unencrypted data into the output BIO.
-    //   BIO_write() writes encrypted data into the input BIO.
-    //   BIO_read()  reads encrypted data from the output BIO.
 
-    /// 64kb nice buffer size for SSL reads and writes, should be enough for
-    /// most cases. In reads we loop until we have no more data to read and in
-    /// writes we loop until we have no more data to write/backpressure.
+    /// 64kb nice buffer size for SSL reads: we loop until we have no more data to read.
     const BUFFER_SIZE: usize = 65536;
 
-    /// Stack scratch shared by `SSL_read` / `BIO_read`.
+    /// Stack scratch of `SSL_read`.
     type IoBuffer = bun_core::vec::UninitBuf<BUFFER_SIZE>;
+
+    /// A queue that empties with more capacity than this gives it back.
+    const QUEUE_RETAIN_LIMIT: usize = 2 * BUFFER_SIZE;
+
+    /// `SSL3_RT_MAX_PLAIN_LENGTH`
+    const MAX_RECORD_PLAINTEXT: usize = 16384;
+    /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`
+    const MAX_RECORD_OVERHEAD: usize = 5 + 88;
+
+    /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
+    #[derive(Default)]
+    struct Ciphertext {
+        /// Sealed, not yet given to `Handlers::write`.
+        outgoing: RefCell<Vec<u8>>,
+        /// From the peer, not yet read by BoringSSL.
+        incoming: RefCell<VecDeque<u8>>,
+    }
+
+    extern "C" fn bio_write(bio: *mut boring_sys::BIO, data: *const c_char, len: c_int) -> c_int {
+        let Ok(count) = usize::try_from(len) else {
+            return -1;
+        };
+        // SAFETY: `init_with_ctx` pointed this live BIO at the `Ciphertext` of the box that outlives it; BoringSSL passes `len` readable bytes.
+        let (ciphertext, data) = unsafe {
+            (
+                &*boring_sys::BIO_get_data(bio).cast::<Ciphertext>(),
+                core::slice::from_raw_parts(data.cast::<u8>(), count),
+            )
+        };
+        let mut outgoing = ciphertext.outgoing.borrow_mut();
+        outgoing.try_reserve(count).unwrap_or_oom();
+        outgoing.extend_from_slice(data);
+        len
+    }
+
+    extern "C" fn bio_read(bio: *mut boring_sys::BIO, out: *mut c_char, len: c_int) -> c_int {
+        // SAFETY: as in `bio_write`.
+        let ciphertext = unsafe {
+            boring_sys::BIO_clear_retry_flags(bio);
+            &*boring_sys::BIO_get_data(bio).cast::<Ciphertext>()
+        };
+        let mut incoming = ciphertext.incoming.borrow_mut();
+        // BoringSSL reads again for what lies past the point where the ring wraps.
+        let (front, _) = incoming.as_slices();
+        let count = front.len().min(usize::try_from(len).unwrap_or(0));
+        if count == 0 {
+            // SAFETY: `bio` is live.
+            unsafe { boring_sys::BIO_set_retry_read(bio) };
+            return -1;
+        }
+        // SAFETY: BoringSSL passes `len` writable bytes of its own, and `count <= len`.
+        unsafe { core::ptr::copy_nonoverlapping(front.as_ptr(), out.cast::<u8>(), count) };
+        incoming.drain(..count);
+        if incoming.is_empty() && incoming.capacity() > QUEUE_RETAIN_LIMIT {
+            *incoming = VecDeque::new();
+        }
+        c_int::try_from(count).unwrap_or(len)
+    }
+
+    /// BoringSSL fails a flight whose `BIO_flush` reports 0.
+    extern "C" fn bio_ctrl(
+        _: *mut boring_sys::BIO,
+        cmd: c_int,
+        _: c_long,
+        _: *mut c_void,
+    ) -> c_long {
+        c_long::from(cmd == boring_sys::BIO_CTRL_FLUSH)
+    }
+
+    fn bio_method() -> *const boring_sys::BIO_METHOD {
+        static METHOD: OnceLock<AtomicPtr<boring_sys::BIO_METHOD>> = OnceLock::new();
+        METHOD
+            .get_or_init(|| {
+                // A type of its own: see `us_ssl_is_socket` in openssl.c.
+                let r#type = boring_sys::BIO_get_new_index() | boring_sys::BIO_TYPE_SOURCE_SINK;
+                // SAFETY: the name is static, and a null `method` does not get past the check.
+                unsafe {
+                    let method = boring_sys::BIO_meth_new(r#type, c"SSLWrapper".as_ptr());
+                    if method.is_null() {
+                        bun_core::out_of_memory();
+                    }
+                    boring_sys::BIO_meth_set_write(method, Some(bio_write));
+                    boring_sys::BIO_meth_set_read(method, Some(bio_read));
+                    boring_sys::BIO_meth_set_ctrl(method, Some(bio_ctrl));
+                    AtomicPtr::new(method)
+                }
+            })
+            .load(Ordering::Relaxed)
+    }
 
     /// Cap on peer-initiated TLS renegotiations per
     /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
@@ -270,6 +357,7 @@ pub mod ssl_wrapper {
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
+        ciphertext: Ciphertext,
     }
 
     /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
@@ -448,11 +536,9 @@ pub mod ssl_wrapper {
             // SAFETY: ctx is a live SSL_CTX; SSL_new returns null on OOM.
             let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
                 .ok_or(InitError::OutOfMemory)?;
-            // errdefer BoringSSL.SSL_free(ssl) — FFI cleanup on early return
-            let ssl_guard = scopeguard::guard(ssl, |ssl| {
-                // SAFETY: ssl was created by SSL_new above and is solely owned by this guard until disarmed.
-                unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
-            });
+            // SAFETY: the method lives as long as the process; BIO_new returns null on OOM.
+            let bio = NonNull::new(unsafe { boring_sys::BIO_new(bio_method()) })
+                .unwrap_or_else(|| bun_core::out_of_memory());
 
             // OpenSSL enables TLS renegotiation by default and accepts
             // renegotiation requests from the peer transparently.
@@ -495,30 +581,6 @@ pub mod ssl_wrapper {
                     boring_sys::SSL_set_accept_state(ssl.as_ptr());
                 }
             }
-            // SAFETY: BIO_s_mem returns a static method table; BIO_new returns null on OOM.
-            let input = NonNull::new(unsafe { boring_sys::BIO_new(boring_sys::BIO_s_mem()) })
-                .ok_or(InitError::OutOfMemory)?;
-            // errdefer _ = BoringSSL.BIO_free(input)
-            let input_guard = scopeguard::guard(input, |bio| {
-                // SAFETY: bio was created by BIO_new above and not yet transferred to SSL_set_bio.
-                unsafe {
-                    let _ = boring_sys::BIO_free(bio.as_ptr());
-                }
-            });
-            // SAFETY: same as above.
-            let output = NonNull::new(unsafe { boring_sys::BIO_new(boring_sys::BIO_s_mem()) })
-                .ok_or(InitError::OutOfMemory)?;
-            // Set the EOF return value to -1 so that we can detect when the BIO is empty using BIO_ctrl_pending
-            // SAFETY: input/output are valid BIOs we just created; ssl is valid.
-            unsafe {
-                let _ = boring_sys::BIO_set_mem_eof_return(input.as_ptr(), -1);
-                let _ = boring_sys::BIO_set_mem_eof_return(output.as_ptr(), -1);
-                // Set the input and output BIOs
-                boring_sys::SSL_set_bio(ssl.as_ptr(), input.as_ptr(), output.as_ptr());
-            }
-            // Ownership of input/output transferred to ssl via SSL_set_bio; disarm guards.
-            let _ = scopeguard::ScopeGuard::into_inner(input_guard);
-            let ssl = scopeguard::ScopeGuard::into_inner(ssl_guard);
 
             let flags = Flags::default();
             flags.set_is_client(is_client);
@@ -545,10 +607,17 @@ pub mod ssl_wrapper {
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
+                ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
-            // SAFETY: `ssl` is live; the box outlives it, `deinit` frees `ssl` first.
+            // SAFETY: `ssl` and `bio` are live; the box outlives both, `deinit` frees `ssl` first. One BIO for both ends gives `ssl` its one reference.
             unsafe {
+                boring_sys::BIO_set_data(
+                    bio.as_ptr(),
+                    core::ptr::from_ref(&this.ciphertext).cast_mut().cast(),
+                );
+                boring_sys::BIO_set_init(bio.as_ptr(), 1);
+                boring_sys::SSL_set_bio(ssl.as_ptr(), bio.as_ptr(), bio.as_ptr());
                 us_ssl_set_wrapper(
                     ssl.as_ptr(),
                     core::ptr::from_ref(&this.callbacks).cast_mut().cast(),
@@ -753,48 +822,32 @@ pub mod ssl_wrapper {
                     return false;
                 }
             }
-            // SSL_shutdown only queues close_notify into the write BIO; nothing
-            // else pumps it on the memory-BIO paths (duplex / named pipe), so
-            // drain it now or the peer never sees our shutdown.
-            let mut buffer = IoBuffer::uninit();
-            self.handle_writing(&mut buffer);
+            // SSL_shutdown only queues close_notify, and nothing else hands it to the owner.
+            self.handle_writing();
             ret == 1 // truly closed
         }
 
         /// flush buffered data and returns amount of pending data to write
         pub fn flush(&self) -> usize {
-            // handle_traffic may trigger a close callback which frees ssl,
-            // so we must not capture the ssl pointer before calling it.
             self.handle_traffic();
-            let Some(ssl) = self.ssl.get() else { return 0 };
-            // SAFETY: ssl is a live SSL*; SSL_get_wbio returns the BIO bound in init_with_ctx.
-            unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) }
+            self.ciphertext.outgoing.borrow().len()
         }
 
-        /// Return if we have pending data to be read or write. Covers both
-        /// BIOs and `SSL_pending` — decrypted bytes of a partially-returned
-        /// record are buffered inside the SSL, invisible to either BIO.
+        /// Ciphertext is queued in either direction, or the SSL holds the rest of a partially-returned record.
         pub fn has_pending_data(&self) -> bool {
             let Some(ssl) = self.ssl.get() else {
                 return false;
             };
-            // SAFETY: ssl is a live SSL*; rbio/wbio bound in init_with_ctx.
-            unsafe {
-                boring_sys::SSL_pending(ssl.as_ptr()) > 0
-                    || boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) > 0
-                    || boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_rbio(ssl.as_ptr())) > 0
-            }
+            // SAFETY: ssl is a live SSL*.
+            let decrypted = unsafe { boring_sys::SSL_pending(ssl.as_ptr()) };
+            decrypted > 0
+                || !self.ciphertext.outgoing.borrow().is_empty()
+                || self.has_pending_read()
         }
 
-        /// Return if we buffered data inside the BIO read buffer, not
-        /// necessarily will return data to read. This dont reflect
-        /// SSL_pending().
+        /// Ciphertext from the peer is queued. This dont reflect SSL_pending().
         fn has_pending_read(&self) -> bool {
-            let Some(ssl) = self.ssl.get() else {
-                return false;
-            };
-            // SAFETY: ssl is a live SSL*.
-            unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_rbio(ssl.as_ptr())) > 0 }
+            !self.ciphertext.incoming.borrow().is_empty()
         }
 
         /// We sent or received a shutdown (closing or closed)
@@ -811,24 +864,15 @@ pub mod ssl_wrapper {
 
         /// Receive data from the network (encrypted data)
         pub fn receive_data(&self, data: &[u8]) {
-            let Some(ssl) = self.ssl.get() else { return };
-
-            // SAFETY: ssl is a live SSL*; rbio bound in init_with_ctx.
-            let Some(input) = NonNull::new(unsafe { boring_sys::SSL_get_rbio(ssl.as_ptr()) })
-            else {
+            if self.ssl.get().is_none() {
                 return;
-            };
-            // SAFETY: input is a valid BIO*; data is a valid &[u8] for len bytes.
-            let written = unsafe {
-                boring_sys::BIO_write(
-                    input.as_ptr(),
-                    data.as_ptr().cast::<c_void>(),
-                    c_int::try_from(data.len()).expect("int cast"),
-                )
-            };
-            if written > -1 {
-                self.handle_traffic();
             }
+            {
+                let mut incoming = self.ciphertext.incoming.borrow_mut();
+                incoming.try_reserve(data.len()).unwrap_or_oom();
+                incoming.extend(data);
+            }
+            self.handle_traffic();
         }
 
         /// Send data to the network (unencrypted data)
@@ -857,12 +901,20 @@ pub mod ssl_wrapper {
                 self.handle_traffic();
                 return Err(WriteDataError::WantRead);
             }
+            let data = &data[..data.len().min(c_int::MAX as usize)];
+            // One growth for all the records of this write.
+            let records = data.len() / MAX_RECORD_PLAINTEXT + 1;
+            self.ciphertext
+                .outgoing
+                .borrow_mut()
+                .try_reserve(data.len() + records * MAX_RECORD_OVERHEAD)
+                .unwrap_or_oom();
             // SAFETY: ssl is a live SSL*; data is a valid &[u8] for len bytes.
             let written = unsafe {
                 boring_sys::SSL_write(
                     ssl.as_ptr(),
                     data.as_ptr().cast::<c_void>(),
-                    c_int::try_from(data.len()).unwrap_or(c_int::MAX),
+                    data.len() as c_int,
                 )
             };
             if written <= 0 {
@@ -903,7 +955,7 @@ pub mod ssl_wrapper {
 
         fn free(ssl: Option<NonNull<boring_sys::SSL>>) {
             if let Some(ssl) = ssl {
-                // SAFETY: ssl was created by SSL_new and the caller took it out of `self.ssl`; SSL_free also frees the input and output BIOs.
+                // SAFETY: ssl was created by SSL_new and the caller took it out of `self.ssl`; SSL_free also frees its BIO.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
         }
@@ -1033,12 +1085,8 @@ pub mod ssl_wrapper {
                 && unsafe { boring_sys::SSL_get_verify_result(ssl.as_ptr()) } != 0
             {
                 boring_sys::ERR_clear_error();
-                // Reset, not only skip the flush below: a re-entered
-                // `handle_traffic` flushes the write BIO and never gets here.
-                // SAFETY: wbio is the mem BIO bound in init_with_ctx.
-                unsafe {
-                    let _ = boring_sys::BIO_reset(boring_sys::SSL_get_wbio(ssl.as_ptr()));
-                }
+                // Not only skipped below: a re-entered `handle_traffic` flushes the queue and never gets here.
+                self.ciphertext.outgoing.borrow_mut().clear();
                 // The peer never gets our Finished, so it cannot read a close_notify.
                 self.flags.set_fatal_error(true);
                 self.flags
@@ -1077,7 +1125,7 @@ pub mod ssl_wrapper {
                     self.flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
                     // Our fatal alert leaves before the owner tears the transport down.
-                    self.handle_writing(&mut IoBuffer::uninit());
+                    self.handle_writing();
                     self.trigger_handshake_callback(HandshakeOutcome::HandshakeError(fatal_reason));
 
                     if self.flags.fatal_error() {
@@ -1211,7 +1259,7 @@ pub mod ssl_wrapper {
                         }
                         if is_fatal {
                             // Our fatal alert leaves before the owner tears the transport down.
-                            self.handle_writing(buffer);
+                            self.handle_writing();
                         }
                         if reason.is_some() {
                             self.trigger_handshake_callback(HandshakeOutcome::HandshakeError(
@@ -1261,39 +1309,19 @@ pub mod ssl_wrapper {
             self.ssl.get().is_some() && !self.flags.closed_notified()
         }
 
-        fn handle_writing(&self, buffer: &mut IoBuffer) {
-            let mut read: usize = 0;
-            loop {
-                let Some(ssl) = self.ssl.get() else { return };
-                // SAFETY: ssl is a live SSL*; wbio bound in init_with_ctx.
-                let Some(output) = NonNull::new(unsafe { boring_sys::SSL_get_wbio(ssl.as_ptr()) })
-                else {
-                    return;
-                };
-                // SAFETY: write-only view of the unfilled tail; BIO_read only stores into it.
-                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
-                // SAFETY: output is a valid BIO*; available is a valid mutable slice.
-                let just_read = unsafe {
-                    boring_sys::BIO_read(
-                        output.as_ptr(),
-                        available.as_mut_ptr().cast::<c_void>(),
-                        c_int::try_from(available.len()).expect("int cast"),
-                    )
-                };
-                if just_read > 0 {
-                    read += usize::try_from(just_read).expect("int cast");
-                    if read == BUFFER_SIZE {
-                        // SAFETY: the BIO_read calls above wrote `[0..read]` contiguously.
-                        self.trigger_wanna_write_callback(unsafe { buffer.filled(read) });
-                        read = 0;
-                    }
-                } else {
-                    break;
-                }
+        /// This frame owns what it hands out: a write made from inside `write` queues behind it.
+        fn handle_writing(&self) {
+            if self.ssl.get().is_none() {
+                return;
             }
-            if read > 0 {
-                // SAFETY: the BIO_read calls above wrote `[0..read]` contiguously.
-                self.trigger_wanna_write_callback(unsafe { buffer.filled(read) });
+            let mut pending = self.ciphertext.outgoing.take();
+            if !pending.is_empty() {
+                self.trigger_wanna_write_callback(&pending);
+                pending.clear();
+            }
+            let mut outgoing = self.ciphertext.outgoing.borrow_mut();
+            if outgoing.capacity() == 0 && pending.capacity() <= QUEUE_RETAIN_LIMIT {
+                *outgoing = pending;
             }
         }
 
@@ -1305,8 +1333,7 @@ pub mod ssl_wrapper {
         fn handle_traffic(&self) {
             if self.traffic.get() != Traffic::Idle {
                 log!("handleTraffic re-entered, flushing and deferring to the outer pass");
-                let mut buffer = IoBuffer::uninit();
-                self.handle_writing(&mut buffer);
+                self.handle_writing();
                 self.traffic.set(Traffic::RerunRequested);
                 return;
             }
@@ -1327,13 +1354,12 @@ pub mod ssl_wrapper {
         fn traffic_pass(&self) {
             // always handle the handshake first
             if self.update_handshake_state() {
-                // shared stack buffer for reading and writing
+                // send what the handshake queued first
+                self.handle_writing();
+
                 // PERF: 64KiB on-stack array — verify stack-size headroom.
                 let mut buffer = IoBuffer::uninit();
-                // drain the input BIO first
-                self.handle_writing(&mut buffer);
-
-                // drain the output BIO in loop, because read can trigger writing and vice versa
+                // drain the incoming queue in loop, because read can trigger writing and vice versa
                 // Once a callback re-entered, the next pass takes over: the bytes it fed in
                 // may belong to the handshake, which only update_handshake_state reports.
                 while self.traffic.get() == Traffic::Running
@@ -1341,7 +1367,7 @@ pub mod ssl_wrapper {
                     && self.handle_reading(&mut buffer)
                 {
                     // read data can trigger writing so we need to handle it
-                    self.handle_writing(&mut buffer);
+                    self.handle_writing();
                 }
                 if self.traffic.get() != Traffic::Running {
                     return;

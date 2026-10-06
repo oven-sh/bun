@@ -402,6 +402,15 @@ public:
             }
             s = next;
         }
+        /* A handshake parked in the loop's low-priority queue is unlinked from head_sockets. Never idle: it only needs the mark. */
+        if (closeWhenIdle && group->low_prio_count) {
+            for (s = group->loop->data.low_prio_head; s; s = s->next) {
+                if (s->group == group) {
+                    auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
+                    data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                }
+            }
+        }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
             closed += h2->closeIdle(closeWhenIdle);
         }

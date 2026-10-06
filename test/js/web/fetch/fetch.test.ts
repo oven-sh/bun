@@ -1074,10 +1074,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
           await new Promise(resolve => setTimeout(resolve, 1));
           if (withGC) gc();
           expect(out).toBe(text);
-          const first = await blobed.arrayBuffer();
+          const first = new Uint8Array(await blobed.arrayBuffer());
           const initial = first[0];
           first[0] = 254;
-          const second = await blobed.arrayBuffer();
+          const second = new Uint8Array(await blobed.arrayBuffer());
           expect(second[0]).toBe(initial);
           expect(first[0]).toBe(254);
         });

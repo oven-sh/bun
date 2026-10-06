@@ -2,7 +2,7 @@ import assert from "assert";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, osSlashes, tempDir } from "harness";
 import path from "path";
-import { type BundlerTestInput, dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
+import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
@@ -2153,7 +2153,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/ImportReExportES6ESBuildIssue149", {
-    todo: true,
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2184,8 +2183,8 @@ describe.concurrent("bundler", () => {
     },
     jsx: {
       factory: "h",
-      automaticRuntime: false,
-    } as BundlerTestInput["jsx"],
+      runtime: "classic",
+    },
     external: ["preact"],
     run: true,
   });

@@ -8457,11 +8457,11 @@ describe.concurrent("bun-install", () => {
 
   it.todo("should handle installing workspaces with absolute glob patterns", async () => {
     await using package_dir = tempDir("absolute-glob", {
-      "package.json": base =>
+      "package.json": ({ root }) =>
         JSON.stringify({
           name: "package3",
           version: "0.0.1",
-          workspaces: [join(base as any, "packages/**/*")],
+          workspaces: [join(root, "packages/**/*")],
         }),
       "packages": {
         "frontend": {
@@ -9761,43 +9761,42 @@ describe.concurrent("bun-install", () => {
     // manifest magic. I doubt it'd ever fail, but having a dedicated
     // test would be nice.
     test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
-      const regURL = "asdfghjklqwertyuiop";
+      await withContext(defaultOpts, async ctx => {
+        const regURL = "asdfghjklqwertyuiop";
 
-      await writeFile(
-        // @ts-expect-error no ctx here
-        join(ctx.package_dir, "bunfig.toml"),
-        Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
-      );
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+        );
 
-      await writeFile(
-        // @ts-expect-error no ctx here
-        join(ctx.package_dir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          version: "0.0.1",
-          peerDependencies: {
-            notapackage: "0.0.2",
-          },
-        }),
-      );
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            peerDependencies: {
+              notapackage: "0.0.2",
+            },
+          }),
+        );
 
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        // @ts-expect-error no ctx here
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        expect(await stdout.text()).not.toBeEmpty();
+
+        const err = await stderr.text();
+
+        expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+        expect(err).toContain("warn: InvalidURL");
+
+        expect(await exited).toBe(0);
       });
-      expect(await stdout.text()).not.toBeEmpty();
-
-      const err = await stderr.text();
-
-      expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-      expect(err).toContain("warn: InvalidURL");
-
-      expect(await exited).toBe(0);
     });
 
     // The manifest URL is built from the registry URL by the WHATWG parser,

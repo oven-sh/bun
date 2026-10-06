@@ -21,15 +21,11 @@ import {
   utilPromisifyAvailable,
 } from "./helpers/setup-tests";
 
-// @ts-expect-error redeclared below
 import * as timersModule from "timers";
-// @ts-expect-error redeclared below
 import * as timersPromisesModule from "timers/promises";
 
 const before = beforeEach;
 const after = afterEach;
-
-let timersModule, timersPromisesModule;
 
 /* eslint-disable no-underscore-dangle */
 globalObject.__runs = globalObject.__runs || 0;
@@ -5531,7 +5527,7 @@ describe.todo("FakeTimers", function () {
         const iterable = timersPromisesModule.setInterval(100);
         const iter = iterable[Symbol.asyncIterator]();
 
-        const returnResult = await iter.return();
+        const returnResult = await iter.return!();
         const nextResult = await iter.next();
 
         assert.equals(returnResult.done, true);
@@ -5555,7 +5551,7 @@ describe.todo("FakeTimers", function () {
         });
 
         let returned;
-        iter.return().then(it => {
+        iter.return!().then(it => {
           returned = it;
         });
 
@@ -5617,7 +5613,7 @@ describe.todo("FakeTimers", function () {
         });
         const iter = iterable[Symbol.asyncIterator]();
 
-        await iter.return();
+        await iter.return!();
 
         assert.equals((abortController.signal.removeEventListener as any).called, true);
       });
@@ -5674,7 +5670,7 @@ describe.todo("FakeTimers", function () {
         });
         const iter = iterable[Symbol.asyncIterator]();
 
-        await iter.return();
+        await iter.return!();
 
         assert.equals(clock.abortListenerMap.size, 0);
       });

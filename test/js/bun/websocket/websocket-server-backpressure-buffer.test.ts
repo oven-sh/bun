@@ -75,7 +75,7 @@ describe("BackPressure buffer", () => {
         return new Response("no", { status: 500 });
       },
       websocket: {
-        maxBackpressure: SIZE * 2,
+        backpressureLimit: SIZE * 2,
         idleTimeout: 0,
         open(ws) {
           opened.resolve(ws);
@@ -90,7 +90,7 @@ describe("BackPressure buffer", () => {
         close() {
           drained.resolve();
         },
-      } as Bun.WebSocketHandler<undefined>,
+      },
     });
 
     const { sock, initial } = await pausedClient(server.port!);
@@ -161,7 +161,7 @@ describe("BackPressure buffer", () => {
     let sent = 0;
     let sawBufferedAboveWindow = false;
     const drained = Promise.withResolvers<void>();
-    const fill = (ws: import("bun").ServerWebSocket<unknown>) => {
+    const fill = (ws: import("bun").ServerWebSocket<undefined>) => {
       while (sent < COUNT) {
         ws.sendBinary(frames[sent]);
         sent++;
@@ -179,7 +179,7 @@ describe("BackPressure buffer", () => {
         return new Response("no", { status: 500 });
       },
       websocket: {
-        maxBackpressure: WINDOW * 4,
+        backpressureLimit: WINDOW * 4,
         idleTimeout: 0,
         open: fill,
         drain: fill,
@@ -187,7 +187,7 @@ describe("BackPressure buffer", () => {
         close() {
           drained.resolve();
         },
-      } as Bun.WebSocketHandler<undefined>,
+      },
     });
 
     const { sock, initial } = await pausedClient(server.port!);

@@ -26,7 +26,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/client.js",
@@ -56,7 +56,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -82,7 +82,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -112,7 +112,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -147,7 +147,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -193,7 +193,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -227,7 +227,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -256,7 +256,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: [
       {
@@ -283,7 +283,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",
@@ -321,7 +321,7 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     target: "browser",
-    env: "inline" as any,
+    dotenv: "inline",
     format: "esm",
     run: {
       file: "/out/entry.js",

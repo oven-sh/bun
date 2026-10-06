@@ -2046,7 +2046,7 @@ export class VerdaccioRegistry {
       return data.token;
     }
 
-    throw new Error("Failed to create user:", response.statusText as any);
+    throw new Error(`Failed to create user: ${response.status} ${response.statusText}`);
   }
 
   async authBunfig(user: string) {

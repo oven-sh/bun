@@ -133,8 +133,8 @@ describe("Bun.serve SSL validations", () => {
             tls: {
               rejectUnauthorized: false,
             },
-            keepAlive: false,
-          } as BunFetchRequestInit);
+            keepalive: false,
+          });
           expect(res.status).toBe(200);
           expect(await res.text()).toBe("Hello, world!");
         }
@@ -146,8 +146,8 @@ describe("Bun.serve SSL validations", () => {
           tls: {
             rejectUnauthorized: false,
           },
-          keepAlive: false,
-        } as BunFetchRequestInit);
+          keepalive: false,
+        });
       });
     }
   }

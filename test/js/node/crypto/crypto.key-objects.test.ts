@@ -211,16 +211,16 @@ describe("crypto.KeyObjects", () => {
     expect(derivedPublicKey.symmetricKeySize).toBe(undefined);
 
     const publicKeyFromJwk = createPublicKey({ key: publicJwk, format: "jwk" });
-    expect(publicKey.type).toBe("public");
-    expect(publicKey.toString()).toBe("[object KeyObject]");
-    expect(publicKey.asymmetricKeyType).toBe("rsa");
-    expect(publicKey.symmetricKeySize).toBe(undefined);
+    expect(publicKeyFromJwk.type).toBe("public");
+    expect(publicKeyFromJwk.toString()).toBe("[object KeyObject]");
+    expect(publicKeyFromJwk.asymmetricKeyType).toBe("rsa");
+    expect(publicKeyFromJwk.symmetricKeySize).toBe(undefined);
 
     const privateKeyFromJwk = createPrivateKey({ key: jwk, format: "jwk" });
-    expect(privateKey.type).toBe("private");
-    expect(privateKey.toString()).toBe("[object KeyObject]");
-    expect(privateKey.asymmetricKeyType).toBe("rsa");
-    expect(privateKey.symmetricKeySize).toBe(undefined);
+    expect(privateKeyFromJwk.type).toBe("private");
+    expect(privateKeyFromJwk.toString()).toBe("[object KeyObject]");
+    expect(privateKeyFromJwk.asymmetricKeyType).toBe("rsa");
+    expect(privateKeyFromJwk.symmetricKeySize).toBe(undefined);
 
     // It should also be possible to import an encrypted private key as a public
     // key.
@@ -793,7 +793,9 @@ describe("crypto.KeyObjects", () => {
 
       expect(first.publicKey.equals(first.publicKey)).toBeTrue();
 
-      expect(first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))));
+      expect(
+        first.publicKey.equals(createPublicKey(first.publicKey.export({ format: "pem", type: "spki" }))),
+      ).toBeTrue();
 
       expect(first.publicKey.equals(second.publicKey)).toBeFalse();
       expect(first.publicKey.equals(second.privateKey)).toBeFalse();
@@ -878,7 +880,7 @@ describe("crypto.KeyObjects", () => {
         expect(typeof publicKey).toBe("object");
         expect(typeof privateKey).toBe("object");
         expect(publicKey.x).toBe(privateKey.x);
-        expect(publicKey.y).toBe(publicKey.y);
+        expect(publicKey.y).toBe(privateKey.y);
         expect(publicKey.d).toBeUndefined();
         expect(privateKey.d).toBeDefined();
         expect(publicKey.kty).toEqual("EC");
@@ -1237,7 +1239,7 @@ describe("crypto.KeyObjects", () => {
         expect(typeof publicKey).toBe("object");
         expect(typeof privateKey).toBe("object");
         expect(publicKey.x).toBe(privateKey.x);
-        expect(publicKey.y).toBe(publicKey.y);
+        expect(publicKey.y).toBe(privateKey.y);
         expect(publicKey.d).toBeUndefined();
         expect(privateKey.d).toBeDefined();
         expect(publicKey.kty).toEqual("EC");
@@ -1406,31 +1408,19 @@ describe("crypto.KeyObjects", () => {
   });
 
   test(`Test sync explicit elliptic curve key generation with an encrypted private key`, async () => {
-    const { publicKey, privateKey } = generateKeyPairSync(
-      "ec",
-      {
-        namedCurve: "prime256v1",
-        publicKeyEncoding: {
-          type: "spki",
-          format: "pem",
-        },
-        privateKeyEncoding: {
-          type: "sec1",
-          format: "pem",
-          cipher: "aes-128-cbc",
-          passphrase: "secret",
-        },
+    const { publicKey, privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      publicKeyEncoding: {
+        type: "spki",
+        format: "pem",
       },
-      // @ts-expect-error extra argument
-      (err, publicKey, privateKey) => {
-        if (err) {
-          // @ts-expect-error not declared
-          return reject(err);
-        }
-        // @ts-expect-error not declared
-        resolve({ publicKey, privateKey });
+      privateKeyEncoding: {
+        type: "sec1",
+        format: "pem",
+        cipher: "aes-128-cbc",
+        passphrase: "secret",
       },
-    );
+    });
 
     expect(typeof publicKey).toBe("string");
     expect(publicKey).toMatch(spkiExp);

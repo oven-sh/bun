@@ -97,7 +97,7 @@ async function generateRegistryUser(username: string, password: string): Promise
     const data: any = await response.json();
     return data.token;
   } else {
-    throw new Error("Failed to create user:", response.statusText as any);
+    throw new Error(`Failed to create user: ${response.status} ${response.statusText}`);
   }
 }
 

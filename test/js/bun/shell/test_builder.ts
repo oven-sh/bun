@@ -1,5 +1,4 @@
-// @ts-expect-error "bun" has no `ShellError` export (it is `$.ShellError`)
-import { ShellError, ShellExpression } from "bun";
+import { $, ShellExpression } from "bun";
 // import { tempDirWithFiles } from "harness";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -15,7 +14,7 @@ export function createTestBuilder(path: string) {
     expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
     expected_stderr: string | ((stderr: string, tempdir: string) => void) | { contains: string } = "";
     expected_exit_code: number | ((code: number) => void) = 0;
-    expected_error: ShellError | string | boolean | undefined = undefined;
+    expected_error: $.ShellError | string | boolean | undefined = undefined;
     file_equals: { [filename: string]: string | (() => string | Promise<string>) } = {};
     _doesNotExist: string[] = [];
     _timeout: number | undefined = undefined;
@@ -156,7 +155,7 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
-    error(expected?: ShellError | string | boolean): this {
+    error(expected?: $.ShellError | string | boolean): this {
       if (expected === undefined || expected === true) {
         this.expected_error = true;
       } else if (expected === false) {
@@ -251,22 +250,22 @@ export function createTestBuilder(path: string) {
         const { stdout, stderr, exitCode } = output;
         await this.doChecks(stdout, stderr, exitCode);
       } catch (err_) {
-        const err: ShellError = err_ as any;
+        const err: $.ShellError = err_ as any;
         const { stdout, stderr, exitCode } = err;
         if (this.expected_error === undefined) {
           if (stdout === undefined || stderr === undefined || exitCode === undefined) {
             throw err_;
           }
-          this.doChecks(stdout, stderr, exitCode);
+          await this.doChecks(stdout, stderr, exitCode);
           return;
         }
         if (this.expected_error === true) return undefined;
         if (this.expected_error === false) expect(err).toBeUndefined();
         if (typeof this.expected_error === "string") {
           expect(err.message).toEqual(this.expected_error);
-        } else if (this.expected_error instanceof ShellError) {
-          expect(err).toBeInstanceOf(ShellError);
-          const e = err as ShellError;
+        } else if (this.expected_error instanceof $.ShellError) {
+          expect(err).toBeInstanceOf($.ShellError);
+          const e = err as $.ShellError;
           expect(e.exitCode).toEqual(this.expected_error.exitCode);
           expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
           expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());

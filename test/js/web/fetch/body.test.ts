@@ -216,11 +216,9 @@ for (const { body, fn } of bodyTypes) {
             label: "Bun.file() stream",
             stream: () => {
               const url = new URL("resources/index.html", import.meta.url);
-              const { readable } = file(url) as any;
-              return readable;
+              return file(url).stream();
             },
             content: /Example Domain/,
-            skip: true, // fails, text is empty
           },
           {
             label: "Bun.spawn() stream",

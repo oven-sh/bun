@@ -383,7 +383,7 @@ for (let algorithmValue of algorithms) {
 
   describe(algorithmValue ? algorithmValue : "default", () => {
     const hash = (value: string | NodeJS.TypedArray) => {
-      return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
+      return algorithmValue ? password.hash(value, algorithmValue as any) : password.hash(value);
     };
 
     const hashSync = (value: string | NodeJS.TypedArray) => {

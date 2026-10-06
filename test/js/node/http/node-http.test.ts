@@ -1655,8 +1655,8 @@ describe("server.address should be valid IP", () => {
     try {
       const socket: any = new EventEmitter();
       const res = new ServerResponse({} as any);
-      res.once("socket", socket => {
-        expect(socket).toBe(socket);
+      res.once("socket", emitted => {
+        expect(emitted).toBe(socket);
         waitSocket();
       });
       res.once("close", () => {

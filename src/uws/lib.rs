@@ -162,16 +162,15 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, ERR_error_string_n, ERR_peek_error,
-            OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
-            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
-            SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-            SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error,
-            SSL_get_rbio, SSL_get_shutdown, SSL_get_verify_result, SSL_get_wbio,
-            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
-            SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
-            SSL_set_session_id_context, SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX,
-            ssl_renegotiate_explicit, ssl_renegotiate_never,
+            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
+            SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER,
+            SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown,
+            SSL_get_verify_result, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending,
+            SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
+            SSL_set_renegotiate_mode, SSL_set_session_id_context, SSL_set_verify, SSL_shutdown,
+            SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -397,9 +396,9 @@ pub mod ssl_wrapper {
         Established,
         /// `set_inline_reject` stopped the handshake on the peer's chain.
         InlineRejected,
-        /// `SSL_do_handshake` failed. Carries the queued reason of a fatal failure.
+        /// `SSL_do_handshake` failed, or `SSL_read` on the established session. Carries the queued reason of a fatal failure.
         HandshakeError(Option<&'a core::ffi::CStr>),
-        /// Closed before the handshake finished, or a renegotiation was refused.
+        /// We closed before the first handshake finished.
         Aborted,
         /// The peer's close_notify ended the first handshake.
         PeerClosed,
@@ -928,10 +927,7 @@ pub mod ssl_wrapper {
                     },
                 ),
                 // node:tls reads a failure with no error after end() as its own close.
-                HandshakeOutcome::Aborted if self.is_shutdown() => {
-                    (false, us_bun_verify_error_t::default())
-                }
-                HandshakeOutcome::Aborted => (false, self.verify_error()),
+                HandshakeOutcome::Aborted => (false, us_bun_verify_error_t::default()),
                 HandshakeOutcome::PeerClosed => (false, us_bun_verify_error_t::peer_disconnected()),
             };
             self.flags.set_authorized(success);
@@ -977,16 +973,11 @@ pub mod ssl_wrapper {
             unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
         }
 
-        /// Formats the oldest queued error, like `ssl_park_fatal_reason` in openssl.c, and clears the queue.
+        /// Why the `SSL_*` call that just returned failed. Clears the thread's queue.
         fn take_queued_error(buf: &mut [u8; FATAL_ERROR_REASON_MAX]) -> Option<&core::ffi::CStr> {
-            let packed = boring_sys::ERR_peek_error();
-            boring_sys::ERR_clear_error();
-            if packed == 0 {
-                return None;
-            }
             // SAFETY: buf is a valid mutable buffer for `buf.len()` bytes.
-            unsafe {
-                boring_sys::ERR_error_string_n(packed, buf.as_mut_ptr().cast(), buf.len());
+            if unsafe { us_ssl_take_error_reason(buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+                return None;
             }
             core::ffi::CStr::from_bytes_until_nul(buf).ok()
         }
@@ -1028,8 +1019,6 @@ pub mod ssl_wrapper {
                 return true;
             }
 
-            // The queue is per thread: what another SSL left there is not this handshake's reason.
-            boring_sys::ERR_clear_error();
             // SAFETY: ssl is a live SSL*.
             let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };
 
@@ -1152,17 +1141,14 @@ pub mod ssl_wrapper {
                 if just_read <= 0 {
                     // SAFETY: ssl is still valid.
                     let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
-                    boring_sys::ERR_clear_error();
 
                     if err != boring_sys::SSL_ERROR_WANT_READ
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
                     {
+                        let mut is_fatal = err == boring_sys::SSL_ERROR_SSL
+                            || err == boring_sys::SSL_ERROR_SYSCALL;
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
-                            self.flags
-                                .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
-                            // An over-limit renegotiation request is treated
-                            // like a failed SSL_renegotiate(). The count
-                            // resets each MAX_RENEGOTIATION_WINDOW, matching
+                            // The count resets each MAX_RENEGOTIATION_WINDOW, matching
                             // the C path's `us_reneg_policy`.
                             let now = std::time::Instant::now();
                             match self.renegotiation_window_start.get() {
@@ -1173,34 +1159,46 @@ pub mod ssl_wrapper {
                                     self.renegotiation_count.set(0);
                                 }
                             }
-                            let renegotiation_allowed =
-                                self.renegotiation_count.get() < MAX_RENEGOTIATIONS;
+                            let over_limit = self.renegotiation_count.get() >= MAX_RENEGOTIATIONS;
                             self.renegotiation_count
                                 .set(self.renegotiation_count.get().saturating_add(1));
                             // SAFETY: ssl is still valid.
-                            let renegotiated = renegotiation_allowed
-                                && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
-                            if !renegotiated {
-                                self.flags
-                                    .set_handshake_state(HandshakeState::HandshakeCompleted);
-                                // we failed to renegotiate
-                                self.trigger_handshake_callback(HandshakeOutcome::Aborted);
-                                self.trigger_close_callback();
-                                return false;
+                            let renegotiated = unsafe {
+                                // BoringSSL refuses, so every refusal queues the same error.
+                                if over_limit {
+                                    boring_sys::SSL_set_renegotiate_mode(
+                                        ssl.as_ptr(),
+                                        boring_sys::ssl_renegotiate_never,
+                                    );
+                                }
+                                boring_sys::SSL_renegotiate(ssl.as_ptr())
+                            } != 0;
+                            if renegotiated {
+                                self.flags.set_handshake_state(
+                                    HandshakeState::HandshakeRenegotiationPending,
+                                );
+                                // SSL_read drives the renegotiation.
+                                continue;
                             }
-                            // ok, we are done here, we need to call SSL_read again
-                            // this dont mean that we are done with the handshake renegotiation
-                            // we need to call SSL_read again
-                            continue;
+                            // After our own close_notify the request has no answer: that is the end of our close.
+                            if self.is_shutdown() {
+                                boring_sys::ERR_clear_error();
+                            }
+                            is_fatal = true;
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
                             self.flags.set_received_ssl_shutdown(true);
                             self.handle_end_of_renegotiation();
                         }
-                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
-                        {
+                        // Taken now: the callbacks below run JS, which can change the queue.
+                        let mut reason_buf = [0u8; FATAL_ERROR_REASON_MAX];
+                        let reason = Self::take_queued_error(&mut reason_buf).filter(|_| is_fatal);
+                        if is_fatal {
+                            // Before the data callback: an owner that is done there must not keep this wrapper.
                             self.flags.set_fatal_error(true);
+                            self.flags
+                                .set_handshake_state(HandshakeState::HandshakeCompleted);
                         }
 
                         // flush the reading
@@ -1224,10 +1222,21 @@ pub mod ssl_wrapper {
                             // 2-step shutdown, last: write_data fails once our close_notify is out.
                             let _ = self.shutdown(false);
                         }
+                        if is_fatal {
+                            // Our fatal alert leaves before the owner tears the transport down.
+                            self.handle_writing(buffer);
+                        }
+                        if reason.is_some() {
+                            self.trigger_handshake_callback(HandshakeOutcome::HandshakeError(
+                                reason,
+                            ));
+                        }
+                        // Whatever the owner did with the report.
                         self.trigger_close_callback();
                         return false;
                     } else {
                         log!("wanna read/write just break");
+                        boring_sys::ERR_clear_error();
                         self.handle_end_of_renegotiation();
                         if self.ssl.get().is_none() || self.flags.closed_notified() {
                             return false;
@@ -1527,6 +1536,8 @@ pub mod ssl_wrapper {
         fn SSL_SESSION_up_ref(session: *mut boring_sys::SSL_SESSION) -> c_int;
         /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;
+        /// openssl.c: formats the reason into `reason[..length]`, NUL-terminated. 0 when nothing is queued.
+        fn us_ssl_take_error_reason(reason: *mut c_char, length: usize) -> c_int;
         /// openssl.c: makes the callbacks of `ssl` go to `wrapper`. `wrapper` must outlive `ssl`.
         fn us_ssl_set_wrapper(ssl: *mut boring_sys::SSL, wrapper: *mut c_void);
         /// openssl.c: the pointer `us_ssl_set_wrapper` stored on the `SSL` that `ctx` verifies, or null.

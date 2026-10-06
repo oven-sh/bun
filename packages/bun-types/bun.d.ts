@@ -7284,6 +7284,11 @@ declare module "bun" {
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
+    /**
+     * Called when a handler throws, and when an established TLS session fails
+     * (a record that does not decrypt, a fatal alert from the peer). After a
+     * TLS failure the socket closes, with or without this handler.
+     */
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;

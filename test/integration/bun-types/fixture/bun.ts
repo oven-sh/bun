@@ -99,3 +99,12 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+{
+  const image = new Bun.Image("./photo.jpg");
+  tsd.expectType(image.placeholder()).is<Promise<string>>();
+  tsd.expectType(image.placeholder("dataurl")).is<Promise<string>>();
+  tsd.expectType(image.placeholder("hash")).is<Promise<Uint8Array<ArrayBuffer>>>();
+  // @ts-expect-error - "dataurl" and "hash" are the only outputs
+  image.placeholder("color");
+}

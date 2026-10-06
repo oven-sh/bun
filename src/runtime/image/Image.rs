@@ -169,6 +169,19 @@ impl jsc::FromJsEnum for codecs::Filter {
     }
 }
 
+/// What `.placeholder(as)` resolves to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlaceholderOutput {
+    DataUrl,
+    Hash,
+}
+bun_core::comptime_string_map! {
+    static PLACEHOLDER_OUTPUT_MAP: PlaceholderOutput = {
+        b"dataurl" => PlaceholderOutput::DataUrl,
+        b"hash" => PlaceholderOutput::Hash,
+    };
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Resize {
     pub(crate) w: u32,
@@ -1027,9 +1040,11 @@ impl Image {
 
     /// `.placeholder()` — ThumbHash-rendered ≤32px PNG `data:` URL. ~28 chars
     /// of hash → ~400-700 bytes of `data:image/png;base64,…` ready for `<img
-    /// src>` / Next's `blurDataURL`. Runs entirely on the work pool; the
-    /// pipeline ops (resize/rotate/…) are skipped — a placeholder is OF the
-    /// source, not of the output.
+    /// src>` / Next's `blurDataURL`. `.placeholder("hash")` resolves the hash
+    /// bytes themselves (≤25), for callers that store them and decode on the
+    /// client. Runs entirely on the work pool; the pipeline ops
+    /// (resize/rotate/…) are skipped — a placeholder is OF the source, not of
+    /// the output.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_placeholder(
         &self,
@@ -1038,18 +1053,21 @@ impl Image {
     ) -> JsResult<JSValue> {
         let cx = global.js_thread_of_caller(cf);
         let args = cf.arguments();
-        // Single positional `"dataurl"` for now — leaves room for `"hash"` /
-        // `"color"` without growing methods. Anything else throws so the
-        // option space isn't accidentally squatted.
-        if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = args[0].to_bun_string(global)?;
-            if !s.eq_ascii(b"dataurl") {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Image.placeholder(): only \"dataurl\" is supported",
-                )));
-            }
-        }
-        self.schedule(&cx, cf.this(), Kind::Placeholder, Deliver::DataUrl)
+        let output = if args.len() > 0 && !args[0].is_undefined_or_null() {
+            args[0].to_enum_from_map(
+                global,
+                "Image.placeholder() argument",
+                &PLACEHOLDER_OUTPUT_MAP,
+                "'dataurl' or 'hash'",
+            )?
+        } else {
+            PlaceholderOutput::DataUrl
+        };
+        let deliver = match output {
+            PlaceholderOutput::DataUrl => Deliver::DataUrl,
+            PlaceholderOutput::Hash => Deliver::Uint8Array,
+        };
+        self.schedule(&cx, cf.this(), Kind::Placeholder(output), deliver)
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1227,7 +1245,7 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            TaskResult::Meta { .. } | TaskResult::Hash { .. } => unreachable!(),
         }
     }
 }
@@ -1514,11 +1532,10 @@ pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
-    /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
-    /// → PNG → `data:` URL. The whole chain runs on the worker; the
-    /// hash itself never crosses the JS boundary unless we add an
-    /// `as: "hash"` option later.
-    Placeholder,
+    /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash, then either
+    /// the hash bytes or render → PNG → `data:` URL. The whole chain runs
+    /// on the worker.
+    Placeholder(PlaceholderOutput),
 }
 
 pub(crate) enum TaskResult {
@@ -1532,6 +1549,10 @@ pub(crate) enum TaskResult {
         w: u32,
         h: u32,
         format: codecs::Format,
+    },
+    Hash {
+        bytes: [u8; thumbhash::MAX_LEN],
+        len: usize,
     },
     Err(codecs::Error),
     IoErr(sys::Error),
@@ -1697,11 +1718,12 @@ impl PipelineTask {
             return;
         }
 
-        if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
-                Ok(r) => r,
-                Err(e) => TaskResult::Err(e),
-            };
+        if let Kind::Placeholder(output) = self.kind {
+            self.result =
+                match make_placeholder(&decoded.rgba, decoded.width, decoded.height, output) {
+                    Ok(r) => r,
+                    Err(e) => TaskResult::Err(e),
+                };
             return;
         }
 
@@ -1929,6 +1951,10 @@ impl PipelineTask {
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
+            TaskResult::Hash { bytes, len } => promise.settle(
+                global,
+                ArrayBuffer::create_uint8_array(global, &bytes[..len]),
+            )?,
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
         }
@@ -1988,12 +2014,16 @@ impl PipelineTask {
 }
 
 /// `.placeholder()` body — runs on the worker. Input is the decoded RGBA
-/// at source size; output is a PNG of the ThumbHash render, ready for the
-/// `.dataurl` deliver. ThumbHash needs ≤100×100, so first downscale with
-/// `box` (the only filter that's correct for "average everything in a
-/// cell" — Lanczos would ring into the DCT). The hash itself stays on
-/// the worker stack; only the rendered PNG crosses back.
-fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs::Error> {
+/// at source size; output is the hash itself, or a PNG of its ThumbHash
+/// render ready for the `.dataurl` deliver. ThumbHash needs ≤100×100, so
+/// first downscale with `box` (the only filter that's correct for "average
+/// everything in a cell" — Lanczos would ring into the DCT).
+fn make_placeholder(
+    rgba: &[u8],
+    sw: u32,
+    sh: u32,
+    output: PlaceholderOutput,
+) -> Result<TaskResult, codecs::Error> {
     const MAX_IN: u32 = 100;
     let mut w = sw;
     let mut h = sh;
@@ -2011,9 +2041,12 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
         owned = Some(codecs::resize(rgba, sw, sh, w, h, codecs::Filter::Box)?);
         pixels = owned.as_deref().unwrap();
     }
-    let mut buf = [0u8; thumbhash::MAX_LEN];
-    let hash = thumbhash::encode(&mut buf, w, h, pixels);
-    let rendered = thumbhash::decode(hash)?;
+    let mut bytes = [0u8; thumbhash::MAX_LEN];
+    let len = thumbhash::encode(&mut bytes, w, h, pixels).len();
+    if output == PlaceholderOutput::Hash {
+        return Ok(TaskResult::Hash { bytes, len });
+    }
+    let rendered = thumbhash::decode(&bytes[..len])?;
     // `rendered.rgba` is owned; drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.

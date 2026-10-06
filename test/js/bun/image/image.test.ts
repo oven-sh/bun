@@ -1154,9 +1154,72 @@ describe("Bun.Image", () => {
       const cx = (px.w >> 1) + (px.h >> 1) * px.w;
       // Wide tolerance — LPQ quantisation + 4-bit AC + 1.25× chroma boost.
       expect(Math.abs(px.data[cx * 4] - 119)).toBeLessThan(40);
-      // Explicit "dataurl" arg accepted, anything else throws.
+      // Explicit "dataurl" arg accepted, anything other than "hash" throws.
       expect(await new Bun.Image(src).placeholder("dataurl")).toBe(url);
-      expect(() => new Bun.Image(src).placeholder("hash" as any)).toThrow(/dataurl/);
+      expect(() => new Bun.Image(src).placeholder("color" as any)).toThrow(
+        "Image.placeholder() argument must be one of 'dataurl' or 'hash'",
+      );
+      expect(() => new Bun.Image(src).placeholder(1 as any)).toThrow("Image.placeholder() argument must be a string");
+    });
+
+    // Known-answer vectors from the reference encoder (npm `thumbhash` 0.1.1,
+    // `rgbaToThumbHash`) run on the same RGBA. Every source is ≤100px, so Bun
+    // hashes the decoded pixels as they are. The patterns are asymmetric so no
+    // coefficient sits on a rounding boundary, where Bun's f32 and the
+    // reference's f64 could round a nibble differently.
+    test.each([
+      {
+        name: "landscape",
+        w: 90,
+        h: 40,
+        px: (x: number, y: number): [number, number, number, number] => [
+          (x * 3 + y * y) & 255,
+          (x * y * 2) & 255,
+          (200 - x - y) & 255,
+          255,
+        ],
+        hash: "9f07022b821f474649823543607477f3f5",
+      },
+      {
+        name: "portrait with alpha",
+        w: 36,
+        h: 60,
+        px: (x: number, y: number): [number, number, number, number] => [
+          (x * y) % 256,
+          (5 * x + 2 * y) % 256,
+          (x * x) % 256,
+          (40 + 3 * x + 2 * y) % 256,
+        ],
+        hash: "1ec9850b041930756a7977ea30f4a88971777078877777",
+      },
+      {
+        name: "square",
+        w: 64,
+        h: 64,
+        px: (x: number, y: number): [number, number, number, number] => [
+          (x * y) & 255,
+          (x * x + y) & 255,
+          (y * 3 + x * 2) & 255,
+          255,
+        ],
+        hash: "5f07062702224455307877a386788558887797f8ddda4400",
+      },
+    ])('.placeholder("hash") resolves the raw ThumbHash ($name)', async ({ w, h, px, hash }) => {
+      const out = await new Bun.Image(makePng(w, h, px)).placeholder("hash");
+      expect(out).toBeInstanceOf(Uint8Array);
+      expect(Buffer.from(out).toString("hex")).toBe(hash);
+    });
+
+    test('.placeholder("hash") box-downscales sources over 100px and ignores pipeline ops', async () => {
+      const big = makePng(250, 125, (x, y) => [(x * y) & 255, (x * 2 + y) & 255, (y * 3) & 255, 255]);
+      const hash = await new Bun.Image(big).placeholder("hash");
+      // 250×125 is hashed as its 100×50 box-filtered copy.
+      const small = await new Bun.Image(big).resize(100, 50, { filter: "box" }).png().bytes();
+      expect(Buffer.from(hash).toString("hex")).toBe(
+        Buffer.from(await new Bun.Image(small).placeholder("hash")).toString("hex"),
+      );
+      // A placeholder is of the source, not of the pipeline output.
+      expect(await new Bun.Image(big).rotate(90).resize(10).placeholder("hash")).toEqual(hash);
     });
 
     test(".jpeg({progressive: true}) emits SOF2 (multi-scan)", async () => {

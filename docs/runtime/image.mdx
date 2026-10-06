@@ -140,6 +140,13 @@ const lqip = await Bun.file("hero.jpg").image().placeholder();
 // <img src={lqip} … /> — then swap to the real URL on load.
 ```
 
+To store a placeholder per image, ask for the hash itself. `.placeholder("hash")` resolves the raw ThumbHash as a `Uint8Array` of at most 25 bytes. Decode it on the client with `thumbHashToDataURL()` from the [`thumbhash`](https://www.npmjs.com/package/thumbhash) package:
+
+```ts
+const hash = await Bun.file("hero.jpg").image().placeholder("hash");
+const stored = Buffer.from(hash).toString("base64"); // ≤36 characters
+```
+
 For coarse-to-fine rendering of the image _itself_, encode a progressive JPEG:
 
 ```ts

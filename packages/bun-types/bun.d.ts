@@ -9537,6 +9537,18 @@ declare module "bun" {
      * ```
      */
     placeholder(as?: "dataurl"): Promise<string>;
+    /**
+     * The raw [ThumbHash](https://github.com/evanw/thumbhash) of the *source*
+     * image: at most 25 bytes that encode its average colour, aspect ratio and
+     * rough structure. Store it and decode it on the client, for example with
+     * `thumbHashToDataURL()` from the `thumbhash` package.
+     *
+     * ```ts
+     * const hash = await Bun.file("hero.jpg").image().placeholder("hash");
+     * const stored = Buffer.from(hash).toString("base64"); // ≤36 characters
+     * ```
+     */
+    placeholder(as: "hash"): Promise<Uint8Array<ArrayBuffer>>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

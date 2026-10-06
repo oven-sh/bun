@@ -1185,7 +1185,7 @@ private:
                     return true;
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
-                write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
+                write(String(JSC::Yarr::flagsString(regExp->regExp()->flags()).span()));
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {

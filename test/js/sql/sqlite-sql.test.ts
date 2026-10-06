@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1364,6 +1364,58 @@ describe("Transactions", () => {
 
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
+  });
+});
+
+// Inside sql.begin() a row is inserted, a second query is made, and the callback closes the
+// transaction with a timeout. close() waits for the second query, for at most the timeout,
+// and then rolls back. The timeout is far longer than the test, so only the second query can
+// end the wait.
+//
+// Each shape runs in its own process: a rejection that close() leaves unhandled then shows on
+// stderr and in the exit code. The row count comes from a second connection, which sees
+// committed rows only.
+describe("tx.close({ timeout }) rolls the transaction back", () => {
+  const fixture = `
+    const [file, shape] = process.argv.slice(1);
+    const sql = new Bun.SQL("sqlite://" + file);
+    await sql\`CREATE TABLE t (v INTEGER)\`;
+    const begin = await sql
+      .begin(async tx => {
+        await tx\`INSERT INTO t VALUES (1)\`;
+        if (shape !== "no second query") {
+          const query = tx\`SELECT 1 AS x\`;
+          if (shape !== "a second query that nothing awaits") query.cancel();
+          if (shape === "a second query that is cancelled before it runs, then awaited") await query.catch(() => {});
+        }
+        await tx.close({ timeout: 60 });
+      })
+      .then(() => "resolved", error => error.code);
+    const [{ rows }] = await new Bun.SQL("sqlite://" + file)\`SELECT count(*) AS rows FROM t\`;
+    console.log(JSON.stringify({ begin, rows }));
+  `;
+
+  test.concurrent.each([
+    "no second query",
+    "a second query that nothing awaits",
+    "a second query that is cancelled before it runs",
+    "a second query that is cancelled before it runs, then awaited",
+  ])("with %s", async shape => {
+    using dir = tempDir("sqlite-tx-close-timeout", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, join(String(dir), "db.sqlite"), shape],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ begin: "ERR_SQLITE_CONNECTION_CLOSED", rows: 0 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 

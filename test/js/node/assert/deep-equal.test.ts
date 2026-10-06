@@ -25,6 +25,7 @@ interface Case {
 const sym = Symbol("shared");
 const sharedArrayBuffer = new ArrayBuffer(4);
 const sharedMapKey = { a: 1 };
+const sharedSetMember = ["x"];
 
 function float64WithNaNPayload(bits: bigint) {
   const arr = new Float64Array(1);
@@ -755,7 +756,6 @@ const cases: Case[] = [
       ]),
     strict: true,
     loose: true,
-    strictBug: "reports not equal",
   },
   {
     name: "maps keyed by deep-equal objects with the values in different counts",
@@ -811,6 +811,106 @@ const cases: Case[] = [
     b: () => new Set([{ a: 1 }]),
     strict: true,
     loose: true,
+  },
+  {
+    name: "sets holding deep-equal objects in another order",
+    a: () => new Set([{ a: 1 }, { a: 2 }, { a: 3 }]),
+    b: () => new Set([{ a: 3 }, { a: 1 }, { a: 2 }]),
+    strict: true,
+    loose: true,
+  },
+  // https://github.com/oven-sh/bun/issues/28760
+  {
+    name: "a set holding two deep-equal objects and a set holding two different ones",
+    a: () => new Set([{ a: 1 }, { a: 1 }]),
+    b: () => new Set([{ a: 1 }, { a: 2 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets holding deep-equal objects in different counts",
+    a: () => new Set([{ a: 1 }, { a: 1 }, { a: 2 }]),
+    b: () => new Set([{ a: 1 }, { a: 2 }, { a: 2 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  // https://github.com/nodejs/node/issues/53423
+  {
+    name: "sets holding the same array and a deep-equal array",
+    a: () => new Set([sharedSetMember, ["y"]]),
+    b: () => new Set([sharedSetMember, ["y"]]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a set holding null and a set holding objects only",
+    a: () => new Set([null, { a: 1 }, { b: 1 }]),
+    b: () => new Set([{ a: 1 }, { b: 1 }, { c: 1 }]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a set with an extra own property",
+    a: () => withExtraProperty(new Set([{ a: 1 }])),
+    b: () => new Set([{ a: 1 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a set and a set with an extra own property",
+    a: () => new Set([{ a: 1 }]),
+    b: () => withExtraProperty(new Set([{ a: 1 }])),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets with deep-equal contents and equal extra own properties",
+    a: () => withExtraProperty(new Set([{ a: 1 }])),
+    b: () => withExtraProperty(new Set([{ a: 1 }])),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a set with an own index property",
+    a: () => Object.assign(new Set([{ a: 1 }]), { 0: 1 }),
+    b: () => new Set([{ a: 1 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps with deep-equal contents and equal extra own properties",
+    a: () => withExtraProperty(new Map([[{ a: 1 }, 1]])),
+    b: () => withExtraProperty(new Map([[{ a: 1 }, 1]])),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a map and a map with an extra own property",
+    a: () => new Map([[{ a: 1 }, 1]]),
+    b: () => withExtraProperty(new Map([[{ a: 1 }, 1]])),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps holding unequal values under the same number key",
+    a: () =>
+      new Map([
+        [1, { a: 1 }],
+        [{ k: 1 }, 1],
+      ]),
+    b: () =>
+      new Map([
+        [1, { a: 2 }],
+        [{ k: 1 }, 1],
+      ]),
+    strict: false,
+    loose: false,
   },
   { name: "sets holding -0 and 0", a: () => new Set([-0]), b: () => new Set([0]), strict: true, loose: true },
   { name: "sets holding NaN", a: () => new Set([NaN]), b: () => new Set([NaN]), strict: true, loose: true },
@@ -1074,6 +1174,80 @@ describe("util.isDeepStrictEqual", () => {
     };
     expect(util.isDeepStrictEqual(make(), make())).toBe(true);
     expect(calls).toBe(2);
+  });
+
+  test.each([
+    ["plain", (collection: Set<unknown> | Map<unknown, unknown>) => collection],
+    ["with an own property", withExtraProperty],
+  ])("reads a value nested in %s Sets and Maps once per side", (_, decorate) => {
+    let reads = 0;
+    const make = () => {
+      let value: unknown = {
+        get leaf() {
+          reads++;
+          return 1;
+        },
+      };
+      for (let depth = 0; depth < 4; depth++) value = decorate(new Map([[decorate(new Set([value])), "as key"]]));
+      for (let depth = 0; depth < 4; depth++) value = decorate(new Map([["as value", decorate(new Set([value]))]]));
+      return value;
+    };
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  // node v22.16 to v26.3.0 answers false: setEquiv's shortcut for Sets of fewer than three members (compareSmallSets) compares the shared member with the other side's copy first.
+  test("a two-member Set pairs a member that both sides hold with itself", () => {
+    const shared = { a: 1 };
+    expect(util.isDeepStrictEqual(new Set([shared, { a: 1 }]), new Set([shared, { a: 1 }]))).toBe(true);
+  });
+
+  // node v26.3.0 answers true: the same shortcut reads past the end of the other Set and compares undefined with undefined.
+  test("a two-member Set does not pair undefined with an object", () => {
+    const shared = { a: 1 };
+    expect(util.isDeepStrictEqual(new Set([shared, undefined]), new Set([shared, { a: 1 }]))).toBe(false);
+  });
+
+  // node v26.3.0 answers false: mapEquiv compares a key both Maps hold structurally, and to it a Promise or a WeakMap equals nothing.
+  test("a Map key that both sides hold equals itself", () => {
+    const promise = Promise.resolve();
+    const weakMap = new WeakMap();
+    const make = () =>
+      new Map<unknown, unknown>([
+        [promise, 1],
+        [weakMap, 2],
+      ]);
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+  });
+
+  describe.each([
+    ["Set member", (value: unknown) => new Set([value])],
+    ["Map value", (value: unknown) => new Map([[1, value]])],
+    ["Map key", (value: unknown) => new Map([[value, 1]])],
+  ])("a cyclic object as a %s", (_, wrap) => {
+    test("a self-loop does not equal the same loop entered through one more object", () => {
+      const loop = () => {
+        const object: Record<string, unknown> = {};
+        object.peer = object;
+        return object;
+      };
+      expect(util.isDeepStrictEqual(wrap(loop()), wrap({ peer: loop() }))).toBe(false);
+    });
+
+    test("a list with one node at both ends equals a list with two equal nodes", () => {
+      const sharedNode = () => {
+        const list: Record<string, unknown> = {};
+        list.head = list.tail = { list };
+        return list;
+      };
+      const twoNodes = () => {
+        const list: Record<string, unknown> = {};
+        list.head = { list };
+        list.tail = { list };
+        return list;
+      };
+      expect(util.isDeepStrictEqual(wrap(sharedNode()), wrap(twoNodes()))).toBe(true);
+    });
   });
 
   // The third argument was added in Node v26.

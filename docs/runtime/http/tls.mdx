@@ -72,6 +72,22 @@ Bun.serve({
 
 With `requestCert: true`, the server refuses a client that sends no certificate or one that `ca` does not verify. Set `rejectUnauthorized: false` to accept those clients too. The `NODE_TLS_REJECT_UNAUTHORIZED` environment variable does not change this for a server.
 
+### Certificate revocation lists
+
+Pass `crl` to refuse peer certificates that a CA has revoked. It takes the PEM contents of one or more CRLs, in the same value types as `ca`. On a server it applies to client certificates, so use it with `requestCert`.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    ca: Bun.file("./client-ca.pem"),
+    requestCert: true,
+    crl: Bun.file("./client-ca.crl.pem"), // [!code ++]
+  },
+});
+```
+
 ### Diffie-Hellman
 
 To override Diffie-Hellman parameters:

@@ -667,7 +667,23 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let context = self.apparent_type_of_contextual_type(file, owner, context_flags)?;
                 match self.member_name(file, prop.key) {
-                    Some(name) => self.contextual_property_of_value(file, e, context, name),
+                    Some(name) => {
+                        let found = self.contextual_property_of_value(file, e, context, name);
+                        // `hasBindableName`: `[(0)]` is neither a name nor bound late. Where no
+                        // property has its name, it goes by its type, which is a number.
+                        match prop.key {
+                            PropKey::Computed(k)
+                                if found.is_none()
+                                    && is_dynamic_name(hir, k)
+                                    && !is_entity_name_expression(hir, k) =>
+                            {
+                                let key = self.type_of_expr(file, k);
+                                let key = self.regular(key);
+                                self.contextual_index(context, key)
+                            }
+                            _ => found,
+                        }
+                    }
                     None => {
                         // `getLiteralTypeFromPropertyName`: the type of the expression between the
                         // brackets.

@@ -636,6 +636,7 @@ const literalNames = [
   `["-1"]`,
   `["a"]`,
   "[(0)]",
+  "[0n]",
 ];
 const destructurings = [
   "const { L: v } = s; const n: never = v;",
@@ -646,6 +647,12 @@ const destructurings = [
   "const { L: v = 1 } = s; const n: never = v;",
   "let v; ({ L: v = 1 } = s); const n: never = v;",
   "for (const { L: v } of [s]) { const n: never = v; }",
+];
+// And one that is written as a string is a string, however much it looks like a number.
+const literalsWithNames = [
+  "const o = { L: 1 }; const t: typeof s = o;",
+  "const t: typeof s = { L: 1 };",
+  "const t: { [K in keyof typeof s]: (x: string) => void } = { L: x => x.nope };",
 ];
 const isKeyOfIndexSignature = (key: string) => /^(string|number|symbol|`[^`]*`)$/.test(key);
 const withIndex = (key: string, value: string) =>
@@ -688,6 +695,14 @@ const indexAccesses = [
   ...[...product(indexKeys, literalNames, destructurings)].map(
     ([key, name, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use.replace(/\bL\b/g, () => name)} }`,
   ),
+  // In these messages `bun check` has `0.5` for the name `.5`.
+  ...[
+    ...product(
+      indexKeys,
+      literalNames.filter(name => name !== ".5"),
+      literalsWithNames,
+    ),
+  ].map(([key, name, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use.replace(/\bL\b/g, () => name)} }`),
 ];
 const indexRelations = [
   ...[...product(indexSources, indexKeys)].flatMap(([source, key]) => [

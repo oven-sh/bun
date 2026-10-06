@@ -797,8 +797,10 @@ impl Checker<'_, '_> {
                 Vec::new(),
             );
             let output = Some(&mut diags);
-            reported |=
-                self.elaborate_element(source, target, at, prop.value, false, name, None, output);
+            let name_type = self.string_literal(name, false);
+            reported |= self.elaborate_element(
+                source, target, at, prop.value, false, name_type, None, output,
+            );
             // `elaborateDidYouMeanToCallOrConstruct` runs on the braces around the value before it
             // runs on the value: its diagnostic, the only one at the start of the value, is
             // reported at the start of the braces.
@@ -863,8 +865,11 @@ impl Checker<'_, '_> {
                     _ => child,
                 };
                 let at = (file, start, end);
+                let name_type = self.string_literal(name, false);
                 return reported
-                    | self.elaborate_element(source, target, at, inner, false, name, None, None);
+                    | self.elaborate_element(
+                        source, target, at, inner, false, name_type, None, None,
+                    );
             }
             // `elaborateElement`, with nothing to elaborate into: JSX text always gets the same
             // message, whatever the mismatch.

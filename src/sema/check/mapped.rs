@@ -1051,10 +1051,14 @@ impl<'p, 's> Checker<'p, 's> {
                     matches!(self.hir(file)[e].kind, ExprKind::Index { index, .. }
                     if matches!(self.hir(file)[index].kind, ExprKind::BigInt(_)) && !is_parenthesized(self.hir(file), index))
                 }
-                AccessNode::PropertyName(file, prop) => {
-                    matches!(self.hir(file)[prop].key, PropKey::Name(_))
-                        && is_bigint_literal_at(self.hir(file), index_node.1)
-                }
+                AccessNode::PropertyName(file, prop) => match self.hir(file)[prop].key {
+                    PropKey::Name(_) => is_bigint_literal_at(self.hir(file), index_node.1),
+                    PropKey::Computed(k) => {
+                        matches!(self.hir(file)[k].kind, ExprKind::BigInt(_))
+                            && !is_parenthesized(self.hir(file), k)
+                    }
+                    _ => false,
+                },
                 AccessNode::Name((file, start, _)) => is_bigint_literal_at(self.hir(file), start),
                 _ => false,
             };

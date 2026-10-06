@@ -1533,7 +1533,10 @@ impl Checker<'_, '_> {
             if prop.kind == PropKind::Spread {
                 continue;
             }
-            let Some(name) = self.member_name(file, prop.key) else {
+            // `getLiteralTypeFromProperty(.., TypeFlagsStringOrNumberLiteralOrUnique)`
+            let name_type = self.literal_type_from_property_name(file, prop.key, prop.pos);
+            let Some(name_type) = name_type.filter(|&it| self.property_name_of_type(it).is_some())
+            else {
                 continue;
             };
             let (next, message) = match prop.kind {
@@ -1546,7 +1549,7 @@ impl Checker<'_, '_> {
             let at = (file, prop.pos, self.end_of_prop_name(file, p));
             let output = diagnostic_output.as_deref_mut();
             reported |=
-                self.elaborate_element(source, target, at, next, false, name, message, output);
+                self.elaborate_element(source, target, at, next, false, name_type, message, output);
         }
         reported
     }
@@ -1582,7 +1585,10 @@ impl Checker<'_, '_> {
         let is_tuple_like = self.is_tuple_like(target);
         let mut reported = false;
         for (i, item) in hir.ids(items).enumerate() {
-            let name = self.number_name(i as f64);
+            let (name, name_type) = (
+                self.number_name(i as f64),
+                self.number_literal(i as f64, false),
+            );
             if matches!(hir[item].kind, ExprKind::Missing)
                 || is_tuple_like && self.get_property_of_type(target, name).is_none()
             {
@@ -1598,25 +1604,11 @@ impl Checker<'_, '_> {
                 self.error_end_inside_parentheses(file, check_node),
             );
             let output = diagnostic_output.as_deref_mut();
-            reported |=
-                self.elaborate_element(source, target, at, check_node, true, name, None, output);
+            reported |= self.elaborate_element(
+                source, target, at, check_node, true, name_type, None, output,
+            );
         }
         reported
-    }
-
-    /// `getIndexedAccessTypeOrUndefined` with `AccessFlagsNone`, by the name of a property or an element
-    /// (`getLiteralTypeFromProperty`).
-    fn indexed_access_by_name(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
-        // The symbol cannot be recovered from a symbol name.
-        if self.atoms().is_symbol_name(name) {
-            return self.type_of_property(ty, name);
-        }
-        // `isNumericLiteralName`: a name that is the string form of a number.
-        let key = match crate::atom::parse_number(self.atoms().bytes(name)) {
-            Some(n) if self.number_name(n) == name => self.number_literal(n, false),
-            _ => self.string_literal(name, false),
-        };
-        self.indexed_access_if_any(ty, key, false)
     }
 
     /// `elaborateElement`: the property or the element is at `prop`, `next` is its value if it has
@@ -1630,18 +1622,22 @@ impl Checker<'_, '_> {
         prop: Place,
         next: ExprId,
         is_effective: bool,
-        name: Atom,
+        name_type: TypeId,
         error_message: Option<u32>,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let file = prop.0;
+        // `getPropertyNameFromType`
+        let Some(name) = self.property_name_of_type(name_type) else {
+            return false;
+        };
         // The property type of a generic object type is deferred: there is nothing to elaborate
         // into.
         if self.is_generic_object_type(target) {
             return false;
         }
         // `getBestMatchIndexedAccessTypeOrUndefined`
-        let expected = match self.indexed_access_by_name(target, name) {
+        let expected = match self.indexed_access_if_any(target, name_type, false) {
             Some(expected) => expected,
             None if self.is_union(target) => {
                 let best =
@@ -1649,7 +1645,7 @@ impl Checker<'_, '_> {
                 let Some(best) = best else {
                     return false;
                 };
-                let Some(expected) = self.indexed_access_by_name(best, name) else {
+                let Some(expected) = self.indexed_access_if_any(best, name_type, false) else {
                     return false;
                 };
                 expected
@@ -1659,7 +1655,7 @@ impl Checker<'_, '_> {
         if matches!(self.data(expected), TypeData::IndexedAccess { .. }) {
             return false;
         }
-        let Some(actual) = self.indexed_access_by_name(source, name) else {
+        let Some(actual) = self.indexed_access_if_any(source, name_type, false) else {
             return false;
         };
         if self.is_assignable(actual, expected) {

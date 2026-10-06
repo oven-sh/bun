@@ -270,7 +270,7 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
 // A failed listen throws the error of the call that failed. `errno` is the
 // negative libuv number that util.getSystemErrorName() takes, as in node.
 describe("Bun.serve() reports why the listen failed", () => {
-  function listenError(options: { hostname: string; port: number }) {
+  function listenError(options: { hostname?: string; port: number }) {
     try {
       serve({ ...options, fetch: () => new Response() }).stop(true);
     } catch (e: any) {
@@ -284,9 +284,14 @@ describe("Bun.serve() reports why the listen failed", () => {
     }
   }
 
-  test.skipIf(!hasIPv4)("a port that is in use throws EADDRINUSE", () => {
-    using occupant = serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
-    expect(listenError({ hostname: "127.0.0.1", port: occupant.port! })).toEqual({
+  // With no hostname, Windows answers WSAEACCES and not WSAEADDRINUSE to the
+  // exclusive bind of a busy port.
+  test.skipIf(!hasIPv4).each([
+    ["127.0.0.1", { hostname: "127.0.0.1" }],
+    ["every address", {}],
+  ])("a port that is in use on %s throws EADDRINUSE", (_, address) => {
+    using occupant = serve({ ...address, port: 0, fetch: () => new Response() });
+    expect(listenError({ ...address, port: occupant.port! })).toEqual({
       code: "EADDRINUSE",
       syscall: "listen",
       errno: "EADDRINUSE",

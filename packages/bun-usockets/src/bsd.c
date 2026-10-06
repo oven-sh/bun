@@ -1197,6 +1197,14 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
+#ifdef _WIN32
+        /* bind() can answer WSAEACCES, not WSAEADDRINUSE, to a socket with
+         * SO_EXCLUSIVEADDRUSE when another socket holds the port (Bun.serve
+         * twice on one port with no hostname). */
+        if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT) && *error == WSAEACCES) {
+            *error = WSAEADDRINUSE;
+        }
+#endif
         return LIBUS_SOCKET_ERROR;
     }
 

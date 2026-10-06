@@ -554,6 +554,79 @@ it("test timeouts when expected", () => {
   expect(err).not.toContain("unreachable code");
 });
 
+test("a completed deadline does not kill an unlimited test's child", async () => {
+  using dir = tempDir("unlimited-test-child", {
+    "child.test.js": `
+      import { afterAll, beforeAll, expect, test } from "bun:test";
+      let child;
+      beforeAll(() => {
+        child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+      });
+      afterAll(() => {
+        child.kill();
+        child.unref();
+      });
+      test("completed finite deadline", () => {}, 50);
+      test("unlimited test retains its child", async () => {
+        // Cross the completed test's deadline while this entry owns a live child.
+        await Bun.sleep(100);
+        expect(() => process.kill(child.pid, 0)).not.toThrow();
+      }, 0);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "child.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode, stderr).toBe(0);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(stderr).not.toContain("killed");
+});
+
+// This regression checks POSIX signal names and uses the system sleep program.
+test.skipIf(process.platform === "win32" || !Bun.which("sleep"))(
+  "an unlimited test keeps the child it spawns after a completed deadline",
+  async () => {
+    using dir = tempDir("unlimited-test-spawned-child", {
+      "stale-timer.test.ts": `// stale-timer.test.ts
+import { expect, test } from 'bun:test';
+
+// Finishes at once, well inside its 100 ms timeout.
+test('a quick test with a timeout', () => {}, 100);
+
+// No timeout. Nothing in this file times out, yet its child gets SIGTERM.
+test('an untimed test keeps its child', async () => {
+  const child = Bun.spawn(['sleep', '2']);
+  await Bun.sleep(500); // past the first test's 100 ms deadline
+  child.kill('SIGKILL'); // a no-op if it is already gone
+  await child.exited;
+  expect(child.signalCode).toBe('SIGKILL');
+}, 0);`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "stale-timer.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode, stderr).toBe(0);
+  },
+);
+
 test("jest.setTimeout will change default timeout", () => {
   const path = join(tmp, "jest-setTimeout-test.test.js");
   copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);

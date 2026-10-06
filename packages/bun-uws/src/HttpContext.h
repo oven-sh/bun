@@ -1282,8 +1282,7 @@ public:
         return socket;
     }
 
-    /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP.
-     * On nullptr, *error is what us_socket_group_listen left there. */
+    /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */
     us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options, int *error) {
         return unrefListenSocket(us_socket_group_listen(&group, socketKind(), sslCtx, host, port, tcpListenOptions(options), socketExtSize(), error));
     }

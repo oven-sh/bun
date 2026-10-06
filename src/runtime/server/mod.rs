@@ -2046,13 +2046,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `err.code`/`err.syscall`) and `globalThis.throwValue` it. The BoringSSL
     /// error-stack drain is still TODO; the EADDRINUSE/
     /// EACCES paths below cover the node:http `server.listen` error contract.
-    /// `error` is what the uWS listen handler received: 0, or the code of the
-    /// call that failed (see `SocketGroup::listen_errno`).
     #[cold]
     pub(crate) fn on_listen_failed(&mut self, error: c_int) {
         self.listener = None;
         let global = self.global_this();
-        // 0: no system call failed, the hostname did not resolve.
+        // 0: the hostname did not resolve, so no system call failed.
         let errno = (error != 0).then(|| {
             uws_sys::SocketGroup::listen_errno(error).unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
         });

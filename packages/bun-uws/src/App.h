@@ -727,10 +727,7 @@ private:
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
-    /* Called once, before listen() returns, with the listen socket and 0, or
-     * with nullptr and the code of the call that failed: errno, or a WSA /
-     * Win32 code on Windows. That code is 0 when the host did not resolve,
-     * because then no call failed. */
+    /* (listen socket, 0), or (nullptr, the *error of us_socket_group_listen) */
     using ListenHandler = MoveOnlyFunction<void(us_listen_socket_t *, int)>;
 
     /* Host, port, options, callback */

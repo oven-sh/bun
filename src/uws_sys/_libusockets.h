@@ -123,7 +123,6 @@ typedef struct {
     uws_websocket_close_handler close;
 } uws_socket_behavior_t;
 
-/* `error` is uWS::TemplatedApp::ListenHandler's second argument. */
 typedef void (*uws_listen_handler)(struct us_listen_socket_t* listen_socket,
     int error, void* user_data);
 typedef void (*uws_listen_domain_handler)(

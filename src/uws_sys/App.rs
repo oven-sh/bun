@@ -489,10 +489,9 @@ pub(crate) type uws_app_t = uws_app_s;
 pub mod c {
     use super::*;
 
-    /// `(listen_socket, error, user_data)`. `error` is the second argument of
-    /// `uWS::TemplatedApp::ListenHandler`; `SocketGroup::listen_errno` decodes it.
-    pub(crate) type uws_listen_handler =
-        Option<extern "C" fn(*mut UwsListenSocket, c_int, *mut c_void)>;
+    pub(crate) type uws_listen_handler = Option<
+        extern "C" fn(listen_socket: *mut UwsListenSocket, error: c_int, user_data: *mut c_void),
+    >;
     pub(crate) type uws_method_handler =
         Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
     // The C++ shim hands the filter the uws_res_t*, which for HTTP server

@@ -214,20 +214,19 @@ impl SocketGroup {
         }
     }
 
-    /// The errno behind the `err` that a failed `listen`, `listen_unix` or
-    /// `listen_fd` filled. uSockets stores the platform's own number there: an
-    /// errno on POSIX, a WSA or Win32 code on Windows. `None` for 0 (no system
-    /// call failed: the host did not resolve) and for a number the errno table
-    /// does not name.
+    /// Decodes the `err` of a failed `listen*`: an errno, or a Windows error code.
     pub fn listen_errno(err: c_int) -> Option<bun_errno::SystemErrno> {
         if err == 0 {
             return None;
         }
-        // `SystemErrno::init` reads an `i64` as an errno. On Windows it reads
-        // a `c_int` through the Win32 table, which is the number `err` holds.
+        #[cfg(windows)]
+        {
+            bun_errno::SystemErrno::init(err.unsigned_abs())
+        }
         #[cfg(not(windows))]
-        let err = i64::from(err);
-        bun_errno::SystemErrno::init(err)
+        {
+            bun_errno::SystemErrno::init(i64::from(err))
+        }
     }
 
     pub fn connect(

@@ -310,6 +310,8 @@ const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 // On that TLS socket: the fd closed, and the socket it wraps waits to be closed with it.
 const kOwesRawClose = Symbol("kOwesRawClose");
+// Emitted on a socket under the stream-level TLS engine in place of reporting a read error itself.
+const kReadError = Symbol("kReadError");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -446,8 +448,11 @@ function onUpgradedError(self, err) {
   self._hadError = true;
   self._emitTLSError(err);
 }
-function forwardUpgradedError(self, connection) {
-  connection.on("error", onUpgradedError.bind(null, self));
+// TLSWrap owns the reads of the handle it wraps: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
+function onUpgradedReadError(self, err) {
+  self._closeAfterHandlingError = true;
+  SocketEmitEndNT(self, err);
+  self.destroy();
 }
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {
@@ -455,9 +460,8 @@ function linkUpgraded(self, connection: SocketInstance) {
   self[kupgraded] = connection;
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
+  connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
-  // A listener on a connected net.Socket makes its close synthesize ECONNRESET: that one is listened to once its fd is taken.
-  if (self.connecting || !isSocket) forwardUpgradedError(self, connection);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
@@ -465,11 +469,16 @@ function onUpgradedConnect(self, connection) {
   self.connecting = false;
   self.emit("connect");
 }
+// A net.Socket emits 'end' after its owner's destroy(), which is no EOF from the peer.
+function onUpgradedEnd(connection, eof) {
+  if (!connection.destroyed) eof();
+}
 function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
   connection.on("data", events[0]);
-  connection.on("end", events[1]);
+  connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
   connection.on("close", events[2]);
+  connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();
   self._handle = handle;
@@ -491,7 +500,6 @@ function attachClientTLS(self, connection, tls, upgradeDuplex) {
       attachTLSEngine(self, connection, options);
     } else {
       adoptTLSPair(self, connection, upgradeTLSDeferred(handle, options));
-      if (!self.connecting) forwardUpgradedError(self, connection);
     }
   } catch (error) {
     self.destroy(error);
@@ -704,7 +712,8 @@ function finishStandaloneWrap(self, verifyError) {
   self.emit("secure", self);
 }
 function onConnectEnd() {
-  if (!this._hadError && this.secureConnecting) {
+  // Under another TLS socket the EOF is that one's to report.
+  if (!this._hadError && this.secureConnecting && this.listenerCount(kReadError) === 0) {
     const options = this[kConnectOptions];
     this._hadError = true;
     const error: InstanceType<typeof ConnResetException> & {
@@ -968,6 +977,7 @@ function SocketEmitEndNT(self, _err?) {
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
   if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
+    if (self.emit(kReadError, _err)) return;
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps
@@ -1676,6 +1686,7 @@ const SocketHandlers2 = {
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
     if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+      if (self.emit(kReadError, err)) return;
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
@@ -2459,6 +2470,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // Shared-fd TLS pair: defer the close two check-phase turns
       // (test-tls-socket-close); see closeAdoptedTLSRawNT.
       currentHandle.pause?.();
+      // The TLS socket closes with the socket it wraps, and that close is nothing to report.
+      currentHandle[kAdoptedTLSRaw]._hadError = true;
       setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
     } else {
       closeSocketHandle(this, currentHandle, isException);
@@ -2613,7 +2626,6 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   } else if (connection.connecting) {
     connection.once("connect", process.nextTick.bind(null, adoptServerTLS, this, connection, options));
   } else {
-    forwardUpgradedError(this, connection);
     process.nextTick(adoptServerTLS, this, connection, options);
   }
   if (this.connecting) connection.once("connect", onUpgradedConnect.bind(null, this, connection));

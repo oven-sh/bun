@@ -239,6 +239,9 @@ function validateSecureContextOptions(options) {
 // SSL_OP_CIPHER_SERVER_PREFERENCE: `honorCipherOrder` folds into secureOptions.
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
+// Holds tls.DEFAULT_ECDH_CURVE here so that an https server reads it without loading node:tls.
+const tlsDefaults = { ecdhCurve: "auto" };
+
 let NativeSecureContext;
 
 /**
@@ -287,6 +290,7 @@ export {
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,
+  tlsDefaults,
   tlsStringToProtocolVersion,
   validateSecureContextOptions,
   validateSecureProtocol,

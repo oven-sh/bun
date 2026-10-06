@@ -392,6 +392,7 @@ function Server(options, callback): void {
         secureProtocolToVersionRange,
         tlsStringToProtocolVersion,
         SSL_OP_CIPHER_SERVER_PREFERENCE,
+        tlsDefaults,
       } = tlsHelpers;
       // The same checks tls.createServer runs.
       validateSecureContextOptions(options);
@@ -423,7 +424,7 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
         sessionTimeout: options.sessionTimeout ?? undefined,
-        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
+        ecdhCurve: options.ecdhCurve ?? tlsDefaults.ecdhCurve,
         sigalgs: options.sigalgs,
         allowPartialTrustChain: !!options.allowPartialTrustChain,
       });

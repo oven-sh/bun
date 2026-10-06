@@ -15,6 +15,7 @@ const {
   processPfxOptions,
   validateSecureContextOptions,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  tlsDefaults,
 } = require("internal/tls");
 const {
   validateString,
@@ -509,7 +510,7 @@ function newNativeSecureContext(options, cached = false) {
       options = { ...options, sessionTimeout: 0 };
     }
     if (options.ecdhCurve === undefined) {
-      options = { ...options, ecdhCurve: DEFAULT_ECDH_CURVE };
+      options = { ...options, ecdhCurve: tlsDefaults.ecdhCurve };
     }
     const rejectUnauthorized = options.rejectUnauthorized;
     if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
@@ -1094,7 +1095,7 @@ function buildSharedCreds(server) {
       allowPartialTrustChain: server.allowPartialTrustChain,
       sessionTimeout: server.sessionTimeout,
       sigalgs: server.sigalgs,
-      ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
+      ecdhCurve: server.ecdhCurve ?? tlsDefaults.ecdhCurve,
       passphrase: server.passphrase,
       secureProtocol: server.secureProtocol,
       minVersion: server.minVersion,
@@ -1390,7 +1391,7 @@ function Server(options, secureConnectionListener): void {
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,
         sigalgs: this.sigalgs,
-        ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
+        ecdhCurve: this.ecdhCurve ?? tlsDefaults.ecdhCurve,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
         // A server that requests no client certificate has none to reject.
@@ -1476,7 +1477,6 @@ Server.prototype[kSharedCreds] = function () {
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-let DEFAULT_ECDH_CURVE = "auto";
 // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
 let DEFAULT_MIN_VERSION = "TLSv1.2",
   DEFAULT_MAX_VERSION = "TLSv1.3";
@@ -1812,10 +1812,10 @@ export default {
     setTLSDefaultCiphers(value);
   },
   get DEFAULT_ECDH_CURVE() {
-    return DEFAULT_ECDH_CURVE;
+    return tlsDefaults.ecdhCurve;
   },
   set DEFAULT_ECDH_CURVE(value) {
-    DEFAULT_ECDH_CURVE = value;
+    tlsDefaults.ecdhCurve = value;
   },
   // Accessors so `tls.DEFAULT_MAX_VERSION = 'TLSv1.2'` reaches the
   // module-level variables that context construction reads (Node mutates the

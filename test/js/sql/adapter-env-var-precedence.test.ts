@@ -424,6 +424,39 @@ describe("SQL adapter environment variable precedence", () => {
       expect(options.options.sslMode).toBe(2);
       expect(options.options.tls).toBeTypeOf("object");
     });
+
+    // The name of the variable asks for at least `require`.
+    describe.each(["TLS_DATABASE_URL", "TLS_POSTGRES_DATABASE_URL"])("next to a URL from %s", urlVariable => {
+      test.each([
+        ["PGSSLMODE", "verify-ca", 3],
+        ["PG_SSLMODE", "verify-full", 4],
+      ])("%s=%s selects sslMode %d", (modeVariable, mode, expected) => {
+        process.env[urlVariable] = "postgres://user@host:5432/db";
+        process.env[modeVariable] = mode;
+
+        expect(new SQL().options).toMatchObject({
+          adapter: "postgres",
+          sslMode: expected,
+          tls: { serverName: "host" },
+        });
+      });
+
+      test("PGSSLMODE=verify-ca is kept when the options give a CA", () => {
+        process.env[urlVariable] = "postgres://user@host:5432/db";
+        process.env.PGSSLMODE = "verify-ca";
+
+        expect(new SQL({ tls: { ca: "x" } }).options.sslMode).toBe(3);
+      });
+
+      test("an invalid PGSSLMODE throws", () => {
+        process.env[urlVariable] = "postgres://user@host:5432/db";
+        process.env.PGSSLMODE = "bogus";
+
+        expect(() => new SQL()).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("sslmode") }),
+        );
+      });
+    });
   });
 
   describe("TLS settings from the connection URL query string", () => {
@@ -493,7 +526,7 @@ describe("SQL adapter environment variable precedence", () => {
     test("an explicit tls option takes priority over ?ssl=false", () => {
       const options = new SQL("postgres://u@h:5432/db?ssl=false", { tls: true });
       expect(options.options.sslMode).toBe(2);
-      expect(options.options.tls).toBe(true);
+      expect(options.options.tls).toEqual({ serverName: "h" });
     });
 
     test.each(["mysql://u:p@h/db?ssl=bogus", 'mysql://u:p@h/db?ssl={"rejectUnauthorized":true}'])(
@@ -591,6 +624,193 @@ describe("SQL adapter environment variable precedence", () => {
       expect(fromUrl.options.sslMode).toBe(3);
       expect(fromUrl.options.tls).toEqual({ ca, serverName: "h" });
       expect((fromUrl.options.tls as Bun.TLSOptions).ca).toBe(ca);
+    });
+  });
+
+  describe("the tls option object", () => {
+    test.each([true, {}, { rejectUnauthorized: false }])("tls: %p names the host, like tls: 'require'", tls => {
+      for (const adapter of ["postgres", "mysql"] as const) {
+        const { options } = new SQL({ adapter, hostname: "h", tls });
+        expect(options.sslMode).toBe(2);
+        expect(options.tls).toEqual({ ...(tls as object), serverName: "h" });
+      }
+    });
+
+    test.each([
+      ["rejectUnauthorized", false],
+      ["serverName", "other.example"],
+    ])("an inherited %s is not read", (key, value) => {
+      Object.defineProperty(Object.prototype, key, { value, configurable: true, enumerable: true });
+      try {
+        const { options } = new SQL({ adapter: "postgres", hostname: "h", tls: { ca: "x" } });
+        expect(options.sslMode).toBe(4);
+        expect({ ...(options.tls as object) }).toEqual({ ca: "x", serverName: "h" });
+        expect(Object.getPrototypeOf(options.tls)).toBeNull();
+      } finally {
+        delete Object.prototype[key];
+      }
+    });
+  });
+
+  describe("the SSL mode stated in two places", () => {
+    const MODES = ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"] as const;
+    const RESOLVED = ["disable", "prefer", "require", "verify-ca", "verify-full"] as const;
+    type Mode = (typeof MODES)[number];
+    type Setting = {
+      label: string;
+      // The mode the setting names. Without one it only asks for TLS.
+      mode?: Mode;
+      env?: Record<string, string>;
+      urlVariable?: string;
+      query?: string;
+      options?: SQL.Options;
+    };
+    const option = (key: "ssl" | "tls"): Setting[] => [
+      ...MODES.map(mode => ({ label: mode, mode, options: { [key]: mode } })),
+      { label: "true", options: { [key]: true } },
+      { label: "{}", options: { [key]: {} } },
+    ];
+    // From the lowest priority to the highest.
+    const SOURCES: [string, Setting[]][] = [
+      ["PGSSLMODE", MODES.map(mode => ({ label: mode, mode, env: { PGSSLMODE: mode } }))],
+      ["URL variable", [{ label: "TLS_DATABASE_URL", urlVariable: "TLS_DATABASE_URL" }]],
+      [
+        "URL query",
+        [
+          ...MODES.map(mode => ({ label: mode, mode, query: `?sslmode=${mode}` })),
+          { label: "ssl=true", query: "?ssl=true" },
+        ],
+      ],
+      ["ssl", option("ssl")],
+      ["tls", option("tls")],
+    ];
+
+    function resolve(scheme: "postgres" | "mysql", ...settings: Setting[]) {
+      const { env, urlVariable = "DATABASE_URL", query = "" } = Object.assign({}, ...settings) as Setting;
+      const options = Object.assign({}, ...settings.map(setting => setting.options));
+      Object.assign(process.env, env, { [urlVariable]: `${scheme}://u@h/db${query}` });
+      try {
+        return RESOLVED[new SQL(options).options.sslMode!];
+      } finally {
+        for (const key of [...Object.keys(env ?? {}), urlVariable]) delete process.env[key];
+      }
+    }
+
+    function table(scheme: "postgres" | "mysql", sources = SOURCES) {
+      let out = "";
+      sources.forEach(([rowSource, rows], i) => {
+        for (const [columnSource, columns] of sources.slice(i + 1)) {
+          out +=
+            `\n${`${rowSource} \\ ${columnSource}`.padEnd(26)}${columns.map(c => c.label.padEnd(12)).join("")}`.trimEnd();
+          for (const row of rows) {
+            out +=
+              `\n${row.label.padEnd(26)}${columns.map(c => resolve(scheme, row, c).padEnd(12)).join("")}`.trimEnd();
+          }
+          out += "\n";
+        }
+      });
+      return out;
+    }
+
+    test("every pair of places", () => {
+      expect(table("postgres")).toMatchInlineSnapshot(`
+        "
+        PGSSLMODE \\ URL variable  TLS_DATABASE_URL
+        disable                   require
+        allow                     require
+        prefer                    require
+        require                   require
+        verify-ca                 verify-ca
+        verify-full               verify-full
+
+        PGSSLMODE \\ URL query     disable     allow       prefer      require     verify-ca   verify-full ssl=true
+        disable                   disable     prefer      prefer      require     verify-ca   verify-full require
+        allow                     disable     prefer      prefer      require     verify-ca   verify-full require
+        prefer                    disable     prefer      prefer      require     verify-ca   verify-full require
+        require                   disable     prefer      prefer      require     verify-ca   verify-full require
+        verify-ca                 disable     prefer      prefer      require     verify-ca   verify-full verify-ca
+        verify-full               disable     prefer      prefer      require     verify-ca   verify-full verify-full
+
+        PGSSLMODE \\ ssl           disable     allow       prefer      require     verify-ca   verify-full true        {}
+        disable                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        allow                     disable     prefer      prefer      require     verify-ca   verify-full require     require
+        prefer                    disable     prefer      prefer      require     verify-ca   verify-full require     require
+        require                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        verify-ca                 disable     prefer      prefer      require     verify-ca   verify-full verify-ca   verify-ca
+        verify-full               disable     prefer      prefer      require     verify-ca   verify-full verify-full verify-full
+
+        PGSSLMODE \\ tls           disable     allow       prefer      require     verify-ca   verify-full true        {}
+        disable                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        allow                     disable     prefer      prefer      require     verify-ca   verify-full require     require
+        prefer                    disable     prefer      prefer      require     verify-ca   verify-full require     require
+        require                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        verify-ca                 disable     prefer      prefer      require     verify-ca   verify-full verify-ca   verify-ca
+        verify-full               disable     prefer      prefer      require     verify-ca   verify-full verify-full verify-full
+
+        URL variable \\ URL query  disable     allow       prefer      require     verify-ca   verify-full ssl=true
+        TLS_DATABASE_URL          disable     prefer      prefer      require     verify-ca   verify-full require
+
+        URL variable \\ ssl        disable     allow       prefer      require     verify-ca   verify-full true        {}
+        TLS_DATABASE_URL          disable     prefer      prefer      require     verify-ca   verify-full require     require
+
+        URL variable \\ tls        disable     allow       prefer      require     verify-ca   verify-full true        {}
+        TLS_DATABASE_URL          disable     prefer      prefer      require     verify-ca   verify-full require     require
+
+        URL query \\ ssl           disable     allow       prefer      require     verify-ca   verify-full true        {}
+        disable                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        allow                     disable     prefer      prefer      require     verify-ca   verify-full require     require
+        prefer                    disable     prefer      prefer      require     verify-ca   verify-full require     require
+        require                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        verify-ca                 disable     prefer      prefer      require     verify-ca   verify-full verify-ca   verify-ca
+        verify-full               disable     prefer      prefer      require     verify-ca   verify-full verify-full verify-full
+        ssl=true                  disable     prefer      prefer      require     verify-ca   verify-full require     require
+
+        URL query \\ tls           disable     allow       prefer      require     verify-ca   verify-full true        {}
+        disable                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        allow                     disable     prefer      prefer      require     verify-ca   verify-full require     require
+        prefer                    disable     prefer      prefer      require     verify-ca   verify-full require     require
+        require                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        verify-ca                 disable     prefer      prefer      require     verify-ca   verify-full verify-ca   verify-ca
+        verify-full               disable     prefer      prefer      require     verify-ca   verify-full verify-full verify-full
+        ssl=true                  disable     prefer      prefer      require     verify-ca   verify-full require     require
+
+        ssl \\ tls                 disable     allow       prefer      require     verify-ca   verify-full true        {}
+        disable                   disable     prefer      prefer      require     verify-ca   verify-full require     require
+        allow                     prefer      prefer      prefer      require     verify-ca   verify-full require     require
+        prefer                    prefer      prefer      prefer      require     verify-ca   verify-full require     require
+        require                   require     require     require     require     verify-ca   verify-full require     require
+        verify-ca                 verify-ca   verify-ca   verify-ca   verify-ca   verify-ca   verify-full verify-ca   verify-ca
+        verify-full               verify-full verify-full verify-full verify-full verify-full verify-full verify-full verify-full
+        true                      disable     prefer      prefer      require     verify-ca   verify-full require     require
+        {}                        disable     prefer      prefer      require     verify-ca   verify-full require     require
+        "
+      `);
+
+      // MySQL resolves the same modes, and does not read PGSSLMODE.
+      const [[, pgsslmode], ...others] = SOURCES;
+      expect(table("mysql", others)).toBe(table("postgres", others));
+      for (const [, settings] of others) {
+        for (const setting of settings) {
+          for (const env of pgsslmode) expect(resolve("mysql", setting, env)).toBe(resolve("mysql", setting));
+        }
+      }
+    });
+
+    test("a setting that only asks for TLS never lowers the mode another one names", () => {
+      const lowered: string[] = [];
+      for (const [weakSource, weakSettings] of SOURCES) {
+        for (const weak of weakSettings.filter(setting => !setting.mode)) {
+          for (const [source, settings] of SOURCES.filter(([source]) => source !== weakSource)) {
+            for (const named of settings.filter(setting => setting.mode)) {
+              const resolved = resolve("postgres", weak, named);
+              if (RESOLVED.indexOf(resolved) < RESOLVED.indexOf(resolve("postgres", named))) {
+                lowered.push(`${source} ${named.label} + ${weakSource} ${weak.label} = ${resolved}`);
+              }
+            }
+          }
+        }
+      }
+      expect(lowered).toEqual([]);
     });
   });
 

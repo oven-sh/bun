@@ -588,6 +588,10 @@ Without a connection URL, Bun checks these individual parameters:
 | `PGDATABASE`         | -                            | username      | Database name                                                                  |
 | `PGSSLMODE`          | -                            | `disable`     | SSL mode (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`) |
 
+`PGSSLMODE` also applies next to a connection URL. A URL from a `TLS_*` variable uses at least `require`; `PGSSLMODE=verify-ca` and `PGSSLMODE=verify-full` raise that.
+
+An `sslmode` in the URL takes priority over both, and a mode in the `tls` or `ssl` option takes priority over the URL. `tls: true` and a `tls` object ask for at least `require` and never lower a stricter mode.
+
 ### SQLite Environment Variables
 
 You can configure SQLite connections with `DATABASE_URL` when it contains a SQLite-compatible URL:
@@ -926,7 +930,7 @@ const sql = new SQL({
 | SSL Mode      | Description                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `disable`     | No SSL/TLS used. Connections fail if server requires SSL. Default mode if none specified.                            |
-| `prefer`      | Tries SSL first, falls back to non-SSL if SSL fails.                                                                 |
+| `prefer`      | Tries SSL first, falls back to non-SSL if the server does not support it.                                            |
 | `require`     | Requires SSL without certificate verification. Fails if SSL cannot be established.                                   |
 | `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
 | `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |

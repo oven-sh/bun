@@ -32,6 +32,8 @@ type MockServer = {
   port: number;
   /** SNI of every completed TLS handshake, in order; `false` when the client sent none. */
   servernames: (string | false)[];
+  /** How many connections sent their login over TLS. */
+  logins: number;
   close(): void;
 };
 
@@ -60,10 +62,14 @@ async function postgresServer(host: string): Promise<MockServer> {
       // until it has the one-byte answer.
       rawSocket.write(pgSSLResponse("S"));
       const socket = upgrade(rawSocket, chunk.subarray(8), servernames);
-      socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
+      socket.once("data", () => {
+        mock.logins++;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      });
     });
   }, host);
-  return { port, servernames, close: () => server.close() };
+  const mock = { port, servernames, logins: 0, close: () => server.close() };
+  return mock;
 }
 
 /** Advertises CLIENT_SSL, upgrades after the SSLRequest packet, then accepts the login. */
@@ -88,6 +94,7 @@ async function mysqlServer(host: string): Promise<MockServer> {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
           if (!authed) {
             authed = true;
+            mock.logins++;
             socket.write(mysqlOkPacket(seq + 1));
             return;
           }
@@ -97,7 +104,8 @@ async function mysqlServer(host: string): Promise<MockServer> {
     };
     rawSocket.on("data", onPlainData);
   }, host);
-  return { port, servernames, close: () => server.close() };
+  const mock = { port, servernames, logins: 0, close: () => server.close() };
+  return mock;
 }
 
 /** "CONNECTED", or the error that `connect()` rejected with. */
@@ -159,5 +167,102 @@ describe.concurrent.each([
       expect(await connect(url, { ca: localhostTls.cert, serverName: "localhost" })).toBe("CONNECTED");
       expect(server.servernames).toEqual(["localhost"]);
     });
+  });
+});
+
+describe.each([
+  ["PostgreSQL", "postgres", postgresServer, "TLS_POSTGRES_DATABASE_URL"],
+  ["MySQL", "mysql", mysqlServer, "TLS_MYSQL_DATABASE_URL"],
+] as const)("%s TLS by every way of asking for it", (_, scheme, startServer, urlVariable) => {
+  type Row = [query: string, options: SQL.Options, env?: Record<string, string>];
+
+  /** Dials a new server as "localhost". With `env`, the URL is in `urlVariable` and not in the options. */
+  async function dial([query, options, env]: Row) {
+    const server = await startServer("127.0.0.1");
+    const url = `${scheme}://u@localhost:${server.port}/db${query}`;
+    const variables = { ...env, ...(env && { [urlVariable]: url }) };
+    // The constructor reads the environment.
+    Object.assign(process.env, variables);
+    let sql: SQL;
+    try {
+      sql = new SQL({ ...(!env && { url }), max: 1, ...options });
+    } finally {
+      for (const key in variables) delete process.env[key];
+    }
+    try {
+      const outcome = await sql.connect().then(
+        () => "CONNECTED",
+        e => e.code,
+      );
+      return { outcome, servernames: server.servernames, logins: server.logins };
+    } finally {
+      await sql.close({ timeout: 0 });
+      server.close();
+    }
+  }
+  const dialAll = async (rows: Row[]) =>
+    Object.fromEntries(await Promise.all(rows.map(async row => [JSON.stringify(row), await dial(row)])));
+  const expectAll = (rows: Row[], outcome: object) =>
+    Object.fromEntries(rows.map(row => [JSON.stringify(row), outcome]));
+
+  test("the host name is sent as SNI", async () => {
+    const rows: Row[] = [
+      ["", { tls: true }],
+      ["", { tls: {} }],
+      ["", { tls: { rejectUnauthorized: false } }],
+      ["", { ssl: true }],
+      ["", { tls: "require" }],
+      ["?sslmode=require", {}],
+      ["?ssl=true", {}],
+      ["", {}, {}],
+    ];
+    expect(await dialAll(rows)).toEqual(
+      expectAll(rows, { outcome: "CONNECTED", servernames: ["localhost"], logins: 1 }),
+    );
+  });
+
+  // The certificate is self-signed, and these give no `ca`.
+  test("verify-ca and verify-full refuse an untrusted certificate, wherever they are stated", async () => {
+    const rows = (["verify-ca", "verify-full"] as const).flatMap((mode): Row[] => [
+      [`?sslmode=${mode}`, {}],
+      [`?sslmode=${mode}`, { tls: true }],
+      [`?sslmode=${mode}&ssl=true`, {}],
+      [`?sslmode=${mode}`, {}, {}],
+      ["", { tls: mode }],
+      ["", { ssl: mode }],
+      ["", { ssl: mode }, {}],
+      ["", { ssl: mode, tls: true }],
+      ["", { ssl: mode, tls: {} }],
+      ["", { ssl: mode, tls: "require" }],
+      ["?sslmode=require", { ssl: mode, tls: true }],
+      ...(scheme === "postgres"
+        ? ([
+            ["", {}, { PGSSLMODE: mode }],
+            ["", { tls: true }, { PGSSLMODE: mode }],
+            ["?ssl=true", {}, { PGSSLMODE: mode }],
+          ] as Row[])
+        : []),
+    ]);
+    expect(await dialAll(rows)).toEqual(
+      expectAll(rows, { outcome: "DEPTH_ZERO_SELF_SIGNED_CERT", servernames: [], logins: 0 }),
+    );
+  });
+
+  test("what verify-ca and verify-full check once the certificate is trusted", async () => {
+    const ca = localhostTls.cert;
+    const connected = (servername: string) => ({ outcome: "CONNECTED", servernames: [servername], logins: 1 });
+    expect(
+      await Promise.all([
+        dial(["", { ssl: "verify-full", tls: { ca } }]),
+        dial(["", { ssl: "verify-full", tls: { ca, serverName: "other.example" } }]),
+        dial(["?sslmode=verify-ca", { tls: { ca, serverName: "other.example" } }]),
+        dial(["", { ssl: "verify-full", tls: { rejectUnauthorized: false } }]),
+      ]),
+    ).toEqual([
+      connected("localhost"),
+      { outcome: "ERR_TLS_CERT_ALTNAME_INVALID", servernames: [], logins: 0 },
+      connected("other.example"),
+      connected("localhost"),
+    ]);
   });
 });

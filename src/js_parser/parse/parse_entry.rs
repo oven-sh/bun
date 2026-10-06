@@ -21,8 +21,9 @@ use crate::parser::{
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
+use bun_sema::hir::{Diagnostic, DiagnosticKind};
 
-// Named instantiations of `P<'_, TS, SCAN>`.
+// Named instantiations of `P<'_, TS, SCAN, SEMA>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
 pub type TSXParser<'a> = P<'a, true, false>;
 
@@ -157,6 +158,11 @@ pub struct Options<'a> {
     /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
+    /// Reports syntax errors the way TypeScript's parser does and recovers. Only the type checker
+    /// enables this.
+    pub tolerant: bool,
+    /// `NodeFlagsJavaScriptFile`, with `tolerant`.
+    pub is_javascript: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -191,6 +197,8 @@ impl<'a> Default for Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: false,
             is_entry_point: false,
+            tolerant: false,
+            is_javascript: false,
         }
     }
 }
@@ -278,6 +286,8 @@ impl<'a> Options<'a> {
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
             is_entry_point: self.is_entry_point,
+            tolerant: self.tolerant,
+            is_javascript: self.is_javascript,
         }
     }
 
@@ -352,6 +362,8 @@ impl<'a> Options<'a> {
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
             is_entry_point: false,
+            tolerant: false,
+            is_javascript: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -377,6 +389,8 @@ impl<'a> Parser<'a> {
         lexer.track_comments = options.features.minify_identifiers;
         lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
+        lexer.tolerant = options.tolerant;
+        lexer.is_javascript = options.is_javascript;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -454,7 +468,7 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
-        // What the parser only logs is an error all the same: the statements are its best guess.
+        // What the parser only logs is still an error: the statements are its best guess.
         if p.log().errors > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
@@ -462,6 +476,176 @@ impl<'a> Parser<'a> {
             stmts: stmts.as_slice(),
             p,
         }))
+    }
+
+    /// Parses a TypeScript module without running the visit pass, and returns the data `bun_sema`
+    /// resolves types from.
+    /// A file the parser cannot recover from, or rejects with an error that has no TypeScript
+    /// equivalent, is marked `has_errors` and gets at least one parse error. A file nested too
+    /// deeply for the stack is marked `ran_out_of_stack`.
+    /// `await_is_a_name`: the top level has no await context, as in a script
+    /// (`parseSourceFileWorker`).
+    /// Also returns whether `await` was parsed as a keyword at the top level.
+    #[cold]
+    pub(crate) fn parse_for_sema(
+        mut self,
+        atoms: &'a dyn bun_sema::atom::Intern,
+        is_declaration_file: bool,
+        is_json: bool,
+        await_is_a_name: bool,
+        parsing: &core::cell::Cell<core::time::Duration>,
+    ) -> (bun_sema::hir::FileBuilder, bool) {
+        type Pi<'a> = P<'a, true, false, true>;
+        let scratch_lexer = |this: &Self| {
+            js_lexer::Lexer::init_without_reading(
+                this.bump.alloc(bun_ast::Log::default()),
+                this.source,
+                this.bump,
+            )
+        };
+        let failed = || bun_sema::hir::FileBuilder {
+            kind: if is_declaration_file {
+                bun_sema::hir::FileKind::Declaration
+            } else {
+                Default::default()
+            },
+            has_errors: true,
+            has_parse_diagnostics: true,
+            ..Default::default()
+        };
+        let placeholder = scratch_lexer(&self);
+        let lexer = core::mem::replace(&mut self.lexer, placeholder);
+        let options = core::mem::take(&mut self.options);
+        let mut slot = MaybeUninit::<Pi<'_>>::uninit();
+        if Pi::init(
+            &mut slot,
+            self.bump,
+            self.log,
+            self.source,
+            self.define,
+            lexer,
+            options,
+        )
+        .is_err()
+        {
+            return (failed(), false);
+        }
+        // SAFETY: `init` returned `Ok`, so the slot is initialized, and the guard is its only owner.
+        let mut __p = scopeguard::guard(slot, |mut s| unsafe { s.assume_init_drop() });
+        // SAFETY: as above.
+        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        // `isJavaScript`. `parseJSONText` drops the JS diagnostics.
+        let is_js = p.lexer.is_javascript_file() && !is_json;
+        let builder = crate::sema::builder::Builder::new(is_js, atoms);
+        let mut type_syntax = Box::new(crate::sema::TypeSyntax::new(builder));
+        type_syntax.save_types |= is_declaration_file;
+        type_syntax.has_jsdoc = is_js;
+        p.type_syntax = Some(type_syntax);
+        // `parseSourceFileWorker`: a declaration file is never reparsed for its top-level `await`
+        // either. `parseJSONText` has no await context at all.
+        if await_is_a_name || is_declaration_file || is_json {
+            p.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowIdent;
+        }
+        if p.lexer.token == js_lexer::T::THashbang {
+            if p.lexer.next().is_err() {
+                return (failed(), false);
+            }
+            // `Scan`: a shebang is trivia.
+            p.lexer.token_full_start = 0;
+        }
+        // The parser is at the first token: these are the comments `getCommentPragmas` processes.
+        let leading_comments = p.lexer.all_comments.len();
+        let mut opts = ParseStatementOptions {
+            scope: StatementScope::Module,
+            // Everything in a declaration file is ambient.
+            is_typescript_declare: is_declaration_file,
+            ..Default::default()
+        };
+        let began = std::time::Instant::now();
+        let stmts = if is_json {
+            // `bindSourceFileIfExternalModule`: a JSON file is an `export =` of its value.
+            p.parse_json_text().map(|value| {
+                let mut stmts = crate::parser::StmtList::new_in(p.arena);
+                stmts.push(p.s(S::ExportEquals { value }, bun_ast::Loc { start: 0 }));
+                stmts
+            })
+        } else {
+            p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)
+        };
+        parsing.set(parsing.get() + began.elapsed());
+        let awaited = p.top_level_await_keyword.len > 0;
+        // Taken before `jsdoc::read_comments` makes the lexer rescan the comments.
+        let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
+        // Recoverable errors are converted to TypeScript's diagnostics. The checker reports them.
+        let mut logged = Vec::new();
+        let has_jsx = p.is_jsx_enabled();
+        let mut has_errors = stmts.is_err();
+        // The offset of the first error that has no TypeScript equivalent.
+        let mut untranslated = None;
+        for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
+            let offset = msg.data.location.as_ref().map(|l| l.offset);
+            // The location of a node was logged without `P::real_loc`.
+            assert!(
+                offset.is_none_or(|offset| offset < 1 << 30),
+                "{}",
+                bstr::BStr::new(&msg.data.text)
+            );
+            let source = self.source.contents();
+            match crate::sema::diagnostic(msg, source, has_jsx) {
+                // `checkJSDecoratorSyntax` reports these two as JS diagnostics, which parse errors do not suppress.
+                Some(Some(diagnostic)) if is_js && matches!(diagnostic.code, 1206 | 8038) => {
+                    logged.push(Diagnostic {
+                        kind: DiagnosticKind::Js,
+                        ..diagnostic
+                    });
+                }
+                Some(diagnostic) => logged.extend(diagnostic),
+                None => {
+                    has_errors = true;
+                    untranslated = untranslated.or(offset);
+                }
+            }
+        }
+        let mut file = match stmts {
+            Ok(stmts) => {
+                let syntax = *p.type_syntax.take().unwrap();
+                let stmts = stmts.as_slice();
+                let mut file =
+                    crate::sema::lower::Lower::run(p, syntax, stmts, is_declaration_file);
+                file.comment_directives = comment_directives;
+                crate::sema::comments::process_pragmas_into_fields(
+                    &p.lexer,
+                    leading_comments,
+                    atoms,
+                    &mut file,
+                );
+                file
+            }
+            Err(error) => bun_sema::hir::FileBuilder {
+                ran_out_of_stack: matches!(error, crate::Error::StackOverflow),
+                ..failed()
+            },
+        };
+        has_errors |= file.ran_out_of_stack;
+        file.has_errors = has_errors;
+        let is_parse_error = |d: &Diagnostic| d.kind == DiagnosticKind::Parse;
+        file.has_parse_diagnostics =
+            has_errors || logged.iter().chain(&file.diagnostics).any(is_parse_error);
+        if has_errors {
+            (file.diagnostics)
+                .retain(|d| !matches!(d.kind, DiagnosticKind::Parse | DiagnosticKind::Grammar));
+            logged.retain(is_parse_error);
+            // A rejected file is never reported as free of errors.
+            if logged.is_empty() && !file.ran_out_of_stack {
+                let at = untranslated.unwrap_or_else(|| p.lexer.loc().start.max(0) as usize) as u32;
+                logged.push(Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1012, &[]));
+            }
+        } else {
+            let suppress_grammar_errors = file.has_parse_diagnostics;
+            logged.retain(|d| !suppress_grammar_errors || d.kind != DiagnosticKind::Grammar);
+        }
+        file.diagnostics.extend(logged);
+        (file, awaited)
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from

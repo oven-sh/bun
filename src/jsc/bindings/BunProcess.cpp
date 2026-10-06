@@ -192,6 +192,7 @@ extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
+extern "C" const char* Bun__typescript_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
@@ -313,6 +314,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     putVersion("icu", icuVersionString());
     putVersion("unicode", unicodeVersionString());
     putVersion("sqlite", String::fromLatin1(Bun__sqlite3_version()));
+    // What `bun check` is a port of.
+    putVersion("typescript", String::fromLatin1(Bun__typescript_version()));
     putVersion("modules", STRINGIFY(REPORTED_NODEJS_ABI_VERSION) ""_s);
 #undef STRINGIFY
 #undef STRINGIFY_IMPL

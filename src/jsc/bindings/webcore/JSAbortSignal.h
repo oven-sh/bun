@@ -30,7 +30,6 @@ namespace WebCore {
 class JSAbortSignal : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = AbortSignal;
     static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);

@@ -1388,7 +1388,7 @@ __attribute__((minsize)) KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobal
         MarkPopErrorOnReturn markPopError;
 
         auto crvUtf8 = crvView->utf8();
-        int nid = Ec::GetCurveIdFromName(crvUtf8.data());
+        int nid = Ec::GetCurveIdFromName(crvUtf8.legacyCStringPointer());
         if (nid == NID_undef) {
             ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
             return {};
@@ -1539,7 +1539,7 @@ KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, Thr
         WTF::String curveStr = namedCurveValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto curveUtf8 = curveStr.utf8();
-        int curveNid = ncrypto::Ec::GetCurveIdFromName(curveUtf8.data());
+        int curveNid = ncrypto::Ec::GetCurveIdFromName(curveUtf8.legacyCStringPointer());
         if (curveNid == NID_undef) {
             ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
             return {};

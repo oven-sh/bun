@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use crate::Error;
 

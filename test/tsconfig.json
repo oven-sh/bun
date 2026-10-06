@@ -9,6 +9,7 @@
       "harness": ["./harness.ts"],
       "mkfifo": ["./mkfifo.ts"],
       "node-harness": ["./js/node/harness.ts"],
+      "s3-server": ["./packages/s3-server/index.ts"],
       "deno:harness": ["./js/deno/harness.ts"],
       "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],
       "foo/bar": ["./js/bun/resolve/baz.js"],

@@ -695,12 +695,6 @@ impl Number {
         self.value
     }
 }
-impl From<f64> for Number {
-    #[inline]
-    fn from(v: f64) -> Self {
-        Number::new(v)
-    }
-}
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
     b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"10", b"11", b"12", b"13", b"14",
@@ -2036,7 +2030,7 @@ impl EString {
         }
     }
 
-    /// Link `other` onto this string's rope tail.
+    /// Link `other` onto this string's rope tail. Mutates both ropes: neither may have another owner.
     ///
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly

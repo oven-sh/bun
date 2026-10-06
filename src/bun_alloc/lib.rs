@@ -768,7 +768,6 @@ impl WTFStringImplStruct {
                 > old / Self::S_REF_COUNT_INCREMENT
                 || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
         );
-        let _ = old;
     }
     /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
     ///
@@ -1845,18 +1844,6 @@ impl BSSAppendable for &[u8] {
     }
     fn copy_into(&self, dst: &mut [u8]) {
         dst[..self.len()].copy_from_slice(self);
-    }
-}
-impl<const N: usize> BSSAppendable for [&[u8]; N] {
-    fn total_len(&self) -> usize {
-        self.iter().map(|s| s.len()).sum()
-    }
-    fn copy_into(&self, dst: &mut [u8]) {
-        let mut remainder = dst;
-        for val in self {
-            remainder[..val.len()].copy_from_slice(val);
-            remainder = &mut remainder[val.len()..];
-        }
     }
 }
 impl BSSAppendable for &[&[u8]] {

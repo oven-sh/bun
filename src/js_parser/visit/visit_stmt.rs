@@ -2268,8 +2268,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         next_numeric_value = Some(num.value() + 1.0);
                     }
-                    js_ast::ExprData::EString(str_) => {
+                    js_ast::ExprData::EString(mut str_) => {
                         has_string_value = true;
+
+                        // Inlined uses share this node's rope and folds append to ropes in place: store it flat.
+                        str_.resolve_rope_if_needed(p.arena);
 
                         exported_members.get_ptr_mut(name).unwrap().data =
                             js_ast::ts::Data::EnumString(str_);

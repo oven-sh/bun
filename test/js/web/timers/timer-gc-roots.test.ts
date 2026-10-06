@@ -28,6 +28,8 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
       const { heapStats } = require("bun:jsc");
       const N = 5000;
       const h = [];
+      // What the process holds by itself, like the promise of this entry point.
+      const before = heapStats().objectTypeCounts.StrongRootBlock || 0;
       for (let i = 0; i < N; i++) h.push(setTimeout(() => {}, 600000));
       Bun.gc(true);
       const armed = heapStats();
@@ -41,7 +43,7 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
         armedTimeout: armed.protectedObjectTypeCounts.Timeout || 0,
         armedBlocks: armed.objectTypeCounts.StrongRootBlock || 0,
         clearedTimeout: cleared.protectedObjectTypeCounts.Timeout || 0,
-        clearedBlocks: cleared.objectTypeCounts.StrongRootBlock || 0,
+        clearedBlocks: (cleared.objectTypeCounts.StrongRootBlock || 0) - before,
       }));
       process.exit(0);
     `;
@@ -131,6 +133,9 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
           await new Promise(r => setTimeout(r, 10));
         }
       }
+      // RSS still climbs to its plateau in the first rounds
+      await round();
+      await round();
       await round();
       const before = process.memoryUsage().rss;
       await round();

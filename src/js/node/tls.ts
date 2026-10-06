@@ -1314,25 +1314,6 @@ function Server(options, secureConnectionListener): void {
     this._sharedCreds = sharedCreds;
   };
 
-  // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
-  // an SNICallback (the `context.context || context` unwrap accepts both the
-  // wrapper and the unwrapped native context).
-  Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
-
-  Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  Server.prototype.setTicketKeys = function (keys) {
-    if (!ArrayBuffer.isView(keys)) {
-      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
-    }
-    if (keys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
-    }
-    throw Error("Not implented in Bun yet");
-  };
-
   this[buntls] = function (port, host, isClient) {
     const requestCert = isClient ? true : this._requestCert;
     return [
@@ -1415,6 +1396,25 @@ function Server(options, secureConnectionListener): void {
   }
 }
 $toClass(Server, "Server", NetServer);
+
+// Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
+// an SNICallback (the `context.context || context` unwrap accepts both the
+// wrapper and the unwrapped native context).
+Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
+
+Server.prototype.getTicketKeys = function () {
+  throw Error("Not implented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function (keys) {
+  if (!ArrayBuffer.isView(keys)) {
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
+  }
+  if (keys.byteLength !== 48) {
+    throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+  }
+  throw Error("Not implented in Bun yet");
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

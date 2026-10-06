@@ -2194,6 +2194,12 @@ Socket.prototype.connect = function connect(...args) {
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+    // A session over a transport the caller handed in has no connection of its own to dial again.
+    if (!socket && this[kupgraded] && !this.destroyed) {
+      const ex = new ExceptionWithHostPort(uv().UV_EISCONN, "connect", path || host || "localhost", port);
+      process.nextTick(destroyNT, this, ex);
+      return this;
+    }
     this.servername = options.servername;
     if (socket) {
       connection = socket;

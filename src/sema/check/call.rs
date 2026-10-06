@@ -2158,8 +2158,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let cycles = self.cycles;
         let ty = self.check_expression_with_contextual_type(file, e, param, None, check_mode);
-        // A result that depends on a circular query is only provisional.
-        if self.cycles == cycles {
+        // A result that depends on a circular query is only provisional. So is what the check
+        // leaves behind after one: `context_checked_under`. The next check has to leave it again.
+        if self.cycles == cycles && !self.is_innermost_tainted() {
             self.literals_checked_under.insert(key, ty);
         }
         ty

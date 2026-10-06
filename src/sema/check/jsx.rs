@@ -255,7 +255,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Err(());
         };
         Ok(self
-            .applicable_index_info(&members, TypeId::STRING)
+            .find_index_info(&members, TypeId::STRING)
             .map(|info| info.value))
     }
 

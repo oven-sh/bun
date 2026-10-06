@@ -1808,10 +1808,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 for other in &sm.shape().index {
-                    if other.key == info.key
-                        || info.key == TypeId::STRING && other.key != TypeId::SYMBOL
-                        || self.is_assignable(other.key, info.key)
-                    {
+                    if other.key == info.key || self.is_applicable_index_type(other.key, info.key) {
                         types.push(self.instantiate(other.value, sm.mapper));
                     }
                 }

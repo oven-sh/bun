@@ -6142,6 +6142,17 @@ impl<'p, 's> Checker<'p, 's> {
         self.applicable_index_info(members, key_type)
     }
 
+    /// `findIndexInfo`, with the value type instantiated for `members`: the index signature with
+    /// that very key type. `string` is applicable to `string & {}`, and is not it.
+    pub fn find_index_info(&mut self, members: &Members, key_type: TypeId) -> Option<IndexInfo> {
+        let mut infos = members.shape().index.iter();
+        let found = *infos.find(|info| info.key == key_type)?;
+        Some(IndexInfo {
+            value: self.instantiate(found.value, members.mapper),
+            ..found
+        })
+    }
+
     /// `findApplicableIndexInfo`, with the value type instantiated for `members`.
     pub fn applicable_index_info(
         &mut self,

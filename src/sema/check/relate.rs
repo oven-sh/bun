@@ -7101,15 +7101,8 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        if let Some(actual) = self.applicable_index_info(&sm, key).map(|info| info.value) {
-            // `getApplicableIndexInfo`: the index signature with the same key type, or else the
-            // string index signature.
-            let source_key = if !REPORT || sm.shape().index.iter().any(|i| i.key == key) {
-                key
-            } else {
-                TypeId::STRING
-            };
-            let (source, target) = ((source_key, actual), (key, expected));
+        if let Some(info) = self.applicable_index_info(&sm, key) {
+            let (source, target) = ((info.key, info.value), (key, expected));
             return self.index_info_related_to::<REPORT>(r, source, target, state);
         }
         // A constituent of an intersection never gets an implicit index signature from its
@@ -7267,17 +7260,12 @@ impl<'p, 's> Checker<'p, 's> {
         key: TypeId,
     ) -> bool {
         let name = prop.name;
-        if self.atoms().is_symbol_name(name) {
-            return key == TypeId::SYMBOL;
-        }
-        if key == TypeId::STRING {
-            return true;
-        }
-        if key == TypeId::NUMBER {
-            return self.is_numeric_name(name);
-        }
-        if key == TypeId::SYMBOL {
-            return false;
+        let is_symbol = self.atoms().is_symbol_name(name);
+        match key {
+            TypeId::SYMBOL => return is_symbol,
+            TypeId::STRING => return !is_symbol,
+            TypeId::NUMBER => return !is_symbol && self.is_numeric_name(name),
+            _ => {}
         }
         // A name that is a numeric literal in the source is a number, which no template literal
         // type accepts. `neverType`, for a private name, is assignable to every type.
@@ -7328,12 +7316,7 @@ impl<'p, 's> Checker<'p, 's> {
             result &= related;
         }
         for info in &sm.shape().index {
-            // `isApplicableIndexType`
-            let applies = info.key == key
-                || key == TypeId::STRING && info.key != TypeId::SYMBOL
-                || key == TypeId::NUMBER && self.is_numeric_string_type(info.key)
-                || self.is_assignable(info.key, key);
-            if applies {
+            if info.key == key || self.is_applicable_index_type(info.key, key) {
                 let actual = self.instantiate(info.value, sm.mapper);
                 let (source, target) = ((info.key, actual), (key, expected));
                 let related = self.index_info_related_to::<REPORT>(r, source, target, state);

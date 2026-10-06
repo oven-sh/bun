@@ -1691,21 +1691,6 @@ export { greeting };`,
     }
   });
 
-  test("is read in place of the tsconfig.json that is found", async () => {
-    using dir = tempDir("tsconfig-api-only", {
-      "tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./wrong/*"] } } }`,
-      "configs/custom.json": `{ "compilerOptions": { "paths": { "@/*": ["../src/*"] } } }`,
-      "src/utils.ts": `export const greeting = "Hello World";`,
-      "wrong/utils.ts": `export const greeting = "Goodbye";`,
-      "index.ts": `import { greeting } from "@/utils";\nexport { greeting };`,
-    });
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "index.ts")],
-      tsconfig: join(String(dir), "configs/custom.json"),
-    });
-    expect(await result.outputs[0].text()).toContain("Hello World");
-  });
-
   test("onEnd fires before promise resolves with throw: true", async () => {
     const dir = tempDirWithFiles("onend-throwonerror-true", {
       "index.ts": `

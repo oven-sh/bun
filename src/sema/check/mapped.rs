@@ -937,7 +937,7 @@ impl<'p, 's> Checker<'p, 's> {
             // signature applies even when accessing with a symbol-like type."
             let info = self.members_for_index_infos(object).and_then(|members| {
                 self.applicable_index_info(&members, index)
-                    .or_else(|| self.applicable_index_info(&members, TypeId::STRING))
+                    .or_else(|| self.find_index_info(&members, TypeId::STRING))
             });
             if let Some(info) = info {
                 if access_flags.contains(AccessFlags::NO_INDEX_SIGNATURES)

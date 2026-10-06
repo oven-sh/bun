@@ -825,6 +825,8 @@ describe("an error of the wrapped socket is reported on the TLS socket", () => {
     const result = Promise.withResolvers<{ added: number; events: string[] }>();
     const queued = transport === "a socket with a write still queued";
     const relayEnds: Record<string, net.Socket> = {};
+    // A dialed socket can hear of its 'connect' before the relay hears of the 'connection'.
+    const relayed = Promise.withResolvers<void>();
 
     function wrap(isServer: boolean, raw: net.Socket) {
       return isServer
@@ -854,7 +856,7 @@ describe("an error of the wrapped socket is reported on the TLS socket", () => {
         act(raw, relayEnds[side]);
         result.resolve(Promise.all(closed).then(() => ({ added, events })));
       };
-      const soon = () => void setImmediate(run);
+      const soon = () => void relayed.promise.then(() => setImmediate(run));
       if (when === "after the handshake") tlsSocket.once(side === "server" ? "secure" : "secureConnect", soon);
       else soon();
     }
@@ -874,6 +876,7 @@ describe("an error of the wrapped socket is reported on the TLS socket", () => {
       relayEnds.client = quiet(client);
       relayEnds.server = quiet(net.connect({ port, host: "127.0.0.1", allowHalfOpen: true }));
       client.pipe(relayEnds.server).pipe(client);
+      relayed.resolve();
     });
     const dial = { port: await listen(relay), host: "127.0.0.1", rejectUnauthorized: false };
     const dialed: net.Socket = overTLS ? tls.connect(dial) : net.connect(dial);

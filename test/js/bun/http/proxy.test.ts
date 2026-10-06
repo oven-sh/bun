@@ -2,7 +2,7 @@ import axios from "axios";
 import type { Server } from "bun";
 import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import http from "node:http";
@@ -1187,6 +1187,66 @@ test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async
     // recvd body size should exactly match the sent body size
     expect(result).toBe(String(size));
   }
+});
+
+test("HTTPS over an HTTPS proxy preserves TLS record order with a large body", async () => {
+  // The tunnel gets all the ciphertext of the body at once, and the TLS socket to the proxy takes it in parts.
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    fetch: async req => new Response(Bun.hash(await req.arrayBuffer()).toString()),
+  });
+  const body = Buffer.alloc(16 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  const response = await fetch(origin.url, {
+    method: "POST",
+    proxy: httpsProxyServer.url,
+    body,
+    keepalive: false,
+    tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+  });
+  expect(await response.text()).toBe(Bun.hash(body).toString());
+});
+
+test("a pooled HTTPS proxy tunnel does not keep the memory of a large request body", async () => {
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      let received = 0;
+      for await (const chunk of req.body!) received += chunk.byteLength;
+      return new Response(String(received));
+    },
+  });
+  const MiB = 1024 * 1024;
+  const bodyMiB = 64;
+  const fixture = `
+    async function post(size) {
+      const res = await fetch(${JSON.stringify(origin.url.href)}, {
+        method: "POST",
+        body: Buffer.alloc(size, "a"),
+        proxy: ${JSON.stringify(httpProxyServer.url)},
+        tls: { rejectUnauthorized: false },
+      });
+      const received = await res.text();
+      if (received !== String(size)) throw new Error("the origin received " + received + " of " + size + " bytes");
+    }
+    // The first request opens the tunnel. Every later one reuses it.
+    await post(1024);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    await post(${bodyMiB * MiB});
+    let kept = Infinity;
+    for (let attempt = 0; attempt < 100 && kept > ${(bodyMiB / 4) * MiB}; attempt++) {
+      await post(1024);
+      Bun.gc(true);
+      kept = Math.min(kept, process.memoryUsage.rss() - before);
+    }
+    console.log(JSON.stringify({ deltaMiB: Math.round(kept / ${MiB}) }));
+  `;
+  httpProxyServer.log.length = 0;
+  // A tunnel that keeps the ciphertext queue of the body keeps more than the body.
+  await expectRssDeltaBelow(["-e", fixture], { release: bodyMiB / 2, debug: bodyMiB / 2 });
+  expect(httpProxyServer.log.filter(line => line === `CONNECT localhost:${origin.port}`).length).toBe(1);
 });
 
 test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {

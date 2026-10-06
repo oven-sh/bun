@@ -314,6 +314,42 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     });
   });
 
+  test("a multi-megabyte message round-trips through the TLS tunnel", async () => {
+    // The tunnel's TLS engine hands all the ciphertext of one send() to the tunnel at once.
+    using recorded = await startRecordingProxy();
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      tls: { rejectUnauthorized: false },
+    });
+    ws.binaryType = "arraybuffer";
+    const payload = Buffer.alloc(4 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+    const echo = Promise.withResolvers<Buffer>();
+    const closed = Promise.withResolvers<{ code: number; wasClean: boolean }>();
+    ws.addEventListener("open", () => ws.send(payload));
+    ws.addEventListener("message", event => {
+      if (typeof event.data !== "string") echo.resolve(Buffer.from(event.data));
+    });
+    ws.addEventListener("close", event => {
+      echo.reject(new Error(`closed before the echo: ${event.code} ${event.reason}`));
+      closed.resolve({ code: event.code, wasClean: event.wasClean });
+    });
+
+    const echoedBack = await echo.promise;
+    ws.close(1000);
+    expect({
+      length: echoedBack.length,
+      intact: echoedBack.equals(payload),
+      closed: await closed.promise,
+      requests: recorded.requests,
+    }).toEqual({
+      length: payload.length,
+      intact: true,
+      closed: { code: 1000, wasClean: true },
+      requests: [connectRequest(wssPort)],
+    });
+    gc();
+  });
+
   test("server-initiated ping survives through TLS tunnel proxy", async () => {
     // Regression test: sendPong checked socket.isClosed() on the detached tcp
     // field instead of using hasTCP(). For wss:// through HTTP proxy, the

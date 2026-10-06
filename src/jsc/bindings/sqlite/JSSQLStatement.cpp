@@ -1239,7 +1239,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         } else {
             // Keep the selected path alive for the process-global SQLite handle.
             sqlite3_lib_path_storage = requestedPathUTF8;
-            sqlite3_lib_path = sqlite3_lib_path_storage.data();
+            sqlite3_lib_path = sqlite3_lib_path_storage.legacyCStringPointer();
             WTF::String msg;
             if (lazyLoadSQLiteUnlocked(&msg) == -1) {
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));

@@ -6,6 +6,8 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
 
+import { runInNewContext } from "node:vm";
+
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -233,7 +235,7 @@ describe("expect()", () => {
 
     // Jest's isError() does not accept it: the tag is not "Error", and `instanceof` uses the Error of this realm.
     test_skipIf(!isBun)("an Error of another realm with its own toStringTag still counts as thrown", async () => {
-      const value = require("node:vm").runInNewContext(
+      const value = runInNewContext(
         `new (class extends Error { get [Symbol.toStringTag]() { return "Tagged"; } })("hello world")`,
       );
       await expect(Promise.resolve(value)).resolves.toThrow("hello world");

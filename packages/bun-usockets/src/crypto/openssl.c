@@ -2562,11 +2562,11 @@ restart:
      * down right after the handshake (node's post-verify destroy, #40653)
      * close with the second segment unread, which turns its FIN teardown
      * into an RST and a bogus ECONNRESET at this side. Node's memory BIO
-     * drained once per cycle has the same single-segment shape. Same gate
-     * as us_internal_ssl_writev. */
+     * drained once per cycle has the same single-segment shape. Not gated
+     * on ssl_batch_spills: a refusal in that dispatch must find the flight
+     * held, and a flight the kernel refuses spills whole either way. */
     int hs_batching = s->ssl_handshake_state == HANDSHAKE_PENDING &&
-                      !loop_ssl_data->ssl_write_batching &&
-                      !loop_ssl_data->ssl_batch_spills;
+                      !loop_ssl_data->ssl_write_batching;
     if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;

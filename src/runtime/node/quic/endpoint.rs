@@ -1331,11 +1331,10 @@ impl QuicEndpoint {
         // SAFETY: see doc comment.
         unsafe { f(&mut *self.state_mut()) }
     }
-    /// Upgrade a session pointer to a reference, verifying it is still in
-    /// `session_set`. `unregister_session` removes it before the session's
-    /// teardown/finalize, so a registered pointer is live on the JS thread.
+    /// Upgrade a session pointer to a reference if it is still registered.
     fn live_session(&self, p: *mut QuicSession) -> Option<&QuicSession> {
-        // SAFETY: see doc comment.
+        // SAFETY: `unregister_session` removes `p` from `session_set` before
+        // the session's teardown/finalize, so a member is live on the JS thread.
         self.session_set.get().contains(&p).then(|| unsafe { &*p })
     }
     fn write_stat(&self, idx: usize, value: u64) {

@@ -1186,11 +1186,10 @@ pub mod ssl_wrapper {
                     "the initial handshake completed outside update_handshake_state, unreported"
                 );
                 // SAFETY: ssl is a live SSL*.
-                if !self.peer_close_waits.get()
-                    && (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
-                        & boring_sys::SSL_RECEIVED_SHUTDOWN)
-                        != 0
-                {
+                let peer_closed = (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
+                    & boring_sys::SSL_RECEIVED_SHUTDOWN)
+                    != 0;
+                if peer_closed && !self.peer_close_waits.get() {
                     // we received a shutdown
                     self.flags.set_received_ssl_shutdown(true);
                     // 2-step shutdown

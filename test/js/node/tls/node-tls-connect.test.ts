@@ -597,6 +597,37 @@ for (const { name, connect } of tests) {
   });
 }
 
+// In a process of its own: BoringSSL's SSL_set_session abort()s once the handshake has started.
+it("setSession() after the handshake started is ignored on every node:tls door", async () => {
+  const client = { threw: null, echo: "ping", reused: false };
+  const server = { threw: null, side: "server" };
+  const expected = {
+    "node-client": client,
+    "node-duplex": client,
+    "node-wrap": client,
+    "node-session-event": client,
+    "node-session-event-duplex": client,
+    "node-check-server-identity": client,
+    // Node v26.3.0 returns undefined from these too, but OpenSSL then fails the connection.
+    "node-duplex-in-flight": client,
+    "node-keylog": client,
+    "node-keylog-duplex": client,
+    "node-client-tls13": client,
+    "node-server": server,
+    "node-server-wrap": server,
+  };
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-after-start.fixture.ts"), ...Object.keys(expected)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(expected);
+  expect(exitCode).toBe(0);
+});
+
 it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", async () => {
   // d2i_SSL_SESSION returns an owned SSL_SESSION; SSL_set_session takes its own
   // reference ("the caller retains ownership"), so the caller's reference must
@@ -4055,7 +4086,6 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       });
     });
 
-    // Not covered here: setSession() after the handshake started on a tls.connect() socket aborts the process (#41671).
     it.skipIf(skip)("a session that is set before the handshake starts is resumed", async () => {
       expect(await session()).toEqual({
         "tls.connect({ port, session })": true,

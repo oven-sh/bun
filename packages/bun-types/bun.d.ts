@@ -7162,7 +7162,11 @@ declare module "bun" {
     getSession(): void;
 
     /**
-     * Sets the session of the socket.
+     * Sets the TLS session to offer for resumption.
+     *
+     * Only has an effect before the handshake starts: in `open`, before any
+     * `write()`, on a client socket that also has a `handshake` handler. A later
+     * call is ignored.
      *
      * @param session The session to set.
      */

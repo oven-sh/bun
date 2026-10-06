@@ -95,6 +95,7 @@ interface TLSSocketInternals {
   _requestCert: boolean;
   _rejectUnauthorized: boolean;
   _releaseControl(): boolean;
+  _emitTLSError(err: Error): void;
   setSession(session: string | Buffer): void;
   _SNICallback?: SNICallback;
   _ALPNCallback?: ALPNCallback;
@@ -1726,7 +1727,7 @@ const SocketHandlers2 = {
       callback(error);
     } else if (tlsError) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
-      self._emitTLSError(error);
+      (self as TLSSocketInstance)._emitTLSError(error);
       return;
     }
 

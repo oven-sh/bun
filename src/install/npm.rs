@@ -382,8 +382,7 @@ pub mod registry {
             );
         }
 
-        /// The URL without credentials, for a message. `Err` when `AsyncHTTP::send_sync` refuses the requests to
-        /// this registry: a password in such a URL can sit where no parser finds it, so no text of it is printed.
+        /// The URL without credentials, for a message. `Err` when `AsyncHTTP::send_sync` refuses it: a password in such a URL can sit where no parser finds it.
         pub fn printable_href(&self) -> Result<Box<[u8]>, NotHttp<'_>> {
             let href = self.url.href();
             // Every request URL is this prefix and a path.

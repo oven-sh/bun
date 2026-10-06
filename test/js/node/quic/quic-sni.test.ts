@@ -238,3 +238,11 @@ test("a client verifies an Ed25519 server certificate", async () => {
     await session.close();
   }
 });
+
+test("connect() refuses a servername with a NUL byte", async () => {
+  await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+  expect(
+    (async () =>
+      connect(server.address, { alpn: "quic-test", servername: "agent2.example\0evil", verifyPeer: "manual" }))(),
+  ).rejects.toThrow("servername must not contain null bytes");
+});

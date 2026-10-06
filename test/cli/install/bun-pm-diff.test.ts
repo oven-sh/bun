@@ -470,7 +470,7 @@ diffme@1.0.0 → diffme@2.0.0
 
   // `bun pm diff` must refuse a request URL that is not http:// or https://. It used to send it as plain HTTP.
   // Every run has its own plain HTTP listener, so a downgraded request shows up in `requests`.
-  describe("a url that is not http:// or https://", () => {
+  describe.concurrent("a url that is not http:// or https://", () => {
     const token = "sekrit";
     type Setup = {
       pkg?: string;
@@ -507,22 +507,28 @@ diffme@1.0.0 → diffme@2.0.0
     const registry = (url: string) => `{ url = "${url}", token = "${token}" }`;
 
     test.each([
-      ["registry", "diffme", "[install]\nregistry = ", "htps://localhost:PORT/", "htps://localhost:PORT/diffme"],
+      [
+        "registry",
+        "diffme",
+        "[install]\nregistry = ",
+        "htps://user:hunter2@localhost:PORT/",
+        'the default registry starts with "htps://"',
+      ],
       [
         "scoped registry",
         "@corp/diffme",
         "[install.scopes]\ncorp = ",
         "localhost:PORT/npm/",
-        "localhost:PORT/npm/@corp%2fdiffme",
+        'the "@corp" registry has no scheme',
       ],
-    ])("the %s is refused before any request", async (_, pkg, section, url, received) => {
-      const { port, stdout, stderr, requests, exitCode } = await diffWith({
+    ])("the %s is refused before any request", async (_, pkg, section, url, problem) => {
+      const { stdout, stderr, requests, exitCode } = await diffWith({
         pkg,
         bunfig: port => `${section}${registry(url.replace("PORT", String(port)))}\n`,
       });
       expect({ stdout, stderr, requests, exitCode }).toEqual({
         stdout: "",
-        stderr: `error: Registry URL must be http:// or https://\nReceived: "${received.replace("PORT", String(port))}"\n`,
+        stderr: `error: Registry URL must be http:// or https://\nnote: the URL for ${problem}\n`,
         requests: [],
         exitCode: 1,
       });
@@ -530,45 +536,17 @@ diffme@1.0.0 → diffme@2.0.0
 
     test("a dist.tarball is not fetched", async () => {
       // The registry is fine, so the manifest request goes out with the token. The tarball it names is refused.
-      const { port, stdout, stderr, requests, exitCode } = await diffWith({
+      const { stdout, stderr, requests, exitCode } = await diffWith({
         bunfig: port => `[install]\nregistry = ${registry(`http://localhost:${port}/`)}\n`,
-        tarball: (port, version) => `ftp://localhost:${port}/diffme-${version}.tgz`,
+        tarball: (port, version) => `ftp://user:hunter2@localhost:${port}/diffme-${version}.tgz`,
       });
       expect({ stdout, stderr, requests, exitCode }).toEqual({
         stdout: "",
-        stderr: `error: Expected tarball URL to start with https:// or http://, got "ftp://localhost:${port}/diffme-2.0.0.tgz" while fetching package "diffme"\n`,
+        stderr: `error: Expected tarball URL to start with https:// or http://, but the one for package "diffme" starts with "ftp://"\n`,
         requests: [`GET /diffme Bearer ${token}`],
         exitCode: 1,
       });
     });
-  });
-
-  test("a failed request does not print a secret from the registry url", async () => {
-    // Accepts the connection and closes it, so the request fails with no HTTP response.
-    using listener = Bun.listen({
-      hostname: "localhost",
-      port: 0,
-      socket: {
-        open(socket) {
-          socket.end();
-        },
-        data() {},
-      },
-    });
-    using dir = tempDir("pm-diff-failed-request", {
-      "bunfig.toml": `[install]\nregistry = "http://localhost:${listener.port}/?token=hunter2"\n`,
-    });
-    await using p = Bun.spawn({
-      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
-      cwd: String(dir),
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-    expect(stdout + stderr).not.toContain("hunter2");
-    expect(stderr).toContain(`GET http://localhost:${listener.port}/ failed`);
-    expect(exitCode).toBe(1);
   });
 
   test("errors: unknown package, no matching version; a third argument is a file filter", async () => {

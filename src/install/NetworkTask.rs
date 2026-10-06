@@ -492,14 +492,13 @@ impl NetworkTask {
             );
 
             if tmp.tag() == bun_core::Tag::Dead {
-                let registry = npm::registry::redacted_url(scope.url.href());
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(&registry),
+                            quote(scope.url.href()),
                             quote(name),
                         ),
                     );
@@ -509,7 +508,7 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(&registry),
+                            quote(scope.url.href()),
                             quote(name),
                         ),
                     );
@@ -518,14 +517,13 @@ impl NetworkTask {
             }
 
             if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
-                let received = npm::registry::redacted_url(&tmp.to_utf8());
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            bstr::BStr::new(&received)
+                            tmp
                         ),
                     );
                 } else {
@@ -534,7 +532,7 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            bstr::BStr::new(&received)
+                            tmp
                         ),
                     );
                 }
@@ -806,7 +804,7 @@ impl NetworkTask {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    quote(&npm::registry::redacted_url(&self.url_buf)),
+                    quote(&self.url_buf),
                     quote(tarball.name.slice()),
                 ),
             );

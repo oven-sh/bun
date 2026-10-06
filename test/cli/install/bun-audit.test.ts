@@ -601,9 +601,9 @@ describe("`bun audit`", () => {
 
   // `bun audit` must refuse a request URL that is not http:// or https://. It used to send it as plain HTTP.
   // Every run has its own plain HTTP listener, so a downgraded request shows up in `requests`.
-  describe("a registry url that is not http:// or https://", () => {
+  describe.concurrent("a registry url that is not http:// or https://", () => {
     const bulk = "/-/npm/v1/security/advisories/bulk";
-    async function auditWith(bunfig: (port: number) => string, args: string[] = []) {
+    async function auditWith(bunfig: string, args: string[] = []) {
       const requests: string[] = [];
       using server = Bun.serve({
         port: 0,
@@ -623,7 +623,7 @@ describe("`bun audit`", () => {
             "left": ["left@1.0.0", "", {}, fakeIntegrity],
           },
         }),
-        "bunfig.toml": bunfig(server.port).replaceAll("PORT", String(server.port)),
+        "bunfig.toml": bunfig.replaceAll("PORT", String(server.port)),
       });
       await using proc = spawn({
         cmd: [bunExe(), "audit", ...args],
@@ -633,46 +633,43 @@ describe("`bun audit`", () => {
         env: bunEnv,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { port: server.port, stdout, stderr, requests, exitCode };
+      return { stdout, stderr, requests, exitCode };
     }
     const registry = (url: string) => `{ url = "${url}", token = "secret-token" }`;
 
     // The default registry is required, so the command stops.
     test.each([
-      ["audit", "htps://localhost:PORT/", `htps://localhost:PORT${bulk}`],
-      ["audit --json", "htps://localhost:PORT/", `htps://localhost:PORT${bulk}`],
-      ["audit fix", "localhost:PORT/npm/", `localhost:PORT/npm${bulk}`],
-      ["audit", "htps://localhost:PORT/?token=hunter2", "htps://localhost:PORT/"],
-    ])("bun %s refuses the default registry %s before any request", async (cmd, url, received) => {
-      const { port, stdout, stderr, requests, exitCode } = await auditWith(
-        () => `[install]\nregistry = ${registry(url)}\n`,
+      ["audit", "htps://user:hunter2@localhost:PORT/", 'starts with "htps://"'],
+      ["audit --json", "htps://localhost:PORT/", 'starts with "htps://"'],
+      ["audit fix", "localhost:PORT/npm/", "has no scheme"],
+    ])("bun %s refuses the default registry %s before any request", async (cmd, url, problem) => {
+      const { stdout, stderr, requests, exitCode } = await auditWith(
+        `[install]\nregistry = ${registry(url)}\n`,
         cmd.split(" ").slice(1),
       );
       expect(stdout).not.toContain("hunter2");
       expect({ stderr, requests, exitCode }).toEqual({
-        stderr: `error: Registry URL must be http:// or https://\nReceived: "${received.replaceAll("PORT", String(port))}"\n`,
+        stderr: `error: Registry URL must be http:// or https://\nnote: the URL for the default registry ${problem}\n`,
         requests: [],
         exitCode: 1,
       });
     });
 
     // A scoped registry that cannot be asked is skipped with a warning, as for every other send error.
-    test.each([
-      ["htps://localhost:PORT/", "htps://localhost:PORT"],
-      ["user:hunter2@localhost:PORT/", "localhost:PORT"],
-      ["htps://localhost:PORT/?token=hunter2", "htps://localhost:PORT"],
-    ])("a scoped registry %s is skipped, not asked", async (url, shown) => {
-      const { port, stdout, stderr, requests, exitCode } = await auditWith(
-        () => `[install]\nregistry = "http://localhost:PORT/"\n[install.scopes]\nfoo = ${registry(url)}\n`,
-      );
-      expect(stdout).not.toContain("hunter2");
-      expect(stdout).toContain("(checked 1 package, 1 skipped)");
-      expect({ stderr, requests, exitCode }).toEqual({
-        stderr: `warn: ${shown.replaceAll("PORT", String(port))} did not answer the audit request (registry URL must be http:// or https://); skipped @foo/bar\n`,
-        requests: [`POST ${bulk} null`],
-        exitCode: 0,
-      });
-    });
+    test.each(["htps://localhost:PORT/", "user:hunter2@localhost:PORT/"])(
+      "a scoped registry %s is skipped, not asked",
+      async url => {
+        const { stdout, stderr, requests, exitCode } = await auditWith(
+          `[install]\nregistry = "http://localhost:PORT/"\n[install.scopes]\nfoo = ${registry(url)}\n`,
+        );
+        expect(stdout).toContain("(checked 1 package, 1 skipped)");
+        expect({ stderr, requests, exitCode }).toEqual({
+          stderr: `warn: the "@foo" registry did not answer the audit request (registry URL must be http:// or https://); skipped @foo/bar\n`,
+          requests: [`POST ${bulk} null`],
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {

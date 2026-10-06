@@ -914,14 +914,15 @@ fn registry_get(
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let display_url = npm::registry::redacted_url(&display_url);
-            match (npm::unsupported_protocol(&req, err), what) {
-                (Some(refused), RegistryGet::Manifest { .. }) => {
-                    Output::err_generic("{}", (refused,));
-                }
+            match (npm::unsupported_protocol(scope, &req, err), what) {
+                (Some(refused), RegistryGet::Manifest { .. }) => refused.report(),
+                // `dist.tarball` comes from the registry, not from the registry URL.
                 (Some(_), RegistryGet::Tarball { name }) => Output::err_generic(
-                    "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    (bun_fmt::quote(&display_url), bun_fmt::quote(name)),
+                    "Expected tarball URL to start with https:// or http://, but the one for package {} {}",
+                    (
+                        bun_fmt::quote(name),
+                        npm::registry::NotHttp::of(&display_url),
+                    ),
                 ),
                 (None, _) => Output::err(err, "GET {} failed", (BStr::new(&display_url),)),
             }

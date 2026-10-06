@@ -928,34 +928,38 @@ describe.concurrent("credentials in the registry url", () => {
     const token = "secret-token";
     type Setup = {
       name?: string;
-      files: (port: number) => Record<string, string>;
+      files?: (port: number) => Record<string, string>;
       env?: Record<string, string>;
-      args?: string[];
+      args?: (port: number) => string[];
     };
     const bunfig = (url: string) => ({
       "bunfig.toml": `[install]\nregistry = { url = "${url}", token = "${token}" }\n`,
     });
 
-    async function run({ name = "pkg", files, env: extraEnv, args = [] }: Setup) {
+    async function run({ name = "pkg", files, env: extraEnv, args }: Setup) {
       using mock = registryMock();
       const packageDir = await packageDirFor(name);
-      for (const [file, contents] of Object.entries(files(mock.port))) {
+      for (const [file, contents] of Object.entries(files?.(mock.port) ?? {})) {
         await write(join(packageDir, file), contents);
       }
-      const { out, err, exitCode } = await publish({ ...env, ...extraEnv }, packageDir, ...args);
+      const { out, err, exitCode } = await publish({ ...env, ...extraEnv }, packageDir, ...(args?.(mock.port) ?? []));
       // The line of the summary that names the registry, or null when the run stops before it.
       const registry = out.match(/^Registry: (.*)$/m)?.[1] ?? null;
       return { port: mock.port, out, err, exitCode, requests: mock.requests, registry };
     }
-    const refused = (received: string) => `error: Registry URL must be http:// or https://\nReceived: "${received}"\n`;
+    // The error and the summary name the scheme. They print no other text of the URL.
+    const refused = (registry: string, problem: string) =>
+      `error: Registry URL must be http:// or https://\nnote: the URL for ${registry} ${problem}\n`;
+    const theDefault = "the default registry";
 
-    // [name, setup, the URL the error shows, the registry the summary shows]
-    const refusedCases: [string, Setup, (port: number) => string, (port: number) => string | null][] = [
+    // [name, setup, the registry the error names, what it says about the URL, whether the summary was printed]
+    const refusedCases: [string, Setup, string, string, boolean][] = [
       [
         "bunfig registry",
         { files: port => bunfig(`htps://localhost:${port}/`) },
-        port => `htps://localhost:${port}/pkg`,
-        port => `htps://localhost:${port}/`,
+        theDefault,
+        'starts with "htps://"',
+        true,
       ],
       [
         ".npmrc scope",
@@ -965,52 +969,57 @@ describe.concurrent("credentials in the registry url", () => {
             ".npmrc": `@corp:registry=ftp://localhost:${port}/\n//localhost:${port}/:_authToken=${token}\n`,
           }),
         },
-        port => `ftp://localhost:${port}/@corp%2fpkg`,
-        port => `ftp://localhost:${port}/`,
+        'the "@corp" registry',
+        'starts with "ftp://"',
+        true,
       ],
       [
-        "token from BUN_CONFIG_TOKEN",
+        "token from BUN_CONFIG_TOKEN, no scheme",
         {
-          files: port => ({ "bunfig.toml": `[install]\nregistry = "htps://localhost:${port}/"\n` }),
+          files: port => ({ "bunfig.toml": `[install]\nregistry = "localhost:${port}/npm/"\n` }),
           env: { BUN_CONFIG_TOKEN: token },
         },
-        port => `htps://localhost:${port}/pkg`,
-        port => `htps://localhost:${port}/`,
+        theDefault,
+        "has no scheme",
+        true,
       ],
       // `--tolerate-republish` asks the registry first, also with `--dry-run`.
       [
         "--tolerate-republish --dry-run",
-        { files: port => bunfig(`htps://localhost:${port}/`), args: ["--tolerate-republish", "--dry-run"] },
-        port => `htps://localhost:${port}/pkg`,
-        () => null,
+        { files: port => bunfig(`htps://localhost:${port}/`), args: () => ["--tolerate-republish", "--dry-run"] },
+        theDefault,
+        'starts with "htps://"',
+        false,
       ],
-      // A password inside the URL must not reach the summary or the error.
+      // A password in the URL reaches neither the summary nor the error.
       [
-        "userinfo with no scheme",
-        { files: port => bunfig(`pubuser:hunter2@localhost:${port}/`) },
-        port => `localhost:${port}/pkg`,
-        port => `localhost:${port}/`,
-      ],
-      [
-        "userinfo before the scheme",
-        { files: port => bunfig(`pubuser:hunter2@htps://localhost:${port}/`) },
-        port => `htps://localhost:${port}/pkg`,
-        port => `htps://localhost:${port}/`,
-      ],
-      [
-        "secret in the query",
-        { files: port => bunfig(`htps://localhost:${port}/?token=hunter2`) },
-        port => `htps://localhost:${port}/`,
-        port => `htps://localhost:${port}/`,
+        "userinfo",
+        { files: port => bunfig(`htps://pubuser:hun/ter2@localhost:${port}/?token=hunter2`) },
+        theDefault,
+        'starts with "htps://"',
+        true,
       ],
     ];
-    test.each(refusedCases)("is refused before any request: %s", async (_, setup, received, shown) => {
-      const { port, out, err, exitCode, requests, registry } = await run(setup);
-      expect(out).not.toContain("hunter2");
-      expect({ err, requests, registry, exitCode }).toEqual({
-        err: refused(received(port)),
+    test.each(refusedCases)("is refused before any request: %s", async (_, setup, registry, problem, summary) => {
+      const { out, err, exitCode, requests, registry: shown } = await run(setup);
+      expect(out).not.toContain("ter2");
+      expect({ err, requests, shown, exitCode }).toEqual({
+        err: refused(registry, problem),
         requests: [],
-        registry: shown(port),
+        shown: summary ? `a URL that ${problem}` : null,
+        exitCode: 1,
+      });
+    });
+
+    test("--registry is refused without printing its password", async () => {
+      const { out, err, exitCode, requests } = await run({
+        env: { BUN_CONFIG_TOKEN: token },
+        args: port => ["--registry", `htps://pubuser:hunter2@localhost:${port}/`],
+      });
+      expect(out).not.toContain("hunter2");
+      expect({ err, requests, exitCode }).toEqual({
+        err: refused("--registry", 'starts with "htps://"'),
+        requests: [],
         exitCode: 1,
       });
     });
@@ -1020,11 +1029,11 @@ describe.concurrent("credentials in the registry url", () => {
         [
           { files: port => bunfig(`htps://localhost:${port}/`) },
           { files: port => bunfig(`HTTP://localhost:${port}/`) },
-          { files: port => bunfig(`htps://localhost:${port}/`), args: ["--dry-run"] },
+          { files: port => bunfig(`htps://localhost:${port}/`), args: () => ["--dry-run"] },
           { files: port => ({ "bunfig.toml": `[install]\nregistry = "htps://localhost:${port}/"\n` }) },
         ].map(run),
       );
-      expect(typo.err).toBe(refused(`htps://localhost:${typo.port}/pkg`));
+      expect(typo.err).toBe(refused(theDefault, 'starts with "htps://"'));
       expect(upperCase).toMatchObject({
         err: "",
         requests: [{ method: "PUT", pathname: "/pkg", authorization: `Bearer ${token}` }],
@@ -1035,7 +1044,7 @@ describe.concurrent("credentials in the registry url", () => {
       expect(dryRun).toMatchObject({
         err: "",
         requests: [],
-        registry: `htps://localhost:${dryRun.port}/`,
+        registry: 'a URL that starts with "htps://"',
         exitCode: 0,
       });
       expect(noCredentials).toMatchObject({

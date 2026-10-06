@@ -35,7 +35,7 @@ pub enum WhoamiError {
     NeedAuth,
     #[error("probably invalid auth")]
     ProbablyInvalidAuth,
-    #[error("{0}")]
+    #[error("unsupported protocol")]
     UnsupportedProtocol(registry::UnsupportedProtocol),
 }
 bun_core::oom_from_alloc!(WhoamiError);
@@ -172,7 +172,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
             return Err(WhoamiError::OutOfMemory);
         }
         Err(e) => {
-            if let Some(refused) = unsupported_protocol(&req, e) {
+            if let Some(refused) = unsupported_protocol(registry, &req, e) {
                 return Err(WhoamiError::UnsupportedProtocol(refused));
             }
             Output::err(e, "whoami request failed to send", format_args!(""));
@@ -220,13 +220,14 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username.to_vec())
 }
 
-/// The message for `err` when `AsyncHTTP::send_sync` refused the scheme of `req`'s URL.
+/// The error to report when `err` is `AsyncHTTP::send_sync` refusing `req`, a request to `scope`'s registry.
 pub fn unsupported_protocol(
+    scope: &registry::Scope,
     req: &AsyncHTTP,
     err: bun_http::Error,
 ) -> Option<registry::UnsupportedProtocol> {
     (err == bun_http::Error::UnsupportedProtocol)
-        .then(|| registry::UnsupportedProtocol::new(req.url.href))
+        .then(|| registry::UnsupportedProtocol::new(&scope.label(), req.url.href))
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
@@ -331,55 +332,68 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
-    /// `href` as an error message may print it.
-    pub fn redacted_url(href: &[u8]) -> Box<[u8]> {
-        let mut out = Vec::new();
-        write!(
-            &mut out,
-            "{}",
-            bun_fmt::redacted_npm_url(&URL::parse(href).redacted_href())
-        )
-        .expect("infallible: in-memory write");
-        out.into_boxed_slice()
-    }
-
-    /// A registry URL for output: `href_without_auth` needs `scheme://`, so only http(s) takes it.
-    pub fn display_url(href: &[u8]) -> Box<[u8]> {
-        let url = URL::parse(href);
-        if url.has_http_like_protocol() {
-            url.href_without_auth()
-        } else {
-            redacted_url(href)
-        }
-    }
-
-    /// What `bun install` prints for a request URL that is not http or https.
+    /// What an error says about a URL that is not http(s). It keeps no text of the URL but its scheme.
     #[derive(Debug)]
-    pub struct UnsupportedProtocol {
-        redacted_url: Box<[u8]>,
+    pub struct NotHttp {
+        scheme: Option<Box<[u8]>>,
     }
 
-    impl UnsupportedProtocol {
-        pub fn new(request_url: &[u8]) -> Self {
-            Self {
-                redacted_url: redacted_url(request_url),
+    impl NotHttp {
+        pub fn of(href: &[u8]) -> NotHttp {
+            NotHttp {
+                scheme: URL::parse(href).scheme().map(Box::from),
             }
         }
     }
 
-    impl core::fmt::Display for UnsupportedProtocol {
+    impl core::fmt::Display for NotHttp {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            write!(
-                f,
-                "Registry URL must be http:// or https://\nReceived: {}",
-                bun_fmt::quote(&self.redacted_url),
-            )
+            match &self.scheme {
+                Some(scheme) => write!(f, "starts with \"{}://\"", bstr::BStr::new(scheme)),
+                None => f.write_str("has no scheme"),
+            }
+        }
+    }
+
+    /// The error for a request URL that `AsyncHTTP::send_sync` refuses.
+    #[derive(Debug)]
+    pub struct UnsupportedProtocol {
+        registry: Box<[u8]>,
+        problem: NotHttp,
+    }
+
+    impl UnsupportedProtocol {
+        /// `registry` names where `href` comes from, as `Scope::label` does.
+        pub fn new(registry: &[u8], href: &[u8]) -> Self {
+            Self {
+                registry: Box::from(registry),
+                problem: NotHttp::of(href),
+            }
+        }
+
+        pub fn report(&self) {
+            Output::err_generic("Registry URL must be http:// or https://", ());
+            bun_core::note!(
+                "the URL for {} {}",
+                bstr::BStr::new(&self.registry),
+                self.problem
+            );
         }
     }
 
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
             bun_semver::semver_string::Builder::string_hash(str)
+        }
+
+        /// How an error names this registry.
+        pub fn label(&self) -> Box<[u8]> {
+            if self.name.is_empty() {
+                return Box::from(&b"the default registry"[..]);
+            }
+            [&b"the \"@"[..], &self.name, &b"\" registry"[..]]
+                .concat()
+                .into_boxed_slice()
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
@@ -565,7 +579,17 @@ pub mod registry {
             let user: Box<[u8]> = Box::from(&*user);
             drop(output_buf_owned);
 
-            let final_href: Box<[u8]> = if needs_normalize {
+            let final_href: Box<[u8]> = if needs_normalize && url.protocol.is_empty() {
+                // `href_without_auth` would give this URL a scheme, and then the credentials go out over plain HTTP.
+                [
+                    url.host,
+                    &b"/"[..],
+                    strings::trim(url.pathname, b"/"),
+                    &b"/"[..],
+                ]
+                .concat()
+                .into_boxed_slice()
+            } else if needs_normalize {
                 url.href_without_auth()
             } else {
                 // reshaped for borrowck — `url` (borrowing

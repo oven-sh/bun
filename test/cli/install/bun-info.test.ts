@@ -378,14 +378,20 @@ describe.concurrent("bun info", () => {
     type Setup = {
       cmd?: string[];
       pkg?: string;
-      files: (port: number) => Record<string, string>;
+      args?: (port: number) => string[];
+      files?: (port: number) => Record<string, string>;
       env?: (port: number) => Record<string, string>;
     };
     const bunfig = (url: string) => ({
       "bunfig.toml": `[install]\nregistry = { url = "${url}", token = "${token}" }\n`,
     });
+    const bunfigString = (url: string) => ({ "bunfig.toml": `[install]\nregistry = "${url}"\n` });
+    const proxy = (port: number) => ({
+      http_proxy: `http://localhost:${port}`,
+      https_proxy: `http://localhost:${port}`,
+    });
 
-    async function view({ cmd = ["pm", "view"], pkg = "left", files, env }: Setup) {
+    async function view({ cmd = ["pm", "view"], pkg = "left", args, files, env }: Setup) {
       const requests: string[] = [];
       using server = Bun.serve({
         port: 0,
@@ -396,10 +402,10 @@ describe.concurrent("bun info", () => {
       });
       using dir = tempDir("view-refused-registry", {
         "package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
-        ...files(server.port),
+        ...files?.(server.port),
       });
       await using proc = spawn({
-        cmd: [bunExe(), ...cmd, pkg],
+        cmd: [bunExe(), ...cmd, pkg, ...(args?.(server.port) ?? [])],
         cwd: String(dir),
         stdout: "pipe",
         stdin: "ignore",
@@ -409,25 +415,24 @@ describe.concurrent("bun info", () => {
       const [output, error, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { port: server.port, output, error, requests, code };
     }
-    const refused = (received: string) => `error: Registry URL must be http:// or https://\nReceived: "${received}"\n`;
+    // The error names the registry and the scheme. It prints no other text of the URL.
+    const refused = (registry: string, problem: string) =>
+      `error: Registry URL must be http:// or https://\nnote: the URL for ${registry} ${problem}\n`;
+    const theDefault = "the default registry";
+    const corp = 'the "@corp" registry';
+    const noScheme = "has no scheme";
+    const startsWith = (scheme: string) => `starts with "${scheme}://"`;
 
-    // [name, setup, the URL the error shows]
-    const refusedCases: [string, Setup, (port: number) => string][] = [
-      [
-        "bunfig registry",
-        { files: port => bunfig(`htps://localhost:${port}/`) },
-        port => `htps://localhost:${port}/left`,
-      ],
+    // [name, setup, the registry the error names, what it says about the URL]
+    const refusedCases: [string, Setup, string, string][] = [
+      ["bunfig registry", { files: port => bunfig(`htps://localhost:${port}/`) }, theDefault, startsWith("htps")],
       [
         "bunfig registry, bun info",
         { cmd: ["info"], files: port => bunfig(`htps://localhost:${port}/`) },
-        port => `htps://localhost:${port}/left`,
+        theDefault,
+        startsWith("htps"),
       ],
-      [
-        "bunfig registry with no scheme",
-        { files: port => bunfig(`localhost:${port}/npm/`) },
-        port => `localhost:${port}/npm/left`,
-      ],
+      ["bunfig registry with no scheme", { files: port => bunfig(`localhost:${port}/npm/`) }, theDefault, noScheme],
       [
         "bunfig scope",
         {
@@ -436,7 +441,8 @@ describe.concurrent("bun info", () => {
             "bunfig.toml": `[install.scopes]\ncorp = { url = "htp://localhost:${port}/", token = "${token}" }\n`,
           }),
         },
-        port => `htp://localhost:${port}/@corp%2fleft`,
+        corp,
+        startsWith("htp"),
       ],
       [
         ".npmrc registry",
@@ -445,7 +451,8 @@ describe.concurrent("bun info", () => {
             ".npmrc": `registry=ftp://localhost:${port}/\n//localhost:${port}/:_authToken=${token}\n`,
           }),
         },
-        port => `ftp://localhost:${port}/left`,
+        theDefault,
+        startsWith("ftp"),
       ],
       [
         ".npmrc scope",
@@ -455,62 +462,78 @@ describe.concurrent("bun info", () => {
             ".npmrc": `@corp:registry=htps://localhost:${port}/\n//localhost:${port}/:_authToken=${token}\n`,
           }),
         },
-        port => `htps://localhost:${port}/@corp%2fleft`,
+        corp,
+        startsWith("htps"),
       ],
       [
         "token from BUN_CONFIG_TOKEN",
-        {
-          files: port => ({ "bunfig.toml": `[install]\nregistry = "htps://localhost:${port}/"\n` }),
-          env: () => ({ BUN_CONFIG_TOKEN: token }),
-        },
-        port => `htps://localhost:${port}/left`,
+        { files: port => bunfigString(`htps://localhost:${port}/`), env: () => ({ BUN_CONFIG_TOKEN: token }) },
+        theDefault,
+        startsWith("htps"),
+      ],
+      [
+        "--registry",
+        { args: port => ["--registry", `htps://user:hunter2@localhost:${port}/?token=hunter2`] },
+        "--registry",
+        startsWith("htps"),
       ],
       // The request URL is `https:/left`: no scheme, host `https`. A proxy would receive it as plain HTTP.
+      ["https:// with no host, behind a proxy", { files: () => bunfig("https://"), env: proxy }, theDefault, noScheme],
+      // A variable that is not set stays `$NAME` in the URL. A proxy would receive the request as plain HTTP.
       [
-        "https:// with no host, behind a proxy",
-        {
-          files: () => bunfig("https://"),
-          env: port => ({ http_proxy: `http://localhost:${port}`, https_proxy: `http://localhost:${port}` }),
-        },
-        () => "https:/left",
+        "url from an unset variable, behind a proxy",
+        { files: () => bunfig("$UNSET_REGISTRY_URL"), env: proxy },
+        theDefault,
+        noScheme,
       ],
-      // A password inside the URL must not be printed.
+      // With the credential in the URL, the stored URL used to get `http://` in front of it.
+      [
+        "no scheme, _authToken in the path",
+        { files: port => bunfigString(`localhost:${port}/npm/_authToken=hunter2`) },
+        theDefault,
+        noScheme,
+      ],
+      [
+        "no scheme, _auth in the path",
+        { files: port => bunfigString(`localhost:${port}/npm/_auth=aHVudGVyMg==`) },
+        theDefault,
+        noScheme,
+      ],
+      [
+        "no scheme, :_authToken in the path, from a variable",
+        {
+          files: () => ({ "bunfig.toml": `[install]\nregistry = { url = "$REGISTRY_URL_FOR_TEST" }\n` }),
+          env: port => ({ REGISTRY_URL_FOR_TEST: `localhost:${port}/npm/:_authToken=hunter2` }),
+        },
+        theDefault,
+        noScheme,
+      ],
+      [
+        "protocol-relative, token from BUN_CONFIG_TOKEN",
+        { files: port => bunfigString(`//localhost:${port}/`), env: () => ({ BUN_CONFIG_TOKEN: token }) },
+        theDefault,
+        noScheme,
+      ],
+      // A password in the URL is not printed, wherever it sits.
       [
         "userinfo",
-        { files: port => bunfig(`htps://user:hunter2@localhost:${port}/`) },
-        port => `htps://localhost:${port}/left`,
+        { files: port => bunfig(`htps://user:hun/ter2@localhost:${port}/`) },
+        theDefault,
+        startsWith("htps"),
       ],
+      ["userinfo, https//", { files: port => bunfig(`https//user:hunter2@localhost:${port}/`) }, theDefault, noScheme],
       [
-        "userinfo with no scheme",
-        { files: port => bunfig(`user:hunter2@localhost:${port}/`) },
-        port => `localhost:${port}/left`,
-      ],
-      [
-        "protocol-relative userinfo",
-        { files: port => bunfig(`//user:hunter2@localhost:${port}/`) },
-        port => `//localhost:${port}/left`,
-      ],
-      [
-        "userinfo before the scheme",
-        { files: port => bunfig(`user:hunter2@htps://localhost:${port}/`) },
-        port => `htps://localhost:${port}/left`,
-      ],
-      [
-        "secret in the query",
-        { files: port => bunfig(`htps://localhost:${port}/?token=hunter2`) },
-        port => `htps://localhost:${port}/`,
-      ],
-      [
-        "secret in the fragment",
-        { files: port => bunfig(`htps://localhost:${port}/#hunter2`) },
-        port => `htps://localhost:${port}/`,
+        "userinfo before https://",
+        { files: port => bunfig(`user:hunter2@https://localhost:${port}/`) },
+        theDefault,
+        noScheme,
       ],
     ];
-    it.each(refusedCases)("is refused before any request: %s", async (_, setup, received) => {
-      const { port, output, error, requests, code } = await view(setup);
+    it.each(refusedCases)("is refused before any request: %s", async (_, setup, registry, problem) => {
+      const { output, error, requests, code } = await view(setup);
       expect({ output, error, requests, code }).toEqual({
         output: "",
-        error: refused(received(port)),
+        error: refused(registry, problem),
         requests: [],
         code: 1,
       });
@@ -518,28 +541,35 @@ describe.concurrent("bun info", () => {
 
     it("does not stop a registry the request can use", async () => {
       // The listener answers 404, so an accepted URL shows one authenticated request and the registry's answer.
-      const accepted: Setup[] = [
-        { files: port => bunfig(`HTTP://localhost:${port}/`) },
-        { files: port => bunfig(`Http://localhost:${port}/`) },
-        { files: port => bunfig(`http:/localhost:${port}/`) },
-        { files: port => bunfig(`http:localhost:${port}/`) },
+      const accepted: [Setup, path?: string, authorization?: string][] = [
+        [{ files: port => bunfig(`HTTP://localhost:${port}/`) }],
+        [{ files: port => bunfig(`Http://localhost:${port}/`) }],
+        [{ files: port => bunfig(`http:/localhost:${port}/`) }],
+        [{ files: port => bunfig(`http:localhost:${port}/`) }],
+        [{ files: port => bunfigString(`http://localhost:${port}/npm/_authToken=${token}`) }, "/npm/left"],
         // The refused registry belongs to a scope this package is not in.
-        {
-          files: port => ({
-            "bunfig.toml": `[install]\nregistry = { url = "http://localhost:${port}/", token = "${token}" }\n[install.scopes]\ncorp = { url = "htps://localhost:${port}/", token = "${token}" }\n`,
-          }),
-        },
+        [
+          {
+            files: port => ({
+              "bunfig.toml": `[install]\nregistry = { url = "http://localhost:${port}/", token = "${token}" }\n[install.scopes]\ncorp = { url = "htps://localhost:${port}/", token = "${token}" }\n`,
+            }),
+          },
+        ],
       ];
-      const [typo, ...results] = await Promise.all(
-        [{ files: port => bunfig(`htps://localhost:${port}/`) }, ...accepted].map(view),
-      );
-      expect(typo.error).toBe(refused(`htps://localhost:${typo.port}/left`));
+      const [typo, ...results] = await Promise.all([
+        view({ files: port => bunfig(`htps://localhost:${port}/`) }),
+        ...accepted.map(([setup]) => view(setup)),
+      ]);
+      expect(typo.error).toBe(refused(theDefault, startsWith("htps")));
       expect(results.map(({ error, requests, code }) => ({ error, requests, code }))).toEqual(
-        results.map(({ port }) => ({
-          error: `\n404 Not Found: http://localhost:${port}/left\n\n - 'left@latest' does not exist in this registry\n`,
-          requests: [`GET /left Bearer ${token}`],
-          code: 1,
-        })),
+        results.map(({ port }, i) => {
+          const path = accepted[i][1] ?? "/left";
+          return {
+            error: `\n404 Not Found: http://localhost:${port}${path}\n\n - 'left@latest' does not exist in this registry\n`,
+            requests: [`GET ${path} Bearer ${token}`],
+            code: 1,
+          };
+        }),
       );
     });
   });

@@ -135,8 +135,8 @@ pub(crate) fn view(
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
-            if let Some(refused) = npm::unsupported_protocol(&req, err) {
-                Output::err_generic("{}", (refused,));
+            if let Some(refused) = npm::unsupported_protocol(scope, &req, err) {
+                refused.report();
                 Global::exit(1);
             }
             Output::err(err, "view request failed to send", ());

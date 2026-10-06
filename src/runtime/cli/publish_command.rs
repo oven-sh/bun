@@ -813,7 +813,7 @@ impl PublishCommand {
         let res = match req.send_sync(&mut response_buf) {
             Ok(res) => res,
             Err(err) => {
-                return match Npm::unsupported_protocol(&req, err) {
+                return match Npm::unsupported_protocol(registry, &req, err) {
                     Some(refused) => Err(PublishError::UnsupportedProtocol(refused)),
                     None => Ok(false),
                 };
@@ -871,9 +871,22 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
-        let registry_href = Npm::Registry::display_url(registry_url.href);
+        let mut registry_shown: Vec<u8> = Vec::new();
+        if registry_url.has_http_like_protocol() {
+            let registry_href = registry_url.href_without_auth();
+            registry_shown.extend_from_slice(strings::without_trailing_slash(&registry_href));
+            registry_shown.push(b'/');
+        } else {
+            // No text of a URL that is not http(s): a password in it can sit where no parser finds it.
+            write!(
+                &mut registry_shown,
+                "a URL that {}",
+                Npm::Registry::NotHttp::of(registry_url.href)
+            )
+            .map_err(|_| AllocError)?;
+        }
         bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
+            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
             } else {
@@ -884,7 +897,7 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
+            bstr::BStr::new(&registry_shown),
         );
 
         // dry-run stops here
@@ -944,7 +957,7 @@ impl PublishCommand {
                 if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
                     return Err(PublishError::OutOfMemory);
                 }
-                if let Some(refused) = Npm::unsupported_protocol(&req, e) {
+                if let Some(refused) = Npm::unsupported_protocol(registry, &req, e) {
                     return Err(PublishError::UnsupportedProtocol(refused));
                 }
                 Output::err(e, "failed to publish package", ());
@@ -2071,7 +2084,7 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
-    #[error("{0}")]
+    #[error("UnsupportedProtocol")]
     UnsupportedProtocol(Npm::Registry::UnsupportedProtocol),
 }
 bun_core::oom_from_alloc!(PublishError);
@@ -2085,7 +2098,7 @@ impl PublishError {
                 Global::crash();
             }
             PublishError::UnsupportedProtocol(refused) => {
-                Output::err_generic("{}", (refused,));
+                refused.report();
                 Global::crash();
             }
         }

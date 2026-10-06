@@ -945,20 +945,21 @@ async function whoamiWith(bunfig: (port: number) => string, cmd = ["pm", "whoami
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { port: server.port, stdout, stderr, requests, exitCode };
 }
+const whoamiRefused = (problem: string) =>
+  `error: Registry URL must be http:// or https://\nnote: the URL for the default registry ${problem}\n`;
 
 test.each([
-  ["pm whoami", "htps://localhost:PORT/", "htps://localhost:PORT/-/whoami"],
-  ["whoami", "htps://localhost:PORT/", "htps://localhost:PORT/-/whoami"],
-  ["pm whoami", "localhost:PORT/npm/", "localhost:PORT/npm/-/whoami"],
-  ["pm whoami", "htps://localhost:PORT/?token=hunter2", "htps://localhost:PORT/"],
-])("bun %s refuses the registry url %s before any request", async (cmd, url, received) => {
-  const { port, stdout, stderr, requests, exitCode } = await whoamiWith(
+  ["pm whoami", "htps://user:hunter2@localhost:PORT/", 'starts with "htps://"'],
+  ["whoami", "htps://localhost:PORT/", 'starts with "htps://"'],
+  ["pm whoami", "localhost:PORT/npm/", "has no scheme"],
+])("bun %s refuses the registry url %s before any request", async (cmd, url, problem) => {
+  const { stdout, stderr, requests, exitCode } = await whoamiWith(
     port => `[install]\nregistry = { url = "${url.replace("PORT", String(port))}", token = "secret-token" }\n`,
     cmd.split(" "),
   );
   expect({ stdout, stderr, requests, exitCode }).toEqual({
     stdout: "",
-    stderr: `error: Registry URL must be http:// or https://\nReceived: "${received.replace("PORT", String(port))}"\n`,
+    stderr: whoamiRefused(problem),
     requests: [],
     exitCode: 1,
   });
@@ -971,9 +972,7 @@ test("bun pm whoami still answers when it sends no refused request", async () =>
     // A username in the URL is the answer. No request is needed, so there is nothing to refuse.
     whoamiWith(port => `[install]\nregistry = "htps://local-user:hunter2@localhost:${port}/"\n`),
   ]);
-  expect(typo.stderr).toBe(
-    `error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${typo.port}/-/whoami"\n`,
-  );
+  expect(typo.stderr).toBe(whoamiRefused('starts with "htps://"'));
   expect(upperCase).toMatchObject({
     stdout: "from-registry\n",
     stderr: "",

@@ -333,6 +333,30 @@ error: Hello World`,
       ...expectBytecodeCacheHit,
     },
   });
+  // The executable must start the worker that was compiled in. With the source
+  // path in import.meta.url it ran whatever was at that path when it started.
+  itBundled("bun/ImportMetaCompileBytecodeWorker", {
+    backend: "cli",
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url));
+        worker.onmessage = e => {
+          console.log(e.data);
+          worker.terminate();
+        };
+        worker.onerror = e => console.log("error: " + e.message);
+      `,
+      "/worker.ts": /* js */ `postMessage("compiled in");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    onAfterBundle(api) {
+      api.writeFile("/worker.ts", `postMessage("read from disk after the build");`);
+    },
+    run: { stdout: "compiled in", file: "dist/out", setCwd: true },
+  });
 
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {

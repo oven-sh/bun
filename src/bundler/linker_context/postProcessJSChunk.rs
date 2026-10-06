@@ -456,17 +456,23 @@ pub(crate) fn post_process_js_chunk(
             j.push_static(bytes);
             line_offset.advance(bytes);
         };
-        push(if c.options.generate_bytecode_cache {
-            b"// @bun @bytecode @bun-cjs\n"
-        } else {
-            b"// @bun @bun-cjs\n"
-        });
-        push(b"(function(exports, require, module, __filename, __dirname");
+        let bytecode = c.options.generate_bytecode_cache;
         if chunk_uses_import_meta_arg(chunk) {
-            push(b", ");
+            push(if bytecode {
+                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname, "
+            } else {
+                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname, "
+            });
             push(E::ImportMeta::CJS_WRAPPER_ARG);
+            push(b") {");
+        } else {
+            // One piece: `generate_isolated_hash` covers each piece's length, so a split moves `[hash]` names.
+            push(if bytecode {
+                b"// @bun @bytecode @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            } else {
+                b"// @bun @bun-cjs\n(function(exports, require, module, __filename, __dirname) {"
+            });
         }
-        push(b") {");
     } else if is_bun {
         if c.options.generate_bytecode_cache {
             j.push_static(b"// @bun @bytecode\n");

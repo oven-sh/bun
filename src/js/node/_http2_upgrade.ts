@@ -1,6 +1,5 @@
 const { Duplex } = require("node:stream");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
-const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 
 interface NativeHandle {
   resume(): void;
@@ -30,7 +29,7 @@ interface Http2SecureServer {
   _requestCert?: boolean;
   _rejectUnauthorized?: boolean;
   emit(event: string, ...args: any[]): boolean;
-  [kSharedCreds](): { context: unknown };
+  _sharedCreds: { context: unknown };
 }
 
 type DuplexStream = import("node:stream").Duplex;
@@ -345,7 +344,7 @@ function upgradeRawSocketToH2(
     [handle, events] = upgradeDuplexToTLS(rawSocket, {
       isServer: true,
       tls: {
-        secureContext: server[kSharedCreds]().context,
+        secureContext: server._sharedCreds.context,
         requestCert: server._requestCert,
         rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols

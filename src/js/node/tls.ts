@@ -597,13 +597,11 @@ function translatePeerCertificate(c) {
 }
 
 const ksecureContext = Symbol("ksecureContext");
-const ksharedCredsOptions = Symbol("ksharedCredsOptions");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
-const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -1044,10 +1042,10 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
-function buildSharedCreds(server) {
-  return (server._sharedCreds = new InternalSecureContext(
+function buildSharedCreds(server, options) {
+  return new InternalSecureContext(
     {
-      ...server[ksharedCredsOptions],
+      ...options,
       pfx: undefined,
       _pfxExtraCACerts: undefined,
       key: server.key,
@@ -1064,9 +1062,12 @@ function buildSharedCreds(server) {
       secureProtocol: server.secureProtocol,
       minVersion: server.minVersion,
       maxVersion: server.maxVersion,
+      // Part of the interning key: one SSL_CTX is one session cache.
+      requestCert: server._requestCert === true,
+      rejectUnauthorized: server._rejectUnauthorized,
     },
     true,
-  ));
+  );
 }
 
 function Server(options, secureConnectionListener): void {
@@ -1277,14 +1278,16 @@ function Server(options, secureConnectionListener): void {
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
+    const isContext = serverTLSOptions instanceof InternalSecureContext;
+    // [buntls] and buildSharedCreds read the staged fields over the server's own.
+    const staged = { __proto__: this, ...next };
+    // Both throw on material BoringSSL rejects, so they run before the fields change.
+    const sharedCreds = isContext ? serverTLSOptions : buildSharedCreds(staged, serverTLSOptions);
+    const handle = this._handle;
+    if (handle && options && !isContext) {
+      setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
+    }
     if (options) {
-      // Throws on material BoringSSL rejects, so it runs before the fields change.
-      const handle = this._handle;
-      if (handle && !(serverTLSOptions instanceof InternalSecureContext)) {
-        // [buntls] reads its receiver: the staged fields over the server's own.
-        const staged = { __proto__: this, ...next };
-        setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
-      }
       this.cert = next.cert;
       this.key = next.key;
       this.ca = next.ca;
@@ -1301,11 +1304,7 @@ function Server(options, secureConnectionListener): void {
       this.minVersion = next.minVersion;
       this.maxVersion = next.maxVersion;
     }
-    this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
-    this[ksharedCredsOptions] =
-      serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
-        ? serverTLSOptions
-        : { ...serverTLSOptions };
+    this._sharedCreds = sharedCreds;
   };
 
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
@@ -1387,16 +1386,8 @@ function Server(options, secureConnectionListener): void {
     // TLS layer, like Node's tls.Server wraps any injected duplex
     // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext;
-    try {
-      secureContext = this[kSharedCreds]();
-    } catch (err) {
-      socket.destroy();
-      this.emit("error", err);
-      return;
-    }
     const wrapped = new TLSSocket(socket, {
-      secureContext,
+      secureContext: this._sharedCreds,
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
@@ -1418,9 +1409,6 @@ function Server(options, secureConnectionListener): void {
   }
 }
 $toClass(Server, "Server", NetServer);
-Server.prototype[kSharedCreds] = function () {
-  return this._sharedCreds || buildSharedCreds(this);
-};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

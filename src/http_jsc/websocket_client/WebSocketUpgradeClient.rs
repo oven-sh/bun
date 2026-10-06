@@ -983,6 +983,10 @@ where
                 let mut c = SSLConfig::default();
                 c.reject_unauthorized = 0; // We verify manually
                 c.request_cert = 1;
+                let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+                if let Some(ciphers) = vm.tls_default_ciphers() {
+                    c.set_default_ciphers(ciphers);
+                }
                 c
             }
         };

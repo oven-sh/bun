@@ -2163,8 +2163,8 @@ folded: >
             const show = (text: string) => {
               try {
                 return Bun.inspect(YAML.parse(text), { depth: 64 });
-              } catch {
-                return "throws";
+              } catch (e) {
+                return `throws: ${(e as Error).message}`;
               }
             };
             const different: string[] = [];
@@ -2178,7 +2178,7 @@ folded: >
             expect(different).toEqual([]);
           });
 
-          test("a .yaml module with CRLF line ends loads like its LF twin", async () => {
+          test.concurrent("a .yaml module with CRLF line ends loads like its LF twin", async () => {
             const lf = 'dq: "x\n  y"\nsq: \'x\n  y\'\nesc: "x\\\n  y"\n';
             using dir = tempDir("yaml-crlf-module", {
               "lf.yaml": lf,
@@ -2881,7 +2881,7 @@ config:
           expect(doc).toEqual({ x: { 1: "b" }, y: { 1: "b" } });
         });
 
-        test("a .yaml module keeps the order through import and bun build", async () => {
+        test.concurrent("a .yaml module keeps the order through import and bun build", async () => {
           using dir = tempDir("yaml-merge-order-module", {
             "doc.yaml": x + "y:\n  p: 0\n  <<: *x\n  q: 0\n",
             "index.ts": `

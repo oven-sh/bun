@@ -1278,3 +1278,27 @@ test("connects to a server with an Ed25519 certificate", async () => {
     server.stop(true);
   }
 });
+
+test("protocol: http3 is refused once tls.DEFAULT_CIPHERS is assigned, as it is with a ciphers option", async () => {
+  const fixture = `
+    import tls from "node:tls";
+    const server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("ok") });
+    const attempt = options =>
+      fetch(server.url, { protocol: "http3", tls: { rejectUnauthorized: false, ...options } }).then(
+        res => res.text(),
+        error => error.code,
+      );
+    const ciphers = "ECDHE-RSA-AES256-GCM-SHA384";
+    const results = { nothing: await attempt(), option: await attempt({ ciphers }) };
+    tls.DEFAULT_CIPHERS = ciphers;
+    results.assigned = await attempt();
+    console.log(JSON.stringify(results));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The HTTP/3 client has one context, which takes no option. QUIC is TLS 1.3, so the list would not apply to it.
+  expect(JSON.parse(stdout)).toEqual({ nothing: "ok", option: "HTTP3Unsupported", assigned: "HTTP3Unsupported" });
+  expect(exitCode).toBe(0);
+});

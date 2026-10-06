@@ -21,7 +21,7 @@ inputs:
     description: "Space-separated rustup components to add to `toolchain`, e.g. `clippy` or `miri rust-src`."
     default: ""
   ninja-targets:
-    description: "Space-separated ninja targets to build after configure."
+    description: "Space-separated build targets (`bun scripts/build.ts --target=…`)."
     default: "clone-lolhtml clone-rust-argon2"
 
 runs:
@@ -61,17 +61,17 @@ runs:
       shell: bash
       run: echo "::add-matcher::.github/rust-matcher.json"
 
-    - name: Configure
+    - name: Configure and build the setup targets
       # Cargo can't resolve the workspace until `clone-lolhtml` and
       # `clone-rust-argon2` have extracted the vendored path deps into vendor/
       # through the same ninja edges the real build uses, and
       # bun_core/build.rs needs the build_options.rs that configure writes.
       # `codegen` writes the include!() sources under build/debug/codegen that
       # bun_runtime/bun_jsc/bun_core can't be checked without.
+      # Through build.ts, not a bare `ninja`: it runs the ninja the build pins.
       shell: bash
       env:
         NINJA_TARGETS: ${{ inputs.ninja-targets }}
       run: |
         bun install --frozen-lockfile
-        bun scripts/build.ts --configure-only
-        ninja -C build/debug $NINJA_TARGETS
+        bun scripts/build.ts $(printf -- '--target=%s ' $NINJA_TARGETS)

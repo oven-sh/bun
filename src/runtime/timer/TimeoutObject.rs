@@ -11,14 +11,14 @@ super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
 
 impl TimeoutObject {
     pub(crate) fn init(
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         id: i32,
         kind: Kind,
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, kind, interval, callback, arguments)
+        Self::init_with(cx, id, kind, interval, callback, arguments)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -31,7 +31,11 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         this.internals.cancel(global.bun_vm_ptr());
         Ok(frame.this())
     }

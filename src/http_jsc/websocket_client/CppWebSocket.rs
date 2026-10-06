@@ -46,6 +46,7 @@ unsafe extern "C" {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: FfiSlice<'_>,
     );
     #[allow(improper_ctypes)]
     safe fn WebSocket__didConnectWithTunnel(
@@ -74,6 +75,7 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
@@ -85,6 +87,14 @@ unsafe extern "C" {
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
+    /// The context of the script that made this WebSocket: its connection is that context's.
+    pub(crate) fn context(&self) -> &bun_jsc::ScriptExecutionContext {
+        // SAFETY: called while the WebSocket is connecting from its constructor, inside the context
+        // that made it (alive while its script runs); every `WebCore::ScriptExecutionContext` has
+        // its Rust half.
+        unsafe { &*WebSocket__bunContext(self).cast::<bun_jsc::ScriptExecutionContext>() }
+    }
+
     pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
@@ -135,14 +145,9 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
+    /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = VirtualMachine::get().event_loop_mut();
-        event_loop.enter();
-        let result = WebSocket__rejectUnauthorized(self);
-        event_loop.exit();
-        result
+        WebSocket__rejectUnauthorized(self)
     }
 
     /// `buffered_data` and `secure` are handed on to the connected client.
@@ -152,10 +157,18 @@ impl CppWebSocket {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: &[u8],
     ) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didConnect(self, socket, buffered_data, deflate_params, secure);
+        WebSocket__didConnect(
+            self,
+            socket,
+            buffered_data,
+            deflate_params,
+            secure,
+            verified_hostname.into(),
+        );
         event_loop.exit();
     }
 

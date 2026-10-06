@@ -929,33 +929,40 @@ fn lower_compound_assignment_identifier(
                 effect: Effect::Unknown,
                 loc: ident_loc,
             };
+            // Unlike upstream: the value is the store itself, as for `x = y`, so it prints in place.
             if builder.is_context_identifier(ref_) {
-                lower_value_to_temporary(
+                let temp = lower_value_to_temporary(
                     builder,
                     InstructionValue::StoreContext {
                         lvalue: LValue {
                             kind: InstructionKind::Reassign,
-                            place: place.clone(),
+                            place,
                         },
                         value: binary_place,
                         loc,
                     },
                 )?;
-                Ok(InstructionValue::LoadContext { place, loc })
+                Ok(InstructionValue::LoadLocal {
+                    loc: temp.loc,
+                    place: temp,
+                })
             } else {
-                lower_value_to_temporary(
+                let temp = lower_value_to_temporary(
                     builder,
                     InstructionValue::StoreLocal {
                         lvalue: LValue {
                             kind: InstructionKind::Reassign,
-                            place: place.clone(),
+                            place,
                         },
                         value: binary_place,
                         type_annotation: None,
                         loc,
                     },
                 )?;
-                Ok(InstructionValue::LoadLocal { place, loc })
+                Ok(InstructionValue::LoadLocal {
+                    loc: temp.loc,
+                    place: temp,
+                })
             }
         }
         _ => {

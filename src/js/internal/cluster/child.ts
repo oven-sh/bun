@@ -1,3 +1,5 @@
+import type { ClusterWorker } from "internal/cluster/Worker";
+
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
@@ -10,10 +12,28 @@ const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ObjectAssign = Object.assign;
 
-const cluster = new EventEmitter();
+interface ChildCluster extends InstanceType<typeof EventEmitter> {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  worker: ClusterWorker | null;
+  Worker: typeof Worker;
+  _setupWorker(): void;
+  _getServer(obj, options, cb): void;
+}
+
+interface RoundRobinFauxHandle {
+  close(): void;
+  listen(backlog): number;
+  ref(): void;
+  unref(): void;
+  getsockname?(out): number;
+}
+
+const cluster = new EventEmitter() as ChildCluster;
 const handles = new Map();
 const indexes = new Map();
-const noop = FunctionPrototype;
+const noop = FunctionPrototype as () => void;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
 let seq = 0;
@@ -43,7 +63,7 @@ cluster.Worker = Worker;
 
 cluster._setupWorker = function () {
   const worker = new Worker({
-    id: +process.env.NODE_UNIQUE_ID | 0,
+    id: +process.env.NODE_UNIQUE_ID! | 0,
     process: process,
     state: "online",
   });
@@ -54,7 +74,7 @@ cluster._setupWorker = function () {
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
   $newRustFunction("node_cluster_binding.rs", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
-    process.channel = null;
+    (process as { channel: unknown }).channel = null;
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {
@@ -147,7 +167,7 @@ cluster._getServer = function (obj, options, cb) {
     if (!indexes.has(indexesKey)) {
       return;
     }
-    cluster.worker.state = "listening";
+    cluster.worker!.state = "listening";
     const address = obj.address();
     message.act = "listening";
     message.port = (address && address.port) || options.port;
@@ -261,7 +281,7 @@ function rr(message, { indexesKey, index }, cb) {
 
   // Faux handle. net.Server is not associated with handle,
   // so we control its state(ref or unref) by setInterval.
-  const handle = { close, listen, ref, unref };
+  const handle: RoundRobinFauxHandle = { close, listen, ref, unref };
   handle.ref();
   if (message.sockname) {
     handle.getsockname = getsockname; // TCP handles only.
@@ -296,7 +316,7 @@ function send(message, cb?) {
   const wire = { __proto__: null, cmd: "NODE_CLUSTER", ...message, seq };
   if (typeof cb === "function") callbacks.$set(seq, cb);
   seq += 1;
-  return process.send(wire, undefined, kInternalSendOptions);
+  return process.send!(wire, undefined, kInternalSendOptions);
 }
 
 // Extend generic Worker with methods specific to worker processes.
@@ -309,7 +329,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+Worker.prototype._disconnect = function (this: ClusterWorker, primaryInitiated?) {
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 
@@ -322,10 +342,10 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
       // it's primary initiated there's no need to send the
       // exitedAfterDisconnect message
       if (primaryInitiated) {
-        if (process.connected) process.disconnect();
+        if (process.connected) process.disconnect!();
       } else {
         send({ act: "exitedAfterDisconnect" }, () => {
-          if (process.connected) process.disconnect();
+          if (process.connected) process.disconnect!();
         });
       }
     }
@@ -350,7 +370,7 @@ Worker.prototype.destroy = function () {
     process.exit(kNoFailure);
   } else {
     this.state = "destroying";
-    send({ act: "exitedAfterDisconnect" }, () => process.disconnect());
+    send({ act: "exitedAfterDisconnect" }, () => process.disconnect!());
     process.once("disconnect", () => process.exit(kNoFailure));
   }
 };

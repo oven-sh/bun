@@ -62,12 +62,6 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(ErrorCodeCache);
-    }
-
     template<typename, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {

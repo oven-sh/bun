@@ -2140,21 +2140,22 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             indexStack.last()++;
             goto objectStartVisitMember;
         }
-        mapStartState: {
-            ASSERT(inValue.isObject());
-            if (inputObjectStack.size() > maximumFilterRecursion)
-                return SerializationReturnCode::StackOverflowError;
-            JSMap* inMap = uncheckedDowncast<JSMap>(inValue);
-            if (!startMap(inMap))
-                break;
-            JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
-            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-            m_gcBuffer.appendWithCrashOnOverflow(inMap);
-            m_gcBuffer.appendWithCrashOnOverflow(iterator);
-            mapIteratorStack.append(iterator);
-            inputObjectStack.append(inMap);
-            goto mapDataStartVisitEntry;
-        }
+        mapStartState:
+            {
+                ASSERT(inValue.isObject());
+                if (inputObjectStack.size() > maximumFilterRecursion)
+                    return SerializationReturnCode::StackOverflowError;
+                JSMap* inMap = uncheckedDowncast<JSMap>(inValue);
+                if (!startMap(inMap))
+                    break;
+                JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                m_gcBuffer.appendWithCrashOnOverflow(inMap);
+                m_gcBuffer.appendWithCrashOnOverflow(iterator);
+                mapIteratorStack.append(iterator);
+                inputObjectStack.append(inMap);
+                goto mapDataStartVisitEntry;
+            }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             JSMapIterator* iterator = mapIteratorStack.last();
@@ -2186,21 +2187,22 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             goto mapDataStartVisitEntry;
         }
 
-        setStartState: {
-            ASSERT(inValue.isObject());
-            if (inputObjectStack.size() > maximumFilterRecursion)
-                return SerializationReturnCode::StackOverflowError;
-            JSSet* inSet = uncheckedDowncast<JSSet>(inValue);
-            if (!startSet(inSet))
-                break;
-            JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
-            RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-            m_gcBuffer.appendWithCrashOnOverflow(inSet);
-            m_gcBuffer.appendWithCrashOnOverflow(iterator);
-            setIteratorStack.append(iterator);
-            inputObjectStack.append(inSet);
-            goto setDataStartVisitEntry;
-        }
+        setStartState:
+            {
+                ASSERT(inValue.isObject());
+                if (inputObjectStack.size() > maximumFilterRecursion)
+                    return SerializationReturnCode::StackOverflowError;
+                JSSet* inSet = uncheckedDowncast<JSSet>(inValue);
+                if (!startSet(inSet))
+                    break;
+                JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
+                RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                m_gcBuffer.appendWithCrashOnOverflow(inSet);
+                m_gcBuffer.appendWithCrashOnOverflow(iterator);
+                setIteratorStack.append(iterator);
+                inputObjectStack.append(inSet);
+                goto setDataStartVisitEntry;
+            }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             JSSetIterator* iterator = setIteratorStack.last();
@@ -3387,11 +3389,6 @@ private:
             return JSValue();
         }
 
-        if (buffer.size() == 0) {
-            auto* cert_obj = Bun::JSX509Certificate::create(m_lexicalGlobalObject->vm(), defaultGlobalObject(m_globalObject)->m_JSX509CertificateClassStructure.get(m_globalObject));
-            addTerminalToObjectPool(cert_obj);
-            return cert_obj;
-        }
         ncrypto::ClearErrorOnReturn clear_error_on_return;
         X509* ptr = nullptr;
         const uint8_t* data = buffer.begin();
@@ -4088,15 +4085,16 @@ DeserializationResult CloneDeserializer::deserialize()
             propertyNameStack.removeLast();
             goto objectStartVisitMember;
         }
-        mapObjectStartState: {
-            if (outputObjectStack.size() > maximumFilterRecursion)
-                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
-            JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
-            addToObjectPool(map);
-            outputObjectStack.append(map);
-            mapStack.append(map);
-            goto mapDataStartVisitEntry;
-        }
+        mapObjectStartState:
+            {
+                if (outputObjectStack.size() > maximumFilterRecursion)
+                    return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+                JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
+                addToObjectPool(map);
+                outputObjectStack.append(map);
+                mapStack.append(map);
+                goto mapDataStartVisitEntry;
+            }
         mapDataStartVisitEntry:
         case MapDataStartVisitEntry: {
             if (consumeCollectionDataTerminationIfPossible<NonMapPropertiesTag>()) {
@@ -4120,15 +4118,16 @@ DeserializationResult CloneDeserializer::deserialize()
             goto mapDataStartVisitEntry;
         }
 
-        setObjectStartState: {
-            if (outputObjectStack.size() > maximumFilterRecursion)
-                return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
-            JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());
-            addToObjectPool(set);
-            outputObjectStack.append(set);
-            setStack.append(set);
-            goto setDataStartVisitEntry;
-        }
+        setObjectStartState:
+            {
+                if (outputObjectStack.size() > maximumFilterRecursion)
+                    return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
+                JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());
+                addToObjectPool(set);
+                outputObjectStack.append(set);
+                setStack.append(set);
+                goto setDataStartVisitEntry;
+            }
         setDataStartVisitEntry:
         case SetDataStartVisitEntry: {
             if (consumeCollectionDataTerminationIfPossible<NonSetPropertiesTag>()) {
@@ -4351,6 +4350,24 @@ void markAsUncloneable(VM& vm, JSObject& object)
 void markAsUntransferable(VM& vm, JSObject& object)
 {
     markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
+}
+
+// Serializing runs user code (getters, Proxy traps) that can invalidate entries create() accepted; runs before anything is detached.
+static std::optional<Exception> transferListChangedDuringSerialization(VM& vm, const Vector<JSC::Strong<JSC::JSObject>>& transferList, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<MessagePort>>& messagePorts)
+{
+    for (auto& transferable : transferList) {
+        if (transferable->getDirect(vm, builtinNames(vm).isUntransferablePrivateName()))
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+    }
+    for (auto& arrayBuffer : arrayBuffers) {
+        if (arrayBuffer->isDetached())
+            return Exception { DataCloneError, "ArrayBuffer in transfer list was detached during serialization"_s };
+    }
+    for (auto& port : messagePorts) {
+        if (port->isDetached() || port->isClosing())
+            return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
+    }
+    return std::nullopt;
 }
 
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)
@@ -4785,14 +4802,23 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
     }
 
-    auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
-    if (arrayBufferContentsArray.hasException()) {
-        releaseSerializedBlockListRefs();
-        RELEASE_AND_RETURN(scope, arrayBufferContentsArray.releaseException());
+    // Most calls have no transfer list; this keeps them at one branch.
+    std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray;
+    if (!transferList.isEmpty()) {
+        if (auto exception = transferListChangedDuringSerialization(vm, transferList, arrayBuffers, messagePorts)) [[unlikely]] {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, WTF::move(*exception));
+        }
+        auto transferred = transferArrayBuffers(vm, arrayBuffers);
+        if (transferred.hasException()) {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, transferred.releaseException());
+        }
+        arrayBufferContentsArray = transferred.releaseReturnValue();
     }
 
     scope.releaseAssertNoException();
-    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), WTF::move(arrayBufferContentsArray), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(WEBASSEMBLY)
         ,
         makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr

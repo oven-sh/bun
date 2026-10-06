@@ -852,10 +852,17 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 err.message = bun_core::String::create_format(format_args!("write {}", err.code));
                 (this.handlers.on_error)(this.handlers.ctx, err.to_error_instance(global));
             } else if this.in_flight.get() == 0 {
-                if let Some(w) = this.wrapper_ref() {
+                let peer_close_waits = this.wrapper_ref().is_some_and(|w| {
                     let _ = w.sink_writable();
-                }
+                    w.peer_close_waits()
+                });
                 (this.handlers.on_writable)(this.handlers.ctx);
+                // That ran JS, which can close this duplex: `teardown` clears the function data.
+                if peer_close_waits && host_fn::get_function_data(function).is_some() {
+                    if let Some(w) = this.wrapper_ref() {
+                        w.answer_peer_close();
+                    }
+                }
             }
             return Ok(JSValue::UNDEFINED);
         }

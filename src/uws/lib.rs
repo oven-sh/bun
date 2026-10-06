@@ -395,6 +395,9 @@ pub mod ssl_wrapper {
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
         sink: Cell<Sink>,
+        /// The peer's close_notify arrived while the transport had a write:
+        /// [`SSLWrapper::answer_peer_close`] ends the session.
+        peer_close_waits: Cell<bool>,
         ciphertext: Ciphertext,
     }
 
@@ -668,6 +671,7 @@ pub mod ssl_wrapper {
                 renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
                 sink: Cell::new(Sink::Ready),
+                peer_close_waits: Cell::new(false),
                 ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
@@ -857,6 +861,7 @@ pub mod ssl_wrapper {
                     let _ = boring_sys::SSL_shutdown(ssl.as_ptr());
                 }
                 self.flags.set_received_ssl_shutdown(true);
+                self.peer_close_waits.set(false);
                 self.handle_end_of_renegotiation();
                 // Reset pending handshake because we are closed for sure now
                 if self.flags.handshake_state() == HandshakeState::HandshakePending {
@@ -885,6 +890,11 @@ pub mod ssl_wrapper {
             }
             // SSL_shutdown only queues close_notify, and nothing else hands it to the owner.
             self.handle_writing();
+            if self.peer_close_waits.take() {
+                // The peer closed first: no read is left to report the close.
+                self.flags.set_received_ssl_shutdown(true);
+                self.trigger_close_callback();
+            }
             ret == 1 // truly closed
         }
 
@@ -905,6 +915,22 @@ pub mod ssl_wrapper {
         pub fn sink_writable(&self) -> usize {
             self.sink.set(Sink::Ready);
             self.flush()
+        }
+
+        /// The peer's close_notify does not end the session while the transport
+        /// still has a write ([`Taken::All`] with `more: false`): the owner may
+        /// hold more behind it. Such an owner calls this after it wrote what it
+        /// held, which follows [`Self::sink_writable`]. Answers the close_notify
+        /// and closes, unless the transport has a write again.
+        pub fn answer_peer_close(&self) {
+            if self.peer_close_waits.get() && self.sink.get() == Sink::Ready {
+                let _ = self.shutdown(false);
+            }
+        }
+
+        /// Whether [`Self::answer_peer_close`] has a close_notify to answer.
+        pub fn peer_close_waits(&self) -> bool {
+            self.peer_close_waits.get()
         }
 
         /// Ciphertext is queued in either direction, or the SSL holds the rest of a partially-returned record.
@@ -1157,9 +1183,10 @@ pub mod ssl_wrapper {
                     "the initial handshake completed outside update_handshake_state, unreported"
                 );
                 // SAFETY: ssl is a live SSL*.
-                if (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
-                    & boring_sys::SSL_RECEIVED_SHUTDOWN)
-                    != 0
+                if !self.peer_close_waits.get()
+                    && (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
+                        & boring_sys::SSL_RECEIVED_SHUTDOWN)
+                        != 0
                 {
                     // we received a shutdown
                     self.flags.set_received_ssl_shutdown(true);
@@ -1303,6 +1330,10 @@ pub mod ssl_wrapper {
                     {
                         let mut is_fatal = err == boring_sys::SSL_ERROR_SSL
                             || err == boring_sys::SSL_ERROR_SYSCALL;
+                        // See `answer_peer_close`. After our own close_notify nothing more is sealed.
+                        let close_waits = err == boring_sys::SSL_ERROR_ZERO_RETURN
+                            && !self.flags.sent_ssl_shutdown()
+                            && (self.peer_close_waits.get() || self.sink.get() == Sink::Busy);
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
                             // The count resets each MAX_RENEGOTIATION_WINDOW, matching
                             // the C path's `us_reneg_policy`.
@@ -1344,7 +1375,7 @@ pub mod ssl_wrapper {
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-                            self.flags.set_received_ssl_shutdown(true);
+                            self.flags.set_received_ssl_shutdown(!close_waits);
                             self.handle_end_of_renegotiation();
                         }
                         // Taken now: the callbacks below run JS, which can change the queue.
@@ -1359,6 +1390,10 @@ pub mod ssl_wrapper {
 
                         // SAFETY: the SSL_read calls above wrote `[0..read]` contiguously.
                         if !self.dispatch_read(unsafe { buffer.filled(read) }) {
+                            return false;
+                        }
+                        if close_waits {
+                            self.peer_close_waits.set(true);
                             return false;
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {

@@ -1,3 +1,4 @@
+import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
@@ -17,6 +18,7 @@ import {
   failingSession,
   startEchoServer,
   startProxy,
+  startRawWssServer,
   startRecordingProxy,
 } from "./proxy-test-utils";
 // Use dynamic require to avoid linter removing the import
@@ -687,6 +689,81 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       });
     });
   });
+});
+
+// After the upgrade the proxy connection still belongs to the upgrade client, and only the tunnel reaches it.
+describe.concurrent("wss:// through a proxy: the end of the proxy connection", () => {
+  describe.each(["http", "https"] as const)("%s proxy", scheme => {
+    test.each([
+      ["terminate()", 1006, (ws: WebSocket) => ws.terminate()],
+      ["an invalid frame from the server", 1002, (ws: WebSocket) => ws.send("go")],
+    ] as const)("%s closes it", async (_label, code, act) => {
+      using origin = await startRawWssServer(socket => socket.write(Buffer.from([0x83, 0x00])));
+      using recorded = await startRecordingProxy({ tls: scheme === "https" });
+      const codes = await Promise.all(
+        Array.from({ length: 4 }, async () => {
+          const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+            proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+            tls: { rejectUnauthorized: false },
+          });
+          // Not inside the open event: there the tunnel still has the upgrade client to close through.
+          ws.addEventListener("open", () => setImmediate(act, ws));
+          return closeCodeOf(await clientEvents(ws));
+        }),
+      );
+      expect(codes).toEqual([code, code, code, code]);
+      expect(await Promise.all(recorded.departures)).toHaveLength(4);
+    });
+  });
+
+  test.each([
+    ["terminate()", "terminate", "1006 false\n"],
+    ["close(), with a server that never closes the connection", "close", "1000 true\n"],
+  ] as const)("the process exits after %s", async (_label, method, output) => {
+    using origin = await startRawWssServer();
+    using recorded = await startRecordingProxy();
+    await using client = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const ws = new WebSocket(process.env.WS_URL, { proxy: process.env.WS_PROXY, tls: { rejectUnauthorized: false } });
+          ws.onopen = () => setImmediate(() => ws.${method}());
+          ws.onclose = event => console.log(event.code, event.wasClean);
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: "",
+        no_proxy: "",
+        WS_URL: `wss://127.0.0.1:${origin.port}`,
+        WS_PROXY: `http://127.0.0.1:${recorded.port}`,
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+    expect(stdout).toBe(output);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Not concurrent: it counts every live SSL_CTX in the process.
+test("wss:// through a proxy: terminate() frees the SSL_CTX of the tunnel", async () => {
+  using recorded = await startRecordingProxy();
+  const terminated = async () => {
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      tls: { rejectUnauthorized: false },
+    });
+    ws.addEventListener("message", () => ws.terminate());
+    return closeCodeOf(await clientEvents(ws));
+  };
+  expect(await terminated()).toBe(1006);
+  const before = sslCtxLiveCount();
+  expect(await Promise.all([terminated(), terminated(), terminated(), terminated()])).toEqual([1006, 1006, 1006, 1006]);
+  // Not toBe: a GC may free a context that an earlier test left behind.
+  expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
 });
 
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {

@@ -66,6 +66,8 @@ new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT",
 // A peer that accepts the TCP connection but never answers the upgrade fails
 // with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
 new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
+// Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
+new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});

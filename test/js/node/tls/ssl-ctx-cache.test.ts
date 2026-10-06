@@ -549,3 +549,27 @@ test("a connection accepted before close() keeps working after it", async () => 
   expect(echoed.toString()).toBe("ping");
   client.destroy();
 });
+
+test("fetch takes a context of its own per tls.DEFAULT_CIPHERS, and none while nothing is assigned", async () => {
+  const script = `
+    import tls from "node:tls";
+    import { sslCtxLiveCount } from "bun:internal-for-testing";
+    using server = Bun.serve({ port: 0, tls: ${JSON.stringify(tlsCerts)}, fetch: () => new Response("ok") });
+    const request = () => fetch(server.url, { keepalive: false, tls: { rejectUnauthorized: false } }).then(res => res.text());
+    await request(); // the server's context and the default one of fetch
+    const created = [];
+    for (const list of [undefined, undefined, "ECDHE-RSA-AES256-GCM-SHA384", undefined, "ECDHE-RSA-AES128-GCM-SHA256", undefined]) {
+      if (list) tls.DEFAULT_CIPHERS = list;
+      const before = sslCtxLiveCount();
+      await request();
+      created.push(sslCtxLiveCount() - before);
+    }
+    console.log(JSON.stringify(created));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Nothing assigned x2, a first list and the same again, a second list and the same again.
+  expect(JSON.parse(stdout)).toEqual([0, 0, 1, 0, 1, 0]);
+  expect(exitCode).toBe(0);
+});

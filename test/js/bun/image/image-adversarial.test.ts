@@ -376,6 +376,21 @@ describe("hostile header dimensions", () => {
     expect((await new Bun.Image(small).resize(4, 4).png().bytes())[0]).toBe(0x89);
   });
 
+  test('fit: "cover" bounds the pre-crop canvas, not just the output', async () => {
+    // 1×64 covering 64×1 scales by 64 to a 64×4096 canvas before cropping it to
+    // 64×1. The canvas is what gets allocated, so it is what maxPixels checks.
+    const strip = makePng(1, 64, () => [0, 0, 0, 255]);
+    await expect(new Bun.Image(strip, { maxPixels: 1000 }).resize(64, 1, { fit: "cover" }).bytes()).rejects.toThrow(
+      /maxPixels/,
+    );
+    // Even with maxPixels out of the way, an overflowing side past i32 (the
+    // resize kernel's dim type) rejects instead of aborting: 8200 × 262143 > 2³¹.
+    const tall = makePng(1, 8200, () => [0, 0, 0, 255]);
+    await expect(new Bun.Image(tall, { maxPixels: 1e15 }).resize(262143, 1, { fit: "cover" }).bytes()).rejects.toThrow(
+      /maxPixels/,
+    );
+  });
+
   test("WebP VP8 frame header with absurd dims", async () => {
     // RIFF + WEBP + VP8 chunk header + 10-byte VP8 bitstream header where
     // bytes 6–9 encode width/height (14-bit each). Craft 16383×16383.
@@ -1093,6 +1108,9 @@ describe("hostile option objects", () => {
     // Non-string enum option → getOptionalEnum throws synchronously.
     expect(() => new Bun.Image(tinyPng).resize(2, 2, { filter: 12345 } as any)).toThrow(/filter must be a string/);
     expect(() => new Bun.Image(tinyPng).resize(2, 2, { fit: [] } as any)).toThrow(/fit must be a string/);
+    expect(() => new Bun.Image(tinyPng).resize(2, 2, { fit: "cover", position: 1 } as any)).toThrow(
+      /position must be a string/,
+    );
     // A string-coercible object isn't a JS string — refused, not coerced.
     expect(() => new Bun.Image(tinyPng).resize(2, 2, { fit: { toString: () => "inside" } } as any)).toThrow(
       /fit must be a string/,

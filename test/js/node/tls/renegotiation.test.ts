@@ -350,6 +350,96 @@ it("should terminate the connection when the peer exceeds the renegotiation limi
   expect(await outcome).toBe("closed");
 });
 
+// A client allows tls.CLIENT_RENEG_LIMIT (3) renegotiations and refuses the next one. The engine reports the one it
+// refused as a failed handshake, and that is not one more 'secureConnect'.
+it.concurrent.each(["a socket", "a Duplex"])(
+  "a renegotiation that the client refuses is not a secureConnect (over %s)",
+  async transport => {
+    await using server = Bun.spawn({
+      cmd: [
+        "node",
+        "-e",
+        `
+        const tls = require("tls");
+        // Node counts the renegotiations of a connection too. The client must be the one that stops.
+        tls.CLIENT_RENEG_LIMIT = 100;
+        let renegotiations = 0;
+        const server = tls.createServer(
+          {
+            cert: process.env.SERVER_CERT,
+            key: process.env.SERVER_KEY,
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+          },
+          socket => {
+            socket.on("error", () => {});
+            const again = () => {
+              if (renegotiations === 10) return socket.end();
+              socket.renegotiate({ rejectUnauthorized: false }, err => {
+                if (err) return socket.destroy(err);
+                renegotiations++;
+                // The client reports a renegotiation when data arrives behind it.
+                socket.write("renegotiated", again);
+              });
+            };
+            // The client has reported its first handshake when it writes.
+            socket.once("data", again);
+          },
+        );
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `,
+      ],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+    });
+    const { value } = await server.stdout.getReader().read();
+    const port = Number(new TextDecoder().decode(value).trim());
+
+    let raw: ReturnType<typeof netConnect> | undefined;
+    let duplex: Duplex | undefined;
+    if (transport === "a Duplex") {
+      const tcp = (raw = netConnect(port, "127.0.0.1"));
+      tcp.on("error", () => {});
+      duplex = new Duplex({
+        read() {},
+        write(chunk: Buffer, encoding: string, callback: () => void) {
+          tcp.write(chunk, callback);
+        },
+        final(callback: () => void) {
+          tcp.end();
+          callback();
+        },
+      });
+      tcp.on("data", (chunk: Buffer) => duplex!.push(chunk));
+      tcp.on("end", () => duplex!.push(null));
+      tcp.on("close", () => duplex!.destroy());
+    }
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const socket = tlsConnect({
+      ...(duplex ? { socket: duplex } : { port, host: "127.0.0.1" }),
+      rejectUnauthorized: false,
+    });
+    socket.on("secureConnect", () => {
+      if (events.push("secureConnect") === 1) socket.write("start");
+    });
+    socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    socket.on("close", () => closed.resolve());
+    socket.resume();
+    try {
+      await closed.promise;
+      // The first handshake, and the three renegotiations that the client allows.
+      expect(events).toEqual(["secureConnect", "secureConnect", "secureConnect", "secureConnect"]);
+    } finally {
+      socket.destroy();
+      raw?.destroy();
+    }
+  },
+);
+
 // A renegotiation reports the certificate check of its own handshake. The client ends its write side while the first
 // handshake still runs, which sends nothing but marks the TLS session as shut down. That state must not turn the
 // failed check of the renegotiated handshake into a pass. Runs the client over a Duplex, the SSLWrapper path.

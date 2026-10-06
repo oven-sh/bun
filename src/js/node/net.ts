@@ -504,7 +504,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     // Only a chain that this client refuses goes on: it gets its X509 error below.
     if (code == null || !self._rejectUnauthorized) {
       // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
-      if (self.writableFinished) self.secureConnecting = false;
+      if (code == null && self.writableFinished) self.secureConnecting = false;
       else onConnectEnd.$call(self);
       return;
     }

@@ -599,16 +599,17 @@ for (const overDuplex of [false, true]) {
   });
 }
 
-// A handshake that did not complete is never an established session. The client below wraps a Duplex, does not call
-// end(), and its peer makes the handshake fail. `peer(otherEnd)` plays the peer on the other end of the Duplex, and
-// can return a function that closes what it opened. Returns the ordered events of the client.
+// A handshake that did not complete is never an established session. The client below wraps a Duplex, and its peer
+// makes the handshake fail. `peer(otherEnd, client)` plays the peer on the other end of the Duplex. `client()` is the
+// client, for a peer that makes it call end(). The peer can return a function that closes what it opened. Returns the
+// ordered events of the client.
 async function failedHandshakeOverDuplex(rejectUnauthorized, peer) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   const [transport, otherEnd] = duplexPair();
   transport.on("error", () => {});
   otherEnd.on("error", () => {});
-  const close = await peer(otherEnd);
+  const close = await peer(otherEnd, () => client);
   const client = tls.connect({ socket: transport, servername: "agent1", ca: serverCA, rejectUnauthorized });
   recordClient(client, events, resolve);
   await promise;
@@ -618,6 +619,8 @@ async function failedHandshakeOverDuplex(rejectUnauthorized, peer) {
 
 const HANDSHAKE = 0x16;
 const SERVER_KEY_EXCHANGE = 12;
+// An alert record: level fatal, description handshake_failure.
+const FATAL_ALERT = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]);
 
 // A TLS 1.2 server with a trusted certificate for "agent1". The relay in front of it changes the last byte of the
 // signature in ServerKeyExchange, so the peer proves no possession of the key. The chain is already verified then.
@@ -647,11 +650,7 @@ async function trustedChainWithBadKeyProof(otherEnd) {
 }
 
 for (const [failure, peer] of [
-  [
-    "a fatal alert",
-    otherEnd =>
-      void otherEnd.once("data", () => otherEnd.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]))),
-  ],
+  ["a fatal alert", otherEnd => void otherEnd.once("data", () => otherEnd.write(FATAL_ALERT))],
   [
     "bytes that are not TLS",
     otherEnd => void otherEnd.once("data", () => otherEnd.write("this is not a TLS record\n")),
@@ -669,6 +668,18 @@ for (const [failure, peer] of [
     });
   }
 }
+
+test("over a Duplex: a fatal alert after end() is an error, with rejectUnauthorized: false", async () => {
+  // The alert arrives when the client's write side has finished, and the transport ends behind it.
+  const events = await failedHandshakeOverDuplex(false, (otherEnd, client) => {
+    otherEnd.once("data", () => setImmediate(() => client().end(() => otherEnd.end(FATAL_ALERT))));
+  });
+  assert.match(events[0], /^error /, events.join(", "));
+  assert.deepStrictEqual(
+    events.filter(event => !event.startsWith("error ")),
+    ["close"],
+  );
+});
 
 // The server side of the same shape. A server that asks for a client certificate calls end() on its socket while the
 // handshake runs. The proxy holds the client's Certificate..Finished flight until the server's FIN arrived, so the

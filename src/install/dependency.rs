@@ -551,46 +551,25 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     true
 }
 
-/// A name that becomes an entry in `node_modules`: a dependency alias, or the
-/// name of the package the alias resolves to. It has to be `name` or
-/// `@scope/name`, and neither half may name a directory the installer owns:
-///
-/// - a leading period. `.bin` holds the commands on the `PATH` of every
-///   lifecycle script, and `.cache` and `.bun` hold bun's own state.
-/// - `node_modules`. A lifecycle script runs with the `node_modules/.bin` of
-///   every directory above it on its `PATH`, so `node_modules/@scope/node_modules/.bin`
-///   reaches the scripts of `@scope/*` the same way `node_modules/node_modules/.bin`
-///   reaches every script.
-///
-/// `is_safe_install_folder_name` keeps its own rules for the callers that
-/// validate something else: a bin name, a temporary directory label, a yarn
-/// lockfile URL.
+/// `name` or `@scope/name`, where neither half is a directory the installer owns.
 pub(crate) fn is_valid_node_modules_entry_name(name: &[u8]) -> bool {
     if !is_safe_install_folder_name(name) {
         return false;
     }
 
-    // `is_safe_install_folder_name` rejected an empty name and empty
-    // components, so the first byte of each half is in bounds.
-    let package = if name[0] == b'@' {
-        let Some(slash) = strings::index_of_char_usize(name, b'/') else {
-            return false;
-        };
-        if slash == 1 {
-            return false;
-        }
-        &name[slash + 1..]
-    } else {
-        name
+    let package = match name.strip_prefix(b"@") {
+        Some(scoped) => match strings::index_of_char_usize(scoped, b'/') {
+            Some(slash) if slash > 0 => &scoped[slash + 1..],
+            _ => return false,
+        },
+        None => name,
     };
 
-    if strings::contains_char(package, b'/') {
-        return false;
-    }
-
-    // Compared without case: on a case-insensitive volume `NODE_MODULES` is
-    // the same directory.
-    name[0] != b'.' && package[0] != b'.' && !package.eq_ignore_ascii_case(b"node_modules")
+    // On a case-insensitive volume `NODE_MODULES` is `node_modules`.
+    !strings::contains_char(package, b'/')
+        && !name.starts_with(b".")
+        && !package.starts_with(b".")
+        && !package.eq_ignore_ascii_case(b"node_modules")
 }
 
 /// assumes version is valid

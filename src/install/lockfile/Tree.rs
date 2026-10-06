@@ -287,9 +287,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     }
 }
 
-/// Tree folder names are joined into install destinations as
-/// `node_modules/<name>/...`, so a name has to stay inside that directory. The
-/// tree builder admits only names this accepts.
+/// A tree folder name is joined onto `node_modules/`, so it has to stay inside it.
 pub(crate) fn folder_name_is_safe(name: &[u8]) -> bool {
     crate::dependency::is_safe_install_folder_name(name)
 }
@@ -750,9 +748,7 @@ impl Tree {
             if !dependency_name.is_empty()
                 && !crate::dependency::is_valid_node_modules_entry_name(dependency_name)
             {
-                // A dependency that did not resolve gets no folder, and the
-                // resolver reported why. `bun add <specifier>` leaves the
-                // specifier as the name of such a dependency.
+                // An unresolved dependency gets no folder, and the resolver has reported it.
                 if pkg_id != invalid_package_id {
                     builder.maybe_report_error(format_args!(
                         "Invalid dependency name \"{}\"",

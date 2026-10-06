@@ -364,20 +364,12 @@ fn abs_node_modules_path(
     abs
 }
 
-/// A dependency alias becomes the install destination inside `node_modules`
-/// (the existing entry is renamed aside, deleted, and re-created), so it has
-/// to be a name `node_modules` can hold: no path escape, no entry the
-/// installer owns, and exactly one component (two for `@scope/name`). The
-/// length bound is this caller's own, because the alias is joined onto a path
-/// buffer here.
+/// A dependency alias is the install destination inside `node_modules`.
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     alias.len() < MAX_PATH_BYTES && crate::dependency::is_valid_node_modules_entry_name(alias)
 }
 
-/// The path rules alone: the name stays inside the directory it is joined
-/// onto, as one component or as two for a scoped name. The isolated installer
-/// checks the own name of the project, a workspace or a folder dependency with
-/// this. That name is only used inside the package's own store entry.
+/// The path rules alone, for the own name of the project, a workspace or a folder dependency.
 pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
     if name.is_empty() || name.len() >= MAX_PATH_BYTES || strings::contains_any(name, b"\\:\0") {
         return false;

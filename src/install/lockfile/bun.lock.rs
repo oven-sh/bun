@@ -3262,10 +3262,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 .is_none_or(|manager| manager.options.link_workspace_packages),
         );
 
-        // A dependency name the tree builder refuses is not an error of this
-        // file. The install checks the names again after it applies
-        // package.json, and a lockfile must still load when it holds a name
-        // that package.json no longer has.
+        // The install reports a refused name itself, after it applies package.json.
         let mut refused_names = bun_ast::Log::init();
         if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(&mut refused_names) {
             return Err(ParseError::OutOfMemory);

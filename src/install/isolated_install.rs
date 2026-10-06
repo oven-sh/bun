@@ -2121,10 +2121,7 @@ pub(crate) fn install_isolated_packages(
             {
                 let mut unsafe_folder_name: Option<&[u8]> = None;
                 let name = pkg_name.slice(string_buf);
-                // Only a package unpacked from a registry, an archive or a
-                // repository is also linked under its own name in
-                // `.bun/node_modules`, beside the `.bin` that every script of
-                // the store has on its `PATH`.
+                // Only these kinds are also linked under their own name, in `.bun/node_modules`.
                 let own_name_is_safe = name.is_empty()
                     || match pkg_res.tag {
                         ResolutionTag::Npm

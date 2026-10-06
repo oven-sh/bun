@@ -78,9 +78,6 @@ pub fn which_for_spawn<'a>(
             && !has_sep
             && !is_absolute(bin)
             && !cwd.is_empty()
-            // A NUL in bin finds nothing in `which`. A NUL in cwd leaves only the `$PATH` walk, which `which` does.
-            && !strings::contains_char(bin, 0)
-            && !strings::contains_char(cwd, 0)
             && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
         {
             // One more `$PATH` directory: .exe/.cmd/.bat before the walk, .com after it.

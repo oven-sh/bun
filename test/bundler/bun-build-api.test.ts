@@ -592,6 +592,22 @@ describe("Bun.build", () => {
         /^Output path ".*virtual:de\\u0000rived(\.exe)?" must not contain null bytes$/,
       ],
       [
+        "compile.outfile of a build with an outdir and a metafile",
+        dir => ({ outdir: out(dir), metafile: "meta.json", compile: { outfile: "app\0zz" } }),
+        /^Output path ".*app\\u0000zz(\.exe)?" must not contain null bytes$/,
+      ],
+      [
+        "a sourcemap name of a compile build",
+        dir => ({
+          entrypoints: [join(dir, "split-a.mjs")],
+          splitting: true,
+          sourcemap: "external",
+          naming: { chunk: "ch\0unk-[hash].[ext]" },
+          compile: { outfile: join(dir, "app") },
+        }),
+        /^Output path ".*ch\\u0000unk-[a-z0-9]+\.js\.map" must not contain null bytes$/,
+      ],
+      [
         "compile.bytecodeOrder",
         dir => ({
           bytecode: true,

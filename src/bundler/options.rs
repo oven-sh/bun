@@ -2191,22 +2191,26 @@ pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> 
     None
 }
 
-/// The build error for an output path with a NUL byte: no file has that name, and a syscall would act on the bytes before it.
-pub struct NulInOutputPath<'a>(&'a [u8]);
-
-/// `Some` when `path` has a NUL byte.
-pub fn nul_in_output_path(path: &[u8]) -> Option<NulInOutputPath<'_>> {
-    strings::contains_char(path, 0).then_some(NulInOutputPath(path))
-}
-
-impl core::fmt::Display for NulInOutputPath<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
+/// Fails the build if one of `paths`, which it is about to write, has a NUL byte: a syscall would act on the bytes before it.
+pub fn check_output_paths<'a>(
+    log: &mut bun_ast::Log,
+    paths: impl IntoIterator<Item = &'a [u8]>,
+) -> Result<(), crate::Error> {
+    let Some(path) = paths
+        .into_iter()
+        .find(|path| strings::contains_char(path, 0))
+    else {
+        return Ok(());
+    };
+    log.add_error_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
             "Output path {} must not contain null bytes",
-            bun_core::fmt::quote(self.0)
-        )
-    }
+            bun_core::fmt::quote(path)
+        ),
+    );
+    Err(crate::Error::BuildFailed)
 }
 
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).

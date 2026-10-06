@@ -3944,3 +3944,42 @@ it("tls.DEFAULT_CIPHERS applies to every context built without a ciphers option"
   });
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/33954
+it.each([
+  [{ requestCert: true }, "agent1"],
+  [{}, undefined],
+])(
+  "new TLSSocket(socket, { isServer: true, ...%j }) asks for a client certificate with requestCert only",
+  async (options, peer) => {
+    const fixtures = join(import.meta.dir, "fixtures");
+    const identity = {
+      key: readFileSync(join(fixtures, "agent1-key.pem"), "utf8"),
+      cert: readFileSync(join(fixtures, "agent1-cert.pem"), "utf8"),
+    };
+    const secure = Promise.withResolvers<string | undefined>();
+    const rawServer = net.createServer(raw => {
+      const socket = new TLSSocket(raw, { isServer: true, ...identity, ...options });
+      socket.on("secure", () => secure.resolve(socket.getPeerCertificate()?.subject?.CN));
+      socket.on("data", data => socket.write(data));
+      socket.on("error", secure.reject);
+    });
+    await once(rawServer.listen(0, "127.0.0.1"), "listening");
+    const client = connect({
+      host: "127.0.0.1",
+      port: (rawServer.address() as AddressInfo).port,
+      ...identity,
+      rejectUnauthorized: false,
+    });
+    try {
+      client.on("error", secure.reject);
+      expect(await secure.promise).toBe(peer);
+      // The wrap trusts no CA, and without rejectUnauthorized it keeps the connection.
+      client.write("ping");
+      expect(String((await once(client, "data"))[0])).toBe("ping");
+    } finally {
+      client.destroy();
+      rawServer.close();
+    }
+  },
+);

@@ -290,7 +290,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("a bad record on an established %
       using proxy = await startRecordingProxy();
       const events = await webSocketEvents(server.port, { ca: cert.cert }, `http://127.0.0.1:${proxy.port}`);
       expect(events).toEqual(["message first", "close 1006"]);
-      // The connection to the proxy stays open: https://github.com/oven-sh/bun/pull/37487
+      await server.closedByOwner;
     });
 
     test.concurrent("Bun.SQL postgres", async () => {

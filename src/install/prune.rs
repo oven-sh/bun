@@ -1972,7 +1972,6 @@ fn disk_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-/// `None` for a workspace at `.`, a root that depends on itself: its `node_modules` is the root folder.
 fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     let res = lockfile.packages.items_resolution().get(pkg_id as usize)?;
     if res.tag != ResolutionTag::Workspace {
@@ -1980,7 +1979,7 @@ fn workspace_path(lockfile: &Lockfile, pkg_id: PackageID) -> Option<&[u8]> {
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
     let path = strings::without_trailing_slash(res.workspace().slice(buf));
-    (!path.is_empty() && path != b".").then_some(path)
+    (!path.is_empty()).then_some(path)
 }
 
 fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<[u8]>> {
@@ -2015,7 +2014,8 @@ fn entry_kind_of(dir: &Dir, alias: &[u8]) -> EntryKind {
 }
 
 fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
-    if lstat_kind(dir, name) != EntryKind::Directory {
+    // POSIX refuses a link here. On Windows `O::NOFOLLOW` opens the link itself, so ask what the entry is first.
+    if cfg!(windows) && lstat_kind(dir, name) != EntryKind::Directory {
         return None;
     }
     dir.open_at_with(name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
@@ -2074,17 +2074,17 @@ fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
 /// The packages in a `node_modules` folder by name: `@scope/name` for one in a scope folder.
 fn read_aliases(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out: Vec<(Box<[u8]>, EntryKind)> = Vec::new();
-    for (name, kind) in read_entries(dir) {
-        if name.first() == Some(&b'@') && kind == EntryKind::Directory {
-            let Ok(scope_dir) = dir.open_at(&name) else {
+    for (entry, kind) in read_entries(dir) {
+        if entry.first() == Some(&b'@') && kind == EntryKind::Directory {
+            let Ok(scope_dir) = dir.open_at(&entry) else {
                 continue;
             };
             for (inner, inner_kind) in read_entries(&scope_dir) {
-                out.push((join_alias(&name, &inner), inner_kind));
+                out.push((join_alias(&entry, &inner), inner_kind));
             }
             continue;
         }
-        out.push((name, kind));
+        out.push((entry, kind));
     }
     out
 }

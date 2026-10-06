@@ -1778,7 +1778,19 @@ impl<'p, 's> Types<'p, 's> {
             TypeData::Substitution { .. } => tf::SUBSTITUTION,
             TypeData::IndexedAccess { .. } => tf::INDEXED_ACCESS,
             TypeData::Cond { .. } => tf::CONDITIONAL,
-            TypeData::Union(members) if members[..] == [TypeId::FALSE, TypeId::TRUE] => {
+            // `getUnionTypeFromSortedList`: two boolean literal types, fresh or not.
+            TypeData::Union(members)
+                if members.len() == 2
+                    && members.iter().all(|it| {
+                        let literals = [
+                            TypeId::FALSE,
+                            TypeId::TRUE,
+                            TypeId::FRESH_FALSE,
+                            TypeId::FRESH_TRUE,
+                        ];
+                        literals.contains(it)
+                    }) =>
+            {
                 tf::UNION | tf::BOOLEAN
             }
             TypeData::Union(_) if created.1.as_ref().is_some_and(|p| p.is_enum) => {

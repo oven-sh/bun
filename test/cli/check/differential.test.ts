@@ -794,6 +794,48 @@ for (const noImplicitAny of [true, false]) {
   );
 }
 
+// `false | true` is `boolean` whether the two are fresh or not, and nothing is said about one of them alone.
+differential("a boolean, where it comes from, what it is assigned to, and how", async () => {
+  const declarations = [
+    "declare const n: number; declare const b: boolean;",
+    "const one = (a: number) => { if (a) { return false } return true };",
+    "const returned = one(1); let widened = one(1);",
+  ];
+  const booleans = [
+    "one(1)",
+    "returned",
+    "widened",
+    "((a: number) => a ? false : true)(1)",
+    "(function (a: number) { if (a) return true; return false })(1)",
+    "(() => { try { return true } catch { return false } })()",
+    "(n ? false : true)",
+    "(n ? true : one(1))",
+    "b",
+    "(n === 1)",
+    "(b as false | true)",
+    "[true, false][0]",
+    "({ p: n ? true : false }).p",
+  ];
+  const targets = [
+    ...["string", "string | number", "{ a: 1 }", "1", "false", "true", "[string]", "never", "null", "undefined"],
+    ...["symbol", "object", "() => void", "`${number}`", "false | 1", "{}[]"],
+  ];
+  const contexts = [
+    "const v: T = V;",
+    "((v: T) => {})(V);",
+    "(): T => V;",
+    "(function (): T { return V });",
+    "const v: { p: T } = { p: V };",
+    "const v: T[] = [V];",
+    "let v: T = null!; v = V;",
+    "V satisfies T;",
+  ];
+  const cases = [...product(booleans, targets, contexts)].map(
+    ([value, target, context]) => `{ ${context.replace(/\bT\b/g, () => target).replace(/\bV\b/g, () => value)} }`,
+  );
+  expect(await casesThatDiffer({}, declarations, cases)).toEqual([]);
+});
+
 // In the true branch of `[a, p] extends [A[], B[]] ? .. : ..`, `[a, p]` is also `[A[], B[]]`. A conditional type there that
 // checks `[a, p]` again is deferred all the same, so nothing is inferred for its `infer` type parameters: they are
 // `unknown`, not what `A` and `B` would give.

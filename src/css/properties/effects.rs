@@ -285,6 +285,10 @@ impl FilterList {
             filters.append(filter);
         }
 
+        if filters.is_empty() {
+            return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
+        }
+
         Ok(FilterList::Filters(filters))
     }
 

@@ -480,8 +480,7 @@ pub fn do_patch_commit(
         let (opts, _envp_guard) =
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
 
-        // `Global::crash()` runs no deferred restore, so the patch hash is out
-        // of the copy for the diff only, and back before any exit below.
+        // `Global::crash()` runs no deferred restore: the patch hash goes back before any exit below.
         let patch_hash = PatchStamp::take_out(new_folder, pkg.resolution.tag);
         let spawned = bun_spawn::sync::spawn(&opts);
         PatchStamp::put_back(new_folder, pkg.resolution.tag, patch_hash);

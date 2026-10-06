@@ -639,8 +639,7 @@ fn parse_auto_quoted_string(
 /// A `u64` in hex.
 const PATCH_HASH_MAX_LEN: usize = 16;
 
-/// Extracts the top-level `name` and `version` strings from a package.json,
-/// and the patch hash when the document starts with [`Self::PATCH_HASH_KEY`].
+/// Extracts the top-level `name` and `version` strings from a package.json, and a leading patch hash.
 pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -656,8 +655,7 @@ pub struct PackageJSONVersionChecker<'a> {
 }
 
 impl<'a> PackageJSONVersionChecker<'a> {
-    /// `bun install` writes the hash of the applied patch under this key, as
-    /// the first key of the package.json of a patched copy.
+    /// First key of the package.json of a patched copy. `bun install` writes the hash of the patch under it.
     pub const PATCH_HASH_KEY: &'static [u8] = b"_bunPatchHash";
 
     pub fn init(source: &'a bun_ast::Source, log: &'a mut bun_ast::Log) -> Self {
@@ -681,8 +679,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
         &self.found_patch_hash_buf[..self.found_patch_hash_len]
     }
 
-    /// `contents` with [`Self::PATCH_HASH_KEY`] as the first key of the root
-    /// object and every other byte unchanged. `None` when the root is not an object.
+    /// `contents` with the key first in the root object. `None` when the root is no object.
     pub fn with_patch_hash(contents: &[u8], hash: &[u8]) -> Option<Vec<u8>> {
         let open = skip_ws_and_comments(contents, 0)?;
         if contents[open] != b'{' {
@@ -704,8 +701,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
         Some(out)
     }
 
-    /// The inverse of [`Self::with_patch_hash`]. `None` when `contents` does not
-    /// start with the key as that function writes it.
+    /// The inverse of [`Self::with_patch_hash`]. `None` when `contents` does not start with the key.
     pub fn without_patch_hash(contents: &[u8]) -> Option<Vec<u8>> {
         let open = skip_ws_and_comments(contents, 0)?;
         if contents[open] != b'{' {

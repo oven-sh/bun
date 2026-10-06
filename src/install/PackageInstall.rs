@@ -779,9 +779,7 @@ impl<'a> PackageInstall<'a> {
         )
     }
 
-    /// Whether the installed package is the wanted build: the resolved version
-    /// with the wanted patch, or with none. Each arm reads one file of the
-    /// package, and a patched copy names its patch in that file (`PatchStamp`).
+    /// Each arm reads one file of the package, and a patched copy names its patch in that file (`PatchStamp`).
     pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {
         match resolution.tag {
             resolution::Tag::Git => {
@@ -815,8 +813,7 @@ impl<'a> PackageInstall<'a> {
                 .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
     }
 
-    /// Whether the package.json of the unpatched cache folder starts with
-    /// `patch_hash` too: a package published from a patched copy does.
+    /// A package that was published from a patched copy has the key in the package.json of its cache folder.
     fn published_with_patch_hash(&self, patch_hash: &[u8]) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let package_json_path = path::resolve_path::join_z_buf::<path::platform::Auto>(

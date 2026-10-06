@@ -500,7 +500,6 @@ pub enum Subcommand {
     #[strum(serialize = "patch-commit")]
     PatchCommit,
     Outdated,
-    Pack,
     Publish,
     Audit,
     Info,

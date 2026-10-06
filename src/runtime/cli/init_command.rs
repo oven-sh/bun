@@ -681,18 +681,8 @@ impl InitCommand {
 
         let need_run_bun_install;
         {
-            let all_dependencies = template.dependencies();
-            let dependencies = all_dependencies.dependencies;
-            let dev_dependencies = all_dependencies.dev_dependencies;
-            let mut needed_dependencies = IntegerBitSet::<64>::init_empty();
+            let dev_dependencies = DEV_DEPENDENCIES;
             let mut needed_dev_dependencies = IntegerBitSet::<64>::init_empty();
-            needed_dependencies.set_range_value(
-                bun_collections::bit_set::Range {
-                    start: 0,
-                    end: dependencies.len(),
-                },
-                true,
-            );
             needed_dev_dependencies.set_range_value(
                 bun_collections::bit_set::Range {
                     start: 0,
@@ -700,17 +690,6 @@ impl InitCommand {
                 },
                 true,
             );
-
-            let needs_dependencies = 'brk: {
-                if let Some(deps) = object.get(b"dependencies") {
-                    for (i, dep) in dependencies.iter().enumerate() {
-                        if deps.get(dep.name).is_some() {
-                            needed_dependencies.unset(i);
-                        }
-                    }
-                }
-                break 'brk needed_dependencies.count() > 0;
-            };
 
             let needs_dev_dependencies = 'brk: {
                 if let Some(deps) = object.get(b"devDependencies") {
@@ -738,22 +717,7 @@ impl InitCommand {
                     true
                 };
 
-            need_run_bun_install =
-                needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
-
-            if needs_dependencies {
-                let mut dependencies_object = dependency_map(object, b"dependencies");
-                let mut iter = needed_dependencies.iter_set();
-                while let Some(index) = iter.next() {
-                    let dep = &dependencies[index];
-                    dependencies_object.data.as_e_object_mut().put_string(
-                        &bump,
-                        dep.name,
-                        dep.version,
-                    )?;
-                }
-                object.put(&bump, b"dependencies", dependencies_object)?;
-            }
+            need_run_bun_install = needs_dev_dependencies || needs_typescript_dependency;
 
             if needs_dev_dependencies {
                 let mut obj = dependency_map(object, b"devDependencies");
@@ -775,10 +739,6 @@ impl InitCommand {
                     .put_string(&bump, b"typescript", b"^7")?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
-        }
-
-        if template.is_react() {
-            template.write_to_package_json(&mut fields, &bump)?;
         }
 
         'write_package_json: {
@@ -1165,7 +1125,7 @@ impl RadioChoice for ReactTemplateChoice {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DependencyNeeded / DependencyGroup
+// DependencyNeeded
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
@@ -1174,155 +1134,10 @@ pub(crate) struct DependencyNeeded {
     pub version: &'static [u8],
 }
 
-struct DependencyGroup {
-    pub dependencies: &'static [DependencyNeeded],
-    pub dev_dependencies: &'static [DependencyNeeded],
-}
-
-impl DependencyGroup {
-    const BLANK: DependencyGroup = DependencyGroup {
-        dependencies: &[],
-        dev_dependencies: &[DependencyNeeded {
-            name: b"@types/bun",
-            version: b"latest",
-        }],
-    };
-
-    // `const` cannot concat slices; the lists are hand-expanded below.
-    const REACT: DependencyGroup = DependencyGroup {
-        dependencies: &[
-            DependencyNeeded {
-                name: b"react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"react-dom",
-                version: b"^19",
-            },
-        ],
-        dev_dependencies: &[
-            DependencyNeeded {
-                name: b"@types/react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/react-dom",
-                version: b"^19",
-            },
-            // ++ blank.devDependencies
-            DependencyNeeded {
-                name: b"@types/bun",
-                version: b"latest",
-            },
-        ],
-    };
-
-    const TAILWIND: DependencyGroup = DependencyGroup {
-        dependencies: &[
-            DependencyNeeded {
-                name: b"tailwindcss",
-                version: b"^4",
-            },
-            // ++ react.dependencies
-            DependencyNeeded {
-                name: b"react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"react-dom",
-                version: b"^19",
-            },
-        ],
-        dev_dependencies: &[
-            DependencyNeeded {
-                name: b"bun-plugin-tailwind",
-                version: b"latest",
-            },
-            // ++ react.devDependencies
-            DependencyNeeded {
-                name: b"@types/react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/react-dom",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/bun",
-                version: b"latest",
-            },
-        ],
-    };
-
-    const SHADCN: DependencyGroup = DependencyGroup {
-        dependencies: &[
-            DependencyNeeded {
-                name: b"class-variance-authority",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"clsx",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"tailwind-merge",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"tw-animate-css",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"lucide-react",
-                version: b"^1",
-            },
-            DependencyNeeded {
-                name: b"@radix-ui/react-label",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"@radix-ui/react-select",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"@radix-ui/react-slot",
-                version: b"latest",
-            },
-            // ++ tailwind.dependencies
-            DependencyNeeded {
-                name: b"tailwindcss",
-                version: b"^4",
-            },
-            DependencyNeeded {
-                name: b"react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"react-dom",
-                version: b"^19",
-            },
-        ],
-        // ++ tailwind.devDependencies
-        dev_dependencies: &[
-            DependencyNeeded {
-                name: b"bun-plugin-tailwind",
-                version: b"latest",
-            },
-            DependencyNeeded {
-                name: b"@types/react",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/react-dom",
-                version: b"^19",
-            },
-            DependencyNeeded {
-                name: b"@types/bun",
-                version: b"latest",
-            },
-        ],
-    };
-}
+const DEV_DEPENDENCIES: &[DependencyNeeded] = &[DependencyNeeded {
+    name: b"@types/bun",
+    version: b"latest",
+}];
 
 // ──────────────────────────────────────────────────────────────────────────
 // Template
@@ -1350,57 +1165,6 @@ impl TemplateFile {
 }
 
 impl Template {
-    fn is_react(self) -> bool {
-        matches!(
-            self,
-            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
-        )
-    }
-
-    fn write_to_package_json(
-        self,
-        fields: &mut PackageJSONFields,
-        bump: &bun_alloc::Arena,
-    ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
-        fields.name = self.name().to_vec();
-        // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
-        });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
-        let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
-            bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
-            bun_ast::E::SetError::Clobber => Error::Unexpected,
-        })?;
-        let the_scripts = self.scripts();
-        let mut i: usize = 0;
-        while i < the_scripts.len() {
-            let script_name = the_scripts[i];
-            let script_command = the_scripts[i + 1];
-
-            scripts_json.data.e_object_mut().unwrap().put_string(
-                bump,
-                script_name,
-                script_command,
-            )?;
-            i += 2;
-        }
-        Ok(())
-    }
-
-    fn dependencies(self) -> &'static DependencyGroup {
-        match self {
-            Template::Blank => &DependencyGroup::BLANK,
-            Template::ReactBlank => &DependencyGroup::REACT,
-            Template::ReactTailwind => &DependencyGroup::TAILWIND,
-            Template::ReactTailwindShadcn => &DependencyGroup::SHADCN,
-            Template::TypescriptLibrary => &DependencyGroup::BLANK,
-        }
-    }
-
     fn name(self) -> &'static [u8] {
         match self {
             Template::Blank => b"bun-blank-template",
@@ -1408,24 +1172,6 @@ impl Template {
             Template::ReactBlank => b"bun-react-template",
             Template::ReactTailwind => b"bun-react-tailwind-template",
             Template::ReactTailwindShadcn => b"bun-react-tailwind-shadcn-template",
-        }
-    }
-
-    fn scripts(self) -> &'static [&'static [u8]] {
-        match self {
-            Template::Blank | Template::TypescriptLibrary => &[],
-            Template::ReactTailwind | Template::ReactTailwindShadcn => &[
-                b"dev", b"bun './**/*.html'",
-                b"build", b"bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'",
-            ],
-            Template::ReactBlank => &[
-                b"dev",
-                b"bun --hot .",
-                b"static",
-                b"bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
-                b"build",
-                b"NODE_ENV=production bun .",
-            ],
         }
     }
 

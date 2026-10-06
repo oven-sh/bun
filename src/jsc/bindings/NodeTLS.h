@@ -11,5 +11,6 @@ JSC_DECLARE_HOST_FUNCTION(getSystemCACertificates);
 JSC_DECLARE_HOST_FUNCTION(parseCACertificates);
 JSC_DECLARE_HOST_FUNCTION(getDefaultCiphers);
 JSC_DECLARE_HOST_FUNCTION(setDefaultCiphers);
+JSC_DECLARE_HOST_FUNCTION(selectServerName);
 
 }

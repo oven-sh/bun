@@ -4,10 +4,13 @@
 
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "libusockets.h"
+#include "bun-usockets/src/internal/internal.h"
 
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
@@ -317,6 +320,37 @@ JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject,
 JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return Bun__setTLSDefaultCiphers(globalObject, callFrame);
+}
+
+// (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
+JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* names = dynamicDowncast<JSC::JSMap>(callFrame->argument(0));
+    JSValue servernameValue = callFrame->argument(1);
+    if (!names || !servernameValue.isString()) return JSValue::encode(jsUndefined());
+    // The SNI bytes reach JS decoded as Latin-1.
+    Latin1CString servername = servernameValue.toWTFString(globalObject).latin1();
+    RETURN_IF_EXCEPTION(scope, {});
+
+    void* tree = sni_new();
+    JSC::MarkedArgumentBuffer values;
+    auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), names, JSC::IterationKind::Entries);
+    JSValue name, value;
+    while (iterator->nextKeyValue(globalObject, name, value)) {
+        auto* string = name.isString() ? asString(name) : nullptr;
+        if (!string) continue;
+        auto view = string->view(globalObject);
+        // No ClientHello can carry a NUL.
+        if (scope.exception() || view->contains('\0')) continue;
+        values.append(value);
+        sni_add(tree, view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
+    }
+    auto selected = reinterpret_cast<uintptr_t>(sni_find(tree, byteCast<char>(servername.spanIncludingNullTerminator()).data()));
+    sni_free(tree, [](void*) {});
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(selected ? values.at(selected - 1) : jsUndefined());
 }
 
 } // namespace Bun

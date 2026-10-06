@@ -46,6 +46,7 @@ const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates"
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+const selectServerName = $newCppFunction("NodeTLS.cpp", "selectServerName", 2);
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
   if (!_VALID_CIPHERS_SET) {
@@ -600,6 +601,7 @@ const ksecureContext = Symbol("ksecureContext");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
+const kcontexts = Symbol("kcontexts");
 
 const buntls = Symbol.for("::buntls::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
@@ -1070,6 +1072,11 @@ function buildSharedCreds(server, options) {
   );
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1599-L1611
+function SNICallback(servername, callback) {
+  callback(null, selectServerName(this.server[kcontexts], servername));
+}
+
 function Server(options, secureConnectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, secureConnectionListener);
@@ -1131,7 +1138,7 @@ function Server(options, secureConnectionListener): void {
   if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
-  const contexts = new Map<string, InstanceType<typeof InternalSecureContext>>();
+  const contexts = (this[kcontexts] = new Map<string, InstanceType<typeof InternalSecureContext>>());
 
   this.addContext = function (hostname, context) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
@@ -1391,7 +1398,7 @@ function Server(options, secureConnectionListener): void {
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: this._SNICallback,
+      SNICallback: this._SNICallback ?? (contexts.size ? SNICallback : undefined),
       ALPNProtocols: this.ALPNProtocols,
       ALPNCallback: this._ALPNCallback,
     });

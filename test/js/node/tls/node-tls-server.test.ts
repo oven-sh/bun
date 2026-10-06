@@ -3734,3 +3734,83 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
     expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
   });
 });
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L924-L931
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("addContext() on connections the server wraps itself (%s)", version => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent = (n: number) => ({ key: fixture(`agent${n}-key.pem`), cert: fixture(`agent${n}-cert.pem`) });
+
+  // Serves `tlsServer` through server.emit("connection"), which no listener's names apply to.
+  async function inject(tlsServer: Server) {
+    tlsServer.on("secureConnection", socket => socket.on("error", () => {}).end());
+    const front = net.createServer(raw => tlsServer.emit("connection", raw));
+    front.listen(0, "127.0.0.1");
+    await once(front, "listening");
+    const { port } = front.address() as AddressInfo;
+    return {
+      async servedCN(servername: string) {
+        const client = connect({
+          port,
+          host: "127.0.0.1",
+          servername,
+          rejectUnauthorized: false,
+          minVersion: version,
+          maxVersion: version,
+        });
+        try {
+          await once(client, "secureConnect");
+          return (client.getPeerCertificate() as PeerCertificate).subject.CN;
+        } finally {
+          client.destroy();
+        }
+      },
+      [Symbol.dispose]: () => void front.close(),
+    };
+  }
+
+  it("selects the entry that matches the servername", async () => {
+    const tlsServer = createServer(agent(1));
+    tlsServer.addContext("exact.example", agent(2));
+    tlsServer.addContext("*.wild.example", agent(3));
+    tlsServer.addContext("twice.example", agent(3));
+    tlsServer.addContext("twice.example", agent(2));
+    using injected = await inject(tlsServer);
+    expect({
+      exact: await injected.servedCN("exact.example"),
+      wildcard: await injected.servedCN("a.wild.example"),
+      twice: await injected.servedCN("twice.example"),
+      twoLabels: await injected.servedCN("a.b.wild.example"),
+      unknown: await injected.servedCN("other.example"),
+    }).toEqual({ exact: "agent2", wildcard: "agent3", twice: "agent2", twoLabels: "agent1", unknown: "agent1" });
+  });
+
+  it("a user SNICallback replaces the entries", async () => {
+    const tlsServer = createServer({ ...agent(1), SNICallback: (_, cb) => cb(null, null) });
+    tlsServer.addContext("exact.example", agent(2));
+    using injected = await inject(tlsServer);
+    expect(await injected.servedCN("exact.example")).toBe("agent1");
+  });
+
+  // Bun's listener and this path share one matcher. Node >= 26.4.0 folds case too, and takes no root dot.
+  it("matches a name like the server's own listener does", async () => {
+    const tlsServer = createServer(agent(1), socket => socket.on("error", () => {}).end());
+    tlsServer.addContext("Exact.Example", agent(2));
+    tlsServer.addContext("*.example", agent(3));
+    using injected = await inject(tlsServer);
+    tlsServer.listen(0, "127.0.0.1");
+    await once(tlsServer, "listening");
+    try {
+      const { port } = tlsServer.address() as AddressInfo;
+      for (const servername of ["exact.example", "EXACT.EXAMPLE", "exact.example.", "other.example", "a.b.example"]) {
+        const client = connect({ port, host: "127.0.0.1", servername, rejectUnauthorized: false });
+        await once(client, "secureConnect");
+        const accepted = (client.getPeerCertificate() as PeerCertificate).subject.CN;
+        client.destroy();
+        expect([servername, await injected.servedCN(servername)]).toEqual([servername, accepted]);
+      }
+      expect(await injected.servedCN("EXACT.EXAMPLE.")).toBe("agent2");
+    } finally {
+      tlsServer.close();
+    }
+  });
+});

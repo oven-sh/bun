@@ -9,7 +9,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
-import type { TLSSocket } from "node:tls";
+import tls, { type TLSSocket } from "node:tls";
 
 const read = (name: string) => readFileSync(path.join(import.meta.dirname, "..", "test", "fixtures", "keys", name));
 // ca1 signs agent1, ca2 signs agent3. No certificate has a SAN, so clients verify CN under `servername`.
@@ -22,6 +22,26 @@ async function serve(options: https.ServerOptions = { key, cert }) {
   const server = https.createServer(options, (req, res) => {
     res.writeHead(200, { connection: "close" });
     res.end(`authorized=${(req.socket as TLSSocket).authorized}`);
+  });
+  server.on("tlsClientError", () => {});
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  return {
+    port: (server.address() as AddressInfo).port,
+    async [Symbol.asyncDispose]() {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+/** Answers each request with the protocol version and the cipher of its connection. */
+async function serveNegotiated(options?: tls.TlsOptions) {
+  const server = tls.createServer({ key, cert, ...options }, socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      const body = `${socket.getProtocol()} ${socket.getCipher().name}`;
+      socket.end(`HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+    });
   });
   server.on("tlsClientError", () => {});
   await once(server.listen(0, "127.0.0.1"), "listening");
@@ -177,6 +197,28 @@ describe("node-fetch applies the TLS options of the agent", () => {
       assert.strictEqual(await outcome(port, { ...trust, ...accepted }), "authorized=false");
       assert.match(await outcome(port, { ...trust, ...rejected }), refused, JSON.stringify(rejected));
     }
+  });
+
+  test("ciphers that name TLS 1.3 suites", async () => {
+    await using server = await serveNegotiated();
+    await using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
+    const trust = { ca, servername };
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    const refused = /EPROTO|PROTOCOL_VERSION|NO_CIPHERS_AVAILABLE|NO_PROTOCOLS_AVAILABLE/;
+    // BoringSSL has no list of TLS 1.3 suites to restrict, so only Node negotiates the one that is named.
+    assert.match(await outcome(server.port, { ...trust, ciphers: "TLS_AES_256_GCM_SHA384" }), /^TLSv1\.3 /);
+    assert.match(await outcome(tls12.port, { ...trust, ciphers: "TLS_AES_256_GCM_SHA384" }), refused);
+    assert.match(
+      await outcome(server.port, { ...trust, ciphers: "TLS_AES_256_GCM_SHA384", maxVersion: "TLSv1.2" }),
+      refused,
+    );
+    assert.match(await outcome(server.port, { ...trust, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }), /^TLSv1\.3 /);
+    assert.strictEqual(
+      await outcome(tls12.port, { ...trust, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }),
+      `TLSv1.2 ${aes256}`,
+    );
+    assert.match(await outcome(server.port, { ...trust, ciphers: aes256 }), /^TLSv1\.3 /);
+    assert.strictEqual(await outcome(tls12.port, { ...trust, ciphers: aes256 }), `TLSv1.2 ${aes256}`);
   });
 
   test("an agent that is a function of the request URL", async () => {

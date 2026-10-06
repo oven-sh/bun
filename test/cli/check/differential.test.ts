@@ -849,6 +849,13 @@ const basesOfThemselves = {
   getters: "{ readonly [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K] }",
   record: "Partial<Record<`$${keyof T & string}`, 1>>",
   omitted: "Omit<T, 'm'> & { extra: 1 }",
+  // Without `as`, the keys of a mapped type are its constraint type, which is the error type here.
+  identity: "{ [K in keyof T]: T[K] }",
+  partial: "Partial<T>",
+  frozen: "Readonly<T>",
+  required: "Required<T>",
+  boxed: "{ [K in keyof T]: { value: T[K] } }",
+  picked: "Pick<T, 'm'>",
 };
 // The declaration of `D` with the base type `M<D>`, and a type to use it by.
 const extendingThemselves: ((D: string, M: string) => [string, string])[] = [
@@ -870,13 +877,13 @@ const usesOfThemselves = [
   "const v: D = { m() {}, n: 1 } as any as { m(): any; n: number };",
   "const v: Record<string, unknown> = d;",
 ];
+const fromTheirBases = ["const v: D = null! as M;", "const v: 1 = null! as (M extends D ? true : false);"];
 // `M<D>` is asked for before `D`, which is then left without the members of `M<D>`.
 const usesOfTheirBases = [
   ...["$m", "m", "$$m", "$b", "b", "extra", "getM", "anything"].map(name => `const v: 1 = null! as Has<"${name}", M>;`),
   "const v: M = d;",
-  "const v: D = null! as M;",
+  ...fromTheirBases,
   "const v: 1 = null! as (D extends M ? true : false);",
-  "const v: 1 = null! as (M extends D ? true : false);",
   "type First = keyof M; const v: 1 = d.$m;",
   "type First = keyof M; const f: First = null!; const v: 1 = d.$m;",
   "const f: M = null!; f; const v: 1 = d.$m;",
@@ -890,18 +897,16 @@ const declarationsForThemselves = [
 const everyThird = isDebug || isASAN ? 3 : 1;
 // What is asked for first decides in typescript-go, so every use has an interface of its own: its declaration, and the use.
 const extendedAndUsed = [
-  ...product(Object.keys(basesOfThemselves), extendingThemselves, usesOfThemselves),
-  // Where `plus<D>` is first, typescript-go has the error type for the keys of the mapped type in it.
-  ...product(
-    Object.keys(basesOfThemselves).filter(base => base !== "plus"),
-    extendingThemselves,
-    usesOfTheirBases,
-  ),
-].map(([base, extending, use], index) => {
-  const [declaration, type] = extending(`D${index}`, base);
-  const used = use.replace(/\b[DM]\b/g, (name: string) => (name === "D" ? type : `${base}<${type}>`));
-  return [declaration, `{ const d = null! as ${type}; ${used} }`];
-});
+  ...product(Object.keys(basesOfThemselves), extendingThemselves, [...usesOfThemselves, ...usesOfTheirBases]),
+]
+  // typescript-go lists the properties of `plus<D>` twice, one time inside the other, and keeps the second list. Here it
+  // is the first, from when the mapped type in it had no member yet.
+  .filter(([base, , use]) => !(base === "plus" && fromTheirBases.includes(use)))
+  .map(([base, extending, use], index) => {
+    const [declaration, type] = extending(`D${index}`, base);
+    const used = use.replace(/\b[DM]\b/g, (name: string) => (name === "D" ? type : `${base}<${type}>`));
+    return [declaration, `{ const d = null! as ${type}; ${used} }`];
+  });
 
 differential(
   "an interface that extends a type made of its own members, in a declaration file that is not checked",

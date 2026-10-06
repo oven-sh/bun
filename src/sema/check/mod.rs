@@ -144,7 +144,7 @@ macro_rules! buffered_fields {
     ($each:ident) => {
         $each!(
             type_node_types fn_return_types pat_types literal_prop_types symbol_types circular_symbols
-            circular_base_types
+            circular_base_types circular_mapped_constraints
             base_constructor_types symbol_reference_links mapped_types_with_errors declared_types shapes
             distributed_intersections sig_params
             sig_type_params resolved_return_types call_signatures construct_signatures candidate_orders members
@@ -204,6 +204,9 @@ pub struct Program<'s> {
     /// The classes and interfaces whose base types were requested while they were being resolved
     /// (2310).
     circular_base_types: ByNode<Sym, (), Buffered, &'s Session>,
+    /// The mapped types whose key has a circular constraint (2313), by the node and the mapper:
+    /// their `constraintType` is `errorType`.
+    circular_mapped_constraints: ByKey<(FileId, TypeNodeId, MapperId), (), Buffered, &'s Session>,
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
     circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
@@ -417,6 +420,7 @@ impl<'s> Program<'s> {
             circular_initializers: ByNode::new_in(&pats, session),
             circular_symbols: ByNode::new_in(&symbols, session),
             circular_base_types: ByNode::new_in(&symbols, session),
+            circular_mapped_constraints: ByKey::new_in(session),
             circular_returns: ByNode::new_in(&fns, session),
             calls_before_signatures: ByNode::new_in(&exprs, session),
             flows_too_deep: ByNode::new_in(&exprs, session),
@@ -565,6 +569,7 @@ impl<'s> Program<'s> {
             declared_index_infos_in_progress: Vec::new(),
             inheriting: Vec::new(),
             base_types_so_far: Vec::new(),
+            mapped_constraints_in_progress: Vec::new(),
             serialization_level: 0,
             flow_type_cache: Default::default(),
             flow_type_cache_depth: usize::MAX,
@@ -977,6 +982,9 @@ pub struct Checker<'p, 's> {
     inheriting: Vec<TypeId>,
     /// `resolvedBaseTypes` of each class or interface whose base types are being resolved.
     base_types_so_far: Vec<(Sym, Vec<TypeId>)>,
+    /// `pushTypeResolution(key, ResolvedBaseConstraint)`, for the key of each mapped type whose
+    /// constraint type is being resolved.
+    mapped_constraints_in_progress: Vec<(FileId, TypeNodeId, MapperId)>,
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,

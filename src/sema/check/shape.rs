@@ -2416,6 +2416,8 @@ impl<'p, 's> Checker<'p, 's> {
                 self.mapped_constraint(file, node, mapper);
                 if !was_in_cycle && self.is_innermost_in_cycle() {
                     self.report_circular_mapped_key(file, node, extending);
+                    let key = (file, node, mapper);
+                    (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());
                 }
             }
         }

@@ -1642,6 +1642,30 @@ impl<'p, 's> Checker<'p, 's> {
         node: TypeNodeId,
         mapper: MapperId,
     ) -> TypeId {
+        // `getConstraintOfTypeParameter` is nil unless `hasNonCircularBaseConstraint`.
+        let key = (file, node, mapper);
+        if self.mapped_constraints_in_progress.contains(&key) {
+            (self.p.circular_mapped_constraints).insert(&self.task, key, (), Stored::new());
+            return TypeId::ERROR;
+        }
+        self.mapped_constraints_in_progress.push(key);
+        let constraint = self.instantiated_constraint_of_mapped_param(file, node, mapper);
+        self.mapped_constraints_in_progress.pop();
+        // Afterwards: this may be the resolution in which the cycle was closed.
+        match (self.p.circular_mapped_constraints).get(&self.task, &key) {
+            Some(()) => TypeId::ERROR,
+            None => constraint,
+        }
+    }
+
+    /// `instantiateType(getConstraintTypeFromMappedType(t), m)`, where `t` is the mapped type as it
+    /// is declared. The key of the instantiation is not being resolved.
+    fn instantiated_constraint_of_mapped_param(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) -> TypeId {
         let declared = self
             .constraint_of_mapped_param(file, node)
             .unwrap_or(TypeId::ERROR);
@@ -1770,7 +1794,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .mapping(mapper)
                 .iter()
                 .any(|pair| pair.0 != pair.1)
-                && c.mapped_constraint(file, node, mapper) == TypeId::WILDCARD
+                && c.instantiated_constraint_of_mapped_param(file, node, mapper) == TypeId::WILDCARD
             {
                 return TypeId::WILDCARD;
             }

@@ -3544,7 +3544,7 @@ declare module "bun" {
     /**
      * Custom tsconfig.json file path. This build reads it in place of every
      * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
-     * settings, and for `check`.
+     * settings, and for `check`. A directory means the `tsconfig.json` in it.
      * Equivalent to `--tsconfig-override` in the CLI.
      * @example
      * ```ts

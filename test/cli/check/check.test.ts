@@ -15192,15 +15192,21 @@ describe.concurrent("--check", () => {
     });
   });
 
-  test("--tsconfig-override is the tsconfig.json of the check too", async () => {
+  // A directory is the tsconfig.json in it, as for `tsc -p`.
+  test.each([
+    ["tsconfig.build.json", "tsconfig.build.json", "."],
+    ["configs", "configs/tsconfig.json", ".."],
+    ["./configs/", "configs/tsconfig.json", ".."],
+  ])("--tsconfig-override %s is the tsconfig.json of the check too", async (named, file, root) => {
     using dir = project({
-      "tsconfig.build.json": JSON.stringify({
-        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, paths: { "@/*": ["./src/*"] } },
+      [file]: JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, paths: { "@/*": [`${root}/src/*`] } },
+        include: [root],
       }),
       "src/lib.ts": `export const a: number = 1;\n`,
       "src/index.ts": `import { a } from "@/lib";\nconsole.log("ran", a);\n`,
     });
-    const override = ["--tsconfig-override", "tsconfig.build.json"];
+    const override = ["--tsconfig-override", named];
     const [without, alone, ran, built] = await Promise.all([
       run(String(dir), ["--check", "src/index.ts"]),
       run(String(dir), [...override, "--check"]),

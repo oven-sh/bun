@@ -6609,7 +6609,20 @@ impl<'a> Resolver<'a> {
         }
         let path = self.opts.tsconfig_override.as_deref()?;
         if self.opts.tsconfig_override_json.is_none() {
-            let path = path.to_vec();
+            let mut path = [path, b"\0"].concat();
+            let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
+            let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
+            path.pop();
+            // As for `tsc -p`, and for the type check.
+            if is_directory {
+                path = ResolvePath::join_abs_string_buf(
+                    &path,
+                    bufs!(tsconfig_path_abs),
+                    &[b"tsconfig.json".as_slice()],
+                    bun_paths::Platform::AUTO,
+                )
+                .to_vec();
+            }
             let loaded = self.load_tsconfig(&path, FD::INVALID).ok().flatten();
             self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
         }

@@ -5210,6 +5210,38 @@ it("a paused socket with a backpressured write still closes when its peer resets
   expect(error?.code).toBe("ECONNRESET");
 });
 
+it("a tls socket that pauses after shutdown() still reads the peer's reply once resumed", async () => {
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    allowHalfOpen: true,
+    socket: {
+      data() {},
+      end: socket => void socket.end("reply"),
+    },
+  });
+  let received = "";
+  const closed = Promise.withResolvers<Error | undefined>();
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { ca: tls.cert },
+    allowHalfOpen: true,
+    socket: {
+      handshake(socket) {
+        socket.shutdown();
+        socket.pause();
+        setImmediate(() => socket.resume());
+      },
+      data: (_socket, chunk) => void (received += chunk),
+      close: (_socket, error) => closed.resolve(error),
+      connectError: (_socket, error) => closed.reject(error),
+    },
+  });
+  expect({ error: await closed.promise, received }).toEqual({ error: undefined, received: "reply" });
+});
+
 // The graceful close keeps the fd until it has read the peer's close_notify or FIN.
 describe.concurrent("tls socket that is paused when its graceful close starts", () => {
   const ENDINGS = {
@@ -5620,4 +5652,108 @@ it("setSession() after the handshake started is ignored on every Bun socket door
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual(expected);
   expect(exitCode).toBe(0);
+});
+
+// The peer resets the connection while the client's loop is blocked, so the kernel rejects the send() of its write().
+describe.concurrent("write() that is the first to observe the peer's reset returns -1", () => {
+  it.each([["tcp"], ["tls"]])("%s", async kind => {
+    using dir = tempDir("socket-write-sees-reset", {});
+    const resetDoneFile = join(String(dir), "reset-done");
+
+    const opened = Promise.withResolvers<Socket>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: kind === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+      socket: {
+        open(s) {
+          if (kind === "tcp") {
+            s.write("hello");
+            opened.resolve(s);
+          }
+        },
+        handshake(s) {
+          s.write("hello");
+          opened.resolve(s);
+        },
+        data() {},
+        error() {},
+        close() {},
+      },
+    });
+
+    const script = `
+      const fs = require("node:fs");
+      const writes = [];
+      let received = "";
+      let reported = false;
+      function report(closed) {
+        if (reported) return;
+        reported = true;
+        fs.writeSync(1, JSON.stringify({ writes, received, closed }) + "\\n");
+        process.exit(0);
+      }
+      // Report whatever happened if close() never runs.
+      setTimeout(report, 20000, false);
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.env.PEER_PORT),
+        tls: process.env.PEER_KIND === "tls" ? { rejectUnauthorized: false } : undefined,
+        socket: {
+          data(socket, chunk) {
+            received += chunk;
+            if (writes.length) return;
+            // Block the loop until the parent has reset the connection.
+            // Nothing is polled in between, so write() meets the reset first.
+            fs.writeSync(1, "busy\\n");
+            const cell = new Int32Array(new SharedArrayBuffer(4));
+            const deadline = Date.now() + 30000;
+            while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
+              Atomics.wait(cell, 0, 0, 5);
+            }
+            writes.push(socket.write("ping"), socket.write("ping"));
+          },
+          error() {},
+          close() {
+            report(true);
+          },
+        },
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, PEER_PORT: String(server.port), PEER_KIND: kind, RESET_DONE_FILE: resetDoneFile },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrText = proc.stderr.text();
+    let stdout = "";
+    let reset = false;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (!reset && stdout.includes("busy\n")) {
+        reset = true;
+        // terminate() closes the fd with SO_LINGER 0, so the RST is on the wire
+        // when it returns, behind the bytes the client has yet to read.
+        (await opened.promise).write(" and bye");
+        (await opened.promise).terminate();
+        await Bun.write(resetDoneFile, "");
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+    const lines = stdout.trim().split("\n");
+    // Debug builds may write benign diagnostics to stderr, so it is only shown
+    // when the fixture failed.
+    expect({
+      reset,
+      result: JSON.parse(lines[lines.length - 1]),
+      failureDetail: exitCode === 0 ? "" : stderr,
+    }).toEqual({
+      reset: true,
+      result: { writes: [-1, -1], received: "hello and bye", closed: true },
+      failureDetail: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

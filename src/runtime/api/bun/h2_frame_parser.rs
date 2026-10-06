@@ -3341,7 +3341,8 @@ impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
         // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
         // takes `&self`). UFCS to avoid resolving back to this trait impl.
-        TLSSocket::write_maybe_corked(*self, buf)
+        // No fatal latch: its close would drop what the peer sent before; the TLS layer closes after reading it.
+        TLSSocket::write_maybe_corked(*self, buf).max(-1)
     }
 }
 impl NativeSocketWrite for &TCPSocket {

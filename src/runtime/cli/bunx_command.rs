@@ -247,7 +247,16 @@ impl Options {
     /// gate as integer milliseconds.
     fn validate_minimum_release_age(value: &[u8]) -> u64 {
         match bun_core::parse_double(value) {
-            Ok(secs) if secs >= 0.0 => (secs * 1000.0) as u64,
+            Ok(secs) if secs >= 0.0 && secs * 1000.0 < u64::MAX as f64 => (secs * 1000.0) as u64,
+            Ok(secs) if secs >= 0.0 => {
+                // Values this large would saturate the cache key and share an
+                // entry with every other oversized gate.
+                Output::err_generic(
+                    "--minimum-release-age is too large: {}",
+                    (BStr::new(value),),
+                );
+                Global::exit(1);
+            }
             _ => {
                 Output::err_generic(
                     "Expected --minimum-release-age to be a positive number: {}",

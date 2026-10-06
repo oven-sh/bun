@@ -2740,10 +2740,12 @@ export const scanner = {
     // BEFORE any filesystem mutation: the warm cache must survive untouched
     // and the cached binary must not run.
     test.skipIf(isWindows).each([
-      ["abc", "non-numeric"],
-      ["-5", "negative integer"],
-      ["-0.5", "negative float"],
-    ])("--minimum-release-age=%s rejected before filesystem mutation (%s)", async (bad, _label) => {
+      ["abc", "non-numeric", "Expected --minimum-release-age to be a positive number"],
+      ["-5", "negative integer", "Expected --minimum-release-age to be a positive number"],
+      ["-0.5", "negative float", "Expected --minimum-release-age to be a positive number"],
+      ["1e999", "overflow to infinity", "--minimum-release-age is too large"],
+      ["2e16", "beyond the cache-key range", "--minimum-release-age is too large"],
+    ])("--minimum-release-age=%s rejected before filesystem mutation (%s)", async (bad, _label, message) => {
       using dir = tempDir(`bunx-min-age-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
       using cacheDir = tempDir(`bunx-min-age-cache-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
       using tmp = tempDir(`bunx-min-age-tmp-bad-${bad.replace(/[^a-z0-9]/gi, "_")}`, {});
@@ -2780,8 +2782,7 @@ export const scanner = {
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // Same error text `bun add` uses — user sees a single consistent message.
-      expect(stderr).toContain("Expected --minimum-release-age to be a positive number");
+      expect(stderr).toContain(message);
       expect(stderr).toContain(bad);
       expect(exitCode).not.toBe(0);
       // No cached binary ran (catches the negative-value silent-bypass

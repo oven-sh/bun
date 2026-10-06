@@ -2,6 +2,7 @@ const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/ty
 const { validateString, validateBuffer } = require("internal/validators");
 
 const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeReplace = String.prototype.replace;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeIncludes = String.prototype.includes;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -394,7 +395,9 @@ function nodeClientTlsToNative(options) {
   options.dhparam = undefined;
   validateSecureContextOptions(options);
   if (options.ciphers) {
-    const { cipherList, tls13Only } = stripTls13CipherNames(options.ciphers);
+    // BoringSSL has no security levels to set.
+    const leveled = StringPrototypeReplace.$call(options.ciphers, /:?@SECLEVEL=\d/g, "");
+    const { cipherList, tls13Only } = stripTls13CipherNames(leveled);
     options.ciphers = cipherList;
     if (tls13Only) options.minVersion = "TLSv1.3";
   }

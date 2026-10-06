@@ -2,7 +2,7 @@ import axios from "axios";
 import type { Server } from "bun";
 import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import http from "node:http";
@@ -230,6 +230,26 @@ for (const proxy_tls of [false, true]) {
     }
   }
 }
+
+test.concurrent("POST of a Bun.file() large enough for sendfile through a TLS proxy from the environment", async () => {
+  const content = Buffer.alloc(200_000, "abcdefgh");
+  using dir = tempDir("proxy-sendfile-body", { "body.bin": content });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const file = Bun.file("body.bin");
+      const res = await fetch(${JSON.stringify(String(httpServer.url))}, { method: "POST", body: file, tls: { rejectUnauthorized: false } });
+      console.log(res.status, (await res.text()) === (await file.text()));`,
+    ],
+    env: { ...bunEnv, ...proxyFreeEnv, http_proxy: httpsProxyServer.url },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "200 true\n", stderr: "", exitCode: 0 });
+});
 
 for (const server_tls of [false, true]) {
   describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {

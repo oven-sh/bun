@@ -39,12 +39,19 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.has_type_variables(ty) {
             // `isGenericMappedType` resolves the constraint type, whatever it is. `keyof D` there
             // asks for the members of `D` before anything asks for those of the mapped type.
-            if let TypeData::Anon {
-                origin: Origin::Mapped(file, node),
-                mapper,
-            } = *self.data(ty)
-            {
-                self.mapped_constraint(file, node, mapper);
+            // `getGenericObjectFlags` asks every member of an intersection.
+            let parts: &[TypeId] = match self.data(ty) {
+                TypeData::Intersection(parts) => &parts[..],
+                _ => std::slice::from_ref(&ty),
+            };
+            for &part in parts {
+                if let TypeData::Anon {
+                    origin: Origin::Mapped(file, node),
+                    mapper,
+                } = *self.data(part)
+                {
+                    self.mapped_constraint(file, node, mapper);
+                }
             }
             return false;
         }

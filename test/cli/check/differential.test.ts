@@ -858,13 +858,15 @@ const basesOfThemselves = {
   picked: "Pick<T, 'm'>",
 };
 // The declaration of `D` with the base type `M<D>`, and a type to use it by.
-const extendingThemselves: ((D: string, M: string) => [string, string])[] = [
+type Extending = (D: string, M: string) => [string, string];
+const beforeAnotherBase: Extending = (D, M) => [`interface ${D} extends ${M}<${D}>, Other { m(): void; n: number }`, D];
+const extendingThemselves: Extending[] = [
   (D, M) => [`interface ${D} extends ${M}<${D}> { m(): void; n: number }`, D],
   (D, M) => [`interface ${D}<X> extends ${M}<${D}<X>> { m(): X; n: number }`, `${D}<string>`],
   (D, M) => [`interface ${D} { m(): void } interface ${D} extends ${M}<${D}> { n: number }`, D],
   (D, M) => [`interface ${D} extends ${M}<${D}> { n: number } interface ${D} { m(): void }`, D],
   (D, M) => [`interface ${D} extends Other, ${M}<${D}> { m(): void; n: number }`, D],
-  (D, M) => [`interface ${D} extends ${M}<${D}>, Other { m(): void; n: number }`, D],
+  beforeAnotherBase,
   (D, M) => [`interface ${D} extends Other { m(): void; n: number } interface ${D} extends ${M}<${D}> {}`, D],
   (D, M) => [`declare class ${D} { m(): void; n: number } interface ${D} extends ${M}<${D}> {}`, D],
   (D, M) => [`interface ${D} extends ${M}<${D}> { (): void; m(): void; n: number }`, D],
@@ -877,12 +879,13 @@ const usesOfThemselves = [
   "const v: D = { m() {}, n: 1 } as any as { m(): any; n: number };",
   "const v: Record<string, unknown> = d;",
 ];
-const fromTheirBases = ["const v: D = null! as M;", "const v: 1 = null! as (M extends D ? true : false);"];
+const isBaseAssignable = "const v: 1 = null! as (M extends D ? true : false);";
 // `M<D>` is asked for before `D`, which is then left without the members of `M<D>`.
 const usesOfTheirBases = [
   ...["$m", "m", "$$m", "$b", "b", "extra", "getM", "anything"].map(name => `const v: 1 = null! as Has<"${name}", M>;`),
   "const v: M = d;",
-  ...fromTheirBases,
+  "const v: D = null! as M;",
+  isBaseAssignable,
   "const v: 1 = null! as (D extends M ? true : false);",
   "type First = keyof M; const v: 1 = d.$m;",
   "type First = keyof M; const f: First = null!; const v: 1 = d.$m;",
@@ -898,15 +901,11 @@ const everyThird = isDebug || isASAN ? 3 : 1;
 // What is asked for first decides in typescript-go, so every use has an interface of its own: its declaration, and the use.
 const extendedAndUsed = [
   ...product(Object.keys(basesOfThemselves), extendingThemselves, [...usesOfThemselves, ...usesOfTheirBases]),
-]
-  // typescript-go lists the properties of `plus<D>` twice, one time inside the other, and keeps the second list. Here it
-  // is the first, from when the mapped type in it had no member yet.
-  .filter(([base, , use]) => !(base === "plus" && fromTheirBases.includes(use)))
-  .map(([base, extending, use], index) => {
-    const [declaration, type] = extending(`D${index}`, base);
-    const used = use.replace(/\b[DM]\b/g, (name: string) => (name === "D" ? type : `${base}<${type}>`));
-    return [declaration, `{ const d = null! as ${type}; ${used} }`];
-  });
+].map(([base, extending, use], index) => {
+  const [declaration, type] = extending(`D${index}`, base);
+  const used = use.replace(/\b[DM]\b/g, (name: string) => (name === "D" ? type : `${base}<${type}>`));
+  return [declaration, `{ const d = null! as ${type}; ${used} }`];
+});
 
 differential(
   "an interface that extends a type made of its own members, in a declaration file that is not checked",

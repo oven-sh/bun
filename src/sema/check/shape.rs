@@ -703,8 +703,15 @@ impl<'p, 's> Checker<'p, 's> {
             };
             return self.provisional_shape(shape);
         }
+        let in_place = self.members_in_place_hits;
         let mut shape = build(self);
+        // `getReducedType` is listing the properties of this intersection, and sets
+        // `resolvedProperties` when it has them all. What is listed in the meantime, of members
+        // that are in place, lasts until then.
+        let is_listed_again =
+            self.members_in_place_hits != in_place && self.never_in_progress.contains(&key);
         match self.leave(Query::Shape(key)) {
+            Ok(_) if is_listed_again => self.provisional_shape(shape),
             Ok(stored) => {
                 shape.props.shrink_to_fit();
                 shape.call.shrink_to_fit();

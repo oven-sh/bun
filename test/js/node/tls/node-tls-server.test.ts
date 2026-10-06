@@ -3917,6 +3917,24 @@ it("tls.DEFAULT_CIPHERS applies to every context built without a ciphers option"
           },
         }),
       );
+      // The TLS 1.2 suites in the ClientHello of \`tls: true\`.
+      results.tlsTrue = await new Promise(resolve => {
+        const raw = net.createServer(socket => {
+          let hello = Buffer.alloc(0);
+          socket.on("data", chunk => {
+            hello = Buffer.concat([hello, chunk]);
+            if (hello.length < 5 || hello.length < 5 + hello.readUInt16BE(3)) return;
+            const at = 5 + 4 + 2 + 32 + 1 + hello[5 + 4 + 2 + 32];
+            const suites = [];
+            for (let i = at + 2; i < at + 2 + hello.readUInt16BE(at); i += 2) suites.push(hello.readUInt16BE(i));
+            socket.destroy();
+            resolve(suites.filter(suite => suite >> 8 !== 0x13));
+          });
+        });
+        raw.listen(0, "127.0.0.1", () =>
+          Bun.connect({ hostname: "127.0.0.1", port: raw.address().port, tls: true, socket: { data() {}, error() {} } }),
+        );
+      });
     }
     for (const [name, port] of Object.entries(ports)) results[name] = [await probe(port, AES256), await probe(port, AES128)];
 
@@ -3940,6 +3958,7 @@ it("tls.DEFAULT_CIPHERS applies to every context built without a ciphers option"
     serve: ["ALERT_HANDSHAKE_FAILURE", AES128],
     listen: ["ALERT_HANDSHAKE_FAILURE", AES128],
     connect: "EPROTO",
+    tlsTrue: [0xc02f],
     tls13Only: ["ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION", "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION"],
   });
   expect(exitCode).toBe(0);

@@ -454,26 +454,31 @@
  };
  
  /* Track which size fields were present in the headers */
-@@ -251,6 +267,186 @@ static const size_t fflags_limit = 512;
+@@ -251,6 +267,191 @@ static const size_t fflags_limit = 512;
  static const size_t acl_limit = 131072; /* Longest textual ACL: 128kiB */
  static const int64_t entry_limit = 0xfffffffffffffffLL; /* 2^60 bytes = 1 ExbiByte */
  
 +/*
 + * BUN PATCH: header replay for non-blocking sources.
 + *
-+ * A client read callback that is fed incrementally (tarball bytes
-+ * that arrive from the network during `bun install`) answers
-+ * ARCHIVE_RETRY when it has no bytes yet. Such a client sets the
-+ * "nonblocking" option. Without it nothing below runs, and a header
-+ * is read exactly as upstream reads it. The header of one entry is
-+ * a sequence of blocks: pax 'x'/'g' and GNU 'L'/'K' extensions, the
-+ * header itself, GNU sparse extension blocks, a PAX 1.0 sparse map,
-+ * an AppleDouble blob. The source can run dry inside any of them.
++ * Upstream has no way for a client read callback to say "no bytes
++ * yet" (https://github.com/libarchive/libarchive/issues/1268). With
++ * this patch a client that is fed incrementally (tarball bytes that
++ * arrive from the network during `bun install`) answers ARCHIVE_RETRY
++ * for that. Such a client sets the "nonblocking" option. Without the
++ * option nothing below runs, and a header is read exactly as
++ * upstream reads it.
++ *
++ * The header of one entry is a sequence of blocks: pax 'x'/'g' and
++ * GNU 'L'/'K' extensions, the header itself, GNU sparse extension
++ * blocks, a PAX 1.0 sparse map, an AppleDouble blob. The source can
++ * run dry inside any of them.
 + *
 + * While a header is read with the option set, every
 + * __archive_read_ahead() and __archive_read_consume() in this file
-+ * goes through the two functions below. A consume only moves `header_offset`, so the whole
-+ * sequence stays in the filter's buffer. When the source runs dry,
++ * goes through the two functions below. A consume only moves
++ * `header_offset`, so the whole sequence stays in the filter's
++ * buffer. When the source runs dry,
 + * archive_read_format_tar_read_header() forgets what it parsed and
 + * returns ARCHIVE_RETRY, and the next call parses the sequence again
 + * from its first byte. A complete parse consumes the sequence at
@@ -641,7 +646,7 @@
  int
  archive_read_support_format_gnutar(struct archive *a)
  {
-@@ -466,6 +662,10 @@ archive_read_format_tar_options(struct a
+@@ -466,6 +667,10 @@ archive_read_format_tar_options(struct a
  	} else if (strcmp(key, "read_concatenated_archives") == 0) {
  		tar->read_concatenated_archives = (val != NULL && val[0] != 0);
  		return (ARCHIVE_OK);
@@ -652,7 +657,7 @@
  	}
  
  	/* Note: The "warn" return is just to inform the options
-@@ -529,6 +729,38 @@ archive_read_format_tar_read_header(stru
+@@ -529,6 +734,38 @@ archive_read_format_tar_read_header(stru
  	int r;
  	size_t l;
  	int64_t unconsumed = 0;
@@ -691,7 +696,7 @@
  
  	/* Assign default device/inode values. */
  	archive_entry_set_dev(entry, 1 + tar->default_dev); /* Don't use zero. */
-@@ -559,6 +791,29 @@ archive_read_format_tar_read_header(stru
+@@ -559,6 +796,29 @@ archive_read_format_tar_read_header(stru
  	tar_flush_unconsumed(a, &unconsumed);
  
  	/*
@@ -721,7 +726,7 @@
  	 * "non-sparse" files are really just sparse files with
  	 * a single block.
  	 */
-@@ -601,6 +856,10 @@ archive_read_format_tar_read_header(stru
+@@ -601,6 +861,10 @@ archive_read_format_tar_read_header(stru
  	return (r);
  }
  
@@ -732,7 +737,7 @@
  static int
  archive_read_format_tar_read_data(struct archive_read *a,
      const void **buff, size_t *size, int64_t *offset)
-@@ -629,9 +888,20 @@ archive_read_format_tar_read_data(struct
+@@ -629,9 +893,20 @@ archive_read_format_tar_read_data(struct
  			int64_t request = tar->entry_bytes_remaining +
  			    tar->entry_padding;
  
@@ -754,7 +759,7 @@
  			*buff = NULL;
  			*size = 0;
  			*offset = tar->disk_size;
-@@ -640,6 +910,15 @@ archive_read_format_tar_read_data(struct
+@@ -640,6 +915,15 @@ archive_read_format_tar_read_data(struct
  
  		*buff = __archive_read_ahead(a, 1, &bytes_read);
  		if (*buff == NULL) {
@@ -770,7 +775,7 @@
  			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
  			    "Truncated tar archive"
  			    " detected while reading data");
-@@ -669,15 +948,26 @@ archive_read_format_tar_skip(struct arch
+@@ -669,15 +953,26 @@ archive_read_format_tar_skip(struct arch
  {
  	struct tar *tar = a->format->data;
  	int64_t request;
@@ -799,7 +804,7 @@
  	tar->entry_padding = 0;
  
  	/* Free the sparse list. */
-@@ -686,6 +976,15 @@ archive_read_format_tar_skip(struct arch
+@@ -686,6 +981,15 @@ archive_read_format_tar_skip(struct arch
  	return (ARCHIVE_OK);
  }
  
@@ -815,7 +820,7 @@
  /*
   * This function resets the accumulated state while reading
   * a header.
-@@ -778,6 +1077,16 @@ tar_read_header(struct archive_read *a,
+@@ -778,6 +1082,16 @@ tar_read_header(struct archive_read *a,
  
  				if (tar->read_concatenated_archives) {
  					/* We're ignoring NULL blocks, so keep going. */

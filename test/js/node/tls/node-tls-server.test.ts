@@ -759,6 +759,33 @@ it("destroying the socket from inside SNICallback or ALPNCallback does not crash
   expect(true).toBe(true);
 });
 
+describe.each(["TLSv1.3", "TLSv1.2"])("an ALPNCallback over a Duplex can drop its connection (%s)", maxVersion => {
+  it.concurrent.each([
+    ["emit", 'server.emit("connection", duplex)'],
+    ["wrap", "new TLSSocket(duplex, { isServer: true })"],
+    ["staged", "new TLSSocket(duplex, { isServer: true }) after the ClientHello"],
+  ])("%s: %s", async door => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-alpn-callback-over-duplex-fixture.mjs"), door, maxVersion],
+      env: { ...bunEnv, TLS_KEY: cert1.key, TLS_CERT: cert1.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "destroy()": ["client error ECONNRESET"],
+      "destroy() and refuse": ["client error ECONNRESET"],
+      "destroy(err)": ["server error boom", "client error ECONNRESET"],
+      "destroy() the client": [],
+      "destroy() the transport": ["client error ECONNRESET"],
+      "throw": ["server error boom", "client error ECONNRESET"],
+      "select": ["client secureConnect h2"],
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("writing to the socket from inside SNICallback or ALPNCallback delivers the data after the handshake", async () => {
   // Same callbacks as above: they run from inside the native read that is
   // processing the ClientHello. A write issued there has to be held until that

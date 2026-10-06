@@ -392,7 +392,12 @@ impl Lookup {
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::path_buffer_pool::get();
-            let normalized = source_file_path(base_filename, name, &mut buf[..]);
+            // `platform::Auto` is
+            // cfg-selected (Posix on unix, Windows on windows).
+            let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
+            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+                bun_paths::platform::Loose,
+            >(dir, &mut buf, &[name]);
             match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
@@ -401,17 +406,6 @@ impl Lookup {
 
         Some(Utf8Bytes::Owned(bytes))
     }
-}
-
-/// The file of `name`, an entry of `sources` in the source map of `base_filename`.
-pub(crate) fn source_file_path<'a>(
-    base_filename: &'a [u8],
-    name: &[u8],
-    buf: &'a mut [u8],
-) -> &'a bun_core::ZStr {
-    // `platform::Auto` is cfg-selected (Posix on unix, Windows on windows).
-    let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(dir, buf, &[name])
 }
 
 impl Mapping {

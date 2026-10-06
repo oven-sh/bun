@@ -26,7 +26,7 @@ use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
 pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::Mapping;
-pub use parsed_source_map::{NoLineBound, ParsedSourceMap, SourceContentPtr};
+pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
 // SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
 // `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
@@ -926,7 +926,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
     let mut longest_source_text: usize = 0;
-    let mut textless_sources: Vec<u32> = Vec::new();
+    let mut every_source_has_text = !sources_paths.items().is_empty();
 
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
@@ -939,7 +939,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
                 Some(text) if !text.is_empty() => {
                     longest_source_text = longest_source_text.max(text.len());
                 }
-                _ => textless_sources.push(v.len() as u32),
+                _ => every_source_has_text = false,
             }
             v.push(Box::<[u8]>::from(s));
         }
@@ -1001,11 +1001,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        psm.source_text = parsed_source_map::SourceText::new(
-            psm.external_source_names.len(),
-            longest_source_text,
-            textless_sources,
-        );
+        psm.longest_source_text =
+            every_source_has_text.then(|| u32::try_from(longest_source_text).unwrap_or(u32::MAX));
         // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
         // `ref_count` field is layout parity only and FFI ref/deref routes
         // through `Arc::{increment,decrement}_strong_count` (see

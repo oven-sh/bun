@@ -1,4 +1,4 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 use std::borrow::Cow;
@@ -9,8 +9,8 @@ use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
-    LineOffsetTable, LineOffsetTableColumns as _, NoLineBound, Ordinal, ParsedSourceMap,
-    internal_source_map, line_offset_table,
+    LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
+    line_offset_table,
 };
 
 type LinesHits = Vec<u32>;
@@ -647,8 +647,6 @@ pub struct ByteRangeMapping {
     /// Of the text `line_offset_table` was built from.
     source_hash: u64,
     pub source_url: Utf8Bytes<'static>,
-    /// The warning of [`Self::original_line_bound`] is printed once for a file.
-    warned_no_line_bound: Cell<bool>,
 }
 
 // Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
@@ -737,15 +735,7 @@ impl ByteRangeMapping {
 
         let line_count: u32;
 
-        let source_map = if ignore_sourcemap {
-            None
-        } else {
-            parsed_mappings_
-                .as_deref()
-                .and_then(|map| self.original_line_bound(map))
-        };
-
-        if source_map.is_none() {
+        if ignore_sourcemap || parsed_mappings_.is_none() {
             line_count = line_starts.len() as u32;
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
@@ -849,8 +839,8 @@ impl ByteRangeMapping {
                 }
                 functions.push(ByteRange::of(min, max));
             }
-        } else if let Some((parsed_mapping, bound)) = source_map {
-            line_count = bound;
+        } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
+            line_count = parsed_mapping.original_line_bound();
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
             line_hits = vec![0u32; line_count as usize];
@@ -1053,35 +1043,7 @@ impl ByteRangeMapping {
             source_ids: vec![source_id],
             source_hash,
             source_url,
-            warned_no_line_bound: Cell::new(false),
         }
-    }
-
-    /// `None`, with a warning the first time, when no source text bounds the lines of `map`.
-    fn original_line_bound<'m>(
-        &self,
-        map: &'m ParsedSourceMap,
-    ) -> Option<(&'m ParsedSourceMap, u32)> {
-        let file = self.source_url.slice();
-        let why = match map.original_line_bound(file) {
-            Ok(bound) => return Some((map, bound)),
-            Err(why) => why,
-        };
-        if !self.warned_no_line_bound.replace(true) {
-            match why {
-                NoLineBound::NoSources => bun_core::warn!(
-                    "Coverage of {} is not mapped to its sources: the sourcemap names no source",
-                    bun_core::fmt::quote(file),
-                ),
-                NoLineBound::Unreadable(source) => bun_core::warn!(
-                    "Coverage of {} is not mapped to its sources: the sourcemap has no text for {} and the file could not be read ({})",
-                    bun_core::fmt::quote(file),
-                    bun_core::fmt::quote(&source.path),
-                    bstr::BStr::new(source.reason),
-                ),
-            }
-        }
-        None
     }
 }
 

@@ -183,11 +183,7 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    /// `--trust` names this entry's package, or its `trustedDependencies` entry
-    /// was added since the lockfile was last saved. The store directory already
-    /// exists, so the relink pass must continue into the lifecycle-script steps
-    /// or the scripts blocked on the earlier install never run.
-    /// `Step::RunPreinstall` still decides whether it is trusted and has scripts.
+    /// Trusted since the last lockfile save: the scripts the earlier install blocked must run now.
     fn is_newly_trusted(&self, entry_id: StoreEntryId) -> bool {
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
@@ -696,9 +692,7 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
-    /// Set with `relink`, see `Installer::is_newly_trusted`. The relink pass
-    /// continues into the lifecycle-script steps instead of stopping once the
-    /// dependency symlinks are verified.
+    /// A relink task continues into the lifecycle-script steps. See `Installer::is_newly_trusted`.
     pub(crate) newly_trusted: bool,
 }
 

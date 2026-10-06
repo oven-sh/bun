@@ -16,7 +16,7 @@
 //! synchronously re-enters this struct through the `ctx` backref via
 //! `on_open`/`on_data`/`on_handshake`/`on_close`/`write_encrypted`.
 //!
-//! All state mutated after construction lives in `Cell`/`JsCell` fields, and
+//! All state mutated after construction lives in `Cell` fields, and
 //! `wrapper` is a write-once `OnceCell` set in `start()` before it is first
 //! driven, so every access — from a driving entry or from a re-entered
 //! callback — is a short shared borrow; no `&mut Self` is ever formed.
@@ -25,9 +25,8 @@
 
 use core::cell::{Cell, OnceCell};
 
-use bun_io::StreamBuffer;
-use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
+use bun_ptr::{BackRef, RefPtr, Root, ThisPtr};
+use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SOCKET_WRITE_STEP, SslWrapper, Taken};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
 use crate::websocket_client::ErrorCode;
@@ -150,8 +149,6 @@ pub struct WebSocketProxyTunnel {
     wrapper: OnceCell<SslWrapperType>,
     /// The proxy connection, until the upgrade client that owns it lets go.
     socket: Cell<SocketUnion>,
-    /// Write buffer for encrypted data (maintains TLS record ordering)
-    write_buffer: JsCell<StreamBuffer>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
 }
@@ -181,7 +178,6 @@ impl WebSocketProxyTunnel {
             connected_websocket: Cell::new(None),
             wrapper: OnceCell::new(),
             socket: Cell::new(socket),
-            write_buffer: JsCell::new(StreamBuffer::default()),
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
             ))),
@@ -218,6 +214,7 @@ impl WebSocketProxyTunnel {
                 on_handshake: Self::on_handshake,
                 on_close: Self::on_close,
                 write: Self::write_encrypted,
+                write_step: SOCKET_WRITE_STEP,
                 // No JS TLSSocket fronts the tunnel; opting out keeps the
                 // SSL off the parked session/keylog queues entirely.
                 on_session: None,
@@ -265,7 +262,7 @@ impl WebSocketProxyTunnel {
         }
 
         // `start*()` synchronously fires `on_open(ctx)` / `write_encrypted(ctx)`
-        // / etc.; those callbacks mutate only `Cell`/`JsCell` fields.
+        // / etc.; those callbacks mutate only `Cell` fields.
         if !initial_data.is_empty() {
             wrapper.start_with_payload(initial_data);
         } else {
@@ -382,7 +379,7 @@ impl WebSocketProxyTunnel {
         if let Some(ws) = connected_websocket {
             let ws = ws.this_ptr();
             let _guard = RefPtr::from_this(ws);
-            ws.fail(ErrorCode::Ended);
+            ws.handle_tunnel_close();
             return;
         }
 
@@ -413,74 +410,29 @@ impl WebSocketProxyTunnel {
         self.socket.set(SocketUnion::None);
     }
 
-    /// SSLWrapper callback: Called with encrypted data to send to network
-    fn write_encrypted(this: ThisPtr<Self>, encrypted_data: &[u8]) {
+    /// SSLWrapper callback: Called with encrypted data to send to network.
+    /// The wrapper keeps what the socket does not take until `on_writable`.
+    fn write_encrypted(this: ThisPtr<Self>, encrypted_data: &[u8]) -> Taken {
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
             "writeEncrypted: {} bytes",
             encrypted_data.len()
         );
-
-        // If data is already buffered, queue this to maintain TLS record ordering
-        if this.write_buffer.get().is_not_empty() {
-            bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
-            return;
-        }
-
-        // Try direct write to socket
-        let written = this.socket.get().write(encrypted_data);
-        if written < 0 {
-            // Write failed - buffer data for retry when socket becomes writable
-            bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
-            return;
-        }
-
-        // Buffer remaining data
-        let written_usize = usize::try_from(written).expect("int cast");
-        if written_usize < encrypted_data.len() {
-            bun_core::handle_oom(
-                this.write_buffer
-                    .with_mut(|b| b.write(&encrypted_data[written_usize..])),
-            );
-        }
+        // A failed write takes nothing.
+        Taken::Bytes(usize::try_from(this.socket.get().write(encrypted_data)).unwrap_or(0))
     }
 
     /// Called when the socket becomes writable - flush buffered encrypted data
     ///
-    /// Takes `ThisPtr<Self>` because `flush()` fires `write_encrypted(ctx)` and
-    /// `handle_tunnel_writable()` re-enters `tunnel.write()`, either of which
-    /// can reach a close path that drops a ref on the tunnel.
+    /// Takes `ThisPtr<Self>` because `sink_writable()` fires `write_encrypted(ctx)`
+    /// and `handle_tunnel_writable()` re-enters `tunnel.write()`, either of
+    /// which can reach a close path that drops a ref on the tunnel.
     pub(crate) fn on_writable(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
 
-        // Flush the SSL state machine; no borrow of `*this` other than
-        // `wrapper` spans the synchronous `write_encrypted` re-entry.
-        if let Some(w) = this.wrapper.get() {
-            let _ = w.flush();
-        }
-
-        // Send buffered encrypted data (`write_encrypted` above may have
-        // appended to it). A raw uws socket write does not re-enter the tunnel.
-        let still_backpressured = this.write_buffer.with_mut(|buf| {
-            let to_send = buf.slice();
-            if to_send.is_empty() {
-                return false;
-            }
-            let to_send_len = to_send.len();
-            let written = this.socket.get().write(to_send);
-            if written < 0 {
-                return true;
-            }
-            let written = usize::try_from(written).expect("int cast");
-            if written == to_send_len {
-                buf.reset();
-                false
-            } else {
-                buf.wrote(written);
-                true
-            }
-        });
-        if still_backpressured {
+        // Gives the socket the ciphertext it did not take; no borrow of `*this`
+        // other than `wrapper` spans the synchronous `write_encrypted` re-entry.
+        if this.wrapper.get().is_some_and(|w| w.sink_writable() > 0) {
             return;
         }
 
@@ -534,11 +486,12 @@ impl WebSocketProxyTunnel {
 
     /// Check if the tunnel has backpressure
     pub(crate) fn has_backpressure(&self) -> bool {
-        self.write_buffer.get().is_not_empty()
+        self.buffered_amount() > 0
     }
 
+    /// Ciphertext the socket has not taken.
     pub(crate) fn buffered_amount(&self) -> usize {
-        self.write_buffer.get().size()
+        self.wrapper.get().map_or(0, |w| w.unsent_len())
     }
 
     pub(crate) fn pause_stream(&self) -> bool {
@@ -585,4 +538,11 @@ pub fn set_connected_web_socket(
     tunnel.connected_websocket.set(ws.map(BackRef::from));
     // Clear the upgrade client reference since we're now in connected phase
     tunnel.upgrade_client.set(None);
+    // The open handler ran before this. If it sent and then spun the event
+    // loop, the socket's writable event found no client to wake.
+    if let Some(ws) = ws
+        && !tunnel.has_backpressure()
+    {
+        WebSocketClient::handle_tunnel_writable(ws);
+    }
 }

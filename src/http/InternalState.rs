@@ -98,6 +98,9 @@ pub struct InternalStateFlags {
     pub(crate) body_compressed: bool,
     /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
     pub(crate) decompress_output_pending: bool,
+    /// The stream body of an upgraded request is sealed, but a proxy tunnel
+    /// still holds ciphertext of it: `HTTPClient::on_socket_writable` sends the FIN.
+    pub(crate) upgraded_shutdown_pending: bool,
 }
 
 impl InternalStateFlags {
@@ -114,6 +117,7 @@ impl InternalStateFlags {
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            upgraded_shutdown_pending: false,
         }
     }
 }

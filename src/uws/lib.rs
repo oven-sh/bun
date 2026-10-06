@@ -215,13 +215,48 @@ pub mod ssl_wrapper {
     /// `SSL3_RT_HEADER_LENGTH + SSL3_RT_SEND_MAX_ENCRYPTED_OVERHEAD`
     const MAX_RECORD_OVERHEAD: usize = 5 + 88;
 
+    /// The most ciphertext that `plaintext_len` bytes seal to.
+    const fn sealed_len(plaintext_len: usize) -> usize {
+        plaintext_len + (plaintext_len / MAX_RECORD_PLAINTEXT + 1) * MAX_RECORD_OVERHEAD
+    }
+
+    /// [`Handlers::write_step`] of a transport that can be full, like a socket.
+    /// `us_internal_ssl_writev` flushes its batch at 8 records; 7 is the most
+    /// whose ciphertext the outgoing queue keeps its buffer for.
+    pub const SOCKET_WRITE_STEP: usize = 7 * MAX_RECORD_PLAINTEXT;
+    const _: () = assert!(sealed_len(SOCKET_WRITE_STEP) <= QUEUE_RETAIN_LIMIT);
+
+    /// [`Handlers::write_step`] of a transport that gets each write whole, as node gives it to a stream.
+    pub const WHOLE_WRITE_STEP: usize = usize::MAX;
+
     /// What the one BIO of the `SSL` reads and writes. No borrow spans an `SSL_*` call or a handler.
     #[derive(Default)]
     struct Ciphertext {
-        /// Sealed, not yet given to `Handlers::write`.
+        /// Sealed, not yet taken by the transport: `Handlers::write` gets what lies past `head`.
         outgoing: RefCell<Vec<u8>>,
+        /// How much of the front of `outgoing` the transport took.
+        head: Cell<usize>,
         /// From the peer, not yet read by BoringSSL.
         incoming: RefCell<VecDeque<u8>>,
+    }
+
+    impl Ciphertext {
+        /// Sealed bytes the transport has not taken.
+        fn unsent_len(&self) -> usize {
+            self.outgoing.borrow().len() - self.head.get()
+        }
+    }
+
+    /// Whether the transport of a wrapper takes ciphertext.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Sink {
+        Ready,
+        /// It left part of what it was given. Nothing is offered to it, and no
+        /// write is sealed, until [`SSLWrapper::sink_writable`].
+        Refused,
+        /// It took everything and wants no more yet. What the engine emits by
+        /// itself still goes out; no write is sealed until [`SSLWrapper::sink_writable`].
+        Busy,
     }
 
     extern "C" fn bio_write(bio: *mut boring_sys::BIO, data: *const c_char, len: c_int) -> c_int {
@@ -357,8 +392,12 @@ pub mod ssl_wrapper {
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
+        sink: Cell<Sink>,
         ciphertext: Ciphertext,
     }
+
+    /// The tail a full transport leaves and a wider `Handlers` stay inside mimalloc's 320-byte bin.
+    const _: () = assert!(size_of::<Inner<*mut c_void>>() <= 320);
 
     /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -498,7 +537,11 @@ pub mod ssl_wrapper {
         pub ctx: T,
         pub on_open: fn(T),
         pub on_handshake: fn(T, bool, us_bun_verify_error_t),
-        pub write: fn(T, &[u8]),
+        /// Gives ciphertext to the transport, which says what it took.
+        pub write: fn(T, &[u8]) -> Taken,
+        /// The most plaintext `write_data` seals before it gives the ciphertext
+        /// to `write`: [`SOCKET_WRITE_STEP`] or [`WHOLE_WRITE_STEP`].
+        pub write_step: usize,
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
         /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
@@ -510,6 +553,20 @@ pub mod ssl_wrapper {
         pub on_keylog: Option<fn(T, &[u8])>,
         /// The name check of the verify step. `None`: the owner checks after the handshake.
         pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
+    }
+
+    /// What a transport did with the ciphertext `Handlers::write` gave it.
+    #[must_use]
+    #[derive(Clone, Copy)]
+    pub enum Taken {
+        /// It took this many bytes from the front. Fewer than all of them means
+        /// it is full: the wrapper keeps the rest, gives it nothing more and
+        /// seals no write until the owner calls [`SSLWrapper::sink_writable`].
+        Bytes(usize),
+        /// It took every byte and queues what it cannot send yet. With
+        /// `more: false` the wrapper seals no write until the owner calls
+        /// [`SSLWrapper::sink_writable`].
+        All { more: bool },
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -607,6 +664,7 @@ pub mod ssl_wrapper {
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
+                sink: Cell::new(Sink::Ready),
                 ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
@@ -830,7 +888,20 @@ pub mod ssl_wrapper {
         /// flush buffered data and returns amount of pending data to write
         pub fn flush(&self) -> usize {
             self.handle_traffic();
-            self.ciphertext.outgoing.borrow().len()
+            self.unsent_len()
+        }
+
+        /// Sealed bytes the transport has not taken.
+        pub fn unsent_len(&self) -> usize {
+            self.ciphertext.unsent_len()
+        }
+
+        /// The transport can take ciphertext again: the owner calls this from the
+        /// transport's own writable event, then writes what `write_data` left.
+        /// Gives the transport what it refused. Returns how much it still has not taken.
+        pub fn sink_writable(&self) -> usize {
+            self.sink.set(Sink::Ready);
+            self.flush()
         }
 
         /// Ciphertext is queued in either direction, or the SSL holds the rest of a partially-returned record.
@@ -840,9 +911,7 @@ pub mod ssl_wrapper {
             };
             // SAFETY: ssl is a live SSL*.
             let decrypted = unsafe { boring_sys::SSL_pending(ssl.as_ptr()) };
-            decrypted > 0
-                || !self.ciphertext.outgoing.borrow().is_empty()
-                || self.has_pending_read()
+            decrypted > 0 || self.unsent_len() > 0 || self.has_pending_read()
         }
 
         /// Ciphertext from the peer is queued. This dont reflect SSL_pending().
@@ -875,11 +944,13 @@ pub mod ssl_wrapper {
             self.handle_traffic();
         }
 
-        /// Send data to the network (unencrypted data)
+        /// Send data to the network (unencrypted data). Returns how much of `data`
+        /// is sealed: less than all of it, `Ok(0)` too, once the transport is
+        /// full. The owner writes the rest after [`Self::sink_writable`].
         pub fn write_data(&self, data: &[u8]) -> Result<usize, WriteDataError> {
-            let Some(ssl) = self.ssl.get() else {
+            if self.ssl.get().is_none() {
                 return Err(WriteDataError::ConnectionClosed);
-            };
+            }
 
             // shutdown is sent we cannot write anymore
             if self.flags.sent_ssl_shutdown() {
@@ -901,46 +972,76 @@ pub mod ssl_wrapper {
                 self.handle_traffic();
                 return Err(WriteDataError::WantRead);
             }
+            if self.sink.get() != Sink::Ready {
+                return Ok(0);
+            }
             let data = &data[..data.len().min(c_int::MAX as usize)];
-            // One growth for all the records of this write.
-            let records = data.len() / MAX_RECORD_PLAINTEXT + 1;
-            self.ciphertext
-                .outgoing
-                .borrow_mut()
-                .try_reserve(data.len() + records * MAX_RECORD_OVERHEAD)
-                .unwrap_or_oom();
-            // SAFETY: ssl is a live SSL*; data is a valid &[u8] for len bytes.
-            let written = unsafe {
-                boring_sys::SSL_write(
-                    ssl.as_ptr(),
-                    data.as_ptr().cast::<c_void>(),
-                    data.len() as c_int,
-                )
-            };
-            if written <= 0 {
-                // SAFETY: ssl is still valid.
-                let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), written) };
-                boring_sys::ERR_clear_error();
+            let step = self.handlers.get().write_step;
+            let mut written = 0;
+            // A step is sealed behind what is already queued, a final handshake
+            // flight for one, and both leave in one `write`.
+            loop {
+                let Some(ssl) = self.ssl.get() else {
+                    return Err(WriteDataError::ConnectionClosed);
+                };
+                let plaintext = &data[written..];
+                let plaintext = &plaintext[..plaintext.len().min(step)];
+                // One growth for all the records of this step.
+                self.ciphertext
+                    .outgoing
+                    .borrow_mut()
+                    .try_reserve(sealed_len(plaintext.len()))
+                    .unwrap_or_oom();
+                // SAFETY: ssl is a live SSL*; plaintext is a valid &[u8] of at most c_int::MAX bytes.
+                let sealed = unsafe {
+                    boring_sys::SSL_write(
+                        ssl.as_ptr(),
+                        plaintext.as_ptr().cast::<c_void>(),
+                        plaintext.len() as c_int,
+                    )
+                };
+                if sealed <= 0 {
+                    // SAFETY: ssl is still valid.
+                    let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), sealed) };
+                    boring_sys::ERR_clear_error();
 
-                if err == boring_sys::SSL_ERROR_WANT_READ {
-                    // we wanna read/write
-                    self.handle_traffic();
-                    return Err(WriteDataError::WantRead);
+                    if err == boring_sys::SSL_ERROR_WANT_READ
+                        || err == boring_sys::SSL_ERROR_WANT_WRITE
+                    {
+                        // we wanna read/write
+                        self.handle_traffic();
+                        // The steps before this one are sealed: the owner keeps only the rest.
+                        if written > 0 {
+                            return Ok(written);
+                        }
+                        return Err(if err == boring_sys::SSL_ERROR_WANT_READ {
+                            WriteDataError::WantRead
+                        } else {
+                            WriteDataError::WantWrite
+                        });
+                    }
+                    // some bad error happened here we must close
+                    self.flags.set_fatal_error(
+                        err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL,
+                    );
+                    self.trigger_close_callback();
+                    return Err(WriteDataError::ConnectionClosed);
                 }
-                if err == boring_sys::SSL_ERROR_WANT_WRITE {
-                    // we wanna read/write
-                    self.handle_traffic();
-                    return Err(WriteDataError::WantWrite);
+                written += usize::try_from(sealed).expect("int cast");
+                if written == data.len() {
+                    break;
                 }
-                // some bad error happened here we must close
-                self.flags.set_fatal_error(
-                    err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL,
-                );
-                self.trigger_close_callback();
-                return Err(WriteDataError::ConnectionClosed);
+                self.handle_writing();
+                // That `write` may have closed the wrapper, and its owner with it.
+                if self.flags.closed_notified() {
+                    return Err(WriteDataError::ConnectionClosed);
+                }
+                if self.sink.get() != Sink::Ready {
+                    break;
+                }
             }
             self.handle_traffic();
-            Ok(usize::try_from(written).expect("int cast"))
+            Ok(written)
         }
 
         pub fn deinit(&self) {
@@ -988,13 +1089,14 @@ pub mod ssl_wrapper {
             (handlers.on_handshake)(handlers.ctx, success, result);
         }
 
-        fn trigger_wanna_write_callback(&self, data: &[u8]) {
+        /// A closed wrapper drops `data`.
+        fn trigger_wanna_write_callback(&self, data: &[u8]) -> Taken {
             if self.flags.closed_notified() {
-                return;
+                return Taken::All { more: true };
             }
             // trigger the write callback
             let handlers = self.handlers.get();
-            (handlers.write)(handlers.ctx, data);
+            (handlers.write)(handlers.ctx, data)
         }
 
         fn trigger_data_callback(&self, data: &[u8]) {
@@ -1087,6 +1189,7 @@ pub mod ssl_wrapper {
                 boring_sys::ERR_clear_error();
                 // Not only skipped below: a re-entered `handle_traffic` flushes the queue and never gets here.
                 self.ciphertext.outgoing.borrow_mut().clear();
+                self.ciphertext.head.set(0);
                 // The peer never gets our Finished, so it cannot read a close_notify.
                 self.flags.set_fatal_error(true);
                 self.flags
@@ -1311,12 +1414,36 @@ pub mod ssl_wrapper {
 
         /// This frame owns what it hands out: a write made from inside `write` queues behind it.
         fn handle_writing(&self) {
-            if self.ssl.get().is_none() {
+            if self.ssl.get().is_none() || self.sink.get() == Sink::Refused {
                 return;
             }
             let mut pending = self.ciphertext.outgoing.take();
-            if !pending.is_empty() {
-                self.trigger_wanna_write_callback(&pending);
+            let head = self.ciphertext.head.take();
+            let unsent = pending.len() - head;
+            if unsent > 0 {
+                let taken = match self.trigger_wanna_write_callback(&pending[head..]) {
+                    Taken::Bytes(taken) if taken < unsent => {
+                        // The transport is full. What it left stays ahead of what was queued since.
+                        let mut outgoing = self.ciphertext.outgoing.borrow_mut();
+                        let queued_since = &outgoing[self.ciphertext.head.get()..];
+                        pending.try_reserve(queued_since.len()).unwrap_or_oom();
+                        pending.extend_from_slice(queued_since);
+                        *outgoing = pending;
+                        self.ciphertext.head.set(head + taken);
+                        self.sink.set(Sink::Refused);
+                        return;
+                    }
+                    taken => taken,
+                };
+                // A `write` made from inside this one may have been refused: its tail is queued.
+                if self.sink.get() != Sink::Refused {
+                    self.sink
+                        .set(if matches!(taken, Taken::All { more: false }) {
+                            Sink::Busy
+                        } else {
+                            Sink::Ready
+                        });
+                }
                 pending.clear();
             }
             let mut outgoing = self.ciphertext.outgoing.borrow_mut();

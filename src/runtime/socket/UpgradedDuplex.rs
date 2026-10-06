@@ -20,7 +20,7 @@ use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, h
 use bun_sys::SystemErrno;
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
-use super::ssl_wrapper::SSLWrapper;
+use super::ssl_wrapper::{SSLWrapper, Taken};
 use crate::generated_classes::js_TLSSocket;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -377,9 +377,15 @@ impl UpgradedDuplex {
         Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
-    fn internal_write(this: *mut Self, encoded_data: &[u8]) {
+    fn internal_write(this: *mut Self, encoded_data: &[u8]) -> Taken {
         // SAFETY: see handler note above.
-        unsafe { &*this }.write_encrypted(encoded_data);
+        let this = unsafe { &*this };
+        this.write_encrypted(encoded_data);
+        // The stream has all of it. Until it has completed what it was handed,
+        // the next write is not sealed: node's TLSWrap keeps one in flight too.
+        Taken::All {
+            more: this.transport_idle(),
+        }
     }
 
     fn write_encrypted(&self, encoded_data: &[u8]) {
@@ -546,6 +552,7 @@ impl UpgradedDuplex {
             on_data: Self::on_data,
             on_close: Self::on_close,
             write: Self::internal_write,
+            write_step: super::ssl_wrapper::WHOLE_WRITE_STEP,
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),
             server_identity: Some(Self::server_identity),
@@ -596,6 +603,10 @@ impl UpgradedDuplex {
 
     #[uws_callback(export = "UpgradedDuplex__raw_write")]
     pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
+        // As `internal_write`: one write in flight, the caller retries from `on_writable`.
+        if !self.transport_idle() {
+            return 0;
+        }
         self.write_encrypted(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
@@ -841,6 +852,9 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 err.message = bun_core::String::create_format(format_args!("write {}", err.code));
                 (this.handlers.on_error)(this.handlers.ctx, err.to_error_instance(global));
             } else if this.in_flight.get() == 0 {
+                if let Some(w) = this.wrapper_ref() {
+                    let _ = w.sink_writable();
+                }
                 (this.handlers.on_writable)(this.handlers.ctx);
             }
             return Ok(JSValue::UNDEFINED);

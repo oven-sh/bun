@@ -1523,7 +1523,7 @@ impl<const SSL: bool> Handler<SSL> {
     pub fn on_writable(ptr: *mut c_void, socket: HTTPSocket<SSL>) {
         let tagged = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = tagged.client_mut() {
-            return client.on_writable::<false, SSL>(socket);
+            return client.on_socket_writable::<SSL>(socket);
         } else if let Some(session) = tagged.session() {
             return h2::ClientSession::on_writable(session);
         } else if tagged.is::<PooledSocket<SSL>>() {

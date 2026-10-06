@@ -1561,6 +1561,9 @@ impl<'a> HTTPClient<'a> {
     /// case where the peer (which may have stopped reading the body) would
     /// never observe the connection closing.
     pub(crate) fn has_unsent_request_body(&self) -> bool {
+        if self.tunnel_unsent_len() > 0 {
+            return true;
+        }
         if self.state.request_stage == RequestStage::Done {
             return false;
         }
@@ -1583,8 +1586,15 @@ impl<'a> HTTPClient<'a> {
         // field of `self`); the RawSlice invariant centralises the unsafe.
         self.state.request_body.slice()
     }
+    /// Ciphertext of the request that the socket to the proxy has not taken.
+    #[inline]
+    fn tunnel_unsent_len(&self) -> usize {
+        self.proxy_tunnel
+            .as_deref()
+            .map_or(0, ProxyTunnel::unsent_len)
+    }
     /// The tunnel handle's pointer, for the entry points that may release the
-    /// handle while they run (`ProxyTunnel::on_writable` / `receive`).
+    /// handle while they run (`ProxyTunnel::on_writable` / `receive` / `write`).
     #[inline]
     pub(crate) fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
         self.proxy_tunnel.as_ref().map(|p| p.as_non_null())
@@ -3159,11 +3169,10 @@ impl<'a> HTTPClient<'a> {
     ) -> crate::Result<bool> {
         // Through a proxy tunnel the stream body goes via the inner TLS,
         // not the outer socket.
-        if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
+        if let Some(proxy) = self.proxy_tunnel_ptr() {
             if socket.is_closed() || socket.is_shutdown() {
                 return Err(crate::Error::ConnectionClosed);
             }
-            let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
             // Any Err is backpressure: WantRead/WantWrite retry on the next
             // on_writable, and a fatal SSL error already ran on_close (and
             // may have freed *self), so bail via Ok(true) without touching
@@ -3278,7 +3287,7 @@ impl<'a> HTTPClient<'a> {
             if upgrade_state == HTTPUpgradeState::Upgraded {
                 // for upgraded connections we need to shutdown the socket to signal the end of the connection
                 // otherwise the client will wait forever for the connection to be closed
-                socket.shutdown();
+                self.shutdown_upgraded_request::<IS_SSL>(socket);
             }
             return;
         }
@@ -3310,7 +3319,7 @@ impl<'a> HTTPClient<'a> {
                 if upgrade_state == HTTPUpgradeState::Upgraded {
                     // for upgraded connections we need to shutdown the socket to signal the end of the connection
                     // otherwise the client will wait forever for the connection to be closed
-                    socket.shutdown();
+                    self.shutdown_upgraded_request::<IS_SSL>(socket);
                 }
             } else {
                 // only report drain if we send everything and previous we had something to send
@@ -3333,6 +3342,47 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// The socket's own writable event. A proxy tunnel first gives the socket
+    /// the ciphertext it refused, then the request goes on.
+    pub(crate) fn on_socket_writable<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if let Some(proxy) = self.proxy_tunnel_ptr() {
+            let had_unsent = self.tunnel_unsent_len() > 0;
+            ProxyTunnel::on_writable(proxy);
+            // ProxyTunnel::on_writable → SSLWrapper::sink_writable →
+            // handle_traffic may process a TLS alert or close_notify that was
+            // buffered alongside the handshake flight, firing on_close →
+            // close_and_fail, which terminates the outer socket and frees
+            // the AsyncHTTP that embeds `*self` via the result callback
+            // (same hazard as documented in `start_proxy_handshake`). The
+            // socket handle outlives the client; use it as the liveness
+            // guard before touching `self` again.
+            if socket.is_closed() {
+                return;
+            }
+            // The socket took bytes of the request, which is a write: it
+            // re-arms the idle timer also once the whole body is sealed.
+            if had_unsent {
+                self.set_timeout(&socket);
+            }
+            if self.state.flags.upgraded_shutdown_pending && self.tunnel_unsent_len() == 0 {
+                self.state.flags.upgraded_shutdown_pending = false;
+                socket.shutdown();
+            }
+        }
+        self.on_writable::<false, IS_SSL>(socket);
+    }
+
+    /// Ends the request side of an upgraded connection once its stream body is
+    /// sealed. A FIN now would cut off what a proxy tunnel still holds for the
+    /// socket, so that waits for [`Self::on_socket_writable`].
+    fn shutdown_upgraded_request<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        if self.tunnel_unsent_len() > 0 {
+            self.state.flags.upgraded_shutdown_pending = true;
+        } else {
+            socket.shutdown();
+        }
+    }
+
     pub(crate) fn on_writable<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -3349,24 +3399,9 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if let Some(proxy) = self.proxy_tunnel_ptr() {
-            ProxyTunnel::on_writable::<IS_SSL>(proxy, socket);
-            // ProxyTunnel::on_writable → SSLWrapper::flush → handle_traffic
-            // may process a TLS alert or close_notify that was buffered
-            // alongside the handshake flight, firing on_close →
-            // close_and_fail, which terminates the outer socket and frees
-            // the AsyncHTTP that embeds `*self` via the result callback
-            // (same hazard as documented in `start_proxy_handshake`). The
-            // socket handle outlives the client; use it as the liveness
-            // guard before touching `self` again.
-            if socket.is_closed() {
-                return;
-            }
-        }
-
         // Parked until the JS `checkServerIdentity` callback approves the peer
-        // certificate: write no HTTP data. Kept below the tunnel flush so the
-        // handshake's final flight still reaches the wire while parked.
+        // certificate: write no HTTP data. The tunnel's own ciphertext, the
+        // handshake's final flight for one, does not go through here.
         if self.state.flags.is_waiting_for_cert_check {
             return;
         }
@@ -3489,15 +3524,10 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyBody => {
                 bun_core::scoped_log!(fetch, "send proxy body");
-                if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
+                if let Some(proxy) = self.proxy_tunnel_ptr() {
+                    self.set_timeout(&socket);
                     match &self.state.original_request_body {
                         HTTPRequestBody::Bytes(_) => {
-                            self.set_timeout(&socket);
-
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
                             let Ok(sent) = ProxyTunnel::write(proxy, to_send) else {
@@ -3526,11 +3556,7 @@ impl<'a> HTTPClient<'a> {
             }
             RequestStage::ProxyHeaders => {
                 bun_core::scoped_log!(fetch, "send proxy headers");
-                if let Some(proxy_ptr) = self.proxy_tunnel.as_ref().map(|p| p.as_ptr()) {
-                    // Detached upgrade so `&mut self` can be reborrowed below;
-                    // the tunnel is a disjoint heap allocation (see
-                    // `proxy_tunnel::raw_as_mut` INVARIANT).
-                    let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
+                if let Some(proxy) = self.proxy_tunnel_ptr() {
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
@@ -4277,10 +4303,9 @@ impl<'a> HTTPClient<'a> {
             self.unregister_abort_tracker();
             // is_done is response-driven. A server can reply early (HTTP 413)
             // with keep-alive while request_stage is still .proxy_body or the
-            // tunnel still has buffered encrypted writes. Pooling that tunnel
-            // would leave the connection mid-request on the inner TLS stream;
-            // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
-            // boundary. Only pool a tunnel whose request side is fully drained.
+            // tunnel still holds ciphertext the socket did not take. Pooling
+            // that tunnel would leave the connection mid-request on the inner
+            // TLS stream. Only pool a tunnel whose request side is fully drained.
             //
             // Also check wrapper liveness: a close-delimited body (no
             // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)
@@ -4288,13 +4313,10 @@ impl<'a> HTTPClient<'a> {
             // socket is still alive. Pooling that dead wrapper would hang the
             // next request (proxy.write() → error.ConnectionClosed, swallowed).
             let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
-                t.write_buffer.is_empty()
-                    && t.wrapper
-                        .as_ref()
-                        .map(|w| {
-                            !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data()
-                        })
-                        .unwrap_or(false)
+                t.wrapper
+                    .as_ref()
+                    .map(|w| !w.is_shutdown() && !w.flags.fatal_error() && !w.has_pending_data())
+                    .unwrap_or(false)
             } else {
                 true
             };

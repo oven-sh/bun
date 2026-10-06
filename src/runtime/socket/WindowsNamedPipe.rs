@@ -370,9 +370,10 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_close()
     }
-    fn ssl_write(this: *mut Self, d: &[u8]) {
+    fn ssl_write(this: *mut Self, d: &[u8]) -> ssl_wrapper::Taken {
         // SAFETY: see block note above.
-        unsafe { &*this }.internal_write(d)
+        unsafe { &*this }.internal_write(d);
+        ssl_wrapper::Taken::All { more: true }
     }
 
     fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
@@ -383,6 +384,7 @@ impl WindowsNamedPipe {
             on_data: Self::ssl_on_data,
             on_close: Self::ssl_on_close,
             write: Self::ssl_write,
+            write_step: ssl_wrapper::WHOLE_WRITE_STEP,
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
             server_identity: Some(Self::ssl_server_identity),

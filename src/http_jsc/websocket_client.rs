@@ -883,38 +883,29 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
-        // For tunnel mode, write through the tunnel instead of direct socket
-        if let Some(tunnel) = self.tunnel() {
-            let wrote = match WebSocketProxyTunnel::write(tunnel, bytes) {
-                Ok(w) => w,
-                Err(_) => {
+        // fast path: no backpressure, no queue, just send the bytes.
+        if !self.has_backpressure() {
+            let wrote = if let Some(tunnel) = self.tunnel() {
+                // For tunnel mode, write through the tunnel instead of direct socket
+                match WebSocketProxyTunnel::write(tunnel, bytes) {
+                    Ok(wrote) => wrote,
+                    Err(_) => {
+                        self.terminate(ErrorCode::FailedToWrite);
+                        return false;
+                    }
+                }
+            } else {
+                // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+                let Ok(wrote) = usize::try_from(self.tcp.get().write(bytes)) else {
                     self.terminate(ErrorCode::FailedToWrite);
                     return false;
-                }
+                };
+                wrote
             };
-            // Buffer any data the tunnel couldn't accept
+            // Buffer any data the transport couldn't accept
             if wrote < bytes.len() {
                 let _ = self.copy_to_send_buffer(&bytes[wrote..], false);
             }
-            return true;
-        }
-
-        // fast path: no backpressure, no queue, just send the bytes.
-        if !self.has_backpressure() {
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            let wrote = self.tcp.get().write(bytes);
-            let expected = c_int::try_from(bytes.len()).expect("int cast");
-            if wrote == expected {
-                return true;
-            }
-
-            if wrote < 0 {
-                self.terminate(ErrorCode::FailedToWrite);
-                return false;
-            }
-
-            let _ = self
-                .copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
             return true;
         }
 
@@ -1155,15 +1146,16 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if self.enqueue_encoded_bytes(&frame[..frame_len]) {
             let dispatch_code = dispatch_code.unwrap_or(code);
-            if self.send_buffer.borrow().readable_length() == 0 {
+            if !self.has_backpressure() {
                 self.shutdown_after_close_frame();
                 self.clear_data();
                 self.dispatch_close(dispatch_code, reason);
             } else {
                 // The close frame was only partially written; the remainder is
-                // in send_buffer. clear_data() would discard it (and the
-                // proxy_tunnel needed to flush it), so defer teardown until
-                // handle_writable drains the buffer or the socket dies.
+                // in send_buffer, or sealed in the proxy tunnel. clear_data()
+                // would discard it (and the proxy_tunnel needed to flush it),
+                // so defer teardown until handle_writable drains the buffer
+                // or the socket dies.
                 self.close_dispatch_pending
                     .replace(Some((dispatch_code, reason)));
             }
@@ -1203,7 +1195,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.send_buffer.borrow().readable_length() != 0 {
             let _ = self.send_buffer_out();
         }
-        if self.send_buffer.borrow().readable_length() == 0 {
+        if !self.has_backpressure() {
             self.finish_pending_close();
         }
     }
@@ -1564,6 +1556,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
         Self::handle_data(this, data);
+    }
+
+    /// Called by the WebSocketProxyTunnel when the TLS session inside it ended,
+    /// or the connection to the proxy is gone. The caller holds a ref guard.
+    pub(crate) fn handle_tunnel_close(&self) {
+        match self.close_dispatch_pending.take() {
+            // Our Close frame was mid-flush: JS still sees the code it closed
+            // with, as `handle_close` reports it for a socket.
+            Some((code, reason)) => {
+                self.drop_connection();
+                self.dispatch_close(code, reason);
+            }
+            None => self.fail(ErrorCode::Ended),
+        }
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.

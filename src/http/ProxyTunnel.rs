@@ -11,7 +11,9 @@ use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
+use crate::ssl_wrapper::{
+    Handlers as SSLWrapperHandlers, InitError, SOCKET_WRITE_STEP, SSLWrapper, Taken, WriteDataError,
+};
 use crate::{AlpnOffer, HTTPClient};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
@@ -44,7 +46,6 @@ pub struct ProxyTunnel {
     pub(crate) shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
     pub(crate) socket: Socket,
-    pub(crate) write_buffer: bun_io::StreamBuffer,
     /// Property of the inner TLS session, not the owning client. Captured from
     /// the client in detachOwner() and restored to the next client in adopt()
     /// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
@@ -66,7 +67,6 @@ impl Default for ProxyTunnel {
             wrapper: None,
             shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
-            write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
             ref_count: Cell::new(1),
@@ -76,8 +76,7 @@ impl Default for ProxyTunnel {
 
 impl Drop for ProxyTunnel {
     fn drop(&mut self) {
-        // `wrapper` / `write_buffer` are handled by their own Drop impls;
-        // just clear the socket tag.
+        // `wrapper` is handled by its own Drop impl; just clear the socket tag.
         self.socket = Socket::None;
     }
 }
@@ -104,13 +103,6 @@ impl ProxyTunnel {
     fn set_socket(this: NonNull<Self>, s: Socket) {
         // SAFETY: see [`Self::socket_of`].
         unsafe { *addr_of_mut!((*this.as_ptr()).socket) = s };
-    }
-
-    /// Mutable access to `write_buffer` (disjoint from `wrapper`).
-    #[inline]
-    fn write_buffer_of<'a>(this: NonNull<Self>) -> &'a mut bun_io::StreamBuffer {
-        // SAFETY: see [`Self::socket_of`].
-        unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }
 
     /// Shared access to `shutdown_err` (a `Cell<Error>`; disjoint from
@@ -446,7 +438,9 @@ fn on_handshake(
     }
 }
 
-pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
+/// Gives the outer socket ciphertext of the inner connection. The wrapper keeps
+/// what the socket does not take until [`ProxyTunnel::on_writable`].
+pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) -> Taken {
     // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic;
     // the call chains that reach here (e.g. on_handshake → on_writable → flush,
     // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
@@ -456,33 +450,19 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // tunnel pointer. The pointee is alive: this client holds a
     // strong ref to the tunnel for the duration of tunneling.
     let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel_ptr() else {
-        return;
+        return Taken::Bytes(0);
     };
-    // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
-    // disjoint field accessors only — never form `&mut ProxyTunnel`, because
-    // the caller (flush/handle_traffic) holds `&SSLWrapper` which IS
-    // `(*proxy).wrapper`; a whole-struct `&mut` would overlap it.
-    let write_buffer = ProxyTunnel::write_buffer_of(proxy_nn);
-    // Preserve TLS record ordering: if any encrypted bytes are buffered,
-    // enqueue new bytes and flush them in FIFO via onWritable.
-    if write_buffer.is_not_empty() {
-        if write_buffer.write(encoded_data).is_err() {
-            bun_core::out_of_memory();
-        }
-        return;
-    }
+    // Live intrusive-refcounted tunnel. Access `socket` via its disjoint field
+    // accessor only — never form `&mut ProxyTunnel`, because the caller
+    // (flush/handle_traffic) holds `&SSLWrapper` which IS `(*proxy).wrapper`;
+    // a whole-struct `&mut` would overlap it.
     let written = match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => socket.write(encoded_data),
         &Socket::Tcp(socket) => socket.write(encoded_data),
         Socket::None => 0,
     };
-    let pending = &encoded_data[usize::try_from(written).expect("int cast")..];
-    if !pending.is_empty() {
-        // lets flush when we are truly writable
-        if write_buffer.write(pending).is_err() {
-            bun_core::out_of_memory();
-        }
-    }
+    // A failed write takes nothing.
+    Taken::Bytes(usize::try_from(written).unwrap_or(0))
 }
 
 fn on_close(ctx: *mut HTTPClient) {
@@ -614,6 +594,7 @@ impl ProxyTunnel {
                 on_handshake,
                 on_close,
                 write: write_encrypted,
+                write_step: SOCKET_WRITE_STEP,
                 // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
                 // opting out keeps its SSL off the parked queues entirely.
                 on_session: None,
@@ -697,35 +678,23 @@ impl ProxyTunnel {
     /// handle (see [`Self::ref_guard`]): the flush below can complete or fail
     /// the request, which releases that handle, leaving the guard's ref as the
     /// last one. A `&mut self` receiver would then be freed while still live.
-    pub(crate) fn on_writable<const IS_SSL: bool>(this: NonNull<Self>, socket: HTTPSocket<IS_SSL>) {
+    pub(crate) fn on_writable(this: NonNull<Self>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
         let _guard = Self::ref_guard(this);
-        // flush() must run AFTER the body but BEFORE the guard's deref; that
-        // order is written out explicitly at the single exit below.
-        // flush() → handle_traffic → write_encrypted reenters and touches
-        // `write_buffer`/`socket` via raw projection; we must not hold a
-        // `&mut ProxyTunnel` (or any borrow overlapping those fields) across it.
-        {
-            let write_buffer = ProxyTunnel::write_buffer_of(this);
-            let encoded_data = write_buffer.slice();
-            if !encoded_data.is_empty() {
-                let written = socket.write(encoded_data);
-                let written = usize::try_from(written).expect("int cast");
-                if written == encoded_data.len() {
-                    write_buffer.reset();
-                } else {
-                    write_buffer.cursor += written;
-                }
-            }
-        } // drop &mut write_buffer before flush() reborrows it inside write_encrypted
-        // Refcount > 0 until _guard drops. The reentrant write_encrypted
-        // touches only `write_buffer`/`socket` via accessors, disjoint from
-        // the `&wrapper` returned by `wrapper_ref`.
+        // sink_writable() → handle_traffic → write_encrypted reenters and
+        // touches `socket` via raw projection, disjoint from the `&wrapper`
+        // returned by `wrapper_ref`. Refcount > 0 until _guard drops.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
-            // Cycle to through the SSL state machine
-            let _ = wrapper.flush();
+            // Gives the socket the ciphertext it did not take.
+            let _ = wrapper.sink_writable();
         }
         // _guard derefs here.
+    }
+
+    /// Ciphertext the outer socket has not taken.
+    #[inline]
+    pub(crate) fn unsent_len(&self) -> usize {
+        self.wrapper.as_ref().map_or(0, |w| w.unsent_len())
     }
 
     /// Encrypted bytes arrived on the outer socket. Same contract as
@@ -744,8 +713,16 @@ impl ProxyTunnel {
         // _guard derefs here.
     }
 
-    pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
-        if let Some(wrapper) = &self.wrapper {
+    /// Seals `buf` and gives it to the outer socket. Returns how much of `buf`
+    /// is sealed: less than all of it, `Ok(0)` too, once the socket is full.
+    /// The rest is written after the socket's next writable event.
+    ///
+    /// Same contract as [`Self::on_writable`]: write_data() fires
+    /// write_encrypted/on_close synchronously, which reach tunnel fields
+    /// through the accessors above, so no `&mut ProxyTunnel` is formed here.
+    pub(crate) fn write(this: NonNull<Self>, buf: &[u8]) -> Result<usize, Error> {
+        let _guard = Self::ref_guard(this);
+        if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
             return wrapper.write_data(buf).map_err(|e| match e {
                 WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
                 WriteDataError::WantRead => crate::Error::WantRead,
@@ -809,11 +786,8 @@ impl ProxyTunnel {
         // writes; nothing re-enters the tunnel until the client's next socket
         // event, after this borrow has ended.
         let this = raw_as_mut(tunnel.as_ptr());
-        // Discard any stale encrypted bytes from the previous request. A clean
-        // request boundary should leave this empty, but an early server response
-        // (e.g. HTTP 413) with Connection: keep-alive before the full body was
-        // consumed could leave unsent bytes that would corrupt the next request.
-        this.write_buffer.reset();
+        // Only a tunnel whose request side is fully drained is pooled.
+        debug_assert_eq!(this.unsent_len(), 0);
         if let Some(wrapper) = &this.wrapper {
             let mut handlers = wrapper.handlers.get();
             handlers.ctx = client.as_erased_ptr().as_ptr();

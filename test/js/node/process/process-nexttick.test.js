@@ -1187,6 +1187,17 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
   });
 
+  // node:fs reads process.nextTick when it loads, and the first read makes the queue.
+  it(".cjs, after a preload that only requires node:fs", async () => {
+    const result = await run({ "entry.cjs": order(), "preload.cjs": `require("node:fs");` }, [
+      bunExe(),
+      "--preload",
+      "./preload.cjs",
+      "entry.cjs",
+    ]);
+    expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
   // Bun reports what the entry point throws after its ticks and microtasks (Node reports it first).
   it(".cjs that throws, after a preload that uses process.nextTick", async () => {
     const result = await run(
@@ -1331,19 +1342,22 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/34115
-  it("Writable.toWeb() close() rejects when the stream ends first, after a preload that loads node:stream", async () => {
-    const result = await run(
-      {
-        ...preload,
-        "entry.cjs": `
-          const { Writable } = require("node:stream");
-          const writable = new Writable({ write(chunk, encoding, callback) { callback(); } });
-          Writable.toWeb(writable).close().then(() => console.log("resolved"), error => console.log("rejected", error.code));
-          writable.end();
-        `,
-      },
-      [bunExe(), "--preload", "./preload.cjs", "entry.cjs"],
-    );
-    expect(result).toEqual({ stdout: "rejected ABORT_ERR\n", stderr: "", exitCode: 0 });
-  });
+  it.each(["node:stream", "node:fs"])(
+    "Writable.toWeb() close() rejects when the stream ends first, after a preload that loads %s",
+    async specifier => {
+      const result = await run(
+        {
+          "preload.cjs": `require(${JSON.stringify(specifier)});`,
+          "entry.cjs": `
+            const { Writable } = require("node:stream");
+            const writable = new Writable({ write(chunk, encoding, callback) { callback(); } });
+            Writable.toWeb(writable).close().then(() => console.log("resolved"), error => console.log("rejected", error.code));
+            writable.end();
+          `,
+        },
+        [bunExe(), "--preload", "./preload.cjs", "entry.cjs"],
+      );
+      expect(result).toEqual({ stdout: "rejected ABORT_ERR\n", stderr: "", exitCode: 0 });
+    },
+  );
 });

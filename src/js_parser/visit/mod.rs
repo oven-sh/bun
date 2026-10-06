@@ -659,9 +659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The value that a macro call's arguments get for a `const`, if its initializer is a
-    /// literal or a macro result that is not an object or an array. A joined string is
-    /// stored as one piece.
+    /// What a macro argument gets for a `const`: a primitive, or a string as one piece.
     fn macro_argument_value(&mut self, value: Expr) -> Option<Expr> {
         match value.data {
             ExprData::ENumber(_)
@@ -678,9 +676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A macro that returns a string gives a UTF-16 string, which a template or a `+` does
-    /// not join. While the arguments of a macro call are visited, an ASCII one is joined
-    /// through an 8-bit copy.
+    /// A macro's string result is UTF-16, which no fold joins. An ASCII one gets an 8-bit copy.
     pub(crate) fn macro_string_for_join(&mut self, expr: Expr) -> Expr {
         if let ExprData::EString(string) = expr.data {
             if string.is_utf16 && strings::first_non_ascii16(string.slice16()).is_none() {
@@ -693,8 +689,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr
     }
 
-    /// In a file that imports a macro. `inlinable`: the inliner may put the value at every
-    /// use, which is today's rule for `const_values`.
+    /// `inlinable`: the value also goes to the inliner's table, by the rule of `const_values`.
     fn put_const_value_for_macros(
         &mut self,
         r#ref: Ref,
@@ -734,15 +729,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         could_be_macro: bool,
     ) {
         let Some(value) = value else { return };
-        // Only a `const` in the leading declaration run of its scope is safe to inline
-        // everywhere. A macro result is inlined for any kind of binding.
+        // The inliner takes a `const` of the leading declaration run, and any macro result.
         let inlinable = (could_be_macro || !self.vis_scope().is_after_const_local_prefix)
             && value.can_be_const_value();
         self.put_const_value_for_macros(r#ref, value, inlinable, was_const);
     }
 
-    /// A binding that a destructuring takes from a macro result. Bun inlines it only when
-    /// inlining is on.
+    /// A destructured binding of a macro result. The inliner takes it only under inlining.
     fn record_macro_result(&mut self, r#ref: Ref, value: Expr, is_const: bool, has_default: bool) {
         // The binding takes its default, not this value.
         if has_default && matches!(value.data, ExprData::EUndefined(_)) {
@@ -857,8 +850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             could_be_macro,
                         );
                     } else if !self.vis_scope().is_after_const_local_prefix {
-                        // Only a `const` in the leading declaration run of its scope is safe
-                        // to inline everywhere.
+                        // Past the leading declaration run, a use can run before the initializer.
                         if let Some(val) = decl.value {
                             if val.can_be_const_value() {
                                 self.const_values.put(id_ref, val).expect("oom");

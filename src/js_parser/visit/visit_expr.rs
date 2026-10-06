@@ -1874,20 +1874,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    /// The arguments of a macro call must be values when the call is visited. While they
-    /// are visited, `macro_.consts` stands in for `const_values` and the inliner reads it
-    /// in every mode. `macro_.consts` also holds a `const` that stands below a statement,
-    /// which the inliner must not put into ordinary code.
-    ///
-    /// Returns false, with nothing visited, for a macro call in the arguments of another,
-    /// which the outer swap covers, and where a `with` object or a direct `eval` can shadow
-    /// the `const`.
+    /// Visits `args` with `macro_.consts` as the inliner's table. False: nothing was visited.
     #[cold]
     #[inline(never)]
     fn visit_macro_arguments(p: &mut Self, args: &mut [Expr]) -> bool {
+        // A macro call in the arguments of another is inside the outer swap.
         if p.macro_.in_args {
             return false;
         }
+        // A `with` object or a direct `eval` can shadow the `const`.
         let mut scope = Some(p.current_scope);
         while let Some(s) = scope {
             if s.kind == js_ast::scope::Kind::With || s.contains_direct_eval {

@@ -1579,12 +1579,11 @@ pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
 pub struct MacroState<'a> {
     pub(crate) refs: MacroRefs<'a>,
-    /// What the arguments of a macro call may name. `visit_macro_arguments` swaps this
-    /// table with `P::const_values` while it visits them.
+    /// The const table of macro arguments. `visit_macro_arguments` swaps it with `const_values`.
     pub(crate) consts: bun_ast::ast_result::ConstValuesMap,
-    /// The two tables are swapped and `features.inlining` is forced on.
+    /// Inside that swap, where `features.inlining` is forced on.
     pub(crate) in_args: bool,
-    /// `features.inlining` as it was before the swap.
+    /// `features.inlining` before the swap.
     pub(crate) inlining_outside_args: bool,
 }
 

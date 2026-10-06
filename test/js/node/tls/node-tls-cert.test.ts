@@ -683,7 +683,7 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
   );
 
   for (const { stderr, exitCode } of results) {
-    expect(stderr).toContain("ignoring extra certs");
+    expect(stderr).toContain("Warning: Ignoring extra certs from");
     expect(exitCode).toBe(1);
   }
 });

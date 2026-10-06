@@ -22,7 +22,7 @@ pub(crate) struct Lower<'p, 'a> {
     /// The parser's side notes about AST nodes.
     noted: Notes,
     /// `TypeSyntax::class_index_signatures`
-    class_index_signatures: Vec<Member>,
+    class_index_signatures: Vec<(Member, ts::Span<ts::Modifier>)>,
     /// Scratch stacks for the lists being lowered, innermost list last: ids, variables, parameters,
     /// properties.
     list_ids: Vec<u32>,
@@ -184,6 +184,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                     let default = self.expr(&default);
                     self.b.file.params[param.idx()].default = default;
                 }
+                PendingPart::ParamDecorators(param, modifiers) => {
+                    let decorators = self.decorators_among(modifiers);
+                    let keywords = self.b.file.param_modifiers(param);
+                    let list = self.b.modifiers_with_decorators(keywords, &decorators);
+                    self.b.file.set_param_modifiers(param, list);
+                    for &(decorator, _) in &decorators {
+                        let owner = DecoratorOwner::Param(param);
+                        self.b.file.decorators.push((owner, decorator));
+                    }
+                }
                 PendingPart::PatternPropertyDefault(property, default) => {
                     let default = self.expr(&default);
                     self.b.file.pat_props[property.idx()].default = default;
@@ -193,12 +203,30 @@ impl<'p, 'a> Lower<'p, 'a> {
                     self.b.file.pat_elems[element.idx()].default = default;
                 }
                 PendingPart::ImportAttributes(attributes) => self.import_attributes(attributes),
-                PendingPart::HeritageExpression(node, expression) => {
-                    let expression = self.expr(&expression);
+                PendingPart::HeritageExpression(node, written) => {
+                    let mut expression = self.expr(&written);
+                    // `parseExpressionWithTypeArguments`: type arguments that the expression
+                    // consumed belong to the element.
+                    if self.last_cast(&written) == Some(Mark::Instantiation)
+                        && let ExprKind::Instantiation { expr, .. } = self.b.file[expression].kind
+                    {
+                        expression = expr;
+                    }
                     self.b.file[node].kind = TypeNodeKind::Heritage(expression);
                 }
             }
         }
+    }
+
+    /// The decorators among `modifiers`, each with the position of its `@`.
+    fn decorators_among(&mut self, modifiers: ts::Span<ts::Modifier>) -> Vec<(ExprId, u32)> {
+        let written: Vec<Expr> = (self.b.ts[modifiers].iter())
+            .filter_map(|modifier| modifier.decorator)
+            .collect();
+        written
+            .iter()
+            .map(|decorator| (self.expr(decorator), self.at_sign(decorator)))
+            .collect()
     }
 
     // ───────────────────────────── parser notes ─────────────────────────────
@@ -352,9 +380,8 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// `checkJSSyntax`: the modifiers that are in the source and not in `ModifierFlagsJavaScript`.
-    /// `checkJSDecoratorSyntax`, if `decorators`: the first decorator of a node for which
-    /// `CanHaveIllegalDecorators` is true.
-    fn check_js_modifiers(&mut self, list: Span<ModifierId>, mut decorators: bool) {
+    /// `check_js_decorator_syntax`, if `decorators`.
+    fn check_js_modifiers(&mut self, list: Span<ModifierId>, decorators: bool) {
         const JAVASCRIPT: Flags = Flags::EXPORT
             .union(Flags::STATIC)
             .union(Flags::ACCESSOR)
@@ -363,17 +390,29 @@ impl<'p, 'a> Lower<'p, 'a> {
             .union(Flags::REPARSED);
         for index in 0..list.len() {
             let Modifier { kind, pos } = self.b.file.modifier_list(list)[index];
-            match kind {
-                ModifierKind::Keyword(flag) if !JAVASCRIPT.intersects(flag) => {
-                    let text = hir::modifier_text(flag).as_bytes();
-                    self.b.js_error_at_range((pos, 0), 8009, text);
-                }
-                ModifierKind::Decorator(e) if std::mem::take(&mut decorators) => {
-                    let end = hir::end_of_expr(&self.b.file, e);
-                    self.b.js_error_at_range((pos, end), 1206, b"");
-                }
-                _ => {}
+            if let ModifierKind::Keyword(flag) = kind
+                && !JAVASCRIPT.intersects(flag)
+            {
+                let text = hir::modifier_text(flag).as_bytes();
+                self.b.js_error_at_range((pos, 0), 8009, text);
             }
+        }
+        if decorators {
+            self.check_js_decorator_syntax(list);
+        }
+    }
+
+    /// `checkJSDecoratorSyntax`: the first decorator in `list`, the modifiers of a node for which
+    /// `CanHaveIllegalDecorators` is true.
+    fn check_js_decorator_syntax(&mut self, list: Span<ModifierId>) {
+        let mut modifiers = self.b.file.modifier_list(list).iter();
+        let first = modifiers.find_map(|modifier| match modifier.kind {
+            ModifierKind::Decorator(e) => Some((modifier.pos, e)),
+            ModifierKind::Keyword(_) => None,
+        });
+        if let Some((pos, e)) = first {
+            let end = hir::end_of_expr(&self.b.file, e);
+            self.b.js_error_at_range((pos, end), 1206, b"");
         }
     }
 
@@ -1236,7 +1275,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         match &key.data {
             Data::EString(s) => PropKey::Name(self.string(s)),
             Data::ENumber(n) => PropKey::Name(self.b.number_name(n.value())),
-            Data::EPrivateIdentifier(id) => PropKey::Private(self.name(id.ref_)),
+            Data::EPrivateIdentifier(id) if !is_computed => PropKey::Private(self.name(id.ref_)),
             _ if is_computed => {
                 let expr = self.expr(key);
                 self.b.computed_key(expr)
@@ -1593,7 +1632,12 @@ impl<'p, 'a> Lower<'p, 'a> {
             }
         }
         for member in self.notes(keyword, Mark::IndexSignature) {
-            let mut member = self.class_index_signatures[member as usize];
+            let (mut member, written) = self.class_index_signatures[member as usize];
+            let decorators = self.decorators_among(written);
+            member.modifiers = self
+                .b
+                .modifiers_with_decorators(member.modifiers, &decorators);
+            of_members.extend(decorators.into_iter().map(|(e, _)| (member.name_pos, e)));
             if self.is_ambient {
                 member.flags |= Flags::AMBIENT;
                 self.b.file[member.func].flags |= Flags::AMBIENT;
@@ -1653,8 +1697,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             self.b
                 .js_error_at_range((member.start, member.loc.end), 8017, b"");
         }
-        if member.kind != MemberKind::IndexSignature {
-            self.check_js_modifiers(member.modifiers, member.kind == MemberKind::Constructor);
+        match member.kind {
+            MemberKind::IndexSignature => self.check_js_decorator_syntax(member.modifiers),
+            kind => self.check_js_modifiers(member.modifiers, kind == MemberKind::Constructor),
         }
     }
 
@@ -1902,6 +1947,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .collect();
             created.reverse();
             let mut paren_full_start = None;
+            let mut is_parenthesized_type = false;
             for (what, kept) in created {
                 let kind = match what {
                     Mark::End => {
@@ -1944,6 +1990,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                         pos = kept;
                         continue;
                     }
+                    Mark::ParenthesizedType => {
+                        is_parenthesized_type = true;
+                        continue;
+                    }
                     Mark::As | Mark::AsTypeParameter => {
                         let ty = if what == Mark::As {
                             self.ts_type_at(kept, 8016)
@@ -1953,9 +2003,12 @@ impl<'p, 'a> Lower<'p, 'a> {
                                 None => self.b.error_type(pos),
                             }
                         };
+                        let is_type_reference = !std::mem::take(&mut is_parenthesized_type);
+                        // `IsConstTypeReference`
                         match self.b.file[ty].kind {
                             TypeNodeKind::Ref { name, args }
-                                if args.is_empty()
+                                if is_type_reference
+                                    && args.is_empty()
                                     && name.len() == 1
                                     && self.b.file[name.at(0)].text
                                         == bun_sema::atom::known::r#const =>
@@ -2072,7 +2125,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             Data::EImportIdentifier(e) => ExprKind::Ident(self.identifier(e.ref_, pos)),
             Data::ECommonjsExportIdentifier(e) => ExprKind::Ident(self.identifier(e.ref_, pos)),
             Data::ENameOfSymbol(e) => ExprKind::Ident(self.identifier(e.ref_, pos)),
-            Data::EPrivateIdentifier(e) => ExprKind::String(self.name(e.ref_)),
+            Data::EPrivateIdentifier(e) => ExprKind::PrivateIdentifier(self.name(e.ref_)),
             Data::EThis(_) => {
                 end = pos + b"this".len() as u32;
                 ExprKind::This
@@ -2222,7 +2275,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 pos = pos.min(self.source_start);
                 let chain = Self::chain(e.optional_chain);
                 match &e.index.data {
-                    Data::EPrivateIdentifier(id) => {
+                    // `a.#b` ends with its name, `a[#b]` with its `]`.
+                    Data::EPrivateIdentifier(id) if self.noted_end(e.index.loc) == Some(end) => {
                         self.refuse_access_to_instantiation(&e.target, obj);
                         ExprKind::Dot {
                             obj,
@@ -2312,7 +2366,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                     .collect();
                 let args = self.exprs(std::iter::once(&e.expr).chain(options).chain(&kept));
                 let specifier = self.b.file.id_at(args, 0);
-                if matches!(self.b.file[specifier].kind, ExprKind::String(_)) {
+                // `IsStringLiteralLike`: `("m")` is a `ParenthesizedExpression`.
+                if !self.has_casts(&e.expr) {
                     self.call_specifier(specifier, SpecifierKind::ImportCall);
                 }
                 if let Some(close) = self.note(expr.loc, Mark::DeferredImportClose) {
@@ -2413,16 +2468,11 @@ impl<'p, 'a> Lower<'p, 'a> {
             let pos = self.pos_of(node.loc).min(start);
             let kind = match binary_op(e.op) {
                 Ok(op) => ExprKind::Binary { op, left, right },
-                Err(op) => {
-                    if op.is_none() {
-                        self.report_trailing_comma_after_rest(&e.left);
-                    }
-                    ExprKind::Assign {
-                        op,
-                        target: left,
-                        value: right,
-                    }
-                }
+                Err(op) => ExprKind::Assign {
+                    op,
+                    target: left,
+                    value: right,
+                },
             };
             // A node composed of two expressions ends with the second.
             let end = self.noted_end(node.loc).unwrap_or(0).max(self.source_end);
@@ -2431,54 +2481,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         left
     }
 
-    /// `checkGrammarForDisallowedTrailingComma`, for the target of a destructuring assignment: 1013
-    /// at the comma after a last `...x`.
-    /// A nested `[..] = default` is a separate assignment, which `binary` passes here.
-    fn report_trailing_comma_after_rest(&mut self, target: &Expr) {
-        if !self.stack_check.is_safe_to_recurse() {
-            return;
-        }
-        match &target.data {
-            Data::EArray(array) => {
-                let items = array.items.as_slice();
-                if let Some(Expr { data: Data::ESpread(rest), loc }) = items.last()
-                    // `...x = d` has an error of its own (1186).
-                    && !matches!(&rest.value.data, Data::EBinary(b) if matches!(b.op, OpCode::BinAssign))
-                    && array.comma_after_spread.start > self.noted.real_loc(*loc).start
-                {
-                    let comma = self.pos_of(array.comma_after_spread);
-                    self.b.file.error(DiagnosticKind::Grammar, comma, 0, 1013);
-                }
-                for item in items {
-                    self.report_trailing_comma_after_rest(item);
-                }
-            }
-            Data::EObject(object) => {
-                let properties = object.properties.as_slice();
-                if let Some(last) = properties.last()
-                    && last.kind == G::PropertyKind::Spread
-                    && let Some(value) = &last.value
-                    && object.comma_after_spread.start > self.noted.real_loc(value.loc).start
-                {
-                    let comma = self.pos_of(object.comma_after_spread);
-                    self.b.file.error(DiagnosticKind::Grammar, comma, 0, 1013);
-                }
-                for property in properties {
-                    if let Some(value) = &property.value {
-                        self.report_trailing_comma_after_rest(value);
-                    }
-                }
-            }
-            Data::ESpread(rest) => self.report_trailing_comma_after_rest(&rest.value),
-            _ => {}
-        }
-    }
-
     /// `is_literal`: the properties of an object literal, not the attributes of a JSX element.
     fn props(&mut self, properties: &[G::Property], is_literal: bool) -> Span<PropId> {
         let base = self.list_props.len();
         // The types of `@type` tags: the index of the property, and the type.
         let mut types: Vec<(usize, TypeNodeId)> = Vec::new();
+        // `node.Modifiers()`: the index of the property, and the list.
+        let mut modifiers: Vec<(usize, Span<ModifierId>)> = Vec::new();
         self.object_literals_around += u32::from(is_literal);
         for property in properties {
             let pos = property
@@ -2535,13 +2544,9 @@ impl<'p, 'a> Lower<'p, 'a> {
                 }
                 _ => PropKind::Init,
             };
-            // Neither does a bigint. `checkGrammarObjectLiteralExpression` reports it on a property
-            // assignment only.
+            // Neither does a bigint.
             if !is_computed && matches!(key_in_source.data, Data::EBigInt(_)) {
                 key = PropKey::None;
-                if matches!(kind, PropKind::Init | PropKind::Shorthand) {
-                    self.b.file.error(DiagnosticKind::Checker, pos, 0, 1539);
-                }
             }
             let mut value = match (&property.value, kind) {
                 (
@@ -2602,6 +2607,14 @@ impl<'p, 'a> Lower<'p, 'a> {
             {
                 self.b.js_error_at_range((question, 0), 8009, b"?");
             }
+            let written = self.modifiers_at(key_in_source.loc);
+            if !written.is_empty() {
+                let list = self.b.add_modifier_list(&written);
+                if matches!(kind, PropKind::Method | PropKind::Getter | PropKind::Setter) {
+                    self.check_js_modifiers(list, false);
+                }
+                modifiers.push((self.list_props.len() - base, list));
+            }
             // `parseJsxAttributeValue`: the attribute ends with its `JsxExpression`.
             if !is_literal
                 && let Some(inside) = &property.value
@@ -2631,6 +2644,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 .file
                 .jsdoc_types
                 .push((JsDocTypeOwner::Prop(props.at(index)), ty));
+        }
+        for (index, list) in modifiers {
+            let of = props.at(index);
+            self.b.file.modifiers_of_props.push((of, list));
         }
         props
     }

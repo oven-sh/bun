@@ -15,8 +15,7 @@ use smallvec::SmallVec;
 
 use super::comments::flags;
 use super::jsdoc::{
-    self, ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType,
-    TypeExpr,
+    ClassName, DeclaredName, JsDoc, Name, Property, Signature, Tag, TagKind, TagType, TypeExpr,
 };
 use super::lower::Lower;
 
@@ -48,6 +47,9 @@ struct Attached {
     docs: SmallVec<[u32; 2]>,
     /// The last of `docs` is the last of all the JSDoc comments.
     last_has_tags: bool,
+    /// From the start of the first of all the JSDoc comments to the end of the last. `None`: there
+    /// is none.
+    range: Option<TextRange>,
 }
 
 /// The modifier flags in `flags`, which an overload signature shares with the implementation.
@@ -57,9 +59,6 @@ fn modifiers_of(flags: Flags) -> Flags {
 
 /// `IsValidIdentifier`
 fn is_valid_identifier(text: &[u8]) -> bool {
-    if bun_core::strings::contains_char(text, b'\\') {
-        return bun_core::lexer::is_identifier(&jsdoc::unescaped_name(text));
-    }
     bun_core::lexer::is_identifier(text)
 }
 
@@ -78,6 +77,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let mut attached = Attached {
             docs: SmallVec::new(),
             last_has_tags: false,
+            range: None,
         };
         // `GetLeadingCommentRanges`: the comments after the first line break, or after the start of
         // the file.
@@ -93,6 +93,11 @@ impl<'p, 'a> Lower<'p, 'a> {
                 is_collecting |= reported & flags::SINGLE_LINE != 0;
                 continue;
             }
+            let start = comment.loc.start as u32;
+            attached.range = Some(TextRange {
+                pos: attached.range.map_or(start, |range| range.pos),
+                end: comment.end().start as u32,
+            });
             attached.last_has_tags = match self.jsdoc.at(comment.loc.start as u32) {
                 Some(index) if !self.jsdoc.list[index].tags.is_empty() => {
                     attached.docs.push(index as u32);
@@ -121,6 +126,17 @@ impl<'p, 'a> Lower<'p, 'a> {
             return;
         }
         let attached = self.jsdoc_before(token, full_start, with_trailing);
+        if let Some(comments) = attached.range {
+            let docs = attached.docs.iter();
+            let mut tags = docs.flat_map(|&doc| &self.jsdoc.list[doc as usize].tags);
+            let first_satisfies_tag = tags.find(|tag| matches!(tag.kind, TagKind::Satisfies(_)));
+            let first_satisfies_tag = first_satisfies_tag.map_or(u32::MAX, |tag| tag.name_pos);
+            self.b.file.jsdoc_hosts.push(JsDocHost {
+                token,
+                comments,
+                first_satisfies_tag,
+            });
+        }
         if !attached.docs.is_empty() {
             self.reparse_tags(host, &attached);
         }
@@ -171,6 +187,14 @@ impl<'p, 'a> Lower<'p, 'a> {
                 file.diagnostics.extend(parse_errors.cloned());
             }
         }
+        // Only `findOriginatingJSDocSatisfiesTag` asks for them.
+        let mut hosts = file.jsdoc_hosts.iter();
+        if hosts.any(|host| host.first_satisfies_tag != u32::MAX) {
+            file.jsdoc_hosts.sort_by_key(|host| host.token);
+            file.jsdoc_hosts.dedup_by_key(|host| host.token);
+        } else {
+            file.jsdoc_hosts.clear();
+        }
         file.jsdoc_types.sort_unstable_by_key(|t| t.0);
         file.jsdoc_modifiers.sort_unstable_by_key(|m| m.0);
         file.jsdoc_member_comments.sort_unstable_by_key(|m| m.0);
@@ -179,11 +203,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     // ───────────────────────────── helpers ─────────────────────────────
 
     fn name_atom(&self, name: Name) -> Atom {
-        let text = name.text.slice();
-        if bun_core::strings::contains_char(text, b'\\') {
-            return self.b.atom(&jsdoc::unescaped_name(text));
-        }
-        self.b.atom(text)
+        self.b.atom(name.text.slice())
     }
 
     /// Position of the `(` around `e`, if `e` is parenthesized.
@@ -333,12 +353,14 @@ impl<'p, 'a> Lower<'p, 'a> {
     fn check_non_identifier_name(&mut self, name: Name) {
         if !is_valid_identifier(name.text.slice()) {
             // A missing name is reported at the character before it.
-            let at = if name.is_missing() {
+            let start = if name.is_missing() {
                 name.start.saturating_sub(1)
             } else {
                 name.start
             };
-            self.b.file.error(DiagnosticKind::Parse, at, 0, 1003);
+            self.b
+                .file
+                .error(DiagnosticKind::Parse, start, name.end, 1003);
         }
     }
 
@@ -555,6 +577,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             && !ty.is_variadic
             && !ty.is_optional
             && ty.ty.is_some()
+            // A `ParenthesizedType` has no node: it starts before the node of its type.
+            && self.jsdoc.types.file[ty.ty].pos == ty.pos
             && matches!(self.jsdoc.types.file[ty.ty].kind, TypeNodeKind::Ref { name, args }
                 if args.is_empty() && self.jsdoc.types.file.texts(name).eq([known::r#const]));
         let kind = if is_const {
@@ -1426,6 +1450,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         let Some(&last) = tags.last() else {
             return;
         };
+        self.b.file.functions_with_param_tags.push(func);
         let mut names = Vec::new();
         let mut is_pattern = Vec::new();
         for param in self.b.file[func].params.iter() {
@@ -1465,8 +1490,8 @@ impl<'p, 'a> Lower<'p, 'a> {
             // `entityNameToString` of the name and, for a qualified name, of the part before its
             // last dot.
             let parts: Vec<&[u8]> = name.iter().map(|part| part.text.slice()).collect();
-            let whole = jsdoc::unescaped_name(&parts.join(&b'.'));
-            let left = jsdoc::unescaped_name(&parts[..parts.len() - 1].join(&b'.'));
+            let whole = parts.join(&b'.');
+            let left = parts[..parts.len() - 1].join(&b'.');
             let args: &[&[u8]] = if code == 8032 {
                 &[&whole, &left]
             } else {

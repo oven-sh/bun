@@ -11,7 +11,8 @@ use super::explain::NO_LENGTH;
 use super::late_bound::LateBoundConflict;
 use super::*;
 use crate::bind::{
-    ClassOwner, Decl, JsDeclarationKind, SymbolId, assignment_declaration_kind, flags_of_member,
+    ClassOwner, Decl, JsDeclarationKind, MemberOwner, SymbolId, assignment_declaration_kind,
+    flags_of_member,
 };
 use smallvec::SmallVec;
 
@@ -20,6 +21,17 @@ use smallvec::SmallVec;
 /// The local symbol of a name in a module or a namespace also lists the declarations exported under
 /// the name, whose own symbol is a different one.
 type Declaration = (FileId, Decl, bool);
+
+/// `message` of `reportMergeSymbolError`. `either`: the flags of both symbols.
+fn code_of_merge_symbol_error(either: SymFlags) -> u32 {
+    if either.intersects(SymFlags::ENUM) {
+        2567
+    } else if either.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
+        2451
+    } else {
+        2300
+    }
+}
 
 impl Checker<'_, '_> {
     pub(super) fn check_duplicates(&mut self, file: FileId) {
@@ -212,7 +224,7 @@ impl Checker<'_, '_> {
                 start
             }
             // A member name can be a string literal or a computed name, so the range covers the whole name node.
-            Decl::Member(_) | Decl::Property(_) => {
+            Decl::Member(_) | Decl::Property(_) | Decl::EnumMember(_) => {
                 let start = self.declaration_name_start(file, decl)?;
                 return Some((start, self.end_of_name_at(file, start)));
             }
@@ -296,7 +308,9 @@ impl Checker<'_, '_> {
                         .collect::<Vec<_>>()
                         .into_iter();
                     let end = match decl {
-                        Decl::Member(_) | Decl::Property(_) => self.end_of_name_at(of, start),
+                        Decl::Member(_) | Decl::Property(_) | Decl::EnumMember(_) => {
+                            self.end_of_name_at(of, start)
+                        }
                         _ => end,
                     };
                     self.add_duplicate_declaration_error((file, start, end), others, &name, code);
@@ -392,15 +406,7 @@ impl Checker<'_, '_> {
                 }
                 continue;
             }
-            // `reportMergeSymbolError`
-            let either = refused.target_flags | refused.source_flags;
-            let code = if either.intersects(SymFlags::ENUM) {
-                2567
-            } else if either.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
-                2451
-            } else {
-                2300
-            };
+            let code = code_of_merge_symbol_error(refused.target_flags | refused.source_flags);
             self.report_merge_symbol_error(file, &there, &added, source, code);
         }
     }
@@ -499,11 +505,16 @@ impl Checker<'_, '_> {
                 modules.push((module, self.are_module_exports_checked(module, file)));
             }
         }
+        // The symbols as the table has them, without `getMergedSymbol`.
         let exports = modules.iter().flat_map(|&(module, is_checked)| {
+            let unmerged = files.unmerged_exports_of_module(module);
             let exports = files.exports_of_module(module).iter();
-            exports.map(move |export| (export, is_checked))
+            exports.map(move |&(id, merged)| {
+                let entry = unmerged.iter().find(|entry| entry.0 == id);
+                (id, entry.map_or(merged, |entry| entry.1), is_checked)
+            })
         });
-        for (&(id, symbol), is_checked) in exports {
+        for (id, symbol, is_checked) in exports {
             let (flags, declarations) = (files.flags(symbol), files.decls_of(symbol));
             if declarations.len() < 2 || flags.intersects(SymFlags::NAMESPACE | SymFlags::ENUM) {
                 continue;
@@ -540,7 +551,8 @@ impl Checker<'_, '_> {
             if declarations.iter().all(|it| is_exports_property(self, it)) {
                 continue;
             }
-            if !is_checked && !self.is_export_of_file_checked_before(id, symbol, file) {
+            let merged = files.canonical(symbol);
+            if !is_checked && !self.is_export_of_file_checked_before(id, merged, file) {
                 continue;
             }
             for it @ &(of, decl) in declarations.iter() {
@@ -562,7 +574,7 @@ impl Checker<'_, '_> {
     /// Whether `checkExternalModuleExports` is called for `module`: by `checkSourceFile`, for a
     /// file that is a module, or by `checkExportAssignment`, for the module that contains it, no
     /// later than `file` is checked.
-    fn are_module_exports_checked(&self, module: Sym, file: FileId) -> bool {
+    pub(super) fn are_module_exports_checked(&self, module: Sym, file: FileId) -> bool {
         let files = self.files();
         let assigned = [known::export_equals, known::default].into_iter();
         let assigned = assigned.filter_map(|name| files.export(module, name));
@@ -601,45 +613,35 @@ impl Checker<'_, '_> {
             && self.reports_semantic_errors(visited)
     }
 
-    /// For the members of each class, interface and type literal.
+    /// For the members of each class, interface and type literal. `check_class_like_declaration`
+    /// calls `check_object_type_for_duplicate_declarations` for a class.
     fn check_duplicate_members(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        let is_declaration_file = hir.kind == FileKind::Declaration;
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let unchecked = self.unchecked_jsdoc_types(file);
-        let classes = hir.classes.iter().map(|class| {
-            let is_ambient = class.flags.contains(Flags::AMBIENT) || is_declaration_file;
-            (class.members, is_ambient, true)
-        });
-        let interfaces = (hir.interfaces.iter()).map(|it| (it.members, true, false));
+        let classes = hir.classes.iter().map(|class| (class.members, true));
+        let interfaces = hir.interfaces.iter().map(|it| (it.members, false));
         let literals = hir.types.iter().filter_map(|node| match node.kind {
-            TypeNodeKind::Object(members) if !unchecked.contain(node.pos) => {
-                Some((members, true, false))
-            }
+            TypeNodeKind::Object(members) if !unchecked.contain(node.pos) => Some((members, false)),
             _ => None,
         });
-        for (members, is_ambient, is_class) in classes.chain(interfaces).chain(literals) {
-            // A single member has nothing to conflict with, unless it declares more than itself, or
-            // is static like the `prototype` of every class.
-            if members.len() > 1
-                || members.iter().any(|m| {
-                    hir[m].kind == MemberKind::Constructor || hir[m].flags.contains(Flags::STATIC)
-                })
-            {
-                self.check_object_type_for_duplicate_declarations(
-                    file, members, is_ambient, is_class,
-                );
-            }
+        for (members, is_class) in classes.chain(interfaces).chain(literals) {
+            // Another declaration of the container may have the late-bound member.
             for is_static in [false, true] {
-                let computed = members.iter().find(|&m| {
-                    matches!(hir[m].key, PropKey::Computed(_))
-                        && hir[m].flags.contains(Flags::STATIC) == is_static
+                let parent = members.iter().find_map(|m| {
+                    let symbol = bound.symbols.get(bound.member_symbol[m.idx()].idx())?;
+                    (hir[m].flags.contains(Flags::STATIC) == is_static).then_some(symbol.parent)
                 });
-                let bound = self.bound(file);
-                let symbol = computed.map_or(SymbolId::NONE, |m| bound.member_symbol[m.idx()]);
-                if symbol.is_some() {
-                    let container = self.files().sym(file, bound.symbols[symbol.idx()].parent);
+                if let Some(parent) = parent.filter(|parent| parent.is_some()) {
+                    let container = self.files().sym(file, parent);
                     self.report_conflicts_of_late_bound_members(file, container, is_static);
                 }
+            }
+            // A single member has nothing to conflict with, unless it is static like the
+            // `prototype` of a class.
+            let has_static = members.iter().any(|m| hir[m].flags.contains(Flags::STATIC));
+            if !is_class && (members.len() > 1 || has_static) {
+                let node = hir.parent(hir.node(members.at(0)));
+                self.check_object_type_for_duplicate_declarations(file, node, members, false);
             }
         }
     }
@@ -669,27 +671,38 @@ impl Checker<'_, '_> {
                         Arg::Atom(*name)
                     };
                     for at in earlier.iter().chain(std::iter::once(refused)) {
-                        if let Some(place) = self.place_of_declaration(at.0, at.1) {
+                        if at.0 == file
+                            && let Some(place) = self.place_of_declaration(at.0, at.1)
+                        {
                             self.error_at(place, 2300, &[name]);
                         }
                     }
                 }
-                LateBoundConflict::NotMerged(target, source) => {
+                LateBoundConflict::NotMerged(target, source, either) => {
                     let own = |it: &(FileId, Decl)| (it.0, it.1, true);
                     let target: Vec<Declaration> = target.iter().map(own).collect();
                     let source: Vec<Declaration> = source.iter().map(own).collect();
-                    self.report_merge_symbol_error(file, &target, &source, container, 2300);
+                    let code = code_of_merge_symbol_error(*either);
+                    self.report_merge_symbol_error(file, &target, &source, container, code);
+                }
+                LateBoundConflict::NonModuleEntity(source, target) => {
+                    if source.0 == file
+                        && let Some(place) = self.place_of_declaration(source.0, source.1)
+                    {
+                        self.error_at(place, 2649, &[Arg::Sym(*target)]);
+                    }
                 }
             }
         }
     }
 
-    /// `checkObjectTypeForDuplicateDeclarations`
-    fn check_object_type_for_duplicate_declarations(
+    /// `checkObjectTypeForDuplicateDeclarations`. `node`: the class, the interface or the type
+    /// literal that has `members`.
+    pub(super) fn check_object_type_for_duplicate_declarations(
         &mut self,
         file: FileId,
+        node: Node,
         members: Span<MemberId>,
-        is_ambient: bool,
         check_private_names: bool,
     ) {
         let hir = self.hir(file);
@@ -699,6 +712,12 @@ impl Checker<'_, '_> {
         let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
         for m in members.iter() {
             let member = &hir[m];
+            let is_static = member.flags.contains(Flags::STATIC);
+            let name = match member.kind {
+                MemberKind::Constructor => None,
+                _ => self.declared_member_name(file, member.key),
+            };
+            // The arguments of `checkPropertyOrAccessor`. 0: it is not called.
             let mut declared: SmallVec<[(Decl, Atom, u8, bool); 2]> = SmallVec::new();
             if member.kind == MemberKind::Constructor {
                 for p in hir[member.func].params.iter() {
@@ -708,33 +727,23 @@ impl Checker<'_, '_> {
                         declared.push((Decl::ParameterProperty(p), name, 1, false));
                     }
                 }
-            } else if let Some(name) = self.declared_member_name(file, member.key) {
-                let is_static = member.flags.contains(Flags::STATIC);
-                if !is_ambient && is_static && name == known::prototype {
+            } else if let Some(name) = name {
+                if is_static && name == known::prototype && !hir.is_ambient(node) {
                     self.report_static_property_name_conflict(file, m, name);
-                }
-                if check_private_names && matches!(member.key, PropKey::Private(_)) {
-                    let at = private_names.iter().position(|it| it.0 == name);
-                    let at = at.unwrap_or_else(|| {
-                        private_names.push((name, 0));
-                        private_names.len() - 1
-                    });
-                    let before = private_names[at].1;
-                    private_names[at].1 |= if is_static { 2 } else { 1 };
-                    if before != 3 && private_names[at].1 == 3 {
-                        self.report_duplicate_member_errors(file, members, name, None, 2804);
-                    }
                 }
                 let kind = match member.kind {
                     MemberKind::Property if !member.flags.contains(Flags::ACCESSOR) => 1,
                     MemberKind::Property | MemberKind::Getter | MemberKind::Setter => 2,
-                    _ => continue,
+                    _ => 0,
                 };
-                declared.push((Decl::Member(m), name, kind, is_static));
+                // `getSymbolOfDeclaration` binds the names of that side for a computed name.
+                if kind != 0 || matches!(member.key, PropKey::Computed(_)) {
+                    declared.push((Decl::Member(m), name, kind, is_static));
+                }
             }
-            // `checkPropertyOrAccessor`
             for (declaration, name, kind, is_static) in declared {
-                if self.declarations_of_member(file, declaration).len() < 2 {
+                let count = (self.declarations_of_symbol_of_declaration(file, declaration)).len();
+                if count < 2 || kind == 0 {
                     continue;
                 }
                 match names.iter_mut().find(|n| (n.0, n.1) == (name, is_static)) {
@@ -745,6 +754,18 @@ impl Checker<'_, '_> {
                         self.report_duplicate_member_errors(file, members, name, is_static, 2300);
                     }
                     Some(_) => {}
+                }
+            }
+            if check_private_names && let (Some(name), PropKey::Private(_)) = (name, member.key) {
+                let at = private_names.iter().position(|it| it.0 == name);
+                let at = at.unwrap_or_else(|| {
+                    private_names.push((name, 0));
+                    private_names.len() - 1
+                });
+                let before = private_names[at].1;
+                private_names[at].1 |= if is_static { 2 } else { 1 };
+                if before != 3 && private_names[at].1 == 3 {
+                    self.report_duplicate_member_errors(file, members, name, None, 2804);
                 }
             }
         }
@@ -771,7 +792,7 @@ impl Checker<'_, '_> {
                         named.push(Decl::ParameterProperty(p));
                     }
                 }
-            } else if is_static.is_none_or(|it| it == member.flags.contains(Flags::STATIC))
+            } else if is_static.is_none_or(|it| it == hir.is_static(hir.node(m)))
                 && flags_of_member(member).is_some_and(|it| it.0.intersects(SymFlags::CLASS_MEMBER))
                 && self.declared_member_name(file, member.key) == Some(name)
             {
@@ -822,22 +843,30 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Reports TS2699 on the name of static member `m`. Arguments: the property name and the class name.
+    /// Reports TS2699 on the name of static member `m`. Arguments: the property name, and
+    /// `symbolToString` of the class, the interface or the type literal.
     fn report_static_property_name_conflict(&mut self, file: FileId, m: MemberId, name: Atom) {
         let at = (
             file,
             self.hir(file)[m].name_pos,
             self.end_of_member_name(file, m),
         );
-        let class_name = match self.bound(file).member_owner[m.idx()] {
-            crate::bind::MemberOwner::Class(class) => {
-                match self.bound(file).class_symbol[class.idx()] {
-                    symbol if symbol.is_some() => Arg::Sym(self.files().sym(file, symbol)),
-                    _ => Arg::Atom(self.hir(file)[class].name),
-                }
+        let bound = self.bound(file);
+        let of_literal;
+        let container = match bound.member_owner[m.idx()] {
+            MemberOwner::Class(class) => match bound.class_symbol[class.idx()] {
+                symbol if symbol.is_some() => Arg::Sym(self.files().sym(file, symbol)),
+                _ => Arg::Atom(self.hir(file)[class].name),
+            },
+            MemberOwner::Interface(it) if bound.interface_symbol[it.idx()].is_some() => {
+                Arg::Sym(self.files().sym(file, bound.interface_symbol[it.idx()]))
+            }
+            MemberOwner::TypeLiteral(node) => {
+                of_literal = self.name_of_type_literal(file, node);
+                Arg::Bytes(&of_literal)
             }
             _ => Arg::Bytes(b""),
         };
-        self.error_at(at, 2699, &[Arg::Atom(name), class_name]);
+        self.error_at(at, 2699, &[Arg::Atom(name), container]);
     }
 }

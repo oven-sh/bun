@@ -65,7 +65,7 @@ impl Files<'_> {
                 // `toFileName`
                 if matches!(
                     visit.reason,
-                    IncludeReason::Reference(_) | IncludeReason::RootFile
+                    IncludeReason::Reference(_) | IncludeReason::RootFile(_)
                 ) && let Some(file_name) = args.get_mut(1)
                 {
                     *file_name = to_relative_file_name(file_name);
@@ -74,8 +74,8 @@ impl Files<'_> {
             }
             // `explainRedirectAndImpliedFormat`
             let options = self.options;
-            let source = options.source_of_project_reference_if_output_included(name);
-            if source != name {
+            if !is_redirect && module.project_reference_source.is_some() {
+                let source = self.atoms.bytes(module.project_reference_source);
                 lines.push(line(1428, &[to_relative_file_name(source)]));
             }
             if is_redirect {

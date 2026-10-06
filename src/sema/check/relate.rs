@@ -237,7 +237,7 @@ pub(super) struct Relater {
     /// The key with which `related` missed the cache for `top_source` and `top_target`, with its
     /// `constrained`. Consumed by the first comparison that needs a key.
     top_key: Option<(Key, bool)>,
-    relation_count: i32,
+    pub(super) relation_count: i32,
     /// `Checker::cycles` at the start of the check. Once it has changed, no result is cacheable.
     cycles: u64,
     /// Failures are recorded in `failed` instead of the relation cache: in the non-reporting run
@@ -584,10 +584,10 @@ impl<'p, 's> Checker<'p, 's> {
         data: &'p TypeData<'p>,
         writing: bool,
     ) -> (TypeId, &'p TypeData<'p>) {
-        // FOR SPEED: `len(getMembersOfSymbol(t.symbol)) != 0` first. The binder creates the table
-        // with the first member (`GetMembers`).
+        // `ObjectFlagsIdenticalBaseTypeCalculated`, and no equivalent base type.
         if is_normalized_kind(data)
-            && !matches!(data, TypeData::Ref { target, .. } if self.files().symbol(*target).members.is_none())
+            && (!matches!(data, TypeData::Ref { .. })
+                || self.p.equivalent_base_types.get(&self.task, &ty) == Some(None))
         {
             return (ty, data);
         }
@@ -645,8 +645,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_any_function_shape(shape: &Shape) -> bool {
-        shape.literal == Literalness::Partial
-            && shape.props.is_empty()
+        shape.literal == Literalness::Partial && Self::has_no_members(shape)
+    }
+
+    fn has_no_members(shape: &Shape) -> bool {
+        shape.props.is_empty()
             && shape.call.is_empty()
             && shape.construct.is_empty()
             && shape.index.is_empty()
@@ -655,13 +658,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isEmptyResolvedType` of the resolved members of `ty`.
     fn is_empty_resolved_type(&mut self, ty: TypeId) -> bool {
         !self.is_any_function_type(ty)
-            && self.members(ty).is_some_and(|m| {
-                let s = m.shape();
-                s.props.is_empty()
-                    && s.call.is_empty()
-                    && s.construct.is_empty()
-                    && s.index.is_empty()
-            })
+            && (self.members(ty)).is_some_and(|m| Self::has_no_members(m.shape()))
     }
 
     /// `isEmptyObjectType`
@@ -678,21 +675,35 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `IsEmptyAnonymousObjectType`
+    /// `IsEmptyAnonymousObjectType`. The members of a type that is created without them count only
+    /// once something else has resolved them (`ObjectFlagsMembersResolved`).
     pub(super) fn is_empty_anonymous_object_type(&mut self, ty: TypeId) -> bool {
-        if ty == TypeId::EMPTY_OBJECT {
+        if matches!(ty, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
             return true;
         }
         match self.data(ty) {
-            // `getTypeWithSyntheticDefaultImportType` gives its result the symbol of a type literal without members.
+            // `newAnonymousType` takes the members. `getTypeWithSyntheticDefaultImportType` gives
+            // its result the symbol of a type literal without members.
             TypeData::Synth(shape) => {
                 shape.literal == Literalness::SyntheticDefault || self.is_empty_resolved_type(ty)
             }
+            // `checkObjectLiteral` and `getWidenedTypeOfObjectLiteral` call `newAnonymousType`,
+            // `instantiateAnonymousType` does not.
             TypeData::Anon {
-                origin:
-                    Origin::TypeLiteral(..) | Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                mapper,
+            } if self.types().mapping(*mapper).iter().all(|p| p.0 == p.1) => {
+                self.is_empty_resolved_type(ty)
+            }
+            // `ObjectFlagsMapped`, without `ObjectFlagsAnonymous`.
+            TypeData::Anon {
+                origin: Origin::Mapped(..),
                 ..
-            } => self.is_empty_resolved_type(ty),
+            } => false,
+            // A type literal that has an `Origin` has members in its symbol.
+            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => self
+                .resolved_members(ty)
+                .is_some_and(|m| Self::has_no_members(m.shape())),
             _ => false,
         }
     }
@@ -709,11 +720,22 @@ impl<'p, 's> Checker<'p, 's> {
             has_undefined |= p.is_undefined();
             has_null |= p.is_null();
         }
-        has_undefined
-            && has_null
-            && parts
-                .iter()
-                .any(|&p| self.is_empty_anonymous_object_type(p))
+        if !(has_undefined && has_null) {
+            return false;
+        }
+        // `ObjectFlagsIsUnknownLikeUnionComputed`: the first answer stays, whatever is resolved
+        // later.
+        if let Some(&known) = self.unknown_like_unions.get(&ty) {
+            return known;
+        }
+        let before = self.non_cacheable_mark();
+        let is_unknown_like = parts
+            .iter()
+            .any(|&p| self.is_empty_anonymous_object_type(p));
+        if before == self.non_cacheable_mark() {
+            self.unknown_like_unions.insert(ty, is_unknown_like);
+        }
+        is_unknown_like
     }
 
     fn has_call_or_construct_signatures(&mut self, ty: TypeId) -> bool {
@@ -749,21 +771,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertyOfType`: includes the properties that every function and every object has.
-    pub(super) fn property_in(
-        &mut self,
-        members: &Members<'p>,
-        name: Atom,
-    ) -> Option<(&'p Prop<'p>, MapperId)> {
-        if let Some(prop) = members.resolved.prop(name) {
-            return Some((prop, members.mapper));
-        }
-        let mut inherited = self.inherited_of(members.shape());
-        self.inherited_property(&mut inherited, name)
-    }
-
-    /// `property_in`, for looking up several names in sequence. `inherited`: `inherited_of` the
-    /// shape of `members`. `ty`: the type that has `members`.
+    /// `property_in_type`, for looking up several names in sequence. `inherited`: `inherited_of`
+    /// the shape of `members`. `ty`: the type that has `members`.
     #[inline]
     pub(super) fn property_among(
         &mut self,
@@ -806,7 +815,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `property_in` the members of `ty`.
+    /// `getPropertyOfType`: includes the properties that every function and every object has.
+    /// `members`: of `ty`.
     pub(super) fn property_in_type(
         &mut self,
         ty: TypeId,
@@ -1001,11 +1011,11 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// `checkTypeRelatedToEx`, without error reporting. `relation_too_complex` tells the caller to
-    /// report 2859.
+    /// `checkTypeRelatedToEx` without an `errorNode`: an overflow is reported at `c.currentNode`.
     /// `related` has found no simple rule for the two types. `missed`: the key of its cache miss,
     /// if it did a lookup.
-    /// `is_trial`: see `Relater::caches_failures`.
+    /// `is_trial`: see `Relater::caches_failures`. The caller has the `errorNode`, and
+    /// `relation_too_complex` tells it to report 2859 there.
     fn check_type_related_to(
         &mut self,
         source: TypeId,
@@ -1035,7 +1045,7 @@ impl<'p, 's> Checker<'p, 's> {
         r.relation = relation;
         r.top_source = source;
         r.top_target = target;
-        r.relation_count = 2_000_000;
+        r.relation_count = self.initial_relation_count(relation);
         r.cycles = self.cycles;
         // Under the identity relation `related` uses other rules.
         r.is_from_related = relation != Relation::Identity;
@@ -1063,22 +1073,17 @@ impl<'p, 's> Checker<'p, 's> {
         self.free_relaters.push(r);
         self.end_comparison(is_outermost);
         self.relation_too_deep = is_too_deep;
-        if is_too_complex {
-            // Recorded as failed so that the comparison is not attempted again.
-            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
-            let scope = self.begin_scope();
-            if let Ok(stored) = self.end_scope_as(scope, false) {
-                self.insert_relation(key, FAILED | COMPLEXITY_OVERFLOW, stored);
+        if is_too_complex || is_too_deep {
+            let (code, kind) = match is_too_complex {
+                true => (2859, COMPLEXITY_OVERFLOW),
+                false => (2321, STACK_DEPTH_OVERFLOW),
+            };
+            self.set_relation_overflow(source, target, relation, kind);
+            self.relation_too_complex |= is_too_complex;
+            if !is_trial {
+                let types = [Arg::Type(source), Arg::Type(target)];
+                self.error_about_comparison_at_current_node(code, &types);
             }
-            self.relation_too_complex = true;
-        } else if is_too_deep {
-            let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
-            let scope = self.begin_scope();
-            if let Ok(stored) = self.end_scope_as(scope, false) {
-                self.insert_relation(key, FAILED | STACK_DEPTH_OVERFLOW, stored);
-            }
-            let types = [Arg::Type(source), Arg::Type(target)];
-            self.error_about_comparison_at_current_node(2321, &types);
         } else if hit_cached_overflow && !overflow && !result.holds() {
             // `reportRelationError`: the overflow replaces the relation error only if it was recorded for `source` and `target`.
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
@@ -1152,7 +1157,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `source.AsLiteralType().value == target.AsLiteralType().value`, of two strings or two numbers.
         let is_same_value = s & t & (tf::STRING_LITERAL | tf::NUMBER_LITERAL) != 0
-            && self.literal_value(source) == self.literal_value(target);
+            && matches!(
+                (self.literal_value(source), self.literal_value(target)),
+                (Some(a), Some(b)) if Self::is_equal_value(a, b)
+            );
         if is_same_value && s & tf::ENUM_LITERAL != 0 && t & tf::ENUM_LITERAL == 0 {
             return true;
         }
@@ -1206,6 +1214,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `==` of two such values, or of two enum member values. Numbers are `jsnum.Number`, compared
+    /// as floats: `-0` equals `0`, and `NaN` differs from itself.
+    fn is_equal_value(a: EnumValue, b: EnumValue) -> bool {
+        match (a, b) {
+            (EnumValue::Number(a), EnumValue::Number(b)) => f64::from_bits(a) == f64::from_bits(b),
+            _ => a == b,
+        }
+    }
+
     /// `t.symbol`, of a type with `TypeFlagsEnumLike`.
     fn symbol_of_enum_like(&self, ty: TypeId) -> Option<Sym> {
         match *self.data(ty) {
@@ -1227,64 +1244,72 @@ impl<'p, 's> Checker<'p, 's> {
         if source == target {
             return true;
         }
-        // `SymbolFlagsRegularEnum`: a `const enum` is related to itself alone.
-        let is_regular = |c: &Self, sym: Sym| {
-            c.files().decls(sym).iter().any(|&(file, decl)| matches!(decl, crate::bind::Decl::Enum(e) if !c.hir(file)[e].flags.contains(Flags::CONST)))
-        };
+        // A `const enum` is related to itself alone.
         if self.files().symbol(source).name != self.files().symbol(target).name
-            || !is_regular(self, source)
-            || !is_regular(self, target)
+            || !self.files().flags(source).contains(SymFlags::REGULAR_ENUM)
+            || !self.files().flags(target).contains(SymFlags::REGULAR_ENUM)
         {
             return false;
         }
-        let theirs = self.exports_in_order(target);
-        for (name, member) in self.exports_in_order(source) {
-            // An export of a namespace merged with the enum is not an enum member.
-            if !self.files().flags(member).contains(SymFlags::ENUM_MEMBER) {
-                continue;
-            }
-            let other = theirs
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|&(_, other)| other)
-                .filter(|&other| self.files().flags(other).contains(SymFlags::ENUM_MEMBER));
-            let Some(other) = other else {
-                if let Some(r) = error_reporter {
-                    let declared = self.enum_type(target);
-                    let declared = self.type_to_string_fully_qualified(declared);
-                    let args = [Arg::Sym(member), Arg::Bytes(&declared)];
-                    self.report_error(r, 2324, &args);
-                }
-                return false;
-            };
-            let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
-            let value = |c: &Self, ty: TypeId| match c.data(ty) {
-                TypeData::EnumLit { value, .. } => Some(*value),
-                _ => None,
-            };
-            // `NaN` differs from itself.
-            let is_nan = |value: EnumValue| matches!(value, EnumValue::Number(bits) if f64::from_bits(bits).is_nan());
-            let (code, values) = match (value(self, a), value(self, b)) {
-                (Some(actual), Some(expected)) if actual != expected || is_nan(actual) => {
-                    (4125, [Some(expected), Some(actual)])
-                }
-                (Some(known @ EnumValue::String(_)), None)
-                | (None, Some(known @ EnumValue::String(_))) => (4126, [Some(known), None]),
-                _ => continue,
-            };
-            if let Some(r) = error_reporter {
-                let count = 2 + values.iter().flatten().count();
-                let values = values.map(|v| v.map(|v| self.enum_value_text(v)).unwrap_or_default());
-                let [first, second] = values.each_ref().map(|v| Arg::Bytes(v));
-                self.report_error(
-                    r,
-                    code,
-                    &[Arg::Sym(target), Arg::Sym(other), first, second][..count],
-                );
-            }
-            return false;
+        if let Some(&is_related) = self.enum_relation.get(&(source, target))
+            && (is_related || error_reporter.is_none())
+        {
+            return is_related;
         }
-        true
+        let before = self.non_cacheable_mark();
+        let theirs = self.exports_in_order(target);
+        let is_related = 'members: {
+            for (name, member) in self.exports_in_order(source) {
+                // An export of a namespace merged with the enum is not an enum member.
+                if !self.files().flags(member).contains(SymFlags::ENUM_MEMBER) {
+                    continue;
+                }
+                let other = theirs
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|&(_, other)| other)
+                    .filter(|&other| self.files().flags(other).contains(SymFlags::ENUM_MEMBER));
+                let Some(other) = other else {
+                    if let Some(r) = error_reporter {
+                        let declared = self.enum_type(target);
+                        let declared = self.type_to_string_fully_qualified(declared);
+                        let args = [Arg::Sym(member), Arg::Bytes(&declared)];
+                        self.report_error(r, 2324, &args);
+                    }
+                    break 'members false;
+                };
+                let (a, b) = (self.enum_member_type(member), self.enum_member_type(other));
+                let value = |c: &Self, ty: TypeId| match c.data(ty) {
+                    TypeData::EnumLit { value, .. } => Some(*value),
+                    _ => None,
+                };
+                let (code, values) = match (value(self, a), value(self, b)) {
+                    (Some(actual), Some(expected)) if !Self::is_equal_value(actual, expected) => {
+                        (4125, [Some(expected), Some(actual)])
+                    }
+                    (Some(known @ EnumValue::String(_)), None)
+                    | (None, Some(known @ EnumValue::String(_))) => (4126, [Some(known), None]),
+                    _ => continue,
+                };
+                if let Some(r) = error_reporter {
+                    let count = 2 + values.iter().flatten().count();
+                    let values =
+                        values.map(|v| v.map(|v| self.enum_value_text(v)).unwrap_or_default());
+                    let [first, second] = values.each_ref().map(|v| Arg::Bytes(v));
+                    self.report_error(
+                        r,
+                        code,
+                        &[Arg::Sym(target), Arg::Sym(other), first, second][..count],
+                    );
+                }
+                break 'members false;
+            }
+            true
+        };
+        if before == self.non_cacheable_mark() {
+            self.enum_relation.insert((source, target), is_related);
+        }
+        is_related
     }
 
     // ───────────────────────────── simpler forms ─────────────────────────────
@@ -1909,10 +1934,7 @@ impl<'p, 's> Checker<'p, 's> {
         if constraint == check {
             return None;
         }
-        let mut pairs = self.types().mapping(mapper).to_vec();
-        pairs.retain(|p| p.0 != param);
-        pairs.push((param, constraint));
-        let with_constraint = self.types().mapper(pairs);
+        let with_constraint = self.prepend_type_mapping(param, constraint, mapper);
         let instantiated = self.conditional_type_uncached(file, node, with_constraint, true, None);
         (!instantiated.is_never()).then_some(instantiated)
     }
@@ -2355,8 +2377,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
-        if Some(sym) == self.global_type_symbol(known::Array)
-            || Some(sym) == self.global_type_symbol(known::ReadonlyArray)
+        if Some(sym) == self.global_type_of_arity(known::Array, 1)
+            || Some(sym) == self.global_type_of_arity(known::ReadonlyArray, 1)
         {
             let scope = self.begin_scope();
             let variances: &'s [u8] = &[COVARIANT];
@@ -2721,7 +2743,7 @@ impl<'p, 's> Checker<'p, 's> {
                     || self.has_primitive_flag_as(source, sd))
                 && (relation != Relation::Comparable || self.is_unit(source))
                 && !(matches!(sd, TypeData::Ref { .. })
-                    && self.is_reference_to_global(source, known::Object))
+                    && self.is_reference_to_global(source, known::Object, 0))
                 && self.is_weak_type(target)
                 && {
                     let apparent = self.reduced_apparent_type_as_object(source);
@@ -2987,7 +3009,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn contains_global_object_type(&self, target: TypeId) -> bool {
         self.parts(target)
             .iter()
-            .any(|&p| self.is_reference_to_global(p, known::Object))
+            .any(|&p| self.is_reference_to_global(p, known::Object, 0))
     }
 
     /// `getTypeOfPropertyInType`
@@ -3104,7 +3126,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `filterPrimitivesIfContainsNonPrimitive`
     pub(super) fn filter_primitives_if_contains_non_primitive(&mut self, union: TypeId) -> TypeId {
-        if self.some_type(union, |_, m| m == TypeId::OBJECT) {
+        if self.maybe_type_of_kind(union, |_, m| m == TypeId::OBJECT) {
             let result = self.filter(union, |c, m| !c.has_primitive_flag(m));
             if !result.is_never() {
                 return result;
@@ -3533,10 +3555,12 @@ impl<'p, 's> Checker<'p, 's> {
         hasher.write_u8(if readonly { b'!' } else { b't' });
         hasher.write_usize(flags.len());
         for flag in flags {
-            hasher.write_u32(flag.with_label(Atom::NONE).bits());
-            let label = flag.label();
-            if !label.is_none() {
-                hasher.write(self.atoms().bytes(label));
+            hasher.write_u32(flag.with_label(LabeledDeclaration::NONE).bits() as u32);
+            let label = flag.labeled_declaration();
+            if !label.name.is_none() {
+                hasher.write(self.atoms().bytes(label.name));
+                hasher.write_u32(label.file.0);
+                hasher.write_u32(label.pos);
             }
         }
     }
@@ -3731,8 +3755,11 @@ impl<'p, 's> Checker<'p, 's> {
             constrained,
             missed,
         } = self.recursive_relation_key(r, source, sd, target, td, state);
-        if !missed
-            && let Some(entry) = self.p.relations.get(&self.task, &key)
+        let cached = match missed {
+            true => None,
+            false => self.p.relations.get(&self.task, &key),
+        };
+        if let Some(entry) = cached
             // A cached failure is recomputed to produce its error elaboration.
             && !(REPORT && entry & FAILED != 0 && entry & OVERFLOW == 0)
         {
@@ -3832,15 +3859,17 @@ impl<'p, 's> Checker<'p, 's> {
                 );
             }
         } else {
-            // A result that is false under assumptions is false without them. A failure caused by
-            // an aborted comparison is not cached.
-            let is_cut_short = r.overflow || r.hit_cached_overflow;
+            // A result that is false under assumptions is false without them, and so is one that
+            // an overflow has cut off. Not so where the native stack ran low, which is no overflow
+            // in typescript-go.
+            let is_cut_short = r.overflow && !r.is_too_deep && r.relation_count > 0;
             if r.caches_failures {
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
             } else if let Some(stored) = ended
                 && !is_cut_short
+                && cached.is_none()
             {
                 self.insert_relation(key, FAILED | propagating, stored);
             }
@@ -3865,17 +3894,40 @@ impl<'p, 's> Checker<'p, 's> {
             _ if r.is_too_deep => (2321, STACK_DEPTH_OVERFLOW),
             _ => return None,
         };
-        let (key, _) = self.relation_key(source, target, r.relation, STATE_NONE, false);
-        let scope = self.begin_scope();
-        if let Ok(stored) = self.end_scope_as(scope, false) {
-            self.insert_relation(key, FAILED | kind, stored);
-        }
+        self.set_relation_overflow(source, target, r.relation, kind);
         Some(code)
     }
 
+    /// `relation.set(id, RelationComparisonResultFailed|kind)` of `checkTypeRelatedToEx`. It
+    /// replaces the plain failure that `recursive_type_related_to` has stored for the two types.
+    fn set_relation_overflow(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        relation: Relation,
+        kind: u8,
+    ) {
+        let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
+        let scope = self.begin_scope();
+        if let Ok(stored) = self.end_scope_as(scope, false) {
+            if self.p.relations.get(&self.task, &key).is_none() {
+                self.insert_relation(key, FAILED | kind, stored);
+            } else {
+                (self.p.relations).rewrite(&self.task, key, FAILED | kind, stored);
+            }
+        }
+    }
+
+    /// `relation.set(key, entry)` for a key that has no entry.
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.generic_relation_entries_not_published += u64::from(key.is_hash_of_own_ids());
+        self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         self.p.relations.insert(&self.task, key, entry, stored);
+    }
+
+    /// `(16_000_000 - relation.size()) / 8`, see `Checker::relation_sizes`.
+    pub(super) fn initial_relation_count(&self, relation: Relation) -> i32 {
+        (16_000_000 - self.relation_sizes[relation as usize]) / 8
     }
 
     /// `resetMaybeStack`
@@ -4142,7 +4194,9 @@ impl<'p, 's> Checker<'p, 's> {
             } => (2, deferred.file.0, deferred.node.0),
             // `ObjectFlagsFromTypeNode`, `isObjectOrArrayLiteralType`
             TypeData::Ref { .. } | TypeData::Tuple { .. }
-                if self.types().is_from_type_node(t) || self.holds_object_literals(t, data) =>
+                if self.types().is_from_type_node(t)
+                    || self.types().is_array_literal(t)
+                    || self.holds_object_literals(t, data) =>
             {
                 (0, t.0, 0)
             }
@@ -4356,12 +4410,11 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let apparent = self.apparent_type(source);
-        // `Literalness::Partial` is `ObjectFlagsNonInferrableType`.
         (self.is_object_type(apparent) || self.is_union_or_intersection(apparent))
             && !self
                 .constituents(source)
                 .iter()
-                .any(|&t| t == target || matches!(self.data(t), TypeData::Synth(shape) if shape.literal == Literalness::Partial))
+                .any(|&t| t == target || self.is_non_inferrable(t))
     }
 
     /// The `relateVariances` closure of `structuredTypeRelatedToWorker`. `Some`: the final result.
@@ -5149,11 +5202,15 @@ impl<'p, 's> Checker<'p, 's> {
         if relation != Relation::Identity {
             // An object type other than a mapped one is its own apparent type.
             if !is_object_kind(sd) || is_mapped_kind(sd) {
-                source = self.apparent_type_for_relation(source);
-                // Only for reporting: the diagnostic prints this type.
-                if REPORT {
-                    source = self.apparent_type_of_intersection(source);
-                }
+                let apparent = self.apparent_type(source);
+                // The diagnostic prints this type, and `apparent_type` leaves some intersections
+                // unchanged. One that it has replaced is the apparent type already: that of
+                // `string & String` is `String`.
+                source = if REPORT && apparent == source {
+                    self.apparent_type_of_intersection(source)
+                } else {
+                    apparent
+                };
                 sd = self.data(source);
             }
         } else if self.is_generic_mapped_type(source) {
@@ -5186,7 +5243,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             (_, TypeData::Ref { .. })
                 if self.is_array(target)
-                    && (self.is_reference_to_global(target, known::ReadonlyArray)
+                    && (self.is_reference_to_global(target, known::ReadonlyArray, 1)
                         && self.every_type(source, |c, m| c.is_array_or_tuple(m))
                         || self.every_type(source, |c, m| {
                             matches!(
@@ -5357,17 +5414,6 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// `getApparentType`, except that a missing constraint yields `unknown` and not `{}`.
-    pub(super) fn apparent_type_for_relation(&mut self, t: TypeId) -> TypeId {
-        if self.is_deferred(t) {
-            return match self.base_constraint_of(t) {
-                Some(constraint) => self.apparent_type(constraint),
-                None => TypeId::UNKNOWN,
-            };
-        }
-        self.apparent_type(t)
-    }
-
     /// The type that `getPropertiesOfType`, `getPropertyOfType` and `getIndexInfosOfType` use:
     /// `getReducedApparentType(ty)`, and for a union the properties common to all its members
     /// (`getPropertiesOfUnionOrIntersectionType`).
@@ -5381,7 +5427,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn is_mutable_array_or_tuple(&self, t: TypeId) -> bool {
-        self.is_reference_to_global(t, known::Array)
+        self.is_reference_to_global(t, known::Array, 1)
             || matches!(
                 self.data(t),
                 TypeData::Tuple {
@@ -5528,22 +5574,25 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        // The discriminant properties of the union, each with its type in the source.
+        // `findDiscriminantProperties`, over all the properties before anything is counted: the
+        // question resolves the type of the property in every member of `target`.
+        // Each comes with its type in the source.
         let mut telling: Vec<(&Prop, TypeId)> = Vec::new();
-        let mut combinations = 1usize;
         for prop in &sm.shape().props {
-            if !self.is_discriminant_property(target, prop.name) {
-                continue;
+            if self.is_discriminant_property(target, prop.name) {
+                telling.push((prop, TypeId::NEVER));
             }
-            let ty = self.type_of_prop_as_read(prop, sm.mapper);
-            combinations *= self.parts(ty).len();
-            if combinations > 25 || combinations == 0 {
-                return Ternary::FALSE;
-            }
-            telling.push((prop, ty));
         }
         if telling.is_empty() {
             return Ternary::FALSE;
+        }
+        let mut combinations = 1usize;
+        for (prop, ty) in &mut telling {
+            *ty = self.type_of_prop_as_read(prop, sm.mapper);
+            combinations *= self.parts(*ty).len();
+            if combinations > 25 || combinations == 0 {
+                return Ternary::FALSE;
+            }
         }
         let excluded: Vec<Atom> = telling.iter().map(|(p, _)| p.name).collect();
         // Every query on a member uses `getReducedApparentType`.
@@ -5552,23 +5601,32 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .map(|&t| self.reduced_apparent_type_as_object(t))
             .collect();
-        // Every combination must match some member.
-        let mut matching = vec![false; types.len()];
+        // Every combination must match some member. `matching_types`: in the order of the matches.
+        let mut matching_types: SmallVec<[TypeId; 8]> = SmallVec::new();
         let skip_optional =
             self.p.files.options.strict_null_checks || r.relation == Relation::Comparable;
-        for combination in 0..combinations {
+        let mut combination: SmallVec<[TypeId; 4]> =
+            SmallVec::from_elem(TypeId::NEVER, telling.len());
+        for i in 0..combinations {
+            let mut n = i;
+            for (chosen, (_, ty)) in combination.iter_mut().zip(&telling).rev() {
+                let source_types = self.parts(*ty);
+                *chosen = source_types[n % source_types.len()];
+                n /= source_types.len();
+            }
             let mut has_match = false;
-            'members: for (m, &t) in types.iter().enumerate() {
+            'members: for &t in &types {
                 let Some(tm) = self.members(t) else { continue };
-                let mut n = combination;
-                for (prop, ty) in telling.iter().rev() {
-                    let alternatives = self.parts(*ty);
-                    let chosen = alternatives[n % alternatives.len()];
-                    n /= alternatives.len();
-                    let Some((target_prop, target_mapper)) = self.property_in(&tm, prop.name)
+                for (&(prop, _), &chosen) in telling.iter().zip(&combination) {
+                    let Some((target_prop, target_mapper)) =
+                        self.property_in_type(t, &tm, prop.name)
                     else {
                         continue 'members;
                     };
+                    if self.is_same_property_symbol((prop, sm.mapper), (target_prop, target_mapper))
+                    {
+                        continue;
+                    }
                     if !self
                         .property_related_to::<false>(
                             r,
@@ -5585,7 +5643,9 @@ impl<'p, 's> Checker<'p, 's> {
                         continue 'members;
                     }
                 }
-                matching[m] = true;
+                if !matching_types.contains(&t) {
+                    matching_types.push(t);
+                }
                 has_match = true;
             }
             if !has_match {
@@ -5594,10 +5654,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // The remaining properties must be related to each of the matched members.
         let mut result = Ternary::TRUE;
-        for (m, &t) in types.iter().enumerate() {
-            if !matching[m] {
-                continue;
-            }
+        for t in matching_types {
             result &= self.properties_related_to::<false>(r, source, t, &excluded, false, state);
             if result.holds() {
                 result &= self.signatures_related_to::<false>(r, source, t, false, STATE_NONE);
@@ -5681,7 +5738,7 @@ impl<'p, 's> Checker<'p, 's> {
                             (
                                 &one_element,
                                 &[ElemFlags::REST],
-                                self.is_reference_to_global(source, known::ReadonlyArray),
+                                self.is_reference_to_global(source, known::ReadonlyArray, 1),
                             )
                         }
                     };
@@ -5929,18 +5986,8 @@ impl<'p, 's> Checker<'p, 's> {
             else {
                 continue;
             };
-            if sp.source == tp.source {
-                if (sp.mapper, source_mapper) == (tp.mapper, tm.mapper) {
-                    continue;
-                }
-                let a = self.compose(sp.mapper, source_mapper);
-                let b = self.compose(tp.mapper, tm.mapper);
-                // A mapper stores `H.this -> H.this`, which maps nothing.
-                let types = &self.types();
-                let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
-                if a == b || moved(a).eq(moved(b)) {
-                    continue;
-                }
+            if self.is_same_property_symbol((sp, source_mapper), (tp, tm.mapper)) {
+                continue;
             }
             let related = self.property_related_to::<REPORT>(
                 r,
@@ -5958,6 +6005,22 @@ impl<'p, 's> Checker<'p, 's> {
             result &= related;
         }
         result
+    }
+
+    /// `a == b` for two property symbols, each with the mapper of the type that has it.
+    #[inline]
+    fn is_same_property_symbol(&mut self, a: (&Prop, MapperId), b: (&Prop, MapperId)) -> bool {
+        if a.0.source != b.0.source {
+            return false;
+        }
+        if (a.0.mapper, a.1) == (b.0.mapper, b.1) {
+            return true;
+        }
+        let (a, b) = (self.compose(a.0.mapper, a.1), self.compose(b.0.mapper, b.1));
+        // A mapper stores `H.this -> H.this`, which maps nothing.
+        let types = &self.types();
+        let moved = |m| types.mapping(m).iter().filter(|pair| pair.0 != pair.1);
+        a == b || moved(a).eq(moved(b))
     }
 
     /// `propertyRelatedTo`. `of`: `source` and `target`, the two types that own the properties.
@@ -6096,7 +6159,7 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 };
                 let declared = self.declared_type(source_class);
-                if source_class == base_class || self.has_base(declared, base_class, 0) {
+                if source_class == base_class || self.has_base(declared, base_class) {
                     is_derived = true;
                     break;
                 }
@@ -6981,12 +7044,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(expected) = self.sig_predicate(target) {
             match self.sig_predicate(source) {
                 Some(actual) => {
-                    result &= self.compare_type_predicate_related_to::<REPORT>(
-                        r,
-                        (&actual, &sp[..]),
-                        (&expected, &tp[..]),
-                        state,
-                    );
+                    result &= self
+                        .compare_type_predicate_related_to::<REPORT>(r, &actual, &expected, state);
                 }
                 // Only a type predicate is related to a target that has a type predicate.
                 None if !expected.asserts => {
@@ -7030,15 +7089,14 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
-    /// `compareTypePredicateRelatedTo`. Each predicate comes with the parameters of its signature.
+    /// `compareTypePredicateRelatedTo`
     fn compare_type_predicate_related_to<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
-        source: (&super::decl::Predicate, &[SigParam]),
-        target: (&super::decl::Predicate, &[SigParam]),
+        actual: &super::decl::Predicate,
+        expected: &super::decl::Predicate,
         state: u8,
     ) -> Ternary {
-        let (actual, expected) = (source.0, target.0);
         let mut related = Ternary::FALSE;
         if (actual.asserts, actual.param.is_none()) != (expected.asserts, expected.param.is_none())
         {
@@ -7047,12 +7105,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         } else if actual.param != expected.param {
             if REPORT {
-                let names = [
-                    Arg::Atom(self.parameter_name_at_position(source.1, actual.param.unwrap_or(0))),
-                    Arg::Atom(
-                        self.parameter_name_at_position(target.1, expected.param.unwrap_or(0)),
-                    ),
-                ];
+                let names = [Arg::Atom(actual.name), Arg::Atom(expected.name)];
                 self.report_error(r, 1227, &names);
             }
         } else {
@@ -7063,8 +7116,8 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         if REPORT && !related.holds() {
-            let actual = self.type_predicate_text(actual, source.1);
-            let expected = self.type_predicate_text(expected, target.1);
+            let actual = self.type_predicate_text(actual);
+            let expected = self.type_predicate_text(expected);
             self.report_error(r, 1226, &[Arg::Bytes(&actual), Arg::Bytes(&expected)]);
         }
         related
@@ -7247,8 +7300,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether `getApparentType(ty)` is `emptyObjectType`, which is the apparent type of `object`.
-    /// It has no symbol, unlike a `{}` in the source, and here the two are one type. Of the types
-    /// that count as `{}` in an intersection `addTypeToIntersection` keeps the first.
+    /// It has no symbol, unlike a `{}` in the source. Of the types that count as `{}` in an
+    /// intersection `addTypeToIntersection` keeps the first.
     pub(super) fn is_object_keyword_like(&mut self, ty: TypeId) -> bool {
         let ty = if self.is_deferred(ty) {
             self.base_constraint(ty)
@@ -7266,7 +7319,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 p
             };
-            if look == TypeId::EMPTY_OBJECT {
+            if matches!(look, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
                 first = first.or(Some(p));
             } else if look != TypeId::UNKNOWN {
                 return false;
@@ -7599,7 +7652,14 @@ impl<'p, 's> Checker<'p, 's> {
         let mut pieces = Vec::with_capacity(spans.len());
         for (from, at, to, until) in spans {
             if from == to {
-                let literal = atoms.intern(text_of(from).get(at..until)?);
+                let text = text_of(from).get(at..until)?;
+                let literal = if text.contains(&0xED) {
+                    let mut combined = text.to_vec();
+                    super::mapped::combine_surrogate_pairs(&mut combined);
+                    atoms.intern(&combined)
+                } else {
+                    atoms.intern(text)
+                };
                 pieces.push(self.string_literal(literal, false));
                 continue;
             }
@@ -7629,7 +7689,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         if let TypeData::Intersection(parts) = self.data(hole) {
             return parts.iter().all(|&p| {
-                p == TypeId::EMPTY_OBJECT
+                p == TypeId::EMPTY_TYPE_LITERAL
                     || self.is_valid_type_for_template_literal_placeholder(piece, p, compare)
             });
         }
@@ -7694,19 +7754,23 @@ pub(super) fn for_each_property<'a>(prop: &'a Prop, callback: &mut impl FnMut(&'
     }
 }
 
-/// `isValidNumberString(s, false)`: `Number(s)` is a number, and not an infinite one (`jsnum.FromString`).
+/// `isValidNumberString(s, false)`: `Number(s)` is a number, and not an infinite one.
 fn is_valid_number_string(s: &[u8]) -> bool {
-    if s.is_empty() {
-        return false;
-    }
+    !s.is_empty() && number_from_string(s).is_finite()
+}
+
+/// `jsnum.FromString`: `Number(s)`.
+pub(super) fn number_from_string(s: &[u8]) -> f64 {
     let Ok(s) = std::str::from_utf8(s) else {
-        return false;
+        return f64::NAN;
     };
     // `isStrWhiteSpace`: NEL is white space to Rust and not to JavaScript, the byte order mark the other way round.
     let s = s.trim_matches(|c: char| c.is_whitespace() && c != '\u{85}' || c == '\u{feff}');
-    // `Number(" ")` is 0.
-    if s.is_empty() {
-        return true;
+    match s {
+        "" => return 0.0,
+        "Infinity" | "+Infinity" => return f64::INFINITY,
+        "-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
     }
     if let Some(digits) = s.get(2..)
         && s.as_bytes()[0] == b'0'
@@ -7722,15 +7786,28 @@ fn is_valid_number_string(s: &[u8]) -> bool {
                 c.to_digit(radix)
                     .map(|digit| value * f64::from(radix) + f64::from(digit))
             });
-            return !digits.is_empty() && value.is_some_and(f64::is_finite);
+            return value.filter(|_| !digits.is_empty()).unwrap_or(f64::NAN);
         }
     }
-    bun_core::fmt::parse_f64(s.as_bytes()).is_some_and(f64::is_finite)
+    // `parse_f64` knows other spellings of infinity and of NaN.
+    let unsigned = s.strip_prefix(['-', '+']).unwrap_or(s);
+    if !unsigned.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+        return f64::NAN;
+    }
+    bun_core::fmt::parse_f64(s.as_bytes()).unwrap_or(f64::NAN)
 }
 
 /// `isValidBigIntString(s, false)`: with an `n` after it, it is scanned as a bigint literal without separators, or `-` and one.
 fn is_valid_bigint_string(s: &[u8]) -> bool {
-    match s.strip_prefix(b"-").unwrap_or(s) {
+    // `Scan` goes on to the next token after U+0085, U+2028 and U+2029 even with `skipTrivia` off.
+    fn next_token(mut s: &[u8]) -> &[u8] {
+        while let [0xC2, 0x85, rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] = s {
+            s = rest;
+        }
+        s
+    }
+    let s = next_token(s);
+    match s.strip_prefix(b"-").map_or(s, next_token) {
         [] => false,
         [b'0'] => true,
         [b'0', prefix, digits @ ..] => {

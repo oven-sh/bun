@@ -36,14 +36,7 @@ impl Checker<'_, '_> {
     }
 
     pub(super) fn check_grammar(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        // `grammarErrorOnNode` and similar functions report nothing in a file with parse errors,
-        // nor does `checkContextualIdentifier`.
-        let parses = !has_parse_diagnostics(hir);
-        if parses {
-            self.check_yield_in_property_initializers(file);
-        }
-        self.check_strict_mode(file, parses);
+        self.check_strict_mode(file, !has_parse_diagnostics(self.hir(file)));
     }
 
     /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: the error for the `///
@@ -88,29 +81,6 @@ impl Checker<'_, '_> {
         self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
     }
 
-    /// From `checkImportEqualsDeclaration`, past `checkGrammarModuleElementContext`: 1202 1392.
-    pub(super) fn check_grammar_import_equals_declaration(&mut self, file: FileId, s: StmtId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let StmtKind::ImportEquals(id) = hir[s].kind else {
-            return;
-        };
-        let (import, kind) = (&hir[id], self.p.files.options.module);
-        // In a namespace it is already an error.
-        if matches!(import.target, ImportEqualsTarget::Require(_))
-            && matches!(bound.stmt_parent[s.idx()], Parent::File)
-            && (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&kind)
-            && !import.flags.intersects(Flags::TYPE_ONLY | Flags::AMBIENT)
-            && hir.kind != FileKind::Declaration
-        {
-            self.grammar_error_on_node(file, s, 1202, &[]);
-        }
-        if matches!(import.target, ImportEqualsTarget::Entity(_))
-            && import.flags.contains(Flags::TYPE_ONLY)
-        {
-            self.grammar_error_on_node(file, s, 1392, &[]);
-        }
-    }
-
     /// From `checkExportAssignment`, for an `export =` in a valid position: 1203 1218.
     pub(super) fn check_grammar_export_equals(&mut self, file: FileId, s: StmtId) {
         let (hir, kind) = (self.hir(file), self.p.files.options.module);
@@ -127,8 +97,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkGrammarImportCallExpression`: the first error of a call is the only one. `check_commas_of_import_calls` reports 1009, the
-    /// parser 1326.
+    /// `checkGrammarImportCallExpression`
     pub(super) fn check_grammar_import_call_expression(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, kind) = (self.hir(file), self.p.files.options.module);
         let ExprKind::ImportCall { args, .. } = hir[e].kind else {
@@ -138,31 +107,29 @@ impl Checker<'_, '_> {
             let message = self.verbatim_module_syntax_error_message(file);
             return self.grammar_error_on_node(file, e, message, &[]);
         }
-        let after_keyword = skip_trivia(&hir.text, hir[e].pos as usize + b"import".len());
-        let after_keyword = hir.text.get(after_keyword).copied();
-        if after_keyword == Some(b'.') {
-            // `import.defer(..)`
+        let (specifier, options) = (hir.id_at(args, 0), hir.ids(args).nth(1));
+        let mut deferred = hir.deferred_import_calls.iter();
+        if deferred.any(|call| call.0 == specifier) {
             if !matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve) {
                 return self.grammar_error_on_node(file, e, 18060, &[]);
             }
         } else if kind == ModuleKind::Es2015 {
-            let start = hir[e].pos;
-            self.reported.retain(|d| d.code != 1326 || d.start != start);
             return self.grammar_error_on_node(file, e, 1323, &[]);
         }
-        if after_keyword == Some(b'<') {
-            return false;
+        let mut with_type_arguments = hir.import_call_type_args.iter();
+        if with_type_arguments.any(|call| call.0 == specifier) {
+            return self.grammar_error_on_node(file, e, 1326, &[]);
         }
-        let (specifier, options) = (hir.id_at(args, 0), hir.ids(args).nth(1));
-        let has_import_attributes =
-            kind.is_node() || matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve);
-        if !has_import_attributes && let Some(options) = options {
-            let at = (
-                file,
-                self.error_start_of(file, options),
-                self.error_end_of(file, options),
-            );
-            return self.grammar_error_at(at, 1324, &[]);
+        if !kind.is_node() && !matches!(kind, ModuleKind::EsNext | ModuleKind::Preserve) {
+            // `checkGrammarForDisallowedTrailingComma`: the call ends with its `)`.
+            let close = hir[e].end.saturating_sub(1);
+            if let Some(comma) = start_of_token_before(&hir.text, close, b",") {
+                self.grammar_error_at((file, comma, comma + 1), 1009, &[]);
+            }
+            if let Some(options) = options {
+                let at = self.span_of_parenthesized_expr(file, options);
+                return self.grammar_error_at(at, 1324, &[]);
+            }
         }
         if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
             return self.grammar_error_on_node(file, e, 1450, &[]);
@@ -181,22 +148,15 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkGrammarYieldExpression`: 1163. `parsePropertyDeclaration` parses an initializer outside of the yield context around the
-    /// class, where `yield` is the keyword only if a name, a keyword or a literal follows on the same line (`isYieldExpression`).
-    fn check_yield_in_property_initializers(&mut self, file: FileId) {
+    /// `checkGrammarYieldExpression`
+    pub(super) fn check_grammar_yield_expression(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
-        let index = self.exprs_by_kind(file);
-        for &id in index.of(ExprTag::Yield) {
-            let e = &hir[id];
-            if !is_word_at(&hir.text, e.pos as usize, b"yield")
-                || !operand_follows_on_the_line(&hir.text, e.pos as usize + 5)
-            {
-                continue;
-            }
-            let container = hir.get_this_container(hir.node(id), true, false);
-            if hir.kind(container) == Kind::PropertyDeclaration {
-                self.error_at((file, e.pos, 0), 1163, &[]);
-            }
+        if !hir.yield_context(hir.node(e)) {
+            // `grammarErrorOnFirstToken`
+            self.grammar_error_at((file, hir[e].pos, 0), 1163, &[]);
+        }
+        if hir.is_in_parameter_initializer_before_containing_function(hir.node(e)) {
+            self.error(file, e, 2523, &[]);
         }
     }
 
@@ -210,31 +170,35 @@ impl Checker<'_, '_> {
     ) {
         if self.p.files.options.allow_unreachable_code == Some(true)
             || !self.is_side_effect_free(file, left)
+            || self.is_indirect_call(file, id, left, right)
         {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `isIndirectCall`: `(0, x.f)()` is a way of calling `x.f` without `x` for `this`.
-        let is_zero =
-            matches!(hir[left].kind, ExprKind::Number(n) if hir.numbers[n as usize] == 0.0);
-        let is_callee = matches!(bound.expr_parent[id.idx()], Parent::Expr(p)
-            if matches!(hir[p].kind, ExprKind::Call(c) | ExprKind::TaggedTemplate(c) if hir[c].callee == id));
-        let is_reference = matches!(
-            hir[right].kind,
-            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Ident(known::eval)
-        );
-        if is_zero && is_callee && is_reference {
             return;
         }
         let start = self.start_of(file, left);
         if !self.is_in_adjacent_jsx_elements(file, id, start) {
             // An omitted operand is a zero-length identifier (`createMissingNode`).
-            let end = match hir[left].kind {
-                ExprKind::Missing | ExprKind::Ident(known::empty) => super::explain::NO_LENGTH,
-                _ => self.error_end_of(file, left),
+            let at = match self.hir(file)[left].kind {
+                ExprKind::Missing | ExprKind::Ident(known::empty) => {
+                    (file, start, super::explain::NO_LENGTH)
+                }
+                _ => self.span_of_parenthesized_expr(file, left),
             };
-            self.error_at((file, start, end), 2695, &[]);
+            self.error_at(at, 2695, &[]);
         }
+    }
+
+    /// `isIndirectCall`: `(0, x.f)(..)` and `(0, eval)(..)` call without passing a `this`.
+    fn is_indirect_call(&self, file: FileId, node: ExprId, left: ExprId, right: ExprId) -> bool {
+        let hir = self.hir(file);
+        let parent = hir.parent(hir.node(node));
+        let (call, right) = (hir.parent(parent), hir.child(right));
+        hir.kind(parent) == Kind::ParenthesizedExpression
+            && !is_parenthesized(hir, left)
+            && matches!(hir[left].kind, ExprKind::Number(n) if hir.numbers[n as usize] == 0.0)
+            && (hir.kind(call) == Kind::CallExpression && hir.expression(call) == parent
+                || hir.kind(call) == Kind::TaggedTemplateExpression)
+            && (hir.kind(right).is_access_expression()
+                || hir.kind(right) == Kind::Identifier && hir.text(right) == known::eval)
     }
 
     /// `isInDiag2657` of `checkBinaryLikeExpression`: whether `start`, where the left operand of `comma` starts, is in the span of a
@@ -308,9 +272,6 @@ impl Checker<'_, '_> {
     /// `checkContextualIdentifier` reports nothing for a file unless it `parses`.
     fn check_strict_mode(&mut self, file: FileId, parses: bool) {
         let hir = self.hir(file);
-        if hir.kind == FileKind::Declaration {
-            return;
-        }
         for &node in hir.keyword_identifiers() {
             match hir.text(node) {
                 known::eval | known::arguments => {
@@ -407,7 +368,8 @@ impl Checker<'_, '_> {
             else {
                 continue;
             };
-            if bound.is_unchecked(id.idx()) {
+            // The binder visits every node of the tree, whether or not the checker does.
+            if matches!(bound.expr_parent[id.idx()], Parent::None) {
                 continue;
             }
             match hir[operand].kind {
@@ -423,33 +385,6 @@ impl Checker<'_, '_> {
                 }
                 _ => {}
             }
-        }
-    }
-}
-
-// ───────────────────────────── the text ─────────────────────────────
-
-/// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine` for the token that ends at `at`.
-fn operand_follows_on_the_line(text: &[u8], mut at: usize) -> bool {
-    loop {
-        match text.get(at..).unwrap_or_default() {
-            [b' ' | b'\t' | 0x0b | 0x0c, ..] => at += 1,
-            [b'/', b'*', rest @ ..] => {
-                let Some(end) = strings::index_of(rest, b"*/") else {
-                    return false;
-                };
-                if bun_core::strings::index_of_any(&rest[..end], b"\n\r").is_some() {
-                    return false;
-                }
-                at += end + 4;
-            }
-            [b'.', second, ..] => return second.is_ascii_digit(),
-            [first, ..] => {
-                return first.is_ascii_alphanumeric()
-                    || matches!(first, b'_' | b'$' | b'\\' | b'"' | b'\'')
-                    || *first >= 0x80;
-            }
-            [] => return false,
         }
     }
 }

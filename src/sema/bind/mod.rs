@@ -216,6 +216,11 @@ fn is_exports_identifier(hir: &File, e: ExprId) -> bool {
 
 /// `IsModuleExportsAccessExpression`
 pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
+    !is_parenthesized(hir, e) && is_module_exports_inside_parentheses(hir, e)
+}
+
+/// The same for `e` without the parentheses around it.
+pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
     let (obj, name) = match hir[e].kind {
         ExprKind::Dot { obj, name, .. } => (obj, name),
         ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
@@ -224,7 +229,6 @@ pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
     name == known::exports
         && matches!(hir[obj].kind, ExprKind::Ident(known::module))
         && !is_parenthesized(hir, obj)
-        && !is_parenthesized(hir, e)
 }
 
 /// `GetAssignmentDeclarationKind`, for the kinds that only JavaScript has.
@@ -510,6 +514,9 @@ pub enum ScopeKind {
     ComputedName,
     /// The same for the `extends` expression of a class, without its type arguments.
     BaseExpression,
+    /// Encloses the computed name of a method or an accessor, which is a child of that function. It
+    /// declares nothing: from here `arguments` is that of the function.
+    FunctionName(FnId),
     /// Encloses the computed name and the initializer of a non-static class property, if the class
     /// has a constructor with a body, which is stored here, and class fields are not emitted
     /// unchanged. It declares nothing: the constructor's declarations cannot be referenced from
@@ -702,9 +709,9 @@ pub enum FlowTarget {
 pub enum Flow {
     Unreachable,
     /// The start of a function, of a property with an initializer, of the body of a namespace or of
-    /// the file. That of a method, an accessor or a property is before its name, if that is
-    /// computed. `outer` is the flow node at which the function expression, the arrow function, or
-    /// the method or accessor of an object literal or a class expression is evaluated.
+    /// the file. That of a method, an accessor or a property is before its decorators and its
+    /// computed name. `outer` is the flow node at which the function expression, the arrow
+    /// function, or the method or accessor of an object literal or a class expression is evaluated.
     /// `arrow`: it is an arrow function, which has no `this` of its own.
     Start {
         outer: FlowId,
@@ -837,6 +844,9 @@ pub struct BoundIn<S: Storage> {
     /// the top level of a script. The flag is `IsModuleAugmentationExternal`: it augments a module
     /// that is declared elsewhere.
     pub ambient_modules: S::Few<(Atom, SymbolId, bool)>,
+    /// `file.PatternAmbientModules`: a module whose name has exactly one `*` and that augments
+    /// nothing, wherever it is declared. One entry for each declaration.
+    pub pattern_ambient_modules: S::Few<(Atom, SymbolId)>,
     /// `declare global { }` at the top level of a module, or directly inside an ambient module at
     /// the top level of a script: symbols whose exports are global.
     pub global_augmentations: S::Few<SymbolId>,
@@ -944,7 +954,8 @@ pub struct BoundIn<S: Storage> {
     /// The flow node at the end of a `case` that is followed by another, if that end is reachable.
     /// `NONE` otherwise.
     pub case_fallthrough: S::List<FlowId>,
-    /// Each `var` declared in a block, from which it is hoisted, and its enclosing scope.
+    /// Each `var` declared in a block, from which it is hoisted, or directly in a static block,
+    /// and its enclosing scope.
     pub hoisted_vars: S::Few<(PatId, ScopeId)>,
     /// The decorators of nodes that cannot be decorated: no further errors are reported inside
     /// them.
@@ -960,6 +971,12 @@ pub struct BoundIn<S: Storage> {
     /// declares an `#x`.
     /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no enclosing class does.
     pub private_class: S::Map<ExprId, ClassId>,
+    /// The members of interfaces, type literals and object literals that are named `#x`, with
+    /// `GetContainingClass`: `getDeclarationName` names them like an `#x` of that class.
+    pub private_names_outside_class_bodies: S::Few<(Decl, ClassId)>,
+    /// The classes for whose symbols `GetSymbolNameForPrivateIdentifier` asks `GetSymbolId`, in the
+    /// order of the first call for each.
+    pub classes_of_private_names: S::Few<ClassId>,
     /// The identifiers that resolve to nothing declared in the file, each with its enclosing scope:
     /// globals, members that another file merges into an enclosing namespace or enum, or errors.
     /// Sorted by expression.
@@ -975,6 +992,11 @@ pub struct BoundIn<S: Storage> {
     pub identifiers_in_parameters: S::Few<(ExprId, PatId, FnId)>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
     pub jsdoc_param_errors: S::Few<u32>,
+    /// The identifiers named `arguments` that are not expressions and that
+    /// `containsArgumentsReference` passes to `getResolvedSymbol`, unless the result is
+    /// `argumentsSymbol`: with the enclosing scope, and the result. `NONE`: nothing in this file
+    /// declares it.
+    pub names_resolved_for_arguments: S::Few<(Node, ScopeId, SymbolId)>,
 
     pub flow: S::List<Flow>,
     pub flow_edges: S::List<FlowId>,
@@ -1065,6 +1087,12 @@ impl<S: Storage> BoundIn<S> {
         self.assignment_target(hir, e, true)
     }
 
+    /// Whether the assignment `e` is what `{ name = value }` is stored as: a
+    /// `ShorthandPropertyAssignment` with an `ObjectAssignmentInitializer`.
+    pub fn is_shorthand_property_assignment(&self, hir: &File, e: ExprId) -> bool {
+        matches!(self.expr_parent[e.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+    }
+
     /// `GetAssignmentTarget` and `accessKind` walk up the parents the same way, except that the
     /// latter looks through neither `!` nor `...`.
     fn assignment_target(
@@ -1076,9 +1104,14 @@ impl<S: Storage> BoundIn<S> {
         loop {
             match self.expr_parent[e.idx()] {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
-                    ExprKind::Assign { op, target, .. } => {
-                        return (target == e).then_some(AssignmentTarget::Assign(op));
+                    ExprKind::Assign { target, .. } if target != e => return None,
+                    // `{ name = value }` is a `ShorthandPropertyAssignment`.
+                    ExprKind::Assign { .. }
+                        if self.is_shorthand_property_assignment(hir, parent) =>
+                    {
+                        e = parent;
                     }
+                    ExprKind::Assign { op, .. } => return Some(AssignmentTarget::Assign(op)),
                     ExprKind::Unary {
                         op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                         ..
@@ -1285,13 +1318,6 @@ impl Bound<'_> {
         self.access_kind(hir, e) == AccessKind::Write
     }
 
-    /// `isSymbolAssignedDefinitely`: `+=` and `++` modify a value, they do not initialize one.
-    pub fn is_symbol_assigned_definitely(&self, hir: &File, symbol: SymbolId) -> bool {
-        self.assignments_to(symbol)
-            .iter()
-            .any(|a| self.get_assignment_target_kind(hir, a.1) == AssignmentKind::Definite)
-    }
-
     /// `markNodeAssignmentsWorker`: the identifiers that resolve to `symbol` and are assignment
     /// targets, in source order.
     pub fn assignments_to(&self, symbol: SymbolId) -> &[(SymbolId, ExprId)] {
@@ -1344,8 +1370,7 @@ impl Bound<'_> {
                     _ => return None,
                 };
                 // `{ a = e }` is a `ShorthandPropertyAssignment`.
-                if is_parenthesized(hir, left)
-                    || matches!(self.expr_parent[parent.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+                if is_parenthesized(hir, left) || self.is_shorthand_property_assignment(hir, parent)
                 {
                     return None;
                 }
@@ -1495,8 +1520,6 @@ impl Bound<'_> {
     }
 
     /// `ExportSymbol` of the local symbol named `name` in `scope`.
-    /// `GetLocalSymbolForExportDefault(result).Name == name` is evaluated in this direction:
-    /// `result` is that symbol.
     pub fn export_symbol_of_local(&self, scope: ScopeId, name: Atom) -> SymbolId {
         match self.lookup(self.scopes[scope.idx()].locals, name) {
             Some(local) => self.symbols[local.idx()].export_symbol,
@@ -1633,6 +1656,7 @@ impl BoundBuilder {
             file_symbol: self.file_symbol,
             export_stars: few_to_arena(self.export_stars, arena),
             ambient_modules: few_to_arena(self.ambient_modules, arena),
+            pattern_ambient_modules: few_to_arena(self.pattern_ambient_modules, arena),
             global_augmentations: few_to_arena(self.global_augmentations, arena),
             redeclarations: few_to_arena(self.redeclarations, arena),
             umd_globals: few_to_arena(self.umd_globals, arena),
@@ -1695,11 +1719,17 @@ impl BoundBuilder {
             export_scope: copy_to_arena(&mut self.export_scope, arena),
             expr_scope: map_to_arena(self.expr_scope, arena),
             private_class: map_to_arena(self.private_class, arena),
+            private_names_outside_class_bodies: few_to_arena(
+                self.private_names_outside_class_bodies,
+                arena,
+            ),
+            classes_of_private_names: few_to_arena(self.classes_of_private_names, arena),
             free_idents: copy_to_arena(&mut self.free_idents, arena),
             alias_idents: copy_to_arena(&mut self.alias_idents, arena),
             arguments_objects: few_to_arena(self.arguments_objects, arena),
             identifiers_in_parameters: few_to_arena(self.identifiers_in_parameters, arena),
             jsdoc_param_errors: few_to_arena(self.jsdoc_param_errors, arena),
+            names_resolved_for_arguments: few_to_arena(self.names_resolved_for_arguments, arena),
             flow: copy_to_arena(&mut self.flow, arena),
             flow_edges: copy_to_arena(&mut self.flow_edges, arena),
             flow_shared: copy_to_arena(&mut self.flow_shared, arena),

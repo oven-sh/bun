@@ -182,6 +182,31 @@ fn compare_message_chain_content(a: &[Reported], b: &[Reported]) -> std::cmp::Or
         })
 }
 
+/// `EqualDiagnostics`
+fn equal_diagnostics(a: &Reported, b: &Reported) -> bool {
+    let (related_to_a, related_to_b) = (&a.related_information, &b.related_information);
+    equal_diagnostics_no_related_info(a, b)
+        && related_to_a.len() == related_to_b.len()
+        && (related_to_a.iter().zip(related_to_b)).all(|(a, b)| equal_diagnostics(a, b))
+}
+
+/// `EqualDiagnosticsNoRelatedInfo`
+fn equal_diagnostics_no_related_info(a: &Reported, b: &Reported) -> bool {
+    (a.file, a.start, a.end, a.code) == (b.file, b.start, b.end, b.code)
+        && a.args == b.args
+        && equal_message_chains(&a.message_chain, &b.message_chain)
+}
+
+/// `slices.EqualFunc(a, b, equalMessageChain)`
+fn equal_message_chains(a: &[Reported], b: &[Reported]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.code == b.code
+                && a.args == b.args
+                && equal_message_chains(&a.message_chain, &b.message_chain)
+        })
+}
+
 pub(super) struct Sink<'s> {
     /// The diagnostics reported in each file. A `Reported` owns memory of the regular heap:
     /// `release`.
@@ -224,6 +249,8 @@ fn is_task_independent(q: Query) -> bool {
         | Query::Expr(..)
         | Query::Call(..)
         | Query::InitializerIsUndefined(..)
+        | Query::AliasTarget(_)
+        | Query::WriteType(..)
         | Query::Comparison(_) => true,
         Query::ReturnOfSignature(_)
         | Query::Shape(_)
@@ -291,17 +318,14 @@ impl super::Program<'_> {
     pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
         reported.sort_by(|a, b| self.compare_diagnostics(a, b));
         // `compactAndMergeRelatedInfos`: diagnostics that differ only in their related information
-        // are merged into one that has all of it.
+        // are merged into one that has all of it, sorted.
         reported.dedup_by(|next, first| {
-            let is_same = (next.file, next.start, next.end, next.code)
-                == (first.file, first.start, first.end, first.code)
-                && next.args == first.args
-                && next.message_chain == first.message_chain;
-            if is_same && !next.related_information.is_empty() {
+            let is_same = equal_diagnostics_no_related_info(next, first);
+            if is_same {
                 let related = &mut first.related_information;
                 related.append(&mut next.related_information);
                 related.sort_by(|a, b| self.compare_diagnostics(a, b));
-                related.dedup();
+                related.dedup_by(|next, first| equal_diagnostics(next, first));
             }
             is_same
         });
@@ -416,11 +440,34 @@ impl Checker<'_, '_> {
             // the owning file recomputes it during its own check and reports the diagnostic there.
             if self.task.file != Some(diagnostic.file) {
                 self.mark_tainted_from(self.frames.len().saturating_sub(1));
+            } else if let Some(from) = self.expressions_checked_again() {
+                self.mark_tainted_from(from);
             }
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
         self.reported.last_mut().unwrap()
+    }
+
+    /// `getReturnTypeFromBody` checks the expression of a `return` statement with
+    /// `checkExpressionCached`, and so does `checkReturnStatement`. An expression body and the
+    /// operand of a `yield` are checked again with `checkExpression`, which stores no result and
+    /// creates a discarded diagnostic again. The index in `stack` of such an expression, if the
+    /// queries from there up are expressions that check one another.
+    fn expressions_checked_again(&self) -> Option<usize> {
+        let is_check = |q: &&Query| matches!(q, Query::Expr(..) | Query::LiteralProp(..));
+        let from = self.stack.len() - self.stack.iter().rev().take_while(is_check).count();
+        if from <= self.printing_floors.last().copied().unwrap_or(0) {
+            return None;
+        }
+        let (Query::Return(..) | Query::ReturnAtFirstLook(..), &Query::Expr(file, outermost)) =
+            (self.stack[from - 1], self.stack.get(from)?)
+        else {
+            return None;
+        };
+        let is_cached = matches!(self.bound(file).expr_parent[outermost.idx()],
+            crate::bind::Parent::Stmt(s) if matches!(self.hir(file)[s].kind, StmtKind::Return(_)));
+        (!is_cached).then_some(from)
     }
 
     /// `c.addDeferredDiagnostic`. `callback`: see `Reported::deferred`.
@@ -494,6 +541,11 @@ impl Checker<'_, '_> {
         if self.is_type_checked && self.task.file == Some(diagnostic.file) {
             return;
         }
+        // `GetGlobalDiagnostics` comes after the last `checkSourceFile` and before a baseline writer. What the writer is the
+        // first to evaluate is not stored then, so the check of a later file that asks for it reports.
+        if self.is_type_checked && diagnostic.file == NOWHERE.0 {
+            return self.mark_tainted_from(0);
+        }
         diagnostic.by_emit |= self.is_emitting;
         let mut owner = owner;
         if self.task.checker_count != 0 {
@@ -502,6 +554,11 @@ impl Checker<'_, '_> {
             }
             // No other checker reports in the file.
             owner = None;
+        } else if diagnostic.file != NOWHERE.0
+            && !diagnostic.by_emit
+            && !self.is_reported_in_time(owner, diagnostic.file)
+        {
+            return;
         }
         if self.task.is_planned() {
             self.task.diagnostics.push((owner, diagnostic));
@@ -528,6 +585,18 @@ impl Checker<'_, '_> {
             .file
             .map(|current| self.files().rank_of_file(current));
         is_own && current.is_none_or(|current| rank >= current)
+    }
+
+    /// `collects_later` for a task of the plan, which other tasks precede in no particular order.
+    /// The check of a file asks for the queries about its own syntax. So what is reported now is
+    /// reported no later than the first of these files is checked: that of the task, and those
+    /// whose syntax `owner` and the queries in progress are about. Any file can be the first to ask
+    /// for a query about a type.
+    fn is_reported_in_time(&self, owner: Option<Query>, file: FileId) -> bool {
+        let is_in_time = |visited: FileId| self.is_checked_no_later_than(visited, file);
+        self.task.file.is_none_or(is_in_time)
+            || (owner.iter().chain(&self.stack))
+                .any(|q| q.syntax().is_none_or(|(visited, _)| is_in_time(visited)))
     }
 
     /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key

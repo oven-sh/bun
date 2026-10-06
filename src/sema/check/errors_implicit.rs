@@ -27,16 +27,16 @@ impl Checker<'_, '_> {
                 let getter = self.sibling_accessor(file, func, FnKind::Getter);
                 (
                     7032,
-                    getter.is_none_or(|g| self.accessor_has_no_type_source(file, g)),
+                    getter.is_none_or(|(of, g)| self.accessor_has_no_type_source(of, g)),
                 )
             } else {
                 // The error is reported on the setter, if possible.
                 let setter = self.sibling_accessor(file, func, FnKind::Setter);
                 (
                     7033,
-                    setter.is_none_or(|s| {
-                        self.accessor_has_no_type_source(file, s)
-                            && self.is_private_within_ambient(file, s)
+                    setter.is_none_or(|(of, s)| {
+                        self.accessor_has_no_type_source(of, s)
+                            && self.is_private_within_ambient(of, s)
                     }),
                 )
             };
@@ -65,28 +65,18 @@ impl Checker<'_, '_> {
             // nothing for a missing body.
             FnKind::Method if matches!(owner, FnOwner::Expr(_)) => {}
             FnKind::Decl | FnKind::Method if !is_private_ambient => {
-                let is_missing = match owner {
-                    FnOwner::Member(m) => {
-                        matches!(hir[m].key, PropKey::None | PropKey::Name(known::empty))
-                    }
-                    _ => decl.name == known::empty,
-                };
+                let name = hir.name(hir.node(func));
                 // `GetErrorRangeForNode` has no case for a method signature: the error spans the
                 // whole node. A missing name has zero length.
-                let (name_end, end) = match owner {
-                    FnOwner::Member(m) => {
-                        let name_end = self.end_of_member_name(file, m);
-                        match bound.member_owner[m.idx()] {
-                            MemberOwner::Class(_) if is_missing => (name_end, start),
-                            MemberOwner::Class(_) => (name_end, name_end),
-                            _ => (name_end, hir[m].loc.end),
-                        }
+                let end = match owner {
+                    FnOwner::Member(m)
+                        if !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_)) =>
+                    {
+                        hir[m].loc.end
                     }
-                    _ if is_missing => (start, start),
-                    _ => {
-                        let end = self.end_of_name_at(file, start);
-                        (end, end)
-                    }
+                    _ if hir.is_missing(name) => start,
+                    FnOwner::Member(m) => self.end_of_member_name(file, m),
+                    _ => self.end_of_name_at(file, start),
                 };
                 let (node, any) = ((file, start, end), Arg::Type(TypeId::ANY));
                 // `reportImplicitAny`: one without a name gets the message of a function
@@ -95,11 +85,9 @@ impl Checker<'_, '_> {
                     self.error_at(node, 7011, &[any]);
                 } else if decl.flags.contains(Flags::REPARSED) {
                     self.error_at(node, 7012, &[any]);
-                } else if is_missing {
-                    self.error_at(node, 7010, &[Arg::Bytes(b"(Missing)"), any]);
                 } else {
-                    let name = Arg::Bytes(&hir.text[start as usize..name_end as usize]);
-                    self.error_at(node, 7010, &[name, any]);
+                    let name = self.declaration_name_to_string(file, name);
+                    self.error_at(node, 7010, &[Arg::Bytes(&name), any]);
                 }
             }
             _ => {}
@@ -129,25 +117,21 @@ impl Checker<'_, '_> {
         let f = &hir[func];
         match f.kind {
             FnKind::Getter => f.ret.is_none() && matches!(f.body, FnBody::None),
-            _ => f.params.iter().next().is_none_or(|p| hir[p].ty.is_none()),
+            _ => f.effective_set_accessor_type_annotation_node(hir).is_none(),
         }
     }
 
-    /// Start of the name of the accessor `func`. `None`: its property cannot be determined.
-    pub(super) fn start_of_accessor_name(&mut self, file: FileId, func: FnId) -> Option<u32> {
+    /// Start of the name of the accessor `func`.
+    fn start_of_accessor_name(&self, file: FileId, func: FnId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (key, pos) = match bound.fns[func.idx()].owner {
-            FnOwner::Member(m) => (hir[m].key, hir[m].name_pos),
+        match bound.fns[func.idx()].owner {
+            FnOwner::Member(m) => Some(hir[m].name_pos),
             FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
-                Parent::Prop(p) => (hir[p].key, hir[p].pos),
-                _ => return None,
+                Parent::Prop(p) => Some(hir[p].pos),
+                _ => None,
             },
-            _ => return None,
-        };
-        if key == PropKey::None {
-            return None;
+            _ => None,
         }
-        Some(pos)
     }
 
     /// `(string) => void` was meant to be `(arg0: string) => void`. `IsTypeNodeKind`

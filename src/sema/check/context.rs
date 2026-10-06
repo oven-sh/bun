@@ -299,80 +299,29 @@ impl<'p, 's> Checker<'p, 's> {
         report_errors: ReportErrors,
     ) -> Option<TypeId> {
         let hir = self.hir(file);
-        // `getTypeFromBindingElement`
-        let of_element = |c: &mut Self, pat: PatId, default: ExprId| -> TypeId {
-            if default.is_some() {
-                let contextual_type = c
-                    .context_implied_by_pattern(file, pat)
-                    .unwrap_or(TypeId::UNKNOWN);
-                let ty = c.check_expression_with_contextual_type(
-                    file,
-                    default,
-                    contextual_type,
-                    None,
-                    CheckMode::empty(),
-                );
-                let root = root_declaration(c.bound(file), pat);
-                // `checkDeclarationInitializer`: under a parameter, the type of a default is padded
-                // with the properties its own pattern has defaults for.
-                let ty = if matches!(root, PatParent::Param(_)) {
-                    c.padded_for_pattern(file, pat, ty)
-                } else {
-                    ty
-                };
-                // `getWidenedLiteralTypeForInitializer`: under a constant a literal type is
-                // preserved.
-                let is_constant = matches!(root, PatParent::Var(d) if matches!(hir[d].kind, VarKind::Const | VarKind::Using | VarKind::AwaitUsing));
-                let ty = if is_constant { ty } else { c.widen_literal(ty) };
-                // The implied type is widened as a whole where it becomes the type of a
-                // declaration. The contextual type is not.
-                let ty = if for_context == IncludePatternInType::Yes {
-                    ty
-                } else {
-                    c.get_widened_type(ty)
-                };
-                return c.optional(ty);
-            }
-            if let Some(implied) = c.implied_by_pattern(file, pat, for_context, report_errors) {
-                return implied;
-            }
-            if report_errors == ReportErrors::Yes {
-                c.report_implicit_any_of_name(file, pat, TypeId::ANY);
-            }
-            if for_context == IncludePatternInType::Yes {
-                TypeId::NON_INFERRABLE_ANY
-            } else {
-                TypeId::ANY
-            }
-        };
         match hir[pat].kind {
             PatKind::Missing | PatKind::Ident(_) => None,
+            // `getTypeFromArrayBindingPattern`
             PatKind::Array(elems) => {
-                let last_is_rest = elems.iter().last().is_some_and(|e| hir[e].is_rest);
-                if elems.is_empty() || (elems.len() == 1 && last_is_rest) {
+                let rest_element = elems.iter().next_back().filter(|&e| hir[e].is_rest);
+                if elems.is_empty() || (elems.len() == 1 && rest_element.is_some()) {
                     if self.p.files.options.target == crate::resolve::ScriptTarget::ES5 {
                         return Some(self.array_of(TypeId::ANY));
                     }
                     // `createIterableType`, `getGlobalIterableTypeChecked`
-                    if self.global_type_symbol(known::Iterable).is_none() {
-                        self.report_global_error(2318, vec![b"Iterable".to_vec()]);
-                    }
-                    return Some(self.global_ref(
+                    return Some(self.global_ref_checked(
                         known::Iterable,
                         &[TypeId::ANY, TypeId::VOID, TypeId::UNDEFINED],
                     ));
                 }
-                let required = elems
+                let min_length = elems
                     .iter()
-                    .enumerate()
-                    .filter(|&(_, e)| {
-                        !(hir[e].is_rest
-                            || hir[e].default.is_some()
-                            || matches!(hir[hir[e].pat].kind, PatKind::Missing))
+                    .rposition(|e| {
+                        !(Some(e) == rest_element
+                            || matches!(hir[hir[e].pat].kind, PatKind::Missing)
+                            || hir[e].default.is_some())
                     })
-                    .map(|(i, _)| i + 1)
-                    .last()
-                    .unwrap_or(0);
+                    .map_or(0, |last| last + 1);
                 let mut types = Vec::with_capacity(elems.len());
                 let mut flags = Vec::with_capacity(elems.len());
                 for (i, e) in elems.iter().enumerate() {
@@ -380,11 +329,17 @@ impl<'p, 's> Checker<'p, 's> {
                     types.push(if matches!(hir[elem.pat].kind, PatKind::Missing) {
                         TypeId::ANY
                     } else {
-                        of_element(self, elem.pat, elem.default)
+                        self.type_from_binding_element(
+                            file,
+                            elem.pat,
+                            elem.default,
+                            for_context,
+                            report_errors,
+                        )
                     });
-                    flags.push(if elem.is_rest {
+                    flags.push(if Some(e) == rest_element {
                         ElemFlags::REST
-                    } else if i >= required {
+                    } else if i >= min_length {
                         ElemFlags::OPTIONAL
                     } else {
                         ElemFlags::REQUIRED
@@ -404,12 +359,23 @@ impl<'p, 's> Checker<'p, 's> {
                             .push(IndexInfo::new(TypeId::STRING, TypeId::ANY, false));
                         continue;
                     }
-                    // A name that is only known at run time is omitted.
-                    let Some(name) = self.member_name(file, prop.key) else {
+                    // A name that is only known at run time is omitted, and so is a private name:
+                    // its `getLiteralTypeFromPropertyName` is `never`.
+                    let name = match prop.key {
+                        PropKey::Private(_) => None,
+                        key => self.member_name(file, key),
+                    };
+                    let Some(name) = name else {
                         has_computed_names = true;
                         continue;
                     };
-                    let ty = of_element(self, prop.value, prop.default);
+                    let ty = self.type_from_binding_element(
+                        file,
+                        prop.value,
+                        prop.default,
+                        for_context,
+                        report_errors,
+                    );
                     let flags = if prop.default.is_some() {
                         PropFlags::OPTIONAL
                     } else {
@@ -439,10 +405,61 @@ impl<'p, 's> Checker<'p, 's> {
                     } else {
                         Literalness::Pattern
                     };
+                } else {
+                    // `ObjectFlagsObjectLiteral`, not fresh.
+                    (shape.literal, shape.is_regular) = (Literalness::Literal, true);
                 }
                 shape.has_no_instantiable_symbol = true;
                 Some(self.synth(shape))
             }
+        }
+    }
+
+    /// `getTypeFromBindingElement` for the element of a pattern that binds `pat` and has the
+    /// initializer `default`.
+    pub(super) fn type_from_binding_element(
+        &mut self,
+        file: FileId,
+        pat: PatId,
+        default: ExprId,
+        for_context: IncludePatternInType,
+        report_errors: ReportErrors,
+    ) -> TypeId {
+        if default.is_some() {
+            let contextual_type = self
+                .context_implied_by_pattern(file, pat)
+                .unwrap_or(TypeId::UNKNOWN);
+            let ty = self.check_expression_with_contextual_type(
+                file,
+                default,
+                contextual_type,
+                None,
+                CheckMode::empty(),
+            );
+            // `checkDeclarationInitializer`: under a parameter, the type of a default is padded
+            // with the members its own pattern has defaults for.
+            let ty = match root_declaration(self.bound(file), pat) {
+                PatParent::Param(root) => {
+                    self.note_checked_with_contextual_type(file, root, default);
+                    self.padded_for_pattern(file, pat, ty)
+                }
+                _ => ty,
+            };
+            let ty = self.get_widened_literal_type_for_initializer(file, pat, ty);
+            return self.optional(ty);
+        }
+        if let Some(implied) = self.implied_by_pattern(file, pat, for_context, report_errors) {
+            return implied;
+        }
+        if report_errors == ReportErrors::Yes
+            && !self.declaration_belongs_to_private_ambient_member(file, pat)
+        {
+            self.report_implicit_any_of_name(file, pat, TypeId::ANY);
+        }
+        if for_context == IncludePatternInType::Yes {
+            TypeId::NON_INFERRABLE_ANY
+        } else {
+            TypeId::ANY
         }
     }
 
@@ -628,7 +645,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && let crate::bind::ClassOwner::Expr(class) = bound.class_owner[c.idx()]
                 {
                     let expected = self.contextual_type(file, class, context_flags)?;
-                    let name = self.member_name(file, hir[m].key)?;
+                    let name = self.declared_member_name(file, hir[m].key)?;
                     return self.contextual_property(expected, name);
                 }
                 None
@@ -674,53 +691,41 @@ impl<'p, 's> Checker<'p, 's> {
                     return self.contextual_type(file, owner, context_flags);
                 }
                 let context = self.apparent_type_of_contextual_type(file, owner, context_flags)?;
-                match self.member_name(file, prop.key) {
-                    Some(name) => {
-                        // `nameType` of a symbol that is bound late: `[zero]` is a number.
-                        let name_type = match prop.key {
-                            PropKey::Computed(k) if is_entity_name_expression(hir, k) => {
-                                let key = self.type_of_expr(file, k);
-                                Some(self.regular(key))
+                let name_expression = match prop.key {
+                    PropKey::Computed(k) if is_dynamic_name(hir, k) => k,
+                    // `symbol.Name`, as the binder has it. A missing name is the empty string.
+                    key => {
+                        return match self.declared_member_name(file, key) {
+                            Some(name) => {
+                                self.contextual_property_of_value(file, e, context, name, None)
                             }
-                            _ => None,
+                            None => self.contextual_index(context, TypeId::STRING),
                         };
-                        let found =
-                            self.contextual_property_of_value(file, e, context, name, name_type);
-                        // `hasBindableName`: `[(0)]` is neither a name nor bound late. Where no
-                        // property has its name, it goes by its type, which is a number.
-                        match prop.key {
-                            PropKey::Computed(k)
-                                if found.is_none()
-                                    && is_dynamic_name(hir, k)
-                                    && !is_entity_name_expression(hir, k) =>
-                            {
-                                let key = self.type_of_expr(file, k);
-                                let key = self.regular(key);
-                                self.contextual_index(context, key)
-                            }
-                            _ => found,
-                        }
                     }
-                    None => {
-                        // `getLiteralTypeFromPropertyName`: the type of the expression between the
-                        // brackets.
-                        let key = match prop.key {
-                            PropKey::Computed(k) => {
-                                let ty = self.type_of_expr(file, k);
-                                self.regular(ty)
-                            }
-                            _ => TypeId::STRING,
-                        };
-                        self.contextual_index(
-                            context,
-                            if key == TypeId::UNRESOLVED {
-                                TypeId::STRING
-                            } else {
-                                key
-                            },
-                        )
+                };
+                let expr_type = self.type_of_expr(file, name_expression);
+                let name_type = self.regular(expr_type);
+                if let Some(name) = self.member_name(file, prop.key) {
+                    // `hasLateBindableName`: `[zero]` is a number.
+                    if is_entity_name_expression(hir, name_expression) {
+                        let name_type = Some(name_type);
+                        return self
+                            .contextual_property_of_value(file, e, context, name, name_type);
+                    }
+                    let found = self.contextual_property_of_value(file, e, context, name, None);
+                    if found.is_some() {
+                        return found;
                     }
                 }
+                // `getLiteralTypeFromPropertyName`
+                self.contextual_index(
+                    context,
+                    if name_type == TypeId::UNRESOLVED {
+                        TypeId::STRING
+                    } else {
+                        name_type
+                    },
+                )
             }
             Parent::Expr(parent) => self.contextual_type_in_expr(file, e, parent, context_flags),
             // `getContextualTypeForDecorator`
@@ -876,50 +881,25 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         name_type: Option<TypeId>,
     ) -> Option<TypeId> {
-        if self.is_any(context) {
-            return None;
-        }
         // `mapTypeEx`
         if context.is_never() {
             return Some(context);
         }
         let mut types = Parts::new();
-        for &written in self.parts(context) {
-            // `getApparentTypeOfContextualType`: a mapped type is left unchanged.
-            let part = if self.mapped_origin(written).is_some() {
-                written
-            } else {
-                self.apparent_type(written)
-            };
-            if self.is_union(part) {
-                if let Some(t) = self.contextual_property_ex(part, name, name_type) {
-                    types.push(t);
-                }
-                continue;
-            }
-            // `getApparentType`: in the constraint of a type parameter, `this` is the type
-            // parameter.
-            let this = self.is_deferred(written).then_some(written);
+        for &part in self.parts(context) {
             let found = if self.is_intersection(part) {
-                self.contextual_property_of_intersection(
-                    part,
-                    this.unwrap_or(part),
-                    name,
-                    name_type,
-                )
+                self.contextual_property_of_intersection(part, name, name_type)
             } else if !self.is_object_type(part) {
                 None
             } else if self.is_generic_mapped_without_remapping(part) {
                 self.contextual_property_of_generic_mapped(part, name, name_type)
             } else {
-                match self.concrete_contextual_property(part, name, this) {
+                match self.concrete_contextual_property(part, name) {
                     Some(declared) => Some(declared),
                     None => self.contextual_type_from_index_infos(part, name, name_type),
                 }
             };
-            if let Some(t) = found {
-                types.push(t);
-            }
+            types.extend(found);
         }
         if types.is_empty() {
             None
@@ -930,34 +910,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The same for the intersection `whole`: the declared properties of its members and, only if
     /// none declares it, their index signatures.
-    /// `this`: the type of `this` in its members.
     fn contextual_property_of_intersection(
         &mut self,
         whole: TypeId,
-        this: TypeId,
         name: Atom,
         name_type: Option<TypeId>,
     ) -> Option<TypeId> {
         let TypeData::Intersection(members) = self.data(whole) else {
             return None;
         };
-        // `getApparentTypeOfIntersectionType`: the apparent type of every member.
-        let mut apparent = Parts::with_capacity(members.len());
-        for &m in members.iter() {
-            apparent.push(self.apparent_type(m));
-        }
-        if apparent
-            .iter()
-            .any(|&m| matches!(self.data(m), TypeData::Union(_) | TypeData::Intersection(_)))
-        {
-            // `(A | B) & C` is `A & C | B & C`.
-            let distributed = self.intersection(&apparent);
-            return if distributed == whole {
-                None
-            } else {
-                self.contextual_property_ex(distributed, name, name_type)
-            };
-        }
         // `appendContextualPropertyTypeConstituent`: `any` carries no information, and must not
         // absorb the other constituents.
         let reported = |c: &Self, t: TypeId| {
@@ -969,7 +930,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let (mut found, mut candidates) = (Parts::new(), Parts::new());
         let mut ignore_index_infos = false;
-        for &m in &apparent {
+        for &m in members.iter() {
             if !self.is_object_type(m) {
                 continue;
             }
@@ -979,7 +940,7 @@ impl<'p, 's> Checker<'p, 's> {
                 found.extend(property.map(|t| reported(self, t)));
                 continue;
             }
-            match self.concrete_contextual_property(m, name, Some(this)) {
+            match self.concrete_contextual_property(m, name) {
                 Some(declared) => {
                     ignore_index_infos = true;
                     candidates.clear();
@@ -1071,37 +1032,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getTypeOfConcretePropertyOfContextualType`. `this`: the type of `this` in the members of
-    /// `part`, if not `part`.
-    fn concrete_contextual_property(
-        &mut self,
-        part: TypeId,
-        name: Atom,
-        this: Option<TypeId>,
-    ) -> Option<TypeId> {
+    /// `getTypeOfConcretePropertyOfContextualType`
+    fn concrete_contextual_property(&mut self, part: TypeId, name: Atom) -> Option<TypeId> {
         let members = self.members(part)?;
-        let (prop, mut mapper) = self.property_in_type(part, &members, name)?;
+        let (prop, mapper) = self.property_in_type(part, &members, name)?;
         // `isCircularMappedProperty`
         if let PropSource::Mapped(of, ..) = prop.source
-            && self.is_resolving(Query::MappedProp(of, prop.name))
+            && let containing_type = self.containing_type_of_mapped_prop(of, prop)
+            && self.is_resolving(Query::MappedProp(containing_type, prop.name))
         {
             return None;
-        }
-        // `getTypeWithThisArgument`
-        if let Some(this) = this
-            && let TypeData::Ref { target, .. } = self.data(part)
-        {
-            let param = self.intern(TypeData::ThisParam(*target));
-            let mapping = self.types().mapping(mapper);
-            if mapping.iter().any(|pair| pair.0 == param && pair.1 != this) {
-                let mut pairs = mapping.to_vec();
-                for pair in &mut pairs {
-                    if pair.0 == param {
-                        pair.1 = this;
-                    }
-                }
-                mapper = self.types().mapper(pairs);
-            }
         }
         let ty = self.type_of_prop(prop, mapper);
         Some(self.remove_missing_type(ty, prop.flags.contains(PropFlags::OPTIONAL)))
@@ -1145,7 +1085,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut types = Vec::new();
         for &part in self.parts(context) {
-            let part = self.apparent_type(part);
             if let Some(members) = self.members(part)
                 && let Some(info) = self.applicable_index_info(&members, key)
             {
@@ -1197,26 +1136,53 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        if !self.maybe_type_of_kind(instantiated, Self::is_deferred) {
-            return Some(instantiated);
-        }
         // A type parameter is not cloned with the signature it belongs to: the outer type arguments
         // of the signature are not applied to its constraint.
-        let around = self
-            .get_inference_context(file, e)
-            .and_then(|level| self.inference_contexts[level].context.as_ref()?.sig)
-            .and_then(|sig| self.mapper_of_signature(sig))
-            .unwrap_or(MapperId::IDENTITY);
+        let sig = if self.maybe_type_of_kind(instantiated, Self::is_deferred) {
+            self.get_inference_context(file, e)
+                .and_then(|level| self.inference_contexts[level].context.as_ref()?.sig)
+        } else {
+            None
+        };
+        let around = match sig {
+            Some(sig) => self.mapper_around_sig(sig),
+            None => MapperId::IDENTITY,
+        };
         Some(self.map_type_unreduced(instantiated, |c, t| {
-            if c.is_deferred(t) {
+            if c.mapped_origin(t).is_some() {
+                return t;
+            }
+            // `getApparentType`
+            let constraint = if c.is_deferred(t) {
                 let constraint = c.base_constraint(t);
                 c.filled_in_around(t, constraint, around)
-            } else if matches!(c.data(t), TypeData::Intersection(_)) {
-                c.apparent_type(t)
             } else {
                 t
+            };
+            if c.is_intersection(constraint) {
+                c.apparent_type_of_intersection_type(constraint, t)
+            } else if constraint == t {
+                c.apparent_type(t)
+            } else {
+                let constraint = c.type_with_this_argument(constraint, t);
+                c.apparent_type(constraint)
             }
         }))
+    }
+
+    /// `getApparentTypeOfIntersectionType`. `apparent_type` leaves it out where the members of the
+    /// intersection as a whole do not depend on it.
+    fn apparent_type_of_intersection_type(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
+        let key = (t, this_argument);
+        if let Some(&cached) = self.apparent_types_of_intersections.get(&key) {
+            return cached;
+        }
+        let before = self.non_cacheable_mark();
+        let result = self.type_with_this_argument_ex(t, this_argument, true);
+        if before == self.non_cacheable_mark() {
+            self.apparent_types_of_intersections.insert(key, result);
+        }
+        result
     }
 
     /// `instantiateContextualType`
@@ -1228,7 +1194,7 @@ impl<'p, 's> Checker<'p, 's> {
         context_flags: ContextFlags,
     ) -> TypeId {
         if self.inference_contexts.is_empty()
-            || !self.maybe_type_of_kind(contextual_type, Self::is_deferred)
+            || !self.maybe_type_of_kind(contextual_type, Self::is_instantiable)
         {
             return contextual_type;
         }
@@ -1239,19 +1205,20 @@ impl<'p, 's> Checker<'p, 's> {
                     if context_flags.contains(ContextFlags::SIGNATURE)
                         && c.has_inference_candidates_or_default(n)
                     {
-                        let mapper = c.non_fixing_mapper(n, contextual_type);
-                        let ty = c.instantiate_instantiable_types(contextual_type, mapper);
+                        let mut mapper_for = |c: &mut Self, t| c.non_fixing_mapper(n, t);
+                        let ty = c.instantiate_instantiable_types(contextual_type, &mut mapper_for);
                         if has_content(c, ty) {
                             return ty;
                         }
                     }
-                    if n.return_mapper != MapperId::IDENTITY {
-                        let ty = c.instantiate_instantiable_types(contextual_type, n.return_mapper);
-                        if has_content(c, ty) {
-                            return c.without_boolean(ty);
-                        }
+                    let ty = c.with_return_context(level, |c, returned| {
+                        let mut mapper_for = |c: &mut Self, t| c.fixing_mapper(returned, t);
+                        c.instantiate_instantiable_types(contextual_type, &mut mapper_for)
+                    });
+                    match ty {
+                        Some(ty) if has_content(c, ty) => c.without_boolean(ty),
+                        _ => contextual_type,
                     }
-                    contextual_type
                 })
             })
             .unwrap_or(contextual_type)
@@ -1268,20 +1235,54 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Takes the context at `level` out of `inference_contexts` while `f` runs. The placeholder
-    /// left in its slot has its `returnMapper` and no type parameters. `None`:
-    /// `pushInferenceContext(node, nil)`.
+    /// left in its slot has its `returnMapper` and no type parameters: see `with_return_context`.
+    /// `None`: `pushInferenceContext(node, nil)`.
     pub(super) fn with_inference_context<R>(
         &mut self,
         level: usize,
         f: impl FnOnce(&mut Self, &mut Inference) -> R,
     ) -> Option<R> {
+        let mut context = self.take_inference_context(level)?;
+        let result = f(self, &mut context);
+        self.put_back_inference_context(level, context);
+        Some(result)
+    }
+
+    fn take_inference_context(&mut self, level: usize) -> Option<Inference> {
         let context = self.inference_contexts[level].context.as_mut()?;
         let mut placeholder = Inference::for_params(&[], None);
-        placeholder.return_mapper = context.return_mapper;
-        let mut context = std::mem::replace(context, placeholder);
-        let result = f(self, &mut context);
-        self.inference_contexts[level].context = Some(context);
+        placeholder.return_context = context.return_context.take();
+        Some(std::mem::replace(context, placeholder))
+    }
+
+    fn put_back_inference_context(&mut self, level: usize, mut context: Inference) {
+        let slot = &mut self.inference_contexts[level].context;
+        context.return_context = (slot.as_mut()).and_then(|it| it.return_context.take());
+        *slot = Some(context);
+    }
+
+    /// Takes the context of `returnMapper` out of the slot at `level` of `inference_contexts` while
+    /// `f` runs. `None`: `returnMapper` is nil, or it is mapping something.
+    pub(super) fn with_return_context<R>(
+        &mut self,
+        level: usize,
+        f: impl FnOnce(&mut Self, &mut Inference) -> R,
+    ) -> Option<R> {
+        let mut returned = self.take_return_context(level)?;
+        let result = f(self, &mut returned);
+        self.put_back_return_context(level, returned);
         Some(result)
+    }
+
+    fn take_return_context(&mut self, level: usize) -> Option<Box<Inference>> {
+        let context = self.inference_contexts[level].context.as_mut()?;
+        context.return_context.take()
+    }
+
+    fn put_back_return_context(&mut self, level: usize, returned: Box<Inference>) {
+        if let Some(context) = &mut self.inference_contexts[level].context {
+            context.return_context = Some(returned);
+        }
     }
 
     /// `discriminateContextualTypeByObjectMembers`: narrows the union `context` to the members the object literal `literal` can
@@ -1326,10 +1327,6 @@ impl<'p, 's> Checker<'p, 's> {
         context: TypeId,
     ) -> (TypeId, bool) {
         let hir = self.hir(file);
-        let context = self.with_apparent_primitives(context);
-        if !self.is_union(context) {
-            return (context, true);
-        }
         // `getMatchingUnionConstituentForObjectLiteral`
         if let Some((name, constituents)) = self.key_property(context)
             && let Some(p) = props.iter().find(|&p| {
@@ -1412,39 +1409,21 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// The mapping of `getApparentTypeOfContextualType` for the primitives in `context`: a `string`
-    /// becomes a `String`, with all its members.
-    fn with_apparent_primitives(&mut self, context: TypeId) -> TypeId {
-        self.map_type_unreduced(context, |c, m| {
-            if !c.is_primitive(m) || c.is_nullish(m) {
-                return m;
-            }
-            match c.apparent_type(m) {
-                TypeId::UNRESOLVED => m,
-                apparent => apparent,
-            }
-        })
-    }
-
-    /// `discriminateContextualTypeByJSXAttributes`: narrows the union `props`, the contextual type
-    /// of the attributes of `element`, to the members the attributes can match.
+    /// `discriminateContextualTypeByJSXAttributes`: narrows the union `context`, the contextual
+    /// type of the attributes of `element`, to the members the attributes can match.
     pub(super) fn discriminate_by_jsx_attributes(
         &mut self,
         file: FileId,
         element: ExprId,
-        props: TypeId,
+        context: TypeId,
     ) -> TypeId {
-        if !self.is_union(props) {
-            return props;
-        }
-        let hir = self.hir(file);
-        let ExprKind::Jsx(j) = hir[element].kind else {
-            return props;
-        };
-        let context = self.with_apparent_primitives(props);
         if !self.is_union(context) {
             return context;
         }
+        let hir = self.hir(file);
+        let ExprKind::Jsx(j) = hir[element].kind else {
+            return context;
+        };
         let (mut items, mut written) = (Discriminants::new(), SmallVec::<[Atom; 16]>::new());
         for p in hir[j].attrs.iter() {
             let attr = &hir[p];
@@ -1471,7 +1450,8 @@ impl<'p, 's> Checker<'p, 's> {
         if hir
             .ids(hir[j].children)
             .any(|child| !matches!(hir[child].kind, ExprKind::Missing))
-            && let super::jsx::JsxName::Name(children) = self.jsx_children_property_name(file)
+            && let super::jsx::JsxName::Name(children) =
+                self.jsx_children_property_name(file, hir.node(element))
         {
             written.push(children);
         }
@@ -1654,45 +1634,33 @@ impl<'p, 's> Checker<'p, 's> {
                 self.contextual_type_for_argument(file, parent, e)
             }
             // `getContextualTypeForYieldOperand`
-            ExprKind::Yield { star: false, .. } => {
+            ExprKind::Yield { star, .. } => {
                 let func = self.get_containing_function(file, parent)?;
                 let declared =
                     self.declared_or_contextual_return_type(file, func, context_flags)?;
                 let is_async = hir[func].flags.contains(Flags::ASYNC);
-                let declared = self.alternatives_to_go_through(declared, is_async);
-                self.iteration_types(declared, is_async).map(|t| t.yielded)
-            }
-            // An iterable that yields the contextual yield type.
-            ExprKind::Yield { star: true, .. } => {
-                let func = self.get_containing_function(file, parent)?;
-                let declared =
-                    self.declared_or_contextual_return_type(file, func, context_flags)?;
-                let is_async = hir[func].flags.contains(Flags::ASYNC);
-                let types = self.iteration_types(declared, is_async);
-                let yielded = types.as_ref().map_or(TypeId::SILENT_NEVER, |t| t.yielded);
-                let next = types.as_ref().map_or(TypeId::UNKNOWN, |t| t.next);
+                if !star {
+                    let declared = self.alternatives_to_go_through(declared, is_async);
+                    let types =
+                        self.iteration_type_of_generator_function_return_type(declared, is_async);
+                    return types.y;
+                }
+                // An iterable that yields the contextual yield type.
+                let types = self.generator_return_types(declared, is_async);
+                let yielded = types.y.unwrap_or(TypeId::SILENT_NEVER);
                 let returned = self
                     .contextual_type(file, parent, context_flags)
                     .map_or(TypeId::SILENT_NEVER, |t| self.without_pattern_marks(t));
-                let generator = self.global_ref(known::Generator, &[yielded, returned, next]);
+                let next = types.n.unwrap_or(TypeId::UNKNOWN);
+                let generator = self.generator_of(yielded, returned, next, false);
                 if is_async {
-                    let asynchronous =
-                        self.global_ref(known::AsyncGenerator, &[yielded, returned, next]);
+                    let asynchronous = self.generator_of(yielded, returned, next, true);
                     return Some(self.union(&[generator, asynchronous]));
                 }
                 Some(generator)
             }
             ExprKind::Array(items) => {
                 let context = self.apparent_type_of_contextual_type(file, parent, context_flags)?;
-                // `getApparentTypeOfContextualType` maps every member, `apparent_contextual_type`
-                // the deferred ones.
-                let context = self.map_type_unreduced(context, |c, t| {
-                    if c.mapped_origin(t).is_some() {
-                        t
-                    } else {
-                        c.apparent_type(t)
-                    }
-                });
                 let index = hir.ids(items).position(|i| i == e)?;
                 // `getSpreadIndices`
                 let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
@@ -1813,7 +1781,8 @@ impl<'p, 's> Checker<'p, 's> {
                     parent,
                     context_flags,
                 )?;
-                let super::jsx::JsxName::Name(children) = self.jsx_children_property_name(file)
+                let super::jsx::JsxName::Name(children) =
+                    self.jsx_children_property_name(file, hir.node(parent))
                 else {
                     return None;
                 };
@@ -1892,7 +1861,9 @@ impl<'p, 's> Checker<'p, 's> {
                                 ExprKind::Index { index, .. } => {
                                     let key = self.type_of_expr(file, index);
                                     match self.property_name_of_type(key) {
-                                        Some(name) => self.contextual_property(declared, name),
+                                        Some(name) => {
+                                            self.contextual_property_ex(declared, name, Some(key))
+                                        }
                                         None => Some(self.get_type_of_expression(file, target)),
                                     }
                                 }
@@ -2078,17 +2049,14 @@ impl<'p, 's> Checker<'p, 's> {
                 types.push(element);
                 continue;
             }
-            // `getTypeOfPropertyOfContextualType(t, index)`: a property of that name, or the
-            // applicable index signature, of an object type or an intersection and of nothing else.
-            if before_spreads && (self.is_object_type(part) || self.is_intersection(part)) {
+            if before_spreads {
                 let name = self.number_name(index as f64);
                 if let Some(t) = self.contextual_property(part, name) {
                     types.push(t);
                     continue;
                 }
             }
-            // `IterationUseElement`, which without an error node is any use of a sync iterable.
-            let usage = IterationUse::Spread;
+            let usage = IterationUse::Element;
             let element = self.iterated_type_or_element_type(usage, part, TypeId::UNDEFINED, None);
             types.extend(element.filter(|&element| element != TypeId::UNRESOLVED));
         }
@@ -2324,50 +2292,48 @@ impl<'p, 's> Checker<'p, 's> {
         self.context_checked(file, func).unwrap_or(pulled)
     }
 
-    /// The contextual type of parameter `index` of `func`.
+    /// `getContextuallyTypedParameterType` for parameter `index` of `func`. Once `func` is checked:
+    /// what `assignContextualParameterTypes` read from the signature it was passed.
     pub fn contextual_param_type(
         &mut self,
         file: FileId,
         func: FnId,
         index: usize,
     ) -> Option<TypeId> {
-        // `isContextSensitiveFunctionOrObjectLiteralMethod`: a function with its own type
-        // parameters is not contextually typed.
-        if !self.hir(file)[func].type_params.is_empty() {
+        // `isContextSensitiveFunctionOrObjectLiteralMethod`
+        let owner = self.takes_context(file, func)?;
+        if !self.is_context_sensitive(file, owner) {
             return None;
         }
         if let Some(actual) = self.iife_param_type(file, func, index) {
             return actual;
         }
         let sig = self.assigned_contextual_signature(file, func)?;
+        self.contextual_param_type_in(file, func, index, sig)
+    }
+
+    /// `getContextuallyTypedParameterType`, where `contextualSignature` is `sig`.
+    pub(super) fn contextual_param_type_in(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+        sig: SigId,
+    ) -> Option<TypeId> {
         let params = self.sig_params(sig);
-        let hir = self.hir(file);
-        let own = hir[func].params.at(index);
-        if hir[own].flags.contains(Flags::REST) {
-            let rest = self.rest_type_at_position(&params, index, false);
-            // `[...T[]]` is `T[]`.
-            if let TypeData::Tuple { flags, .. } = self.data(rest)
-                && let ([e], [f]) = (self.type_arguments(rest), &**flags)
-                && f.contains(ElemFlags::REST)
-            {
-                return Some(self.array_of(*e));
-            }
-            return Some(rest);
+        let own = self.hir(file)[func].params;
+        if self.hir(file)[own.at(index)].flags.contains(Flags::REST) && index + 1 == own.len() {
+            return Some(self.rest_type_at_position(&params, index, false));
         }
         // `tryGetTypeAtPosition`: there is nothing past the end of a rest tuple of fixed length.
         // `assignParameterType` then calls `getContextuallyTypedParameterType`, which sees the
         // signature as the callee declares it: for `...args: U`, `U[index]`.
-        if index >= self.parameter_count(&params) && !self.has_effective_rest_parameter(&params) {
-            let open = self.contextual_signature(file, func)?;
-            let open = self.sig_params(open);
-            return if self.has_effective_rest_parameter(&open) {
-                self.param_type_at(&open, index)
-            } else {
-                None
-            };
+        if let Some(ty) = self.param_type_at(&params, index) {
+            return Some(ty);
         }
-        let ty = self.param_type_at(&params, index)?;
-        Some(ty)
+        let open = self.contextual_signature(file, func)?;
+        let open = self.sig_params(open);
+        self.param_type_at(&open, index)
     }
 
     /// `getContextualReturnType`: the annotated return type of `func`, or its contextual return
@@ -2379,24 +2345,7 @@ impl<'p, 's> Checker<'p, 's> {
         context_flags: ContextFlags,
     ) -> Option<TypeId> {
         let f = &self.hir(file)[func];
-        // `getReturnTypeFromAnnotation`: a constructor is to return an instance of its class.
-        if f.kind == FnKind::Constructor
-            && let FnOwner::Member(m) = self.bound(file).fns[func.idx()].owner
-            && let crate::bind::MemberOwner::Class(class) = self.bound(file).member_owner[m.idx()]
-        {
-            let sym = self.class_sym(file, class);
-            return Some(self.declared_type(sym));
-        }
-        if f.ret.is_some() {
-            return Some(self.type_from_node(file, f.ret));
-        }
-        // A getter returns the annotated parameter type of its matching setter.
-        if f.kind == FnKind::Getter
-            && let Some(taken) = self.annotated_setter_type(file, func)
-        {
-            return Some(taken);
-        }
-        if let Some(returned) = self.return_type_of_full_signature(file, func) {
+        if let Some(returned) = self.return_type_from_annotation(file, func) {
             return Some(returned);
         }
         // The contextual type of a function may be the type of the function itself, where a type
@@ -2431,20 +2380,7 @@ impl<'p, 's> Checker<'p, 's> {
                         None => false,
                     };
                 }
-                // `checkGeneratorInstantiationAssignabilityToReturnType`
-                let types = c.iteration_types(t, is_async);
-                let yielded = types.as_ref().map_or(TypeId::ANY, |i| i.yielded);
-                let returned = types.as_ref().map_or(yielded, |i| i.returned);
-                let next = types.as_ref().map_or(TypeId::UNKNOWN, |i| i.next);
-                let generator = c.global_ref(
-                    if is_async {
-                        known::AsyncGenerator
-                    } else {
-                        known::Generator
-                    },
-                    &[yielded, returned, next],
-                );
-                c.is_assignable(generator, t)
+                c.check_generator_instantiation_assignability_to_return_type(t, is_async, None)
             });
             return Some(fitting);
         }
@@ -2512,10 +2448,13 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getContextualTypeForReturnExpression`, `getContextualTypeForYieldOperand`: of the union
-    /// members of a generator's return type, those that are iterable.
+    /// members of a generator's return type, those that have an iteration return type.
     fn alternatives_to_go_through(&mut self, declared: TypeId, is_async: bool) -> TypeId {
         if self.is_union(declared) {
-            self.filter(declared, |c, t| c.iteration_types(t, is_async).is_some())
+            self.filter(declared, |c, t| {
+                let types = c.iteration_type_of_generator_function_return_type(t, is_async);
+                types.r.is_some()
+            })
         } else {
             declared
         }
@@ -2544,7 +2483,8 @@ impl<'p, 's> Checker<'p, 's> {
             // Its return value is the last result delivered to the consumer of the iterator.
             let is_async = f.flags.contains(Flags::ASYNC);
             declared = self.alternatives_to_go_through(declared, is_async);
-            declared = self.iteration_types(declared, is_async)?.returned;
+            let types = self.iteration_type_of_generator_function_return_type(declared, is_async);
+            declared = types.r?;
         }
         if f.flags.contains(Flags::ASYNC) {
             return self.awaited_or_promise_like(declared);
@@ -2559,7 +2499,20 @@ impl<'p, 's> Checker<'p, 's> {
         if awaited == TypeId::UNRESOLVED {
             return None;
         }
-        let promise = self.global_ref(known::PromiseLike, &[awaited]);
+        let promise = self.create_promise_like_type(awaited);
         Some(self.union(&[awaited, promise]))
+    }
+
+    /// `createPromiseLikeType`: `unknown` if `getGlobalPromiseLikeType` finds no `PromiseLike`.
+    fn create_promise_like_type(&mut self, promised_type: TypeId) -> TypeId {
+        let Some(target) = self.get_global_type(known::PromiseLike, 1, true) else {
+            return TypeId::UNKNOWN;
+        };
+        let unwrapped = self.unwrap_awaited_type(promised_type);
+        let promised_type = self.awaited_no_alias(unwrapped);
+        self.intern_key(TypeKey::Ref {
+            target,
+            args: &[promised_type.unwrap_or(TypeId::UNKNOWN)],
+        })
     }
 }

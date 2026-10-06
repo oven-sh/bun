@@ -167,39 +167,15 @@ pub(super) struct PropertyAccess {
 }
 
 impl<'p> Checker<'p, '_> {
-    /// `a[k]`, property lookups by binding patterns and indexed access types, and misplaced private
-    /// names. Errors in `a.b` are reported where its type is computed (`type_of_property_access`).
+    /// Private names that are reserved or misplaced. The errors in `a.b` and `a[k]` are reported
+    /// where its type is computed.
     pub(super) fn check_property_accesses(&mut self, file: FileId) {
+        // FOR SPEED: a private name is written with a `#`.
+        if !strings::contains_char(&self.hir(file).text, b'#') {
+            return;
+        }
+        self.check_private_identifiers(file);
         self.check_private_names(file);
-    }
-
-    /// `checkAndReportErrorForExtendingInterface`
-    pub(super) fn check_and_report_error_for_extending_interface(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-    ) -> bool {
-        if !self.is_extending_interface(file, e) {
-            return false;
-        }
-        let name = self.entity_name_around(file, e);
-        let node = (file, self.start_of(file, e), self.end_of_expr(file, e));
-        self.error_at(node, 2689, &[Arg::Bytes(&name)]);
-        true
-    }
-
-    /// `getEntityNameForExtendingInterface`: the source text of the whole entity name that `e` is,
-    /// or is a left part of.
-    pub(super) fn entity_name_around(&self, file: FileId, e: ExprId) -> Vec<u8> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut top = e;
-        while let Parent::Expr(parent) = bound.expr_parent[top.idx()]
-            && parent.is_some()
-            && matches!(hir[parent].kind, ExprKind::Dot { .. })
-        {
-            top = parent;
-        }
-        self.source_text(file, self.start_of(file, top), self.end_of_expr(file, top))
     }
 
     /// `DeclarationNameToString` of the name at `pos`.
@@ -220,54 +196,72 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// Misplaced private names: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18012
-    /// (`checkPrivateIdentifier` of binder.go), 18024 (`checkEnumMember`).
-    /// A bare `#x` is an `ExprKind::String` whose source text starts with `#`.
+    /// `checkPrivateIdentifier` of binder.go, 18012, for every `PrivateIdentifier` of the file. The
+    /// binder visits every node of the tree, whether or not the checker does.
+    /// `parsePrivateIdentifier`: it is an expression, the name in `a.#x`, or the name of a member,
+    /// of a property of an object literal, of the property a binding element reads or of a member
+    /// of an enum.
+    fn check_private_identifiers(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // "Report error only if there are no parse errors in file"
+        if has_parse_diagnostics(hir) {
+            return;
+        }
+        let index = self.exprs_by_kind(file);
+        let expressions = (index.of(ExprTag::PrivateIdentifier).iter())
+            .chain(index.of(ExprTag::Dot))
+            .map(|&e| {
+                let pos = match hir[e].kind {
+                    ExprKind::Dot { name_pos, .. } => name_pos,
+                    _ => hir[e].pos,
+                };
+                (pos, !matches!(bound.expr_parent[e.idx()], Parent::None))
+            });
+        let members = (hir.members.iter().zip(bound.member_owner.iter()))
+            .map(|(member, owner)| (member.name_pos, !matches!(owner, MemberOwner::None)));
+        // The name of `{ a }` is an expression, and `{ ...a }` has none.
+        let properties =
+            (hir.props.iter().zip(bound.prop_owner.iter())).map(|(property, owner)| {
+                let has_name = !matches!(property.kind, PropKind::Shorthand | PropKind::Spread);
+                (property.pos, has_name && owner.is_some())
+            });
+        let elements = hir.pat_props.iter().map(|element| {
+            let is_bound = !matches!(bound.pat_parent[element.value.idx()], PatParent::None);
+            (element.key_pos, is_bound)
+        });
+        let enum_members = (hir.enum_members.iter().zip(bound.enum_member_owner.iter()))
+            .map(|(member, owner)| (member.pos, owner.is_some()));
+        let names = expressions
+            .chain(members)
+            .chain(properties)
+            .chain(elements)
+            .chain(enum_members);
+        for (pos, is_bound) in names {
+            if is_bound && is_private_constructor_name(&hir.text, pos) {
+                self.error_at((file, pos, 0), 18012, &[]);
+            }
+        }
+    }
+
+    /// Misplaced private names: 18016 1451 (`checkGrammarPrivateIdentifierExpression`), 18024
+    /// (`checkEnumMember`).
     fn check_private_names(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Empty for a declaration file.
-        let text = &hir.text[..];
         // `checkEnumMember`: a plain error.
         for (i, member) in hir.enum_members.iter().enumerate() {
             if bound.enum_member_owner[i].is_some() && is_private_name_at(hir, member.pos) {
                 self.error_at((file, member.pos, 0), 18024, &[]);
             }
         }
-        // The rest are grammar errors, and the binder also reports nothing in a file with parse diagnostics.
+        // The rest are grammar errors.
         if has_parse_diagnostics(hir) {
             return;
         }
-        for (i, member) in hir.members.iter().enumerate() {
-            if !matches!(bound.member_owner[i], MemberOwner::None)
-                && is_private_constructor_name(text, member.name_pos)
-            {
-                self.error_at((file, member.name_pos, 0), 18012, &[]);
-            }
-        }
         let index = self.exprs_by_kind(file);
-        for &e in index.of(ExprTag::Dot) {
-            let ExprKind::Dot { name_pos, .. } = hir[e].kind else {
-                continue;
-            };
-            if is_private_name_at(hir, name_pos)
-                && !bound.is_unchecked(e.idx())
-                && is_private_constructor_name(text, name_pos)
-            {
-                self.error_at((file, name_pos, 0), 18012, &[]);
-            }
-        }
-        for &e in index.of(ExprTag::String) {
+        for &e in index.of(ExprTag::PrivateIdentifier) {
             let (parent, pos) = (bound.expr_parent[e.idx()], hir[e].pos);
-            if !is_private_name_at(hir, pos) || bound.is_unchecked(e.idx()) {
+            if bound.is_unchecked(e.idx()) {
                 continue;
-            }
-            // JSX text may start with `#`.
-            if matches!(parent, Parent::Expr(owner) if owner.is_some() && matches!(hir[owner].kind, ExprKind::Jsx(_)))
-            {
-                continue;
-            }
-            if is_private_constructor_name(text, pos) {
-                self.error_at((file, pos, 0), 18012, &[]);
             }
             if self.enclosing_classes(file, e).is_empty() {
                 self.error_at((file, pos, 0), 18016, &[]);
@@ -340,7 +334,7 @@ impl<'p> Checker<'p, '_> {
             self.error_at(at_index, 2551, &args);
         } else if self.has_accessor_method_for(object, key, is_target) {
             let method: &[u8] = if is_target { b"set" } else { b"get" };
-            let call = match self.access_to_string(file, obj) {
+            let call = match self.access_to_string(file, self.hir(file).child(obj)) {
                 Some(receiver) => cat!(receiver, b".", method),
                 None => method.to_vec(),
             };
@@ -399,28 +393,40 @@ impl<'p> Checker<'p, '_> {
         }]
     }
 
-    /// `tryGetPropertyAccessOrIdentifierToString`
-    fn access_to_string(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
-        if is_parenthesized(self.hir(file), e) {
-            return None;
-        }
+    /// `tryGetPropertyAccessOrIdentifierToString`. `None`: the empty string. No receiver of an
+    /// element access is a `JsxNamespacedName`.
+    fn access_to_string(&self, file: FileId, expr: Node) -> Option<Vec<u8>> {
         let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Ident(name) => Some(self.atom_text(name)),
-            ExprKind::Dot { obj, name, .. } => {
-                let receiver = self.access_to_string(file, obj)?;
-                Some(cat!(receiver, b".", as_written(self.atoms().bytes(name))))
+        match (hir.kind(expr), hir.data(expr)) {
+            (Kind::PropertyAccessExpression, _) => {
+                let base = self.access_to_string(file, hir.expression(expr))?;
+                // `entityNameToString`: the name as it is written.
+                let name = self.declaration_name_at(file, hir.start(hir.name(expr)));
+                Some(cat!(base, b".", name))
             }
-            // `IsPropertyName`
-            ExprKind::Index { obj, index, .. } if !is_parenthesized(self.hir(file), index) => {
-                let receiver = self.access_to_string(file, obj)?;
-                let name = match hir[index].kind {
-                    ExprKind::Ident(name) | ExprKind::String(name) => self.atom_text(name),
-                    ExprKind::Number(n) => crate::atom::number_to_string(hir.numbers[n as usize]),
+            (Kind::ElementAccessExpression, NodeData::Expr(access)) => {
+                let base = self.access_to_string(file, hir.expression(expr))?;
+                let ExprKind::Index { index, .. } = hir[access].kind else {
+                    return None;
+                };
+                // `IsPropertyName`, `GetPropertyNameForPropertyNameNode`
+                let name = match (hir.kind(hir.child(index)), hir[index].kind) {
+                    (Kind::Identifier, ExprKind::Ident(name))
+                    | (Kind::StringLiteral, ExprKind::String(name)) => self.atom_text(name),
+                    (Kind::PrivateIdentifier, ExprKind::PrivateIdentifier(name)) => {
+                        self.written_name(name).to_vec()
+                    }
+                    (Kind::NumericLiteral, ExprKind::Number(n)) => {
+                        crate::atom::number_to_string(hir.numbers[n as usize])
+                    }
                     _ => return None,
                 };
-                Some(cat!(receiver, b".", name))
+                Some(cat!(base, b".", name))
             }
+            (Kind::Identifier, NodeData::Expr(identifier)) => match hir[identifier].kind {
+                ExprKind::Ident(name) if name != known::empty => Some(self.atom_text(name)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -491,44 +497,70 @@ impl<'p> Checker<'p, '_> {
         file: FileId,
         index: ExprId,
     ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let ExprKind::Ident(_) = hir[index].kind else {
+        let hir = self.hir(file);
+        let ExprKind::Ident(name) = hir[index].kind else {
             return false;
         };
-        let symbol = bound.expr_symbol[index.idx()];
-        if symbol.is_none() {
+        // `getResolvedSymbol`
+        let symbol = self
+            .symbol_of_identifier(file, index, name)
+            .and_then(|found| self.value_symbol_of_identifier(file, index, name, found));
+        let Some(symbol) = symbol else {
+            return false;
+        };
+        if !self.files().flags(symbol).intersects(SymFlags::VARIABLE) {
             return false;
         }
         let (mut child, mut node) = (hir.child(index), hir.parent(hir.child(index)));
         while node.is_some() {
             if let NodeData::Stmt(s) = hir.data(node)
-                && let StmtKind::ForIn { left, expr, body } = hir[s].kind
+                && let StmtKind::ForIn { expr, body, .. } = hir[s].kind
                 && child == hir.node(body)
+                && self.get_for_in_variable_symbol(file, s) == Some(symbol)
             {
-                // `getForInVariableSymbol`
-                let variable = match hir[left].kind {
-                    StmtKind::Var(decls) => decls
-                        .iter()
-                        .next()
-                        .map(|d| bound.pat_symbol[hir[d].pat.idx()]),
-                    StmtKind::Expr(x) if matches!(hir[x].kind, ExprKind::Ident(_)) => {
-                        Some(bound.expr_symbol[x.idx()])
-                    }
-                    _ => None,
-                };
-                if variable == Some(symbol) {
-                    // `hasNumericPropertyNames`: its only index signature is a number index
-                    // signature.
-                    let over = self.get_type_of_expression(file, expr);
-                    let over = self.reduced_apparent_type(over);
-                    if matches!(self.index_signatures_of(over)[..], [(TypeId::NUMBER, _)]) {
-                        return true;
-                    }
+                let over = self.get_type_of_expression(file, expr);
+                if self.has_numeric_property_names(over) {
+                    return true;
                 }
             }
             (child, node) = (node, hir.parent(node));
         }
         false
+    }
+
+    /// `getForInVariableSymbol`
+    fn get_for_in_variable_symbol(&mut self, file: FileId, statement: StmtId) -> Option<Sym> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let StmtKind::ForIn { left, .. } = hir[statement].kind else {
+            return None;
+        };
+        match hir[left].kind {
+            StmtKind::Var(declarations) => {
+                let name = hir[declarations.iter().next()?].pat;
+                if !matches!(hir[name].kind, PatKind::Ident(_)) {
+                    return None;
+                }
+                // `getSymbolOfDeclaration`
+                let declared = bound.pat_symbol[name.idx()].some()?;
+                Some(self.files().sym(file, declared))
+            }
+            // `(i)` is not an `Identifier`.
+            StmtKind::Expr(e) if !is_parenthesized(hir, e) => {
+                let ExprKind::Ident(name) = hir[e].kind else {
+                    return None;
+                };
+                // `getResolvedSymbol`
+                self.symbol_of_identifier(file, e, name)
+                    .and_then(|found| self.value_symbol_of_identifier(file, e, name, found))
+            }
+            _ => None,
+        }
+    }
+
+    /// `hasNumericPropertyNames`
+    fn has_numeric_property_names(&mut self, ty: TypeId) -> bool {
+        let ty = self.reduced_apparent_type(ty);
+        matches!(self.index_signatures_of(ty)[..], [(TypeId::NUMBER, _)])
     }
 
     /// `typeHasStaticProperty`
@@ -664,13 +696,31 @@ impl<'p> Checker<'p, '_> {
         Some((file, start, end))
     }
 
+    /// `getSymbolOfDeclaration(memberDecl).Declarations[0]` for the member `written` of an object
+    /// literal. `combineSymbolTables`: the declarations of the early bound symbol come first, so
+    /// only a late bound member has to ask for the merged symbol.
+    pub(super) fn first_declaration_of_literal_member(
+        &mut self,
+        file: FileId,
+        written: PropId,
+    ) -> PropId {
+        if !matches!(self.hir(file)[written].key, PropKey::Computed(_)) {
+            return self.bound(file).declarations_of_literal_member(written)[0];
+        }
+        let declarations = self.declarations_of_member(file, Decl::Property(written));
+        match declarations.first() {
+            Some(&(_, Decl::Property(first))) => first,
+            _ => written,
+        }
+    }
+
     /// The position of `Declarations[0]` of the symbol of the member `written` of an object literal.
     pub(super) fn first_declaration_pos_of_literal_property(
-        &self,
+        &mut self,
         file: FileId,
         written: PropId,
     ) -> u32 {
-        let first = self.bound(file).declarations_of_literal_member(written)[0];
+        let first = self.first_declaration_of_literal_member(file, written);
         self.hir(file)[first].pos
     }
 
@@ -780,6 +830,11 @@ impl<'p> Checker<'p, '_> {
         element: PatId,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        // "Missing array binding elements have no name"
+        if matches!(hir[element].kind, PatKind::Missing) {
+            return;
+        }
+        let parent_type = self.type_for_binding_element_parent(file, element, pattern);
         // `PropertyNameOrName`, if that is not a pattern, and `getLiteralTypeFromPropertyName` of
         // it.
         let own_name = match hir[element].kind {
@@ -788,7 +843,7 @@ impl<'p> Checker<'p, '_> {
         };
         let name = match bound.pat_parent[element.idx()] {
             PatParent::Prop(_, p) if !hir[p].is_rest => self
-                .literal_type_from_property_name(file, hir[p].key, hir[p].pos)
+                .literal_type_from_property_name(file, hir[p].key, hir[p].name_kind)
                 .map(|key| (key, hir[p].pos)),
             _ => own_name,
         };
@@ -798,7 +853,6 @@ impl<'p> Checker<'p, '_> {
         let Some(name_text) = self.property_name_of_type(expr_type) else {
             return;
         };
-        let parent_type = self.type_for_binding_element_parent(file, element, pattern);
         if self.get_property_of_type(parent_type, name_text).is_none() {
             return;
         }
@@ -986,7 +1040,7 @@ impl<'p> Checker<'p, '_> {
         if self.is_private_name(name) {
             return false;
         }
-        let promised = match self.is_global_ref(containing, known::Promise) {
+        let promised = match self.is_global_ref(containing, known::Promise, 1) {
             Some(&[promised]) => Some(promised),
             _ => self.thenable_value(containing),
         };
@@ -1373,13 +1427,17 @@ impl<'p> Checker<'p, '_> {
                 return self.report_inaccessible(error_node, 2855, first, &[]);
             }
         }
+        let hir = self.hir(file);
         // "Referencing abstract properties within their own constructors is not allowed"
         if flags.contains(Flags::ABSTRACT)
             // `symbolHasNonMethodDeclaration`
             && !first.flags.contains(PropFlags::METHOD)
-            && is_this_property_or_initialized_by_this(self.hir(file), self.bound(file), location)
+            && (hir.is_this_property(location)
+                || is_this_initialized_object_binding_expression(hir, location)
+                || hir.kind(hir.parent(location)) == Kind::ObjectBindingPattern
+                    && is_this_initialized_declaration(hir, hir.parent(hir.parent(location))))
             && let Some(class) = self.declaring_class(first)
-            && is_node_used_during_class_initialization(self.hir(file), location)
+            && is_node_used_during_class_initialization(hir, location)
         {
             if let Some(error_node) = error_node {
                 self.error_at(error_node(self), 2715, &[Arg::Prop(first), Arg::Sym(class)]);
@@ -1428,10 +1486,7 @@ impl<'p> Checker<'p, '_> {
         let mut enclosing_class = None;
         for class in enclosing {
             let declared_type = self.declared_type(class);
-            if declaring
-                .iter()
-                .all(|&d| self.has_base(declared_type, d, 0))
-            {
+            if declaring.iter().all(|&d| self.has_base(declared_type, d)) {
                 enclosing_class = Some(class);
                 break;
             }
@@ -1457,7 +1512,7 @@ impl<'p> Checker<'p, '_> {
             };
             if let Some(this) = this
                 && let TypeData::Ref { target, .. } = *self.data(this)
-                && declaring.iter().all(|&d| self.has_base(this, d, 0))
+                && declaring.iter().all(|&d| self.has_base(this, d))
             {
                 enclosing_class = Some(target);
             }
@@ -1479,7 +1534,7 @@ impl<'p> Checker<'p, '_> {
         } else {
             self.apparent_type_of_intersection(containing)
         };
-        if self.has_base(through, enclosing_class, 0) {
+        if self.has_base(through, enclosing_class) {
             return true;
         }
         let class = self.declared_type(enclosing_class);
@@ -1503,27 +1558,20 @@ impl<'p> Checker<'p, '_> {
     }
 }
 
-/// `isThisProperty(location) || isThisInitializedObjectBindingExpression(location) || IsObjectBindingPattern(location.Parent) &&
-/// isThisInitializedDeclaration(location.Parent.Parent)`
-fn is_this_property_or_initialized_by_this(hir: &File, bound: &Bound, location: Node) -> bool {
-    let is_this = |node: Node| hir.kind(node) == Kind::ThisKeyword;
-    let around = hir.parent(hir.parent(location));
-    match hir.kind(location) {
-        Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
-            // In `typeof this.a` it is a qualified name.
-            is_this(hir.expression(location))
-                && !matches!(hir.data(location), NodeData::Expr(e) if bound.is_in_type_query(e))
-        }
-        Kind::ShorthandPropertyAssignment | Kind::PropertyAssignment => {
-            matches!(hir.data(around), NodeData::Expr(e)
-                if matches!(hir[e].kind, ExprKind::Assign { op: None, value, .. } if is_this(hir.node(value))))
-        }
-        _ => {
-            hir.kind(hir.parent(location)) == Kind::ObjectBindingPattern
-                && hir.kind(around) == Kind::VariableDeclaration
-                && is_this(hir.initializer(around))
-        }
-    }
+/// `isThisInitializedObjectBindingExpression`
+fn is_this_initialized_object_binding_expression(hir: &File, node: Node) -> bool {
+    matches!(
+        hir.kind(node),
+        Kind::ShorthandPropertyAssignment | Kind::PropertyAssignment
+    ) && matches!(hir.data(hir.parent(hir.parent(node))), NodeData::Expr(e)
+        if matches!(hir[e].kind, ExprKind::Assign { op: None, value, .. }
+            if hir.kind(hir.child(value)) == Kind::ThisKeyword))
+}
+
+/// `isThisInitializedDeclaration`
+fn is_this_initialized_declaration(hir: &File, node: Node) -> bool {
+    hir.kind(node) == Kind::VariableDeclaration
+        && hir.kind(hir.initializer(node)) == Kind::ThisKeyword
 }
 
 /// `isNodeUsedDuringClassInitialization`
@@ -1543,16 +1591,14 @@ fn is_node_used_during_class_initialization(hir: &File, node: Node) -> bool {
     found.is_some()
 }
 
-/// Whether the private name at `pos` is `#constructor`.
+/// Whether a `PrivateIdentifier` starts at `pos` and its `node.Text()` is `#constructor`.
 fn is_private_constructor_name(text: &[u8], pos: u32) -> bool {
-    text.get(pos as usize) == Some(&b'#') && is_word_at(text, pos as usize + 1, b"constructor")
+    text.get(pos as usize) == Some(&b'#')
+        && *super::spans::unescaped_identifier(word_at(text, pos as usize + 1)) == *b"constructor"
 }
 
 /// `SymbolName`: a `#x` as in the source, without the part that distinguishes it from the `#x` of
 /// another class.
 fn as_written(name: &[u8]) -> &[u8] {
-    if name.first() != Some(&b'#') {
-        return name;
-    }
-    &name[..bun_core::strings::index_of_any(name, b"@'").unwrap_or(name.len())]
+    crate::atom::written_name(name)
 }

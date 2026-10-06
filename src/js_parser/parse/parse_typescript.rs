@@ -292,13 +292,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             && (is_module_keyword && !is_nested || !p.is_tolerant());
         let mut string_name: &'a [u8] = b"";
         let mut has_body = true;
-        if p.lexer.token == T::TIdentifier || !p.is_tolerant() || p.lexer.is_identifier_or_keyword()
-        {
+        // `parseIdentifierName` after a dot, `parseIdentifier` after `namespace`.
+        let is_name = if is_nested {
+            p.is_identifier_or_keyword()
+        } else {
+            p.is_identifier_in_context()
+        };
+        if is_name || !p.is_tolerant() {
             p.lexer.next()?;
         } else {
-            // A string names no symbol. After `namespace` (`parseIdentifier`) and after a dot
-            // (`parseIdentifierName`) any token but a word is not consumed, and the name is
-            // missing.
+            // A string names no symbol. Any other token is not consumed, and the name is missing.
             name_text = b"";
             if name_is_string {
                 if p.preserves_type_syntax() {
@@ -306,7 +309,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
                 p.lexer.next()?;
             } else {
-                p.lexer.expect(T::TIdentifier)?;
+                p.report_missing_identifier()?;
             }
         }
 
@@ -339,6 +342,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             is_top_level: old_fn_or_arrow_data.is_top_level,
             ..Default::default()
         };
+        // `parseModuleBlock` stays in the [Await] and [Yield] contexts of the function around it.
+        if p.is_tolerant() && !old_fn_or_arrow_data.is_top_level {
+            p.fn_or_arrow_data_parse.allow_await = old_fn_or_arrow_data.allow_await;
+            p.fn_or_arrow_data_parse.allow_yield = old_fn_or_arrow_data.allow_yield;
+        }
 
         // Parse the statements inside the namespace
         let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.arena);
@@ -631,7 +639,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let kind = js_ast::LocalKind::KConst;
         // `parseEntityName`: any token but a name is not consumed, and the name is missing.
-        let name: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.is_tolerant() {
+        let is_name = matches!(p.lexer.token, T::TIdentifier | T::TPrivateIdentifier);
+        let name: &'a [u8] = if is_name || !p.is_tolerant() {
             p.lexer.identifier
         } else {
             b""
@@ -647,10 +656,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         );
         let mut value = target;
         p.push_entity_name();
-        p.lexer.expect(T::TIdentifier)?;
+        let escaped_name = if p.lexer.token == T::TIdentifier {
+            p.lexer.escaped_word()
+        } else {
+            None
+        };
+        p.expect_identifier()?;
 
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
+            p.lexer.keyword_was_taken(escaped_name);
             p.lexer.next()?;
             let path = if p.lexer.token != T::TStringLiteral && p.is_tolerant() {
                 // `parseModuleSpecifier`: any expression. `checkExternalImportOrExportDeclaration` reports 1141 unless it is
@@ -766,22 +781,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TPrivateIdentifier => value.name = js_ast::StoreStr::new(p.lexer.identifier),
             T::TOpenBracket => {
                 p.lexer.next()?;
+                // `[("a")]`: a `ParenthesizedExpression` is no literal.
+                let is_literal = p.lexer.token != T::TOpenParen;
                 let old_allow_in = core::mem::replace(&mut p.allow_in, true);
                 let name = p.parse_expr(Level::Lowest);
                 p.allow_in = old_allow_in;
                 // `["a"]` and `[1]` are names like `"a"` and `1`. Any other expression leaves the member without a name.
                 let name = name?;
                 match name.data {
-                    js_ast::ExprData::EString(string) if !string.is_utf16 => {
+                    js_ast::ExprData::EString(string) if is_literal && !string.is_utf16 => {
                         value.name = string.data;
                         p.note(&mut value.loc, crate::sema::Mark::NameKind, 3);
                     }
-                    js_ast::ExprData::ENumber(number) => {
+                    js_ast::ExprData::ENumber(number) if is_literal => {
                         let text = bun_sema::atom::number_to_string(number.value());
                         value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(&text));
                         p.note(&mut value.loc, crate::sema::Mark::NameKind, 4);
                     }
-                    js_ast::ExprData::EString(_) => {}
+                    js_ast::ExprData::EString(_) if is_literal => {}
                     // `checkEnumMember` never checks it.
                     _ => {
                         p.note_expr(&mut value.loc, crate::sema::Mark::ComputedName, name);
@@ -804,19 +821,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEnum)?;
-        // `createMissingIdentifier`: a missing name is at the end of the previous token.
-        let name_loc = if p.is_tolerant() && p.lexer.token != T::TIdentifier {
-            p.lexer.full_start()
+        let mut name_loc = p.lexer.loc();
+        let mut name_text: &'a [u8] = p.lexer.identifier;
+        // `parseIdentifier`: any other token but a private name is not consumed, and the name is
+        // missing.
+        if p.is_tolerant()
+            && p.lexer.token != T::TPrivateIdentifier
+            && !p.is_identifier_in_context()
+        {
+            name_loc = p.report_missing_identifier()?;
+            name_text = b"";
         } else {
-            p.lexer.loc()
-        };
-        // `parseIdentifier`: any other token is not consumed, and the name is missing.
-        let name_text: &'a [u8] = if p.lexer.token == T::TIdentifier || !p.is_tolerant() {
-            p.lexer.identifier
-        } else {
-            b""
-        };
-        p.lexer.expect(T::TIdentifier)?;
+            p.expect_identifier()?;
+        }
         let mut name = LocRef {
             loc: name_loc,
             ref_: Ref::NONE,

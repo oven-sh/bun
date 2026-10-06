@@ -1,31 +1,28 @@
 //! Type nodes, and indexed access:
 //! 1257 1265 1266 2574 (tuple types), 1338 2838 (`infer`), 1354 (`readonly`), 2795 (`intrinsic`),
-//! 2526 (`this`), 1021 1268 1337 (index signatures), 7061 (mapped types), 18016 (private names),
-//! 1176 (interfaces), 1099 1009 (type argument lists, `import()`), 2848 2635 (instantiation
-//! expressions), 2536 4105 2542 2862 2514 (`T[K]`, `a[k]`).
+//! 2526 (`this`), 1021 1268 1337 (index signatures), 18016 (private names), 1176 (interfaces),
+//! 1099 1009 (type argument lists), 2848 2635 (instantiation expressions), 2536 4105 2542 2862 2514
+//! (`T[K]`, `a[k]`).
 //!
 //! Follows `checkTupleType`, `checkInferType`, `getThisType`, `checkTypeAliasDeclaration`,
 //! `checkObjectTypeForDuplicateDeclarations`, `checkPropertySignature`, `checkMethodDeclaration`,
 //! `checkIndexedAccessIndexType`, `getPropertyTypeForIndexType`, `checkExpressionWithTypeArguments`
 //! and `getInstantiationExpressionType` of TypeScript 7.0.2's checker.go, and
 //! `checkGrammarIndexSignatureParameters`, `checkGrammarTypeArguments`,
-//! `checkGrammarImportCallExpression`, `checkGrammarInterfaceDeclaration`, `checkGrammarProperty`
-//! and `checkGrammarTypeOperatorNode` of its grammarchecks.go.
+//! `checkGrammarInterfaceDeclaration` and `checkGrammarTypeOperatorNode` of its grammarchecks.go.
 //!
 //! What the HIR of a file does not store (parentheses around types, the position of a type argument
 //! list) is read from the source text.
 
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent};
-use crate::resolve::ModuleKind;
 
 /// `hasParseDiagnostics`: the parser or the scanner reported an error in the file, so
 /// `grammarErrorOnNode` and similar functions report nothing.
-/// For type syntax the parser bailed out of, it is not known whether they did. `parse_for_sema`
-/// sets the flag by the origin of each error, so a code the parser shares with `grammarErrorOnNode`
-/// (1005 ..) does not count.
+/// `parse_for_sema` sets the flag by the origin of each error, so a code the parser shares with
+/// `grammarErrorOnNode` (1005 ..) does not count.
 pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
-    hir.has_parse_diagnostics || hir.has_errors || hir.syntax_errors > 0
+    hir.has_parse_diagnostics || hir.has_errors
 }
 
 // ───────────────────────────── the text ─────────────────────────────
@@ -84,38 +81,6 @@ pub(super) fn start_of_type(hir: &hir::File, node: TypeNodeId) -> u32 {
     }
 }
 
-/// The start of a tuple type element: its `...`, its name, or its type.
-fn start_of_tuple_element(hir: &hir::File, elem: &TupleElem) -> u32 {
-    let text: &[u8] = &hir.text;
-    let before_dots = |at: usize| {
-        let end = skip_trivia_back(text, at);
-        if text[..end].ends_with(b"...") {
-            end - 3
-        } else {
-            at
-        }
-    };
-    let mut at = start_of_type(hir, elem.ty) as usize;
-    if elem.rest {
-        at = before_dots(at);
-    }
-    if elem.name.is_some() {
-        let mut end = skip_trivia_back(text, at);
-        if !text[..end].ends_with(b":") {
-            return at as u32;
-        }
-        end = skip_trivia_back(text, end - 1);
-        if text[..end].ends_with(b"?") {
-            end = skip_trivia_back(text, end - 1);
-        }
-        at = word_start(text, end);
-        if elem.rest {
-            at = before_dots(at);
-        }
-    }
-    at as u32
-}
-
 /// Position of `implements` in the head of the interface whose name is at `name_pos`. `None` if
 /// there is none, or if a second `extends` comes first: `checkGrammarInterfaceDeclaration` stops at
 /// whichever comes first.
@@ -158,15 +123,6 @@ fn implements_in_interface_head(text: &[u8], name_pos: usize) -> Option<usize> {
 
 // ───────────────────────────── syntax ─────────────────────────────
 
-/// Whether the element starts with `...`. `name: ...T` does not, whatever else is wrong with it.
-fn is_rest_element(hir: &hir::File, elem: &TupleElem) -> bool {
-    // The text of a declaration file is not stored.
-    elem.rest
-        && (elem.name.is_none()
-            || hir.text.is_empty()
-            || hir.text[start_of_tuple_element(hir, elem) as usize..].starts_with(b"..."))
-}
-
 /// `getArrayElementTypeNode`: `X` for `X[]`, `[...X[]]`, `[...[...X[]]]`.
 pub(super) fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Option<TypeNodeId> {
     if node.is_none() {
@@ -174,39 +130,33 @@ pub(super) fn array_element_type_node(hir: &hir::File, node: TypeNodeId) -> Opti
     }
     match hir[node].kind {
         TypeNodeKind::Array(element) => Some(element),
-        TypeNodeKind::Tuple(elems)
-            if elems.len() == 1 && is_rest_element(hir, &hir[elems.at(0)]) =>
-        {
+        TypeNodeKind::Tuple(elems) if elems.len() == 1 && hir[elems.at(0)].has_dots => {
             rest_element_type_node(hir, &hir[elems.at(0)])
         }
         _ => None,
     }
 }
 
-/// The same for the type after the `...` of an element. `...X[]?` is `...` applied to `X[]?`, which
-/// is not an array type node.
-fn rest_element_type_node(hir: &hir::File, elem: &TupleElem) -> Option<TypeNodeId> {
-    if elem.name.is_none() && elem.optional {
-        None
-    } else {
-        array_element_type_node(hir, elem.ty)
+/// `getArrayElementTypeNode(node.Type())` for an element that starts with `...`: a `RestType`, or a
+/// `NamedTupleMember` with a `DotDotDotToken`. The type in `...name: ...T` is a `RestType`, that in
+/// `...name: T?` an `OptionalType`.
+pub(super) fn rest_element_type_node(hir: &hir::File, elem: &TupleElem) -> Option<TypeNodeId> {
+    match elem.member_type {
+        TupleMemberType::Plain => array_element_type_node(hir, elem.written),
+        TupleMemberType::Rest | TupleMemberType::Optional => None,
     }
 }
 
-/// `getTupleElementFlags`
+/// `getTupleElementFlags`. Of the elements without a name only those without `...` are optional.
 fn tuple_element_flags(hir: &hir::File, elem: &TupleElem) -> ElemFlags {
-    if elem.name.is_some() && elem.optional {
+    if elem.optional {
         ElemFlags::OPTIONAL
-    } else if is_rest_element(hir, elem) {
-        if rest_element_type_node(hir, elem).is_some() {
-            ElemFlags::REST
-        } else {
-            ElemFlags::VARIADIC
-        }
-    } else if elem.name.is_none() && elem.optional {
-        ElemFlags::OPTIONAL
-    } else {
+    } else if !elem.has_dots {
         ElemFlags::REQUIRED
+    } else if rest_element_type_node(hir, elem).is_some() {
+        ElemFlags::REST
+    } else {
+        ElemFlags::VARIADIC
     }
 }
 
@@ -218,7 +168,6 @@ impl Checker<'_, '_> {
             return;
         }
         let exprs = self.exprs_by_kind(file);
-        self.check_commas_of_import_calls(file, &exprs);
         self.check_instantiation_expressions(file, &exprs);
         self.check_instantiations_after_instanceof(file, &exprs);
     }
@@ -238,14 +187,9 @@ impl Checker<'_, '_> {
             let mut flags = tuple_element_flags(hir, elem);
             if flags.contains(ElemFlags::VARIADIC) {
                 let ty = self.type_from_node(file, elem.ty);
-                let mut ty = ty;
-                // `...T?`: `T?` is `T` or null.
-                if elem.optional && self.p.files.options.strict_null_checks {
-                    ty = self.union(&[ty, TypeId::NULL]);
-                }
                 if !self.is_array_like(ty) {
-                    let start = start_of_tuple_element(hir, elem);
-                    self.error_at((file, start, self.end_of_tuple_elem(file, e)), 2574, &[]);
+                    let at = (file, elem.start, self.end_of_tuple_elem(file, e));
+                    self.error_at(at, 2574, &[]);
                     break;
                 }
                 if self.is_array(ty)
@@ -270,8 +214,8 @@ impl Checker<'_, '_> {
             } else {
                 continue;
             };
-            let start = start_of_tuple_element(hir, elem);
-            self.grammar_error_at((file, start, self.end_of_tuple_elem(file, e)), code, &[]);
+            let at = (file, elem.start, self.end_of_tuple_elem(file, e));
+            self.grammar_error_at(at, code, &[]);
             break;
         }
     }
@@ -346,12 +290,18 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkGrammarTypeOperatorNode`: 1354 for `readonly`, 1330 to 1335 for `unique symbol`. The parser reports the 1005 of `unique`
-    /// before anything else.
+    /// `checkGrammarTypeOperatorNode`
     pub(super) fn check_grammar_type_operator_node(&mut self, file: FileId, node: TypeNodeId) {
         let hir = self.hir(file);
         // The text of the default library is not stored.
         if hir.text.is_empty() {
+            return;
+        }
+        if let TypeNodeKind::Unique(inner) = hir[node].kind {
+            // `unique (symbol)` applies `unique` to a parenthesized type.
+            let operand = skip_trivia(&hir.text, hir[node].pos as usize + b"unique".len()) as u32;
+            let end = self.end_of_type_node_from(file, inner, operand);
+            self.grammar_error_at((file, operand, end), 1005, &[Arg::Text("symbol")]);
             return;
         }
         if let TypeNodeKind::Readonly(inner) = hir[node].kind {
@@ -496,54 +446,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkGrammarProperty`: 7061 for a property whose name is `[K in T]`. Reported at the first
-    /// member of its container.
-    pub(super) fn check_grammar_mapped_property(&mut self, file: FileId, m: MemberId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if has_parse_diagnostics(hir) {
-            return;
-        }
-        let member = &hir[m];
-        let PropKey::Computed(name) = member.key else {
-            return;
-        };
-        if member.kind != MemberKind::Property
-            || !matches!(hir[name].kind, ExprKind::Binary { op: BinOp::In, .. })
-        {
-            return;
-        }
-        // `checkGrammarModifiers` runs first, and if it reports an error nothing else is reported.
-        if self.grammar_error_in_modifiers(file, m).is_some() {
-            return;
-        }
-        let (all, is_in_class) = match bound.member_owner[m.idx()] {
-            MemberOwner::Class(c) => (hir[c].members, true),
-            MemberOwner::Interface(i) => (hir[i].members, false),
-            MemberOwner::TypeLiteral(t) => match hir[t].kind {
-                TypeNodeKind::Object(members) => (members, false),
-                _ => return,
-            },
-            MemberOwner::None => return,
-        };
-        // `GetErrorRangeForNode`: at its name, if errors about it point there. They do not for a
-        // method without a body.
-        let first = &hir[all.at(0)];
-        let start = match first.kind {
-            MemberKind::Constructor | MemberKind::StaticBlock => first.start,
-            MemberKind::Method if !is_in_class => first.start,
-            _ => first.name_pos,
-        };
-        let end = match first.kind {
-            MemberKind::Constructor => self.end_of_name_at(file, first.name_pos),
-            MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
-                self.end_of_member_name(file, all.at(0))
-            }
-            MemberKind::Method if is_in_class => self.end_of_member_name(file, all.at(0)),
-            _ => first.loc.end,
-        };
-        self.error_at((file, start, end), 7061, &[]);
-    }
-
     /// `checkPropertySignature`, `checkMethodDeclaration`: 18016 for a signature with a private name. A property signature is always
     /// an error, a method signature only outside every class, an accessor signature never.
     pub(super) fn check_private_name_in_signature(&mut self, file: FileId, m: MemberId) {
@@ -593,39 +495,6 @@ impl Checker<'_, '_> {
             .is_none()
         {
             self.error_at(self.place_of_token(file, keyword as u32), 1176, &[]);
-        }
-    }
-
-    // ───────────────────────────── bracketed lists ─────────────────────────────
-
-    /// The part of `checkGrammarImportCallExpression` that handles `import(a,)`: 1009.
-    fn check_commas_of_import_calls(&mut self, file: FileId, exprs: &ExprsByKind) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let kind = self.p.files.options.module;
-        let is_verbatim = self.p.files.options.verbatim_module_syntax;
-        // With `es2015`, and with `commonjs` when module syntax is preserved verbatim, the call
-        // itself is the error. The other module kinds have import attributes, and the comma with
-        // them.
-        if has_parse_diagnostics(hir)
-            || is_verbatim && kind == ModuleKind::CommonJs
-            || kind.is_node()
-            || matches!(
-                kind,
-                ModuleKind::Es2015 | ModuleKind::EsNext | ModuleKind::Preserve
-            )
-        {
-            return;
-        }
-        let text: &[u8] = &hir.text;
-        for &e in exprs.of(ExprTag::ImportCall) {
-            if bound.is_unchecked(e.idx()) {
-                continue;
-            }
-            // The call ends with its `)`.
-            let last = skip_trivia_back(text, (hir[e].end as usize).saturating_sub(1));
-            if text[..last].ends_with(b",") {
-                self.error_at((file, last as u32 - 1, 0), 1009, &[]);
-            }
         }
     }
 
@@ -716,36 +585,20 @@ impl Checker<'_, '_> {
     /// `checkIndexedAccessIndexType` for a deferred indexed access type `object[keys]`: the error code (4105 or 2536) if `keys` cannot
     /// index `object`.
     pub(super) fn why_not_a_key_of(&mut self, object: TypeId, keys: TypeId) -> Option<u32> {
-        // For type parameters the answer follows their constraint.
-        let apparent = self.apparent_type(object);
         let object_keys = self.keys_to_look_into(object);
         let has_number_index = self.index_type_of_type(object, TypeId::NUMBER).is_some();
         let fits = self.parts(keys).iter().all(|&key| {
             self.is_assignable(key, object_keys)
                 || has_number_index && self.is_applicable_index_type(key, TypeId::NUMBER)
-                || {
-                    // `A extends B ? A : never` is an `A` that is a `B`.
-                    matches!(self.data(key), TypeData::Cond { .. }) && {
-                        let [check, extends, yes, no] =
-                            [0, 1, 2, 3].map(|piece| self.cond_piece(key, piece));
-                        let passed = self.intersection(&[extends, check]);
-                        yes == check
-                            && self.is_assignable(passed, object_keys)
-                            && self.is_assignable(no, object_keys)
-                    }
-                }
         });
         if fits {
-            return None;
-        }
-        // `getReducedType`: no value inhabits its constraint, and anything is a key of `never`.
-        if self.reduced(apparent).is_never() {
             return None;
         }
         if self.is_generic_object_type(object)
             && let Some(name) = self.property_name_of_type(keys)
         {
             // `getConstituentProperty`
+            let apparent = self.apparent_type(object);
             for &part in self.parts(apparent) {
                 let part = self.apparent_type(part);
                 if let Some((prop, _)) = self.prop_ref(part, name) {

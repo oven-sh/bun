@@ -38,6 +38,7 @@ impl<'p, 's> Checker<'p, 's> {
                 origin,
                 is_enum: false,
                 stored_under: None,
+                is_array_literal: false,
             },
         )
     }
@@ -57,6 +58,7 @@ impl<'p, 's> Checker<'p, 's> {
                 origin: self.origin(ty).into(),
                 is_enum: self.files().flags(alias).intersects(SymFlags::ENUM),
                 stored_under: None,
+                is_array_literal: false,
             },
         )
     }
@@ -86,6 +88,7 @@ impl<'p, 's> Checker<'p, 's> {
             origin: OriginKey::Union(&origin),
             is_enum: false,
             stored_under: None,
+            is_array_literal: false,
         };
         (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance)
     }
@@ -297,8 +300,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // Only a deferred type reference goes through `getObjectTypeInstantiation`: it is the
             // body of an alias and has that alias.
-            TypeData::Ref { .. } | TypeData::Tuple { .. } if self.stored_alias(ty).is_none() => {
-                self.instantiate(ty, mapper)
+            TypeData::Ref { .. } if self.stored_alias(ty).is_none() => self.instantiate(ty, mapper),
+            // Nothing but `links.instantiations`, whose key has the alias, stores the result:
+            // `createNormalizedTupleType` reports a tuple that is too large for every alias.
+            TypeData::Tuple {
+                flags, readonly, ..
+            } if self.stored_alias(ty).is_none() => {
+                let elems = self.type_arguments(ty);
+                let elems = self.instantiate_all(elems, mapper);
+                self.normalized_tuple(&elems, flags, *readonly)
             }
             _ => {
                 let result = self.instantiate(ty, mapper);

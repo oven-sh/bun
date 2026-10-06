@@ -77,9 +77,6 @@ fn regexp_flag(ch: u32) -> Option<u8> {
 const RUNE_ERROR: u32 = 0xFFFD;
 const BACKSLASH: u32 = b'\\' as u32;
 
-/// Maximum nesting depth of groups and classes. tsgo has no limit: its stack grows.
-const MAX_NESTING: u32 = 200;
-
 /// The value a member of a character class represents. tsgo uses a string.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ClassAtom {
@@ -95,6 +92,32 @@ enum ClassAtom {
 enum ClassSetExpressionType {
     ClassIntersection,
     ClassSubtraction,
+}
+
+/// The call of `scanClassSetOperand` after which a `scanClassSetExpression` continues.
+#[derive(Copy, Clone)]
+enum ClassSetOperand {
+    /// The first operand.
+    First,
+    /// The end of a range. It starts at this position.
+    RangeEnd(usize),
+    /// Another operand of a union.
+    Union,
+    /// An operand of `scanClassSetSubExpression`.
+    SubExpression(ClassSetExpressionType),
+}
+
+/// The variables of a `scanClassSetExpression`, and of the `scanClassSetSubExpression` it calls.
+struct ClassSetExpression {
+    is_character_complement: bool,
+    expression_may_contain_strings: bool,
+    /// `expressionMayContainStrings` of `scanClassSetSubExpression`.
+    sub_expression_may_contain_strings: bool,
+    start: usize,
+    /// The character the expression starts with.
+    first: u8,
+    operand: ClassAtom,
+    continues_after: ClassSetOperand,
 }
 
 /// `ReScanSlashToken` when it reports errors. The first `/` is at `token_start`.
@@ -148,8 +171,6 @@ fn check_regular_expression_literal(
         decimal_escapes: Vec::new(),
         named_capturing_groups: Vec::new(),
         pending_low_surrogate: 0,
-        nesting: 0,
-        is_too_deep: false,
         last_error: None,
         noted,
     };
@@ -205,9 +226,6 @@ struct RegExpParser<'a> {
     /// Without `u` or `v` a character above U+FFFF counts as two. The first has been returned
     /// without advancing. This is the second.
     pending_low_surrogate: u32,
-    nesting: u32,
-    /// `MAX_NESTING` was reached. Nothing more is reported for the literal.
-    is_too_deep: bool,
     /// Position of the most recently reported error.
     last_error: Option<usize>,
     noted: &'a mut Vec<Noted>,
@@ -228,7 +246,7 @@ impl<'a> RegExpParser<'a> {
         length: usize,
         args: impl FnOnce() -> Vec<Vec<u8>>,
     ) {
-        if self.last_error != Some(start) && !self.is_too_deep {
+        if self.last_error != Some(start) {
             self.last_error = Some(start);
             let end = match length {
                 0 => super::explain::NO_LENGTH,
@@ -280,17 +298,6 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// Whether one more group or class may be nested in those being parsed.
-    fn enter(&mut self) -> bool {
-        if self.nesting == MAX_NESTING {
-            self.is_too_deep = true;
-            self.pos = self.end;
-            return false;
-        }
-        self.nesting += 1;
-        true
-    }
-
     /// `checkRegularExpressionFlagAvailability`
     fn check_flag_availability(&mut self, flag: u8, pos: usize, size: usize) {
         let (available_from, name) = match flag {
@@ -306,7 +313,7 @@ impl<'a> RegExpParser<'a> {
 
     /// `run`
     fn run(&mut self) {
-        self.scan_disjunction(false);
+        self.scan_disjunction();
         let group_specifiers = std::mem::take(&mut self.group_specifiers);
         for (pos, end, name) in &std::mem::take(&mut self.group_name_references) {
             if !group_specifiers.contains(name) {
@@ -334,22 +341,45 @@ impl<'a> RegExpParser<'a> {
         }
     }
 
-    /// `scanDisjunction`: `Alternative ('|' Alternative)*`
-    fn scan_disjunction(&mut self, is_in_group: bool) {
+    /// `scanDisjunction`: `Alternative ('|' Alternative)*`. The disjunction of a group is scanned
+    /// by the same loop: tsgo recurses, on a stack that grows.
+    fn scan_disjunction(&mut self) {
+        // For each open group, the state of the alternative that contains it:
+        // `isPreviousTermQuantifiable` after the group, and the length of `named_capturing_groups`
+        // at the start of the alternative.
+        let mut open_groups: Vec<(bool, usize)> = Vec::new();
+        let mut is_previous_term_quantifiable = false;
+        let mut outer = self.named_capturing_groups.len();
         loop {
-            let outer = self.named_capturing_groups.len();
-            self.scan_alternative(is_in_group);
-            self.named_capturing_groups.truncate(outer);
-            if self.peek() != Some(b'|') {
-                return;
+            let is_in_group = !open_groups.is_empty();
+            let opened = self.scan_alternative(is_in_group, is_previous_term_quantifiable);
+            is_previous_term_quantifiable = false;
+            if let Some(is_group_quantifiable) = opened {
+                open_groups.push((is_group_quantifiable, outer));
+                outer = self.named_capturing_groups.len();
+                continue;
             }
-            self.pos += 1;
+            self.named_capturing_groups.truncate(outer);
+            if self.peek() == Some(b'|') {
+                self.pos += 1;
+                continue;
+            }
+            let Some(enclosing) = open_groups.pop() else {
+                return;
+            };
+            self.scan_expected_char(b')');
+            (is_previous_term_quantifiable, outer) = enclosing;
         }
     }
 
     /// `scanAlternative`: `Term*`, a term being an assertion, or an atom and perhaps a quantifier.
-    fn scan_alternative(&mut self, is_in_group: bool) {
-        let mut is_previous_term_quantifiable = false;
+    /// `Some`: the disjunction of a group is next, and this is `isPreviousTermQuantifiable` after
+    /// the group, with which the alternative is continued. `None`: the alternative has ended.
+    fn scan_alternative(
+        &mut self,
+        is_in_group: bool,
+        mut is_previous_term_quantifiable: bool,
+    ) -> Option<bool> {
         while let Some(ch) = self.peek() {
             let start = self.pos;
             match ch {
@@ -415,11 +445,7 @@ impl<'a> RegExpParser<'a> {
                         self.number_of_capturing_groups += 1;
                         is_previous_term_quantifiable = true;
                     }
-                    if self.enter() {
-                        self.scan_disjunction(true);
-                        self.nesting -= 1;
-                    }
-                    self.scan_expected_char(b')');
+                    return Some(is_previous_term_quantifiable);
                 }
                 b'{' | b'*' | b'+' | b'?' => {
                     if ch == b'{' && !self.scan_braced_quantifier() {
@@ -451,7 +477,7 @@ impl<'a> RegExpParser<'a> {
                     self.scan_expected_char(b']');
                     is_previous_term_quantifiable = true;
                 }
-                b')' if is_in_group => return,
+                b')' if is_in_group => return None,
                 b')' | b']' | b'}' => {
                     if self.any_unicode_mode || ch == b')' {
                         self.error_unexpected(self.pos, ch);
@@ -459,13 +485,14 @@ impl<'a> RegExpParser<'a> {
                     self.pos += 1;
                     is_previous_term_quantifiable = true;
                 }
-                b'/' | b'|' => return,
+                b'/' | b'|' => return None,
                 _ => {
                     self.scan_source_character();
                     is_previous_term_quantifiable = true;
                 }
             }
         }
+        None
     }
 
     /// The `{` case of `scanAlternative`. True: it opens a quantifier, and the closing token is
@@ -917,66 +944,153 @@ impl<'a> RegExpParser<'a> {
     }
 
     /// `scanClassSetExpression`: `'^'? (ClassUnion | ClassIntersection | ClassSubtraction)`, the
-    /// contents of brackets with `v`.
+    /// contents of brackets with `v`. A class nested in it is scanned by the same loop: tsgo
+    /// recurses, on a stack that grows.
     ///
     /// Sets `may_contain_strings` to whether it can match more than one character at once. A union
     /// can if any of its operands can, an intersection if all of them can, a subtraction if the
     /// first can; `\q{..}` can unless each alternative is one character, `\p{..}` if it is a
     /// property of strings.
     fn scan_class_set_expression(&mut self) {
-        let mut is_character_complement = false;
-        if self.peek() == Some(b'^') {
+        let mut enclosing: Vec<ClassSetExpression> = Vec::new();
+        let (mut class, mut calls_operand) = self.start_class_set_expression();
+        loop {
+            let operand = if calls_operand {
+                self.scan_class_set_operand()
+            } else {
+                // The rest of the `scanClassSetOperand` that called it.
+                let Some(outer) = enclosing.pop() else {
+                    return;
+                };
+                class = outer;
+                self.scan_expected_char(b']');
+                Some(ClassAtom::None)
+            };
+            match operand {
+                Some(operand) => {
+                    calls_operand = self.continue_class_set_expression(&mut class, operand);
+                }
+                None => {
+                    let (nested, nested_calls_operand) = self.start_class_set_expression();
+                    enclosing.push(std::mem::replace(&mut class, nested));
+                    calls_operand = nested_calls_operand;
+                }
+            }
+        }
+    }
+
+    /// `scanClassSetExpression`, up to its first call of `scanClassSetOperand`. False: it returned
+    /// without another call.
+    fn start_class_set_expression(&mut self) -> (ClassSetExpression, bool) {
+        let is_character_complement = self.peek() == Some(b'^');
+        if is_character_complement {
             self.pos += 1;
-            is_character_complement = true;
         }
-        let mut expression_may_contain_strings = false;
+        let mut class = ClassSetExpression {
+            is_character_complement,
+            expression_may_contain_strings: false,
+            sub_expression_may_contain_strings: false,
+            start: self.pos,
+            first: self.peek().unwrap_or(0),
+            operand: ClassAtom::None,
+            continues_after: ClassSetOperand::First,
+        };
         if self.is_class_content_exit() {
-            return;
+            return (class, false);
         }
-        let mut start = self.pos;
-        let first = self.text[start];
-        let mut operand = if self.is_at_class_set_operator() {
+        if self.is_at_class_set_operator() {
             self.error(1520, self.pos, 0);
             self.may_contain_strings = false;
-            ClassAtom::None
-        } else {
-            self.scan_class_set_operand()
-        };
-        match self.peek() {
-            Some(b'-') => {
-                if self.peek_at(1) == Some(b'-') {
-                    if is_character_complement && self.may_contain_strings {
-                        self.error(1518, start, self.pos - start);
+            let calls_operand = self.continue_class_set_expression(&mut class, ClassAtom::None);
+            return (class, calls_operand);
+        }
+        (class, true)
+    }
+
+    /// `scanClassSetExpression`, from where `scanClassSetOperand` returned `operand` up to the next
+    /// call of it. False: it returned without another call.
+    fn continue_class_set_expression(
+        &mut self,
+        class: &mut ClassSetExpression,
+        operand: ClassAtom,
+    ) -> bool {
+        let is_character_complement = class.is_character_complement;
+        match class.continues_after {
+            ClassSetOperand::First => {
+                class.operand = operand;
+                match self.peek() {
+                    Some(b'-') => {
+                        if self.peek_at(1) == Some(b'-') {
+                            if is_character_complement && self.may_contain_strings {
+                                self.error(1518, class.start, self.pos - class.start);
+                            }
+                            class.expression_may_contain_strings = self.may_contain_strings;
+                            class.sub_expression_may_contain_strings = self.may_contain_strings;
+                            return self.scan_class_set_sub_expression(
+                                class,
+                                ClassSetExpressionType::ClassSubtraction,
+                            );
+                        }
                     }
-                    let first_may_contain_strings = self.may_contain_strings;
-                    self.scan_class_set_sub_expression(ClassSetExpressionType::ClassSubtraction);
-                    self.may_contain_strings =
-                        !is_character_complement && first_may_contain_strings;
-                    return;
-                }
-            }
-            Some(b'&') => {
-                if self.peek_at(1) == Some(b'&') {
-                    self.scan_class_set_sub_expression(ClassSetExpressionType::ClassIntersection);
-                    if is_character_complement && self.may_contain_strings {
-                        self.error(1518, start, self.pos - start);
+                    Some(b'&') => {
+                        if self.peek_at(1) == Some(b'&') {
+                            class.sub_expression_may_contain_strings = self.may_contain_strings;
+                            return self.scan_class_set_sub_expression(
+                                class,
+                                ClassSetExpressionType::ClassIntersection,
+                            );
+                        }
+                        // tsgo names the character the expression starts with, not the `&`.
+                        self.error_unexpected(self.pos, class.first);
                     }
-                    self.may_contain_strings = !is_character_complement && self.may_contain_strings;
-                    return;
+                    _ => {
+                        if is_character_complement && self.may_contain_strings {
+                            self.error(1518, class.start, self.pos - class.start);
+                        }
+                        class.expression_may_contain_strings = self.may_contain_strings;
+                    }
                 }
-                // tsgo names the character the expression starts with, not the `&`.
-                self.error_unexpected(self.pos, first);
+                self.scan_class_union(class, false)
             }
-            _ => {
+            ClassSetOperand::RangeEnd(second_start) => {
                 if is_character_complement && self.may_contain_strings {
-                    self.error(1518, start, self.pos - start);
+                    self.error(1518, second_start, self.pos - second_start);
                 }
-                expression_may_contain_strings = self.may_contain_strings;
+                class.expression_may_contain_strings |= self.may_contain_strings;
+                if operand == ClassAtom::None {
+                    self.error(1516, second_start, self.pos - second_start);
+                } else if let (ClassAtom::Char(min), ClassAtom::Char(max)) =
+                    (class.operand, operand)
+                    && min > max
+                {
+                    self.error(1517, class.start, self.pos - class.start);
+                }
+                self.scan_class_union(class, true)
+            }
+            ClassSetOperand::Union => {
+                class.operand = operand;
+                self.scan_class_union(class, false)
+            }
+            ClassSetOperand::SubExpression(expression_type) => {
+                if expression_type == ClassSetExpressionType::ClassIntersection {
+                    class.sub_expression_may_contain_strings &= self.may_contain_strings;
+                }
+                self.scan_class_set_sub_expression(class, expression_type)
             }
         }
+    }
+
+    /// The loop of `scanClassSetExpression`, up to the next call of `scanClassSetOperand`. False:
+    /// it returned without another call. `is_after_range`: the loop continues after its `switch`.
+    fn scan_class_union(
+        &mut self,
+        class: &mut ClassSetExpression,
+        mut is_after_range: bool,
+    ) -> bool {
         while let Some(ch) = self.peek() {
+            let is_at_switch = !std::mem::take(&mut is_after_range);
             match ch {
-                b'-' => {
+                b'-' if is_at_switch => {
                     self.pos += 1;
                     if self.is_class_content_exit() {
                         break;
@@ -984,30 +1098,18 @@ impl<'a> RegExpParser<'a> {
                     if self.peek() == Some(b'-') {
                         self.pos += 1;
                         self.error(1519, self.pos - 2, 2);
-                        start = self.pos - 2;
-                        operand = ClassAtom::Text;
+                        class.start = self.pos - 2;
+                        class.operand = ClassAtom::Text;
                         continue;
                     }
-                    if operand == ClassAtom::None {
-                        self.error(1516, start, self.pos - 1 - start);
+                    if class.operand == ClassAtom::None {
+                        self.error(1516, class.start, self.pos - 1 - class.start);
                     }
-                    let second_start = self.pos;
-                    let second_operand = self.scan_class_set_operand();
-                    if is_character_complement && self.may_contain_strings {
-                        self.error(1518, second_start, self.pos - second_start);
-                    }
-                    expression_may_contain_strings |= self.may_contain_strings;
-                    if second_operand == ClassAtom::None {
-                        self.error(1516, second_start, self.pos - second_start);
-                    } else if let (ClassAtom::Char(min), ClassAtom::Char(max)) =
-                        (operand, second_operand)
-                        && min > max
-                    {
-                        self.error(1517, start, self.pos - start);
-                    }
+                    class.continues_after = ClassSetOperand::RangeEnd(self.pos);
+                    return true;
                 }
-                b'&' => {
-                    start = self.pos;
+                b'&' if is_at_switch => {
+                    class.start = self.pos;
                     self.pos += 1;
                     if self.peek() == Some(b'&') {
                         self.pos += 1;
@@ -1016,10 +1118,10 @@ impl<'a> RegExpParser<'a> {
                             self.error_unexpected(self.pos, ch);
                             self.pos += 1;
                         }
-                        operand = ClassAtom::Text;
+                        class.operand = ClassAtom::Text;
                     } else {
                         self.error_unexpected(self.pos - 1, ch);
-                        operand = ClassAtom::Char(u32::from(ch));
+                        class.operand = ClassAtom::Char(u32::from(ch));
                     }
                     continue;
                 }
@@ -1028,22 +1130,29 @@ impl<'a> RegExpParser<'a> {
             if self.is_class_content_exit() {
                 break;
             }
-            start = self.pos;
-            if self.is_at_class_set_operator() {
-                self.error(1519, self.pos, 2);
-                self.pos += 2;
-                operand = ClassAtom::Text;
-            } else {
-                operand = self.scan_class_set_operand();
+            class.start = self.pos;
+            if !self.is_at_class_set_operator() {
+                class.continues_after = ClassSetOperand::Union;
+                return true;
             }
+            self.error(1519, self.pos, 2);
+            self.pos += 2;
+            class.operand = ClassAtom::Text;
         }
-        self.may_contain_strings = !is_character_complement && expression_may_contain_strings;
+        self.may_contain_strings =
+            !class.is_character_complement && class.expression_may_contain_strings;
+        false
     }
 
-    /// `scanClassSetSubExpression`: `('&&' ClassSetOperand)+` or `('--' ClassSetOperand)+`, after the first operand.
-    fn scan_class_set_sub_expression(&mut self, expression_type: ClassSetExpressionType) {
-        let mut expression_may_contain_strings = self.may_contain_strings;
-        while !self.is_class_content_exit() {
+    /// `scanClassSetSubExpression`: `('&&' ClassSetOperand)+` or `('--' ClassSetOperand)+`, after
+    /// an operand and up to the next call of `scanClassSetOperand`. False: it returned without
+    /// another call, and so did the `scanClassSetExpression` that called it.
+    fn scan_class_set_sub_expression(
+        &mut self,
+        class: &mut ClassSetExpression,
+        expression_type: ClassSetExpressionType,
+    ) -> bool {
+        if !self.is_class_content_exit() {
             match self.peek() {
                 Some(b'-') => {
                     self.pos += 1;
@@ -1082,35 +1191,37 @@ impl<'a> RegExpParser<'a> {
                     ]
                 }),
             }
-            if self.is_class_content_exit() {
-                self.error(1520, self.pos, 0);
-                break;
+            if !self.is_class_content_exit() {
+                class.continues_after = ClassSetOperand::SubExpression(expression_type);
+                return true;
             }
-            self.scan_class_set_operand();
-            if expression_type == ClassSetExpressionType::ClassIntersection {
-                expression_may_contain_strings &= self.may_contain_strings;
-            }
+            self.error(1520, self.pos, 0);
         }
-        self.may_contain_strings = expression_may_contain_strings;
+        self.may_contain_strings = class.sub_expression_may_contain_strings;
+        if expression_type == ClassSetExpressionType::ClassIntersection {
+            if class.is_character_complement && self.may_contain_strings {
+                self.error(1518, class.start, self.pos - class.start);
+            }
+            class.expression_may_contain_strings = self.may_contain_strings;
+        }
+        self.may_contain_strings =
+            !class.is_character_complement && class.expression_may_contain_strings;
+        false
     }
 
     /// `scanClassSetOperand`: a class in brackets, a class escape, `\q{..}`, or a character.
-    fn scan_class_set_operand(&mut self) -> ClassAtom {
+    /// `None`: the contents of a class in brackets are next.
+    fn scan_class_set_operand(&mut self) -> Option<ClassAtom> {
         self.may_contain_strings = false;
-        match self.peek() {
+        Some(match self.peek() {
             Some(b'[') => {
                 self.pos += 1;
-                if self.enter() {
-                    self.scan_class_set_expression();
-                    self.nesting -= 1;
-                }
-                self.scan_expected_char(b']');
-                ClassAtom::None
+                return None;
             }
             Some(b'\\') => {
                 self.pos += 1;
                 if self.scan_character_class_escape() {
-                    return ClassAtom::None;
+                    return Some(ClassAtom::None);
                 }
                 if self.peek() == Some(b'q') {
                     self.pos += 1;
@@ -1118,16 +1229,16 @@ impl<'a> RegExpParser<'a> {
                         self.pos += 1;
                         self.scan_class_string_disjunction_contents();
                         self.scan_expected_char(b'}');
-                        return ClassAtom::None;
+                        return Some(ClassAtom::None);
                     }
                     self.error(1521, self.pos - 2, 2);
-                    return ClassAtom::Char(u32::from(b'q'));
+                    return Some(ClassAtom::Char(u32::from(b'q')));
                 }
                 self.pos -= 1;
                 self.scan_class_set_character()
             }
             _ => self.scan_class_set_character(),
-        }
+        })
     }
 
     /// `scanClassStringDisjunctionContents`: `ClassSetCharacter* ('|' ClassSetCharacter*)*`, past the `{` of `\q{`.
@@ -1434,7 +1545,7 @@ fn parse_hex(digits: &[u8]) -> u32 {
 
 /// `utf8.DecodeRuneInString`: the first character and its length in bytes. Invalid UTF-8 yields
 /// U+FFFD with length 1. Empty input yields U+FFFD with length 0.
-fn decode_rune(text: &[u8]) -> (u32, usize) {
+pub fn decode_rune(text: &[u8]) -> (u32, usize) {
     let Some(&first) = text.first() else {
         return (RUNE_ERROR, 0);
     };

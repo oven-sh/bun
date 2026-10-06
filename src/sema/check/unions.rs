@@ -300,6 +300,8 @@ impl<'p, 's> Checker<'p, 's> {
             members.retain(|m| *m != TypeId::MISSING);
         }
         let mut is_plain = true;
+        // `includes&TypeFlagsIncludesInstantiable`, of a member that is removed.
+        let mut includes_removed_pattern = false;
         if members.len() > 1 {
             let (mut any_fresh, mut has_pattern, mut has_constrained) = (false, false, false);
             for &m in members.iter() {
@@ -370,6 +372,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 });
             }
+            includes_removed_pattern = has_pattern && string;
             if members.len() > 1 {
                 // `string` has already removed the patterns.
                 let has_pattern = has_pattern && !string;
@@ -391,11 +394,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Up to here they were ordered by id.
         self.sort_types(&mut members);
+        let first_new_type_id = self.types().first_new_type_id();
         let union = match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
             _ => self.union_of_named_unions(actual, &members),
         };
+        if includes_removed_pattern && self.types().is_new_since(union, first_new_type_id) {
+            self.types().mark_without_primitive_union(union);
+        }
         (union, is_plain)
     }
 
@@ -452,6 +459,7 @@ impl<'p, 's> Checker<'p, 's> {
                 origin,
                 is_enum: false,
                 stored_under: None,
+                is_array_literal: false,
             },
         )
     }
@@ -532,8 +540,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isPrimitiveOrObjectOrEmptyType`
-    fn is_primitive_or_object_or_empty(&self, ty: TypeId) -> bool {
-        self.flags(ty) & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0 || self.is_empty_anonymous(ty)
+    fn is_primitive_or_object_or_empty(&mut self, ty: TypeId) -> bool {
+        self.flags(ty) & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
+            || self.is_empty_anonymous_object_type(ty)
     }
 
     /// For `T & P` or `P & T`, where `T` is a type variable whose constraint consists only of
@@ -577,29 +586,44 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    /// `ObjectFlagsIsConstrainedTypeVariable` of `ty`, the intersection of `a` and `b`. Where no
+    /// request of `getIntersectionTypeEx` is on record, the flag that a request for `a & b` gives.
+    fn is_constrained_type_variable(&mut self, ty: TypeId, a: TypeId, b: TypeId) -> bool {
+        if let Some(known) = self.types().is_constrained_type_variable(ty) {
+            return known;
+        }
+        let includes_empty_object =
+            self.is_empty_anonymous_object_type(a) || self.is_empty_anonymous_object_type(b);
+        self.constrained_type_variable(a, b, includes_empty_object)
+            .is_some()
+    }
+
     /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` reduces to `T` once the `P`s cover the
     /// whole constraint of `T`.
     fn remove_constrained_type_variables(&mut self, members: &mut Flat) {
-        // (member, T, P, constraint of T)
-        let mut constrained: Vec<(TypeId, TypeId, TypeId, TypeId)> = Vec::new();
+        // (member, T, P)
+        let mut constrained: Vec<(TypeId, TypeId, TypeId)> = Vec::new();
         for &m in members.iter() {
             if let TypeData::Intersection(parts) = self.data(m)
                 && let [a, b] = parts[..]
-                && let Some(found) = self.constrained_type_variable(
-                    a,
-                    b,
-                    self.is_empty_anonymous(a) || self.is_empty_anonymous(b),
-                )
+                && self.is_constrained_type_variable(m, a, b)
             {
-                constrained.push((m, found.variable, found.primitive, found.constraint));
+                constrained.push(if self.is_type_variable(a) {
+                    (m, a, b)
+                } else {
+                    (m, b, a)
+                });
             }
         }
         let mut changed = false;
         for i in 0..constrained.len() {
-            let (_, variable, _, constraint) = constrained[i];
+            let (_, variable, _) = constrained[i];
             if constrained[..i].iter().any(|c| c.1 == variable) {
                 continue;
             }
+            let Some(constraint) = self.base_constraint_of(variable) else {
+                continue;
+            };
             if self
                 .parts(constraint)
                 .iter()
@@ -618,6 +642,29 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// A union in which no member is a subtype of another. `UnionReductionSubtype`
     pub fn union_reduced(&mut self, types: &[TypeId]) -> TypeId {
+        // `unionOfUnionTypes`: the error type is stored too, and is reported once.
+        let key = match *types {
+            [a, b] if !self.is_union(a) && !self.is_union(b) => None,
+            [a, b] if a.arrival_order() < b.arrival_order() => Some((a, b)),
+            [a, b] => Some((b, a)),
+            _ => None,
+        };
+        let Some(key) = key else {
+            return self.create_reduced_union(types);
+        };
+        if let Some(&known) = self.unions_of_union_types.get(&key) {
+            return known;
+        }
+        let before = self.non_cacheable_mark();
+        let union = self.create_reduced_union(types);
+        if before == self.non_cacheable_mark() {
+            self.unions_of_union_types.insert(key, union);
+        }
+        union
+    }
+
+    /// `getUnionTypeWorker` with `UnionReductionSubtype`.
+    fn create_reduced_union(&mut self, types: &[TypeId]) -> TypeId {
         // An existing union is left unchanged.
         if let [only] = types {
             return *only;
@@ -735,11 +782,15 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     continue;
                 }
-                // `emptyObjectType`, which has no symbol, is not removed in favor of the type of an
-                // empty object literal.
+                // `emptyObjectType`, which has no symbol, is not removed in favor of an empty type
+                // that has one.
                 if (source == TypeId::EMPTY_OBJECT || self.is_unknown_empty_object(source))
-                    && matches!(self.data(target), TypeData::Anon { .. })
-                    && self.is_empty_anonymous(target)
+                    && match self.data(target) {
+                        TypeData::Anon { .. } => true,
+                        TypeData::Synth(shape) => shape.literal == Literalness::EmptyTypeLiteral,
+                        _ => false,
+                    }
+                    && self.is_empty_anonymous_object_type(target)
                 {
                     continue;
                 }
@@ -834,15 +885,24 @@ impl<'p, 's> Checker<'p, 's> {
                                 new_origin = OriginKey::Union(&left);
                             }
                         }
-                        self.types().intern_key_with(
+                        let first_new_type_id = self.types().first_new_type_id();
+                        let filtered = self.types().intern_key_with(
                             TypeKey::Union(&kept),
                             &ProvenanceKey {
                                 alias: None,
                                 origin: new_origin,
                                 is_enum: false,
                                 stored_under: None,
+                                is_array_literal: false,
                             },
-                        )
+                        );
+                        // `ObjectFlagsPrimitiveUnion` is forwarded.
+                        if self.types().is_new_since(filtered, first_new_type_id)
+                            && !self.is_primitive_union(ty)
+                        {
+                            self.types().mark_without_primitive_union(filtered);
+                        }
+                        filtered
                     }
                 }
             }
@@ -1009,39 +1069,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `IsEmptyAnonymousObjectType`. Like it, this does not resolve members that are not resolved
-    /// yet: it inspects the syntax. An empty type literal is `TypeId::EMPTY_OBJECT`.
-    fn is_empty_anonymous(&self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Synth(shape) => match shape.literal {
-                Literalness::SyntheticDefault => true,
-                // `anyFunctionType`
-                Literalness::Partial => false,
-                _ => {
-                    shape.props.is_empty()
-                        && shape.call.is_empty()
-                        && shape.construct.is_empty()
-                        && shape.index.is_empty()
-                }
-            },
-            TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..),
-                mapper,
-            } => {
-                // In JavaScript `o.x = 1` gives the `{}` that `o` is initialized with a member.
-                let bound = self.bound(*file);
-                let symbol = bound.expr_symbol[e.idx()];
-                matches!(self.hir(*file)[*e].kind, ExprKind::Object(props) if props.is_empty())
-                    && (symbol.is_none() || bound.symbols[symbol.idx()].exports.is_none())
-                    // `instantiateAnonymousType` resolves no members, and `getObjectTypeInstantiation`
-                    // instantiates a literal with all its outer type parameters: `{} & T` with `C`
-                    // for `T` is `{} & C`.
-                    && (self.types().mapping(*mapper).iter()).all(|p| p.0 == p.1)
-            }
-            _ => false,
-        }
-    }
-
     /// `A & B & ...`
     pub fn intersection(&mut self, types: &[TypeId]) -> TypeId {
         self.intersection_ex(types, false)
@@ -1069,7 +1096,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
-            if self.is_empty_anonymous(ty) {
+            if self.is_empty_anonymous_object_type(ty) {
                 if includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
                     includes |= tf::INCLUDES_EMPTY_OBJECT;
                     set.push(ty);
@@ -1121,7 +1148,11 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         match (self.intersection_worker(types, false), alias) {
             ((created, true), Some((alias, type_arguments))) => {
-                self.with_alias(created, alias, type_arguments)
+                let aliased = self.with_alias(created, alias, type_arguments);
+                if let Some(flag) = self.types().is_constrained_type_variable(created) {
+                    self.types().set_constrained_type_variable(aliased, flag);
+                }
+                aliased
             }
             ((created, _), _) => created,
         }
@@ -1233,7 +1264,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || t == TypeId::BIGINT && includes & tf::BIGINT_LITERAL != 0
                 || t == TypeId::SYMBOL && includes & tf::UNIQUE_ES_SYMBOL != 0
                 || t == TypeId::VOID && includes & tf::UNDEFINED != 0
-                || is_non_nullable && self.is_empty_anonymous(t))
+                || is_non_nullable && self.is_empty_anonymous_object_type(t))
         });
         if includes & tf::INCLUDES_MISSING_TYPE != 0
             && let Some(at) = set.iter().position(|&t| t == TypeId::UNDEFINED)
@@ -1251,6 +1282,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {}
         }
         // `T & P` is reduced using the constraint of `T`.
+        let mut is_constrained_type_variable = false;
         if !no_constraint_reduction
             && let [a, b] = set[..]
             && let Some(found) =
@@ -1273,28 +1305,30 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return (TypeId::NEVER, false);
             }
+            is_constrained_type_variable = true;
         }
         if includes & tf::UNION == 0 {
-            return (self.intern_key(TypeKey::Intersection(&set)), true);
+            let created = self.intern_key(TypeKey::Intersection(&set));
+            if !no_constraint_reduction && set.len() == 2 {
+                self.types()
+                    .set_constrained_type_variable(created, is_constrained_type_variable);
+            }
+            return (created, true);
         }
-        // `intersectionTypes`: the cached result for the same types.
-        // `len(typeSet) >= 3 && len(types) > 2`. tsgo omits it from the key, so there the first
-        // caller decides for all.
-        let is_split = set.len() >= 3 && types.len() > 2;
-        let key = (
-            Box::<[TypeId]>::from(&set[..]),
-            no_constraint_reduction,
-            is_split,
-        );
+        // `intersectionTypes`: the cached result for the same types. The number of `types` is not
+        // in the key: the first request decides whether the set is split in halves.
+        let key = (Box::<[TypeId]>::from(&set[..]), no_constraint_reduction);
         let table = &self.p.distributed_intersections;
         if let Some(known) = table.get(&self.task, &key) {
             return known;
         }
         let scope = self.begin_scope();
         let result = self.distribute_intersection(types.len(), set, no_constraint_reduction);
-        match self.end_scope_by_counters(scope) {
-            Ok(stored) => table.insert(&self.task, key, result, stored),
-            Err(_) => result,
+        match (result, self.end_scope_by_counters(scope)) {
+            // `return c.errorType`, before the result is stored: the next request reports again.
+            (None, _) => (TypeId::ERROR, false),
+            (Some(result), Ok(stored)) => table.insert(&self.task, key, result, stored),
+            (Some(result), Err(_)) => result,
         }
     }
 
@@ -1319,16 +1353,16 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getIntersectionType` for types some of which are unions. `actual`: the number of types in
-    /// the request.
+    /// the request. `None`: `checkCrossProductUnion` has refused the set.
     fn distribute_intersection(
         &mut self,
         actual: usize,
         mut set: Flat,
         no_constraint_reduction: bool,
-    ) -> (TypeId, bool) {
+    ) -> Option<(TypeId, bool)> {
         if self.intersect_unions_of_primitive_types(&mut set) {
             // Happens only once: at most one such union is left.
-            return self.intersection_worker(&set, no_constraint_reduction);
+            return Some(self.intersection_worker(&set, no_constraint_reduction));
         }
         // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and likewise for `null`.
         if set
@@ -1345,7 +1379,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let rest = self.intersection_ex(&set, no_constraint_reduction);
             let union = self.union_ex(&[rest, undefined], !no_constraint_reduction);
-            return (union, self.is_union(union));
+            return Some((union, self.is_union(union)));
         }
         if set
             .iter()
@@ -1356,7 +1390,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let rest = self.intersection_ex(&set, no_constraint_reduction);
             let union = self.union_ex(&[rest, TypeId::NULL], !no_constraint_reduction);
-            return (union, self.is_union(union));
+            return Some((union, self.is_union(union)));
         }
         // `A & B & C & D` is `(A & B) & (C & D)`: much of a half may reduce to never. Not applied
         // to two types, which would recurse forever.
@@ -1364,12 +1398,10 @@ impl<'p, 's> Checker<'p, 's> {
             let middle = set.len() / 2;
             let left = self.intersection_ex(&set[..middle], no_constraint_reduction);
             let right = self.intersection_ex(&set[middle..], no_constraint_reduction);
-            return self.intersection_worker(&[left, right], no_constraint_reduction);
+            return Some(self.intersection_worker(&[left, right], no_constraint_reduction));
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
-        let Some(size) = self.checked_cross_product_union_size(&set) else {
-            return (TypeId::ERROR, false);
-        };
+        let size = self.checked_cross_product_union_size(&set)?;
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
@@ -1393,9 +1425,9 @@ impl<'p, 's> Checker<'p, 's> {
             && self.constituent_count_of_types(&intersections)
                 > self.constituent_count_of_types(&set)
         {
-            return (self.with_origin(union, OriginKey::Intersection(&set)), true);
+            return Some((self.with_origin(union, OriginKey::Intersection(&set)), true));
         }
-        (union, self.is_union(union))
+        Some((union, self.is_union(union)))
     }
 
     /// `getConstituentCount`
@@ -1461,11 +1493,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `ObjectFlagsPrimitiveUnion`: a union with no member that has `TypeFlagsNotPrimitiveUnion`.
-    /// `object` is allowed. `void`, template literal types and `keyof T` are not.
+    /// `object` is allowed. `void`, template literal types and `keyof T` are not. `filterType`
+    /// forwards the flag, so what it is the first to create from another union lacks it.
     fn is_primitive_union(&self, ty: TypeId) -> bool {
         let TypeData::Union(parts) = self.data(ty) else {
             return false;
         };
+        if self.types().is_without_primitive_union(ty) {
+            return false;
+        }
         parts.iter().all(|&p| {
             let flags = self.flags(p);
             flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
@@ -1589,6 +1625,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `InternalSymbolNameClass`, of a class expression without a name.
         Some(if name.is_none() {
             &b"\xFEclass"[..]
+        } else if name == known::missing {
+            &b"\xFEmissing"[..]
         } else {
             self.atoms().bytes(name)
         })
@@ -1666,6 +1704,26 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `t.symbol.Name` of an object type whose symbol has no declarations. `compareSymbols` puts
+    /// such a symbol after those that have one and before nil.
+    fn name_of_symbol_without_declarations(&self, ty: TypeId) -> Option<&'static [u8]> {
+        match self.data(ty) {
+            TypeData::Synth(shape) if shape.instantiation_expression.is_some() => {
+                Some(&b"\xFEinstantiationExpression"[..])
+            }
+            TypeData::Synth(shape) => matches!(
+                shape.literal,
+                Literalness::EmptyTypeLiteral | Literalness::SyntheticDefault
+            )
+            .then_some(&b"\xFEtype"[..]),
+            TypeData::Anon {
+                origin: Origin::GlobalThis,
+                ..
+            } => Some(&b"globalThis"[..]),
+            _ => None,
+        }
+    }
+
     /// The sort key `compareNodes` uses for a node at `pos` of `file`: the index of the file in the
     /// program (`fileIndexMap`), then the position. Library files come first.
     pub(super) fn place_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
@@ -1687,6 +1745,20 @@ impl<'p, 's> Checker<'p, 's> {
             _ => ExprId::NONE,
         };
         self.sort_place(ty).map(|place| (place.1, place.2, literal))
+    }
+
+    /// `Shape::mapper` for a type that gets `t.symbol`, the symbol of an object literal
+    /// (`newAnonymousType(t.symbol, ..)`): what the outer type parameters of the literal are mapped
+    /// to in `ty`.
+    pub(super) fn mapper_of_object_literal_type(&self, ty: TypeId) -> MapperId {
+        match *self.data(ty) {
+            TypeData::Anon {
+                origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
+                mapper,
+            } => mapper,
+            TypeData::Synth(ref shape) => shape.mapper,
+            _ => MapperId::IDENTITY,
+        }
     }
 
     /// `compareTypeLists`
@@ -1812,7 +1884,12 @@ impl<'p, 's> Checker<'p, 's> {
                 .compare_type_names(a, b)
                 .then_with(|| match are_of_one_symbol {
                     true => Equal,
-                    false => some_first(place(a), place(b)),
+                    false => some_first(place(a), place(b)).then_with(|| {
+                        some_first(
+                            self.name_of_symbol_without_declarations(a),
+                            self.name_of_symbol_without_declarations(b),
+                        )
+                    }),
                 })
                 .then_with(|| originating_import(a).cmp(&originating_import(b)))
                 .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
@@ -1859,6 +1936,10 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => 2,
             TypeData::Synth(ref shape) => u8::from(shape.is_regular),
+            // `createArrayLiteralType`
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => {
+                u8::from(self.types().is_array_literal(t))
+            }
             _ => 0,
         };
         let by_structure = match (self.data(a), self.data(b)) {
@@ -1878,7 +1959,7 @@ impl<'p, 's> Checker<'p, 's> {
                     readonly: q,
                 },
             ) => {
-                let bits = |e: &ElemFlags| e.with_label(Atom::NONE).bits();
+                let bits = |e: &ElemFlags| e.with_label(LabeledDeclaration::NONE).bits();
                 let label = |e: &ElemFlags| e.label().is_some().then(|| atoms.bytes(e.label()));
                 r.cmp(q)
                     .then_with(|| f.len().cmp(&g.len()))
@@ -1988,7 +2069,8 @@ impl<'p, 's> Checker<'p, 's> {
                     (Some(x), Some(y)) => types(x, y),
                     (x, y) => y.is_some().cmp(&x.is_some()),
                 },
-            },
+            }
+            .then_with(|| self.compare_type_mappers(x.mapper, y.mapper)),
             (
                 TypeData::Cond {
                     mapper: x,

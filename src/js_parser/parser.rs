@@ -924,6 +924,9 @@ impl<'a> JSXTag<'a> {
         lexer: &mut js_lexer::Lexer<'a>,
         stops: &[u8],
     ) -> crate::CrateResult<(&'a [u8], bun_ast::Range)> {
+        if lexer.token == T::TPrivateIdentifier {
+            lexer.scan_jsx_identifier();
+        }
         if lexer.token != T::TIdentifier {
             if lexer.is_log_disabled {
                 return Err(crate::Error::Backtrack);

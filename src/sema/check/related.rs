@@ -27,7 +27,7 @@ impl Checker<'_, '_> {
     /// `GetNameOfDeclaration(decl) ?? decl`: its name, or its start if it has none.
     pub(super) fn place_of_declaration(&self, file: FileId, decl: Decl) -> Option<Place> {
         let start = self.declaration_name_start(file, decl)?;
-        if let Decl::Member(_) | Decl::Property(_) = decl {
+        if let Decl::Member(_) | Decl::Property(_) | Decl::EnumMember(_) = decl {
             return Some((file, start, self.end_of_name_at(file, start).max(start)));
         }
         Some(self.place_of_token(file, start))

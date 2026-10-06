@@ -11,14 +11,14 @@
 //!   removed
 //! * `checkImportAttributes`, `getTypeFromImportAttributes`, `checkImportType`,
 //!   `getResolutionModeOverride`: 1453 1454 1463 1464 2322 2823 2856 2857
-//! * `checkImportEqualsDeclaration`: 2437 2438; `checkExportDeclaration`: 1194 2498;
+//! * `checkImportEqualsDeclaration`: 1202 1392 2437 2438; `checkExportDeclaration`: 1194 2498;
 //!   `checkClassDeclaration`: 1211
 //! * `checkExportAssignment`: 1063 1319 1282 1283 1284 1285 1289 1290 1291 1292
 //! * `getVerbatimModuleSyntaxErrorMessage`, from `checkAliasSymbol`, `checkExportAssignment` and
 //!   `checkGrammarImportCallExpression`: 1286 1295
-//! * `reportObviousModifierErrors` for `static { }`: 1184
 //! * `checkGrammarModuleElementContext`: 1231 1232 1233 1234 1235 1258 1473 1474
-//! * `getTypeFromImportTypeNode`: 1339 1340; `checkGrammarImportClause`: 18060
+//! * `getTypeFromImportTypeNode`: 1339 1340; `checkGrammarImportClause`: 1363 2206 18058 18059
+//!   18060
 //! * `reportFlowControlError`: 2563
 //!
 //! All of TypeScript 7.0.2's checker.go, flow.go, grammarchecks.go, binder.go and
@@ -30,7 +30,7 @@
 
 use super::errors_enums_names::resolves_to_umd_global;
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, ScopeId};
+use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative};
 use bun_collections::ArrayHashMap;
 
@@ -42,6 +42,8 @@ struct Cx<'a> {
     uses: &'a [SpecifierUse],
     /// `IsExternalModule`, according to the program.
     is_module: bool,
+    /// `IsGlobalSourceFile`: a CommonJS module is none either.
+    is_global_source_file: bool,
     /// Not `hasParseDiagnostics`: `grammarErrorOnNode` only reports in a file that parses.
     grammar: bool,
     /// `IsInJSFile`
@@ -59,7 +61,9 @@ struct Cx<'a> {
 /// The node whose body a statement list is.
 #[derive(Copy, Clone)]
 struct Around {
-    /// `NONE`: the file.
+    /// `isInAppropriateContext` of `checkGrammarModuleElementContext`: it is the file or a module.
+    is_appropriate_context: bool,
+    /// `NONE`: the file, or no module.
     module: ModuleId,
     /// `IsAmbientModule`
     is_ambient_module: bool,
@@ -76,6 +80,16 @@ impl Cx<'_> {
     fn specifier(&self, pos: u32, spec: Atom) -> Option<SpecifierUse> {
         let at = self.uses.partition_point(|u| u.pos < pos);
         self.uses.get(at).copied().filter(|u| u.spec == spec)
+    }
+
+    /// `importClause.NamedBindings` is a `NamedImports`. The HIR has no node for `{}` after a
+    /// default import: the clause ends with the brace.
+    fn has_named_imports(&self, import: &Import) -> bool {
+        import.namespace.is_none()
+            && (!import.named.is_empty()
+                || import.clause_end > import.clause_start
+                    && (import.default.is_none()
+                        || self.text.get(import.clause_end as usize - 1) == Some(&b'}')))
     }
 }
 
@@ -105,7 +119,8 @@ impl Checker<'_, '_> {
         let cx = Cx {
             file,
             text: &hir.text,
-            is_module: module.is_module(),
+            is_module: hir.has_module_syntax,
+            is_global_source_file: !module.is_module(),
             // `tryParseImportAttributes`, `parseImportType`: `assert` in place of `with` is a parse
             // error.
             grammar: !has_parse_diagnostics(hir) && !hir.diagnostics.iter().any(|d| d.code == 2880),
@@ -117,6 +132,7 @@ impl Checker<'_, '_> {
             uses,
         };
         let top = Around {
+            is_appropriate_context: true,
             module: ModuleId::NONE,
             is_ambient_module: false,
             is_augmentation: false,
@@ -125,7 +141,6 @@ impl Checker<'_, '_> {
         };
         self.modules_statements(&cx, hir.body, top);
         self.modules_misplaced_statements(&cx, top);
-        self.modules_static_blocks(&cx);
         self.modules_import_calls_and_types(&cx);
         // Fast path: a cycle needs an alias that other files can import, or one that refers to another name in this file.
         let can_be_circular = cx.aliases.keys().iter().any(|d| {
@@ -144,10 +159,15 @@ impl Checker<'_, '_> {
             if matches!(decl, Decl::Require(_)) {
                 self.check_alias_symbol(file, &cx.aliases, decl, false);
             }
-            // `resolveAlias`: at `getDeclarationOfAliasSymbol`
+            // `resolveAlias`: at `getDeclarationOfAliasSymbol`. Where
+            // `checkGrammarModuleElementContext` stops the check of the declaration, something else
+            // has to resolve the alias.
             if can_be_circular
                 && self.files().alias_links(sym).is_circular
                 && self.files().declaration_of_alias_symbol(sym) == Some((file, decl))
+                && (statement_of_alias_declaration(hir, decl)
+                    .is_none_or(|s| is_in_appropriate_context(self.bound(file), s))
+                    || self.modules_alias_is_used(&cx, sym))
                 && let Some(at) = self.place_of_alias_declaration(Sym { file, ..sym }, decl)
             {
                 self.error_at(at, 2303, &[Arg::Sym(sym)]);
@@ -210,60 +230,82 @@ impl Checker<'_, '_> {
         match self.files().module(file).implied_format {
             ResolutionMode::Require => ModuleKind::CommonJs,
             ResolutionMode::Import => ModuleKind::EsNext,
-            ResolutionMode::None => self.p.files.options.module,
+            ResolutionMode::None => self.files().compiler_options_for_file(file).module,
         }
     }
 
     /// The statements of the file or of the body of a module.
     fn modules_statements(&mut self, cx: &Cx<'_>, list: IdList<StmtId>, around: Around) {
-        let hir = self.hir(cx.file);
-        for s in hir.ids(list) {
-            let Stmt {
-                start, modifiers, ..
-            } = hir[s];
-            match hir[s].kind {
-                StmtKind::Module(m) => self.modules_declaration(cx, list, s, m, around),
-                StmtKind::Import(i) => self.modules_import(cx, s, i, around),
-                StmtKind::ImportEquals(i) => self.modules_import_equals(cx, s, i, around),
-                StmtKind::ExportNamed(x) => self.modules_export_named(cx, s, x, around),
-                StmtKind::ExportStar { .. } => self.modules_export_star(cx, s, around),
-                StmtKind::ExportDefault(e) => {
-                    self.modules_export_assignment(cx, s, e, false, around)
-                }
-                StmtKind::ExportAssign(e) => self.modules_export_assignment(cx, s, e, true, around),
-                // `bindNamespaceExportDeclaration`: `export as namespace N` accepts no modifiers,
-                // and must be at the top level of a declaration file that is a module.
-                StmtKind::ExportAsNamespace(_) => {
-                    if !modifiers.is_empty() {
-                        self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 1184, &[]);
-                    }
-                    let code = if around.module.is_some() {
-                        1316
-                    } else if !cx.is_module {
-                        1314
-                    } else if hir.kind != FileKind::Declaration {
-                        1315
-                    } else {
-                        continue;
-                    };
-                    self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), code, &[]);
-                }
-                _ => {}
-            }
+        for s in self.hir(cx.file).ids(list) {
+            self.modules_statement(cx, s, around);
         }
+    }
+
+    /// The statement `s`, whose parent is `around`.
+    fn modules_statement(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
+        match self.hir(cx.file)[s].kind {
+            StmtKind::Module(m) => self.modules_declaration(cx, s, m, around),
+            StmtKind::Import(i) => self.modules_import(cx, s, i, around),
+            StmtKind::ImportEquals(i) => self.modules_import_equals(cx, s, i, around),
+            StmtKind::ExportNamed(x) => self.modules_export_named(cx, s, x, around),
+            StmtKind::ExportStar { .. } => self.modules_export_star(cx, s, around),
+            StmtKind::ExportDefault(e) => self.modules_export_assignment(cx, s, e, false, around),
+            StmtKind::ExportAssign(e) => self.modules_export_assignment(cx, s, e, true, around),
+            StmtKind::ExportAsNamespace(_) => {
+                self.modules_namespace_export_declaration(cx, s, around)
+            }
+            _ => {}
+        }
+    }
+
+    /// `bindNamespaceExportDeclaration`: `export as namespace N` accepts no modifiers, and must be
+    /// at the top level of a declaration file that is a module.
+    fn modules_namespace_export_declaration(&mut self, cx: &Cx<'_>, s: StmtId, around: Around) {
+        let hir = self.hir(cx.file);
+        let node = (cx.file, hir[s].start, self.end_of_stmt(cx.file, s));
+        if !hir[s].modifiers.is_empty() {
+            self.error_at(node, 1184, &[]);
+        }
+        let code = if around.module.is_some() || !around.is_appropriate_context {
+            1316
+        } else if !cx.is_module {
+            1314
+        } else if hir.kind != FileKind::Declaration {
+            1315
+        } else {
+            return;
+        };
+        self.error_at(node, code, &[]);
+    }
+
+    /// `checkGrammarModuleElementContext` for the statement `s`, whose parent is `around`.
+    fn check_grammar_module_element_context(
+        &mut self,
+        cx: &Cx<'_>,
+        s: StmtId,
+        around: Around,
+        code: u32,
+    ) -> bool {
+        if !around.is_appropriate_context && cx.grammar && !cx.text.is_empty() {
+            self.error_at((cx.file, self.hir(cx.file)[s].start, 0), code, &[]);
+        }
+        !around.is_appropriate_context
+    }
+
+    /// `node.Flags&NodeFlagsAmbient` of the statement `s`, whose parent is `around`: what follows
+    /// `declare` is parsed in an ambient context.
+    fn modules_is_ambient(&self, cx: &Cx<'_>, s: StmtId, around: Around) -> bool {
+        let hir = self.hir(cx.file);
+        around.is_ambient
+            || hir
+                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
+                .is_some()
     }
 
     // ───────────────────────────── module declarations ─────────────────────────────
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
-    fn modules_declaration(
-        &mut self,
-        cx: &Cx<'_>,
-        list: IdList<StmtId>,
-        s: StmtId,
-        m: ModuleId,
-        around: Around,
-    ) {
+    fn modules_declaration(&mut self, cx: &Cx<'_>, s: StmtId, m: ModuleId, around: Around) {
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
         let name_pos = module.name_pos;
@@ -271,7 +313,8 @@ impl Checker<'_, '_> {
         let is_global = module.name == ModuleName::Global;
         let is_ambient_module = !matches!(module.name, ModuleName::Ident(_));
         let is_ambient = around.is_ambient || module.flags.contains(Flags::AMBIENT);
-        let is_at_top = around.module.is_none();
+        // `IsSourceFile(node.Parent)`
+        let is_at_top = around.module.is_none() && around.is_appropriate_context;
         // `IsModuleAugmentationExternal`
         let adds_to_another = if is_at_top {
             cx.is_module
@@ -280,6 +323,7 @@ impl Checker<'_, '_> {
         };
         let is_augmentation = is_ambient_module && adds_to_another;
         let inner = Around {
+            is_appropriate_context: true,
             module: m,
             is_ambient_module,
             is_augmentation,
@@ -313,7 +357,16 @@ impl Checker<'_, '_> {
         {
             self.error_at((cx.file, name_pos, 0), 2670, &[]);
         }
-        if cx.grammar && !is_ambient && matches!(module.name, ModuleName::String(_)) {
+        let context_error = if is_ambient_module { 1234 } else { 1235 };
+        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+            return;
+        }
+        // `!c.checkGrammarModifiers(node)`
+        if cx.grammar
+            && !is_ambient
+            && matches!(module.name, ModuleName::String(_))
+            && self.grammar_error_in_modifiers(cx.file, s).is_none()
+        {
             self.error_at((cx.file, name_pos, 0), 1035, &[]);
         }
         if module.specifies_module {
@@ -346,14 +399,17 @@ impl Checker<'_, '_> {
             return;
         }
         if is_augmentation {
+            if let ModuleName::String(name) = module.name {
+                self.modules_merge_augmentation(cx, m, name, around);
+            }
             // An augmentation that was not merged into anything is not visited: it would only
             // produce cascading errors.
-            let check_body = match module.name {
-                ModuleName::String(name) => {
-                    self.modules_merge_augmentation(cx, list, m, name, around)
-                }
-                _ => true,
+            let symbol = self.bound(cx.file).module_symbol[m.idx()];
+            let is_merged = || {
+                let merged = files.sym(cx.file, symbol);
+                files.flags(merged).contains(SymFlags::TRANSIENT)
             };
+            let check_body = is_global || symbol.is_some() && is_merged();
             if check_body && cx.grammar {
                 for s in hir.ids(module.body) {
                     // `checkModuleAugmentationElement`
@@ -375,7 +431,7 @@ impl Checker<'_, '_> {
             }
         } else if is_global {
             self.error_at((cx.file, name_pos, 0), 2669, &[]);
-        } else if !is_at_top {
+        } else if !is_at_top || !cx.is_global_source_file {
             self.error_at((cx.file, name_pos, 0), 2435, &[]);
         } else if let ModuleName::String(name) = module.name
             && is_relative(self.atoms().bytes(name))
@@ -384,16 +440,10 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `mergeModuleAugmentation`: whether the declarations of `m` were merged into the module named
-    /// `name`. Errors are reported at the first declaration in the file.
-    fn modules_merge_augmentation(
-        &mut self,
-        cx: &Cx<'_>,
-        list: IdList<StmtId>,
-        m: ModuleId,
-        name: Atom,
-        around: Around,
-    ) -> bool {
+    /// What `mergeModuleAugmentation` reports for the declaration `m`, which augments the module
+    /// named `name`. `Files::merge` has merged it. Errors are reported at the first declaration in
+    /// the file.
+    fn modules_merge_augmentation(&mut self, cx: &Cx<'_>, m: ModuleId, name: Atom, around: Around) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let text = self.atoms().bytes(name);
         // `collectModuleReferences`: whether it is one of `ModuleAugmentations` at all.
@@ -404,15 +454,13 @@ impl Checker<'_, '_> {
         };
         let symbol = bound.module_symbol[m.idx()];
         if !is_collected || symbol.is_none() {
-            return false;
+            return;
         }
         // All declarations with the same quoted name in a file share one symbol here.
         // `declareModuleSymbol` has one per container.
         let decls = &bound.symbols[symbol.idx()].decls;
-        let is_here = |part: ModuleId| {
-            hir.ids(list)
-                .any(|s| matches!(hir[s].kind, StmtKind::Module(x) if x == part))
-        };
+        let parent_of = |part: ModuleId| bound.stmt_parent[hir[part].stmt.idx()];
+        let is_here = |part: ModuleId| parent_of(part) == parent_of(m);
         let first = decls.iter().find_map(|&d| match d {
             Decl::Module(part) if is_here(part) => Some(part),
             _ => None,
@@ -440,19 +488,23 @@ impl Checker<'_, '_> {
             };
             self.resolve_external_module(cx.file, written, site);
         }
-        let Some(found) = self.modules_module_of_specifier(cx.file, name) else {
-            return false;
+        let own = Sym {
+            file: cx.file,
+            id: symbol,
         };
-        // `resolveExternalModuleSymbol`
+        if files.augmentations_of_non_modules.contains(&own) {
+            report(self, 2671, false, &[Arg::Atom(name)]);
+            return;
+        }
+        let merged = files.canonical(own);
+        if files.flags(merged).contains(SymFlags::TRANSIENT) {
+            return;
+        }
+        let Some(found) = self.modules_module_of_specifier(cx.file, name) else {
+            return;
+        };
         let main = files.module_value(found);
         let flags = files.flags(main);
-        if !flags.intersects(SymFlags::NAMESPACE) {
-            // An alias here is one that could not be resolved.
-            if !flags.contains(SymFlags::ALIAS) {
-                report(self, 2671, false, &[Arg::Atom(name)]);
-            }
-            return false;
-        }
         // `mergeSymbol`, `SymbolFlagsValueModuleExcludes`: a module that contains values merges
         // with neither a variable nor a `const enum`, whatever else has the same name.
         let is_variable = flags.intersects(SymFlags::VARIABLE);
@@ -469,9 +521,7 @@ impl Checker<'_, '_> {
                 // `reportMergeSymbolError` for the declarations on this side.
                 report(self, 2567, true, &[]);
             }
-            return false;
         }
-        true
     }
 
     pub(super) fn modules_is_a_file(&self, module: Sym) -> bool {
@@ -575,12 +625,24 @@ impl Checker<'_, '_> {
         spec: Atom,
         around: Around,
     ) -> bool {
-        let hir = self.hir(cx.file);
-        let Some(written) = cx.specifier(hir[s].start, spec) else {
-            return true;
-        };
+        let written = cx.specifier(self.hir(cx.file)[s].start, spec);
+        written.is_none_or(|written| {
+            !self.resolve_external_module_name(cx.file, s, written, around.is_ambient)
+        })
+    }
+
+    /// `resolveExternalModuleName(node, node.ModuleSpecifier())` for the statement `s` of `file`,
+    /// whose module specifier is `written`: whether the module is found.
+    fn resolve_external_module_name(
+        &mut self,
+        file: FileId,
+        s: StmtId,
+        written: SpecifierUse,
+        is_ambient: bool,
+    ) -> bool {
+        let hir = self.hir(file);
         let mut site = SpecifierSite {
-            is_ambient: around.is_ambient,
+            is_ambient,
             ..Default::default()
         };
         let type_only = match hir[s].kind {
@@ -607,16 +669,66 @@ impl Checker<'_, '_> {
                 site.is_ambient |= hir[x].flags.contains(Flags::AMBIENT);
                 site.is_type_only
             }
-            _ => return true,
+            _ => return false,
         };
         site.is_emittable = !type_only;
-        !self.resolve_external_module(cx.file, written, site)
+        self.resolve_external_module(file, written, site)
     }
 
-    /// `checkGrammarModuleElementContext` stops the check of imports, exports and module
-    /// declarations that are directly in neither the file nor a module declaration. The module of
-    /// an import or an export is still resolved for a name it declares (`resolveAlias`), or for the
-    /// exports of the file (`getExportsOfModuleWorker`). 1211 for a class declaration.
+    /// What `resolveAlias(sym)` reports through `getTargetOfAliasDeclaration`, for a caller other
+    /// than the check of the declaration: `resolveExternalModuleName`, then
+    /// `check_target_of_alias_declaration`.
+    pub(super) fn check_target_of_alias_symbol(&mut self, sym: Sym) {
+        let Some((file, decl)) = self.files().declaration_of_alias_symbol(sym) else {
+            return;
+        };
+        // The HIR of a leaf is freed after its task.
+        if self.task.file != Some(file) && self.files().module(file).is_leaf {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Some(s) = statement_of_alias_declaration(hir, decl) else {
+            return;
+        };
+        let spec = match hir[s].kind {
+            StmtKind::Import(x) => hir[x].spec,
+            StmtKind::ImportEquals(x) => hir[x].target.spec(),
+            StmtKind::ExportNamed(x) => hir[x].spec,
+            StmtKind::ExportStar { spec, .. } => spec,
+            _ => Atom::NONE,
+        };
+        // FOR SPEED: nothing stops the check of such a declaration, which reports the same.
+        let has_phase_modifier =
+            matches!(hir[s].kind, StmtKind::Import(x) if hir[x].type_only || hir[x].is_deferred);
+        let is_checked = matches!(bound.stmt_parent[s.idx()], Parent::File)
+            && hir.import_attributes.is_empty()
+            && !has_phase_modifier;
+        if spec.is_none() || is_checked {
+            return;
+        }
+        let start = hir[s].start;
+        let is_written = |u: &&SpecifierUse| u.spec == spec && u.pos >= start && !u.kind.is_call();
+        let uses = hir.specifier_uses.iter().filter(is_written);
+        if let Some(&written) = uses.min_by_key(|u| u.pos)
+            && self.resolve_external_module_name(file, s, written, hir.is_ambient(hir.node(s)))
+        {
+            self.check_target_of_alias_declaration(file, sym, decl);
+        }
+    }
+
+    /// `check_target_of_alias_symbol` for the alias that `decl` declares, in a statement whose
+    /// check does not get to it, if something else resolves the alias.
+    fn modules_resolve_alias_if_used(&mut self, cx: &Cx<'_>, decl: Decl) {
+        if let Some(&sym) = cx.aliases.get(&decl)
+            && self.modules_alias_is_used(cx, sym)
+        {
+            self.check_target_of_alias_symbol(sym);
+        }
+    }
+
+    /// The statements that are directly in neither the file nor a module declaration, where
+    /// `checkGrammarModuleElementContext` refuses imports, exports and module declarations. 1211
+    /// for a class declaration.
     fn modules_misplaced_statements(&mut self, cx: &Cx<'_>, top: Around) {
         let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
         let reports_grammar_errors = cx.grammar && !cx.text.is_empty();
@@ -638,94 +750,71 @@ impl Checker<'_, '_> {
             if matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_)) {
                 continue;
             }
-            let code = match statement.kind {
-                StmtKind::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)) => 1235,
-                StmtKind::Module(_) => 1234,
-                StmtKind::Import(_) | StmtKind::ImportEquals(_) => {
-                    if cx.is_js {
-                        1473
-                    } else {
-                        1232
-                    }
-                }
-                StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
-                    if cx.is_js {
-                        1474
-                    } else {
-                        1233
-                    }
-                }
-                StmtKind::ExportAssign(_) => 1231,
-                StmtKind::ExportDefault(_) => 1258,
-                _ => continue,
-            };
-            if reports_grammar_errors {
-                self.error_at((cx.file, statement.start, 0), code, &[]);
+            if !matches!(
+                statement.kind,
+                StmtKind::Module(_)
+                    | StmtKind::Import(_)
+                    | StmtKind::ImportEquals(_)
+                    | StmtKind::ExportNamed(_)
+                    | StmtKind::ExportStar { .. }
+                    | StmtKind::ExportAssign(_)
+                    | StmtKind::ExportDefault(_)
+                    | StmtKind::ExportAsNamespace(_)
+            ) {
+                continue;
             }
             let s = StmtId(i as u32);
-            match statement.kind {
-                StmtKind::Import(x) => {
-                    let (import, scope) = (hir[x], bound.import_scope[x.idx()]);
-                    let named = import.named.iter();
-                    let used: Vec<Decl> = [
-                        (import.default, Decl::ImportDefault(x)),
-                        (import.namespace, Decl::ImportNamespace(x)),
-                    ]
-                    .into_iter()
-                    .chain(named.map(|n| (hir[n].local, Decl::ImportSpec(n))))
-                    .filter(|it| it.0.is_some() && self.modules_alias_is_used(cx, scope, it.0))
-                    .map(|it| it.1)
-                    .collect();
-                    if used.is_empty() || self.modules_module_is_missing(cx, s, import.spec, top) {
-                        continue;
-                    }
-                    for decl in used {
-                        if let Some(&sym) = cx.aliases.get(&decl) {
-                            self.check_target_of_alias_declaration(cx.file, sym, decl);
-                        }
-                    }
-                }
-                StmtKind::ImportEquals(x) => {
-                    if let ImportEqualsTarget::Require(spec) = hir[x].target
-                        && self.modules_alias_is_used(
-                            cx,
-                            bound.import_equals_scope[x.idx()],
-                            hir[x].name,
-                        )
-                    {
-                        self.modules_module_is_missing(cx, s, spec, top);
-                    }
-                }
-                StmtKind::ExportStar { spec, alias, .. } if alias.is_none() && cx.is_module => {
-                    self.modules_module_is_missing(cx, s, spec, top);
-                }
-                _ => {}
-            }
+            let around = Around {
+                is_appropriate_context: false,
+                is_ambient: hir.is_ambient(hir.parent(hir.node(s))),
+                ..top
+            };
+            self.modules_statement(cx, s, around);
         }
     }
 
-    /// Whether the file references `alias`, which a statement in `scope` declares.
-    fn modules_alias_is_used(&self, cx: &Cx<'_>, scope: ScopeId, alias: Atom) -> bool {
+    /// Whether something other than the check of its declaration resolves the alias `sym`, which
+    /// the file declares: a reference in the file, or `getNamedMembers` of `typeof globalThis`.
+    fn modules_alias_is_used(&self, cx: &Cx<'_>, sym: Sym) -> bool {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let scope = bound.scopes.get(scope.idx());
-        let Some(symbol) = scope.and_then(|s| bound.lookup(s.locals, alias)) else {
-            return false;
-        };
+        let alias = files.symbol(sym).name;
         let all = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         let means_it = |from: ScopeId, name: Atom| {
             name == alias
                 && from.is_some()
-                && files.resolve_name(cx.file, from, name, all) == Some(files.sym(cx.file, symbol))
+                && files.resolve_name(cx.file, from, name, all) == Some(sym)
         };
-        bound.expr_symbol.iter().zip(&bound.expr_parent).any(|(&s, parent)| s == symbol && !matches!(parent, Parent::None))
+        // `checkGrammarModuleElementContext` stops the check of any other.
+        let is_checked = |s: StmtId| is_in_appropriate_context(bound, s);
+        bound.expr_symbol.iter().zip(&bound.expr_parent).any(|(&s, parent)| s.is_some() && files.sym(cx.file, s) == sym && !matches!(parent, Parent::None))
             || hir.types.iter().enumerate().any(|(t, node)| match node.kind {
                 TypeNodeKind::Ref { name, .. } | TypeNodeKind::Typeof { name, .. } => !name.is_empty() && means_it(bound.type_scope[t], hir[name.at(0)].text),
                 _ => false,
             })
             || hir.import_equals.iter().enumerate().any(|(other, import)| {
-                matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && means_it(bound.import_equals_scope[other], hir[names.at(0)].text))
+                matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && is_checked(import.stmt) && means_it(bound.import_equals_scope[other], hir[names.at(0)].text))
             })
-            || hir.exports.iter().enumerate().any(|(x, export)| export.spec.is_none() && export.items.iter().any(|s| means_it(bound.export_scope[x], hir[s].local)))
+            || hir.exports.iter().enumerate().any(|(x, export)| export.spec.is_none() && is_checked(export.stmt) && export.items.iter().any(|s| means_it(bound.export_scope[x], hir[s].local)))
+            || cx.is_global_source_file
+                && files.globals.get(alias) == Some(&sym)
+                && self.modules_resolves_members_of_global_this(cx)
+    }
+
+    /// Whether the members of `typeof globalThis` are resolved by the time the diagnostics of the
+    /// file are collected. `getNamedMembers` asks `symbolIsValue` of every global, which resolves
+    /// the aliases among them. The default library is not checked here. Its check resolves them:
+    /// `DecoratorMetadata` relates `typeof globalThis` to an object type.
+    fn modules_resolves_members_of_global_this(&self, cx: &Cx<'_>) -> bool {
+        let files = self.files();
+        let name = self.atoms().lookup(b"DecoratorMetadata");
+        let alias = name.and_then(|name| files.global(name, SymFlags::TYPE_ALIAS));
+        alias.is_some_and(|alias| {
+            let declarations = files.decls_of(alias);
+            let mut declarations = declarations.iter();
+            declarations.any(|&(of, _)| {
+                files.module(of).is_lib && self.is_checked_no_later_than(of, cx.file)
+            })
+        })
     }
 
     /// Whether the file contains `name` after a dot, the syntax for accessing a namespace export:
@@ -749,7 +838,7 @@ impl Checker<'_, '_> {
     }
 
     /// Whether a file that is checked no later than this one has `import { name } from` or
-    /// `export { name } from` the ambient module `around`, with `is_requested(name)`.
+    /// `export { name } from` the file or the ambient module `around`, with `is_requested(name)`.
     /// `checkAliasSymbol` resolves such an alias to its end, through the aliases that the module
     /// exports, and reports what that finds, in whichever file.
     fn modules_is_imported_by_name(
@@ -758,11 +847,20 @@ impl Checker<'_, '_> {
         around: Around,
         is_requested: &dyn Fn(Atom) -> bool,
     ) -> bool {
-        if !around.is_ambient_module || around.is_augmentation {
+        let is_module = if around.module.is_none() {
+            cx.is_module
+        } else {
+            around.is_ambient_module && !around.is_augmentation
+        };
+        if !is_module {
             return false;
         }
         let files = self.files();
-        let module = self.bound(cx.file).module_symbol[around.module.idx()];
+        let module = if around.module.is_none() {
+            self.bound(cx.file).file_symbol
+        } else {
+            self.bound(cx.file).module_symbol[around.module.idx()]
+        };
         let module = Some(files.sym(cx.file, module));
         let until = files.rank_of_file(cx.file) as usize;
         files
@@ -770,8 +868,8 @@ impl Checker<'_, '_> {
             .iter()
             .take(until.saturating_add(1))
             .any(|&other| {
-                // The HIR of a leaf is freed after its task. A file that imports from such a module is
-                // no leaf.
+                // The HIR of a leaf is freed after its task. A file that imports from such an
+                // ambient module is no leaf, nor is one that comes before a file it imports from.
                 let is_freed = other != cx.file && files.module(other).is_leaf;
                 if is_freed || !self.is_checked_no_later_than(other, cx.file) {
                     return false;
@@ -792,78 +890,32 @@ impl Checker<'_, '_> {
     fn modules_import(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportId, around: Around) {
         let (hir, files) = (self.hir(cx.file), self.files());
         let (import, pos) = (hir[i], hir[s].start);
-        if self.modules_is_in_valid_position(cx, s, import.spec, false, around) {
-            // `checkGrammarImportClause`, of `import defer ..`
-            let mut is_clause_refused = false;
-            if cx.grammar && import.is_deferred {
-                let is_supported = matches!(
-                    self.p.files.options.module,
-                    ModuleKind::EsNext | ModuleKind::Preserve
-                );
-                let code = if import.default.is_some() {
-                    Some(18058)
-                } else if import.namespace.is_none() {
-                    Some(18059)
-                } else {
-                    (!is_supported).then_some(18060)
-                };
-                if let Some(code) = code {
-                    is_clause_refused = true;
-                    let start = import.clause_start;
-                    self.error_at((cx.file, start, import.clause_end), code, &[]);
-                }
-            }
+        let context_error = if cx.is_js { 1473 } else { 1232 };
+        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+            self.modules_resolve_aliases_of_import_if_used(cx, i);
+            return;
+        }
+        if self.modules_is_in_valid_position(cx, s, import.spec, false, around)
+            && !self.check_grammar_import_clause(cx, i)
+        {
+            let is_ambient = self.modules_is_ambient(cx, s, around);
             let is_missing = self.modules_module_is_missing(cx, s, import.spec, around);
-            // `checkImportBinding`: `checkCollisionsForDeclarationName`
-            if !is_clause_refused {
-                let (file, statement) = (cx.file, hir.node(s));
-                let clause = statement.with(Part::ImportClause);
-                self.check_collisions_for_declaration_name(file, clause, import.default);
-                let bindings = statement.with(Part::NamedBindings);
-                self.check_collisions_for_declaration_name(file, bindings, import.namespace);
-                for s in import.named.iter().filter(|_| !is_missing) {
-                    self.check_collisions_for_declaration_name(file, s, hir[s].local);
-                }
-            }
-            // `checkImportBinding`: `checkAliasSymbol`. The names in braces are checked once the
-            // module is resolved.
-            if !is_clause_refused {
-                self.check_alias_symbol(
-                    cx.file,
-                    &cx.aliases,
-                    Decl::ImportDefault(i),
-                    around.is_ambient,
-                );
-                self.check_alias_symbol(
-                    cx.file,
-                    &cx.aliases,
-                    Decl::ImportNamespace(i),
-                    around.is_ambient,
-                );
-                for named in import.named.iter().filter(|_| !is_missing) {
-                    self.check_alias_symbol(
-                        cx.file,
-                        &cx.aliases,
-                        Decl::ImportSpec(named),
-                        around.is_ambient,
-                    );
-                }
-            }
-            // `checkImportBinding`: `checkModuleExportName` for the name before `as`.
-            if !is_missing && !is_clause_refused {
-                for s in import.named.iter() {
-                    if hir[s].imported_pos != hir[s].pos {
-                        self.modules_module_export_name(cx, hir[s].imported_pos);
-                    }
+            self.check_import_binding(cx, Decl::ImportDefault(i), import.default, is_ambient);
+            self.check_import_binding(cx, Decl::ImportNamespace(i), import.namespace, is_ambient);
+            // The names in braces are checked once the module is resolved.
+            for s in import.named.iter().filter(|_| !is_missing) {
+                self.check_import_binding(cx, Decl::ImportSpec(s), hir[s].local, is_ambient);
+                // `checkModuleExportName` for the name before `as`.
+                if hir[s].imported_pos != hir[s].pos {
+                    self.modules_module_export_name(cx, hir[s].imported_pos);
                 }
             }
             // 1543: `isOnlyImportableAsDefault`, `hasTypeJsonImportAttribute`
             if !import.type_only
-                && !is_clause_refused
                 && (ModuleKind::Node18..=ModuleKind::NodeNext).contains(&files.options.module)
                 && let Some(written) = cx.specifier(pos, import.spec)
                 && written.kind != SpecifierKind::SideEffect
-                && let Some(module) = files.module_of_specifier_as(
+                && let Some(module) = self.resolve_external_module_name_ignoring_errors(
                     cx.file,
                     import.spec,
                     files.mode_of_import(cx.file, import.mode),
@@ -887,53 +939,127 @@ impl Checker<'_, '_> {
                 );
             }
         } else {
-            let is_used = [import.default, import.namespace]
-                .into_iter()
-                .chain(import.named.iter().map(|s| hir[s].local))
-                .any(|name| {
-                    self.modules_alias_is_used(cx, self.bound(cx.file).import_scope[i.idx()], name)
-                });
-            if is_used {
-                self.modules_module_is_missing(cx, s, import.spec, around);
-            }
+            self.modules_resolve_aliases_of_import_if_used(cx, i);
         }
         self.check_import_attributes(cx, s, import.spec, import.type_only);
+    }
+
+    /// `modules_resolve_alias_if_used` for the names that the import `i` declares.
+    fn modules_resolve_aliases_of_import_if_used(&mut self, cx: &Cx<'_>, i: ImportId) {
+        self.modules_resolve_alias_if_used(cx, Decl::ImportDefault(i));
+        self.modules_resolve_alias_if_used(cx, Decl::ImportNamespace(i));
+        for specifier in self.hir(cx.file)[i].named.iter() {
+            self.modules_resolve_alias_if_used(cx, Decl::ImportSpec(specifier));
+        }
+    }
+
+    /// `checkGrammarImportClause`
+    fn check_grammar_import_clause(&mut self, cx: &Cx<'_>, i: ImportId) -> bool {
+        let hir = self.hir(cx.file);
+        let import = hir[i];
+        let has_named_imports = cx.has_named_imports(&import);
+        let clause = (cx.file, import.clause_start, import.clause_end);
+        let (at, code) = if import.type_only {
+            let has_named_bindings = import.namespace.is_some() || has_named_imports;
+            let mut specifiers = import.named.iter();
+            if import.default.is_some()
+                && has_named_bindings
+                && !hir.is_in_jsdoc(import.clause_start)
+            {
+                (clause, 1363)
+            // `checkGrammarTypeOnlyNamedImportsOrExports`
+            } else if let Some(specifier) = specifiers.find(|&it| hir[it].type_only) {
+                ((cx.file, hir[specifier].start, 0), 2206)
+            } else {
+                return false;
+            }
+        } else if !import.is_deferred {
+            return false;
+        } else if import.default.is_some() {
+            (clause, 18058)
+        } else if has_named_imports {
+            (clause, 18059)
+        } else if !matches!(
+            self.p.files.options.module,
+            ModuleKind::EsNext | ModuleKind::Preserve
+        ) {
+            (clause, 18060)
+        } else {
+            return false;
+        };
+        if cx.grammar {
+            self.error_at(at, code, &[]);
+        }
+        cx.grammar
+    }
+
+    /// `checkImportBinding` for the declaration `decl` of `name`, but for `checkModuleExportName`.
+    fn check_import_binding(&mut self, cx: &Cx<'_>, decl: Decl, name: Atom, is_ambient: bool) {
+        self.check_collisions_for_declaration_name(cx.file, decl, name);
+        self.check_alias_symbol(cx.file, &cx.aliases, decl, is_ambient);
+    }
+
+    /// `resolveExternalModuleName(usage, usage, true /*ignoreErrors*/)` for the specifier `spec` in
+    /// `file`. Without an `errorNode` there is no `resolutionDiagnostic`: a file that only needs
+    /// `allowArbitraryExtensions` is found, if the program has it for another reason.
+    fn resolve_external_module_name_ignoring_errors(
+        &self,
+        file: FileId,
+        spec: Atom,
+        mode: ResolutionMode,
+    ) -> Option<Sym> {
+        let (files, importing) = (self.files(), self.files().module(file));
+        let mut arbitrary = importing.arbitrary_extension_imports.iter();
+        let source_file = arbitrary
+            .position(|&u| u == (spec, mode))
+            .and_then(|index| {
+                let resolved_file_name = importing.arbitrary_extension_files[index];
+                files.by_path.get(self.atoms().bytes(resolved_file_name))
+            });
+        match source_file {
+            Some(source_file) if files.module(source_file).is_module() => {
+                Some(files.file_symbol(source_file))
+            }
+            _ => files.module_of_specifier_as(file, spec, mode),
+        }
     }
 
     /// `checkImportEqualsDeclaration`
     fn modules_import_equals(&mut self, cx: &Cx<'_>, s: StmtId, i: ImportEqualsId, around: Around) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let import = hir[i];
+        let (import, decl) = (hir[i], Decl::ImportEquals(i));
+        let context_error = if cx.is_js { 1473 } else { 1232 };
+        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+            self.modules_resolve_alias_if_used(cx, decl);
+            return;
+        }
         let is_ambient = around.is_ambient || import.flags.contains(Flags::AMBIENT);
         let names = match import.target {
             ImportEqualsTarget::Require(spec) => {
                 if self.modules_is_in_valid_position(cx, s, spec, false, around) {
-                    self.check_collisions_for_declaration_name(cx.file, s, import.name);
-                    self.check_alias_symbol(
-                        cx.file,
-                        &cx.aliases,
-                        Decl::ImportEquals(i),
-                        is_ambient,
-                    );
+                    self.check_import_binding(cx, decl, import.name, is_ambient);
+                    self.modules_module_is_missing(cx, s, spec, around);
+                    if (ModuleKind::Es2015..=ModuleKind::EsNext).contains(&files.options.module)
+                        && !import.flags.contains(Flags::TYPE_ONLY)
+                        && !is_ambient
+                    {
+                        self.grammar_error_on_node(cx.file, s, 1202, &[]);
+                    }
+                } else if import.flags.contains(Flags::EXPORT)
+                    && self.modules_follows_a_dot_somewhere(cx, import.name)
+                {
                     self.modules_module_is_missing(cx, s, spec, around);
                 } else {
-                    let is_used = self.modules_alias_is_used(
-                        cx,
-                        bound.import_equals_scope[i.idx()],
-                        import.name,
-                    );
-                    let may_be_used = import.flags.contains(Flags::EXPORT)
-                        && self.modules_follows_a_dot_somewhere(cx, import.name);
-                    if is_used || may_be_used {
-                        self.modules_module_is_missing(cx, s, spec, around);
-                    }
+                    self.modules_resolve_alias_if_used(cx, decl);
                 }
                 return;
             }
             ImportEqualsTarget::Entity(names) => names,
         };
-        self.check_collisions_for_declaration_name(cx.file, s, import.name);
-        self.check_alias_symbol(cx.file, &cx.aliases, Decl::ImportEquals(i), is_ambient);
+        self.check_import_binding(cx, decl, import.name, is_ambient);
+        if import.flags.contains(Flags::TYPE_ONLY) {
+            self.grammar_error_on_node(cx.file, s, 1392, &[]);
+        }
         let scope = bound.import_equals_scope[i.idx()];
         if scope.is_none() || names.is_empty() {
             return;
@@ -947,36 +1073,14 @@ impl Checker<'_, '_> {
             SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE
         };
         let Some(target) = self.resolve_entity_name(cx.file, scope, names, meaning, false) else {
-            // `markLinkedReferences`: not where nothing is emitted, nor when imports are preserved
-            // verbatim.
-            if first.text == known::empty
-                || import.flags.contains(Flags::AMBIENT)
-                || files.options.verbatim_module_syntax
-            {
+            // `canCollectSymbolAliasAccessibilityData`
+            if first.text == known::empty || files.options.verbatim_module_syntax {
                 return;
             }
-            // `markImportEqualsAliasReferenced`, `markExportSpecifierAliasReferenced`, `markIdentifierAliasReferenced`
-            let is_referenced = import.flags.contains(Flags::EXPORT)
-                || hir.exports.iter().enumerate().any(|(x, export)| {
-                    export.spec.is_none()
-                        && !export.type_only
-                        && bound.export_scope[x] == scope
-                        && export
-                            .items
-                            .iter()
-                            .any(|s| !hir[s].type_only && hir[s].local == import.name)
-                })
-                || bound.alias_idents.iter().any(|&(e, _)| {
-                    !bound.is_unchecked(e.idx())
-                        && !bound.is_in_type_query(e)
-                        && bound.symbols[bound.expr_symbol[e.idx()].idx()]
-                            .decls
-                            .contains(&Decl::ImportEquals(i))
-                });
             // `markAliasSymbolAsReferenced`: the first name of an alias that is not elided is also
             // resolved as a value.
             let value = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-            if is_referenced
+            if self.modules_is_marked_as_referenced(cx, i, &mut Vec::new())
                 && files
                     .resolve_name(cx.file, scope, first.text, value)
                     .is_none()
@@ -1015,6 +1119,62 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `aliasSymbolLinks.referenced` of the `import i = A.B`, whose target is `unknownSymbol`:
+    /// whether `markAliasSymbolAsReferenced` is called for it. `seen`: those already asked about.
+    fn modules_is_marked_as_referenced(
+        &self,
+        cx: &Cx<'_>,
+        i: ImportEqualsId,
+        seen: &mut Vec<ImportEqualsId>,
+    ) -> bool {
+        let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
+        let (import, scope) = (hir[i], bound.import_equals_scope[i.idx()]);
+        seen.push(i);
+        // `markLinkedReferences`: not where nothing is emitted.
+        if import.flags.contains(Flags::AMBIENT) {
+            return false;
+        }
+        // `markImportEqualsAliasReferenced`, `markExportSpecifierAliasReferenced`, `markIdentifierAliasReferenced`
+        let is_exported = import.flags.contains(Flags::EXPORT);
+        let is_referenced = is_exported && is_in_appropriate_context(bound, import.stmt)
+            || hir.exports.iter().enumerate().any(|(x, export)| {
+                export.spec.is_none()
+                    && !export.type_only
+                    && bound.export_scope[x] == scope
+                    && is_in_appropriate_context(bound, export.stmt)
+                    && export
+                        .items
+                        .iter()
+                        .any(|s| !hir[s].type_only && hir[s].local == import.name)
+            })
+            || bound.alias_idents.iter().any(|&(e, _)| {
+                !bound.is_unchecked(e.idx())
+                    && !bound.is_in_type_query(e)
+                    && bound.symbols[bound.expr_symbol[e.idx()].idx()]
+                        .decls
+                        .contains(&Decl::ImportEquals(i))
+            });
+        if is_referenced {
+            return true;
+        }
+        // `markAliasSymbolAsReferenced` of another `import =`: `markIdentifierAliasReferenced` for
+        // the first name of its right side.
+        let Some(&symbol) = cx.aliases.get(&Decl::ImportEquals(i)) else {
+            return false;
+        };
+        let value = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+        (0..hir.import_equals.len()).any(|other| {
+            let other = ImportEqualsId(other as u32);
+            let from = bound.import_equals_scope[other.idx()];
+            matches!(hir[other].target, ImportEqualsTarget::Entity(names)
+                if !names.is_empty() && hir[names.at(0)].text == import.name)
+                && !seen.contains(&other)
+                && from.is_some()
+                && files.resolve_name(cx.file, from, import.name, value) == Some(symbol)
+                && self.modules_is_marked_as_referenced(cx, other, seen)
+        })
+    }
+
     /// `checkModuleExportName` for the name of an import or an export at `pos`, where a string
     /// literal is allowed: 18057.
     fn modules_module_export_name(&mut self, cx: &Cx<'_>, pos: u32) {
@@ -1034,9 +1194,17 @@ impl Checker<'_, '_> {
     fn modules_export_named(&mut self, cx: &Cx<'_>, s: StmtId, x: ExportId, around: Around) {
         let hir = self.hir(cx.file);
         let export = hir[x];
+        let context_error = if cx.is_js { 1474 } else { 1233 };
+        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+            for item in export.items.iter() {
+                self.modules_resolve_alias_if_used(cx, Decl::ExportSpec(item));
+            }
+            return;
+        }
         if export.spec.is_none()
             || self.modules_is_in_valid_position(cx, s, export.spec, true, around)
         {
+            let is_ambient = self.modules_is_ambient(cx, s, around);
             let is_missing = if export.spec.is_none() {
                 false
             } else if export.items.is_empty() {
@@ -1055,33 +1223,28 @@ impl Checker<'_, '_> {
             }
             // `checkExportSpecifier`: `checkAliasSymbol`
             for item in export.items.iter().filter(|_| !is_missing) {
-                self.check_alias_symbol(
-                    cx.file,
-                    &cx.aliases,
-                    Decl::ExportSpec(item),
-                    around.is_ambient,
-                );
+                self.check_alias_symbol(cx.file, &cx.aliases, Decl::ExportSpec(item), is_ambient);
                 if export.spec.is_none() {
-                    self.modules_export_specifier(cx, x, item, around.is_ambient);
+                    self.modules_export_specifier(cx, x, item, is_ambient);
                 }
             }
-            let is_in_ambient_namespace = export.spec.is_none() && around.is_ambient;
+            let is_in_ambient_namespace = export.spec.is_none() && is_ambient;
             if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
                 let start = hir[s].start;
                 self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 1194, &[]);
             }
         } else {
-            // Other files may request the exports of a file.
-            let may_be_used = around.module.is_none()
-                || export
-                    .items
-                    .iter()
-                    .any(|s| self.modules_follows_a_dot_somewhere(cx, hir[s].exported))
+            let mut items = export.items.iter();
+            let may_be_used = around.module.is_some()
+                && items.any(|s| self.modules_follows_a_dot_somewhere(cx, hir[s].exported))
                 || self.modules_is_imported_by_name(cx, around, &|name| {
                     export.items.iter().any(|s| hir[s].exported == name)
                 });
             if may_be_used {
                 self.modules_module_is_missing(cx, s, export.spec, around);
+            }
+            for item in export.items.iter().filter(|_| !may_be_used) {
+                self.modules_resolve_alias_if_used(cx, Decl::ExportSpec(item));
             }
         }
         self.check_import_attributes(cx, s, export.spec, export.type_only);
@@ -1163,6 +1326,19 @@ impl Checker<'_, '_> {
         else {
             return;
         };
+        // `checkExternalModuleExports` asks for the exports of the file, and
+        // `getExportsOfModuleWorker` resolves the module of every `export *` among them.
+        let bound = self.bound(cx.file);
+        let is_of_file = |it: &(SymbolId, StmtId)| it.0 == bound.file_symbol && it.1 == s;
+        let is_resolved_for_file = alias.is_none() && bound.export_stars.iter().any(is_of_file);
+        let context_error = if cx.is_js { 1474 } else { 1233 };
+        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+            if is_resolved_for_file {
+                self.modules_module_is_missing(cx, s, spec, around);
+            }
+            self.modules_resolve_alias_if_used(cx, Decl::ExportStarAs(s));
+            return;
+        }
         if self.modules_is_in_valid_position(cx, s, spec, true, around) {
             if !self.modules_module_is_missing(cx, s, spec, around)
                 && let Some(module) = self.modules_module_of_specifier(cx.file, spec)
@@ -1173,11 +1349,12 @@ impl Checker<'_, '_> {
                         self.error_at((cx.file, written.pos, 0), 2498, &[Arg::Sym(module)]);
                     }
                 } else {
+                    let is_ambient = self.modules_is_ambient(cx, s, around);
                     self.check_alias_symbol(
                         cx.file,
                         &cx.aliases,
                         Decl::ExportStarAs(s),
-                        around.is_ambient,
+                        is_ambient,
                     );
                 }
             }
@@ -1191,13 +1368,17 @@ impl Checker<'_, '_> {
                 self.modules_module_export_name(cx, alias_pos);
             }
         } else {
-            let may_be_used = around.module.is_none()
-                || alias.is_some() && self.modules_follows_a_dot_somewhere(cx, alias)
+            let may_be_used = is_resolved_for_file
+                || around.module.is_some()
+                    && alias.is_some()
+                    && self.modules_follows_a_dot_somewhere(cx, alias)
                 || self.modules_is_imported_by_name(cx, around, &|name| {
                     alias.is_none() || name == alias
                 });
             if may_be_used {
                 self.modules_module_is_missing(cx, s, spec, around);
+            } else {
+                self.modules_resolve_alias_if_used(cx, Decl::ExportStarAs(s));
             }
         }
         self.check_import_attributes(cx, s, spec, is_type_only);
@@ -1214,16 +1395,16 @@ impl Checker<'_, '_> {
     ) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
         let start = hir[s].start;
+        let context_error = if is_export_equals { 1231 } else { 1258 };
+        if self.check_grammar_module_element_context(cx, s, around, context_error) {
+            return;
+        }
         if around.module.is_some() && !around.is_ambient_module {
             let code = if is_export_equals { 1063 } else { 1319 };
             self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), code, &[]);
             return;
         }
-        // `node.Flags&NodeFlagsAmbient`: what follows `declare` is parsed in an ambient context.
-        let is_ambient = around.is_ambient
-            || hir
-                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
-                .is_some();
+        let is_ambient = self.modules_is_ambient(cx, s, around);
         if is_ambient && cx.grammar && e.is_some() && !is_entity_name_expression(hir, e) {
             self.error_at(self.span_of_parenthesized_expr(cx.file, e), 2714, &[]);
         }
@@ -1349,10 +1530,8 @@ impl Checker<'_, '_> {
             self.modules_end_of_import_attributes(cx.file, object),
         );
         // `getGlobalImportAttributesTypeChecked` returns `emptyObjectType` if there is no such interface, and the check is skipped.
-        if let Some(sym) = self
-            .atoms()
-            .lookup(b"ImportAttributes")
-            .and_then(|name| self.global_type_of_arity(name, 0))
+        let name = self.atoms().intern(b"ImportAttributes");
+        if let Some(sym) = self.get_global_type(name, 0, true)
             && let Some(source) = self.get_type_from_import_attributes(cx.file, object)
         {
             // `getNullableType(importAttributesType, TypeFlagsUndefined)`
@@ -1500,34 +1679,30 @@ impl Checker<'_, '_> {
             }
         }
     }
-
-    // ───────────────────────────── misplaced syntax ─────────────────────────────
-
-    /// `reportObviousModifierErrors` for `static { }`: nothing may precede it.
-    fn modules_static_blocks(&mut self, cx: &Cx<'_>) {
-        if !cx.grammar {
-            return;
-        }
-        let (hir, bound) = (self.hir(cx.file), self.bound(cx.file));
-        for (i, member) in hir.members.iter().enumerate() {
-            if member.kind != MemberKind::StaticBlock
-                || matches!(bound.member_owner[i], MemberOwner::None)
-            {
-                continue;
-            }
-            // `reportObviousDecoratorErrors` runs first, and nothing more is reported then.
-            if let Some(first) = hir.modifier_list(member.modifiers).first()
-                && cx.text.get(member.start as usize) != Some(&b'@')
-            {
-                self.error_at((cx.file, first.pos, 0), 1184, &[]);
-            }
-        }
-    }
 }
 
 // ───────────────────────────── whether the file parses ─────────────────────────────
 
 // ───────────────────────────── module names ─────────────────────────────
+
+/// The import or export statement that the alias declaration `decl` is, or is a part of.
+fn statement_of_alias_declaration(hir: &hir::File, decl: Decl) -> Option<StmtId> {
+    let s = match decl {
+        Decl::ImportDefault(x) | Decl::ImportNamespace(x) => hir[x].stmt,
+        Decl::ImportSpec(specifier) => hir[hir[specifier].import].stmt,
+        Decl::ImportEquals(x) => hir[x].stmt,
+        Decl::ExportSpec(specifier) => hir[hir[specifier].export].stmt,
+        Decl::ExportStarAs(s) | Decl::ExportExpr(s) => s,
+        _ => StmtId::NONE,
+    };
+    s.is_some().then_some(s)
+}
+
+/// `isInAppropriateContext` of `checkGrammarModuleElementContext` for the statement `s`.
+fn is_in_appropriate_context(bound: &Bound, s: StmtId) -> bool {
+    let parent = bound.stmt_parent.get(s.idx());
+    matches!(parent, Some(Parent::File | Parent::Module(_)))
+}
 
 // ───────────────────────────── message arguments ─────────────────────────────
 

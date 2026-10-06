@@ -20,7 +20,6 @@ use super::enclosing_declaration::Enclosing;
 use super::sink::held;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
-use bun_core::strings;
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
@@ -127,6 +126,15 @@ struct Accessors {
     setter: Option<FnId>,
 }
 
+/// `node.Parameters()[0]`: the `this` parameter, if there is one. `NONE`: there is no parameter.
+fn first_parameter(func: &Func) -> ParamId {
+    if func.this_param.is_some() {
+        func.this_param
+    } else {
+        func.params.iter().next().unwrap_or(ParamId::NONE)
+    }
+}
+
 /// `isOptionalAnnotated` and `reportErrors` of `pseudoTypeEquivalentToType`
 #[derive(Copy, Clone)]
 pub(super) struct EquivalenceOptions {
@@ -137,9 +145,7 @@ pub(super) struct EquivalenceOptions {
 impl<'p, 's> Checker<'p, 's> {
     /// `state.isolatedDeclarations`, for the transformer of `file`.
     pub(super) fn new_isolated_declarations(&self, file: FileId) -> Option<Emit> {
-        let is_on = self.files().options.isolated_declarations
-            && !self.hir(file).has_errors
-            && !strings::contains(self.files().module(file).file_name(), b"/node_modules/");
+        let is_on = self.files().options.isolated_declarations && !self.hir(file).has_errors;
         is_on.then(|| Emit::new(file))
     }
 
@@ -408,8 +414,8 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let func = hir.function_of(node);
         let Accessors { getter, setter } = self.iso_accessors(file, func);
-        let target = match hir[func].params.iter().next() {
-            Some(param) if hir[func].kind == FnKind::Setter => hir.node(param),
+        let target = match first_parameter(&hir[func]) {
+            param if param.is_some() && hir[func].kind == FnKind::Setter => hir.node(param),
             _ => node,
         };
         let mut reported = self.iso_diagnostic(file, target, 9009);
@@ -725,14 +731,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// `GetAllAccessorDeclarationsForDeclaration`: the getter and the setter that share a symbol
     /// with the accessor `func`.
     fn iso_accessors(&mut self, file: FileId, func: FnId) -> Accessors {
-        if self.hir(file)[func].kind == FnKind::Getter {
+        let is_getter = self.hir(file)[func].kind == FnKind::Getter;
+        let expected = if is_getter {
+            FnKind::Setter
+        } else {
+            FnKind::Getter
+        };
+        // `Accessors` holds functions of `file`.
+        let sibling = self.sibling_accessor(file, func, expected);
+        let sibling = sibling.filter(|it| it.0 == file).map(|it| it.1);
+        if is_getter {
             Accessors {
                 getter: Some(func),
-                setter: self.sibling_accessor(file, func, FnKind::Setter),
+                setter: sibling,
             }
         } else {
             Accessors {
-                getter: self.sibling_accessor(file, func, FnKind::Getter),
+                getter: sibling,
                 setter: Some(func),
             }
         }
@@ -794,6 +809,7 @@ impl<'p, 's> Checker<'p, 's> {
             | TypeNodeKind::Keyof(_)
             | TypeNodeKind::Readonly(_)
             | TypeNodeKind::UniqueSymbol
+            | TypeNodeKind::Unique(_)
             | TypeNodeKind::Predicate { .. }
             | TypeNodeKind::Keyword(Keyword::Undefined) => true,
             TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => hir
@@ -1016,11 +1032,8 @@ impl<'p, 's> Checker<'p, 's> {
         let is_getter = hir[func].kind == FnKind::Getter;
         if let (Some(getter), Some(setter)) = (getter, setter)
             && hir[getter].ret.is_some()
-            && hir[setter]
-                .params
-                .iter()
-                .next()
-                .is_some_and(|p| hir[p].ty.is_some())
+            && (hir.params.get(first_parameter(&hir[setter]).idx()))
+                .is_some_and(|parameter| parameter.ty.is_some())
         {
             // Both are annotated, possibly with different types: both are preserved.
             if is_getter {
@@ -1048,11 +1061,8 @@ impl<'p, 's> Checker<'p, 's> {
         let annotation = |accessor: Option<FnId>| -> TypeNodeId {
             match accessor {
                 Some(f) if hir[f].kind == FnKind::Getter => hir[f].ret,
-                Some(f) => hir[f]
-                    .params
-                    .iter()
-                    .next()
-                    .map_or(TypeNodeId::NONE, |p| hir[p].ty),
+                Some(f) => (hir.params.get(first_parameter(&hir[f]).idx()))
+                    .map_or(TypeNodeId::NONE, |parameter| parameter.ty),
                 None => TypeNodeId::NONE,
             }
         };
@@ -1355,16 +1365,23 @@ impl<'p, 's> Checker<'p, 's> {
             true => 0,
             false => (p.0 - params.start) as usize + usize::from(this.is_some()),
         };
-        // `getImmediatelyInvokedFunctionExpression`: the argument count of its immediate
-        // invocation.
-        let actual = bound
-            .get_immediately_invoked_function_expression(hir, func)
-            .map(|call| hir[call].args.len());
+        let iife = bound.get_immediately_invoked_function_expression(hir, func);
         if param.default.is_none() {
-            return actual.is_some_and(|actual| {
-                param.ty.is_none() && !param.flags.contains(Flags::REST) && index >= actual
-            });
+            let Some(iife) = iife else {
+                return false;
+            };
+            if param.ty.is_some() || param.flags.contains(Flags::REST) {
+                return false;
+            }
+            // `len(getEffectiveCallArguments(iife))`
+            let mut effective = 0;
+            for argument in hir.ids(hir[iife].args) {
+                self.each_effective_arg(file, argument, |_| effective += 1);
+            }
+            return index >= effective;
         }
+        // `len(iife.Arguments())`, for `getSignatureFromDeclaration`
+        let actual = iife.map(|call| hir[call].args.len());
         // `getMinArgumentCountEx`, with `StrongArityForUntypedJS` and `VoidIsNonOptional`
         if let Some(last) = params.iter().next_back()
             && hir[last].flags.contains(Flags::REST)
@@ -1726,7 +1743,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 match self.sig_predicate(sig) {
                     Some(predicate) => {
-                        let matches = self.iso_matches_predicate(file, returns, sig, predicate);
+                        let matches = self.iso_matches_predicate(file, returns, predicate);
                         if !matches && reports {
                             tx.inference_fallbacks.push(node);
                         }
@@ -1832,9 +1849,7 @@ impl<'p, 's> Checker<'p, 's> {
                         return false;
                     }
                     match self.sig_predicate(sig) {
-                        Some(predicate) => {
-                            self.iso_matches_predicate(file, returns, sig, predicate)
-                        }
+                        Some(predicate) => self.iso_matches_predicate(file, returns, predicate),
                         None => {
                             let returned = self.sig_return(sig);
                             self.iso_is_equivalent(tx, returns, returned, silent)
@@ -1903,12 +1918,11 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// `pseudoReturnTypeMatchesPredicate`. `sig`: the signature `predicate` belongs to.
+    /// `pseudoReturnTypeMatchesPredicate`
     pub(super) fn iso_matches_predicate(
         &mut self,
         file: FileId,
         returns: &Pseudo,
-        sig: SigId,
         predicate: Predicate,
     ) -> bool {
         let hir = self.hir(file);
@@ -1921,11 +1935,8 @@ impl<'p, 's> Checker<'p, 's> {
         if asserts != predicate.asserts || (param == known::this) != predicate.param.is_none() {
             return false;
         }
-        if let Some(index) = predicate.param {
-            let name = self.sig_params(sig).get(index).map(|p| p.name);
-            if name != Some(param) {
-                return false;
-            }
+        if predicate.param.is_some() && param != predicate.name {
+            return false;
         }
         match predicate.ty {
             Some(narrowed) => {

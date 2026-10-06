@@ -79,6 +79,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         text: _,
         unclosed_literals: _,
         modifiers_of_params: _,
+        modifiers_of_props: _,
         body,
         references,
         comment_directives,
@@ -97,10 +98,12 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         jsx_expressions,
         jsx_pragmas,
         jsdoc_comments,
+        jsdoc_hosts: _,
         jsdoc_types,
         jsdoc_modifiers,
         jsdoc_member_comments: _,
         jsdoc_param_errors,
+        functions_with_param_tags: _,
         ids: _,
         numbers: _,
         exprs: _,
@@ -559,7 +562,10 @@ impl Dump<'_, '_> {
             | ExprKind::Regex
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => self.line(depth, label, &head),
-            ExprKind::Ident(name) | ExprKind::String(name) | ExprKind::BigInt(name) => {
+            ExprKind::Ident(name)
+            | ExprKind::PrivateIdentifier(name)
+            | ExprKind::String(name)
+            | ExprKind::BigInt(name) => {
                 put!(self, depth, label, "{head} {}", self.q(name))
             }
             ExprKind::Number(index) => put!(self, depth, label, "{head} {}", self.number(index)),
@@ -722,7 +728,10 @@ impl Dump<'_, '_> {
             "Prop kind={} pos={pos} start={start} end={end} postfix_token={postfix_token}",
             prop_kind_name(kind)
         );
-        let d = depth + 1;
+        let (d, file) = (depth + 1, self.file);
+        for modifier in file.modifier_list(file.prop_modifiers(id)) {
+            put!(self, d, "modifier", "{:?}@{}", modifier.kind, modifier.pos);
+        }
         self.key(d, "key", key);
         self.name_kind(d, name_kind);
         self.expr(d, "value", value);
@@ -1428,6 +1437,7 @@ impl Dump<'_, '_> {
             TypeNodeKind::Array(ty)
             | TypeNodeKind::Keyof(ty)
             | TypeNodeKind::Readonly(ty)
+            | TypeNodeKind::Unique(ty)
             | TypeNodeKind::JSDoc { ty, .. } => {
                 self.line(depth, label, &head);
                 self.ty(d, "ty", ty);
@@ -1586,6 +1596,7 @@ fn expr_kind_name(kind: ExprKind) -> &'static str {
         ExprKind::Missing => "Missing",
         ExprKind::Instantiation { .. } => "Instantiation",
         ExprKind::Ident(_) => "Ident",
+        ExprKind::PrivateIdentifier(_) => "PrivateIdentifier",
         ExprKind::This => "This",
         ExprKind::Super => "Super",
         ExprKind::Null => "Null",
@@ -1683,6 +1694,7 @@ fn type_kind_name(kind: TypeNodeKind) -> &'static str {
         TypeNodeKind::Keyof(_) => "Keyof",
         TypeNodeKind::Readonly(_) => "Readonly",
         TypeNodeKind::UniqueSymbol => "UniqueSymbol",
+        TypeNodeKind::Unique(_) => "Unique",
         TypeNodeKind::JSDoc { kind, .. } => match kind {
             JSDocTypeKind::Nullable => "JSDocNullable",
             JSDocTypeKind::NonNullable => "JSDocNonNullable",

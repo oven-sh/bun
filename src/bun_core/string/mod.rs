@@ -1750,16 +1750,21 @@ pub mod lexer {
         is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
     }
 
-    /// `charAndSize`: the character at `at` and its length in bytes, 0 at the end.
+    /// `charAndSize`: the character at `at` and its length in bytes, 0 at the end. As in
+    /// `utf8.DecodeRuneInString`, a byte that starts no valid UTF-8 sequence is U+FFFD
+    /// (`utf8.RuneError`) with the length 1.
     #[inline]
     pub fn char_and_size(text: &[u8], at: usize) -> (CodePoint, usize) {
         match text.get(at) {
             None => (-1, 0),
             Some(&first) if first < 0x80 => (first as CodePoint, 1),
-            Some(&first) => {
-                let mut end = at;
-                let c = strings::lexer_step::next_codepoint_multibyte(text, &mut end, first);
-                (c, end.min(text.len()) - at)
+            Some(_) => {
+                let sequence = &text[at..text.len().min(at + 4)];
+                let valid = sequence.utf8_chunks().next().map_or("", |it| it.valid());
+                match valid.chars().next() {
+                    Some(c) => (c as CodePoint, c.len_utf8()),
+                    None => (strings::UNICODE_REPLACEMENT as CodePoint, 1),
+                }
             }
         }
     }
@@ -1767,7 +1772,10 @@ pub mod lexer {
     /// `DecodeLastRuneInString`, and the offset where that character starts.
     pub fn last_char(text: &[u8]) -> (CodePoint, usize) {
         let start = text.iter().rposition(|&c| c & 0xC0 != 0x80).unwrap_or(0);
-        (char_and_size(text, start).0, start)
+        match char_and_size(text, start) {
+            (c, size) if start + size == text.len() => (c, start),
+            _ => (strings::UNICODE_REPLACEMENT as CodePoint, text.len() - 1),
+        }
     }
 
     /// End of the run of characters starting at `at` for which `is` returns true.
@@ -1787,15 +1795,23 @@ pub mod lexer {
             || text.starts_with(b"\xE2\x80\xA9")
     }
 
+    /// TypeScript's `IsIdentifierPart`. Its table has U+30FB and U+FF65, which are ID_Continue
+    /// since Unicode 15.1 and which `is_identifier_part` leaves out on purpose
+    /// (`ID_Continue_mistake` in misctools/gen-unicode-table.ts).
+    #[inline]
+    pub fn is_type_script_identifier_part(c: CodePoint) -> bool {
+        is_identifier_part(c as u32) || matches!(c, 0x30FB | 0xFF65)
+    }
+
     /// `scanIdentifierParts`: the end of the identifier that continues at `at`.
     pub fn scan_identifier_parts(text: &[u8], mut at: usize) -> usize {
         loop {
-            at = end_of_run(text, at, |c| is_identifier_part(c as u32));
+            at = end_of_run(text, at, is_type_script_identifier_part);
             if text.get(at) != Some(&b'\\') {
                 return at;
             }
             match peek_unicode_escape(text, at) {
-                Some((c, len)) if is_identifier_part(c as u32) => at += len,
+                Some((c, len)) if is_type_script_identifier_part(c) => at += len,
                 _ => return at,
             }
         }

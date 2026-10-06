@@ -251,7 +251,10 @@ pub(crate) struct PatternProperty {
     pub(crate) value: PatternId,
     pub(crate) default: Option<Expr>,
     pub(crate) is_rest: bool,
+    /// Position of its first token: the `...`, or the property name.
     pub(crate) loc: Loc,
+    /// Position of the property name, which is the binding in `{ name }` and `{ ...name }`.
+    pub(crate) key_loc: Loc,
     /// `node.End()`
     pub(crate) end: Loc,
 }

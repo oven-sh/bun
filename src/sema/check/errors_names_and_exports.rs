@@ -32,17 +32,15 @@ impl Checker<'_, '_> {
             PropKey::Computed(e) => Some((e, m.name_pos)),
             _ => None,
         }));
-        for p in &hir.pat_props {
-            if let PropKey::Computed(e) = p.key
-                && !self.is_binding_element_key_unchecked(file, p)
-            {
-                keys.push((e, p.pos));
-            }
-        }
+        keys.extend(hir.pat_props.iter().filter_map(|p| match p.key {
+            PropKey::Computed(e) => Some((e, p.key_pos)),
+            _ => None,
+        }));
         for (e, start) in keys {
             if bound.is_unchecked(e.idx())
                 || unchecked.contain(start)
                 || self.cached_by_emit.contains(&e)
+                || self.is_never_checked(start)
             {
                 continue;
             }
@@ -57,30 +55,6 @@ impl Checker<'_, '_> {
                 self.error_at((file, start, self.end_of_name_at(file, start)), 2464, &[]);
             }
         }
-    }
-
-    /// Whether `checkComputedPropertyName` never sees the computed key of the binding element `prop`.
-    /// `checkVariableLikeDeclaration` returns before the key of `{ [key]: name }` in a parameter of a function without a body.
-    /// `getBindingElementTypeFromParentType` still checks the key when it computes the type of `name` or of a `...rest` sibling,
-    /// unless the parent type is `any`.
-    fn is_binding_element_key_unchecked(&mut self, file: FileId, prop: &PatProp) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let PatParent::Prop(pattern, _) = bound.pat_parent[prop.value.idx()] else {
-            return false;
-        };
-        let is_renamed_in_signature = matches!(hir[prop.value].kind, PatKind::Ident(_))
-            && matches!(root_declaration(bound, pattern), PatParent::Param(p) if matches!(hir[bound.param_fn[p.idx()]].body, FnBody::None));
-        if !is_renamed_in_signature {
-            return false;
-        }
-        let symbol = bound.pat_symbol[prop.value.idx()];
-        let is_referenced = symbol.is_some() && bound.expr_symbol.contains(&symbol);
-        let has_rest_sibling = matches!(hir[pattern].kind, PatKind::Object(props) if props.iter().any(|p| hir[p].is_rest));
-        if !is_referenced && !has_rest_sibling {
-            return true;
-        }
-        let parent_type = self.type_for_binding_element_parent(file, prop.value, pattern);
-        self.is_any(parent_type)
     }
 
     /// `resolveQualifiedName`: each name after the first must be an export of the symbol the
@@ -105,13 +79,11 @@ impl Checker<'_, '_> {
                 return;
             }
             // The loop at the end of `resolveEntityName`: an alias that is merged with a namespace is not resolved further.
-            let Some(resolved) = files.resolve_alias_as(namespace, SymFlags::NAMESPACE) else {
+            let Some(resolved) = files.resolve_alias_as_with(namespace, SymFlags::NAMESPACE, self)
+            else {
                 return;
             };
-            // A namespace without an exports table, such as a shorthand ambient module, resolves any member.
-            if files.symbol(resolved).exports.is_none() && resolved != files.global_this_symbol
-                || !files.flags(resolved).intersects(SymFlags::NAMESPACE)
-            {
+            if !files.flags(resolved).intersects(SymFlags::NAMESPACE) {
                 return;
             }
             let is_last = i + 1 == names.len();
@@ -161,8 +133,9 @@ impl Checker<'_, '_> {
                     let suggested =
                         get_spelling_suggestion(text, candidates, get_name, |a, b| a.1.cmp(&b.1));
                     let arg0 = fully_qualified_name(self, resolved, None);
-                    let arg1 = suggested.map_or(Arg::Bytes(b""), |s| Arg::Sym(s.1));
-                    let args = [Arg::Bytes(&arg0), Arg::Atom(name), arg1];
+                    let declaration_name = self.declaration_name_to_string(file, hir.node(right));
+                    let arg2 = suggested.map_or(Arg::Bytes(b""), |s| Arg::Sym(s.1));
+                    let args = [Arg::Bytes(&arg0), Arg::Bytes(&declaration_name), arg2];
                     self.error(file, right, 2724, &args);
                 }
                 return;
@@ -175,8 +148,9 @@ impl Checker<'_, '_> {
                     match self.is_qualified_name_a_value(file, scope, &texts) {
                         Some(true) => {
                             // `getContainingQualifiedNameNode`: all of the names. `entityNameToString`
-                            let written: Vec<&[u8]> =
-                                texts.iter().map(|&n| self.atoms().bytes(n)).collect();
+                            let written: Vec<Vec<u8>> = (names.iter())
+                                .map(|n| self.declaration_name_to_string(file, hir.node(n)))
+                                .collect();
                             self.error(file, names, 2749, &[Arg::Bytes(&written.join(&b'.'))]);
                             return;
                         }
@@ -196,8 +170,25 @@ impl Checker<'_, '_> {
                 }
             }
             let arg0 = fully_qualified_name(self, resolved, None);
-            self.error(file, right, 2694, &[Arg::Bytes(&arg0), Arg::Atom(name)]);
+            let declaration_name = self.declaration_name_to_string(file, hir.node(right));
+            let args = [Arg::Bytes(&arg0), Arg::Bytes(&declaration_name)];
+            self.error(file, right, 2694, &args);
             return;
+        }
+    }
+
+    /// `DeclarationNameToString`
+    pub(super) fn declaration_name_to_string(&self, file: FileId, name: Node) -> Vec<u8> {
+        let hir = self.hir(file);
+        // `name.Pos() == name.End()`
+        if name.is_none() || hir.is_missing(name) {
+            return b"(Missing)".to_vec();
+        }
+        let written = self.source_text(file, hir.start(name), self.end_of_node(file, name));
+        // The text of the default library is not retained.
+        match hir.text(name) {
+            text if written.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),
+            _ => written,
         }
     }
 
@@ -369,7 +360,9 @@ impl Checker<'_, '_> {
             let Some(type_only) = type_only else {
                 continue;
             };
-            if is_valid_type_only_alias_use_site(hir, hir.node(e)) {
+            if is_valid_type_only_alias_use_site(hir, hir.node(e))
+                || self.is_never_checked(hir[e].pos)
+            {
                 continue;
             }
             let is_export = type_only.is_export();
@@ -385,33 +378,59 @@ impl Checker<'_, '_> {
     }
 }
 
-/// `IsValidTypeOnlyAliasUseSite` for a name or an access expression that is an `ExprId`. Also true
-/// for the syntax `checkVariableLikeDeclaration` does not check: anything inside a parameter of a
-/// signature without a body.
+/// `IsValidTypeOnlyAliasUseSite`
 pub(super) fn is_valid_type_only_alias_use_site(hir: &hir::File, use_site: Node) -> bool {
-    // `isPartOfPossiblyValidTypeOrAbstractComputedPropertyName`
-    let mut name = use_site;
+    hir.is_ambient(use_site)
+        || hir.is_in_jsdoc(hir.start(use_site))
+        || hir.is_in_type_query(use_site)
+        || is_identifier_in_non_emitting_heritage_clause(hir, use_site)
+        || is_part_of_possibly_valid_type_or_abstract_computed_property_name(hir, use_site)
+        || !(hir.is_expression_node(use_site) || is_shorthand_property_name_use_site(hir, use_site))
+}
+
+/// `isIdentifierInNonEmittingHeritageClause`
+fn is_identifier_in_non_emitting_heritage_clause(hir: &hir::File, node: Node) -> bool {
+    if hir.kind(node) != Kind::Identifier {
+        return false;
+    }
+    let mut parent = hir.parent(node);
     while matches!(
-        hir.kind(name),
+        hir.kind(parent),
+        Kind::PropertyAccessExpression | Kind::ExpressionWithTypeArguments
+    ) {
+        parent = hir.parent(parent);
+    }
+    hir.kind(parent) == Kind::HeritageClause
+        && (parent.part() == Some(Part::Implements)
+            || hir.kind(hir.parent(parent)) == Kind::InterfaceDeclaration)
+}
+
+/// `isPartOfPossiblyValidTypeOrAbstractComputedPropertyName`
+fn is_part_of_possibly_valid_type_or_abstract_computed_property_name(
+    hir: &hir::File,
+    mut node: Node,
+) -> bool {
+    while matches!(
+        hir.kind(node),
         Kind::Identifier | Kind::PropertyAccessExpression
     ) {
-        name = hir.parent(name);
+        node = hir.parent(node);
     }
-    let named = hir.parent(name);
-    let parameter = hir.find_ancestor_kind(use_site, Kind::Parameter);
-    let function = hir.fns.get(hir.function_of(hir.parent(parameter)).idx());
-    hir.is_ambient(use_site)
-        || hir.is_in_type_query(use_site)
-        || hir.kind(name) == Kind::ComputedPropertyName
-            && (hir.flags(named).contains(Flags::ABSTRACT)
-                || matches!(
-                    hir.kind(hir.parent(named)),
-                    Kind::InterfaceDeclaration | Kind::TypeLiteral
-                ))
-        // `IsInExpressionContext`: an exported bare identifier is not an expression.
-        || hir.kind(use_site) == Kind::Identifier
-            && hir.kind(hir.parent(use_site)) == Kind::ExportAssignment
-        || function.is_some_and(|function| matches!(function.body, FnBody::None))
+    let named = hir.parent(node);
+    hir.kind(node) == Kind::ComputedPropertyName
+        && (hir.flags(named).contains(Flags::ABSTRACT)
+            || matches!(
+                hir.kind(hir.parent(named)),
+                Kind::InterfaceDeclaration | Kind::TypeLiteral
+            ))
+}
+
+/// `isShorthandPropertyNameUseSite`
+fn is_shorthand_property_name_use_site(hir: &hir::File, use_site: Node) -> bool {
+    let parent = hir.parent(use_site);
+    hir.kind(use_site) == Kind::Identifier
+        && hir.kind(parent) == Kind::ShorthandPropertyAssignment
+        && hir.name(parent) == use_site
 }
 
 /// `getFullyQualifiedName`
@@ -420,6 +439,13 @@ pub(super) fn fully_qualified_name(
     sym: Sym,
     containing_location: Option<Enclosing>,
 ) -> Vec<u8> {
+    // `combineValueAndTypeSymbols`: `result.Parent` is that of the value symbol, if it has one.
+    if let Some((alias, true)) = c.files().alias_of_transient_symbol(sym)
+        && let Some((object, name, _)) = c.symbol_from_variable(alias)
+        && let (qualified, true) = fully_qualified_name_of_property(c, object, name)
+    {
+        return qualified;
+    }
     match c.files().symbol_parent(sym) {
         Some(parent) => {
             let parent = fully_qualified_name(c, parent, containing_location);
@@ -429,22 +455,36 @@ pub(super) fn fully_qualified_name(
     }
 }
 
-/// `getFullyQualifiedName` for an `AliasTarget`. A synthesized property (of a union, an intersection, a mapped type, a tuple) has no `Parent`.
+/// `getFullyQualifiedName` for an `AliasTarget`.
 pub(super) fn fully_qualified_name_of(c: &mut Checker<'_, '_>, symbol: AliasTarget) -> Vec<u8> {
-    let (object, name) = match symbol {
-        AliasTarget::Symbol(symbol) => return fully_qualified_name(c, symbol, None),
-        AliasTarget::Property(object, name, _) => (object, name),
-        AliasTarget::Unknown => return b"unknown".to_vec(),
-    };
+    match symbol {
+        AliasTarget::Symbol(symbol) => fully_qualified_name(c, symbol, None),
+        AliasTarget::Property(object, name, _) => {
+            fully_qualified_name_of_property(c, object, name).0
+        }
+        AliasTarget::Unknown => b"unknown".to_vec(),
+    }
+}
+
+/// `getFullyQualifiedName` of the property `name` of `object`, and whether it has a `Parent`. A synthesized property (of a union, an
+/// intersection, a mapped type, a tuple) has none.
+fn fully_qualified_name_of_property(
+    c: &mut Checker<'_, '_>,
+    object: TypeId,
+    name: Atom,
+) -> (Vec<u8>, bool) {
     let Some((mut prop, _)) = c.get_property_of_type(object, name) else {
-        return c.atoms().bytes(name).to_vec();
+        return (c.atoms().bytes(name).to_vec(), false);
     };
     // `getSpreadSymbol` keeps the `Parent` of the original property.
     while let PropSource::Copy(_, of, true) = &prop.source {
         prop = &of[0];
     }
     let mut qualified = match prop.source {
-        PropSource::Symbol(symbol) => return fully_qualified_name(c, symbol, None),
+        PropSource::Symbol(symbol) => {
+            let has_parent = c.files().symbol_parent(symbol).is_some();
+            return (fully_qualified_name(c, symbol, None), has_parent);
+        }
         PropSource::Literal(file, property) => {
             let owner = c.bound(file).prop_owner[property.idx()];
             let mut parent = c.name_of_object_literal(file, owner);
@@ -453,8 +493,9 @@ pub(super) fn fully_qualified_name_of(c: &mut Checker<'_, '_>, symbol: AliasTarg
         }
         _ => Vec::new(),
     };
+    let has_parent = !qualified.is_empty();
     c.write_prop(&mut qualified, prop);
-    qualified
+    (qualified, has_parent)
 }
 
 /// `GetRootDeclaration`: the variable or the parameter whose binding pattern contains `pat`.

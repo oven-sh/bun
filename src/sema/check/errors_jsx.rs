@@ -78,7 +78,6 @@ impl Checker<'_, '_> {
         ) && (specifies_factory || hir.jsx_pragmas.factory.is_some())
             && options.jsx_fragment_factory.is_empty()
             && hir.jsx_pragmas.fragment_factory.is_none();
-        let intrinsic_elements = self.jsx_type(file, known::IntrinsicElements);
         let mut elements: Vec<ExprId> = self
             .exprs_by_kind(file)
             .of(ExprTag::Jsx)
@@ -140,8 +139,7 @@ impl Checker<'_, '_> {
                     };
                 }
             }
-            // `resolveName`, starting at the tag. The error `checkAndReportErrorForMissingPrefix`
-            // reports for a tag with the same spelling as the name being resolved is not reported.
+            // `resolveName`, starting at `jsxFactoryLocation`: the tag name, or the opening fragment.
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
             let jsx_factory_sym = checks_factory
                 .then(|| self.files().resolve_name(file, scope, factory, meaning))
@@ -152,28 +150,34 @@ impl Checker<'_, '_> {
                 let fragment_factory_is_missing = (checks_factory || provides_fragment_type)
                     && names_fragment_factory
                     && is_missing(self, scope, fragment_factory);
-                if checks_factory && fragment_factory_is_missing {
-                    self.explain_missing_jsx_factory(
+                let mut failed_to_resolve = |name: Atom, name_not_found_message: u32| {
+                    let location = self.jsx_opening_like(file, e);
+                    self.on_failed_to_resolve_symbol(
                         file,
-                        e,
+                        location,
+                        None,
                         scope,
-                        (start, end),
-                        fragment_factory,
-                        2874,
+                        name,
+                        meaning,
+                        name_not_found_message,
                     );
+                };
+                if checks_factory && fragment_factory_is_missing {
+                    failed_to_resolve(fragment_factory, 2874);
                 }
                 if factory_is_missing {
-                    self.explain_missing_jsx_factory(file, e, scope, (start, end), factory, 2874);
+                    failed_to_resolve(factory, 2874);
                 }
                 if provides_fragment_type && fragment_factory_is_missing {
-                    self.explain_missing_jsx_factory(
-                        file,
-                        e,
-                        scope,
-                        (start, end),
-                        fragment_factory,
-                        2879,
-                    );
+                    failed_to_resolve(fragment_factory, 2879);
+                }
+                if provides_fragment_type
+                    && let Some(result) =
+                        self.files()
+                            .resolve_name(file, scope, fragment_factory, meaning)
+                {
+                    let node = self.jsx_opening_like(file, e);
+                    self.on_successfully_resolved_symbol(file, node, scope, result, meaning);
                 }
                 if lacks_fragment_factory {
                     let at = (file, start, self.end_inside_parentheses(file, e));
@@ -185,8 +189,10 @@ impl Checker<'_, '_> {
                 continue;
             }
             if factory_is_missing {
-                let at = (hir[element.tag].pos, hir[element.tag].end);
-                self.explain_missing_jsx_factory(file, e, scope, at, factory, 2874);
+                let location = hir.node(element.tag);
+                self.on_failed_to_resolve_symbol(
+                    file, location, None, scope, factory, meaning, 2874,
+                );
             }
             if let Some(result) = jsx_factory_sym {
                 self.check_type_only_jsx_factory(file, j, result);
@@ -199,7 +205,7 @@ impl Checker<'_, '_> {
             for child in hir.ids(element.children) {
                 self.check_jsx_expression(file, child);
             }
-            self.check_explicit_children_attribute(file, j);
+            self.check_explicit_children_attribute(file, e, j);
             if !self.are_jsx_attributes_never_checked(file, e) {
                 self.check_spread_overrides(file, element.attrs);
             }
@@ -218,11 +224,13 @@ impl Checker<'_, '_> {
             ] {
                 let Some(name) = name else { continue };
                 let at = (file, start, if is_closing { element.end } else { end });
-                match intrinsic_elements {
+                match self.jsx_type(file, hir.node(e), known::IntrinsicElements) {
                     None if no_implicit_any => {
                         self.error_at(at, 7026, &[Arg::Bytes(b"IntrinsicElements")]);
                     }
-                    Some(elements) if self.type_of_property(elements, name).is_none() => {
+                    Some(elements)
+                        if self.type_of_intrinsic_tag_symbol(elements, name).is_none() =>
+                    {
                         self.error_at(
                             at,
                             2339,
@@ -245,15 +253,7 @@ impl Checker<'_, '_> {
             return;
         }
         let tag = hir[j].tag;
-        let use_site = hir.node(tag);
-        // `IsExpressionNode`
-        let is_expression_node = match hir.kind(use_site) {
-            Kind::JsxNamespacedName => false,
-            // `IsInExpressionContext`: a `JsxOpeningElement` is no expression node.
-            Kind::ThisKeyword => hir[j].close_pos == u32::MAX,
-            _ => true,
-        };
-        if !is_expression_node || is_valid_type_only_alias_use_site(hir, use_site) {
+        if is_valid_type_only_alias_use_site(hir, hir.node(tag)) {
             return;
         }
         let type_only = files.type_only_alias_declaration_ex(result, SymFlags::VALUE);
@@ -273,10 +273,10 @@ impl Checker<'_, '_> {
     /// `createJsxAttributesTypeFromAttributesProperty`: 2710 for `explicitlySpecifyChildrenAttribute`.
     /// `c.error` reports it, so it is no part of the errors of a candidate, and every path of
     /// `resolveJsxOpeningLikeElement` checks the attributes of an opening element.
-    fn check_explicit_children_attribute(&mut self, file: FileId, j: JsxId) {
+    fn check_explicit_children_attribute(&mut self, file: FileId, e: ExprId, j: JsxId) {
         let hir = self.hir(file);
         let jsx = &hir[j];
-        let JsxName::Name(name) = self.jsx_children_property_name(file) else {
+        let JsxName::Name(name) = self.jsx_children_property_name(file, hir.node(e)) else {
             return;
         };
         let (Some(first), Some(last)) = (jsx.attrs.iter().next(), jsx.attrs.iter().next_back())
@@ -424,16 +424,12 @@ impl Checker<'_, '_> {
             (file, hir[jsx.tag].pos, hir[jsx.tag].end)
         };
         let expr_types = if is_jsx_open_fragment {
-            // `getJsxNamespaceAt` uses the fragment factory name. Only where that resolves to the
-            // same `JSX` namespace that elements use.
-            let is_one_jsx =
-                self.jsx_namespace_at(file, false) == self.jsx_namespace_at(file, true);
-            let fragment = self.jsx_fragment_type(file, e);
-            fragment.filter(|_| is_one_jsx).unwrap_or(TypeId::ANY)
+            self.jsx_fragment_type(file, e)
         } else if let Some(name) = self.jsx_intrinsic_tag_name(file, jsx.tag) {
-            let result = self.jsx_intrinsic_attributes(file, name);
+            let node = self.jsx_opening_like(file, e);
+            let result = self.jsx_intrinsic_attributes(file, node, name);
             let result = result.unwrap_or(TypeId::ERROR);
-            let fake_signature = self.jsx_intrinsic_signature(file, result);
+            let fake_signature = self.jsx_intrinsic_signature(file, node, result);
             let param_type = self.jsx_effective_first_argument(file, e, fake_signature);
             // As `CallState::checks_arguments_once`.
             let is_checked_once = self.resolution_start == self.stack.len()
@@ -550,11 +546,20 @@ impl Checker<'_, '_> {
     /// `isContextSensitive` for `JsxAttributes`. A fragment has none.
     pub(super) fn is_jsx_attributes_context_sensitive(&self, file: FileId, j: JsxId) -> bool {
         let hir = self.hir(file);
-        let values = hir[j].attrs.iter().map(|p| hir[p].value);
+        // There is no case for a `JsxSpreadAttribute`.
+        let attributes = hir[j].attrs.iter();
+        let values = attributes
+            .filter(|&p| hir[p].kind != PropKind::Spread)
+            .map(|p| hir[p].value);
+        // `JsxExpression`, which `{...x}` is too.
+        let children = hir.ids(hir[j].children).map(|child| match hir[child].kind {
+            ExprKind::Spread(x) => x,
+            _ => child,
+        });
         hir[j].tag.is_some()
             && values
                 .filter(|value| value.is_some())
-                .chain(hir.ids(hir[j].children))
+                .chain(children)
                 .any(|part| self.is_context_sensitive(file, part))
     }
 
@@ -745,21 +750,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `onFailedToResolveSymbol` for `name`, the factory for the tag `e`. It is resolved from
-    /// `scope`, and does not appear in the source at the error span, `at.0` to `at.1`.
-    fn explain_missing_jsx_factory(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        scope: ScopeId,
-        at: (u32, u32),
-        name: Atom,
-        message: u32,
-    ) {
-        let (location, at) = (self.hir(file).node(e), Some((file, at.0, at.1)));
-        self.on_failed_to_resolve_symbol(file, location, at, scope, name, SymFlags::VALUE, message);
-    }
-
     /// `checkTagNameDoesNotExpectTooManyArguments`: whether every call signature of the tag of `e`
     /// requires more arguments than the JSX factory passes to a function it receives. If so: the
     /// smallest required count, the factory, and the largest count it passes.
@@ -779,11 +769,7 @@ impl Checker<'_, '_> {
         {
             return None;
         }
-        // `getSignaturesOfType`, which does not use the constraint of a type parameter.
         let tag_type = self.type_of_expr(file, hir[j].tag);
-        if self.is_deferred(tag_type) {
-            return None;
-        }
         let ways = self.signatures(tag_type, false);
         if ways.is_empty() {
             return None;
@@ -882,7 +868,7 @@ impl Checker<'_, '_> {
         if hir[j].close_pos == u32::MAX {
             return reported;
         }
-        let children_prop_name = match self.jsx_children_property_name(file) {
+        let children_prop_name = match self.jsx_children_property_name(file, hir.node(e)) {
             JsxName::Name(name) => name,
             JsxName::Missing => known::children,
             JsxName::Empty => known::empty,
@@ -1127,7 +1113,8 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        // `allPropertiesTable`, which excludes accessors.
+        // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`,
+        // which is that of the symbol all declarations of the name share.
         let mut written: Vec<(Atom, PropId)> = Vec::new();
         for p in props.iter() {
             let prop = &hir[p];
@@ -1137,8 +1124,9 @@ impl Checker<'_, '_> {
                     PropKind::Init | PropKind::Shorthand | PropKind::Method
                 ) && let Some(name) = self.member_name(file, prop.key)
                 {
+                    let value_declaration = self.first_declaration_of_literal_member(file, p);
                     written.retain(|w| w.0 != name);
-                    written.push((name, p));
+                    written.push((name, value_declaration));
                 }
                 continue;
             }
@@ -1166,18 +1154,10 @@ impl Checker<'_, '_> {
                     }
                 }
                 if always {
-                    let start = hir[overwritten].pos;
-                    // `GetErrorRangeForNode`: the name for a method, the whole node for anything
-                    // else.
-                    let end = if hir[overwritten].kind == PropKind::Method {
-                        self.end_of_prop_name(file, overwritten)
-                    } else {
-                        self.end_of_prop(file, overwritten)
-                    };
                     // The spread starts at its `...`, that of an attribute at the `{`.
                     let spread = (file, prop.start, self.end_of_prop(file, p));
                     let spread = self.new_diagnostic(spread, 2785, &[]);
-                    self.error_at((file, start, end), 2783, &[Arg::Atom(name)])
+                    self.error(file, overwritten, 2783, &[Arg::Atom(name)])
                         .add_related_info(spread);
                 }
             }
@@ -1194,8 +1174,9 @@ impl Checker<'_, '_> {
         let at = (file, hir[tag].pos, hir[tag].end);
         let intrinsic = self.jsx_intrinsic_tag_name(file, tag);
         let mut diags = Vec::new();
+        let node = self.jsx_opening_like(file, e);
         // `JSX.ElementType`, if it exists, is the only constraint.
-        if let Some(allowed) = self.jsx_element_type_constraint(file) {
+        if let Some(allowed) = self.jsx_element_type_constraint(file, node) {
             let actual = match intrinsic {
                 Some(name) => self.string_literal(name, false),
                 None => self.type_of_expr(file, tag),
@@ -1209,6 +1190,7 @@ impl Checker<'_, '_> {
             self.check_jsx_return_assignable_to_appropriate_bound(
                 ref_kind,
                 elem_instance_type,
+                node,
                 at,
                 diags,
             );
@@ -1225,13 +1207,15 @@ impl Checker<'_, '_> {
         &mut self,
         ref_kind: JsxReferenceKind,
         elem_instance_type: TypeId,
+        opening_like_element: Node,
         tag_name: (FileId, u32, u32),
         diags: &mut Vec<Reported>,
     ) {
         // `getJsxStatelessElementTypeAt`, `getJsxElementClassTypeAt`
-        let element = self.jsx_type(tag_name.0, known::Element);
+        let file = tag_name.0;
+        let element = self.jsx_type(file, opening_like_element, known::Element);
         let sfc_return_constraint = element.map(|element| self.union(&[element, TypeId::NULL]));
-        let class_constraint = self.jsx_type(tag_name.0, known::ElementClass);
+        let class_constraint = self.jsx_type(file, opening_like_element, known::ElementClass);
         let (constraint, head) = match (ref_kind, sfc_return_constraint, class_constraint) {
             (JsxReferenceKind::Function, constraint, _) => (constraint, 2787),
             (JsxReferenceKind::Component, _, constraint) => (constraint, 2788),
@@ -1300,11 +1284,8 @@ fn jsx_factory_entity(
 
 /// `parseIsolatedEntityName`, returned as the identifiers of the name. Empty text is not a name.
 fn parse_isolated_entity_name(atoms: Atoms<'_, '_>, text: &[u8]) -> Option<Vec<Atom>> {
-    crate::verify::is_entity_name(text).then(|| {
-        bun_core::strings::split(text, b".")
-            .map(|name| atoms.intern(name.trim_ascii()))
-            .collect()
-    })
+    let entity = crate::verify::parse_isolated_entity_name(text)?;
+    Some(entity.iter().map(|name| atoms.intern(name)).collect())
 }
 
 fn text_of<'a>(hir: &'a hir::File<'_>, start: u32, end: u32) -> &'a [u8] {

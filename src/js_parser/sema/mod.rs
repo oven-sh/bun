@@ -171,8 +171,8 @@ pub(crate) enum Mark {
 
     // Nodes that wrap an expression and that the AST represents as the expression alone. Recorded
     // in the order they are built: `(e) as T` is not `(e as T)`.
-    /// `node.End()` of the node built by the next note, not counting `LessThan` and
-    /// `InstantiationStart`.
+    /// `node.End()` of the node built by the next note, not counting `LessThan`,
+    /// `ParenthesizedType` and `InstantiationStart`.
     End,
     /// `e as T`, `<T>e`: the type (`ts::TypeId`).
     As,
@@ -181,6 +181,8 @@ pub(crate) enum Mark {
     AsTypeParameter,
     /// The next `As` or `AsTypeParameter` note is `<T>e`: the position of the `<`.
     LessThan,
+    /// The type of the next `As` note is a `ParenthesizedType`, which has no node.
+    ParenthesizedType,
     /// `e satisfies T`: the type (`ts::TypeId`).
     Satisfies,
     /// `e!`
@@ -215,7 +217,7 @@ impl Mark {
 /// The TypeScript error code for the parser error `msg`, after which the parser continued as if
 /// there were no error.
 /// `0`: the checker detects the error itself. `None`: the AST is unreliable.
-pub(crate) fn early_error(msg: &bun_ast::Msg, at: &[u8]) -> Option<(u32, i32)> {
+pub(crate) fn early_error(msg: &bun_ast::Msg) -> Option<(u32, i32)> {
     // `Lexer::ts_error`, `ts_grammar_error`, `P::ts_checker_error`
     if let Metadata::TypeScript { code, .. } = msg.metadata {
         return Some((code, 0));
@@ -224,21 +226,6 @@ pub(crate) fn early_error(msg: &bun_ast::Msg, at: &[u8]) -> Option<(u32, i32)> {
     // TypeScript reports at the keyword, the parser after it.
     if text == b"\"await\" can only be used inside an \"async\" function" {
         return Some((1308, -6));
-    }
-    // `checkGrammarModifiers`
-    if text == b"Class constructor cannot be an async function" {
-        return Some((0, 0));
-    }
-    // `checkMethodDeclaration`: only for the keyword. The string literal is an ordinary name.
-    if text == b"Class constructor cannot be a generator function" {
-        return Some((
-            if at.starts_with(b"constructor") {
-                1368
-            } else {
-                0
-            },
-            0,
-        ));
     }
     early_error_in_place(text).map(|code| (code, 0))
 }
@@ -253,7 +240,7 @@ pub(crate) fn diagnostic(
     let location = msg.data.location.as_ref()?;
     let (text, mut len) = (&msg.data.text[..], location.length);
     let at = source.get(location.offset..).unwrap_or_default();
-    let (code, delta) = early_error(msg, at)?;
+    let (code, delta) = early_error(msg)?;
     let kind = match msg.metadata {
         _ if code == 0 => return Some(None),
         Metadata::TypeScript { kind, .. } => match kind {
@@ -261,8 +248,6 @@ pub(crate) fn diagnostic(
             TypeScriptKind::Grammar => DiagnosticKind::Grammar,
             TypeScriptKind::Checker => DiagnosticKind::Checker,
         },
-        // `checkMethodDeclaration` reports it with a plain `c.error`.
-        _ if code == 1368 => DiagnosticKind::Checker,
         // `Lexer::expected` and `Lexer::unexpected`
         _ if matches!(code, 1003 | 1005 | 1109) => DiagnosticKind::Parse,
         // `createIdentifierWithDiagnostic`, at a reserved word.
@@ -334,9 +319,8 @@ fn arguments(text: &[u8]) -> Box<[Box<[u8]>]> {
 /// The message arguments of the logged error `msg`, which has `code`.
 fn error_arguments(msg: &bun_ast::Msg, code: u32, source: &[u8]) -> Option<Box<[Box<[u8]>]>> {
     let (reported, text) = (&msg.data, &msg.data.text[..]);
-    // `createIdentifierWithDiagnostic`, `parsingContextErrors`, `checkGrammarObjectLiteralExpression`: these name the token they are
-    // reported at.
-    if matches!(code, 1042 | 1359 | 1389 | 1390) {
+    // `createIdentifierWithDiagnostic`: it names the token it is reported at.
+    if code == 1359 {
         let at = reported.location.as_ref()?;
         let token = source.get(at.offset..at.offset + at.length)?;
         return Some(Box::new([token.into()]));
@@ -381,6 +365,9 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         // The parser accepts any member name. `checkGrammarProperty`: 18006. `checkObjectTypeForDuplicateDeclarations`: 2699.
         || text == b"Invalid field name"
         || text == b"Invalid static method name \"prototype\""
+        // `checkPrivateIdentifier`: 18012.
+        || text == b"Invalid field name \"#constructor\""
+        || text == b"Invalid method name \"#constructor\""
         // `checkGrammarModifiers`: 1491 1495. `checkGrammarVariableDeclarationList`: 1545 1546.
         || starts(b"Cannot use ") && ends(b" declaration") && bun_core::strings::contains(text, b"\" with a")
         // `checkContextualIdentifier`: 1212 1213 1214.
@@ -389,21 +376,16 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         || starts(b"Deleting the private name ")
         // `checkGrammarParameterList`: 1048. `checkGrammarBindingElement`: 1186.
         || text == b"A rest argument cannot have a default initializer"
+        // `checkGrammarYieldExpression`: 1163.
+        || ends(b" outside a generator function")
+        // `checkReturnStatement`: 1108 18041.
+        || text == b"A return statement cannot be used here"
+        // `checkGrammarForInOrForOfStatement`: 1103 1431 1432.
+        || text == b"Cannot use \"await\" outside an async function"
         {
             0
-        } else if ends(b" outside a generator function") {
-            1163
-        } else if text == b"Cannot use \"await\" outside an async function" {
-            1103
         } else if text == b"\"await\" is only allowed in an \"async\" function" {
             1308
-        } else if text == b"A return statement cannot be used here" {
-            18041
-        } else if text == b"Invalid field name \"#constructor\""
-            || text == b"Invalid method name \"#constructor\""
-        {
-            // `checkPrivateIdentifier`
-            18012
         } else if text == b"Template literals cannot have an optional chain as a tag" {
             // `checkGrammarTaggedTemplateChain`
             1358
@@ -422,11 +404,6 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         } else if starts(b"Expected \"") || starts(b"Expected ") && ends(b" but found end of file")
         {
             1005
-        } else if text == b"Unexpected trailing comma after rest element"
-            || text == b"Unexpected \",\" after rest pattern"
-        {
-            // `checkGrammarForDisallowedTrailingComma`
-            1013
         } else if starts(b"Unexpected ") {
             1109
         } else {
@@ -485,8 +462,8 @@ pub fn summarize<'s>(
     );
     let is_json = by_name && path.ends_with(b".json");
     let is_tsx = script_kind.map_or_else(|| path.ends_with(b".tsx"), |it| it == ScriptKind::Tsx);
-    // `getLanguageVariant`: JSX is enabled in all JavaScript files.
-    let loader = if is_js || is_tsx {
+    // `getLanguageVariant`: JSX is enabled in all JavaScript files, and in JSON.
+    let loader = if is_js || is_tsx || is_json {
         bun_ast::Loader::Tsx
     } else {
         bun_ast::Loader::Ts
@@ -504,7 +481,8 @@ pub fn summarize<'s>(
             options.features.standard_decorators = !experimental_decorators;
             options.suppress_warnings_about_weird_code = true;
             options.tolerant = true;
-            options.is_javascript = is_js;
+            // `initializeState`
+            options.is_javascript = is_js || is_json;
             let define = crate::Define::default();
             let mut log = bun_ast::Log::init();
             let (file, awaited) =
@@ -610,6 +588,8 @@ pub(crate) struct TypeSyntax<'a> {
     pub(crate) pending_fn_type_head: Option<keep::FnTypeHead>,
     /// The most recently parsed type parameters. `None` if unusable.
     pub(crate) last_type_params: Option<ts::TypeParams>,
+    /// The range of the `<>` that was just parsed as the type parameters of a class.
+    pub(crate) empty_class_type_params: Option<bun_ast::Range>,
     /// The `{` about to be parsed opens the body of an interface, which cannot be a mapped type.
     pub(crate) next_braces_are_interface_body: bool,
     /// The body of the most recently parsed object type. `None` if unusable.
@@ -619,8 +599,8 @@ pub(crate) struct TypeSyntax<'a> {
     /// The results above as they were at each `Checkpoint` of a speculative parse in progress.
     pub(crate) saved_results: Vec<notes::Results>,
     /// The index signatures of classes, which become HIR nodes together with the other members of
-    /// their class.
-    pub(crate) class_index_signatures: Vec<bun_sema::hir::Member>,
+    /// their class, and their modifiers as written: the decorators are not lowered yet.
+    pub(crate) class_index_signatures: Vec<(bun_sema::hir::Member, ts::Span<ts::Modifier>)>,
     /// The TypeScript-only statement emitted while parsing the current statement. `NONE` if there is none.
     pub(crate) last_statement: ts::StatementId,
     /// The modifiers consumed so far, for the current statement and its enclosing statements.
@@ -652,6 +632,7 @@ impl<'a> TypeSyntax<'a> {
             last_params: None,
             pending_fn_type_head: None,
             last_type_params: None,
+            empty_class_type_params: None,
             next_braces_are_interface_body: false,
             last_object_type: None,
             last_index_signature: None,

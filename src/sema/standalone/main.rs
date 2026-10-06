@@ -55,6 +55,89 @@ fn list_loaded(program: &bun_sema::check::Program) {
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
+/// What `parseStrings` makes of the arguments of `cli`.
+#[derive(Default)]
+struct CommandLine {
+    paths: Vec<Vec<u8>>,
+    project: Option<String>,
+    compiler_options: Vec<bun_sema_driver::CompilerOption>,
+    /// The code of each, and the response file it is about.
+    errors: Vec<(u32, Vec<u8>)>,
+}
+
+impl CommandLine {
+    /// `parseStrings`. `cwd` is in the checker's path format. A flag that is no compiler option is
+    /// one of the tool's own, which `main` looks for. So is `--all`, as for `bun check`.
+    fn parse_strings(&mut self, args: &[String], cwd: &[u8]) {
+        use bun_sema_driver::{FlagError, compiler_option_from_flag, is_boolean_compiler_option};
+        let mut rest = args.iter().peekable();
+        while let Some(arg) = rest.next() {
+            if let Some(file_name) = arg.strip_prefix('@') {
+                self.parse_response_file(file_name.as_bytes(), cwd);
+            } else if arg == "-p" || arg == "--project" {
+                self.project = rest.next().cloned();
+            } else if let Some(name) = arg.strip_prefix("--") {
+                // `parseOptionValue`: a boolean takes the next argument only if that is its value.
+                let is_boolean = is_boolean_compiler_option(name.as_bytes());
+                let is_value = |next: &&String| !is_boolean || *next == "true" || *next == "false";
+                let value = rest.peek().copied().filter(is_value);
+                match compiler_option_from_flag(name.as_bytes(), value.map(String::as_bytes)) {
+                    _ if name == "all" => {}
+                    Ok(option) => {
+                        self.compiler_options.push(option);
+                        if value.is_some() {
+                            rest.next();
+                        }
+                    }
+                    Err(FlagError::Unknown) => {}
+                    Err(_) => error_line!("{arg} is left out: it has no value that it accepts"),
+                }
+            } else if !arg.is_empty() {
+                self.paths.push(arg.clone().into_bytes());
+            }
+        }
+    }
+
+    /// `parseResponseFile`
+    fn parse_response_file(&mut self, file_name: &[u8], cwd: &[u8]) {
+        let file_name = bun_sema::resolve::join(cwd, file_name);
+        // `tryReadFile`
+        let Some(contents) = read_file(&text(bun_sema_driver::host::to_native(&file_name))) else {
+            return self.errors.push((5083, file_name));
+        };
+        let contents = bun_core::strings::without_utf8_bom(&contents);
+        let mut args = Vec::new();
+        let mut pos = 0;
+        while pos < contents.len() {
+            while pos < contents.len() && contents[pos] <= b' ' {
+                pos += 1;
+            }
+            if pos >= contents.len() {
+                break;
+            }
+            let start = pos;
+            if contents[pos] == b'"' {
+                pos += 1;
+                while pos < contents.len() && contents[pos] != b'"' {
+                    pos += 1;
+                }
+                if pos < contents.len() {
+                    args.push(text(&contents[start + 1..pos]));
+                    pos += 1;
+                } else {
+                    self.errors.push((6045, file_name.clone()));
+                }
+            } else {
+                while pos < contents.len() && contents[pos] > b' ' {
+                    pos += 1;
+                }
+                args.push(text(&contents[start..pos]));
+            }
+        }
+        self.parse_strings(&args, cwd);
+    }
+}
+
 fn main() {
     // The main thread parses tsconfig.json. Its stack is 8 MB on macOS and Linux.
     bun_sema_standalone::native::set_stack_size(7 << 20);
@@ -146,24 +229,35 @@ fn main() {
             }
         }
         Some("cli") => {
-            // cli [paths..] [-p <project>] [--threads=n] [--plain] [--no-color] [--github]: behaves
-            // like `bun check`.
+            // cli [paths..] [@<response file>] [-p <project>] [--<compiler option> [value]]
+            // [--threads=n] [--plain] [--no-color] [--github]: behaves like `bun check`.
             use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
-            let mut paths = Vec::new();
-            let mut project = None;
-            let mut rest = args[1..].iter();
-            while let Some(arg) = rest.next() {
-                if arg == "-p" || arg == "--project" {
-                    project = rest.next().cloned();
-                } else if !arg.starts_with("--") {
-                    paths.push(arg.clone().into_bytes());
-                }
-            }
             let has = |flag: &str| args.iter().any(|a| a == flag);
             let cwd = std::env::current_dir()
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
+            let mut command_line = CommandLine::default();
+            command_line.parse_strings(
+                &args[1..],
+                &bun_sema_driver::host::from_native(cwd.as_bytes()),
+            );
+            let CommandLine {
+                paths,
+                project,
+                compiler_options,
+                errors,
+            } = command_line;
+            // `tscCompilation`: they are reported, and nothing is compiled.
+            for (code, file_name) in &errors {
+                let mut line = Vec::new();
+                let message = bun_sema::messages::message(*code).map_or("", |message| message.1);
+                bun_sema::messages::format(&mut line, message, &[file_name]);
+                output_line!("error TS{code}: {}", text(&line));
+            }
+            if !errors.is_empty() {
+                std::process::exit(1);
+            }
             let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
             // `--progress`: as `bun check` displays it on a terminal.
             let shows_progress = args.iter().any(|a| a == "--progress");
@@ -285,9 +379,6 @@ fn main() {
                 checkers: number("--checkers=", defaults.checkers),
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
             };
-            let list_files_only = has("--listFilesOnly")
-                .then(|| bun_sema_driver::compiler_option_from_flag(b"listFilesOnly", None).ok());
-            let compiler_options: Vec<_> = list_files_only.flatten().into_iter().collect();
             let request = bun_sema_driver::Request {
                 compiler_options: &compiler_options,
                 cwd: cwd.as_bytes(),

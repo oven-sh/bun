@@ -13,16 +13,18 @@ use super::enclosing_declaration::Enclosing;
 use super::errors_isolated_declarations::Emit;
 use super::print::{
     DECLARATION_EMIT_NODE_BUILDER_FLAGS, Report, SymbolTracker,
-    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, Written, push_access,
+    WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL, Written, YieldModuleSymbol, push_access,
 };
 use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::config::compare_strings_case_insensitive;
 use crate::json::Json;
 use crate::program::source_file_may_be_emitted;
 use crate::resolve::{
-    JsxEmit, contains_path, ensure_path_is_non_module_name, is_declaration_file_name, is_relative,
-    join, known_extension, node_module_path_parts, path_is_relative, remove_file_extension,
+    JsxEmit, contains_path, ensure_path_is_non_module_name, get_root_length,
+    is_declaration_file_name, is_relative, join, known_extension, node_module_path_parts,
+    path_is_relative, remove_file_extension,
 };
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -31,6 +33,13 @@ use bun_paths::resolve_path::{dirname, relative_normalized};
 use std::rc::Rc;
 
 mod commonjs;
+
+/// `endOfChain` of `getSymbolChain`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum EndOfChain {
+    No,
+    Yes,
+}
 
 /// The meaning a name is resolved with.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -953,7 +962,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         symbol: Sym,
         is_value: bool,
-        yields_module: bool,
+        yield_module_symbol: YieldModuleSymbol,
         at: Enclosing,
         fake_locals: Vec<(Atom, SymFlags, Option<Sym>)>,
     ) -> (bool, Vec<Sym>) {
@@ -964,7 +973,8 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // A nested query has its own locals.
         let outer = std::mem::replace(&mut self.emit_resolver_links.fake_locals, fake_locals);
-        let mut chain = self.symbol_chain_ex(symbol, at, meaning, yields_module, 0);
+        let mut chain =
+            self.symbol_chain_ex(symbol, at, meaning, yield_module_symbol, EndOfChain::Yes);
         self.emit_resolver_links.fake_locals = outer;
         let starts_with_global_this =
             chain.len() > 1 && chain[0] == self.files().global_this_symbol;
@@ -979,16 +989,16 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn lookup_symbol_chain_of_module_clone_at(
         &mut self,
         originating_import: Sym,
-        yields_module: bool,
+        yield_module_symbol: YieldModuleSymbol,
         at: Enclosing,
     ) -> (bool, Vec<Sym>) {
         let symbol = self.module_clone(originating_import);
-        self.lookup_symbol_chain_at(symbol, true, yields_module, at, Vec::new())
+        self.lookup_symbol_chain_at(symbol, true, yield_module_symbol, at, Vec::new())
     }
 
     /// `IsTypeSymbolAccessible`
     pub(super) fn is_type_symbol_accessible_at(&mut self, symbol: Sym, at: Enclosing) -> bool {
-        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false, 0)
+        self.is_any_symbol_accessible(&[symbol], at, symbol, Meaning::Type, false)
             .is_some_and(|access| access.is_accessible())
     }
 }
@@ -1072,14 +1082,16 @@ impl<'p, 's> Checker<'p, 's> {
         let chain = if self.flags_of(symbol).contains(SymFlags::TYPE_PARAMETER) {
             vec![symbol]
         } else {
-            self.symbol_chain_ex(symbol, at, meaning, false, 0)
+            self.symbol_chain_ex(symbol, at, meaning, YieldModuleSymbol::No, EndOfChain::Yes)
         };
+        // "add neverAsciiEscape for GH#39027"
+        let escapes_non_ascii = self.node_of_enclosing_declaration(at) != Node::FILE;
         // `createExpressionFromSymbolChain`
         let mut expression = self.symbol_text(chain[0]);
         for &part in &chain[1..] {
             let name = self.symbol_text(part);
             let is_enum_member = self.flags_of(part).contains(SymFlags::ENUM_MEMBER);
-            push_access(&mut expression, &name, is_enum_member);
+            push_access(&mut expression, &name, is_enum_member, escapes_non_ascii);
         }
         expression
     }
@@ -1196,7 +1208,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSymbolIfSameReference(a, b) != nil`
     pub(super) fn is_same_reference(&mut self, a: Sym, b: Sym) -> bool {
-        self.resolve_symbol(a) == self.resolve_symbol(b)
+        self.merged_resolved_symbol(a) == self.merged_resolved_symbol(b)
     }
 
     /// `compareSymbols`: by the position of their first declaration.
@@ -1622,14 +1634,23 @@ impl<'p, 's> Checker<'p, 's> {
             return vec![Table::Globals];
         }
         let files = self.files();
-        let bound = self.bound(at.file);
+        let (hir, bound) = (self.hir(at.file), self.bound(at.file));
         let mut tables = Vec::new();
         let mut scope = at.scope;
         while scope.is_some() {
             let s = &bound.scopes[scope.idx()];
+            // `bindFunctionExpression`: the name of a function expression is in no table. Here it
+            // is alone in a scope around that of the function.
+            let only = match bound.table(s.locals) {
+                &[(_, only)] => bound.symbols[only.idx()].decls.first(),
+                _ => None,
+            };
+            let holds_function_name =
+                matches!(only, Some(&Decl::Fn(f)) if hir[f].kind == FnKind::Expr);
             match s.kind {
                 // `IsGlobalSourceFile`: the declarations of a script are global.
                 ScopeKind::File if s.symbol.is_none() => {}
+                ScopeKind::Block if holds_function_name => {}
                 ScopeKind::File | ScopeKind::Module(_) => {
                     tables.push(Table::Locals(at.file, scope));
                     if s.symbol.is_some() {
@@ -1640,12 +1661,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // "Type parameters are bound into `members` lists so they can merge across declarations"
                 ScopeKind::Class(class) => {
                     let symbol = bound.class_symbol[class.idx()];
+                    // `getClassExpressionNameTable`: the locals of the scope around that of a named
+                    // class expression, which comes next.
                     tables.push(Table::TypeMembers(files.sym(at.file, symbol)));
-                    // `getClassExpressionNameTable`: the binder puts the name of a class expression
-                    // in the locals of its scope.
-                    if matches!(bound.class_owner[class.idx()], ClassOwner::Expr(_)) {
-                        tables.push(Table::Locals(at.file, scope));
-                    }
                 }
                 ScopeKind::Interface(interface) => {
                     let symbol = bound.interface_symbol[interface.idx()];
@@ -2094,8 +2112,11 @@ impl<'p, 's> Checker<'p, 's> {
                     .decls_of(found)
                     .iter()
                     .any(|d| matches!(d.1, Decl::ExportSpec(_)));
+            // `getSymbolFlags(resolveAlias(symbolFromSymbolTable))`: what is merged with the alias
+            // does not count. `unknownSymbol` is a property.
             let flags = if resolves_alias {
-                self.files().symbol_flags(found)
+                self.flags_of_alias_target(found)
+                    .unwrap_or(SymFlags::PROPERTY)
             } else {
                 flags
             };
@@ -2150,7 +2171,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `resolveExternalModuleName(enclosingDeclaration, importRef)`: the location is not a
         // specifier, so the module is resolved in the default mode of the file. An import that was
         // resolved in another mode (`module: commonjs` with `bundler`) is not found.
-        let mode = self.default_resolution_mode_for_file(at.file);
+        let mode = self.files().default_resolution_mode_for_file(at.file);
         for &specifier in &self.bound(at.file).specifiers {
             if let Some(module) = files.module_of_specifier_as(at.file, specifier, mode)
                 && self.alias_for_symbol_in_container(module, symbol).is_some()
@@ -2400,9 +2421,8 @@ impl<'p, 's> Checker<'p, 's> {
         initial: Sym,
         meaning: Meaning,
         paints: bool,
-        depth: u32,
     ) -> Option<Access> {
-        if depth > 32 {
+        if self.is_stack_low() {
             return None;
         }
         let mut had_accessible_chain = None;
@@ -2429,8 +2449,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 meaning
             };
-            let of_parent =
-                self.is_any_symbol_accessible(&containers, at, initial, next, paints, depth + 1);
+            let of_parent = self.is_any_symbol_accessible(&containers, at, initial, next, paints);
             if of_parent.is_some() {
                 return of_parent;
             }
@@ -2460,8 +2479,7 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: Meaning,
         paints: bool,
     ) -> Access {
-        if let Some(result) =
-            self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints, 0)
+        if let Some(result) = self.is_any_symbol_accessible(&[symbol], at, symbol, meaning, paints)
         {
             return result;
         }
@@ -5314,6 +5332,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             TypeNodeKind::Array(of)
             | TypeNodeKind::Keyof(of)
             | TypeNodeKind::Readonly(of)
+            | TypeNodeKind::Unique(of)
             | TypeNodeKind::JSDoc { ty: of, .. } => {
                 self.visit_type(of, false);
             }
@@ -5610,6 +5629,16 @@ fn path_is_bare_specifier(path: &[u8]) -> bool {
     !path.starts_with(b"/") && !path_is_relative(path)
 }
 
+/// `ComparePaths` for two normalized file names: neither has a relative path segment.
+fn compare_paths(a: &[u8], b: &[u8], is_case_sensitive: bool) -> std::cmp::Ordering {
+    let (a_root, a_rest) = a.split_at(get_root_length(a));
+    let (b_root, b_rest) = b.split_at(get_root_length(b));
+    compare_strings_case_insensitive(a_root, b_root).then_with(|| match is_case_sensitive {
+        true => a_rest.cmp(b_rest),
+        false => compare_strings_case_insensitive(a_rest, b_rest),
+    })
+}
+
 /// `CountPathComponents`
 fn count_path_components(path: &[u8]) -> usize {
     strings::count_char(path.strip_prefix(b"./").unwrap_or(path), b'/')
@@ -5730,7 +5759,8 @@ fn module_name_from_exports(
             for (key, value) in entries {
                 if key != b"default"
                     && !conditions.contains(&key.as_slice())
-                    && !(key.starts_with(b"types@") && conditions.contains(&&b"types"[..]))
+                    && !(conditions.contains(&&b"types"[..])
+                        && crate::resolve::is_applicable_versioned_types_key(key))
                 {
                     continue;
                 }
@@ -5811,34 +5841,27 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
-    /// `GetDefaultResolutionModeForFile`
-    fn default_resolution_mode_for_file(&self, file: FileId) -> ResolutionMode {
-        let files = self.files();
-        let options = &files.options;
-        // `importSyntaxAffectsModuleResolution`
-        if options.resolves_like_node
-            || options.resolve_package_json_exports
-            || options.resolve_package_json_imports
-        {
-            files.module(file).implied_format
-        } else {
-            ResolutionMode::None
-        }
-    }
-
     /// `resolutionMode` in `getSpecifierForModuleSymbol`. `mode`: `overrideImportMode`.
-    fn resolution_mode_for_specifier(
-        &self,
-        importing: FileId,
-        mode: ResolutionMode,
-    ) -> ResolutionMode {
+    fn resolution_mode_for_specifier(&self, at: Enclosing, mode: ResolutionMode) -> ResolutionMode {
         if mode != ResolutionMode::None {
             return mode;
         }
-        match self.enclosing_module_specifier_mode {
-            Some(mode) => mode,
-            None => self.default_resolution_mode_for_file(importing),
+        if let Some(mode) = self.enclosing_module_specifier_mode {
+            return mode;
         }
+        // `TryGetModuleSpecifierFromDeclaration` for a variable declaration.
+        let (hir, files) = (self.hir(at.file), self.files());
+        if at.fake_scope == 0 && at.variable.is_some() {
+            let initializer = hir[at.variable].init;
+            if initializer.is_some()
+                && !is_parenthesized(hir, initializer)
+                && let Some((argument, _)) = crate::bind::require_call_argument(hir, initializer)
+                && matches!(hir[argument].kind, ExprKind::String(_))
+            {
+                return files.mode_of_require(at.file);
+            }
+        }
+        files.default_resolution_mode_for_file(at.file)
     }
 
     /// `getPreferredEnding`. `prefers_js`: `ImportModuleSpecifierEndingPreferenceJs`.
@@ -5850,7 +5873,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Ending {
         let files = self.files();
         let mode = if mode == ResolutionMode::None {
-            self.default_resolution_mode_for_file(importing)
+            self.files().default_resolution_mode_for_file(importing)
         } else {
             mode
         };
@@ -6038,7 +6061,7 @@ impl<'p, 's> Checker<'p, 's> {
                         b".cjs" | b".cts" | b".d.cts" => ResolutionMode::Require,
                         b".mjs" | b".mts" | b".d.mts" => ResolutionMode::Import,
                         _ if mode == ResolutionMode::None => {
-                            self.default_resolution_mode_for_file(importing)
+                            self.files().default_resolution_mode_for_file(importing)
                         }
                         _ => mode,
                     };
@@ -6113,16 +6136,6 @@ impl<'p, 's> Checker<'p, 's> {
         package_name_from_types_package_name(&module_specifier[top_level_package_name + 1..])
     }
 
-    /// `GetProjectReferenceFromSource(path).OutputDts`: the declaration file a referenced project emits for its source file at `path`.
-    fn output_dts_of_project_reference_source(&self, path: &[u8]) -> Option<Vec<u8>> {
-        if !matches!(known_extension(path), b".ts" | b".tsx" | b".mts" | b".cts") {
-            return None;
-        }
-        let outputs = self.files().options.referenced_outputs.iter();
-        (outputs.map(|(output_dir, root_dir)| Some((output_dir.as_slice(), root_dir.as_slice()))))
-            .find_map(|output| crate::resolve::output_declaration_file_name(path, output))
-    }
-
     /// `GetEachFileNameOfModule`: the paths that reach one of `targets` through a symlink to a
     /// directory that contains the file at `real`. Each path, here and below, is paired with
     /// whether it `IsRedirect`.
@@ -6169,6 +6182,7 @@ impl<'p, 's> Checker<'p, 's> {
         importing: FileId,
         mode: ResolutionMode,
         target_mode: ResolutionMode,
+        prefers_js: bool,
     ) -> Vec<u8> {
         let from = dirname::<Posix>(self.files().module(importing).file_name());
         // The number of directory levels from the importing file up to the directory that contains
@@ -6186,13 +6200,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
             up
         };
-        // `comparePathsByRedirect`
+        // `comparePathsByRedirect`. Names that differ only in case are in no particular order there.
+        let is_case_sensitive = self.files().is_case_sensitive;
         paths.sort_by(|a, b| {
             distance(&a.0)
                 .cmp(&distance(&b.0))
                 .then(b.1.cmp(&a.1))
                 .then(strings::count_char(&a.0, b'/').cmp(&strings::count_char(&b.0, b'/')))
-                .then(a.0.cmp(&b.0))
+                .then_with(|| compare_paths(&a.0, &b.0, is_case_sensitive))
+                .then_with(|| a.0.cmp(&b.0))
         });
         paths.dedup();
         // The specifier of an import that resolves to one of the paths, by its `ResolvedFileName`.
@@ -6222,8 +6238,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return self.atoms().bytes(specifier).to_vec();
             }
         }
-        let prefers_js =
-            self.resolution_mode_for_specifier(importing, mode) == ResolutionMode::Import;
         let allowed_endings = self.allowed_endings(importing, prefers_js, target_mode);
         let imported_file_is_in_node_modules = paths
             .iter()
@@ -6437,10 +6451,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `referenceRedirect` in `GetEachFileNameOfModule`
     fn reference_redirect(&self, path: &[u8]) -> Option<Vec<u8>> {
-        match self.files().options.parse_file_redirect(path) {
-            Some(output) => Some(output.to_vec()),
-            None => self.output_dts_of_project_reference_source(path),
-        }
+        let output_dts = self.files().options.parse_file_redirect(path)?;
+        Some(output_dts.to_vec())
     }
 
     /// `ResolvedFileName` of an import of `importing`.
@@ -6469,23 +6481,23 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `GetModuleSpecifiers`, first result only: the specifier `importing` uses for the file
-    /// `target`.
+    /// `target`. `prefers_js`: `ImportModuleSpecifierEndingPreferenceJs`.
     fn get_module_specifiers(
         &self,
         target: FileId,
         importing: FileId,
         mode: ResolutionMode,
+        prefers_js: bool,
     ) -> Vec<u8> {
         let files = self.files();
         let from = files.module(importing);
         let target_mode = if mode == ResolutionMode::None {
-            self.default_resolution_mode_for_file(importing)
+            self.files().default_resolution_mode_for_file(importing)
         } else {
             mode
         };
         // `GetModuleSpecifiersWithInfo`: "Use original source file name when file is from project reference output".
-        let path = (files.options)
-            .source_of_project_reference_if_output_included(files.module(target).file_name());
+        let path = files.source_of_project_reference_if_output_included(target);
         // `GetEachFileNameOfModule`. The output of a referenced project for the file comes first,
         // then the source: the `exports` of its package map to one or the other.
         let reference_redirect = self.reference_redirect(path);
@@ -6509,20 +6521,21 @@ impl<'p, 's> Checker<'p, 's> {
         let filters = !paths.is_empty() || !targets.iter().all(|it| contains_ignored_path(&it.0));
         targets.retain(|it| !(filters && contains_ignored_path(&it.0)));
         paths.append(&mut targets);
-        self.compute_module_specifiers(target, paths, importing, mode, target_mode)
+        self.compute_module_specifiers(target, paths, importing, mode, target_mode, prefers_js)
     }
 
     /// `getSpecifierForModuleSymbol`
     pub(super) fn specifier_for_module_symbol(
         &mut self,
         symbol: Sym,
-        importing: FileId,
+        at: Enclosing,
         mode: ResolutionMode,
     ) -> Vec<u8> {
-        if importing == Enclosing::NONE.file {
+        if at.is_none() {
             return self.specifier_of_module(symbol);
         }
-        let resolution_mode = self.resolution_mode_for_specifier(importing, mode);
+        let importing = at.file;
+        let resolution_mode = self.resolution_mode_for_specifier(at, mode);
         if let Some(known) =
             self.emit_resolver_links
                 .specifiers
@@ -6561,7 +6574,10 @@ impl<'p, 's> Checker<'p, 's> {
             (Some(name), _, None) => self.atoms().bytes(name).to_vec(),
             (_, Some(name), _) => name,
             (_, None, target) => match target.or_else(|| self.source_file_of_module(symbol)) {
-                Some(target) => self.get_module_specifiers(target, importing, mode),
+                Some(target) => {
+                    let prefers_js = resolution_mode == ResolutionMode::Import;
+                    self.get_module_specifiers(target, importing, mode, prefers_js)
+                }
                 None => Vec::new(),
             },
         };
@@ -6588,7 +6604,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut named: Vec<(Sym, Vec<u8>)> = Vec::with_capacity(parents.len());
         for parent in parents {
             let name = if self.is_external_module_symbol(parent) {
-                self.specifier_for_module_symbol(parent, at.file, ResolutionMode::None)
+                self.specifier_for_module_symbol(parent, at, ResolutionMode::None)
             } else {
                 Vec::new()
             };
@@ -6598,14 +6614,14 @@ impl<'p, 's> Checker<'p, 's> {
         named.into_iter().map(|parent| parent.0).collect()
     }
 
-    /// `getSymbolChain`. `endOfChain`: `depth` is 0.
+    /// `getSymbolChain`
     pub(super) fn symbol_chain_ex(
         &mut self,
         symbol: Sym,
         at: Enclosing,
         meaning: Meaning,
-        yields_module: bool,
-        depth: u32,
+        yield_module_symbol: YieldModuleSymbol,
+        end_of_chain: EndOfChain,
     ) -> Vec<Sym> {
         let mut chain = self.accessible_symbol_chain(symbol, at, meaning).to_vec();
         let qualifier_meaning = if chain.len() > 1 {
@@ -6614,14 +6630,19 @@ impl<'p, 's> Checker<'p, 's> {
             meaning
         };
         let root = chain.first().copied();
-        if depth < 32
+        if !self.is_stack_low()
             && root.is_none_or(|root| self.needs_qualification(root, at, qualifier_meaning))
         {
             // Go up and add the parent.
             let parents = self.containers_of_symbol(root.unwrap_or(symbol), at, meaning);
             for parent in self.sorted_by_best_name(parents, at) {
-                let mut parent_chain =
-                    self.symbol_chain_ex(parent, at, meaning.left(), yields_module, depth + 1);
+                let mut parent_chain = self.symbol_chain_ex(
+                    parent,
+                    at,
+                    meaning.left(),
+                    yield_module_symbol,
+                    EndOfChain::No,
+                );
                 if parent_chain.is_empty() {
                     continue;
                 }
@@ -6647,9 +6668,10 @@ impl<'p, 's> Checker<'p, 's> {
         // unless the chain may start with it.
         let anonymous = SymFlags::TYPE_LITERAL | SymFlags::OBJECT_LITERAL;
         if chain.is_empty()
-            && (depth == 0
+            && (end_of_chain == EndOfChain::Yes
                 || !self.flags_of(symbol).intersects(anonymous)
-                    && (yields_module || !self.is_external_module_symbol(symbol)))
+                    && (yield_module_symbol == YieldModuleSymbol::Yes
+                        || !self.is_external_module_symbol(symbol)))
         {
             // A symbol created by `cloneTypeAsModuleType` is emitted as its target, whose name and
             // declarations it has.
@@ -6663,13 +6685,13 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn import_type_specifier_and_mode(
         &mut self,
         module: Sym,
-        importing: FileId,
+        at: Enclosing,
         allows_node_modules_relative_paths: bool,
     ) -> (Vec<u8>, Option<&'static [u8]>) {
         let files = self.files();
         let is_node = files.options.resolves_like_node;
         // `GetEmitModuleFormatOfFile`
-        let context_format = files.module(importing).implied_format;
+        let context_format = files.module(at.file).implied_format;
         let target_format = self
             .decls_of(module)
             .into_iter()
@@ -6684,11 +6706,11 @@ impl<'p, 's> Checker<'p, 's> {
             && target_format == Some(ResolutionMode::Import)
             && context_format != ResolutionMode::Import
         {
-            specifier = self.specifier_for_module_symbol(module, importing, ResolutionMode::Import);
+            specifier = self.specifier_for_module_symbol(module, at, ResolutionMode::Import);
             mode = Some(&b"import"[..]);
         }
         if specifier.is_empty() {
-            specifier = self.specifier_for_module_symbol(module, importing, ResolutionMode::None);
+            specifier = self.specifier_for_module_symbol(module, at, ResolutionMode::None);
         }
         if !allows_node_modules_relative_paths
             && is_node
@@ -6700,7 +6722,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 (ResolutionMode::Import, &b"import"[..])
             };
-            let other = self.specifier_for_module_symbol(module, importing, swapped);
+            let other = self.specifier_for_module_symbol(module, at, swapped);
             if !strings::contains(&other, b"/node_modules/") {
                 return (other, Some(swapped_mode));
             }

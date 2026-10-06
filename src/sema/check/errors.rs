@@ -4,10 +4,12 @@
 //! The codes are the TypeScript compiler's. An error that depends on something the resolver could
 //! not resolve is not reported: a false negative is preferred to a false positive.
 
+use super::enclosing_declaration::Enclosing;
 use super::errors_aliases::Directives;
+use super::errors_names_and_exports::fully_qualified_name;
 use super::errors_operators::has_empty_object_intersection;
 use super::explain::{Explained, NOWHERE};
-use super::sink::{NO_DIRECTIVE, held};
+use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
@@ -164,6 +166,7 @@ impl Checker<'_, '_> {
         self.circular_mapped_props.clear();
         self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
+        self.unknown_symbols.clear();
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
@@ -213,22 +216,21 @@ impl Checker<'_, '_> {
                 d.by_emit = true;
             }
         }
+        self.check_required_global_types(Some(file));
         self.save_deferred_diagnostics = true;
         let logged = self.task.diagnostics.len();
         self.check_source_file(file);
         self.check_declare_modifiers(file);
-        self.check_empty_declaration_lists(file);
         self.check_modules(file);
         self.report_unresolved_identifiers();
-        self.check_keywords_implemented(file);
         self.check_property_accesses(file);
         self.check_calls(file);
         self.check_unused(file);
         self.check_grammar(file);
         self.check_duplicates(file);
         self.check_jsx(file);
-        self.check_overloads(file);
         self.check_use_before_declaration(file);
+        self.resolve_names_for_arguments(file);
         self.check_iteration(file);
         self.check_names_and_exports(file);
         self.check_declarations(file);
@@ -240,9 +242,7 @@ impl Checker<'_, '_> {
         self.check_x_modules(file);
         self.produce_deferred_diagnostics(file);
         self.check_x_typenodes(file);
-        // The last two replace messages that were already reported: for assignments, for unresolved
-        // names.
-        self.check_x_signatures(file);
+        // They replace messages that were already reported: for assignments, for unresolved names.
         self.check_x_operators(file);
         self.check_x_enums_names(file);
         self.report_unresolved_identifiers();
@@ -429,13 +429,20 @@ impl Checker<'_, '_> {
         let index = self.exprs_by_kind(file);
         // `checkImportCallExpression`
         for &e in index.of(ExprTag::ImportCall) {
-            if let ExprKind::ImportCall { args, .. } = hir[e].kind
-                && let argument = hir.id_at(args, 0)
-                && !self.bound(file).is_unchecked(e.idx())
-                && let ExprKind::String(spec) = hir[argument].kind
-            {
+            let ExprKind::ImportCall { args, .. } = hir[e].kind else {
+                continue;
+            };
+            if self.bound(file).is_unchecked(e.idx()) {
+                continue;
+            }
+            if let Some(options) = hir.ids(args).nth(1) {
+                self.check_import_call_options(file, options);
+            }
+            let argument = hir.id_at(args, 0);
+            // `resolveExternalModuleNameWorker`
+            if is_string_literal_like(hir, argument) {
                 let written = SpecifierUse {
-                    spec,
+                    spec: crate::bind::string_literal_text(hir, argument),
                     pos: hir[argument].pos,
                     kind: SpecifierKind::ImportCall,
                     mode: ResolutionMode::None,
@@ -494,49 +501,34 @@ impl Checker<'_, '_> {
                 self.resolve_external_module(file, written, SpecifierSite::default());
             }
         }
-        // `checkImportCallExpression`: the second argument is checked against `ImportCallOptions` as a whole.
-        let import_options: Vec<ExprId> = index
-            .of(ExprTag::ImportCall)
-            .iter()
-            .filter_map(|&e| match hir[e].kind {
-                ExprKind::ImportCall { args, .. } => hir.ids(args).nth(1),
-                _ => None,
-            })
-            .collect();
-        if !import_options.is_empty()
-            && let Some(sym) = self
-                .atoms()
-                .lookup(b"ImportCallOptions")
-                .and_then(|name| self.global_type_symbol(name))
-        {
-            for &options in &import_options {
-                if self.bound(file).is_unchecked(options.idx()) {
-                    continue;
-                }
-                let actual = self.type_of_expr(file, options);
-                let expected = self.declared_type(sym);
-                let expected = self.optional(expected);
-                let at = self.start_of(file, options);
-                let end = self.end_of_expr(file, options);
-                self.check_type_assignable_to(actual, expected, Some((file, at, end)), None);
-            }
+    }
+
+    /// What `checkImportCallExpression` does with `options`, the second argument.
+    fn check_import_call_options(&mut self, file: FileId, options: ExprId) {
+        let hir = self.hir(file);
+        let operand_type = self.type_of_expr(file, options);
+        let options_type = match hir[options].kind {
+            ExprKind::Spread(_) => self.type_of_spread_expression(file, options, operand_type),
+            _ => operand_type,
+        };
+        // `getGlobalImportCallOptionsTypeChecked`
+        let name = self.atoms().intern(b"ImportCallOptions");
+        if let Some(sym) = self.get_global_type(name, 0, true) {
+            let expected = self.declared_type(sym);
+            let expected = self.optional(expected);
+            let error_node = self.span_of_parenthesized_expr(file, options);
+            self.check_type_assignable_to(options_type, expected, Some(error_node), None);
         }
-        // `checkImportCallExpression`: 2880 at the first `assert: ..` of an options object literal, with or without a global
-        // `ImportCallOptions`.
-        for &options in &import_options {
-            if self.bound(file).is_unchecked(options.idx()) || is_parenthesized(hir, options) {
-                continue;
-            }
-            if let ExprKind::Object(props) = hir[options].kind
-                && let Some(prop) = props.iter().map(|p| hir[p]).find(|prop| {
-                    prop.kind == PropKind::Init
-                        && matches!(prop.key, PropKey::Name(name) if self.atoms().bytes(name) == b"assert")
-                        // `IsIdentifier(prop.Name())`: `"assert"` and `["assert"]` have the same key.
-                        && !matches!(hir.text.get(prop.pos as usize), None | Some(b'"' | b'\'' | b'['))
-                })
-            {
-                self.error_at((file, prop.pos, 0), 2880, &[]);
-            }
+        if let ExprKind::Object(props) = hir[options].kind
+            && !is_parenthesized(hir, options)
+            && let Some(prop) = props.iter().map(|p| hir[p]).find(|prop| {
+                prop.kind == PropKind::Init
+                    && matches!(prop.key, PropKey::Name(name) if self.atoms().bytes(name) == b"assert")
+                    // `IsIdentifier(prop.Name())`: `"assert"` and `["assert"]` have the same key.
+                    && !matches!(hir.text.get(prop.pos as usize), None | Some(b'"' | b'\'' | b'['))
+            })
+        {
+            self.error_at((file, prop.pos, 0), 2880, &[]);
         }
     }
 
@@ -562,16 +554,18 @@ impl Checker<'_, '_> {
         };
         // `node.PropertyNameOrName()`, and `getEmitSyntaxForModuleSpecifierExpression` of the specifier.
         let (start, usage) = match decl {
-            Decl::ImportSpec(s) => (hir[s].imported_pos, files.module(file).default_mode),
-            Decl::ExportSpec(s) => (hir[s].local_pos, files.module(file).default_mode),
+            Decl::ImportSpec(s) => (hir[s].imported_pos, files.emit_syntax_of_import(file)),
+            Decl::ExportSpec(s) => (hir[s].local_pos, files.emit_syntax_of_import(file)),
             Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
                 PatParent::Prop(_, p) => (hir[p].key_pos, ResolutionMode::Require),
                 PatParent::Elem(..) => (hir[pat].pos, ResolutionMode::Require),
                 _ => return,
             },
-            _ => (0, files.module(file).default_mode),
+            _ => (0, files.emit_syntax_of_import(file)),
         };
         let target = files.module_value(module);
+        // `TryGetModuleSpecifierFromDeclaration(node)`: nil for a binding element.
+        let node = (file, (!matches!(decl, Decl::Require(_))).then_some(mode));
         // In a binding pattern too: `symbolFromModule == nil && nameText == InternalSymbolNameDefault`.
         if name == known::default {
             if self.module_has_default(usage, module) {
@@ -579,7 +573,7 @@ impl Checker<'_, '_> {
             }
             match decl {
                 Decl::ImportDefault(i) => self.report_non_default_export(file, i, module),
-                _ => self.error_no_module_member_symbol(file, module, target, name, start),
+                _ => self.error_no_module_member_symbol(module, target, node, name, start),
             }
         } else if !matches!(decl, Decl::Require(_))
             && files.is_only_importable_as_default(usage, module)
@@ -589,7 +583,7 @@ impl Checker<'_, '_> {
         } else if files.alias_links(sym).immediate_target.is_none()
             && self.symbol_from_variable(sym).is_none()
         {
-            self.error_no_module_member_symbol(file, module, target, name, start);
+            self.error_no_module_member_symbol(module, target, node, name, start);
         }
     }
 
@@ -612,16 +606,23 @@ impl Checker<'_, '_> {
 
     /// `errorNoModuleMemberSymbol`: `name`, at `start` in `from`, is imported from `module`, which
     /// has no such export. `target`: the value `module` exports with `export =`, or else `module`.
+    /// `specifier_mode`: `GetModeForUsageLocation` of the module specifier of `node`.
     fn error_no_module_member_symbol(
         &mut self,
-        from: FileId,
         module: Sym,
         target: Sym,
+        (from, specifier_mode): (FileId, Option<ResolutionMode>),
         name: Atom,
         start: u32,
     ) {
+        if self.files().options.no_check {
+            return;
+        }
         let (code, other) = self.why_no_module_member(from, module, target, name, start);
-        let module_name = module_name_as_imported(self, module, from);
+        self.enclosing_module_specifier_mode = specifier_mode;
+        let containing_location = Some(Enclosing::at_scope(from, ScopeId(0)));
+        let module_name = fully_qualified_name(self, module, containing_location);
+        self.enclosing_module_specifier_mode = None;
         // `DeclarationNameToString`: a string literal name keeps its quotes.
         let written = match self.hir(from).text.get(start as usize) {
             Some(b'"' | b'\'') => word_at(self, from, start),
@@ -726,12 +727,10 @@ impl Checker<'_, '_> {
     /// the exported value.
     fn has_export_by_name(&mut self, module: Sym, name: Atom) -> bool {
         let files = self.files();
-        let value = files.module_value(module);
-        if value == module {
-            return files.export(module, name).is_some();
+        match files.export(module, known::export_equals) {
+            Some(_) => self.resolve_export_by_name(module, name).is_some(),
+            None => files.export(module, name).is_some(),
         }
-        let ty = self.type_of_symbol(value);
-        self.type_of_own_property(ty, name).is_some()
     }
 
     /// `errorNoModuleMemberSymbol`, `reportNonExportedMember`,
@@ -816,7 +815,7 @@ impl Checker<'_, '_> {
 
     /// `getMergedSymbol(resolveSymbol(getMergedSymbol(symbol)))`, which `getSymbolIfSameReference`
     /// compares.
-    fn merged_resolved_symbol(&mut self, symbol: Sym) -> AliasTarget {
+    pub(super) fn merged_resolved_symbol(&mut self, symbol: Sym) -> AliasTarget {
         let files = self.files();
         match self.resolve_symbol(files.canonical(symbol)) {
             AliasTarget::Symbol(target) => AliasTarget::Symbol(files.canonical(target)),
@@ -881,18 +880,8 @@ impl Checker<'_, '_> {
         decl: VarDeclId,
     ) -> Option<(ExprId, Atom)> {
         let hir = self.hir(file);
-        let VarDecl {
-            ty, init, flags, ..
-        } = hir[decl];
-        if !hir.is_js
-            || init.is_none()
-            || ty.is_some()
-            || flags.contains(Flags::EXPORT)
-            || is_parenthesized(hir, init)
-        {
-            return None;
-        }
-        crate::bind::require_call_argument(hir, init)
+        self.bound(file).required_by(hir, hir[decl].pat)?;
+        crate::bind::require_call_argument(hir, hir[decl].init)
     }
 
     // ───────────────────────────── uninitialized variables ─────────────────────────────
@@ -999,7 +988,7 @@ impl Checker<'_, '_> {
             && !self.declares_loop_variable(file, stmt)
             && decl.init.is_none()
             && self.is_mutable_local_variable_declaration(file, d)
-            && !bound.is_symbol_assigned_definitely(hir, symbol))
+            && !self.is_symbol_assigned_definitely(file, symbol))
     }
 
     /// `isMutableLocalVariableDeclaration`
@@ -1217,35 +1206,17 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── unresolved names ─────────────────────────────
 
-    /// `resolveEntityName` for the name of a primitive type after `implements`: an ordinary name in
-    /// that position, which is stored as the keyword.
-    fn check_keywords_implemented(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for node in hir.classes.iter().flat_map(|c| hir.ids(c.implements)) {
-            let TypeNodeKind::Keyword(keyword) = hir[node].kind else {
-                continue;
-            };
-            if matches!(
-                keyword,
-                Keyword::Void | Keyword::Null | Keyword::This | Keyword::Intrinsic
-            ) {
-                continue;
-            }
-            let (location, scope) = (hir.node(node), bound.type_scope[node.idx()]);
-            let (start, end) = self.get_error_range_for_node(file, location);
-            if let Some(written) = hir.text.get(start as usize..end as usize) {
-                let name = self.atoms().intern(written);
-                self.on_failed_to_resolve_symbol(
-                    file,
-                    location,
-                    None,
-                    scope,
-                    name,
-                    SymFlags::TYPE,
-                    2304,
-                );
+    /// `getResolvedSymbol`, where `resolveName` finds nothing for the identifier `e`. The error is
+    /// created on the first call, so `addDiagnostic` discards it or not by the state of that call.
+    /// In another file that depends on the order of the files: `check_file` of that file decides.
+    pub(super) fn note_unresolved_identifier(&mut self, file: FileId, e: ExprId, name: Atom) {
+        if self.task.file == Some(file) {
+            let is_discarded = self.serialization_level >= MAX_SERIALIZATION_LEVEL;
+            if *self.unknown_symbols.entry(e).or_insert(is_discarded) {
+                return;
             }
         }
+        self.unresolved_identifiers.push((file, e, name));
     }
 
     /// `addLazyDiagnostic`, which `onFailedToResolveSymbol` is wrapped in in checker.ts. Choosing the message queries the members of
@@ -1295,31 +1266,26 @@ impl Checker<'_, '_> {
         if hir.has_diagnostic(hir[e].pos, 1308) {
             return;
         }
+        let other = SymFlags::TYPE | SymFlags::NAMESPACE;
         let is_resolved_by_check = !bound.is_unchecked(e.idx())
             && match bound.expr_parent[e.idx()] {
                 // `checkExportAssignment`: `export = A` and `export default A` resolve `A` with any
-                // meaning. In a namespace they are invalid, and `A` is not checked.
+                // meaning, `(A)` is checked as an expression. In a namespace they are invalid, and
+                // neither is checked.
                 Parent::Stmt(s)
                     if matches!(
                         hir[s].kind,
                         StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
                     ) && (matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if matches!(hir[m].name, ModuleName::Ident(_)))
-                        || self
-                            .files()
-                            .resolve_name(file, scope, name, SymFlags::TYPE | SymFlags::NAMESPACE)
-                            .is_some()) =>
+                        || !is_parenthesized(hir, e)
+                            && self
+                                .files()
+                                .resolve_name(file, scope, name, other)
+                                .is_some()) =>
                 {
                     false
                 }
-                // `checkShorthandPropertyAssignment`: outside a destructuring pattern only the initializer of `{ a = 1 }` is checked.
-                Parent::Expr(assign)
-                    if matches!(hir[assign].kind, ExprKind::Assign { op: None, target, .. } if target == e)
-                        && matches!(bound.expr_parent[assign.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand
-                        && !self.is_definite_assignment_target(file, bound.prop_owner[p.idx()])) =>
-                {
-                    false
-                }
-                _ => true,
+                _ => !self.is_name_with_object_assignment_initializer(file, e),
             };
         if is_resolved_by_check != is_checked {
             return;
@@ -1343,6 +1309,42 @@ impl Checker<'_, '_> {
                 self.on_failed_to_resolve_symbol(
                     file, location, None, scope, name, meaning, message,
                 );
+            }
+        }
+    }
+
+    /// `getResolvedSymbol` for the identifiers named `arguments` that are not expressions. Only
+    /// `containsArgumentsReference` resolves them.
+    fn resolve_names_for_arguments(&mut self, file: FileId) {
+        let name = known::arguments;
+        for &(location, scope, local) in self.bound(file).names_resolved_for_arguments.iter() {
+            if local.is_some() {
+                // `onSuccessfullyResolvedSymbol`
+                let result = self.files().sym(file, local);
+                self.check_resolved_block_scoped_variable(file, result, location);
+                continue;
+            }
+            match self
+                .files()
+                .resolve(file, scope, name, SymFlags::VALUE, true)
+            {
+                Err(error) => self.check_and_report_error_for_invalid_initializer(
+                    file,
+                    location,
+                    scope,
+                    name,
+                    SymFlags::VALUE,
+                    error,
+                ),
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    let message =
+                        self.get_cannot_find_name_diagnostic_for_name(file, location, name);
+                    let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+                    self.on_failed_to_resolve_symbol(
+                        file, location, None, scope, name, meaning, message,
+                    );
+                }
             }
         }
     }
@@ -1411,12 +1413,9 @@ impl Checker<'_, '_> {
             let is_unresolved = match self.resolve_identifier(file, e, name, true) {
                 Err(_) => true,
                 Ok(None) => !(name == known::arguments && bound.is_arguments_object(e)),
-                Ok(Some(sym)) => {
-                    let own = files.flags(sym);
-                    own.contains(SymFlags::ALIAS)
-                        && !own.intersects(SymFlags::VALUE)
-                        && !files.means(sym, SymFlags::VALUE)
-                }
+                Ok(Some(sym)) => self
+                    .value_symbol_of_identifier(file, e, name, sym)
+                    .is_none(),
             };
             if is_unresolved && hir.find_ancestor(parent, is_import).is_none() {
                 self.report_unresolved_identifier_if(file, e, name, is_checked);
@@ -1575,11 +1574,9 @@ impl Checker<'_, '_> {
         name: Atom,
     ) -> bool {
         let hir = self.hir(file);
-        // `isTypeReferenceIdentifier`: for a name that is not an expression, no enclosing class is
-        // considered.
-        if !matches!(hir.data(location), NodeData::Expr(_))
-            || hir.kind(location) != Kind::Identifier
+        if hir.kind(location) != Kind::Identifier
             || hir.text(location) != name
+            || Self::is_type_reference_identifier(hir, location)
             || hir.is_in_type_query(location)
         {
             return false;
@@ -1605,6 +1602,14 @@ impl Checker<'_, '_> {
             at = hir.parent(at);
         }
         false
+    }
+
+    /// `isTypeReferenceIdentifier`
+    fn is_type_reference_identifier(hir: &hir::File, mut node: Node) -> bool {
+        while hir.kind(hir.parent(node)) == Kind::QualifiedName {
+            node = hir.parent(node);
+        }
+        hir.kind(hir.parent(node)) == Kind::TypeReference
     }
 
     /// `getCannotFindNameDiagnosticForName`
@@ -1698,11 +1703,8 @@ impl Checker<'_, '_> {
         // `checkAndReportErrorForUsingTypeAsValue`
         if meaning.intersects(SymFlags::VALUE) {
             if is_primitive {
-                // `errorLocation.Parent.Parent`. A keyword after `implements` has no parent.
-                let clause = match hir.data(location) {
-                    NodeData::Type(_) => hir.parent(location),
-                    _ => hir.parent(hir.parent(location)),
-                };
+                // `errorLocation.Parent.Parent`
+                let clause = hir.parent(hir.parent(location));
                 let code = if hir.kind(clause) != Kind::HeritageClause {
                     2693
                 } else {
@@ -1757,18 +1759,39 @@ impl Checker<'_, '_> {
                     && hir.text(location) == name
             });
         let declaration_name = written.map_or(reported, Arg::Bytes);
+        let diagnostic = self.name_not_found_diagnostic(
+            Some((file, scope)),
+            at,
+            declaration_name,
+            name,
+            meaning,
+            name_not_found_message,
+        );
+        self.add_diagnostic(diagnostic);
+    }
+
+    /// The end of `onFailedToResolveSymbol`, which is all of it without an `errorLocation`: the
+    /// missing library, a spelling suggestion, or `name_not_found_message`. `location`: the file
+    /// and the scope of `errorLocation`. `at`: its error range.
+    pub(super) fn name_not_found_diagnostic(
+        &mut self,
+        location: Option<(FileId, ScopeId)>,
+        at: super::related::Place,
+        declaration_name: Arg<'_>,
+        name: Atom,
+        meaning: SymFlags,
+        name_not_found_message: u32,
+    ) -> Reported {
         // `getSuggestedLibForNonExistentName`
-        if let Some(&lib) = SUGGESTED_LIBS.get(text) {
+        if let Some(&lib) = SUGGESTED_LIBS.get(self.atoms().bytes(name)) {
             let args = [declaration_name, Arg::Bytes(lib)];
-            self.error_at(at, name_not_found_message, &args);
-            return;
+            return self.new_diagnostic(at, name_not_found_message, &args);
         }
         // `getSuggestedSymbolForNonexistentSymbol`
         let Some((suggestion, leads_to_export)) =
-            similar_in_scope_and_where(self, file, scope, name, meaning)
+            similar_in_scope_and_where(self, location, name, meaning)
         else {
-            self.error_at(at, name_not_found_message, &[declaration_name]);
-            return;
+            return self.new_diagnostic(at, name_not_found_message, &[declaration_name]);
         };
         let (suggestion, declared) = match suggestion {
             // `suggestion.ValueDeclaration`, which a symbol that only refers to an export symbol
@@ -1786,66 +1809,70 @@ impl Checker<'_, '_> {
         if let Some(declared) = declared {
             diagnostic.add_related_info(self.new_diagnostic(declared, 2728, &[suggestion]));
         }
-        self.add_diagnostic(diagnostic);
+        diagnostic
     }
 
-    /// `checkAndReportErrorForExtendingInterface`: `e` is the entity name that a class extends or
-    /// that has type arguments (an `ExpressionWithTypeArguments` either way), or a left part of it,
-    /// and the whole name resolves to an interface.
-    pub(super) fn is_extending_interface(&self, file: FileId, e: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // `getEntityNameForExtendingInterface`
-        let mut top = e;
-        let class = loop {
-            match bound.expr_parent[top.idx()] {
-                Parent::Expr(p) if p.is_some() => match hir[p].kind {
-                    ExprKind::Dot { .. } => top = p,
-                    ExprKind::Instantiation { .. } => break None,
-                    _ => return false,
-                },
-                Parent::ClassExtends(c) => break Some(c),
-                _ => return false,
-            }
+    /// `checkAndReportErrorForExtendingInterface`
+    pub(super) fn check_and_report_error_for_extending_interface(
+        &mut self,
+        file: FileId,
+        error_location: ExprId,
+    ) -> bool {
+        let hir = self.hir(file);
+        let Some(expression) = self.get_entity_name_for_extending_interface(file, error_location)
+        else {
+            return false;
         };
-        let mut names = [Atom::NONE; 8];
-        let (mut n, mut at) = (0, top);
+        // `resolveEntityName(expression, SymbolFlagsInterface, ignoreErrors)`
+        let (mut names, mut first) = (Vec::new(), expression);
+        while let ExprKind::Dot { obj, name, .. } = hir[first].kind {
+            names.push(name);
+            first = obj;
+        }
+        // `NodeIsMissing`
+        let ExprKind::Ident(name) = hir[first].kind else {
+            return false;
+        };
+        names.push(name);
+        names.reverse();
+        let scope = self.enclosing_scope_of_expr(file, first);
+        let interface = SymFlags::INTERFACE;
+        let found = self.files().resolve_entity(file, scope, &names, interface);
+        if found.is_none_or(|found| !self.resolved_flags(found).contains(interface)) {
+            return false;
+        }
+        let range_of = |e: ExprId| (self.start_of(file, e), self.end_of_expr(file, e));
+        let ((from, to), (start, end)) = (range_of(expression), range_of(error_location));
+        let text = self.source_text(file, from, to);
+        self.error_at((file, start, end), 2689, &[Arg::Bytes(&text)]);
+        true
+    }
+
+    /// `getEntityNameForExtendingInterface`. An `ExpressionWithTypeArguments` is what a class
+    /// extends, or an instantiation expression.
+    fn get_entity_name_for_extending_interface(
+        &self,
+        file: FileId,
+        mut node: ExprId,
+    ) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
-            // `IsEntityNameExpression`: neither `(M.I)` nor `(M).I` is one.
-            if n == names.len() || is_parenthesized(self.hir(file), at) {
-                return false;
+            if !matches!(hir[node].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
+                || is_parenthesized(hir, node)
+            {
+                return None;
             }
-            match hir[at].kind {
-                ExprKind::Dot { obj, name, .. } => {
-                    names[n] = name;
-                    n += 1;
-                    at = obj;
-                }
-                ExprKind::Ident(name) => {
-                    names[n] = name;
-                    n += 1;
-                    break;
-                }
-                _ => return false,
+            match bound.expr_parent[node.idx()] {
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Dot { .. } => node = parent,
+                    ExprKind::Instantiation { .. } => break,
+                    _ => return None,
+                },
+                Parent::ClassExtends(_) => break,
+                _ => return None,
             }
         }
-        names[..n].reverse();
-        // The scope of the first name. Except for the expression a class extends, it is only stored
-        // for names that are not values.
-        let scope = match class {
-            Some(c) => bound.class_scope[c.idx()],
-            None => match bound
-                .free_idents
-                .iter()
-                .chain(&bound.alias_idents)
-                .find(|ident| ident.0 == at)
-            {
-                Some(ident) => ident.1,
-                None => return false,
-            },
-        };
-        self.files()
-            .resolve_entity(file, scope, &names[..n], SymFlags::INTERFACE)
-            .is_some_and(|s| self.resolved_flags(s).contains(SymFlags::INTERFACE))
+        is_entity_name_expression(hir, node).then_some(node)
     }
 
     /// `getSymbolFlags`. Empty for an alias that does not resolve.
@@ -2047,28 +2074,63 @@ fn get_spelling_suggestion_for_name<'a>(
 /// exports it. `declareModuleMember`: the local there is a symbol that only refers to the export
 /// symbol.
 fn similar_in_scope_and_where(
-    c: &Checker<'_, '_>,
-    file: FileId,
-    scope: ScopeId,
+    c: &mut Checker<'_, '_>,
+    location: Option<(FileId, ScopeId)>,
     name: Atom,
     meaning: SymFlags,
 ) -> Option<(SpellingSuggestion, bool)> {
     let files = c.files();
-    let try_resolve_alias = &mut |sym| {
-        let target = files.resolve_alias(sym);
-        Some(target.map_or(SymFlags::all(), |target| files.flags(target)))
-    };
     let name = (name, c.atoms().bytes(name));
+    let among_globals = std::mem::take(&mut c.suggestions_among_globals);
     let suggested = files.suggested_symbol_for_nonexistent_symbol(
-        file,
-        scope,
+        location,
         name,
         meaning,
-        try_resolve_alias,
-        Some(&c.suggestions_among_globals),
+        c,
+        Some(&among_globals),
     );
+    c.suggestions_among_globals = among_globals;
     // `Resolve` returns nil where the name may not be used.
     suggested.ok().flatten()
+}
+
+/// What `getSuggestionForSymbolNameLookup` asks about the symbols of a table.
+pub(crate) trait SuggestionLookup {
+    /// `getSymbol`, given the entry of the table.
+    fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym>;
+
+    /// `tryResolveAlias(candidate).Flags`. `None`: nil.
+    fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags>;
+}
+
+impl SuggestionLookup for Checker<'_, '_> {
+    fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
+        Checker::get_symbol(self, held, meaning)
+    }
+
+    fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags> {
+        let files = self.files();
+        // As for `get_symbol_flags`: the symbol tables have the target, unless types are needed.
+        if let Some(target) = files.resolve_alias(candidate)
+            && files.combined_symbol(candidate).is_none()
+        {
+            return Some(files.flags(target));
+        }
+        Some(match self.resolve_alias(candidate) {
+            AliasTarget::Symbol(target) => files.flags(target),
+            AliasTarget::Property(..) => match self.property_of_alias(candidate) {
+                Some(&Prop {
+                    source: PropSource::Symbol(member),
+                    ..
+                }) => files.flags(member),
+                _ => SymFlags::PROPERTY,
+            },
+            AliasTarget::Unknown => {
+                self.check_target_of_alias_symbol(candidate);
+                files.flags(files.unknown_symbol)
+            }
+        })
+    }
 }
 
 /// By `meaning` and by the text of the name: what `getSuggestionForSymbolNameLookup` finds in
@@ -2080,42 +2142,30 @@ pub(crate) type SuggestionsAmongGlobals =
 impl Files<'_> {
     /// `getSuggestedSymbolForNonexistentSymbol`, and whether the result is among the locals of a
     /// block that exports it.
-    /// `try_resolve_alias`: the flags of `tryResolveAlias(candidate)`, all flags for
-    /// `unknownSymbol`. `None`: nil.
+    /// `location`: the file and the scope of the node. `None`: nil, so only `globals` is searched.
     /// `text`: the text of `name`, which may be a task-local atom.
     /// `among_globals`: only with a `try_resolve_alias` that is a function of its argument.
     /// `Err`: see `resolve_with`.
     pub(crate) fn suggested_symbol_for_nonexistent_symbol(
         &self,
-        file: FileId,
-        scope: ScopeId,
+        location: Option<(FileId, ScopeId)>,
         (name, text): (Atom, &[u8]),
         meaning: SymFlags,
-        try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
+        symbols: &mut dyn SuggestionLookup,
         among_globals: Option<&SuggestionsAmongGlobals>,
     ) -> Result<Option<(SpellingSuggestion, bool)>, (u32, MemberId)> {
-        let (files, hir, bound) = (self, self.hir(file), self.bound(file));
+        let files = self;
         let (mut word, mut is_among_locals) = (None, false);
-        // tsgo does not put the name of a function or class expression in any symbol table:
-        // `Resolve` compares it directly.
-        let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound.symbols[id.idx()]
-            .decls
-            .first()
-        {
-            Some(&Decl::Fn(f)) => hir[f].kind != FnKind::Expr,
-            Some(&Decl::Class(c)) => !matches!(bound.class_owner[c.idx()], ClassOwner::Expr(_)),
-            _ => true,
-        };
         // `getSuggestionForSymbolNameLookup`
         let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             is_among_locals = matches!(table, SymbolTable::Locals(..));
-            if let Some(found) = held.filter(|&sym| files.means(sym, meaning)) {
+            if let Some(found) = symbols.get_symbol(held, meaning) {
                 return Some(found);
             }
             // `GetSpellingSuggestion` first gets the name of each candidate, then computes its edit
             // distance.
             let fits = |&(candidate, sym): &(Atom, Sym)| {
-                files.is_spelling_candidate(sym, meaning, &mut *try_resolve_alias)
+                files.is_spelling_candidate(sym, meaning, &mut *symbols)
                     && is_close(text, files.atoms.bytes(candidate))
             };
             let named = |(candidate, sym): (Atom, Sym)| {
@@ -2126,6 +2176,20 @@ impl Files<'_> {
             };
             let suggestion = match table {
                 SymbolTable::Locals(file, scope) => {
+                    let (hir, bound) = (files.hir(file), files.bound(file));
+                    // tsgo does not put the name of a function or class expression in any symbol
+                    // table: `Resolve` compares it directly.
+                    let is_in_table = |&&(_, id): &&(Atom, crate::bind::SymbolId)| match bound
+                        .symbols[id.idx()]
+                    .decls
+                    .first()
+                    {
+                        Some(&Decl::Fn(f)) => hir[f].kind != FnKind::Expr,
+                        Some(&Decl::Class(c)) => {
+                            !matches!(bound.class_owner[c.idx()], ClassOwner::Expr(_))
+                        }
+                        _ => true,
+                    };
                     let s = &bound.scopes[scope.idx()];
                     // `IsGlobalSourceFile`: the declarations of a script are globals.
                     if s.kind == ScopeKind::File && s.symbol.is_none() {
@@ -2195,7 +2259,14 @@ impl Files<'_> {
                 }
             }
         };
-        let found = files.resolve_with(file, scope, name, meaning, false, lookup);
+        let found = match location {
+            Some((file, scope)) => files.resolve_with(file, scope, name, meaning, false, lookup),
+            None => Ok(lookup(
+                SymbolTable::Globals,
+                files.globals.get(name).copied(),
+                meaning,
+            )),
+        };
         if let Some(word) = word {
             return Ok(Some((SpellingSuggestion::Word(word), false)));
         }
@@ -2209,37 +2280,19 @@ impl Files<'_> {
         Ok(Some((SpellingSuggestion::Symbol(sym), leads_to_export)))
     }
 
-    /// `getCandidateName` of `getSpellingSuggestionForName`. `unknownSymbol` is created with
-    /// `SymbolFlagsProperty`: a value meaning only.
+    /// `getCandidateName` of `getSpellingSuggestionForName`
     fn is_spelling_candidate(
         &self,
         sym: Sym,
         meaning: SymFlags,
-        try_resolve_alias: &mut dyn FnMut(Sym) -> Option<SymFlags>,
+        symbols: &mut dyn SuggestionLookup,
     ) -> bool {
         let flags = self.flags(sym);
-        if flags.intersects(meaning) {
-            return true;
-        }
-        if !flags.contains(SymFlags::ALIAS) {
-            return false;
-        }
-        match try_resolve_alias(sym) {
-            Some(target) if target == SymFlags::all() => meaning.contains(SymFlags::VALUE),
-            Some(target) => target.intersects(meaning),
-            None => false,
-        }
-    }
-}
-
-/// `getFullyQualifiedName` of `module`, relative to an import of it in `from`.
-fn module_name_as_imported(c: &mut Checker<'_, '_>, module: Sym, from: FileId) -> Vec<u8> {
-    let decls = c.files().decls_of(module);
-    if decls.iter().any(|d| matches!(d.1, Decl::File)) {
-        let specifier = c.specifier_for_module_symbol(module, from, ResolutionMode::None);
-        super::print::quoted(&specifier, b'"', true)
-    } else {
-        c.symbol_to_string(module)
+        flags.intersects(meaning)
+            || flags.contains(SymFlags::ALIAS)
+                && symbols
+                    .try_resolve_alias(sym)
+                    .is_some_and(|target| target.intersects(meaning))
     }
 }
 
@@ -2390,11 +2443,13 @@ impl Checker<'_, '_> {
             // `#x in v`: the left operand is a name, resolved in the enclosing classes, not a
             // value. A name that none of them declares is reported as missing on the type of the
             // right operand as it is.
-            ExprKind::String(name) if is_private_name_at(hir, hir[left].pos) => {
+            ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
                 if !self.bound(file).private_class.contains_key(&left)
                     && !self.enclosing_classes(file, left).is_empty()
                 {
-                    let (start, is_unchecked_js) = (hir[left].pos, self.is_plain_js(file));
+                    let start = hir[left].pos;
+                    let is_unchecked_js =
+                        self.is_unchecked_js_suggestion(file, left, right_type, true);
                     self.report_nonexistent_property(
                         file,
                         left,
@@ -2440,7 +2495,7 @@ impl Checker<'_, '_> {
     }
 
     /// `errorAndMaybeSuggestAwait`
-    fn error_and_maybe_suggest_await(
+    pub(super) fn error_and_maybe_suggest_await(
         &mut self,
         at: (FileId, u32, u32),
         maybe_missing_await: bool,
@@ -2982,151 +3037,75 @@ impl Files<'_> {
 
 // ───────────────────────────── assignment targets ─────────────────────────────
 
-impl<'p, 's> Checker<'p, 's> {
-    /// The kind of assignment to `e`, if any: `=`, a compound assignment operator, or `++` and
-    /// `--`.
-    fn write_kind(&self, file: FileId, e: ExprId) -> Option<Write> {
-        Some(
-            match self.bound(file).get_assignment_target(self.hir(file), e)? {
-                AssignmentTarget::Assign(Some(_)) => Write::Compound,
-                AssignmentTarget::Unary => Write::Step,
-                AssignmentTarget::Assign(None) | AssignmentTarget::ForInOrOf => Write::Assign,
-            },
-        )
-    }
-
-    /// Members accessed through `import * as` are read-only: whether `obj` is the name such an
-    /// import declares.
-    fn is_namespace_import_name(&self, file: FileId, obj: ExprId) -> bool {
-        matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
-        if self.symbol_of_identifier(file, obj, n).is_some_and(|s| {
-            self.files().flags(s).contains(SymFlags::ALIAS) && self.files().symbol(s).decls.iter().any(|d| matches!(d, Decl::ImportNamespace(_)))
-        }))
-    }
-
-    /// `isAssignmentToReadonlyEntity`: returns the property `name` if the access `e` (`obj.name` or `obj[name]`) is an assignment target
-    /// and the property is read-only. `ty` is the receiver type on which the access resolved the property.
-    pub(super) fn readonly_entity_assigned_to(
+impl Checker<'_, '_> {
+    /// `isAssignmentToReadonlyEntity(expr, symbol, getAssignmentTargetKind(expr))`. `expr`: the
+    /// access `obj.name` or `obj[name]`.
+    pub(super) fn is_assignment_to_readonly_entity(
         &mut self,
         file: FileId,
-        e: ExprId,
+        expr: ExprId,
         obj: ExprId,
-        ty: TypeId,
-        name: Atom,
-    ) -> Option<&'p Prop<'p>> {
-        self.write_kind(file, e)?;
-        if self.is_any(ty) {
-            return None;
-        }
-        // `getIndexedAccessTypeOrUndefined`: in `a[k]` no property is looked for where `a` has only a string index signature.
-        if matches!(self.hir(file)[e].kind, ExprKind::Index { .. })
-            && !self.atoms().is_symbol_name(name)
-        {
-            let reduced = self.reduced(ty);
-            if self.is_string_index_signature_only(reduced) {
-                return None;
-            }
-        }
-        // `getReducedApparentType`
-        let apparent = self.reduced_apparent_type(ty);
-        // `getPropertyOfType`: the properties common to all functions and all objects are included.
-        let (prop, _) = self.get_property_of_type(apparent, name)?;
-        if self.is_union(apparent) {
-            return prop.flags.contains(PropFlags::READONLY).then_some(prop);
-        }
-        // `isAssignmentToReadonlyEntity`: an export that a CommonJS module creates by assignment
-        // can be reassigned, whatever it aliases.
-        if let PropSource::Symbol(sym) = prop.source
-            && self
-                .files()
-                .symbol(sym)
-                .decls
-                .iter()
-                .any(|d| matches!(d, Decl::ExportsProperty(_) | Decl::ModuleExports(_)))
-        {
-            // `isReadonlySymbol`: excludes a property that `Object.defineProperty(exports, name,
-            // descriptor)` makes read-only, unless it is assigned through `exports` or `module`
-            // itself.
-            let is_through_module = matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
-            if self.symbol_of_identifier(file, obj, n).is_some_and(|s| {
-                self.files().flags(s).contains(SymFlags::MODULE_EXPORTS)
-            }));
-            if is_through_module {
-                return None;
-            }
-            let mut is_refused = false;
-            for (declared_in, decl) in self.files().decls(sym) {
-                if let Decl::ExportsProperty(declaration) = decl
-                    && self.is_readonly_assignment_declaration(declared_in, declaration)
-                {
-                    is_refused = true;
-                    break;
-                }
-            }
-            return (is_refused || self.is_namespace_import_name(file, obj)).then_some(prop);
-        }
-        let is_refused = if prop.flags.contains(PropFlags::READONLY) {
-            !self.is_assigned_in_own_constructor(file, e, obj, prop)
-        } else if self.has_readonly_assignment_declaration(prop) {
-            true
-        } else {
-            self.is_namespace_import_name(file, obj)
-        };
-        is_refused.then_some(prop)
-    }
-    /// `this.p = v` in a constructor of the class that declares `p` initializes a `readonly`
-    /// property.
-    fn is_assigned_in_own_constructor(
-        &self,
-        file: FileId,
-        e: ExprId,
-        obj: ExprId,
-        prop: &Prop,
+        symbol: &Prop,
     ) -> bool {
-        let hir = self.hir(file);
-        let bound = self.bound(file);
-        // `isAssignmentToReadonlyEntity`: only for a property declaration. An accessor without a
-        // setter can never be assigned.
-        if prop.flags.contains(PropFlags::ACCESSOR) || !matches!(hir[obj].kind, ExprKind::This) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        if !self.is_assignment_target(file, expr) {
             return false;
         }
-        let Container::Fn(f) = self.get_control_flow_container(file, bound.expr_parent[e.idx()])
-        else {
-            return false;
+        // `getResolvedSymbol(SkipParentheses(expr.Expression()))`
+        let expression_symbol = match hir[obj].kind {
+            ExprKind::Ident(name) => self.symbol_of_identifier(file, obj, name),
+            _ => None,
         };
-        if hir[f].kind != FnKind::Constructor {
+        // "CommonJS module.exports is never readonly"
+        if expression_symbol.is_some_and(|it| files.flags(it).contains(SymFlags::MODULE_EXPORTS)) {
             return false;
         }
-        let FnOwner::Member(constructor) = bound.fns[f.idx()].owner else {
-            return false;
-        };
-        match Self::value_declaration(prop) {
-            Some(&PropSource::Symbol(sym)) => {
-                let declarations = self.files().decls_of(sym);
-                declarations.iter().any(|&(other, decl)| {
-                    other == file
-                        && match decl {
-                            Decl::Member(m) => {
-                                bound.member_owner[m.idx()] == bound.member_owner[constructor.idx()]
-                            }
-                            Decl::ParameterProperty(p) => bound.param_fn[p.idx()] == f,
-                            // `isLocalThisPropertyAssignment`
-                            Decl::ThisProperty(_) => {
-                                matches!(bound.member_owner[constructor.idx()], MemberOwner::Class(class)
-                                    if self.files().parent_of_symbol(sym) == Some(self.class_sym(file, class)))
-                            }
-                            _ => false,
-                        }
-                })
+        if self.is_readonly_symbol(symbol) {
+            // "Allow assignments to readonly properties within constructors of the same class declaration."
+            if let Some(&PropSource::Symbol(property)) = Self::value_declaration(symbol)
+                && self
+                    .flags_of_property(property)
+                    .contains(SymFlags::PROPERTY)
+                && matches!(hir[obj].kind, ExprKind::This)
+                && !is_parenthesized(hir, obj)
+                && let Container::Fn(ctor) =
+                    self.get_control_flow_container(file, bound.expr_parent[expr.idx()])
+                && hir[ctor].kind == FnKind::Constructor
+                && let FnOwner::Member(constructor) = bound.fns[ctor.idx()].owner
+                && let Some((declared_in, value_declaration)) = files.value_declaration(property)
+            {
+                let class = bound.member_owner[constructor.idx()];
+                let is_writeable_symbol = match value_declaration {
+                    // `isLocalPropertyDeclaration`
+                    Decl::Member(member) => {
+                        declared_in == file && bound.member_owner[member.idx()] == class
+                    }
+                    // `isLocalParameterProperty`
+                    Decl::ParameterProperty(parameter) => {
+                        declared_in == file && bound.param_fn[parameter.idx()] == ctor
+                    }
+                    // `isLocalThisPropertyAssignment`. No symbol has a constructor as the
+                    // declaration of its parent (`getThisClassAndSymbolTable`), which
+                    // `isLocalThisPropertyAssignmentConstructorFunction` asks for.
+                    Decl::ThisProperty(_) => {
+                        let parent = files.symbol_parent(property);
+                        let parent = parent.and_then(|parent| files.value_declaration(parent));
+                        matches!(class, MemberOwner::Class(class)
+                            if parent == Some((file, Decl::Class(class))))
+                    }
+                    _ => false,
+                };
+                return !is_writeable_symbol;
             }
-            _ => false,
+            return true;
         }
+        // "references through namespace import should be readonly"
+        expression_symbol.is_some_and(|it| {
+            files.flags(it).contains(SymFlags::ALIAS)
+                && matches!(
+                    files.declaration_of_alias_symbol(it),
+                    Some((_, Decl::ImportNamespace(_)))
+                )
+        })
     }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Write {
-    Assign,
-    Compound,
-    Step,
 }

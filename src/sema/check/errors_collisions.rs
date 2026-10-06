@@ -59,12 +59,6 @@ impl Checker<'_, '_> {
             NodeData::Pat(_) => (hir.parent(declaration), declaration),
             _ => (declaration, hir.name(declaration)),
         };
-        // `checkVariableLikeDeclaration`: `const a = require("m")` is an alias and is not checked
-        // further.
-        if matches!(hir.data(node), NodeData::VarDecl(d) if self.external_module_require_argument(file, d).is_some())
-        {
-            return;
-        }
         self.check_collision_with_require_exports_in_generated_code(file, node, name);
         self.check_collision_with_global_object_in_generated_code(file, node, name);
         self.check_collision_with_global_promise_in_generated_code(file, node, name);

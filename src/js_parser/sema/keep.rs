@@ -143,11 +143,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     negative: false,
                 }
             }
-            T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => match self.string_token_text()
-            {
+            T::TStringLiteral => match self.string_token_text() {
                 Some(text) => TypeNodeKind::StringLit(self.type_syntax_mut().b.atom(&text)),
                 None => return self.clear_last_type(),
             },
+            // `parseLiteralTypeNode` does not rescan the token.
+            T::TNoSubstitutionTemplateLiteral => {
+                let raw = self.lexer.string_literal_raw_content;
+                let text = self.lexer.cooked_template_contents(raw);
+                TypeNodeKind::StringLit(self.type_syntax_mut().b.atom(&text))
+            }
             T::TTrue => TypeNodeKind::BoolLit(true),
             T::TFalse => TypeNodeKind::BoolLit(false),
             T::TNull => TypeNodeKind::Keyword(Keyword::Null),
@@ -174,7 +179,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// The text of the current identifier or keyword.
     pub(crate) fn token_text(&self) -> StoreStr {
         StoreStr::new(
-            if matches!(self.lexer.token, T::TIdentifier | T::TPrivateIdentifier) {
+            if matches!(
+                self.lexer.token,
+                T::TIdentifier | T::TPrivateIdentifier | T::TEscapedKeyword
+            ) {
                 self.lexer.identifier
             } else {
                 self.lexer.raw()
@@ -298,16 +306,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// Whether a `.` can continue the last parsed type: it is a name without type arguments
-    /// (`parseEntityName`), or `import(..)`.
+    /// (`parseEntityName`).
     pub(crate) fn last_type_takes_qualifier(&mut self) -> bool {
         let reference = self.last_type();
         if reference.is_none() {
             return true;
         }
         match self.type_syntax_mut().b.file[reference].kind {
-            // `import(T)` keeps `T` there.
-            TypeNodeKind::Import { spec, .. } if spec.is_none() => true,
-            TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. } => args.is_empty(),
+            TypeNodeKind::Ref { args, .. } => args.is_empty(),
             TypeNodeKind::Keyword(Keyword::Void | Keyword::Null | Keyword::This) => false,
             TypeNodeKind::Keyword(_) => true,
             _ => false,
@@ -370,6 +376,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Some((self.string_token_text()?, self.token_start()))
     }
 
+    /// `IsLiteralImportTypeNode`: whether the last parsed type, the argument of `import(..)`, is
+    /// nothing but the string literal `specifier`. Then its node is removed.
+    pub(crate) fn take_back_import_type_specifier(
+        &mut self,
+        specifier: Option<(StoreStr, u32)>,
+    ) -> bool {
+        let argument = self.last_type();
+        let Some((_, specifier_pos)) = specifier.filter(|_| argument.is_some()) else {
+            return false;
+        };
+        let TypeNode { kind, pos, .. } = self.type_syntax_mut().b.file[argument];
+        let is_literal = matches!(kind, TypeNodeKind::StringLit(_)) && pos == specifier_pos;
+        if is_literal {
+            self.take_back_single_token_type();
+        }
+        is_literal
+    }
+
     /// Called after `{ with: { "resolution-mode": "import" } }`, which the skipper parsed as an
     /// object type. Reads the resolution mode from those nodes (`GetResolutionModeOverride`), and
     /// the position of `assert` if it is used instead of `with`. `None` if the attributes are not
@@ -381,10 +405,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// Emits `import("specifier")`. A qualified name and type arguments are added later, as for a
     /// type reference.
     /// `argument` is the type in place of a string literal, and `NONE` if `specifier` is given.
+    /// `argument_range`: its start and end as written.
     pub(crate) fn emit_import_type(
         &mut self,
         specifier: Option<(StoreStr, u32)>,
-        argument: TypeId,
+        (argument, argument_range): (TypeId, (u32, u32)),
         attributes: Option<ImportTypeAttributes>,
         is_typeof: bool,
         pos: u32,
@@ -399,11 +424,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         };
         let import = self.type_syntax_mut().b.add_import_type(
             (&specifier, specifier_pos),
-            argument,
+            (argument, argument_range),
             attributes,
             is_typeof,
         );
         self.emit_type(import, pos);
+    }
+
+    /// Emits `unique T`, where `T` is the last parsed type. Its first token is at `operand_pos`,
+    /// which is a parenthesis if `T` starts after it.
+    pub(crate) fn emit_unique_type(&mut self, operand_pos: u32, pos: u32) {
+        let operand = self.last_type();
+        if operand.is_none() {
+            return;
+        }
+        let TypeNode {
+            kind, pos: start, ..
+        } = self.type_syntax_mut().b.file[operand];
+        if matches!(kind, TypeNodeKind::Keyword(Keyword::Symbol)) && start == operand_pos {
+            self.take_back_single_token_type();
+            return self.emit_type(TypeNodeKind::UniqueSymbol, pos);
+        }
+        self.emit_type(TypeNodeKind::Unique(operand), pos);
     }
 
     /// Emits `infer name`. The constraint, if present, is the last parsed type.
@@ -468,7 +510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // JSDoc types can only be used inside documentation comments.
         self.type_syntax_mut()
             .b
-            .check_jsdoc_type_is_in_js_file(pos, 8020);
+            .check_jsdoc_type_is_in_js_file(pos, pos + 1, 8020);
         self.emit_type(TypeNodeKind::Keyword(Keyword::Any), pos);
     }
 
@@ -493,7 +535,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.emit_type(union, pos);
     }
 
-    /// `interface I extends expression`. The end of `checkInterfaceDeclaration` reports 2499 for it.
+    /// `interface I extends expression`, `class C implements expression`. The checker reports it
+    /// (2499, 2500).
     pub(crate) fn emit_heritage_expression(&mut self, expression: Expr, pos: u32) {
         self.emit_type(TypeNodeKind::Error, pos);
         let node = self.last_type();
@@ -538,16 +581,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         syntax.last_binding = syntax.b.add_pattern(PatKind::Ident(name), loc, loc);
     }
 
-    /// `{ name }`, after the name.
+    /// `{ name }`, `{ ...name }`, after the name.
     pub(crate) fn emit_shorthand_binding(&mut self, property: &PatternProperty) {
         let end = self.lexer.full_start();
         let syntax = self.type_syntax_mut();
         syntax.last_binding = match property.key {
             PropertyKey::Name(name) => {
-                let name = syntax.b.identifier(&name, property.loc.start as u32);
+                let name = syntax.b.identifier(&name, property.key_loc.start as u32);
                 syntax
                     .b
-                    .add_pattern(PatKind::Ident(name), property.loc, end)
+                    .add_pattern(PatKind::Ident(name), property.key_loc, end)
             }
             _ => PatternId::NONE,
         };
@@ -687,13 +730,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 _ => self.simple_property_key(),
             },
             pos: self.token_start(),
-            full_start: self.lexer.token_full_start as u32,
-            modifier: if self.lexer.token == T::TIdentifier {
-                PropertyModifierKeyword::find(self.lexer.raw())
-            } else {
-                None
-            },
-            newline_before: self.lexer.has_newline_before,
         }
     }
 
@@ -978,38 +1014,6 @@ impl TypeSyntax<'_> {
 
     /// Adds `member` to `kept`, the object type being built.
     fn finish_type_member(&mut self, member: &TypeMemberParts, kept: &mut ObjectTypeBuilder) {
-        // The skipper reads "x \n y: T" as one run of words. A word that is not a modifier is a property of its own, and a line break
-        // ends it.
-        if let Some(name_index) = member.first_bare_property() {
-            let (bare, rest) = member.words.split_at(name_index + 1);
-            let newline_after = rest
-                .first()
-                .map_or(member.newline_before_bracket, |next| next.newline_before);
-            if !newline_after {
-                kept.is_complete = false;
-                return;
-            }
-            let bare = TypeMemberParts {
-                start: bare[0].pos,
-                full_start: bare[0].full_start,
-                words: bare.into(),
-                ..Default::default()
-            };
-            self.finish_type_member(&bare, kept);
-            let (start, full_start) = match rest.first() {
-                Some(next) => (next.pos, next.full_start),
-                None => (member.bracket_pos, member.bracket_full_start),
-            };
-            kept.end_member(loc(full_start));
-            let rest = TypeMemberParts {
-                start,
-                full_start,
-                words: rest.into(),
-                is_accessor: false,
-                ..member.clone()
-            };
-            return self.finish_type_member(&rest, kept);
-        }
         let built = self.build_type_member(member);
         match (built, &mut kept.mapped) {
             // `parseMappedType` parses the members after `[K in T]: X` and only reports an error at
@@ -1035,54 +1039,26 @@ impl TypeSyntax<'_> {
         }
     }
 
-    /// Turns the words before a member's name into modifiers. `None` if one of them is not a modifier (`parseModifiers`): only `static`
-    /// may be followed by a line break, and a second `static` is a name.
-    fn member_modifiers(
-        &mut self,
-        before: &[MemberWord],
-        newline_before_name: bool,
-    ) -> Option<(Flags, Span<Modifier>)> {
-        let mut flags = Flags::empty();
-        let mut modifiers: smallvec::SmallVec<[Modifier; 4]> = smallvec::SmallVec::new();
-        for (i, word) in before.iter().enumerate() {
-            let flag = modifier_flag(word.modifier?)?;
-            let newline_after = before
-                .get(i + 1)
-                .map_or(newline_before_name, |next| next.newline_before);
-            if newline_after && flag != Flags::STATIC
-                || flag == Flags::STATIC && flags.contains(Flags::STATIC)
-            {
-                return None;
-            }
-            flags |= flag;
-            modifiers.push(Modifier {
-                flag,
-                loc: loc(word.pos),
-                decorator: None,
-            });
-        }
-        Some((flags, self.b.ts.add_modifiers(&modifiers)))
-    }
-
     /// Builds one member. `Err` is the body of a mapped type. `None` means unusable.
     fn build_type_member(
         &mut self,
         member: &TypeMemberParts,
     ) -> Option<Result<Member, MappedType>> {
-        if !member.is_complete {
-            return None;
-        }
         // The type after `:`, if any.
         let ty = match member.ty {
             Some(ty) if ty.is_none() => return None,
             Some(ty) => ty,
             None => TypeId::NONE,
         };
+        let mut flags = Flags::empty();
+        for modifier in &member.modifiers {
+            flags |= modifier.flag;
+        }
         let mut created = Member {
             kind: MemberKind::Property,
             key: PropertyKey::None,
-            flags: Flags::empty(),
-            modifiers: Span::EMPTY,
+            flags,
+            modifiers: self.b.ts.add_modifiers(&member.modifiers),
             ty,
             initializer: member.initializer,
             index_signature_errors: member.index_signature_errors,
@@ -1093,11 +1069,7 @@ impl TypeSyntax<'_> {
             end: Loc::EMPTY,
         };
         if member.bracket_kind == BracketKind::IndexParameters {
-            let (flags, modifiers) =
-                self.member_modifiers(&member.words, member.newline_before_bracket)?;
             let params = member.parameters??;
-            created.flags |= flags;
-            created.modifiers = modifiers;
             created.kind = MemberKind::IndexSignature;
             created.signature = self.b.add_signature(Signature {
                 kind: SignatureKind::IndexSignature,
@@ -1112,9 +1084,6 @@ impl TypeSyntax<'_> {
             return Some(Ok(created));
         }
         if member.bracket_kind != BracketKind::Nothing && member.computed_name.is_none() {
-            let (flags, modifiers) =
-                self.member_modifiers(&member.words, member.newline_before_bracket)?;
-            let has_readonly = flags == Flags::READONLY;
             let PropertyKey::Name(name) = member.bracket_name.key else {
                 return None;
             };
@@ -1127,10 +1096,11 @@ impl TypeSyntax<'_> {
             let name_loc = loc(member.bracket_name.pos);
             match member.bracket_kind {
                 BracketKind::Mapped(constraint, name_type, end) => {
-                    // Only `readonly` may precede the `[` of a mapped type.
-                    if constraint.is_none() || !(flags.is_empty() || has_readonly) {
+                    if constraint.is_none() {
                         return None;
                     }
+                    // Only `readonly` precedes the `[` of a mapped type.
+                    let has_readonly = flags == Flags::READONLY;
                     let modifier = |sign: Option<bool>, exists: bool| match (sign, exists) {
                         (None, false) => Some(MappedModifier::None),
                         (None | Some(true), true) => Some(MappedModifier::Add),
@@ -1172,8 +1142,6 @@ impl TypeSyntax<'_> {
                     {
                         return None;
                     }
-                    created.flags |= flags;
-                    created.modifiers = modifiers;
                     let ast = &mut self.b;
                     let name_end = Loc {
                         start: name_loc.start + name.len() as i32,
@@ -1205,19 +1173,13 @@ impl TypeSyntax<'_> {
             return None;
         }
         let has_signature = member.parameters.is_some();
-        let (before, word) = match (member.computed_name, member.words.split_last()) {
-            // `[name]: T`, `readonly [name]: T`, `get [name](): T`
-            (Some(name), _) => {
-                let bracket = MemberWord {
-                    key: PropertyKey::Computed(name),
-                    pos: member.bracket_pos,
-                    full_start: member.bracket_full_start,
-                    token: T::TOpenBracket,
-                    newline_before: member.newline_before_bracket,
-                    modifier: None,
-                };
-                (&member.words[..], bracket)
-            }
+        let word = match (member.computed_name, member.name) {
+            // `[name]: T`, `get [name](): T`
+            (Some(name), _) => MemberWord {
+                key: PropertyKey::Computed(name),
+                pos: member.bracket_pos,
+                token: T::TOpenBracket,
+            },
             // `(a: A): R`
             (None, None) => {
                 created.kind = MemberKind::CallSignature;
@@ -1231,8 +1193,12 @@ impl TypeSyntax<'_> {
                 return Some(Ok(created));
             }
             // `new (a: A): R`
-            (None, Some((word, [])))
-                if word.token == T::TNew && has_signature && !member.is_optional =>
+            (None, Some(word))
+                if word.token == T::TNew
+                    && has_signature
+                    && !member.is_optional
+                    && member.modifiers.is_empty()
+                    && member.accessor.is_none() =>
             {
                 created.kind = MemberKind::ConstructSignature;
                 created.ty = TypeId::NONE;
@@ -1244,7 +1210,7 @@ impl TypeSyntax<'_> {
                 )?;
                 return Some(Ok(created));
             }
-            (None, Some((word, before))) => (before, *word),
+            (None, Some(word)) => word,
         };
         if matches!(word.key, PropertyKey::None) {
             return None;
@@ -1257,31 +1223,13 @@ impl TypeSyntax<'_> {
         if member.is_optional {
             created.flags |= Flags::OPTIONAL;
         }
-        let mut signature_kind = SignatureKind::Method;
-        let before = match before {
-            [accessor] if member.is_accessor && has_signature => {
-                let is_getter = accessor.modifier == Some(PropertyModifierKeyword::PGet);
-                created.kind = if is_getter {
-                    MemberKind::Getter
-                } else {
-                    MemberKind::Setter
-                };
-                signature_kind = if is_getter {
-                    SignatureKind::Getter
-                } else {
-                    SignatureKind::Setter
-                };
-                &[][..]
-            }
-            before => before,
-        };
-        let (flags, modifiers) = self.member_modifiers(before, word.newline_before)?;
-        created.flags |= flags;
-        created.modifiers = modifiers;
         if has_signature {
-            if created.kind == MemberKind::Property {
-                created.kind = MemberKind::Method;
-            }
+            let signature_kind = member.accessor.unwrap_or(SignatureKind::Method);
+            created.kind = match signature_kind {
+                SignatureKind::Getter => MemberKind::Getter,
+                SignatureKind::Setter => MemberKind::Setter,
+                _ => MemberKind::Method,
+            };
             created.ty = TypeId::NONE;
             created.signature =
                 self.emit_signature(member, signature_kind, created.flags, word.pos)?;
@@ -1368,31 +1316,12 @@ impl TypeSyntax<'_> {
         self.emit_statement(StatementData::Interface(interface), keyword_loc);
     }
 
-    /// Emits an alias of the last parsed type, which starts at `type_loc`.
-    fn emit_type_alias(
-        &mut self,
-        name: Name,
-        type_params: Option<TypeParams>,
-        type_loc: Loc,
-        keyword_loc: Loc,
-    ) {
+    /// Emits an alias of the last parsed type.
+    fn emit_type_alias(&mut self, name: Name, type_params: Option<TypeParams>, keyword_loc: Loc) {
         let ty = self.last_type;
         let (Some(type_params), true) = (type_params, ty.is_some()) else {
             return;
         };
-        // `parseTypeAliasDeclaration`: `intrinsic` directly after the `=`, and not before a dot, is a keyword.
-        let file = &mut self.b.file;
-        if let TypeNode {
-            kind: TypeNodeKind::Ref { name, args },
-            pos,
-            ..
-        } = file[ty]
-            && pos == type_loc.start as u32
-            && args.is_empty()
-            && file.texts(name).eq([bun_sema::atom::known::intrinsic])
-        {
-            file[ty].kind = TypeNodeKind::Keyword(Keyword::Intrinsic);
-        }
         let alias = self.b.ts.add_type_alias(TypeAlias {
             name,
             type_params,
@@ -1463,8 +1392,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TDefault => Flags::DEFAULT,
             T::TExport => Flags::EXPORT,
             T::TIn => Flags::IN,
-            _ if self.lexer.raw() == b"out" => Flags::OUT,
-            _ => PropertyModifierKeyword::find(self.lexer.raw())
+            _ if self.lexer.identifier == b"out" => Flags::OUT,
+            _ => PropertyModifierKeyword::find(self.lexer.identifier)
                 .and_then(modifier_flag)
                 .unwrap_or(Flags::empty()),
         }
@@ -1545,16 +1474,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         );
     }
 
-    /// The aliased type is the last parsed type, which starts at `type_loc`.
+    /// Called on the `intrinsic` that is the whole type of an alias (`parseKeywordTypeNode`).
+    pub(crate) fn emit_intrinsic_keyword(&mut self) {
+        let pos = self.token_start();
+        self.emit_type(TypeNodeKind::Keyword(Keyword::Intrinsic), pos);
+    }
+
+    /// The aliased type is the last parsed type.
     pub(crate) fn emit_type_alias(
         &mut self,
         name: Name,
         type_params: Option<TypeParams>,
-        type_loc: Loc,
         keyword_loc: Loc,
     ) {
         self.type_syntax_mut()
-            .emit_type_alias(name, type_params, type_loc, keyword_loc);
+            .emit_type_alias(name, type_params, keyword_loc);
     }
 
     /// The type parameters that `skip_type_script_type_parameters` just parsed. `None` if unusable.
@@ -1598,16 +1532,12 @@ pub(crate) type ImportTypeAttributes = (
     Option<crate::sema::ts_syntax::ImportAttributes>,
 );
 
-/// An identifier, keyword, string, number or private name at the start of an object type member. It is either a modifier or the member's
-/// name.
+/// An identifier, keyword, string, number or private name: the name of an object type member, or the first token in its brackets.
 #[derive(Copy, Clone)]
 pub(crate) struct MemberWord {
     token: T,
     key: PropertyKey,
     pos: u32,
-    full_start: u32,
-    modifier: Option<PropertyModifierKeyword>,
-    newline_before: bool,
 }
 
 impl Default for MemberWord {
@@ -1616,9 +1546,6 @@ impl Default for MemberWord {
             token: T::TEndOfFile,
             key: PropertyKey::None,
             pos: 0,
-            full_start: 0,
-            modifier: None,
-            newline_before: false,
         }
     }
 }
@@ -1641,22 +1568,21 @@ pub(crate) enum BracketKind {
 }
 
 /// The pieces of one object type member, collected while the skipper walks over it.
-#[derive(Clone)]
+#[derive(Default)]
 pub(crate) struct TypeMemberParts {
     pub(crate) start: u32,
     /// `TokenFullStart` of the token at `start`.
     pub(crate) full_start: u32,
-    /// False if the member contains unusable syntax.
-    pub(crate) is_complete: bool,
-    pub(crate) is_accessor: bool,
+    /// `parseModifiers`. Of a mapped type: its `readonly`.
+    pub(crate) modifiers: Vec<Modifier>,
+    /// `Getter` or `Setter`, after `get` or `set`.
+    pub(crate) accessor: Option<SignatureKind>,
     /// `+` (`true`) or `-` before the member, and after `]`.
     pub(crate) leading_sign: Option<bool>,
     pub(crate) trailing_sign: Option<bool>,
-    /// Leading words: modifiers, `get` or `set`, and then the member's name unless a `[` follows.
-    pub(crate) words: smallvec::SmallVec<[MemberWord; 4]>,
+    /// `parsePropertyName`, unless the name is in brackets.
+    pub(crate) name: Option<MemberWord>,
     pub(crate) bracket_pos: u32,
-    pub(crate) bracket_full_start: u32,
-    pub(crate) newline_before_bracket: bool,
     /// The first token after `[`.
     pub(crate) bracket_name: MemberWord,
     pub(crate) bracket_kind: BracketKind,
@@ -1675,67 +1601,12 @@ pub(crate) struct TypeMemberParts {
     pub(crate) ty: Option<TypeId>,
 }
 
-impl Default for TypeMemberParts {
-    fn default() -> Self {
-        TypeMemberParts {
-            start: 0,
-            full_start: 0,
-            is_complete: true,
-            is_accessor: false,
-            leading_sign: None,
-            trailing_sign: None,
-            words: smallvec::SmallVec::new(),
-            bracket_pos: 0,
-            bracket_full_start: 0,
-            newline_before_bracket: false,
-            bracket_name: MemberWord::default(),
-            bracket_kind: BracketKind::Nothing,
-            computed_name: None,
-            initializer: None,
-            is_optional: false,
-            type_parameters: None,
-            open_paren: 0,
-            parameters: None,
-            index_signature_errors: [None; 2],
-            ty: None,
-        }
-    }
-}
-
 impl TypeMemberParts {
-    pub(crate) fn add_word(&mut self, word: MemberWord) {
-        self.words.push(word);
-    }
-
-    /// The index of the first word that is the name of a property although more words or a `[` follow it.
-    fn first_bare_property(&self) -> Option<usize> {
-        let has_bracket = self.bracket_kind != BracketKind::Nothing;
-        let last_name = if has_bracket {
-            self.words.len()
-        } else {
-            self.words.len().saturating_sub(1)
-        };
-        (0..last_name).find(|&i| {
-            let newline_after = self
-                .words
-                .get(i + 1)
-                .map_or(self.newline_before_bracket, |next| next.newline_before);
-            match self.words[i].modifier {
-                None => true,
-                Some(PropertyModifierKeyword::PGet | PropertyModifierKeyword::PSet) => {
-                    !(self.is_accessor && i == 0)
-                }
-                Some(PropertyModifierKeyword::PStatic) => false,
-                Some(_) => newline_after,
-            }
-        })
-    }
-
     /// Nothing but `readonly` precedes the `[`, as in a mapped type.
     pub(crate) fn has_only_readonly(&self) -> bool {
-        self.words
+        self.modifiers
             .iter()
-            .all(|word| word.modifier == Some(PropertyModifierKeyword::PReadonly))
+            .all(|modifier| modifier.flag == Flags::READONLY)
     }
 }
 

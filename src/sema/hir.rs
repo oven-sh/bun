@@ -432,6 +432,9 @@ pub struct Expr {
 pub enum ExprKind {
     Missing,
     Ident(Atom),
+    /// `#x` that is an expression of its own: the left operand of `in`, or misplaced. The name of
+    /// `a.#x` is in `Dot`.
+    PrivateIdentifier(Atom),
     This,
     Super,
     Null,
@@ -526,6 +529,7 @@ pub enum ExprKind {
 pub enum ExprTag {
     Missing,
     Ident,
+    PrivateIdentifier,
     This,
     Super,
     Null,
@@ -564,7 +568,7 @@ pub enum ExprTag {
 }
 
 impl ExprTag {
-    pub const COUNT: usize = 37;
+    pub const COUNT: usize = 38;
 }
 
 impl ExprKind {
@@ -573,6 +577,7 @@ impl ExprKind {
         match self {
             ExprKind::Missing => ExprTag::Missing,
             ExprKind::Ident(..) => ExprTag::Ident,
+            ExprKind::PrivateIdentifier(..) => ExprTag::PrivateIdentifier,
             ExprKind::This => ExprTag::This,
             ExprKind::Super => ExprTag::Super,
             ExprKind::Null => ExprTag::Null,
@@ -817,6 +822,17 @@ pub enum ModifierKind {
     Decorator(ExprId),
 }
 
+impl ModifierKind {
+    /// `ModifierToFlag`. There is no `ModifierFlagsDecorator`.
+    #[inline]
+    pub fn flag(self) -> Flags {
+        match self {
+            ModifierKind::Keyword(flag) => flag,
+            ModifierKind::Decorator(_) => Flags::empty(),
+        }
+    }
+}
+
 /// `scanner.TokenToString(modifier.Kind)`
 pub fn modifier_text(modifier: Flags) -> &'static str {
     const TEXTS: [(Flags, &str); 15] = [
@@ -1053,6 +1069,34 @@ impl Func {
     pub fn this_ty<S: Storage>(&self, hir: &FileIn<S>) -> TypeNodeId {
         let this = hir.params.get(self.this_param.idx());
         this.map_or(TypeNodeId::NONE, |this| this.ty)
+    }
+
+    /// `getAccessorThisParameter`: the `this` parameter of an accessor that has, with it, as many
+    /// parameters as its kind takes: one for a getter, two for a setter.
+    pub fn accessor_this_parameter(&self) -> ParamId {
+        if self.params.len() == usize::from(self.kind != FnKind::Getter) {
+            self.this_param
+        } else {
+            ParamId::NONE
+        }
+    }
+
+    /// `GetSetAccessorValueParameter`: the first parameter, which can be the `this` parameter. That
+    /// is skipped only where it is the first of two. `NONE`: there is no parameter.
+    pub fn set_accessor_value_parameter(&self) -> ParamId {
+        match self.params.iter().next() {
+            Some(value) if self.this_param.is_none() || self.params.len() == 1 => value,
+            _ => self.this_param,
+        }
+    }
+
+    /// `getEffectiveSetAccessorTypeAnnotationNode`
+    pub fn effective_set_accessor_type_annotation_node<S: Storage>(
+        &self,
+        hir: &FileIn<S>,
+    ) -> TypeNodeId {
+        let value = hir.params.get(self.set_accessor_value_parameter().idx());
+        value.map_or(TypeNodeId::NONE, |value| value.ty)
     }
 }
 
@@ -1322,6 +1366,18 @@ pub enum ImportEqualsTarget {
     Entity(Span<NameId>),
 }
 
+impl ImportEqualsTarget {
+    /// The module specifier. `NONE`: this is an entity name, or the argument of `require` is not a
+    /// string literal.
+    #[inline]
+    pub fn spec(self) -> Atom {
+        match self {
+            ImportEqualsTarget::Require(spec) => spec,
+            ImportEqualsTarget::Entity(_) => Atom::NONE,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct ImportEquals {
     pub name: Atom,
@@ -1537,8 +1593,8 @@ pub enum JSDocTypeKind {
 pub enum TypeNodeKind {
     /// Syntax the type parser failed on.
     Error,
-    /// An element of a heritage clause of an interface whose expression is not an entity name,
-    /// which is an error: `extends f()`.
+    /// An element of a heritage clause of an interface, or of an `implements` clause of a class,
+    /// whose expression is not an entity name, which is an error: `extends f()`.
     Heritage(ExprId),
     Keyword(Keyword),
     /// `A.B.C<Args>`
@@ -1579,6 +1635,8 @@ pub enum TypeNodeKind {
     Keyof(TypeNodeId),
     Readonly(TypeNodeId),
     UniqueSymbol,
+    /// `unique T`, where `T` is not the keyword `symbol`, which is an error.
+    Unique(TypeNodeId),
     JSDoc {
         ty: TypeNodeId,
         kind: JSDocTypeKind,
@@ -1665,6 +1723,17 @@ impl Default for JsxPragmas {
     }
 }
 
+/// A node with `NodeFlagsHasJSDoc`.
+#[derive(Copy, Clone, Debug)]
+pub struct JsDocHost {
+    /// The position of its first token.
+    pub token: u32,
+    /// From the start of the first of its JSDoc comments to the end of the last.
+    pub comments: TextRange,
+    /// The position of the name of its first `@satisfies` tag. `u32::MAX`: it has none.
+    pub first_satisfies_tag: u32,
+}
+
 /// `ast.CommentDirective`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CommentDirective {
@@ -1739,6 +1808,9 @@ pub struct FileIn<S: Storage> {
     /// separate column and not a field of `Param`: few parameters have a modifier, and a field
     /// would cost every parameter.
     pub modifiers_of_params: S::List<Span<ModifierId>>,
+    /// `node.Modifiers()` of the members of object literals that have any: see `prop_modifiers`.
+    /// Sorted.
+    pub modifiers_of_props: S::Few<(PropId, Span<ModifierId>)>,
     /// The array and object literals whose closing bracket is missing: their start, and their end,
     /// which is the end of the last token they consumed (`finishNode`). Sorted.
     pub unclosed_literals: S::Few<(u32, u32)>,
@@ -1774,6 +1846,9 @@ pub struct FileIn<S: Storage> {
     /// The spans of the JSDoc comments of a JavaScript file. Sorted. A node whose position is
     /// inside one is synthesized from a tag.
     pub jsdoc_comments: S::Few<(u32, u32)>,
+    /// The nodes that have JSDoc comments, in a JavaScript file in which one has a `@satisfies`
+    /// tag. Sorted by `token`.
+    pub jsdoc_hosts: S::Few<JsDocHost>,
     /// The types of `@type` tags on nodes that have no field for a type. Sorted by owner.
     pub jsdoc_types: S::Few<(JsDocTypeOwner, TypeNodeId)>,
     /// `@public`, `@private`, `@protected`, `@readonly` and `@override` on an assignment: the assignment and the modifiers. Sorted.
@@ -1784,6 +1859,10 @@ pub struct FileIn<S: Storage> {
     /// `checkUnmatchedJSDocParameters`, the part that only needs syntax: the function and the diagnostic for the name in its
     /// `@param` tag. 8024 and 8032 apply unless the function references `arguments`. 8029 applies if it does.
     pub jsdoc_param_errors: S::Kept<(FnId, Diagnostic)>,
+    /// The functions whose JSDoc comment has a `@param` tag with a name: for each of them
+    /// `checkUnmatchedJSDocParameters` calls `containsArgumentsReference`. Those of
+    /// `jsdoc_param_errors` are among them, in the same order.
+    pub functions_with_param_tags: S::Few<FnId>,
 
     pub ids: S::List<u32>,
     pub numbers: S::List<f64>,
@@ -1912,6 +1991,13 @@ impl<S: Storage> FileIn<S> {
             .copied()
             .unwrap_or(Span::EMPTY)
     }
+    /// `node.Modifiers()` of the member `p` of an object literal.
+    pub fn prop_modifiers(&self, p: PropId) -> Span<ModifierId> {
+        let found = self
+            .modifiers_of_props
+            .binary_search_by_key(&p.0, |of| of.0.0);
+        found.map_or(Span::EMPTY, |at| self.modifiers_of_props[at].1)
+    }
     /// The texts of the template whose substitutions are `exprs`.
     #[inline]
     pub fn template_texts(&self, exprs: IdList<ExprId>) -> IdList<Atom> {
@@ -1966,6 +2052,14 @@ impl<S: Storage> FileIn<S> {
     pub fn modifier_list(&self, list: Span<ModifierId>) -> &[Modifier] {
         &self.modifiers[list.range()]
     }
+    /// `ModifiersToFlags`
+    pub fn modifiers_to_flags(&self, list: Span<ModifierId>) -> Flags {
+        let mut flags = Flags::empty();
+        for modifier in self.modifier_list(list) {
+            flags |= modifier.kind.flag();
+        }
+        flags
+    }
     /// The position of the first `flag` in `list`.
     pub fn find_modifier(&self, list: Span<ModifierId>, flag: Flags) -> Option<u32> {
         self.modifier_list(list)
@@ -2008,6 +2102,14 @@ impl<S: Storage> FileIn<S> {
     pub fn is_in_jsdoc(&self, pos: u32) -> bool {
         let after = self.jsdoc_comments.partition_point(|c| c.0 <= pos);
         after > 0 && pos < self.jsdoc_comments[after - 1].1
+    }
+
+    /// `NodeFlagsHasJSDoc` for a node whose first token is at `token`. See `jsdoc_hosts`.
+    pub fn jsdoc_host_at(&self, token: u32) -> Option<&JsDocHost> {
+        let index = self
+            .jsdoc_hosts
+            .binary_search_by_key(&token, |host| host.token);
+        index.ok().map(|index| &self.jsdoc_hosts[index])
     }
 
     /// The type that a `@type` tag assigns to `owner`. `NONE` if there is none.
@@ -2207,6 +2309,7 @@ impl FileBuilder {
             body_starts: copy_to_arena(&mut self.body_starts, arena),
             after_skipped: few_to_arena(self.after_skipped, arena),
             modifiers_of_params: copy_to_arena(&mut self.modifiers_of_params, arena),
+            modifiers_of_props: few_to_arena(self.modifiers_of_props, arena),
             unclosed_literals: few_to_arena(self.unclosed_literals, arena),
             stray_decorators: few_to_arena(self.stray_decorators, arena),
             specifier_uses: copy_to_arena(&mut self.specifier_uses, arena),
@@ -2219,10 +2322,12 @@ impl FileBuilder {
             jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
             jsx_pragmas: self.jsx_pragmas,
             jsdoc_comments: few_to_arena(self.jsdoc_comments, arena),
+            jsdoc_hosts: few_to_arena(self.jsdoc_hosts, arena),
             jsdoc_types: few_to_arena(self.jsdoc_types, arena),
             jsdoc_modifiers: few_to_arena(self.jsdoc_modifiers, arena),
             jsdoc_member_comments: Cow::Owned(self.jsdoc_member_comments),
             jsdoc_param_errors: Cow::Owned(self.jsdoc_param_errors),
+            functions_with_param_tags: few_to_arena(self.functions_with_param_tags, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             numbers: copy_to_arena(&mut self.numbers, arena),
             exprs: copy_to_arena(&mut self.exprs, arena),

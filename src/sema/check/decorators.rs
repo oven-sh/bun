@@ -1,11 +1,12 @@
-//! Decorators: the arguments a decorator is called with, and whether that call is valid: 1206 1207
-//! 1249 1497, 1329, 1238 1239 1240 1241, 1270 1271.
+//! Decorators: the arguments a decorator is called with, and whether that call is valid: 1497,
+//! 1329, 1238 1239 1240 1241, 1270 1271.
 //!
 //! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`,
-//! `checkDecorator` and the decorator checks of `checkGrammarModifiers`, of TypeScript 7.0.2's
-//! checker.go and grammarchecks.go.
+//! `checkDecorator` and `checkGrammarDecorator`, of TypeScript 7.0.2's checker.go and
+//! grammarchecks.go.
 
 use super::call::{CallLike, ExpectsReturn};
+use super::errors_statements::is_binder_diagnostic;
 use super::*;
 use crate::bind::MemberOwner;
 
@@ -27,7 +28,7 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         owner: DecoratorOwner,
     ) -> Option<(ClassId, Option<MemberId>)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let bound = self.bound(file);
         let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => Some((c, Some(m))),
             _ => None,
@@ -37,10 +38,7 @@ impl<'p, 's> Checker<'p, 's> {
             DecoratorOwner::Member(m) => of_member(m),
             DecoratorOwner::Param(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner {
                 crate::bind::FnOwner::Member(m) => of_member(m),
-                _ => {
-                    let _ = hir;
-                    None
-                }
+                _ => None,
             },
         }
     }
@@ -58,7 +56,7 @@ impl<'p, 's> Checker<'p, 's> {
             optional: false,
             is_required_rest: false,
             rest: false,
-            has_declaration: false,
+            declaration: None,
         });
         self.types().intern_sig(SigData::Synth {
             type_params: ArenaBox::empty(),
@@ -70,34 +68,63 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `getGlobalType` with `reportErrors`: a missing global type is reported, without a file.
-    fn global_type(&mut self, name: &[u8], args: &[TypeId]) -> Option<TypeId> {
-        let found = self
-            .atoms()
-            .lookup(name)
-            .and_then(|name| self.files().global(name, SymFlags::TYPE));
-        let Some(sym) = found else {
-            self.report_global_error(2318, vec![name.to_vec()]);
-            return None;
-        };
-        Some(self.type_reference(sym, args))
+    /// `newFunctionType`
+    fn new_function_type(
+        &mut self,
+        this: Option<TypeId>,
+        params: &[(&[u8], TypeId)],
+        ret: TypeId,
+    ) -> TypeId {
+        let signature = self.synthetic_signature(this, params, ret);
+        self.type_of_signature(signature, false)
+    }
+
+    /// `tryCreateTypeReference` for the global type `name`, whose resolver has `reportErrors`.
+    fn try_create_type_reference(&mut self, name: &[u8], type_arguments: &[TypeId]) -> TypeId {
+        let name = self.atoms().intern(name);
+        match self.get_global_type(name, type_arguments.len(), true) {
+            Some(target) => self.intern_key(TypeKey::Ref {
+                target,
+                args: type_arguments,
+            }),
+            None => TypeId::UNKNOWN,
+        }
+    }
+
+    /// `newTypedPropertyDescriptorType`
+    fn new_typed_property_descriptor_type(&mut self, property_type: TypeId) -> TypeId {
+        let name = self.atoms().intern(b"TypedPropertyDescriptor");
+        self.global_ref_checked(name, &[property_type])
+    }
+
+    /// `getParentTypeOfClassElement`
+    fn get_parent_type_of_class_element(
+        &mut self,
+        file: FileId,
+        class: ClassId,
+        node: MemberId,
+    ) -> TypeId {
+        let class_symbol = self.class_sym(file, class);
+        if self.hir(file)[node].flags.contains(Flags::STATIC) {
+            self.type_of_symbol(class_symbol)
+        } else {
+            self.declared_type(class_symbol)
+        }
     }
 
     /// `getTypeOfNode(node)`, which is `getTypeOfSymbol(getSymbolOfDeclaration(node))`: the function
     /// type of a method, the value type of a property or an accessor. Nothing substitutes for
     /// `this`.
     fn type_of_decorated_member(&mut self, file: FileId, class: ClassId, m: MemberId) -> TypeId {
-        let member = self.hir(file)[m];
-        let sym = self.class_sym(file, class);
-        let holder = if member.flags.contains(Flags::STATIC) {
-            self.type_of_symbol(sym)
+        let holder = self.get_parent_type_of_class_element(file, class, m);
+        // `declareSymbolEx`: a declaration that the symbol of its name refused has its own symbol.
+        let name = if self.bound(file).is_member_in_no_table(m) {
+            None
         } else {
-            self.declared_type(sym)
+            let key = self.hir(file)[m].key;
+            self.declared_member_name(file, key)
         };
-        match self
-            .member_name(file, member.key)
-            .and_then(|name| self.prop_ref(holder, name))
-        {
+        match name.and_then(|name| self.prop_ref(holder, name)) {
             Some((prop, _)) => self.type_of_prop(prop, MapperId::IDENTITY),
             None => self.type_of_member_declaration(file, m),
         }
@@ -122,205 +149,277 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         owner: DecoratorOwner,
     ) -> Option<SigId> {
+        if self.hir(file).legacy_decorators {
+            self.get_legacy_decorator_call_signature(file, owner)
+        } else {
+            self.get_es_decorator_call_signature(file, owner)
+        }
+    }
+
+    /// `getLegacyDecoratorCallSignature`
+    fn get_legacy_decorator_call_signature(
+        &mut self,
+        file: FileId,
+        owner: DecoratorOwner,
+    ) -> Option<SigId> {
         let (class, member) = self.class_of_decorated(file, owner)?;
         let hir = self.hir(file);
-        let sym = self.class_sym(file, class);
-        let statics = self.type_of_symbol(sym);
-        let holder = |c: &mut Self, m: MemberId| {
-            if hir[m].flags.contains(Flags::STATIC) {
-                statics
-            } else {
-                c.declared_type(sym)
+        match (owner, member) {
+            (DecoratorOwner::Class(_), _) => {
+                let class_symbol = self.class_sym(file, class);
+                let target_type = self.type_of_symbol(class_symbol);
+                let return_type = self.union(&[target_type, TypeId::VOID]);
+                Some(self.synthetic_signature(None, &[(b"target", target_type)], return_type))
             }
-        };
-        if hir.legacy_decorators {
-            // `getClassElementPropertyKeyType`
-            let key_of = |c: &mut Self, m: MemberId| match hir[m].key {
-                // `["a"]` and `[0]`
-                PropKey::Name(_) if hir[m].flags.contains(Flags::COMPUTED_NAME) => TypeId::STRING,
-                PropKey::Name(name) => c.string_literal(name, false),
-                // A type assignable to symbol is used unchanged (`isTypeAssignableToKind`).
-                PropKey::Computed(e) => {
-                    let ty = c.type_of_expr(file, e);
-                    if c.is_symbol_like(ty) || c.is_assignable(ty, TypeId::SYMBOL) {
-                        ty
-                    } else {
-                        TypeId::STRING
-                    }
-                }
-                // `#x` is not a property key: the error type.
-                PropKey::Private(_) => TypeId::ERROR,
-                PropKey::None => TypeId::STRING,
-            };
-            return Some(match (owner, member) {
-                (DecoratorOwner::Class(_), _) => {
-                    let ret = self.union(&[statics, TypeId::VOID]);
-                    self.synthetic_signature(None, &[(b"target", statics)], ret)
-                }
-                (DecoratorOwner::Param(p), Some(m))
-                    if matches!(
-                        hir[m].kind,
-                        MemberKind::Constructor | MemberKind::Method | MemberKind::Setter
-                    ) =>
-                {
-                    // A `this` parameter does not count, and is not among the parameters here.
-                    let index =
-                        self.number_literal((p.0 - hir[hir[m].func].params.start) as f64, false);
-                    let (target, key) = if hir[m].kind == MemberKind::Constructor {
-                        (statics, TypeId::UNDEFINED)
-                    } else {
-                        (holder(self, m), key_of(self, m))
-                    };
-                    self.synthetic_signature(
-                        None,
-                        &[
-                            (b"target", target),
-                            (b"propertyKey", key),
-                            (b"parameterIndex", index),
-                        ],
-                        TypeId::VOID,
-                    )
-                }
-                (DecoratorOwner::Member(_), Some(m))
-                    if matches!(
-                        hir[m].kind,
-                        MemberKind::Method
-                            | MemberKind::Getter
-                            | MemberKind::Setter
-                            | MemberKind::Property
-                    ) =>
-                {
-                    let (target, key) = (holder(self, m), key_of(self, m));
-                    if hir[m].kind == MemberKind::Property
-                        && !hir[m].flags.contains(Flags::ACCESSOR)
-                    {
-                        self.synthetic_signature(
-                            None,
-                            &[(b"target", target), (b"propertyKey", key)],
-                            TypeId::VOID,
-                        )
-                    } else {
-                        let value = self.type_of_decorated_member(file, class, m);
-                        let descriptor = self.global_type(b"TypedPropertyDescriptor", &[value])?;
-                        let ret = if hir[m].kind == MemberKind::Property {
-                            TypeId::VOID
-                        } else {
-                            self.union(&[descriptor, TypeId::VOID])
-                        };
-                        self.synthetic_signature(
-                            None,
-                            &[
-                                (b"target", target),
-                                (b"propertyKey", key),
-                                (b"descriptor", descriptor),
-                            ],
-                            ret,
-                        )
-                    }
-                }
-                _ => return None,
-            });
-        }
-        let (target, context, result) = match (owner, member) {
-            (DecoratorOwner::Class(_), _) => (
-                statics,
-                self.global_type(b"ClassDecoratorContext", &[statics])?,
-                statics,
-            ),
-            (DecoratorOwner::Member(_), Some(m)) => {
-                let this = holder(self, m);
-                let value = if hir[m].kind == MemberKind::Method {
-                    self.type_of_method_declaration(file, m)
+            (DecoratorOwner::Param(p), Some(parent))
+                if matches!(
+                    hir[parent].kind,
+                    MemberKind::Constructor | MemberKind::Method | MemberKind::Setter
+                ) =>
+            {
+                // A `this` parameter is not among `params`.
+                let index = p.0 - hir[hir[parent].func].params.start;
+                let (target_type, key_type) = if hir[parent].kind == MemberKind::Constructor {
+                    let class_symbol = self.class_sym(file, class);
+                    (self.type_of_symbol(class_symbol), TypeId::UNDEFINED)
                 } else {
-                    self.type_of_decorated_member(file, class, m)
+                    (
+                        self.get_parent_type_of_class_element(file, class, parent),
+                        self.get_class_element_property_key_type(file, parent),
+                    )
                 };
-                let is_accessor_field =
-                    hir[m].kind == MemberKind::Property && hir[m].flags.contains(Flags::ACCESSOR);
-                let (target, result, context) = match hir[m].kind {
-                    MemberKind::Method => (value, value, &b"ClassMethodDecoratorContext"[..]),
-                    MemberKind::Getter => {
-                        let getter = {
-                            let sig = self.synthetic_signature(None, &[], value);
-                            self.type_of_signature(sig, false)
-                        };
-                        (getter, getter, &b"ClassGetterDecoratorContext"[..])
-                    }
-                    MemberKind::Setter => {
-                        let setter = {
-                            let sig =
-                                self.synthetic_signature(None, &[(b"value", value)], TypeId::VOID);
-                            self.type_of_signature(sig, false)
-                        };
-                        (setter, setter, &b"ClassSetterDecoratorContext"[..])
-                    }
-                    MemberKind::Property if is_accessor_field => (
-                        self.global_type(b"ClassAccessorDecoratorTarget", &[this, value])?,
-                        self.global_type(b"ClassAccessorDecoratorResult", &[this, value])?,
-                        &b"ClassAccessorDecoratorContext"[..],
-                    ),
-                    // `newClassFieldDecoratorInitializerMutatorType`
-                    MemberKind::Property => (
-                        TypeId::UNDEFINED,
-                        {
-                            let sig =
-                                self.synthetic_signature(Some(this), &[(b"value", value)], value);
-                            self.type_of_signature(sig, false)
-                        },
-                        &b"ClassFieldDecoratorContext"[..],
-                    ),
-                    _ => return None,
-                };
-                let context = self.global_type(context, &[this, value])?;
-                // `newClassMemberDecoratorContextTypeForNode`, `getClassMemberDecoratorContextOverrideType`
-                let is_private = matches!(hir[m].key, PropKey::Private(_));
-                let name = match hir[m].key {
-                    // `#x` as in the source, without the part that distinguishes it from the `#x`
-                    // of other classes.
-                    PropKey::Private(name) => {
-                        let written = self.atoms().intern(self.written_name(name));
-                        self.string_literal(written, false)
-                    }
-                    // `getLiteralTypeFromPropertyName`: a number literal type only where the source
-                    // has a numeric literal.
-                    PropKey::Name(name)
-                        if matches!(
-                            hir.text.get(hir[m].name_pos as usize),
-                            Some(b'0'..=b'9' | b'.')
-                        ) =>
-                    {
-                        let n = crate::atom::parse_number(self.atoms().bytes(name)).unwrap_or(0.0);
-                        self.number_literal(n, false)
-                    }
-                    PropKey::Name(name) => self.string_literal(name, false),
-                    PropKey::Computed(e) => {
-                        let ty = self.type_of_expr(file, e);
-                        self.regular(ty)
-                    }
-                    PropKey::None => TypeId::STRING,
-                };
-                let boolean = |b: bool| if b { TypeId::TRUE } else { TypeId::FALSE };
-                let props = [
-                    (&b"name"[..], name),
-                    (b"private", boolean(is_private)),
-                    (b"static", boolean(hir[m].flags.contains(Flags::STATIC))),
-                ]
-                .into_iter()
-                .map(|(name, ty)| Prop {
-                    name: self.atoms().intern(name),
-                    flags: PropFlags::empty(),
-                    source: PropSource::Type(ty),
-                    mapper: MapperId::IDENTITY,
-                });
-                let overrides = self.synth(Shape {
-                    props: vec_from_iter_in(props, self.arena),
-                    ..Shape::new_in(self.arena)
-                });
-                (target, self.intersection(&[context, overrides]), result)
+                let index_type = self.number_literal(f64::from(index), false);
+                Some(self.synthetic_signature(
+                    None,
+                    &[
+                        (b"target", target_type),
+                        (b"propertyKey", key_type),
+                        (b"parameterIndex", index_type),
+                    ],
+                    TypeId::VOID,
+                ))
             }
-            _ => return None,
+            (DecoratorOwner::Member(_), Some(node))
+                if matches!(
+                    hir[node].kind,
+                    MemberKind::Method
+                        | MemberKind::Getter
+                        | MemberKind::Setter
+                        | MemberKind::Property
+                ) =>
+            {
+                let target_type = self.get_parent_type_of_class_element(file, class, node);
+                let key_type = self.get_class_element_property_key_type(file, node);
+                let is_property_declaration = hir[node].kind == MemberKind::Property;
+                if is_property_declaration && !hir[node].flags.contains(Flags::ACCESSOR) {
+                    return Some(self.synthetic_signature(
+                        None,
+                        &[(b"target", target_type), (b"propertyKey", key_type)],
+                        TypeId::VOID,
+                    ));
+                }
+                let property_type = self.type_of_decorated_member(file, class, node);
+                let descriptor_type = self.new_typed_property_descriptor_type(property_type);
+                let return_type = if is_property_declaration {
+                    TypeId::VOID
+                } else {
+                    self.union(&[descriptor_type, TypeId::VOID])
+                };
+                Some(self.synthetic_signature(
+                    None,
+                    &[
+                        (b"target", target_type),
+                        (b"propertyKey", key_type),
+                        (b"descriptor", descriptor_type),
+                    ],
+                    return_type,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// `getClassElementPropertyKeyType`
+    fn get_class_element_property_key_type(&mut self, file: FileId, element: MemberId) -> TypeId {
+        let hir = self.hir(file);
+        let name = hir.name(hir.node(element));
+        match hir.kind(name) {
+            Kind::Identifier | Kind::NumericLiteral | Kind::StringLiteral => {
+                self.string_literal(hir.text(name), false)
+            }
+            Kind::ComputedPropertyName => match hir[element].key {
+                PropKey::Computed(expression) => {
+                    let name_type = self.check_computed_property_name(file, expression);
+                    let is_symbol = self.is_assignable_to_kind(
+                        name_type,
+                        Self::is_symbol_like,
+                        TypeId::SYMBOL,
+                        false,
+                    );
+                    if is_symbol { name_type } else { TypeId::STRING }
+                }
+                // `["a"]`, `[0]`
+                _ => TypeId::STRING,
+            },
+            _ => TypeId::ERROR,
+        }
+    }
+
+    /// `getESDecoratorCallSignature`
+    fn get_es_decorator_call_signature(
+        &mut self,
+        file: FileId,
+        owner: DecoratorOwner,
+    ) -> Option<SigId> {
+        let (class, member) = self.class_of_decorated(file, owner)?;
+        let hir = self.hir(file);
+        match (owner, member) {
+            (DecoratorOwner::Class(_), _) => {
+                let class_symbol = self.class_sym(file, class);
+                let target_type = self.type_of_symbol(class_symbol);
+                // `newClassDecoratorContextType`
+                let context_type =
+                    self.try_create_type_reference(b"ClassDecoratorContext", &[target_type]);
+                Some(self.new_es_decorator_call_signature(target_type, context_type, target_type))
+            }
+            (DecoratorOwner::Member(_), Some(node))
+                if matches!(
+                    hir[node].kind,
+                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+                ) =>
+            {
+                let value_type = if hir[node].kind == MemberKind::Method {
+                    self.type_of_method_declaration(file, node)
+                } else {
+                    self.type_of_decorated_member(file, class, node)
+                };
+                let this_type = self.get_parent_type_of_class_element(file, class, node);
+                let target_type = match hir[node].kind {
+                    // `newGetterFunctionType`
+                    MemberKind::Getter => self.new_function_type(None, &[], value_type),
+                    // `newSetterFunctionType`
+                    MemberKind::Setter => {
+                        self.new_function_type(None, &[(b"value", value_type)], TypeId::VOID)
+                    }
+                    _ => value_type,
+                };
+                let context_type = self.new_class_member_decorator_context_type_for_node(
+                    file, node, this_type, value_type,
+                );
+                Some(self.new_es_decorator_call_signature(target_type, context_type, target_type))
+            }
+            (DecoratorOwner::Member(_), Some(node)) if hir[node].kind == MemberKind::Property => {
+                let value_type = self.type_of_decorated_member(file, class, node);
+                let this_type = self.get_parent_type_of_class_element(file, class, node);
+                let type_arguments = [this_type, value_type];
+                let (target_type, return_type) = if hir[node].flags.contains(Flags::ACCESSOR) {
+                    (
+                        self.try_create_type_reference(
+                            b"ClassAccessorDecoratorTarget",
+                            &type_arguments,
+                        ),
+                        self.try_create_type_reference(
+                            b"ClassAccessorDecoratorResult",
+                            &type_arguments,
+                        ),
+                    )
+                } else {
+                    // `newClassFieldDecoratorInitializerMutatorType`
+                    let value = [(&b"value"[..], value_type)];
+                    (
+                        TypeId::UNDEFINED,
+                        self.new_function_type(Some(this_type), &value, value_type),
+                    )
+                };
+                let context_type = self.new_class_member_decorator_context_type_for_node(
+                    file, node, this_type, value_type,
+                );
+                Some(self.new_es_decorator_call_signature(target_type, context_type, return_type))
+            }
+            _ => None,
+        }
+    }
+
+    /// `getClassMemberDecoratorContextOverrideType`
+    fn get_class_member_decorator_context_override_type(
+        &self,
+        name_type: TypeId,
+        is_private: bool,
+        is_static: bool,
+    ) -> TypeId {
+        let boolean = |b: bool| if b { TypeId::TRUE } else { TypeId::FALSE };
+        let members = [
+            (&b"name"[..], name_type),
+            (b"private", boolean(is_private)),
+            (b"static", boolean(is_static)),
+        ]
+        .into_iter()
+        .map(|(name, ty)| Prop {
+            name: self.atoms().intern(name),
+            flags: PropFlags::empty(),
+            source: PropSource::Type(ty),
+            mapper: MapperId::IDENTITY,
+        });
+        self.synth(Shape {
+            props: vec_from_iter_in(members, self.arena),
+            ..Shape::new_in(self.arena)
+        })
+    }
+
+    /// `newClassMemberDecoratorContextTypeForNode`
+    fn new_class_member_decorator_context_type_for_node(
+        &mut self,
+        file: FileId,
+        node: MemberId,
+        this_type: TypeId,
+        value_type: TypeId,
+    ) -> TypeId {
+        let hir = self.hir(file);
+        let member = hir[node];
+        let is_static = member.flags.contains(Flags::STATIC);
+        let (key, name_kind) = hir.key_of(hir.node(node));
+        let is_private = matches!(key, PropKey::Private(_));
+        let name_type = match key {
+            // `#x` as in the source, without the part that distinguishes it from the `#x` of other
+            // classes.
+            PropKey::Private(name) => {
+                let text = self.atoms().intern(self.written_name(name));
+                self.string_literal(text, false)
+            }
+            // `getLiteralTypeFromPropertyName`, which has no text for a name that declares nothing.
+            _ => match self.literal_type_from_property_name(file, key, name_kind) {
+                Some(name_type) => name_type,
+                None => self
+                    .get_property_name_for_property_name_node(file, key, member.name_pos)
+                    .map_or(TypeId::NEVER, |text| self.string_literal(text, false)),
+            },
         };
-        let ret = self.union(&[result, TypeId::VOID]);
-        Some(self.synthetic_signature(None, &[(b"target", target), (b"context", context)], ret))
+        let context: &[u8] = match member.kind {
+            MemberKind::Method => b"ClassMethodDecoratorContext",
+            MemberKind::Getter => b"ClassGetterDecoratorContext",
+            MemberKind::Setter => b"ClassSetterDecoratorContext",
+            _ if member.flags.contains(Flags::ACCESSOR) => b"ClassAccessorDecoratorContext",
+            _ => b"ClassFieldDecoratorContext",
+        };
+        let context_type = self.try_create_type_reference(context, &[this_type, value_type]);
+        let override_type =
+            self.get_class_member_decorator_context_override_type(name_type, is_private, is_static);
+        self.intersection(&[context_type, override_type])
+    }
+
+    /// `newESDecoratorCallSignature`
+    fn new_es_decorator_call_signature(
+        &mut self,
+        target: TypeId,
+        context: TypeId,
+        non_optional_return_type: TypeId,
+    ) -> SigId {
+        let return_type = self.union(&[non_optional_return_type, TypeId::VOID]);
+        self.synthetic_signature(
+            None,
+            &[(b"target", target), (b"context", context)],
+            return_type,
+        )
     }
 
     /// `getDecoratorArgumentCount`
@@ -357,8 +456,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// The span of the decorator with the expression `e`.
     pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> Written {
         let start = self.start_of(file, e);
+        let at_sign = start_of_token_before(&self.hir(file).text, start, b"@");
         Written {
-            at_sign: start.saturating_sub(1),
+            at_sign: at_sign.unwrap_or(start),
             start,
             end: self.end_of_expr(file, e),
             is_parenthesized: start != self.start_inside_parentheses(file, e),
@@ -371,10 +471,10 @@ impl<'p, 's> Checker<'p, 's> {
         // visits them.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
-            self.reported
-                .retain(|d| d.start < start || d.start >= end || d.by_emit);
+            self.reported.retain(|d| {
+                d.start < start || d.start >= end || d.by_emit || is_binder_diagnostic(d.code)
+            });
         }
-        let mut refused: Vec<DecoratorOwner> = Vec::new();
         for i in 0..hir.decorators.len() {
             let (owner, e) = hir.decorators[i];
             if bound.is_unchecked(e.idx()) {
@@ -382,8 +482,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let written = self.decorator_position(file, e);
             let at_sign = written.at_sign;
-            // A decorator in an invalid position: reported once per decorated declaration, and no
-            // other diagnostic is reported between it and the declaration.
+            // A decorator in an invalid position, which `checkGrammarModifiers` reports: no other
+            // diagnostic is reported between it and the declaration.
             if bound.refused_decorators.contains(&e) {
                 let end = match owner {
                     DecoratorOwner::Class(c) => hir[c].name_pos,
@@ -391,17 +491,12 @@ impl<'p, 's> Checker<'p, 's> {
                     DecoratorOwner::Param(p) => hir[hir[p].pat].pos,
                 };
                 self.never_checked.borrow_mut().push((at_sign + 1, end));
-                self.reported
-                    .retain(|d| d.start <= at_sign || d.start >= end || d.by_emit);
-                if !refused.contains(&owner) {
-                    refused.push(owner);
-                    let is_overload = matches!(owner, DecoratorOwner::Member(m) if hir[m].kind == MemberKind::Method && matches!(hir[hir[m].func].body, FnBody::None));
-                    // `grammarErrorOnFirstToken`
-                    if !hir.has_parse_diagnostics {
-                        let code = if is_overload { 1249 } else { 1206 };
-                        self.error_at((file, at_sign, 0), code, &[]);
-                    }
-                }
+                self.reported.retain(|d| {
+                    d.start <= at_sign
+                        || d.start >= end
+                        || d.by_emit
+                        || is_binder_diagnostic(d.code)
+                });
                 continue;
             }
             // `checkClassDeclaration`, on the first decorator of the class.
@@ -419,33 +514,6 @@ impl<'p, 's> Checker<'p, 's> {
                 })
             {
                 self.error_at((file, at_sign, written.end), 18036, &[]);
-            }
-            // The two accessors of a property count as one decoration target.
-            if hir.legacy_decorators
-                && let DecoratorOwner::Member(m) = owner
-                && matches!(hir[m].kind, MemberKind::Getter | MemberKind::Setter)
-                && let Some((class, _)) = self.class_of_decorated(file, owner)
-                && let Some(name) = self.member_name(file, hir[m].key)
-                && !refused.contains(&owner)
-            {
-                let is_static = hir[m].flags.contains(Flags::STATIC);
-                let first = hir[class].members.iter().find(|&o| {
-                    matches!(hir[o].kind, MemberKind::Getter | MemberKind::Setter)
-                        && hir[o].flags.contains(Flags::STATIC) == is_static
-                        && self.member_name(file, hir[o].key) == Some(name)
-                });
-                if let Some(first) = first
-                    && first != m
-                    && hir
-                        .decorators
-                        .iter()
-                        .any(|d| d.0 == DecoratorOwner::Member(first))
-                {
-                    refused.push(owner);
-                    if !hir.has_parse_diagnostics {
-                        self.error_at((file, at_sign, 0), 1207, &[]);
-                    }
-                }
             }
             if !hir.has_parse_diagnostics
                 && !written.is_parenthesized

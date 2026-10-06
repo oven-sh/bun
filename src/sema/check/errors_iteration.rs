@@ -33,9 +33,7 @@ impl Checker<'_, '_> {
         if self.is_any(input_type) {
             return input_type;
         }
-        // An array or a tuple is iterable: the error position is not computed.
-        let error_node = (!self.is_array_or_tuple(input_type))
-            .then(|| self.span_of_parenthesized_expr(file, expr));
+        let error_node = Some(self.span_of_parenthesized_expr(file, expr));
         self.iterated_type_or_element_type(usage, input_type, TypeId::UNDEFINED, error_node)
             .unwrap_or(TypeId::ANY)
     }
@@ -100,12 +98,12 @@ impl Checker<'_, '_> {
     pub(super) fn check_iteration(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let index = self.exprs_by_kind(file);
-        // `[...x]`, `f(...x)`
+        // `f(...x)`, `import(...x)`. `checkArrayLiteral` reports for `[...x]`.
         for &e in index.of(ExprTag::Spread) {
             let ExprKind::Spread(inner) = hir[e].kind else {
                 continue;
             };
-            if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Array(_) | ExprKind::Call(_) | ExprKind::New(_)))
+            if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }))
                 && !self.is_definite_assignment_target(file, e)
             {
                 let actual = self.type_of_expr(file, inner);
@@ -123,21 +121,13 @@ impl Checker<'_, '_> {
     }
 
     /// `getIndexTypeOrString`: the string keys of `ty`, or `string` if it has none.
-    pub(super) fn index_type_or_string(&mut self, ty: TypeId) -> TypeId {
+    fn index_type_or_string(&mut self, ty: TypeId) -> TypeId {
         let keys = self.keyof(ty);
-        // `getExtractStringType`: `Extract<keys, string>`. Only generic keys need the conditional type.
-        let strings = if self.is_generic(keys)
-            && let Some(name) = self.atoms().lookup(b"Extract")
-            && let Some(extract) = self.files().global(name, SymFlags::TYPE_ALIAS)
-        {
-            self.type_reference(extract, &[keys, TypeId::STRING])
-        } else {
-            self.filter(keys, |c, m| c.is_string_like(m))
-        };
-        if strings.is_never() {
+        let index_type = self.get_extract_string_type(keys);
+        if index_type.is_never() {
             TypeId::STRING
         } else {
-            strings
+            index_type
         }
     }
 
@@ -264,13 +254,14 @@ impl Checker<'_, '_> {
                 let left_type = self.type_of_expr(file, left);
                 let error_node = Some(self.error_range_of(file, left));
                 let right = Some((file, value));
+                let head_message = self.exact_optional_head_message(file, left, initializer);
                 self.check_type_assignable_to_and_optionally_elaborate(
                     initializer,
                     left_type,
                     error_node,
                     right,
                     false,
-                    None,
+                    head_message,
                     None,
                 );
             }
@@ -332,8 +323,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkObjectLiteralDestructuringPropertyAssignment`. 1136, for a member that is not a
-    /// property assignment, is reported with the grammar checks.
+    /// `checkObjectLiteralDestructuringPropertyAssignment`
     fn check_object_literal_destructuring_property_assignment(
         &mut self,
         file: FileId,
@@ -354,28 +344,37 @@ impl Checker<'_, '_> {
                 self.error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
                 return;
             }
+            // A name that is not numeric omits the property of that name and no other. Any other
+            // name omits by its type.
             let (mut names, mut keys) = (Vec::new(), Vec::new());
             for other in all_properties
                 .iter()
                 .filter(|&other| hir[other].kind != PropKind::Spread)
             {
-                match self.member_name(file, hir[other].key) {
-                    Some(name) => names.push(name),
-                    None => {
-                        let (key, pos) = (hir[other].key, hir[other].pos);
-                        keys.extend(self.literal_type_from_property_name(file, key, pos));
-                    }
+                let (key, name_kind) = (hir[other].key, hir[other].name_kind);
+                match key {
+                    PropKey::Name(name) if !self.is_numeric_name(name) => names.push(name),
+                    _ => keys.extend(self.literal_type_from_property_name(file, key, name_kind)),
                 }
             }
             let keys = self.union(&keys);
             let rest = self.rest_of_object(object_literal_type, &names, keys, None);
+            // `checkGrammarForDisallowedTrailingComma`
+            let end = self.end_of_prop(file, p);
+            self.grammar_error_on_token_after(file, end, b',', 1013);
             return self.check_destructuring_assignment(file, property.value, rest);
         }
         if !matches!(property.kind, PropKind::Init | PropKind::Shorthand) {
+            self.error(file, p, 1136, &[]);
+            // Nothing in it is checked, unless `checkObjectLiteral` comes to the pattern, for the
+            // contextual type of the right side. That defers every method and accessor.
+            if self.task.file == Some(file) && !self.is_deferred_node.contains(&property.value) {
+                self.unvisited_exprs.push((property.start, property.value));
+            }
             return;
         }
         let Some(expr_type) =
-            self.literal_type_from_property_name(file, property.key, property.pos)
+            self.literal_type_from_property_name(file, property.key, property.name_kind)
         else {
             return;
         };
@@ -500,6 +499,9 @@ impl Checker<'_, '_> {
                     }
                     return;
                 }
+                // `checkGrammarForDisallowedTrailingComma`
+                let end = self.end_of_expr(file, element);
+                self.grammar_error_on_token_after(file, end, b',', 1013);
                 let ty = if self.every_type(source_type, |c, t| c.is_tuple(t)) {
                     self.element_of_destructured(source_type, element_index, true, None)
                 } else {
@@ -544,6 +546,22 @@ impl Checker<'_, '_> {
         if self.check_reference_expression(file, target, message, optional_message) {
             let error_node = Some(self.error_range_of(file, target));
             self.check_type_assignable_to(source_type, target_type, error_node, None);
+        }
+    }
+
+    /// `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` is about to call
+    /// `checkSignatureDeclaration` for `func`, and `getContextualSignature` returns `contextual`.
+    pub(super) fn note_contextual_signature_at_check(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        contextual: SigId,
+    ) {
+        let hir = self.hir(file);
+        let mut parameters = hir[func].params.iter();
+        if parameters.any(|p| Self::is_pattern_without_names(hir, hir[p].pat)) {
+            self.contextual_signatures_at_check
+                .push(((file, func), contextual));
         }
     }
 
@@ -599,15 +617,25 @@ impl Checker<'_, '_> {
             }
             // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters
             // while `getContextualSignature` still returns the signature that the inference
-            // context then instantiates. Only the instantiated one is stored.
+            // context then instantiates.
             if contextually_typed.is_some() && self.iife_param_type(file, func, index).is_none() {
-                let assigned = self.assigned_contextual_signature(file, func);
-                let is_as_declared = assigned.is_some_and(|sig| {
-                    matches!(*self.types().sig(sig), SigData::Decl { mapper, .. }
-                        if !self.is_instantiating(mapper))
-                });
-                if !is_as_declared {
-                    return;
+                let mut noted = self.contextual_signatures_at_check.iter();
+                match noted.rfind(|it| it.0 == (file, func)).map(|it| it.1) {
+                    Some(sig) => {
+                        contextually_typed = self.contextual_param_type_in(file, func, index, sig);
+                    }
+                    // Another task has checked the function. Only the instantiated signature is
+                    // stored.
+                    None => {
+                        let assigned = self.assigned_contextual_signature(file, func);
+                        let is_as_declared = assigned.is_some_and(|sig| {
+                            matches!(*self.types().sig(sig), SigData::Decl { mapper, .. }
+                                if !self.is_instantiating(mapper))
+                        });
+                        if !is_as_declared {
+                            return;
+                        }
+                    }
                 }
             }
             if hir[q].flags.contains(Flags::OPTIONAL) {

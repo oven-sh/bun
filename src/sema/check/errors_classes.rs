@@ -1,8 +1,9 @@
 //! Classes and interfaces checked against their base types, and errors specific to class bodies:
 //! 4112 4113 4114 4115 4116 4117 4127 (`override`), 4119 to 4123 4128 (`override` in a JavaScript
-//! file); 2510 2545 2797 2675 (the base type of a class); 2422 (the types it implements); 2499 (the
-//! base types of an interface); 2725 (a class named `Object`); 2376 2377 2401 17005 (the position
-//! of the `super()` call); 2715 (an abstract property read during instance initialization).
+//! file); 2510 2545 2797 2675 (the base type of a class); 2422 2500 (the types it implements); 2499
+//! (the base types of an interface); 2725 (a class named `Object`); 2376 2377 2401 17005 (the
+//! position of the `super()` call); 2715 (an abstract property read during instance
+//! initialization).
 //!
 //! Follows `checkClassLikeDeclaration`, `checkBaseTypeAccessibility`,
 //! `checkMembersForOverrideModifier`, `checkMemberForOverrideModifier`, `isValidBaseType`,
@@ -64,8 +65,8 @@ impl<'p> Checker<'p, '_> {
             if self.is_type_variable(constructor) {
                 let static_type = self.type_of_symbol(sym);
                 let own = self.signatures(static_type, true);
-                // `GetErrorRangeForNode`
-                let at = self.place_of_token(file, class.name_pos);
+                let (start, end) = self.error_range_of_class(file, c);
+                let at = (file, start, end);
                 if !self.is_mixin_constructor_type(&own) {
                     self.error_at(at, 2545, &[]);
                 } else if !class.flags.contains(Flags::ABSTRACT)
@@ -77,11 +78,9 @@ impl<'p> Checker<'p, '_> {
                     self.error_at(at, 2797, &[]);
                 }
             } else if !matches!(
-                self.data(static_base_type),
-                TypeData::Anon {
-                    origin: Origin::ClassStatic(_),
-                    ..
-                }
+                self.symbol_of_type(static_base_type),
+                Some(super::errors_small::SymbolAtLocation::Symbol(symbol))
+                    if self.files().flags(symbol).contains(SymFlags::CLASS)
             ) {
                 // A base constructor that is not a class must return the same type from every
                 // construct signature.
@@ -99,7 +98,11 @@ impl<'p> Checker<'p, '_> {
         }
         self.check_members_for_override_modifier(file, c, sym, base);
         for node in hir.ids(class.implements) {
-            // The name of a primitive type is an unresolved name here, which is reported elsewhere.
+            // `!IsEntityNameExpression(expr)`, whose type is the error type.
+            if let TypeNodeKind::Heritage(expression) = hir[node].kind {
+                let end = self.end_of_expr(file, expression);
+                self.error_at((file, hir[node].pos, end), 2500, &[]);
+            }
             if !matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
                 continue;
             }
@@ -241,8 +244,13 @@ impl<'p> Checker<'p, '_> {
         let visits_all = self.p.files.options.no_implicit_override;
         for m in class.members.iter() {
             let member = &hir[m];
+            // `ModifierFlags()`: what is written before `static { }` is only in its list.
+            let flags = match member.kind {
+                MemberKind::StaticBlock => member.flags | hir.modifiers_to_flags(member.modifiers),
+                _ => member.flags,
+            };
             if !visits_all
-                && !member.flags.contains(Flags::OVERRIDE)
+                && !flags.contains(Flags::OVERRIDE)
                 && (member.kind != MemberKind::Constructor
                     || member.func.is_some()
                         && !hir[member.func]
@@ -263,7 +271,7 @@ impl<'p> Checker<'p, '_> {
             if member.kind != MemberKind::Constructor {
                 let overrider = Overrider {
                     key: member.key,
-                    flags: member.flags,
+                    flags,
                     member: m,
                     param: ParamId::NONE,
                 };
@@ -315,24 +323,18 @@ impl<'p> Checker<'p, '_> {
             }
             ClassBase::Is { constructor, base } => (constructor, base),
         };
-        // A name that is only known at run time names no property that could be looked up.
-        if let PropKey::Computed(name) = member.key {
-            match self.is_bindable_computed_name(file, name) {
-                None => return,
-                Some(false) => {
-                    if has_override {
-                        let at = self.place_of_overrider(file, member);
-                        self.error_at(at, code(4127), &[]);
-                    }
-                    return;
-                }
-                Some(true) => {}
-            }
+        if has_override
+            && let PropKey::Computed(name) = member.key
+            && self.is_non_bindable_dynamic_name(file, name)
+        {
+            let at = self.place_of_overrider(file, member);
+            self.error_at(at, code(4127), &[]);
+            return;
         }
         if !has_override && !no_implicit_override {
             return;
         }
-        let Some(name) = self.member_name(file, member.key) else {
+        let Some(name) = self.declared_member_name(file, member.key) else {
             return;
         };
         let is_static = member.param.is_none() && member.flags.contains(Flags::STATIC);
@@ -393,38 +395,19 @@ impl<'p> Checker<'p, '_> {
         (file, start, end)
     }
 
-    /// Whether the computed name `e` evaluates to a statically known name: not
-    /// `isNonBindableDynamicName`.
-    /// `None`: undetermined.
-    fn is_bindable_computed_name(&mut self, file: FileId, e: ExprId) -> Option<bool> {
+    /// `isNonBindableDynamicName` for the computed name `[e]`.
+    fn is_non_bindable_dynamic_name(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         if !is_dynamic_name(hir, e) {
-            return Some(true);
+            return false;
         }
         // `isLateBindableAST`
         if !is_entity_name_expression(hir, e) {
-            return Some(false);
+            return true;
         }
         let ty = self.type_of_expr(file, e);
-        // `isValidESSymbolDeclaration`: `static readonly k = Symbol()` has a unique symbol type,
-        // whereas here it has the general symbol type.
-        if ty == TypeId::SYMBOL
-            && let ExprKind::Dot { obj, name, .. } = hir[e].kind
-        {
-            let object = self.type_of_expr(file, obj);
-            let apparent = self.apparent_type(object);
-            if let Some((prop, _)) = self.prop_ref(apparent, name)
-                && let PropSource::Symbol(sym) = prop.source
-                && self.members_of_symbol(sym).iter().any(|&(f, m)| {
-                    let member = &self.hir(f)[m];
-                    member.ty.is_none() && member.flags.contains(Flags::STATIC | Flags::READONLY)
-                })
-            {
-                return None;
-            }
-        }
         // `isTypeUsableAsPropertyName`
-        Some(self.property_name_of_type(ty).is_some())
+        self.property_name_of_type(ty).is_none()
     }
 
     /// `getSuggestedSymbolForNonexistentClassMember`
@@ -434,31 +417,35 @@ impl<'p> Checker<'p, '_> {
         // The name of a symbol-keyed member is compared like any other. In tsgo it is
         // `\xFE@description@<symbol id>` (`getESSymbolLikeTypeForNode`). `GetSymbolId` numbers
         // symbols in the order they are first requested, which cannot be reproduced: the id is
-        // assumed to have one digit, as it has early in a process.
+        // assumed to have two digits, the fewest it has in a program with a default library.
         let late_bound = written
             .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
             .map(|described| {
                 let description =
                     &described[..bun_core::strings::last_index_of_char(described, b'@')
                         .unwrap_or(described.len())];
-                [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@0"[..]].concat()
+                [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@00"[..]].concat()
             });
         let text = late_bound.as_deref().unwrap_or(written);
         let ty = self.reduced(ty);
         let apparent = self.apparent_type(ty);
         let members = self.members(apparent)?;
-        // `getCandidateName`: an internal name is never suggested, and only `SymbolFlagsClassMember` counts, which the exports of a
-        // namespace merged with the class are not.
-        let get_name = |prop: &Prop| match self.written_name(prop.name) {
-            _ if matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym)) => {
-                &[][..]
+        let mut candidates = Vec::new();
+        for prop in &members.shape().props {
+            // `getCandidateName`: an internal name is never suggested, and only
+            // `SymbolFlagsClassMember` counts, which the exports of a namespace merged with the
+            // class are not.
+            let candidate = self.written_name(prop.name);
+            if matches!(candidate.first(), Some(b'"' | 0xFE))
+                || matches!(prop.source, PropSource::Symbol(sym) if !self.is_member_symbol(sym))
+            {
+                continue;
             }
-            name if name.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => &[][..],
-            name => name,
-        };
-        // Of two equally close candidates, the first wins.
-        let compare = |_, _| std::cmp::Ordering::Equal;
-        get_spelling_suggestion(text, members.shape().props.iter(), get_name, compare)
+            candidates.push((self.order_of_property(prop), candidate, prop));
+        }
+        // `compareSymbols` breaks ties between equally close candidates.
+        get_spelling_suggestion(text, candidates.iter(), |it| it.1, |a, b| a.0.cmp(&b.0))
+            .map(|found| found.2)
     }
 
     /// Whether `prop` has any declarations, and whether one of them is `abstract`. `None`: its

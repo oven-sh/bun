@@ -15,7 +15,7 @@ use super::keep::{TypeMemberParts, modifier_flag};
 use crate::Error;
 use crate::lexer::{PropertyModifierKeyword, T};
 use crate::p::P;
-use crate::parser::{PropertyOpts, TypeParameterFlag};
+use crate::parser::TypeParameterFlag;
 use crate::sema::ts_syntax as ts;
 use bun_ast::{E, G, Loc, LocRef, Ref, S, Stmt};
 use bun_sema::hir::TypeNodeKind;
@@ -81,6 +81,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(())
     }
 
+    /// The range of the type parameters that `skip_class_type_parameters` just parsed, if they are
+    /// `<>` (`checkGrammarTypeParameterList`).
+    #[inline]
+    pub(crate) fn take_empty_class_type_parameters(&mut self) -> Option<bun_ast::Range> {
+        match &mut self.type_syntax {
+            Some(syntax) if SEMA => syntax.empty_class_type_params.take(),
+            _ => None,
+        }
+    }
+
     /// `parseClassElement`: `property`, whose first token is at `start` with full start
     /// `full_start`, ends before the current token. Its modifiers are those pushed since the stack
     /// had `modifiers_base` entries.
@@ -112,8 +122,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// `implemented`, which starts at `start`, is an element of an `implements` clause of the class
-    /// whose keyword is at `class_keyword`. `NONE`: it is not of the form `A.B<C>`, which the
-    /// parser has already reported.
+    /// whose keyword is at `class_keyword`. `NONE`: its type arguments are unusable.
     pub(crate) fn note_implemented(
         &mut self,
         class_keyword: &mut Loc,
@@ -158,17 +167,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
-    /// `parseModifiersEx`: the word at `loc` was consumed as a modifier of the member being parsed.
+    /// `parseModifiersEx`: the word at `loc` was consumed as a modifier of the member being parsed,
+    /// of a class or of an object literal.
     #[inline]
-    pub(crate) fn push_member_modifier(
-        &mut self,
-        opts: &PropertyOpts,
-        keyword: PropertyModifierKeyword,
-        loc: Loc,
-    ) {
-        if opts.is_class
-            && let Some(flag) = modifier_flag(keyword)
-        {
+    pub(crate) fn push_member_modifier(&mut self, keyword: PropertyModifierKeyword, loc: Loc) {
+        if let Some(flag) = modifier_flag(keyword) {
             self.push_statement_modifier(flag, loc);
         }
     }
@@ -214,17 +217,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// The member of the class at `class_keyword` whose first token is at `start`, with full start
-    /// `full_start`, was dropped. If it is an index signature, its modifiers are those pushed since
-    /// the stack had `modifiers_base` entries, and it ends before the current token.
+    /// `full_start`, was dropped. If it is an index signature, its modifiers are `decorators` and
+    /// those pushed since the stack had `modifiers_base` entries, and it ends before the current
+    /// token.
     #[cold]
     #[inline(never)]
     pub(crate) fn finish_class_index_signature(
         &mut self,
         class_keyword: &mut Loc,
+        decorators: &[bun_ast::Expr],
         start: Loc,
         full_start: Loc,
         modifiers_base: usize,
     ) {
+        for &decorator in decorators {
+            let at_sign = self.noted(decorator.loc, Mark::AtSign);
+            let at_sign = bun_ast::usize2loc(at_sign.unwrap_or_default() as usize);
+            self.push_statement_decorator(decorator, at_sign);
+        }
         let end = self.lexer.full_start();
         self.type_syntax_mut().take_class_index_signature(
             class_keyword,
@@ -233,72 +243,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             end,
             modifiers_base,
         );
-    }
-
-    /// `parseExpressionWithTypeArguments` after `implements`, where the names parsed as the type
-    /// `kept` continue with `?.`.
-    /// `isEntityNameExpression` treats `A?.B` as an entity name, so it is resolved as `A.B`.
-    /// Returns false, with nothing consumed, if the expression is anything more than that.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn parse_optional_chain_of_implemented(
-        &mut self,
-        kept: ts::TypeId,
-    ) -> Result<bool, Error> {
-        if kept.is_none() {
-            return Ok(false);
-        }
-        let TypeNodeKind::Ref { name, args } = self.type_syntax_mut().b.file[kept].kind else {
-            return Ok(false);
-        };
-        if self.lexer.token != T::TQuestionDot || !args.is_empty() {
-            return Ok(false);
-        }
-        let here = self.lexer.snapshot();
-        let mut names: Vec<ts::Name> = Vec::new();
-        while matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
-            self.lexer.next()?;
-            if !self.lexer.is_identifier_or_keyword() {
-                self.lexer.restore(&here);
-                return Ok(false);
-            }
-            names.push(ts::Name {
-                text: bun_ast::StoreStr::new(self.lexer.identifier),
-                loc: self.lexer.loc(),
-            });
-            self.lexer.next()?;
-        }
-        if matches!(
-            self.lexer.token,
-            T::TOpenParen
-                | T::TOpenBracket
-                | T::TExclamation
-                | T::TLessThan
-                | T::TNoSubstitutionTemplateLiteral
-                | T::TTemplateHead
-        ) {
-            self.lexer.restore(&here);
-            return Ok(false);
-        }
-        let end = self.lexer.full_start();
-        self.type_syntax_mut()
-            .qualify_reference(kept, name, args, &names, end);
-        Ok(true)
-    }
-
-    /// Whether the type `kept` has the form `A.B<C>`. True outside of type checking, and where no
-    /// type could be parsed.
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn is_saved_entity_name(&self, kept: ts::TypeId) -> bool {
-        match &self.type_syntax {
-            // `number` is an ordinary name to `parseLeftHandSideExpressionOrHigher`.
-            Some(syntax) if kept.is_some() => matches!(
-                syntax.b.file[kept].kind,
-                TypeNodeKind::Ref { .. } | TypeNodeKind::Keyword(_)
-            ),
-            _ => true,
-        }
     }
 
     /// The text of the tagged template piece at the lexer's current token. An ordinary build prints
@@ -353,7 +297,10 @@ impl super::TypeSyntax<'_> {
             let flags = self.statement_modifiers[base..]
                 .iter()
                 .fold(ts::Flags::empty(), |flags, modifier| flags | modifier.flag);
-            let first_modifier = self.statement_modifiers.get(base).map(|first| first.loc);
+            let mut keywords = self.statement_modifiers[base..].iter();
+            let first_modifier = keywords
+                .find(|modifier| modifier.decorator.is_none())
+                .map(|first| first.loc);
             self.b.file[kept.signature].flags |= flags;
             kept.flags |= flags;
             kept.modifiers = modifiers;
@@ -362,31 +309,11 @@ impl super::TypeSyntax<'_> {
             }
             (kept.start, kept.full_start, kept.end) = (start, full_start, end);
             let created = self.b.member(&kept);
-            self.class_index_signatures.push(created);
+            self.class_index_signatures.push((created, modifiers));
             let payload = self.class_index_signatures.len() as u32 - 1;
             self.notes.add(class_keyword, Mark::IndexSignature, payload);
         }
         self.statement_modifiers.truncate(base);
-    }
-
-    /// Appends `names` to `name`, the entity name of the type reference `reference`, which then ends at `end`.
-    fn qualify_reference(
-        &mut self,
-        reference: ts::TypeId,
-        mut name: ts::Names,
-        args: ts::Types,
-        names: &[ts::Name],
-        end: Loc,
-    ) {
-        for next in names {
-            let text = self.b.atom(&next.text);
-            name = self
-                .b
-                .file
-                .append_to_entity_name(name, text, next.loc.start as u32);
-        }
-        self.b.file[reference].kind = TypeNodeKind::Ref { name, args };
-        self.b.file[reference].end = end.start as u32;
     }
 }
 
@@ -467,10 +394,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.type_syntax.as_mut()?.module_syntax.last_mut()
     }
 
-    /// `parseIdentifier`, before the token is consumed. A missing name is empty and is positioned
-    /// at the end of the previous token.
+    /// `parseIdentifier`, before the token is consumed (`expect_identifier`). A missing name is
+    /// empty and is positioned at the end of the previous token.
     pub(crate) fn identifier_syntax(&self) -> ts::Name {
-        if self.lexer.token == T::TIdentifier || !self.is_tolerant() {
+        if matches!(self.lexer.token, T::TIdentifier | T::TPrivateIdentifier) || !self.is_tolerant()
+        {
             ts::Name {
                 text: bun_ast::StoreStr::new(self.lexer.identifier),
                 loc: self.lexer.loc(),

@@ -26,7 +26,7 @@ struct TypeWalk {
 impl Checker<'_, '_> {
     /// `typeWriterWalker.getTypes`. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
-        self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
+        self.flow_analysis_disabled |= self.is_flow_analysis_left_disabled(file);
         let hir = self.hir(file);
         let mut walk = TypeWalk {
             text_of_expr: vec![None; hir.exprs.len()],
@@ -50,7 +50,7 @@ impl Checker<'_, '_> {
         if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
             return Vec::new();
         }
-        self.flow_analysis_disabled_in = self.is_flow_analysis_left_disabled(file).then_some(file);
+        self.flow_analysis_disabled |= self.is_flow_analysis_left_disabled(file);
         let mut found = Vec::new();
         for node in self.visited_nodes(file) {
             if self.is_omitted_from_types(file, node.kind) {
@@ -314,14 +314,12 @@ impl Checker<'_, '_> {
     /// property access (`isRightSideOfQualifiedNameOrPropertyAccess`).
     fn type_of_visited_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
-        match hir[e].kind {
-            // `getResolvedSymbol`: `NodeIsMissing`
-            ExprKind::Missing | ExprKind::Ident(known::empty) => return TypeId::ERROR,
-            // `checkPrivateIdentifierExpression`
-            ExprKind::String(_) if is_private_name_at(hir, hir[e].pos) => {
-                return TypeId::ANY;
-            }
-            _ => {}
+        // `getResolvedSymbol`: `NodeIsMissing`
+        if matches!(
+            hir[e].kind,
+            ExprKind::Missing | ExprKind::Ident(known::empty)
+        ) {
+            return TypeId::ERROR;
         }
         if let Some(ty) = self.type_of_export_assignment_name(file, e) {
             return ty;
@@ -569,7 +567,7 @@ impl Checker<'_, '_> {
         // `[e]` whose `e` has no type usable as a property name, or is not syntactically a name
         // (`isLateBindableAST`); `#x` outside a class; `1n`.
         let prop = self
-            .member_name(file, member.key)
+            .declared_member_name(file, member.key)
             .and_then(|name| self.prop_ref(container, name))
             .map(|(prop, mapper)| (prop.clone_in(self.arena), mapper));
         let own = PropSource::Symbol(self.symbol_of_member(file, m));
@@ -616,24 +614,18 @@ impl Checker<'_, '_> {
         self.type_of_prop(&prop, MapperId::IDENTITY)
     }
 
-    /// `getTypeOfSymbol` of the symbol of `p`, a member of an object literal or a JSX attribute.
+    /// `getTypeOfSymbol(getSymbolOfDeclaration(p))` for `p`, a member of an object literal or a JSX
+    /// attribute.
     fn type_of_literal_member_symbol(&mut self, file: FileId, p: PropId) -> TypeId {
-        let hir = self.hir(file);
-        let declarations = self.bound(file).declarations_of_literal_member(p);
-        let of_kind = |kind: PropKind| {
-            declarations
-                .iter()
-                .copied()
-                .find(|&declaration| hir[declaration].kind == kind)
-        };
         // `getTypeOfAccessors` takes precedence: the get accessor determines the type of the
         // property, or else the set accessor. Otherwise
         // `getTypeOfVariableOrParameterOrPropertyWorker`: `checkPropertyAssignment`,
         // `checkJsxAttribute` and the like for `symbol.ValueDeclaration`, the first declaration
         // (`SetValueDeclaration`). None of them widens.
-        let declaration = of_kind(PropKind::Getter)
-            .or_else(|| of_kind(PropKind::Setter))
-            .unwrap_or(declarations[0]);
+        let declaration = self
+            .accessor_of_literal(file, p, PropKind::Getter)
+            .or_else(|| self.accessor_of_literal(file, p, PropKind::Setter))
+            .unwrap_or_else(|| self.first_declaration_of_literal_member(file, p));
         self.get_type_of_literal_member(file, declaration)
     }
 }
@@ -705,7 +697,6 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: SymFlags,
     ) -> Option<Sym> {
         let files = self.files();
-        let lookup = &mut |_, held, meaning| self.get_symbol(held, meaning);
-        files.resolve_entity_with(file, scope, names, meaning, false, lookup)
+        files.resolve_entity_with(file, scope, names, meaning, false, self)
     }
 }

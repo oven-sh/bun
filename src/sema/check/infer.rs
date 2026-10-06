@@ -42,9 +42,6 @@ pub(super) struct Candidate {
     pub covariant: SmallVec<[TypeId; 4]>,
     /// Type argument nesting depth at which each of `covariant` was found. The deepest come first.
     depths: SmallVec<[u32; 4]>,
-    /// `ObjectFlagsArrayLiteral` of each of `covariant`. `createArrayLiteralType` sets it on a clone
-    /// of the array type, so `number[]` and the type of `[1]` are two candidates.
-    array_literals: SmallVec<[bool; 4]>,
     pub contravariant: SmallVec<[TypeId; 4]>,
     /// Candidates of a worse priority are dropped.
     pub priority: u32,
@@ -83,9 +80,6 @@ pub(super) struct Inference {
     original_target: TypeId,
     /// The source is the type implied by a binding pattern (`patternForType`).
     pub(super) from_pattern: bool,
-    /// The types with `ObjectFlagsArrayLiteral` in the type of the argument that is being inferred
-    /// from (`Checker::array_literal_types_in`).
-    pub(super) array_literals: Vec<TypeId>,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
     /// inferences is `any`.
     pub(super) any_default: bool,
@@ -98,8 +92,9 @@ pub(super) struct Inference {
     pub(super) around: MapperId,
     /// `propagationType`
     propagated: Option<TypeId>,
-    /// `returnMapper`. `IDENTITY`: nil.
-    pub(super) return_mapper: MapperId,
+    /// `returnMapper`, as the context whose `mapper` it is: nothing is inferred before something is
+    /// mapped. `None`: nil.
+    pub(super) return_context: Option<Box<Inference>>,
     /// The clone that `createOuterReturnMapper` creates, once.
     pub(super) outer_return_context: Option<Box<Inference>>,
     /// `InferenceFlagsNoDefault`
@@ -139,12 +134,11 @@ impl Inference {
             calls: 0,
             original_target: TypeId::NEVER,
             from_pattern: false,
-            array_literals: Vec::new(),
             any_default: false,
             around_source: MapperId::IDENTITY,
             around: MapperId::IDENTITY,
             propagated: None,
-            return_mapper: MapperId::IDENTITY,
+            return_context: None,
             outer_return_context: None,
             no_default: false,
             skipped_generic_function: false,
@@ -168,12 +162,6 @@ impl Inference {
 }
 
 impl<'p, 's> Checker<'p, 's> {
-    /// `ObjectFlagsNonInferrableType`: part of the type is missing.
-    pub(super) fn is_non_inferrable_type(&self, ty: TypeId) -> bool {
-        let flags = self.types().object_flags(ty);
-        flags.contains(ObjectFlags::HAS_UNRESOLVED)
-    }
-
     /// Infers `params` from `source` to `target`. For `infer` in conditional types.
     pub fn infer_from_types(
         &mut self,
@@ -381,7 +369,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(index) = n.index_of(target) {
                 // `ObjectFlagsNonInferrableType`: a type with omitted parts is not a candidate. Nor
                 // is `nonInferrableAnyType`, which lacks the flag: a type that contains it is one.
-                if self.is_non_inferrable(source, 0) || source == TypeId::NON_INFERRABLE_ANY {
+                if self.is_non_inferrable(source) || source == TypeId::NON_INFERRABLE_ANY {
                     return;
                 }
                 let candidate = n.propagated.unwrap_or(source);
@@ -531,13 +519,11 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         if n.candidates[index].fixed.is_none() {
             let (priority, contra, depth) = (n.priority, n.contra && !n.bivariant, n.depth);
-            let is_array_literal = n.array_literals.contains(&candidate);
             let mut has_changed = false;
             let c = &mut n.candidates[index];
             if priority < c.priority {
                 c.covariant.clear();
                 c.depths.clear();
-                c.array_literals.clear();
                 c.contravariant.clear();
                 c.top_level = true;
                 c.priority = priority;
@@ -550,14 +536,11 @@ impl<'p, 's> Checker<'p, 's> {
                         has_changed = true;
                     }
                 } else {
-                    let found = (0..c.covariant.len()).find(|&i| {
-                        c.covariant[i] == candidate && c.array_literals[i] == is_array_literal
-                    });
+                    let found = c.covariant.iter().position(|&t| t == candidate);
                     if found.is_none_or(|i| c.depths[i] < depth) {
                         if let Some(i) = found {
                             c.covariant.remove(i);
                             c.depths.remove(i);
-                            c.array_literals.remove(i);
                         }
                         let at = c
                             .depths
@@ -566,7 +549,6 @@ impl<'p, 's> Checker<'p, 's> {
                             .unwrap_or(c.depths.len());
                         c.covariant.insert(at, candidate);
                         c.depths.insert(at, depth);
-                        c.array_literals.insert(at, is_array_literal);
                         has_changed = true;
                     }
                 }
@@ -956,31 +938,41 @@ impl<'p, 's> Checker<'p, 's> {
             let source = matches.as_ref().map_or(TypeId::NEVER, |m| m[i]);
             // A substring inferred for a type parameter constrained to, for example, `number`: the
             // number it spells.
-            if let TypeData::StringLit { value, .. } = *self.data(source)
+            if let Some(value) = self.string_literal_value(source)
                 && let Some(index) = n.index_of(target)
                 && let Some(constraint) = self.base_constraint_of(n.params[index])
                 && !self.is_any(constraint)
-                && !self.some_type(constraint, |_, m| m == TypeId::STRING)
-                && let Some(spelled) = self.literal_matching_text(value, source, constraint)
+                && let Some(matching_type) = self.literal_matching_text(value, source, constraint)
             {
-                self.infer_types(n, spelled, target);
+                self.infer_types(n, matching_type, target);
                 continue;
             }
             self.infer_types(n, source, target);
         }
     }
 
-    /// The member of `constraint` that best represents the text `value`. The `choose` closure of
-    /// `inferToTemplateLiteralType`.
+    /// `matchingType` of `inferToTemplateLiteralType`: the member of `constraint` that best
+    /// represents `source`, a string literal type with the text `value`. `None`: `never`.
     fn literal_matching_text(
         &mut self,
         value: Atom,
         source: TypeId,
         constraint: TypeId,
     ) -> Option<TypeId> {
+        let mut all_type_flags = (self.parts(constraint).iter())
+            .fold(0, |all_type_flags, &t| all_type_flags | self.flags(t));
+        // Nothing is preferred to `string`.
+        if all_type_flags & tf::STRING != 0 {
+            return None;
+        }
         let text = self.atoms().bytes(value);
-        let number = crate::atom::parse_number(text)
-            .filter(|v| v.is_finite() && self.number_name(*v) == value);
+        let number = super::relate::number_from_string(text);
+        // `isValidNumberString(text, roundTripOnly)`. An enum member keeps `TypeFlagsEnumLiteral`.
+        if all_type_flags & tf::NUMBER_LIKE != 0
+            && (text.is_empty() || !number.is_finite() || self.number_name(number) != value)
+        {
+            all_type_flags &= !tf::NUMBER_LIKE;
+        }
         // `isValidBigIntString(text, roundTripOnly)`: exactly what a bigint prints as.
         let negative = text.starts_with(b"-");
         let digits = text.strip_prefix(b"-").unwrap_or(text);
@@ -991,68 +983,131 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 !digits.starts_with(b"0")
             };
-        // In order of preference.
-        let rank = |c: &mut Self, t: TypeId| -> Option<(u32, TypeId)> {
-            match c.data(t) {
-                TypeData::Template { texts, types } => c
-                    .is_type_matched_by_template_literal_type(
-                        source,
-                        texts,
-                        types,
-                        &mut |c, s, t| c.is_assignable(s, t),
-                    )
-                    .then_some((1, source)),
-                TypeData::StringMapping { kind, .. } => {
-                    (c.string_mapping(*kind, source) == source).then_some((2, source))
-                }
-                TypeData::StringLit { value: v, .. }
-                | TypeData::EnumLit {
-                    value: EnumValue::String(v),
-                    ..
-                } => (*v == value).then_some((3, t)),
-                TypeData::Intrinsic(Intrinsic::Number) | TypeData::Enum { .. } => {
-                    number.map(|v| (4, c.number_literal(v, false)))
-                }
-                TypeData::NumberLit { bits, .. }
-                | TypeData::EnumLit {
-                    value: EnumValue::Number(bits),
-                    ..
-                } => (number.map(f64::to_bits) == Some(*bits)).then_some((5, t)),
-                // `parseBigIntLiteralType`
-                TypeData::Intrinsic(Intrinsic::BigInt) if is_bigint => {
-                    let written = c.atoms().intern(digits);
-                    Some((
-                        6,
-                        c.intern(TypeData::BigIntLit {
-                            text: written,
-                            negative,
-                            fresh: false,
-                        }),
-                    ))
-                }
-                TypeData::BigIntLit {
-                    text: written,
-                    negative: minus,
-                    ..
-                } => (is_bigint && *minus == negative && c.atoms().bytes(*written) == digits)
-                    .then_some((6, t)),
-                TypeData::BoolLit { value: v, .. } => {
-                    (text == if *v { &b"true"[..] } else { b"false" }).then_some((7, t))
-                }
-                _ if t.is_undefined() => (text == b"undefined").then_some((8, t)),
-                _ if t.is_null() => (text == b"null").then_some((9, t)),
-                _ => None,
-            }
-        };
-        let mut best: Option<(u32, TypeId)> = None;
-        for &t in self.parts(constraint) {
-            if let Some(found) = rank(self, t)
-                && best.is_none_or(|b| found.0 < b.0)
-            {
-                best = Some(found);
-            }
+        if !is_bigint {
+            all_type_flags &= !tf::BIGINT_LIKE;
         }
-        best.map(|b| b.1)
+        let choose = |c: &mut Self, left: TypeId, right: TypeId| -> TypeId {
+            let (left_flags, right_flags) = (c.flags(left), c.flags(right));
+            if right_flags & all_type_flags == 0 || left_flags & tf::STRING != 0 {
+                return left;
+            }
+            if right_flags & tf::STRING != 0 {
+                return source;
+            }
+            if left_flags & tf::TEMPLATE_LITERAL != 0 {
+                return left;
+            }
+            if let TypeData::Template { texts, types } = c.data(right)
+                && c.is_type_matched_by_template_literal_type(
+                    source,
+                    texts,
+                    types,
+                    &mut |c, s, t| c.is_assignable(s, t),
+                )
+            {
+                return source;
+            }
+            if left_flags & tf::STRING_MAPPING != 0 {
+                return left;
+            }
+            if let TypeData::StringMapping { kind, .. } = *c.data(right)
+                && c.string_mapping(kind, source) == source
+            {
+                return source;
+            }
+            if left_flags & tf::STRING_LITERAL != 0 {
+                return left;
+            }
+            if c.string_literal_value(right) == Some(value) {
+                return right;
+            }
+            if left_flags & tf::NUMBER != 0 {
+                return left;
+            }
+            if right_flags & tf::NUMBER != 0 {
+                return c.number_literal(number, false);
+            }
+            if left_flags & tf::ENUM != 0 {
+                return left;
+            }
+            if right_flags & tf::ENUM != 0 {
+                return c.number_literal(number, false);
+            }
+            if left_flags & tf::NUMBER_LITERAL != 0 {
+                return left;
+            }
+            if let TypeData::NumberLit { bits, .. }
+            | TypeData::EnumLit {
+                value: EnumValue::Number(bits),
+                ..
+            } = *c.data(right)
+                && f64::from_bits(bits) == number
+            {
+                return right;
+            }
+            if left_flags & tf::BIGINT != 0 {
+                return left;
+            }
+            // `parseBigIntLiteralType`
+            if right_flags & tf::BIGINT != 0 {
+                let written = c.atoms().intern(digits);
+                return c.intern(TypeData::BigIntLit {
+                    text: written,
+                    negative,
+                    fresh: false,
+                });
+            }
+            if left_flags & tf::BIGINT_LITERAL != 0 {
+                return left;
+            }
+            if let TypeData::BigIntLit {
+                text: written,
+                negative: minus,
+                ..
+            } = *c.data(right)
+                && minus == negative
+                && c.atoms().bytes(written) == digits
+            {
+                return right;
+            }
+            if left_flags & tf::BOOLEAN != 0 {
+                return left;
+            }
+            if right_flags & tf::BOOLEAN != 0 {
+                return match text {
+                    b"true" => TypeId::TRUE,
+                    b"false" => TypeId::FALSE,
+                    _ => TypeId::BOOLEAN,
+                };
+            }
+            if left_flags & tf::BOOLEAN_LITERAL != 0 {
+                return left;
+            }
+            if let TypeData::BoolLit { value: is_true, .. } = *c.data(right) {
+                let name: &[u8] = if is_true { b"true" } else { b"false" };
+                if text == name {
+                    return right;
+                }
+            }
+            if left_flags & tf::UNDEFINED != 0 {
+                return left;
+            }
+            if right_flags & tf::UNDEFINED != 0 && text == b"undefined" {
+                return right;
+            }
+            if left_flags & tf::NULL != 0 {
+                return left;
+            }
+            if right_flags & tf::NULL != 0 && text == b"null" {
+                return right;
+            }
+            left
+        };
+        let mut matching_type = TypeId::NEVER;
+        for &t in self.parts(constraint) {
+            matching_type = choose(self, matching_type, t);
+        }
+        (!matching_type.is_never()).then_some(matching_type)
     }
 
     /// `inferFromGenericMappedTypes`: `{ [P in S]: X }` and `{ [P in T]: Y }`: from `S` to `T` and from `X` to `Y`.
@@ -1501,7 +1556,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let source_prop = match source_members {
-            Some(members) => self.property_in(members, tp.name),
+            Some(members) => self.property_in_type(source, members, tp.name),
             None => self.get_property_of_type(source, tp.name),
         };
         let Some((sp, source_mapper)) = source_prop else {
@@ -1538,14 +1593,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isTypeCloselyMatchedBy`
     fn is_type_closely_matched_by(&mut self, s: TypeId, t: TypeId) -> bool {
-        // `s.symbol != nil && s.symbol == t.symbol`
-        let has_symbol_of = match (self.data(s), self.data(t)) {
-            (TypeData::Ref { target: a, .. }, TypeData::Ref { target: b, .. }) => a == b,
-            (TypeData::Anon { origin: a, .. }, TypeData::Anon { origin: b, .. }) => a == b,
-            (TypeData::Fns { decls: a, .. }, TypeData::Fns { decls: b, .. }) => a == b,
-            _ => false,
-        };
-        has_symbol_of
+        self.is_object_type(s)
+            && self.is_object_type(t)
+            && self
+                .symbol_of_type(s)
+                .is_some_and(|symbol| self.symbol_of_type(t) == Some(symbol))
             || self
                 .same_alias(s, t)
                 .is_some_and(|(.., has_type_arguments)| has_type_arguments)
@@ -1553,13 +1605,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromProperties`
     fn infer_from_properties(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
+        // `getPropertiesOfObjectType`
+        if !self.is_object_type(target) {
+            return;
+        }
         let (Some(sm), Some(tm)) = (self.members(source), self.members(target)) else {
             return;
         };
+        let mut inherited = self.inherited_of(sm.shape());
         for tp in &tm.shape().props {
             // `getPropertyOfType(source, targetProp.Name)` comes before either `getTypeOfSymbol`: a
             // target property that the source lacks may be the one whose type is being resolved.
-            let Some((sp, source_mapper)) = self.property_in(&sm, tp.name) else {
+            let Some((sp, source_mapper)) =
+                self.property_among(source, &sm, &mut inherited, tp.name)
+            else {
                 continue;
             };
             let actual = self.type_of_prop_as_read(sp, source_mapper);
@@ -1898,7 +1957,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && n.candidates[index].fixed.is_none()
                     && let Some(inferred) = self.reverse_mapped_type(source, target, of)
                 {
-                    let priority = if self.is_non_inferrable(source, 0) {
+                    let priority = if self.is_non_inferrable(source) {
                         PRIORITY_PARTIAL_HOMOMORPHIC
                     } else {
                         PRIORITY_HOMOMORPHIC
@@ -1995,7 +2054,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(element) = self.array_element(source) {
             let element = self.infer_reverse_mapped_type(element, target, of)?;
-            let readonly = self.is_reference_to_global(source, known::ReadonlyArray);
+            let readonly = self.is_reference_to_global(source, known::ReadonlyArray, 1);
             return Some(if readonly {
                 self.readonly_array_of(element)
             } else {
@@ -2017,7 +2076,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .iter()
                 .map(|&f| {
                     if adds_optional && f.contains(ElemFlags::OPTIONAL) {
-                        ElemFlags::REQUIRED.with_label(f.label())
+                        ElemFlags::REQUIRED.with_label(f.labeled_declaration())
                     } else {
                         f
                     }
@@ -2033,33 +2092,23 @@ impl<'p, 's> Checker<'p, 's> {
         }))
     }
 
-    /// `ObjectFlagsNonInferrableType`: `ty` is, or contains, `autoType`, `silentNeverType` or a
-    /// literal checked without its context sensitive functions.
-    pub(super) fn is_non_inferrable(&self, ty: TypeId, depth: u32) -> bool {
-        if depth > 8 {
-            return false;
-        }
+    /// `t.objectFlags&ObjectFlagsNonInferrableType != 0`: `ty` is, or contains, `autoType`,
+    /// `silentNeverType` or a literal checked without its context sensitive functions.
+    #[inline]
+    pub(super) fn is_non_inferrable(&self, ty: TypeId) -> bool {
+        let flags = self.types().object_flags(ty);
+        flags.contains(ObjectFlags::NON_INFERRABLE_TYPE)
+            || flags.contains(ObjectFlags::NON_INFERRABLE_BY_ALIAS)
+                && self.is_non_inferrable_by_alias(ty)
+    }
+
+    /// `is_non_inferrable` for a type that has `ObjectFlags::NON_INFERRABLE_BY_ALIAS` only.
+    fn is_non_inferrable_by_alias(&self, ty: TypeId) -> bool {
         match self.data(ty) {
-            TypeData::Synth(shape) => {
-                shape.literal == Literalness::Partial
-                    || shape.literal == Literalness::JsxAttributes
-                        && shape.props.iter().any(|p| {
-                            matches!(p.source, PropSource::Copy(ty, ..) | PropSource::Type(ty)
-                                if self.is_non_inferrable(ty, depth + 1))
-                        })
-            }
-            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => true,
-            // `checkObjectLiteral` propagates the flag from the member types (`look_at_members`), and
-            // `getWidenedTypeOfObjectLiteral` keeps it. The contextual type of a call is widened (`without_pattern_marks`).
-            TypeData::Anon {
-                origin: Origin::ObjectLiteral(.., object_flags, _),
-                ..
-            } if object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE) => true,
-            TypeData::Anon {
-                origin: Origin::WidenedLiteral(.., true),
-                ..
-            } => true,
-            // `createDeferredTypeReference` sets no propagating flags.
+            TypeData::Synth(shape) => shape.props.iter().any(|p| {
+                matches!(p.source, PropSource::Copy(ty, ..) | PropSource::Type(ty)
+                    if self.is_non_inferrable(ty))
+            }),
             TypeData::Tuple {
                 elems: TypeArguments::Given(list),
                 ..
@@ -2069,24 +2118,16 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             }
             | TypeData::Union(list)
-            | TypeData::Intersection(list) => {
-                list.iter().any(|&m| self.is_non_inferrable(m, depth + 1))
-            }
+            | TypeData::Intersection(list) => list.iter().any(|&m| self.is_non_inferrable(m)),
             // `instantiateAnonymousType`: `objectFlags |=
             // getPropagatingFlagsOfTypes(aliasTypeArguments)`. A type substituted for a type
             // parameter in an anonymous type does not mark it, unless the anonymous type has an
             // alias and the substituted type is a type argument of the alias.
-            TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. }
-                if self
-                    .types()
-                    .mapping(*mapper)
-                    .iter()
-                    .any(|pair| self.is_non_inferrable(pair.1, depth + 1)) =>
-            {
+            TypeData::Anon { .. } | TypeData::Fns { .. } => {
                 self.alias_of_type(ty).is_some_and(|(_, type_arguments)| {
                     type_arguments
                         .iter()
-                        .any(|&argument| self.is_non_inferrable(argument, depth + 1))
+                        .any(|&argument| self.is_non_inferrable(argument))
                 })
             }
             _ => false,
@@ -2095,7 +2136,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isPartiallyInferableType`
     fn is_partially_inferable(&mut self, ty: TypeId) -> bool {
-        if !self.is_non_inferrable(ty, 0) {
+        if !self.is_non_inferrable(ty) {
             return true;
         }
         if self.is_object_literal_type(ty) {
@@ -2211,22 +2252,18 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getLimitedConstraint`: of `{ [P in keyof T & K]: X }`, the `K`.
     fn limited_constraint(&mut self, target: TypeId, of: TypeId) -> Option<TypeId> {
-        let keys = self.mapped_keys(target);
-        let own = self.intern(TypeData::Keyof(of));
-        // `keyof T & ("a" | "b")` is `keyof T & "a" | keyof T & "b"` by now, and the original form
-        // is not recorded (`UnionType.origin`).
-        let mut limits = Vec::new();
-        for &part in self.parts(keys) {
-            let TypeData::Intersection(members) = self.data(part) else {
-                return None;
-            };
-            if !members.contains(&own) {
-                return None;
-            }
-            let others: Vec<TypeId> = members.iter().copied().filter(|&m| m != own).collect();
-            limits.push(self.intersection(&others));
-        }
-        let limited = self.union(&limits);
+        let constraint = self.mapped_keys(target);
+        // `keyof T & ("a" | "b")` is `keyof T & "a" | keyof T & "b"` by now.
+        let origin: &[TypeId] = match (self.data(constraint), self.origin(constraint)) {
+            (TypeData::Union(_), UnionOrigin::Intersection(types)) => types,
+            (TypeData::Intersection(types), _) => types,
+            _ => return None,
+        };
+        let constraint_type = self.intern(TypeData::Keyof(of));
+        let others: Parts = (origin.iter().copied())
+            .filter(|&t| t != constraint_type)
+            .collect();
+        let limited = self.intersection(&others);
         (!limited.is_never()).then_some(limited)
     }
 
@@ -2321,22 +2358,26 @@ impl<'p, 's> Checker<'p, 's> {
         self.normalized_tuple(&types, &infos, readonly)
     }
 
-    /// `getNameableDeclarationAtPosition`: its name.
-    fn nameable_declaration_at_position(&self, params: &[SigParam], pos: usize) -> Atom {
+    /// `getNameableDeclarationAtPosition`
+    fn nameable_declaration_at_position(
+        &self,
+        params: &[SigParam],
+        pos: usize,
+    ) -> LabeledDeclaration {
         let Some(last) = params.last() else {
-            return Atom::NONE;
+            return LabeledDeclaration::NONE;
         };
         let param_count = params.len() - usize::from(last.rest);
         if pos < param_count {
             return params[pos].label();
         }
         if !last.rest {
-            return Atom::NONE;
+            return LabeledDeclaration::NONE;
         }
         match self.data(last.ty) {
             TypeData::Tuple { flags, .. } => flags
                 .get(pos - param_count)
-                .map_or(Atom::NONE, |info| info.label()),
+                .map_or(LabeledDeclaration::NONE, |info| info.labeled_declaration()),
             _ => last.label(),
         }
     }
@@ -2566,6 +2607,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `isObjectOrArrayLiteralType`
+    fn is_object_or_array_literal_type(&self, ty: TypeId) -> bool {
+        self.types().is_array_literal(ty) || self.is_object_literal_type(ty)
+    }
+
     /// `getCovariantInference`, and the constraint of `param`.
     fn covariant_inference(
         &mut self,
@@ -2577,23 +2623,11 @@ impl<'p, 's> Checker<'p, 's> {
         // `unionObjectAndArrayLiteralCandidates`: the object and array literals count as one, after the others.
         let mut candidates = c.covariant.clone();
         if candidates.len() > 1 {
-            // `isObjectOrArrayLiteralType`
-            let is_literal: SmallVec<[bool; 4]> = (0..candidates.len())
-                .map(|i| {
-                    c.array_literals.get(i) == Some(&true)
-                        || self.is_object_literal_type(candidates[i])
-                })
-                .collect();
-            if is_literal.contains(&true) {
-                let mut literals: SmallVec<[TypeId; 4]> = SmallVec::new();
-                let mut others: SmallVec<[TypeId; 4]> = SmallVec::new();
-                for (&candidate, &literal) in candidates.iter().zip(&is_literal) {
-                    if literal {
-                        literals.push(candidate);
-                    } else {
-                        others.push(candidate);
-                    }
-                }
+            let (literals, mut others): (SmallVec<[TypeId; 4]>, SmallVec<[TypeId; 4]>) = candidates
+                .iter()
+                .copied()
+                .partition(|&t| self.is_object_or_array_literal_type(t));
+            if !literals.is_empty() {
                 others.push(self.union_reduced(&literals));
                 candidates = others;
             }
@@ -2871,19 +2905,18 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(contextual_type) =
                 self.contextual_type(file, e, ContextFlags::NO_CONSTRAINTS)
             {
-                let outside = n.array_literals.len();
-                self.array_literal_types_in(file, e, &mut n.array_literals);
                 self.infer(n, ty, contextual_type, 0);
-                n.array_literals.truncate(outside);
             }
         }
     }
 
     /// `core.Some(n.inferences, hasInferenceCandidatesOrDefault)`
-    pub(super) fn has_inference_candidates_or_default(&mut self, n: &Inference) -> bool {
+    pub(super) fn has_inference_candidates_or_default(&self, n: &Inference) -> bool {
         (0..n.params.len()).any(|i| {
             let c = &n.candidates[i];
-            !c.covariant.is_empty() || !c.contravariant.is_empty() || self.has_default(n.params[i])
+            !c.covariant.is_empty()
+                || !c.contravariant.is_empty()
+                || self.has_type_parameter_default(n.params[i])
         })
     }
 
@@ -2949,8 +2982,12 @@ impl<'p, 's> Checker<'p, 's> {
                 MapperId::IDENTITY,
                 self.flags(ty) & tf::ENUM_LITERAL == 0 && some(types),
             ),
-            // Not exact for `Synth`, which records neither its symbol nor whether it is an
-            // instantiation.
+            // Not exact: a `Synth` does not say that it is a rest type (`ObjectFlagsObjectRestType`).
+            TypeData::Synth(shape) => (
+                shape.mapper,
+                shape.instantiation_expression.is_some()
+                    || shape.symbol_declared_at.is_some_and(|it| it.2.is_some()),
+            ),
             _ => return false,
         };
         // `getObjectTypeInstantiation`: an instantiation could contain what the type arguments for
@@ -3063,6 +3100,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                     left.extend(shape.index.iter().map(|i| i.value));
+                    left.extend(values(shape.mapper));
                 }
                 TypeData::IndexedAccess { obj, index, .. } => left.extend([*obj, *index]),
                 TypeData::Substitution { base, constraint } => left.extend([*base, *constraint]),

@@ -8,7 +8,7 @@
 //! nameresolver.go.
 
 use super::*;
-use crate::bind::{Decl, PatParent, SymbolId};
+use crate::bind::{Decl, MemberOwner, PatParent, SymbolId};
 use smallvec::SmallVec;
 
 impl Checker<'_, '_> {
@@ -186,19 +186,15 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The nodes of `file` that `checkVariableLikeDeclaration` is called for, where the symbol has
-    /// other declarations.
+    /// The variables and parameters of `file` that `checkVariableLikeDeclaration` is called for,
+    /// where the symbol has other declarations. `check_members` calls it for a property.
     fn check_variable_like_declarations(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // The source text of the default library is not stored: there is no name to report.
-        if hir.text.is_empty() {
-            return;
-        }
-        let unchecked = self.unchecked_jsdoc_types(file);
+        let bound = self.bound(file);
         for (i, symbol) in bound.symbols.iter().enumerate() {
+            // A late-bound member can be another declaration of a parameter property.
             if symbol.decls.len() < 2
                 && !symbol.flags.contains(SymFlags::MERGED)
-                && symbol.name != known::computed
+                && !matches!(symbol.decls.first(), Some(Decl::ParameterProperty(_)))
             {
                 continue;
             }
@@ -208,9 +204,6 @@ impl Checker<'_, '_> {
                     // `bindParameter` declares the property last, so that is the symbol of the node.
                     Decl::Param(pat) => !matches!(bound.pat_parent[pat.idx()], PatParent::Param(p)
                         if bound.symbol_of_declaration(Decl::ParameterProperty(p)).is_some()),
-                    Decl::Member(m) => {
-                        hir[m].kind == MemberKind::Property && !unchecked.contain(hir[m].start)
-                    }
                     _ => false,
                 };
                 // The local symbol of a module or a namespace also lists the declarations exported
@@ -226,7 +219,23 @@ impl Checker<'_, '_> {
     /// c.convertAutoToAny(c.getTypeOfSymbol(symbol))`, except for the initializer.
     pub(super) fn check_variable_like_declaration(&mut self, file: FileId, node: Decl) {
         let (own, hir) = ((file, node), self.hir(file));
-        let declarations = self.declarations_of_member(file, node);
+        // The source text of the default library is not stored: there is no name to report.
+        if hir.text.is_empty() {
+            return;
+        }
+        // `checkIndexConstraints` has resolved the members of a class or an interface before they
+        // are checked. `checkTypeLiteral` checks the members first.
+        let declarations = match node {
+            Decl::Member(m)
+                if matches!(
+                    self.bound(file).member_owner[m.idx()],
+                    MemberOwner::TypeLiteral(_)
+                ) =>
+            {
+                self.declarations_of_symbol_of_declaration(file, node)
+            }
+            _ => self.declarations_of_member(file, node),
+        };
         if declarations.len() < 2 {
             return;
         }
@@ -280,7 +289,9 @@ impl Checker<'_, '_> {
             return;
         }
         // `getTypeOfSymbol`: `getTypeOfAccessors` adds no optionality.
-        let t = if self.files().flags(symbol).intersects(SymFlags::ACCESSOR) {
+        let t = if let Some(prototype) = self.get_type_of_prototype_property(symbol) {
+            prototype
+        } else if self.files().flags(symbol).intersects(SymFlags::ACCESSOR) {
             let ty = self.type_of_symbol(symbol);
             self.convert_auto_to_any(ty)
         } else {
@@ -303,6 +314,24 @@ impl Checker<'_, '_> {
         self.error_at(at, code, &args)
             .related_information
             .extend(related);
+    }
+
+    /// `getTypeOfPrototypeProperty`, if `symbol` has `SymbolFlagsPrototype`: it is the `prototype`
+    /// that `bindClassLikeDeclaration` puts among the exports of a class, which a static member of
+    /// that name declares too.
+    fn get_type_of_prototype_property(&mut self, symbol: Sym) -> Option<TypeId> {
+        let files = self.files();
+        if files.symbol(symbol).name != known::prototype {
+            return None;
+        }
+        let class = files.parent_of_symbol(symbol)?;
+        if !files.flags(class).contains(SymFlags::CLASS)
+            || files.export(class, known::prototype) != Some(files.canonical(symbol))
+        {
+            return None;
+        }
+        let constructor = self.type_of_symbol(class);
+        self.type_of_property(constructor, known::prototype)
     }
 
     /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. For

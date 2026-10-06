@@ -92,7 +92,7 @@ pub enum Intrinsic {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct ElemFlags: u32 {
+    pub struct ElemFlags: u128 {
         const REQUIRED = 1;
         const OPTIONAL = 2;
         const REST = 4;
@@ -111,38 +111,74 @@ bitflags::bitflags! {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct AccessFlags: u8 {
+    pub struct AccessFlags: u16 {
         const INCLUDE_UNDEFINED = 1 << 0;
         const NO_INDEX_SIGNATURES = 1 << 1;
         const WRITING = 1 << 2;
         const ALLOW_MISSING = 1 << 4;
         const EXPRESSION_POSITION = 1 << 5;
         const SUPPRESS_NO_IMPLICIT_ANY_ERROR = 1 << 7;
+        const CONTEXTUAL = 1 << 8;
     }
 }
 
+/// `TupleElementInfo.labeledDeclaration`: the named tuple member or the parameter that labels an
+/// element. The file and the position tell it from another one of that name: `getTupleKey` writes
+/// the node, so `[x: T]` written twice has two targets.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct LabeledDeclaration {
+    pub name: Atom,
+    pub file: FileId,
+    pub pos: u32,
+}
+
+impl LabeledDeclaration {
+    /// nil
+    pub const NONE: LabeledDeclaration = LabeledDeclaration {
+        name: Atom::NONE,
+        file: FileId(0),
+        pos: 0,
+    };
+}
+
 impl ElemFlags {
-    /// The name of `TupleElementInfo.labeledDeclaration` is stored in the bits above the flags.
-    const LABEL_SHIFT: u32 = 8;
+    /// `TupleElementInfo.labeledDeclaration` is stored in the bits above the flags.
+    const NAME_SHIFT: u32 = 8;
+    const FILE_SHIFT: u32 = 40;
+    const POS_SHIFT: u32 = 72;
 
     /// `name` in `[name: T]`. `NONE`: the element has no label.
     #[inline]
     pub fn label(self) -> Atom {
-        match self.bits() >> Self::LABEL_SHIFT {
+        match (self.bits() >> Self::NAME_SHIFT) as u32 {
             0 => Atom::NONE,
             label => Atom(label - 1),
         }
     }
 
+    #[inline]
+    pub fn labeled_declaration(self) -> LabeledDeclaration {
+        LabeledDeclaration {
+            name: self.label(),
+            file: FileId((self.bits() >> Self::FILE_SHIFT) as u32),
+            pos: (self.bits() >> Self::POS_SHIFT) as u32,
+        }
+    }
+
     /// The same flags with the label `label`.
     #[inline]
-    pub fn with_label(self, label: Atom) -> ElemFlags {
-        debug_assert!(!label.is_own(), "a label is a declared name");
-        let flags = self.bits() & ((1 << Self::LABEL_SHIFT) - 1);
-        if label.is_none() || label.0 >= (u32::MAX >> Self::LABEL_SHIFT) {
+    pub fn with_label(self, label: LabeledDeclaration) -> ElemFlags {
+        debug_assert!(!label.name.is_own(), "a label is a declared name");
+        let flags = self.bits() & ((1 << Self::NAME_SHIFT) - 1);
+        if label.name.is_none() {
             return ElemFlags::from_bits_retain(flags);
         }
-        ElemFlags::from_bits_retain(flags | ((label.0 + 1) << Self::LABEL_SHIFT))
+        ElemFlags::from_bits_retain(
+            flags
+                | (u128::from(label.name.0 + 1) << Self::NAME_SHIFT)
+                | (u128::from(label.file.0) << Self::FILE_SHIFT)
+                | (u128::from(label.pos) << Self::POS_SHIFT),
+        )
     }
 }
 
@@ -189,11 +225,13 @@ pub enum Origin {
     /// resolve to the module itself (`resolveESModuleSymbol`): the properties and index signatures
     /// of `module` (a module, or its `export =` target), no call or construct signatures, and, if
     /// `with_default`, a `default` that overrides theirs and is `module` itself.
+    /// `is_default_only`: that `default` and nothing else (`getTypeWithSyntheticDefaultOnly`).
     /// `originating_import`: the alias `ns`. Each such import creates its own symbol, and so its
     /// own type.
     Namespace {
         module: Sym,
         with_default: bool,
+        is_default_only: bool,
         originating_import: Sym,
     },
     /// `globalThis`
@@ -613,8 +651,16 @@ pub struct Shape<'s> {
     /// `t.symbol` is nil (`getTypeFromObjectBindingPattern`), or is not a function, a method, a
     /// class, a type literal or an object literal (`getOrCreateTypeFromSignature` for a call
     /// signature). `couldContainTypeVariables` is false whatever the members mention: the type is
-    /// never instantiated, and nothing is inferred to it.
+    /// never instantiated, and nothing is inferred to it. It has no implicit index signature
+    /// (`isObjectTypeWithInferableIndex`).
     pub has_no_instantiable_symbol: bool,
+    /// `t.mapper` of a type that `getObjectTypeInstantiation` instantiates whatever its members
+    /// mention: it has the symbol of an object literal (`getSpreadType`,
+    /// `getWidenedTypeOfObjectLiteral`), `ObjectFlagsObjectRestType` or
+    /// `ObjectFlagsInstantiationExpressionType`. It maps `links.outerTypeParameters` of the
+    /// declaration, to themselves in the type as created, and each list of type arguments is a
+    /// type of its own. `IDENTITY`: there are none.
+    pub mapper: MapperId,
 }
 
 /// Whether a synthesized object type is still the type of an object literal expression, or which
@@ -655,6 +701,9 @@ pub enum Literalness {
     /// The type `createEmptyObjectTypeFromStringLiteral` creates for an inference from a string
     /// literal to `keyof T`. It has no symbol.
     OfLiteralKeyof,
+    /// `emptyTypeLiteralType`: `{}` written as a type. Its symbol is a type literal without
+    /// declarations.
+    EmptyTypeLiteral,
 }
 
 impl Literalness {
@@ -691,6 +740,7 @@ impl<'s> Shape<'s> {
             spread_rank: 0,
             single_signature_arguments: None,
             has_no_instantiable_symbol: false,
+            mapper: MapperId::IDENTITY,
         }
     }
 
@@ -710,20 +760,24 @@ pub struct SigParam {
     /// minimum argument counts, and the parameter at that position may be the rest parameter of
     /// the other signature: `((...a: number[]) => void) | ((a: string) => void)`.
     pub is_required_rest: bool,
-    /// `symbol.ValueDeclaration != nil`. A parameter that the checker synthesizes
-    /// (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no declaration.
-    pub has_declaration: bool,
+    /// `symbol.ValueDeclaration`: its file and position. `None`: a parameter that the checker
+    /// synthesizes (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no
+    /// declaration.
+    pub declaration: Option<(FileId, u32)>,
 }
 
 impl SigParam {
     /// `getNameableDeclarationAtPosition`: the label of a tuple element created from this
     /// parameter. `name` is `NONE` for a pattern (`isValidDeclarationForTupleLabel`).
     #[inline]
-    pub fn label(&self) -> Atom {
-        if self.has_declaration {
-            self.name
-        } else {
-            Atom::NONE
+    pub fn label(&self) -> LabeledDeclaration {
+        match self.declaration {
+            Some((file, pos)) if self.name.is_some() => LabeledDeclaration {
+                name: self.name,
+                file,
+                pos,
+            },
+            _ => LabeledDeclaration::NONE,
         }
     }
 }
@@ -895,15 +949,21 @@ bitflags::bitflags! {
         const HAS_MARKER = 4;
         /// The type implied by a binding pattern counts too.
         const CONTAINS_OBJECT_OR_ARRAY_LITERAL = 8;
-        /// Only meaningful without strictNullChecks. The flags of an interned object literal type do not include it:
-        /// `Origin::ObjectLiteral` stores it, and `Checker::contains_widening_type` reads it there.
+        /// Under strictNullChecks only `nonInferrableAnyType` has it. For the type of an object literal,
+        /// `Origin::ObjectLiteral` or `Shape::contains_widening_type` stores it.
         const CONTAINS_WIDENING_TYPE = 16;
         /// `ObjectFlagsRequiresWidening`. `getPropagatingFlagsOfTypes` propagates the two to a
         /// reference, a union, an intersection and the type of a literal, and to nothing else.
         const REQUIRES_WIDENING = 8 | 16;
-        /// `ObjectFlagsNonInferrableType`. Only stored in `Origin::ObjectLiteral`. `Checker::is_non_inferrable` computes it for
-        /// every other type.
+        /// `ObjectFlagsNonInferrableType`
         const NON_INFERRABLE_TYPE = 32;
+        /// Is or contains an instantiated anonymous type with a type argument that has
+        /// `NON_INFERRABLE_TYPE`. `instantiateAnonymousType` gives it the flag if that is a type
+        /// argument of its alias, which only the checker knows where it is the alias of the type
+        /// node: `Checker::is_non_inferrable` looks. It propagates like `NON_INFERRABLE_TYPE`.
+        const NON_INFERRABLE_BY_ALIAS = 512;
+        /// `ObjectFlagsPropagatingFlags`
+        const PROPAGATING_FLAGS = 8 | 16 | 32 | 512;
         /// Is or contains a reverse mapped type. `couldContainTypeVariables` is true for every one,
         /// and `instantiateReverseMappedType` instantiates the mapped type it was inferred through,
         /// which references the inferred type parameter. The result is the same type or an
@@ -935,6 +995,9 @@ pub struct Provenance<'s> {
     /// is the key of the type itself, its type arguments and its alias. Also for a result that is
     /// a union of such types and could not contain type variables.
     pub stored_under: Option<InstantiationKey>,
+    /// `ObjectFlagsArrayLiteral`: the clone of a type reference that `createArrayLiteralType`
+    /// creates (`cloneTypeReference`), once per reference.
+    pub is_array_literal: bool,
 }
 
 /// `getTypeInstantiationKey`, for `ObjectType.instantiations` of a mapped type.
@@ -1132,6 +1195,7 @@ pub struct ProvenanceKey<'a> {
     pub origin: OriginKey<'a>,
     pub is_enum: bool,
     pub stored_under: Option<InstantiationKey>,
+    pub is_array_literal: bool,
 }
 
 impl ProvenanceKey<'_> {
@@ -1140,6 +1204,7 @@ impl ProvenanceKey<'_> {
             && matches!(self.origin, OriginKey::None)
             && !self.is_enum
             && self.stored_under.is_none()
+            && !self.is_array_literal
     }
 
     fn is(self, provenance: &Provenance) -> bool {
@@ -1159,6 +1224,7 @@ impl ProvenanceKey<'_> {
             && is_same_origin
             && self.is_enum == provenance.is_enum
             && self.stored_under == provenance.stored_under
+            && self.is_array_literal == provenance.is_array_literal
     }
 
     fn to_provenance<'s>(self, arena: &'s Arena) -> Provenance<'s> {
@@ -1175,6 +1241,7 @@ impl ProvenanceKey<'_> {
             },
             is_enum: self.is_enum,
             stored_under: self.stored_under,
+            is_array_literal: self.is_array_literal,
         }
     }
 }
@@ -1192,6 +1259,10 @@ pub struct TypeRecord<'s> {
     is_from_type_node: AtomicBool,
     /// See `Types::mark_ordered_by_id`.
     is_ordered_by_id: AtomicBool,
+    /// See `Types::set_constrained_type_variable`: 0 until then, 1 for false, 2 for true.
+    constrained_type_variable: std::sync::atomic::AtomicU8,
+    /// See `Types::mark_without_primitive_union`.
+    is_without_primitive_union: AtomicBool,
     id: TypeId,
 }
 
@@ -1578,10 +1649,12 @@ impl TypeId {
 
     /// `false | true`
     pub const BOOLEAN: TypeId = TypeId(WELL_KNOWN.len() as u32);
-    /// `{}`
+    /// `emptyObjectType`: `{}` where no type node says so. It has no symbol.
     pub const EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 1);
     /// `unknownEmptyObjectType`, see `Literalness::OfUnknown`
     pub const UNKNOWN_EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 2);
+    /// `emptyTypeLiteralType`, see `Literalness::EmptyTypeLiteral`
+    pub const EMPTY_TYPE_LITERAL: TypeId = TypeId(WELL_KNOWN.len() as u32 + 3);
 
     /// `undefined` and `null` have variants that flags, facts and relations do not distinguish:
     /// returns the ordinary variant.
@@ -1655,6 +1728,12 @@ impl<'s> TypeStore<'s> {
             string_literals: [ById::new_in(session), ById::new_in(session)],
             has_unresolved_names: AtomicBool::new(false),
         };
+        // First: the flags of a type are those of its mapper too.
+        let no_pairs = (Mapping::empty(), ObjectFlags::empty());
+        assert_eq!(
+            store.mappers.add(spread_hash(&Pairs(&[])), no_pairs),
+            MapperId::IDENTITY.0
+        );
         let arena = session.arena();
         let publish = |data: TypeData<'s>| store.publish_constant(data);
         for (i, data) in WELL_KNOWN.iter().enumerate() {
@@ -1671,10 +1750,12 @@ impl<'s> TypeStore<'s> {
             })),
             TypeId::UNKNOWN_EMPTY_OBJECT
         );
-        let no_pairs = (Mapping::empty(), ObjectFlags::empty());
         assert_eq!(
-            store.mappers.add(spread_hash(&Pairs(&[])), no_pairs),
-            MapperId::IDENTITY.0
+            publish(synth(Shape {
+                literal: Literalness::EmptyTypeLiteral,
+                ..Shape::new_in(arena)
+            })),
+            TypeId::EMPTY_TYPE_LITERAL
         );
         let no_components = List::<IndexComponent>::empty();
         assert_eq!(
@@ -1860,6 +1941,9 @@ impl<'p, 's> Types<'p, 's> {
         };
         match data {
             TypeData::Intrinsic(Intrinsic::Unresolved) => ObjectFlags::HAS_UNRESOLVED,
+            TypeData::Intrinsic(Intrinsic::Auto | Intrinsic::SilentNever) => {
+                ObjectFlags::NON_INFERRABLE_TYPE
+            }
             // `createWideningType`
             TypeData::Intrinsic(
                 Intrinsic::NullWidening
@@ -1883,34 +1967,70 @@ impl<'p, 's> Types<'p, 's> {
             // `instantiateType` returns a type with `TypeFlagsAny` unchanged, regardless of its
             // alias type arguments.
             TypeData::UnresolvedName { .. } => ObjectFlags::empty(),
-            TypeData::Union(t) | TypeData::Intersection(t) => all(t),
+            // `getPropagatingFlagsOfTypes(types, TypeFlagsNullable)`
+            TypeData::Union(t) | TypeData::Intersection(t) => {
+                t.iter().fold(ObjectFlags::empty(), |f, &t| {
+                    let record = self.record(t);
+                    if record.flags & tf::NULLABLE != 0 {
+                        f | record
+                            .object_flags
+                            .difference(ObjectFlags::PROPAGATING_FLAGS)
+                    } else {
+                        f | record.object_flags
+                    }
+                })
+            }
             TypeData::Ref { args, .. } | TypeData::Tuple { elems: args, .. } => match args {
                 TypeArguments::Given(actual) => all(actual),
                 // `couldContainTypeVariables`: `t.AsTypeReference().node != nil`. `createDeferredTypeReference` sets no propagating
                 // flags.
                 TypeArguments::Deferred(deferred) => (self.mapper_record(deferred.mapper).1)
-                    .difference(ObjectFlags::REQUIRES_WIDENING),
+                    .difference(ObjectFlags::PROPAGATING_FLAGS),
             },
             TypeData::Anon {
-                origin: Origin::ObjectLiteral(..),
+                origin: Origin::ObjectLiteral(.., object_flags, _),
                 mapper,
-            } => self.mapper_record(*mapper).1 | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL,
+            } => {
+                let stored = ObjectFlags::CONTAINS_WIDENING_TYPE | ObjectFlags::NON_INFERRABLE_TYPE;
+                (self.mapper_record(*mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS)
+                    | ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
+                    | (*object_flags & stored)
+            }
             // The mapper is omitted at creation unless the origin has enclosing type parameters.
-            TypeData::Anon { mapper, .. }
-            | TypeData::Fns { mapper, .. }
-            | TypeData::Cond { mapper, .. } => {
-                (self.mapper_record(*mapper).1).difference(ObjectFlags::REQUIRES_WIDENING)
+            TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => {
+                let type_arguments = self.mapper_record(*mapper).1;
+                let mut flags = type_arguments.difference(ObjectFlags::PROPAGATING_FLAGS);
+                let non_inferrable =
+                    ObjectFlags::NON_INFERRABLE_TYPE | ObjectFlags::NON_INFERRABLE_BY_ALIAS;
+                if type_arguments.intersects(non_inferrable) {
+                    flags |= ObjectFlags::NON_INFERRABLE_BY_ALIAS;
+                }
+                if let TypeData::Anon {
+                    origin: Origin::WidenedLiteral(.., true),
+                    ..
+                } = data
+                {
+                    flags |= ObjectFlags::NON_INFERRABLE_TYPE;
+                }
+                flags
+            }
+            TypeData::Cond { mapper, .. } => {
+                (self.mapper_record(*mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS)
             }
             TypeData::Synth(shape) => {
                 let is_plain = matches!(
                     shape.literal,
-                    Literalness::No | Literalness::OfUnknown | Literalness::AutoArray
+                    Literalness::No
+                        | Literalness::OfUnknown
+                        | Literalness::AutoArray
+                        | Literalness::EmptyTypeLiteral
                 );
                 let mut flags = if is_plain {
                     ObjectFlags::empty()
                 } else {
                     ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL
                 };
+                let mut of_properties = ObjectFlags::empty();
                 for p in &shape.props {
                     if let PropSource::Type(t)
                     | PropSource::Copy(t, ..)
@@ -1921,16 +2041,32 @@ impl<'p, 's> Types<'p, 's> {
                         if p.flags.contains(PropFlags::WIDEN) {
                             of_type.remove(ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL);
                         }
-                        flags |= of_type;
+                        of_properties |= of_type;
                     }
                     flags |= self.mapper_record(p.mapper).1;
                 }
+                flags |= of_properties;
                 for i in &shape.index {
                     flags |= self.object_flags(i.key) | self.object_flags(i.value);
                 }
                 for &s in shape.call.iter().chain(&shape.construct) {
                     flags |= self.sig_flags(s);
                 }
+                flags |=
+                    (self.mapper_record(shape.mapper).1).difference(ObjectFlags::PROPAGATING_FLAGS);
+                let non_inferrable =
+                    ObjectFlags::NON_INFERRABLE_TYPE | ObjectFlags::NON_INFERRABLE_BY_ALIAS;
+                flags.remove(non_inferrable);
+                match shape.literal {
+                    Literalness::Partial => flags |= ObjectFlags::NON_INFERRABLE_TYPE,
+                    // `createJsxAttributesTypeFromAttributesProperty`
+                    Literalness::JsxAttributes => flags |= of_properties & non_inferrable,
+                    _ => {}
+                }
+                flags.set(
+                    ObjectFlags::CONTAINS_WIDENING_TYPE,
+                    shape.contains_widening_type,
+                );
                 if is_plain {
                     flags.remove(ObjectFlags::REQUIRES_WIDENING);
                 }
@@ -1947,24 +2083,24 @@ impl<'p, 's> Types<'p, 's> {
             TypeData::ReverseMapped { source, mapped, of } => {
                 let created_with = self.object_flags(*mapped) | self.object_flags(*of);
                 self.object_flags(*source)
-                    .difference(ObjectFlags::REQUIRES_WIDENING)
+                    .difference(ObjectFlags::PROPAGATING_FLAGS)
                     | (created_with & (ObjectFlags::HAS_UNRESOLVED | ObjectFlags::HAS_MARKER))
                     | ObjectFlags::HAS_REVERSE_MAPPED
             }
             TypeData::IndexedAccess { obj, index, .. } => (self.object_flags(*obj)
                 | self.object_flags(*index))
-            .difference(ObjectFlags::REQUIRES_WIDENING),
+            .difference(ObjectFlags::PROPAGATING_FLAGS),
             // `couldContainTypeVariables`: instantiating one resolves it.
             TypeData::Substitution { base, constraint } => {
                 (self.object_flags(*base) | self.object_flags(*constraint))
-                    .difference(ObjectFlags::REQUIRES_WIDENING)
+                    .difference(ObjectFlags::PROPAGATING_FLAGS)
                     | ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
             }
             TypeData::Keyof(t) | TypeData::StringMapping { ty: t, .. } => {
-                (self.object_flags(*t)).difference(ObjectFlags::REQUIRES_WIDENING)
+                (self.object_flags(*t)).difference(ObjectFlags::PROPAGATING_FLAGS)
             }
             TypeData::Template { types, .. } => {
-                all(types).difference(ObjectFlags::REQUIRES_WIDENING)
+                all(types).difference(ObjectFlags::PROPAGATING_FLAGS)
             }
             _ => ObjectFlags::empty(),
         }
@@ -2048,6 +2184,10 @@ impl<'p, 's> Types<'p, 's> {
             if (provenance.alias.as_ref()).is_some_and(|alias| alias.1.is_empty()) {
                 flags.remove(ObjectFlags::HAS_OTHER_INSTANTIATION);
             }
+            // `createArrayLiteralType`
+            if provenance.is_array_literal {
+                flags |= ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
+            }
         }
         // Unlike the others, it is not propagated from the type's constituents.
         flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
@@ -2070,6 +2210,8 @@ impl<'p, 's> Types<'p, 's> {
                 && !flags.contains(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES),
             is_from_type_node: AtomicBool::new(false),
             is_ordered_by_id: AtomicBool::new(is_ordered_by_id),
+            constrained_type_variable: std::sync::atomic::AtomicU8::new(0),
+            is_without_primitive_union: AtomicBool::new(false),
             created,
             id: TypeId(id),
         }
@@ -2109,12 +2251,14 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     /// `Shape::has_no_instantiable_symbol` is part of the identity of a type only where it makes a
-    /// difference: `{}` is `EMPTY_OBJECT` with or without a symbol.
+    /// difference: to `couldContainTypeVariables`, or, for a type without signatures, to
+    /// `isObjectTypeWithInferableIndex`.
     fn drop_flag_without_effect(&self, data: &mut TypeData<'s>) {
         let TypeData::Synth(shape) = data else {
             return;
         };
-        if !shape.has_no_instantiable_symbol {
+        if !shape.has_no_instantiable_symbol || shape.call.is_empty() && shape.construct.is_empty()
+        {
             return;
         }
         shape.has_no_instantiable_symbol = false;
@@ -2214,6 +2358,13 @@ impl<'p, 's> Types<'p, 's> {
         self.record(id).created.1.as_deref()
     }
 
+    /// `t.objectFlags&ObjectFlagsArrayLiteral != 0`
+    #[inline]
+    pub fn is_array_literal(&self, id: TypeId) -> bool {
+        self.provenance(id)
+            .is_some_and(|provenance| provenance.is_array_literal)
+    }
+
     fn intern_new(&self, created: Made<'s>) -> TypeId {
         TypeId(intern_record(
             (&self.published.types, self.own, Kind::Type),
@@ -2237,8 +2388,8 @@ impl<'p, 's> Types<'p, 's> {
         TypeId(self.own.types.records.len() | LOCAL)
     }
 
-    /// `ObjectFlagsFromTypeNode`, `ObjectFlagsArrayLiteral`: `id` is the type of a type node or an
-    /// array literal. `first_new_type_id` was taken before it was resolved. `createTypeReferenceEx`
+    /// `ObjectFlagsFromTypeNode`: `id` is the type of a type node. `first_new_type_id` was taken
+    /// before it was resolved. `createTypeReferenceEx`
     /// sets the flags only on a type that it creates: one that an instantiation created earlier is
     /// unchanged. If two tasks of a step create the type, the record of the lower task is
     /// published, with its flag.
@@ -2256,6 +2407,48 @@ impl<'p, 's> Types<'p, 's> {
     #[inline]
     pub fn is_from_type_node(&self, id: TypeId) -> bool {
         self.record(id).is_from_type_node.load(Ordering::Relaxed)
+    }
+
+    /// `ObjectFlagsIsConstrainedTypeVariable`: `getIntersectionTypeEx` has it for the intersection
+    /// `id`. It sets the flags only on a type that it creates, so the first request decides. A
+    /// published type is unchanged.
+    pub fn set_constrained_type_variable(&self, id: TypeId, is_constrained: bool) {
+        if id.0 & LOCAL != 0 {
+            let state = &self.record(id).constrained_type_variable;
+            if state.load(Ordering::Relaxed) == 0 {
+                state.store(1 + u8::from(is_constrained), Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// `None`: no request has decided.
+    #[inline]
+    pub fn is_constrained_type_variable(&self, id: TypeId) -> Option<bool> {
+        match (self.record(id).constrained_type_variable).load(Ordering::Relaxed) {
+            0 => None,
+            state => Some(state == 2),
+        }
+    }
+
+    /// Whether the task has created `id` since `first_new_type_id` was taken.
+    #[inline]
+    pub fn is_new_since(&self, id: TypeId, first_new_type_id: TypeId) -> bool {
+        id.0 & LOCAL != 0 && id.0 >= first_new_type_id.0
+    }
+
+    /// The union `id`, which the task has just created, is without `ObjectFlagsPrimitiveUnion`
+    /// although every member is primitive: the flags are those of the first request.
+    pub fn mark_without_primitive_union(&self, id: TypeId) {
+        let record = self.record(id);
+        record
+            .is_without_primitive_union
+            .store(true, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn is_without_primitive_union(&self, id: TypeId) -> bool {
+        let record = self.record(id);
+        record.is_without_primitive_union.load(Ordering::Relaxed)
     }
 
     #[inline]
@@ -2687,8 +2880,13 @@ has_no_references!(
 impl Follow for ElemFlags {
     #[inline]
     fn visit<V: Visitor>(&self, visitor: &mut V) {
-        visitor.plain(&self.with_label(Atom::NONE).bits());
-        visitor.atom(self.label());
+        let label = self.labeled_declaration();
+        visitor.plain(&self.with_label(LabeledDeclaration::NONE).bits());
+        visitor.atom(label.name);
+        if label.name.is_some() {
+            visitor.file(label.file);
+            visitor.plain(&label.pos);
+        }
     }
     #[inline]
     fn follow(&mut self, _: &Link) {}
@@ -2707,7 +2905,7 @@ follow_enum!(Origin {
     Origin::Function(a) => (a),
     Origin::EnumObject(a) => (a),
     Origin::Module(a) => (a),
-    Origin::Namespace { module, with_default, originating_import } => (module, with_default, originating_import),
+    Origin::Namespace { module, with_default, is_default_only, originating_import } => (module, with_default, is_default_only, originating_import),
     Origin::GlobalThis => (),
 });
 follow_enum!(UniqueSymbolDeclaration {
@@ -2804,7 +3002,8 @@ follow_struct!(Shape<'_> {
     spread_of,
     spread_rank,
     single_signature_arguments,
-    has_no_instantiable_symbol
+    has_no_instantiable_symbol,
+    mapper
 });
 follow_struct!(SigParam {
     name,
@@ -2812,7 +3011,7 @@ follow_struct!(SigParam {
     optional,
     rest,
     is_required_rest,
-    has_declaration
+    declaration
 });
 follow_enum!(SigData<'_> {
     SigData::Decl { file, func, mapper } => (file, func, mapper),
@@ -2825,7 +3024,8 @@ follow_struct!(Provenance<'_> {
     alias,
     origin,
     is_enum,
-    stored_under
+    stored_under,
+    is_array_literal
 });
 follow_struct!(InstantiationKey {
     type_arguments,
@@ -3042,7 +3242,8 @@ clone_in_struct!(Shape {
     spread_of,
     spread_rank,
     single_signature_arguments,
-    has_no_instantiable_symbol
+    has_no_instantiable_symbol,
+    mapper
 });
 clone_in_enum!(SigData {
     Decl { file, func, mapper },
@@ -3055,7 +3256,8 @@ clone_in_struct!(Provenance {
     alias,
     origin,
     is_enum,
-    stored_under
+    stored_under,
+    is_array_literal
 });
 clone_in_enum!(UnionOrigin {
     None,
@@ -3301,6 +3503,7 @@ fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
             origin,
             is_enum,
             stored_under,
+            is_array_literal,
         } = &**provenance;
         alias.visit(&mut content);
         match origin {
@@ -3312,6 +3515,7 @@ fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
         }
         is_enum.visit(&mut content);
         stored_under.visit(&mut content);
+        is_array_literal.visit(&mut content);
     }
     content.lanes.0
 }

@@ -534,14 +534,16 @@ impl<'a> Parser<'a> {
         let mut __p = scopeguard::guard(slot, |mut s| unsafe { s.assume_init_drop() });
         // SAFETY: as above.
         let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
-        let builder = crate::sema::builder::Builder::new(p.lexer.is_javascript_file(), atoms);
+        // `isJavaScript`. `parseJSONText` drops the JS diagnostics.
+        let is_js = p.lexer.is_javascript_file() && !is_json;
+        let builder = crate::sema::builder::Builder::new(is_js, atoms);
         let mut type_syntax = Box::new(crate::sema::TypeSyntax::new(builder));
         type_syntax.save_types |= is_declaration_file;
-        type_syntax.has_jsdoc = p.lexer.is_javascript_file();
+        type_syntax.has_jsdoc = is_js;
         p.type_syntax = Some(type_syntax);
         // `parseSourceFileWorker`: a declaration file is never reparsed for its top-level `await`
-        // either.
-        if await_is_a_name || is_declaration_file {
+        // either. `parseJSONText` has no await context at all.
+        if await_is_a_name || is_declaration_file || is_json {
             p.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowIdent;
         }
         if p.lexer.token == js_lexer::T::THashbang {
@@ -576,7 +578,7 @@ impl<'a> Parser<'a> {
         let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
         // Recoverable errors are converted to TypeScript's diagnostics. The checker reports them.
         let mut logged = Vec::new();
-        let (has_jsx, is_js) = (p.is_jsx_enabled(), p.lexer.is_javascript_file());
+        let has_jsx = p.is_jsx_enabled();
         let mut has_errors = stmts.is_err();
         // The offset of the first error that has no TypeScript equivalent.
         let mut untranslated = None;

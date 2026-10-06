@@ -14,6 +14,7 @@ use crate::hir::{
 use crate::program::FileId;
 use bun_core::lexer;
 use bun_core::strings::wtf8_byte_sequence_length;
+use std::borrow::Cow;
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -65,7 +66,7 @@ pub fn compute_ecma_line_starts(text: &[u8]) -> Vec<u32> {
 }
 
 /// End of the line that contains `at`, before its line break.
-fn line_end(text: &[u8], mut at: usize) -> usize {
+pub(crate) fn line_end(text: &[u8], mut at: usize) -> usize {
     while at < text.len() && line_break_len(text, at) == 0 {
         at += 1;
     }
@@ -73,10 +74,25 @@ fn line_end(text: &[u8], mut at: usize) -> usize {
 }
 
 /// `SkipTrivia`: from `at`, past whitespace and comments.
-pub(crate) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
+pub(crate) fn skip_trivia(text: &[u8], at: usize) -> usize {
+    skip_trivia_ex(text, at, false)
+}
+
+/// `SkipTriviaEx`. `stop_after_line_break`: `StopAfterLineBreak`.
+pub(super) fn skip_trivia_ex(text: &[u8], mut at: usize, stop_after_line_break: bool) -> usize {
     loop {
         match text.get(at) {
-            Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) => at += 1,
+            Some(b'\n' | b'\r') => {
+                at += if text[at..].starts_with(b"\r\n") {
+                    2
+                } else {
+                    1
+                };
+                if stop_after_line_break {
+                    return at;
+                }
+            }
+            Some(b' ' | b'\t' | 0x0B | 0x0C) => at += 1,
             Some(b'/') => match text.get(at + 1) {
                 Some(b'/') => at = line_end(text, at + 2),
                 Some(b'*') => {
@@ -85,6 +101,8 @@ pub(crate) fn skip_trivia(text: &[u8], mut at: usize) -> usize {
                 }
                 _ => return at,
             },
+            // `isShebangTrivia`, `scanShebangTrivia`
+            Some(b'#') if at == 0 && text.starts_with(b"#!") => at = line_end(text, 2),
             Some(&b) if b >= 0x80 => match white_space_len(text, at) {
                 0 => return at,
                 len => at += len,
@@ -254,11 +272,6 @@ pub(super) fn word_start(text: &[u8], end: usize) -> usize {
     start
 }
 
-/// The word that ends at `end`, possibly empty.
-pub(super) fn word_before(text: &[u8], end: usize) -> &[u8] {
-    &text[word_start(text, end)..end.min(text.len())]
-}
-
 /// `scanIdentifierParts`
 pub(super) fn ident_end(text: &[u8], at: usize) -> usize {
     lexer::scan_identifier_parts(text, at.min(text.len()))
@@ -284,6 +297,33 @@ pub(super) fn word_end(text: &[u8], at: usize) -> usize {
     } else {
         ident_end(text, at)
     }
+}
+
+/// `tokenValue` of the identifier `text`: its escapes are decoded.
+pub(crate) fn unescaped_identifier(text: &[u8]) -> Cow<'_, [u8]> {
+    if !bun_core::strings::contains_char(text, b'\\') {
+        return Cow::Borrowed(text);
+    }
+    let mut value = Vec::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        let escape = if byte == b'\\' {
+            lexer::peek_unicode_escape(text, at)
+        } else {
+            None
+        };
+        match escape.and_then(|(ch, len)| Some((char::from_u32(ch as u32)?, len))) {
+            Some((ch, len)) => {
+                value.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+                at += len;
+            }
+            None => {
+                value.push(byte);
+                at += 1;
+            }
+        }
+    }
+    Cow::Owned(value)
 }
 
 /// `scanString`, at the quote.
@@ -851,7 +891,7 @@ impl<'a, 's> Spans<'a, 's> {
 
     /// `LanguageVariantJSX`
     fn is_jsx(self) -> bool {
-        self.hir.kind == FileKind::Tsx || self.hir.is_js
+        matches!(self.hir.kind, FileKind::Tsx | FileKind::Json) || self.hir.is_js
     }
 
     /// From `at`, which is directly inside brackets, to the position after the matching `closer`.
@@ -873,6 +913,21 @@ impl<'a, 's> Spans<'a, 's> {
     /// `GetRangeOfTokenAtPosition`
     fn token(self, at: usize) -> usize {
         token_end(self.text, at, self.is_jsx())
+    }
+
+    /// `Loc.End()` of a diagnostic stored with `start` and `end` (`hir::Diagnostic::end`).
+    pub(crate) fn diagnostic_end(self, start: u32, end: u32) -> u32 {
+        // In a JSDoc comment the line break is a token.
+        let is_between_tokens =
+            || matches!(self.byte(start as usize), b'\n' | b'\r') && !self.hir.is_in_jsdoc(start);
+        match end {
+            crate::hir::Diagnostic::NO_LENGTH => start,
+            // `getErrorSpanForNode` (parser.go): a missing JSON value ends before it starts.
+            end if end != 0 && (end >= start || self.hir.kind == FileKind::Json) => end,
+            // No end was given.
+            _ if is_between_tokens() => start,
+            _ => (self.token(start as usize) as u32).max(start),
+        }
     }
 
     /// The name that starts at `at`: an identifier, a private name, a string, a number, `[computed]`, or a binding pattern. Any
@@ -945,7 +1000,7 @@ impl<'a, 's> Spans<'a, 's> {
 
     /// The positions of the `(` immediately before `pos`, at `floor` or later, from the innermost.
     /// Parentheses around a type are not stored.
-    fn parens_before(self, floor: usize, pos: usize) -> impl Iterator<Item = usize> {
+    pub(crate) fn parens_before(self, floor: usize, pos: usize) -> impl Iterator<Item = usize> {
         let mut at = pos;
         std::iter::from_fn(move || {
             loop {
@@ -1117,11 +1172,6 @@ impl<'s> Checker<'_, 's> {
     /// `start_inside_parentheses`.
     pub(super) fn end_inside_parentheses(&self, file: FileId, e: ExprId) -> u32 {
         self.spans(file).expr_inside(e) as u32
-    }
-
-    /// `node.End()` of the node for `e` that starts at `start`: closes the parentheses around `e` that open at `start` or later.
-    pub(super) fn end_of_expr_from(&self, file: FileId, e: ExprId, start: u32) -> u32 {
-        self.spans(file).expr_from(e, start as usize) as u32
     }
 
     /// The end of `GetErrorRangeForNode` of `e` including enclosing parentheses. Pairs with
@@ -1383,6 +1433,11 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
+    /// `GetErrorRangeForNode` of a class: its name, or else its first token.
+    pub(super) fn error_range_of_class(&self, file: FileId, class: ClassId) -> (u32, u32) {
+        self.get_error_range_for_node(file, self.hir(file).node(class))
+    }
+
     /// `node.End()` of a class.
     pub(super) fn end_of_class(&self, file: FileId, class: ClassId) -> u32 {
         let hir = self.hir(file);
@@ -1422,7 +1477,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `GetErrorRangeForNode` of a member: the name of a property, an accessor or a method of a class; a constructor from its first
-    /// modifier to the keyword; the whole of a signature.
+    /// token to the first `constructor` or string literal; the whole of a signature.
     pub(super) fn error_range_of_member(&self, file: FileId, m: MemberId) -> (u32, u32) {
         let (hir, spans) = (self.hir(file), self.spans(file));
         let Some(member) = hir.members.get(m.idx()) else {
@@ -1435,8 +1490,18 @@ impl<'s> Checker<'_, 's> {
         match member.kind {
             MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {}
             MemberKind::Method if is_in_class => {}
-            MemberKind::Constructor => {
-                return (member.start, spans.token(member.name_pos as usize) as u32);
+            MemberKind::Constructor if !member.flags.contains(crate::hir::Flags::REPARSED) => {
+                let mut at = member.start as usize;
+                loop {
+                    let end = spans.token(at);
+                    if end <= at
+                        || matches!(spans.byte(at), b'"' | b'\'')
+                        || &spans.text[at..end] == b"constructor"
+                    {
+                        return (member.start, end as u32);
+                    }
+                    at = spans.skip_trivia(end);
+                }
             }
             _ => return (member.start, member.loc.end),
         }
@@ -1605,10 +1670,10 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         match hir.data(node) {
             // The file uses its first token.
-            NodeData::File => {
-                let start = self.skip_trivia_from(file, 0);
-                (start, self.end_of_token_at(file, start))
-            }
+            NodeData::File => match self.skip_trivia_from(file, 0) {
+                start if start as usize == hir.text.len() => (0, super::explain::NO_LENGTH),
+                start => (start, self.end_of_token_at(file, start)),
+            },
             NodeData::Expr(e) => (
                 self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),

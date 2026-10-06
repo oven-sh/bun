@@ -95,9 +95,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// Call before parsing each element. Ports the loop condition of `parseList` and `parseDelimitedList`.
     #[inline]
     pub(crate) fn classify_list_token(&mut self, kind: ListKind) -> Result<ListStep, Error> {
-        // A speculative parse must still fail on errors. The type member parser accepts any run of
-        // words as modifiers and a name, so for that list the check is done here: a token that
-        // cannot start a member ends the list, and `expect("}")` fails the speculative parse.
+        // A speculative parse must still fail on errors. For type members the check is done here: a
+        // token that cannot start a member ends the list, and `expect("}")` fails the speculative
+        // parse.
         if !self.is_tolerant() || self.lexer.is_log_disabled && kind != ListKind::TypeMembers {
             return Ok(ListStep::Element);
         }
@@ -182,14 +182,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// `nextToken` during lookahead. Returns false on a lexer error, which ends the lookahead.
+    /// `GetIdentifierToken`: a reserved word also if it is written with an escape.
     pub(crate) fn step(&mut self) -> bool {
-        self.lexer.next().is_ok()
+        if self.lexer.next().is_err() {
+            return false;
+        }
+        if self.lexer.token == T::TEscapedKeyword
+            && let Some(keyword) = crate::lexer::keyword(self.lexer.identifier)
+        {
+            self.lexer.token = keyword;
+        }
+        true
     }
 
-    /// The text of the current token if it is an identifier, otherwise empty.
+    /// The word the current token spells (`GetIdentifierToken`) if it is an identifier, otherwise empty.
     fn word(&self) -> &'a [u8] {
         if self.lexer.token == T::TIdentifier {
-            self.lexer.raw()
+            self.lexer.identifier
         } else {
             b""
         }
@@ -198,11 +207,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// `IsKeyword`
     fn is_keyword(&self) -> bool {
         self.lexer.token.is_reserved_word()
+            || self.lexer.token == T::TEscapedKeyword
             || crate::typescript::identifier::is_contextual_keyword(self.word())
     }
 
     /// `tokenIsIdentifierOrKeyword`. In TypeScript this is `token >= KindIdentifier`, which includes private identifiers.
-    fn is_identifier_or_keyword(&self) -> bool {
+    pub(crate) fn is_identifier_or_keyword(&self) -> bool {
         matches!(
             self.lexer.token,
             T::TIdentifier | T::TPrivateIdentifier | T::TEscapedKeyword
@@ -256,8 +266,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         )
     }
 
-    /// `isStartOfExpression`. TypeScript's scanner always produces `>` first and only rescans on request, so `>>=` and `>>>=` count as
-    /// binary operators, and a binary operator counts as the start of an expression with a missing left operand.
+    /// `isStartOfExpression`. TypeScript's scanner always produces `>` first and only rescans on request, so until then `>>=` and `>>>=`
+    /// count as binary operators, and a binary operator counts as the start of an expression with a missing left operand.
     #[cold]
     #[inline(never)]
     pub(crate) fn is_start_of_expression_or_shift_assign(&mut self) -> bool {
@@ -268,7 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             || matches!(
                 self.lexer.token,
                 T::TGreaterThanGreaterThanEquals | T::TGreaterThanGreaterThanGreaterThanEquals
-            )
+            ) && self.lexer.start != self.lexer.rescanned_greater_than_at
     }
 
     /// `KindLessThanSlashToken`: `</` is one token in a file with JSX. It starts nothing.
@@ -581,7 +591,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// `isHeritageClause`
     fn is_heritage_clause(&self) -> bool {
-        self.lexer.token == T::TExtends || self.word() == b"implements"
+        self.lexer.token == T::TExtends
+            || self.word() == b"implements"
+            || (self.lexer.token == T::TEscapedKeyword && self.lexer.identifier == b"extends")
     }
 
     /// `isHeritageClauseExtendsOrImplementsKeyword`
@@ -679,7 +691,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn is_list_terminator(&self, kind: ListKind) -> bool {
-        let token = self.lexer.token;
+        // `GetIdentifierToken`: a reserved word also if it is written with an escape.
+        let token = match self.lexer.token {
+            T::TEscapedKeyword => {
+                crate::lexer::keyword(self.lexer.identifier).unwrap_or(T::TIdentifier)
+            }
+            token => token,
+        };
         if token == T::TEndOfFile {
             return true;
         }
@@ -816,21 +834,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         match self.parsing_context_error(kind) {
             1005 if kind == ListKind::SourceElements => self.lexer.ts_expected(range, "export"),
             1005 => self.lexer.ts_expected(range, "}"),
+            // `TokenToString`
+            code @ (1389 | 1390) => {
+                let keyword = self.lexer.identifier;
+                self.lexer.ts_error_about(range, code, keyword);
+            }
             code => self.lexer.ts_error(range, code),
         }
         if self.is_in_some_parsing_context() {
             self.lexer.put_up_with(before)?;
             return Ok(true);
         }
-        let is_less_than_slash = self.is_at_less_than_slash_token();
-        self.lexer.next()?;
-        // The `/` of `</`, unless this lexer scanned it as the start of a comment.
-        if is_less_than_slash
-            && self.lexer.token == T::TSlash
-            && self.lexer.loc().start == range.loc.start + 1
-        {
-            self.lexer.next()?;
+        if self.is_at_less_than_slash_token() {
+            self.lexer.step();
         }
+        self.lexer.next()?;
         if !self.lexer.is_log_disabled {
             let next = self.lexer.loc();
             if SEMA && let Some(syntax) = &mut self.type_syntax {

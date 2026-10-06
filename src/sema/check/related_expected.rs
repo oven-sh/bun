@@ -52,15 +52,15 @@ impl Checker<'_, '_> {
         ))
     }
 
-    /// The span, computed by `range`, of the node that starts at `start` in `file`. The text of the
-    /// default library is not retained, so end positions in it are unknown.
+    /// The span, computed by `range`, of the node that starts at `start` in `file`. Where the text
+    /// of the default library is not stored, end positions in it are unknown.
     fn place_in_file(
         &self,
         file: FileId,
         start: u32,
         range: impl FnOnce(&Self) -> (u32, u32),
     ) -> Place {
-        if self.files().module(file).is_lib {
+        if self.hir(file).text.is_empty() {
             return (file, start, start);
         }
         let (start, end) = range(self);
@@ -104,9 +104,8 @@ impl Checker<'_, '_> {
         let (file, decl) = self.files().decls_of(sym).first().copied()?;
         match decl {
             Decl::Class(class) => {
-                let class = &self.hir(file)[class];
-                let start = class.name_pos;
-                Some(self.place_of_token(file, start))
+                let (start, end) = self.error_range_of_class(file, class);
+                Some((file, start, end))
             }
             Decl::Fn(func) => Some(self.place_of_signature_declaration(file, func)),
             _ => self.place_of_declaration(file, decl),

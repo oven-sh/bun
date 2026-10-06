@@ -17,9 +17,6 @@ use super::*;
 pub(super) struct SerializeTypeOptions {
     /// `tryReuse`
     pub(super) try_reuse: bool,
-    /// If the type is that of an array literal, it still has `ObjectFlagsArrayLiteral`, a flag that
-    /// types do not store.
-    pub(super) is_unwidened: bool,
     /// The symbol is an optional property of a reverse mapped type.
     pub(super) is_optional_reverse_mapped: bool,
 }
@@ -40,7 +37,6 @@ impl<'p> Printer<'_, 'p, '_> {
                 parameter.ty,
                 SerializeTypeOptions {
                     try_reuse: true,
-                    is_unwidened: false,
                     is_optional_reverse_mapped: false,
                 },
             ),
@@ -73,26 +69,12 @@ impl<'p> Printer<'_, 'p, '_> {
         ty: TypeId,
     ) -> Node {
         if let Some((file, declaration)) = self.value_declaration_of_property(prop) {
-            // The properties of an unwidened object literal are unwidened too.
-            let is_unwidened = matches!(
-                self.c.data(owner),
-                TypeData::Anon {
-                    origin: Origin::ObjectLiteral(..),
-                    ..
-                }
-            );
             // `t.symbol == symbol`: a symbol derived from the declared one (`getSpreadSymbol`,
             // `createSymbolWithType`) is not the symbol of its `unique symbol` type.
             if !matches!(prop.source, PropSource::Symbol(_))
                 && matches!(self.c.data(ty), TypeData::UniqueSymbol { .. })
             {
-                return self.serialize_type_for_declaration_worker(
-                    file,
-                    declaration,
-                    ty,
-                    is_unwidened,
-                    false,
-                );
+                return self.serialize_type_for_declaration_worker(file, declaration, ty, false);
             }
             // `symbol.Flags&SymbolFlagsOptional != 0 && ReverseMappedSymbolLinks.Has(symbol)`
             let is_optional_reverse_mapped = prop.flags.contains(PropFlags::OPTIONAL)
@@ -103,7 +85,6 @@ impl<'p> Printer<'_, 'p, '_> {
                 ty,
                 SerializeTypeOptions {
                     try_reuse: true,
-                    is_unwidened,
                     is_optional_reverse_mapped,
                 },
             );
@@ -139,9 +120,7 @@ impl<'p> Printer<'_, 'p, '_> {
         }
         // The pseudochecker does not see an inferred type predicate.
         if let Some(predicate) = self.c.sig_predicate(signature)
-            && !self
-                .c
-                .iso_matches_predicate(file, &pt, signature, predicate)
+            && !self.c.iso_matches_predicate(file, &pt, predicate)
         {
             if !self.suppress_report_inference_fallback {
                 let declaration = self.c.hir(file).node(func);
@@ -230,7 +209,6 @@ impl<'p> Printer<'_, 'p, '_> {
     ) -> Node {
         let SerializeTypeOptions {
             try_reuse,
-            is_unwidened,
             is_optional_reverse_mapped,
         } = options;
         let hir = self.c.hir(file);
@@ -260,13 +238,7 @@ impl<'p> Printer<'_, 'p, '_> {
             self.flags |= ALLOW_UNIQUE_ES_SYMBOL_TYPE;
         }
         let result = if try_reuse {
-            self.serialize_type_for_declaration_worker(
-                file,
-                node,
-                ty,
-                is_unwidened,
-                requires_undefined,
-            )
+            self.serialize_type_for_declaration_worker(file, node, ty, requires_undefined)
         } else {
             self.type_to_node(ty)
         };
@@ -299,7 +271,6 @@ impl<'p> Printer<'_, 'p, '_> {
         file: FileId,
         node: hir::Node,
         ty: TypeId,
-        is_unwidened: bool,
         requires_undefined: bool,
     ) -> Node {
         if !self.reuses_nodes() {
@@ -318,9 +289,6 @@ impl<'p> Printer<'_, 'p, '_> {
             Some(func) => self.c.iso_pseudo_of_accessor(file, func),
             None => self.c.iso_pseudo_of_declaration(file, node),
         };
-        if is_unwidened && matches!(pt, Pseudo::Tuple(_)) {
-            return self.type_to_node(ty);
-        }
         // `isOptionalDeclaration`
         let has_question = match hir.data(node) {
             NodeData::Param(p) => hir[p].flags.contains(Flags::OPTIONAL),
@@ -557,8 +525,10 @@ impl<'p> Printer<'_, 'p, '_> {
                             let text = hir.id_at(hir.template_texts(exprs), 0);
                             Node::simple(quoted(&printer.text(text), b'`', false))
                         }
-                        // A number is printed in its canonical form, as its type is.
-                        _ => printer.type_of_pseudo_type_to_node(file, pt),
+                        ExprKind::Unary { operand, .. } => {
+                            Node::simple(cat!(b"-", printer.text_of_number_literal(file, operand)))
+                        }
+                        _ => Node::simple(printer.text_of_number_literal(file, *e)),
                     })
                 });
                 reused.unwrap_or_else(|| Node::simple(b"any"))
@@ -569,8 +539,7 @@ impl<'p> Printer<'_, 'p, '_> {
     /// `serializeReturnTypeForSignature(getSignatureFromDeclaration(func), false)`
     fn inferred_return_type_to_node(&mut self, file: FileId, func: FnId) -> Node {
         let signature = self.c.sig_of_fn(file, func);
-        let declared = self.signature_parameters(signature);
-        self.return_type_node(signature, &declared, false)
+        self.return_type_node(signature, false)
     }
 
     /// `serializeTypeForDeclaration(declaration, nil, nil, tryReuse)`
@@ -591,7 +560,6 @@ impl<'p> Printer<'_, 'p, '_> {
             ty,
             SerializeTypeOptions {
                 try_reuse,
-                is_unwidened: false,
                 is_optional_reverse_mapped: false,
             },
         )
@@ -626,15 +594,26 @@ impl<'p> Printer<'_, 'p, '_> {
         }
     }
 
-    /// `typeToTypeNode(pseudoTypeToType(pt))`
-    fn type_of_pseudo_type_to_node(&mut self, file: FileId, pt: &Pseudo) -> Node {
-        match self.c.iso_type_of_pseudo(file, pt) {
-            Some(ty) => {
-                let ty = self.c.instantiate(ty, self.mapper);
-                self.type_to_node(ty)
-            }
-            None => Node::simple(b"any"),
+    /// `Text()` of the `NumericLiteral` or `BigIntLiteral` `e`: what the printer emits for a clone.
+    fn text_of_number_literal(&self, file: FileId, e: ExprId) -> Vec<u8> {
+        let hir = self.c.hir(file);
+        match hir[e].kind {
+            ExprKind::BigInt(digits) => self
+                .text_of_big_int_literal(file, hir[e].pos)
+                .unwrap_or_else(|| cat!(self.text(digits), b"n")),
+            ExprKind::Number(index) => crate::atom::number_to_string(
+                hir.numbers.get(index as usize).copied().unwrap_or(0.0),
+            ),
+            _ => Vec::new(),
         }
+    }
+
+    /// `Text()` of the `BigIntLiteral` of `file` whose token starts at `pos`: hexadecimal digits
+    /// are not converted to base 10. `None`: the text of the file is not retained.
+    fn text_of_big_int_literal(&self, file: FileId, pos: u32) -> Option<Vec<u8>> {
+        let end = self.c.end_of_token_at(file, pos);
+        let written = self.c.hir(file).text.get(pos as usize..end as usize)?;
+        (!written.is_empty()).then(|| crate::json::bigint_token_value(written))
     }
 
     /// The type parameters and `pseudoParametersToNodeList` of the function `func`.
@@ -1066,8 +1045,8 @@ impl<'p> Printer<'_, 'p, '_> {
         let module = parent
             .filter(|&parent| self.c.is_external_module_symbol(parent))
             .unwrap_or(target);
-        let importing = enclosing_file.unwrap_or(Enclosing::NONE.file);
-        let name = self.c.specifier_for_module_symbol(module, importing, mode);
+        let at = self.enclosing_declaration.unwrap_or(Enclosing::NONE);
+        let name = self.c.specifier_for_module_symbol(module, at, mode);
         if bun_core::strings::contains(&name, b"/node_modules/") {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(name.clone(), Vec::new()));
@@ -1219,7 +1198,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 }
                 // `rewriteModuleSpecifier`
                 let specifier = match self.get_module_specifier_override(file, node) {
-                    Some(name) => quoted(&name, b'"', true),
+                    Some(name) => self.string_literal(&name, b'"'),
                     None => {
                         let is_quote = |&&byte: &&u8| byte == b'\'' || byte == b'"';
                         let quote = match hir.text.get(pos as usize..) {
@@ -1260,14 +1239,22 @@ impl<'p> Printer<'_, 'p, '_> {
                 };
                 Node::simple(quoted(self.c.atoms().bytes(value), quote, false))
             }
-            TypeNodeKind::NumberLit(index) => Node::simple(crate::atom::number_to_string(
-                hir.numbers.get(index as usize).copied().unwrap_or(0.0),
-            )),
+            // A `PrefixUnaryExpression` and its operand: `-0` keeps its sign.
+            TypeNodeKind::NumberLit(index) => {
+                let value = hir.numbers.get(index as usize).copied().unwrap_or(0.0);
+                let sign: &[u8] = if value.is_sign_negative() { b"-" } else { b"" };
+                Node::simple(cat!(sign, crate::atom::number_to_string(value.abs())))
+            }
             TypeNodeKind::BigIntLit { text, negative } => {
-                let digits = self.text(text);
-                let digits = digits.strip_suffix(b"n").unwrap_or(&digits);
                 let sign: &[u8] = if negative { b"-" } else { b"" };
-                Node::simple(cat!(sign, digits, b"n"))
+                let literal = match negative {
+                    true => hir.start(hir.node(node).with(Part::Operand)),
+                    false => pos,
+                };
+                let literal = self
+                    .text_of_big_int_literal(file, literal)
+                    .unwrap_or_else(|| cat!(self.text(text), b"n"));
+                Node::simple(cat!(sign, literal))
             }
             TypeNodeKind::BoolLit(value) => {
                 Node::simple(if value { &b"true"[..] } else { b"false" })
@@ -1293,6 +1280,10 @@ impl<'p> Printer<'_, 'p, '_> {
             TypeNodeKind::Readonly(of) => {
                 let of = self.visit_existing_type_node(file, of, 0)?;
                 Node::new(cat!(b"readonly ", of.emit(POSTFIX)), TYPE_OPERATOR)
+            }
+            TypeNodeKind::Unique(of) => {
+                let of = self.visit_existing_type_node(file, of, 0)?;
+                Node::new(cat!(b"unique ", of.emit(TYPE_OPERATOR)), TYPE_OPERATOR)
             }
             // nodecopy.go
             TypeNodeKind::JSDoc { ty, kind, .. } => {
@@ -1475,8 +1466,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 )
             }
             TypeNodeKind::Infer(tp) => {
-                let parameter = self.c.declared_type_of_type_parameter(file, tp);
-                let name = self.type_parameter_to_name(parameter);
+                let name = self.visit_type_parameter_name(file, tp);
                 if hir[tp].constraint.is_none() {
                     Node::new(cat!(b"infer ", name), TYPE_OPERATOR)
                 } else {
@@ -1624,6 +1614,16 @@ impl<'p> Printer<'_, 'p, '_> {
         self.enter_new_scope(&parameters, &type_parameters, None, false)
     }
 
+    /// `trackExistingEntityName(node.Name())` for the `TypeParameterDeclaration` `tp`. A missing
+    /// name resolves to nothing: its clone is emitted, which has no text.
+    fn visit_type_parameter_name(&mut self, file: FileId, tp: TypeParamId) -> Vec<u8> {
+        if self.c.hir(file)[tp].name == known::empty {
+            return Vec::new();
+        }
+        let parameter = self.c.declared_type_of_type_parameter(file, tp);
+        self.type_parameter_to_name(parameter)
+    }
+
     /// A `TypeParameterDeclaration`
     pub(super) fn visit_type_parameter_declaration(
         &mut self,
@@ -1640,8 +1640,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 text.push(b' ');
             }
         }
-        let parameter = self.c.declared_type_of_type_parameter(file, tp);
-        text.extend_from_slice(&self.type_parameter_to_name(parameter));
+        text.extend_from_slice(&self.visit_type_parameter_name(file, tp));
         if declaration.constraint.is_some() {
             let constraint = self.visit_existing_type_node(file, declaration.constraint, 0)?;
             text.extend_from_slice(b" extends ");
@@ -1771,11 +1770,14 @@ impl<'p> Printer<'_, 'p, '_> {
                 }
                 _ => self.text(name),
             },
-            // `#x` outside a class declares nothing (`getDeclarationName`). The node has the name
-            // anyway.
+            // `#x` outside a class and `1n` declare nothing (`getDeclarationName`). The node has
+            // the name anyway.
             PropKey::None if is_private_name_at(hir, hir[m].name_pos) => {
                 self.property_key_text(file, hir.node(m).with(Part::Name))
             }
+            PropKey::None if is_bigint_literal_at(hir, member.name_pos) => self
+                .text_of_big_int_literal(file, member.name_pos)
+                .unwrap_or_default(),
             PropKey::None => Vec::new(),
             PropKey::Computed(e) => {
                 let name = self.entity_name_text(file, e)?;

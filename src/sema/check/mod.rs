@@ -99,8 +99,8 @@ use errors_names_and_exports::{root_declaration, root_pattern};
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
-pub use regexp_scanner::get_spelling_suggestion;
 use regexp_scanner::spelling_suggestion;
+pub use regexp_scanner::{decode_rune, get_spelling_suggestion};
 use shape::members_among;
 use sink::{Arg, Reported};
 use spans::end_of_brackets;
@@ -108,7 +108,7 @@ use spans::is_identifier_part;
 use spans::skip_trivia;
 use spans::start_of_token_before;
 use spans::token_end;
-use spans::{is_word_at, word_at, word_before, word_end, word_start};
+use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::atomic::AtomicBool;
 use symbols::AliasTarget;
@@ -144,20 +144,21 @@ macro_rules! buffered_fields {
     ($each:ident) => {
         $each!(
             type_node_types fn_return_types pat_types literal_prop_types symbol_types circular_symbols
-            circular_base_types circular_mapped_constraints
+            circular_base_types circular_alias_targets circular_mapped_constraints circular_write_types
             base_constructor_types symbol_reference_links mapped_types_with_errors declared_types shapes
             distributed_intersections sig_params
             sig_type_params resolved_return_types call_signatures construct_signatures candidate_orders members
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
-            awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
+            awaited_types synthetic_default_import_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
             union_properties union_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
-            equivalent_base_types type_param_constraints enum_values type_param_defaults conditionals
+            equivalent_base_types type_param_constraints enum_values type_param_defaults
+            circular_type_param_defaults conditionals
             mapped_param_constraints
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
             effects_signatures resolved_effects_signatures context_free_expr_types context_free_types
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
-            calls_before_signatures untyped_signatures_in_js
+            calls_before_signatures untyped_signatures_in_js jsx_fragment_types
         )
     };
 }
@@ -204,9 +205,15 @@ pub struct Program<'s> {
     /// The classes and interfaces whose base types were requested while they were being resolved
     /// (2310).
     circular_base_types: ByNode<Sym, (), Buffered, &'s Session>,
+    /// The aliases whose `aliasTarget` is `unknownSymbol` because `resolveAlias` found a cycle
+    /// through a type (2303).
+    circular_alias_targets: ByNode<Sym, (), Buffered, &'s Session>,
     /// The mapped types whose key has a circular constraint (2313), by the node and the mapper:
     /// their `constraintType` is `errorType`.
     circular_mapped_constraints: ByKey<(FileId, TypeNodeId, MapperId), (), Buffered, &'s Session>,
+    /// The annotations of the setters whose `writeType` is `anyType` because
+    /// `getWriteTypeOfAccessors` found a cycle (2502).
+    circular_write_types: ByKey<(FileId, TypeNodeId), (), Buffered, &'s Session>,
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
     circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
@@ -244,10 +251,9 @@ pub struct Program<'s> {
     untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
     declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
     shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, Buffered, &'s Session>,
-    /// `intersectionTypes`, for sets that contain a union. The key: the set, `IntersectionFlagsNoConstraintReduction`, and whether the set
-    /// is split in halves, which gives the result another `origin`.
-    distributed_intersections:
-        ByKey<(Box<[TypeId]>, bool, bool), (TypeId, bool), Buffered, &'s Session>,
+    /// `intersectionTypes`, for sets that contain a union. The key: the set, and
+    /// `IntersectionFlagsNoConstraintReduction`.
+    distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool), Buffered, &'s Session>,
     sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, Buffered, &'s Session>,
     sig_type_params: ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
     /// `Signature.resolvedReturnType` of a signature with a `target`.
@@ -287,6 +293,8 @@ pub struct Program<'s> {
     /// `links.deferredNodes` for a file that the task was not checking at the time. See
     /// `check_node_deferred`.
     deferred_nodes: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
+    /// `links.jsxFragmentType` of a source file.
+    jsx_fragment_types: ByKey<FileId, TypeId, Buffered, &'s Session>,
     /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to,
     /// keyed by the element.
     jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal, &'s Session>,
@@ -308,6 +316,9 @@ pub struct Program<'s> {
     /// declaration.
     /// `awaited_no_alias` as a top-level query, once it is final.
     awaited_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    /// `cachedTypes[CachedTypeKindSyntheticType]`, by the type of a module: whether the cached type
+    /// has a synthetic `default`.
+    synthetic_default_import_types: ById<TypeId, bool, Buffered, &'s Session>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
     mapped_prop_types: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
     /// `reverseMappedCache`
@@ -336,6 +347,8 @@ pub struct Program<'s> {
     enum_values: ByNodeIndirect<(FileId, EnumMemberId), decl::Evaluated, Buffered, &'s Session>,
     /// `default_of_type_param` of a type parameter, once it is final.
     type_param_defaults: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
+    /// The type parameters whose `resolvedDefaultType` is `circularConstraintType`.
+    circular_type_param_defaults: ById<TypeId, (), Buffered, &'s Session>,
     conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId, Buffered, &'s Session>,
     /// The constraint of the parameter of each mapped type, if any. See
     /// `constraint_of_mapped_param`.
@@ -353,11 +366,18 @@ impl crate::types::Follow for Reported {
 
 impl crate::types::Follow for decl::Predicate {
     fn visit<V: crate::types::Visitor>(&self, visitor: &mut V) {
-        let decl::Predicate { param, ty, asserts } = self;
+        let decl::Predicate {
+            param,
+            name,
+            ty,
+            asserts,
+        } = self;
         visitor.plain(&(param, asserts));
+        name.visit(visitor);
         ty.visit(visitor);
     }
     fn follow(&mut self, link: &crate::types::Link) {
+        self.name.follow(link);
         self.ty.follow(link);
     }
 }
@@ -421,7 +441,9 @@ impl<'s> Program<'s> {
             circular_initializers: ByNode::new_in(&pats, session),
             circular_symbols: ByNode::new_in(&symbols, session),
             circular_base_types: ByNode::new_in(&symbols, session),
+            circular_alias_targets: ByNode::new_in(&symbols, session),
             circular_mapped_constraints: ByKey::new_in(session),
+            circular_write_types: ByKey::new_in(session),
             circular_returns: ByNode::new_in(&fns, session),
             calls_before_signatures: ByNode::new_in(&exprs, session),
             flows_too_deep: ByNode::new_in(&exprs, session),
@@ -460,6 +482,7 @@ impl<'s> Program<'s> {
             calls: ByNode::new_in(&exprs, session),
             call_return_types: ByNode::new_in(&exprs, session),
             deferred_nodes: ByNode::new_in(&exprs, session),
+            jsx_fragment_types: ByKey::new_in(session),
             jsx_attributes_types: ByNode::new_in(&exprs, session),
             call_diagnostics: ByNodeIndirect::new_in(&exprs, session),
             context_checked: ByNode::new_in(&fns, session),
@@ -468,6 +491,7 @@ impl<'s> Program<'s> {
             relations: ByKey::new_in(session),
             variances: ByNodeIndirect::new_in(&symbols, session),
             awaited_types: ById::new_in(session),
+            synthetic_default_import_types: ById::new_in(session),
             mapped_prop_types: ByKey::new_in(session),
             reverse_mapped_cache: ByKey::new_in(session),
             optional_properties: ById::new_in(session),
@@ -484,6 +508,7 @@ impl<'s> Program<'s> {
             type_param_constraints: ById::new_in(session),
             enum_values: ByNodeIndirect::new_in(&enum_members, session),
             type_param_defaults: ById::new_in(session),
+            circular_type_param_defaults: ById::new_in(session),
             conditionals: ByKey::new_in(session),
             mapped_param_constraints: ByNode::new_in(&type_nodes, session),
             files,
@@ -512,33 +537,35 @@ impl<'s> Program<'s> {
         if self.files.modules.is_empty() {
             return Vec::new();
         }
-        // `initializeChecker`: these must exist, whether or not anything uses them.
-        let mut needed: Vec<&[u8]> = vec![
-            b"IArguments",
-            b"Array",
-            b"Object",
-            b"Function",
-            b"String",
-            b"Number",
-            b"Boolean",
-            b"RegExp",
-        ];
+        let mut required = self.required_global_types();
+        if required.any(|(name, arity)| self.files.get_global_type(name, arity).is_err()) {
+            self.checker().check_required_global_types(None);
+        }
+        self.global_errors.lock().iter().cloned().collect()
+    }
+
+    /// `initializeChecker`: the global types it asks `getGlobalType` for with `reportErrors`,
+    /// whether or not anything uses them, each with the number of its type parameters.
+    fn required_global_types(&self) -> impl Iterator<Item = (Atom, usize)> {
         // `getGlobalStrictFunctionType`
-        if self.files.options.strict_bind_call_apply {
-            needed.extend([&b"CallableFunction"[..], b"NewableFunction"]);
-        }
-        let mut all = self.global_errors.lock().clone();
-        for name in needed {
-            let exists = self
-                .files
-                .atoms
-                .lookup(name)
-                .is_some_and(|atom| self.files.global(atom, SymFlags::TYPE).is_some());
-            if !exists {
-                all.insert((2318, vec![name.to_vec()]));
-            }
-        }
-        all.into_iter().collect()
+        let strict: &[(Atom, usize)] = if self.files.options.strict_bind_call_apply {
+            &[(known::CallableFunction, 0), (known::NewableFunction, 0)]
+        } else {
+            &[]
+        };
+        let first = [
+            (known::IArguments, 0),
+            (known::Array, 1),
+            (known::Object, 0),
+            (known::Function, 0),
+        ];
+        let last = [
+            (known::String, 0),
+            (known::Number, 0),
+            (known::Boolean, 0),
+            (known::RegExp, 0),
+        ];
+        first.into_iter().chain(strict.iter().copied()).chain(last)
     }
 
     pub fn checker(&self) -> Checker<'_, 's> {
@@ -563,10 +590,11 @@ impl<'s> Program<'s> {
             eager: Vec::new(),
             loop_values: Vec::new(),
             non_circular_returns: Vec::new(),
+            array_or_tuple_constraint_requests: Vec::new(),
             contextual_binding_patterns: Vec::new(),
             late_bound_members: Default::default(),
             this_types: Default::default(),
-            late_binding_exports: Vec::new(),
+            late_binding: Vec::new(),
             reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
             inheriting: Vec::new(),
@@ -585,6 +613,9 @@ impl<'s> Program<'s> {
             context_free_level: usize::MAX,
             found_cycle: false,
             left_a_cycle: false,
+            stale_resolutions: Vec::new(),
+            unpopped_resolutions: Default::default(),
+            popped_for_symbol: None,
             taints: 0,
             checked_type_references: (None, Vec::new()),
             taints_before_patterns: 0,
@@ -592,14 +623,12 @@ impl<'s> Program<'s> {
             lowest_taint: usize::MAX,
             context_checked_under: Vec::new(),
             quick_initializers: Vec::new(),
-            depth: 0,
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
             rechecks_at: usize::MAX,
             mode_of_recheck: CheckMode::empty(),
             rechecked_exprs: Default::default(),
             rechecked_members: Default::default(),
-            automatic_assignments: None,
             literals_checked_under: Default::default(),
             inference_contexts: Vec::new(),
             instantiation_depth: 0,
@@ -618,6 +647,9 @@ impl<'s> Program<'s> {
             comparisons_of_deeply_nested_types: 0,
             instantiations_up_to_a_limit: Default::default(),
             relations_cut_short: Default::default(),
+            enum_relation: Default::default(),
+            unknown_like_unions: Default::default(),
+            relation_sizes: [0; 6],
             generic_relation_entries_not_published: 0,
             variances_cut_short: Default::default(),
             free_relaters: Vec::new(),
@@ -644,7 +676,9 @@ impl<'s> Program<'s> {
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
+            defaults_in_progress: Vec::new(),
             generic_object_flags: FxHashMap::default(),
+            names_of_small_numbers: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -656,6 +690,7 @@ impl<'s> Program<'s> {
             ),
             recent_unions: Default::default(),
             recent_unreduced_unions: Default::default(),
+            unions_of_union_types: Default::default(),
             constraint_stack: Vec::new(),
             constraints_marked_circular: Vec::new(),
             type_arguments_in_instantiation: Vec::new(),
@@ -679,7 +714,7 @@ impl<'s> Program<'s> {
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
             parsed_again_for_await: None,
-            flow_analysis_disabled_in: None,
+            flow_analysis_disabled: false,
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
@@ -690,6 +725,7 @@ impl<'s> Program<'s> {
             undefined_properties: Default::default(),
             widening_contexts: Vec::new(),
             widened_types: Default::default(),
+            iteration_types_cache: Default::default(),
             iife_resolving: Vec::new(),
             any_signature_reads: 0,
             any_signature_read_at: 0,
@@ -700,15 +736,22 @@ impl<'s> Program<'s> {
             flow_memo: Default::default(),
             discriminated: Default::default(),
             contextual_properties: Default::default(),
+            apparent_types_of_intersections: Default::default(),
             deferred_nodes: Default::default(),
             deferred_type_parameters: Vec::new(),
+            checked_class_expressions: Vec::new(),
             unresolved_identifiers: Vec::new(),
+            unknown_symbols: Default::default(),
             is_deferred_node: Default::default(),
             deferred_diagnostics: Vec::new(),
             save_deferred_diagnostics: false,
             node_check_flags: Default::default(),
             within_unreachable_code: false,
             reported_unreachable_nodes: Vec::new(),
+            renamed_binding_elements_in_types: Vec::new(),
+            unvisited_exprs: Vec::new(),
+            checked_with_contextual_type: Vec::new(),
+            contextual_signatures_at_check: Vec::new(),
             call_resolution_errors: None,
             is_call_re_resolved: false,
             untyped_call_resolved_again: None,
@@ -783,6 +826,12 @@ enum Query {
     InitializerIsUndefined(FileId, ParamId),
     /// `TypeSystemPropertyNameResolvedTypeArguments`
     TypeArguments(TypeId),
+    /// `TypeSystemPropertyNameAliasTarget`, around the types that `getTargetOfAliasDeclaration`
+    /// requests. A cycle of aliases alone is found by the link step (`AliasSymbolLinks::is_circular`).
+    AliasTarget(Sym),
+    /// `TypeSystemPropertyNameWriteType` of the accessors whose setter has the annotation at the
+    /// node.
+    WriteType(FileId, TypeNodeId),
     /// The relation cache entry for two types, keyed by a hash of their printed names, which is the same in every task. Never on the
     /// stack: it only owns the diagnostic of a stack depth overflow (`error_about_comparison_at_current_node`).
     Comparison(u64),
@@ -835,6 +884,8 @@ impl Query {
             | Query::InferredConstraint(_)
             | Query::MappedProp(..)
             | Query::TypeArguments(_)
+            | Query::AliasTarget(_)
+            | Query::WriteType(..)
             | Query::Comparison(_) => return None,
         })
     }
@@ -921,6 +972,8 @@ struct QueryFrame {
     /// It is a `Query::Expr`, and a nested visit of the expression has stored its type since the
     /// frame was pushed. Every later visit is a cache hit, which reports nothing.
     is_stored_by_nested_visit: bool,
+    /// `Checker::current_source_element` when it was pushed.
+    source_element: Option<CurrentNode>,
 }
 
 /// Which diagnostics of a file `check_file` computes.
@@ -973,9 +1026,10 @@ pub struct Checker<'p, 's> {
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
-    /// The classes whose static members with computed names `getExportsOfSymbol` is binding, for
-    /// `resolveAnonymousTypeMembers`. See `origin_shape_in_the_meantime`.
-    late_binding_exports: Vec<Sym>,
+    /// `getResolvedMembersOrExportsOfSymbol` is binding the computed names, with `earlySymbols` in
+    /// `links[resolutionKind]`. For each one in progress: the depth of `stack` at that point, the
+    /// container, and whether it is at the exports. See `is_late_binding`.
+    late_binding: Vec<(usize, Sym, bool)>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// `resolveDeclaredMembers` is at `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
@@ -990,8 +1044,8 @@ pub struct Checker<'p, 's> {
     /// `resolvedBaseTypes` of each class or interface whose base types are being resolved.
     base_types_so_far: Vec<(Sym, Vec<TypeId>)>,
     /// `pushTypeResolution(key, ResolvedBaseConstraint)`, for the key of each mapped type whose
-    /// constraint type is being resolved.
-    mapped_constraints_in_progress: Vec<(FileId, TypeNodeId, MapperId)>,
+    /// constraint type is being resolved, and the height of `stack` at that time.
+    mapped_constraints_in_progress: Vec<((FileId, TypeNodeId, MapperId), usize)>,
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,
@@ -1028,6 +1082,8 @@ pub struct Checker<'p, 's> {
     loop_values: Vec<usize>,
     /// The height of `stack` at each request of `getNonCircularReturnTypeOfSignature` in progress.
     non_circular_returns: Vec<usize>,
+    /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
+    array_or_tuple_constraint_requests: Vec<usize>,
     /// The index in `stack` from which a query counts as in progress.
     resolution_start: usize,
     /// Why the last `enter` refused: the query is one of TypeScript's own resolutions and is in
@@ -1035,6 +1091,16 @@ pub struct Checker<'p, 's> {
     found_cycle: bool,
     /// The frame popped by the last `leave` was in a cycle.
     left_a_cycle: bool,
+    /// The entries that are left on `typeResolutions` above a resolution in progress.
+    /// `getTypeOfVariableOrParameterOrPropertyWorker` returns the type of `module` or `exports`
+    /// without `popTypeResolution`, so every resolution around it pops the entry above its own
+    /// and leaves its own. From the bottom, for each: the height of `stack` below it, and
+    /// `!result`. Each has its property (`typeResolutionHasProperty`).
+    stale_resolutions: Vec<(usize, bool)>,
+    /// The `module` and `exports` symbols whose entry has been left there.
+    unpopped_resolutions: crate::util::FxHashSet<Sym>,
+    /// What `pop_type_resolution` returned for a `Query::Pat`, for the `Query::Symbol` right below.
+    popped_for_symbol: Option<bool>,
     /// Number of times frames were marked non-cacheable for any reason except `mark_tainted_by_pattern_from`.
     taints: u64,
     /// See `is_type_reference_checked`: the file, and a bit for each of its type nodes.
@@ -1045,7 +1111,6 @@ pub struct Checker<'p, 's> {
     cycles: u64,
     /// The lowest index given to `mark_tainted_from` since the innermost `begin_scope`.
     lowest_taint: usize,
-    depth: usize,
     /// Expressions being checked against a pushed contextual type, innermost last.
     contextual: Vec<(FileId, ExprId, TypeId)>,
     /// The height of `stack` at which `getContextualType` finds nothing pushed: the contextual
@@ -1064,9 +1129,6 @@ pub struct Checker<'p, 's> {
     /// expression, and by member of an object literal or JSX attribute.
     rechecked_exprs: FxHashMap<(FileId, ExprId), TypeId>,
     rechecked_members: FxHashMap<(FileId, PropId), TypeId>,
-    /// While `array_literal_types_in_automatic_variable` repeats the control flow analysis of a
-    /// reference: the reference, and each value assigned to it with its type.
-    automatic_assignments: Option<((FileId, ExprId), Vec<(ExprId, TypeId)>)>,
     /// `arg_type_under`: the type of a literal argument under a parameter type.
     literals_checked_under: FxHashMap<(FileId, ExprId, TypeId, u8), TypeId>,
     /// `inferenceContextInfos`
@@ -1122,6 +1184,15 @@ pub struct Checker<'p, 's> {
     instantiations_up_to_a_limit: FxHashMap<(TypeId, MapperId), (u32, TypeId, bool)>,
     /// The same for the results of `check_type_related_to` and of `variances_of` during which `cuts` moved.
     relations_cut_short: FxHashMap<relate::Key, (u64, bool)>,
+    /// `enumRelation`, by the source and the target symbol.
+    enum_relation: FxHashMap<(Sym, Sym), bool>,
+    /// `ObjectFlagsIsUnknownLikeUnion` of the unions that have
+    /// `ObjectFlagsIsUnknownLikeUnionComputed`, `undefined` and `null`.
+    unknown_like_unions: FxHashMap<TypeId, bool>,
+    /// `Relation.size()`, indexed by `relate::Relation`: the entries of `relations` that this task
+    /// has stored. Those of the files that a single checker would have checked before are not
+    /// counted.
+    relation_sizes: [i32; 6],
     /// Entries of `relations` under a generic key whose hash included a task-local id. They are not
     /// published: see `relate::Key`.
     pub(super) generic_relation_entries_not_published: u64,
@@ -1175,9 +1246,14 @@ pub struct Checker<'p, 's> {
     pub(super) never_in_progress: Vec<TypeId>,
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
+    /// The type parameters whose `resolvedDefaultType` is `resolvingDefaultType`, each with the
+    /// height of `stack` when that began. `true`: it has become `circularConstraintType`.
+    defaults_in_progress: Vec<(TypeId, usize, bool)>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of unions and intersections.
     generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
+    /// `number_name` of the index, `NONE` where it has not been asked for.
+    names_of_small_numbers: std::cell::RefCell<Vec<Atom>>,
     generic_mapped_types_in_progress: Vec<(FileId, TypeNodeId)>,
     /// Those for which it has ended at the limit of `instantiation_count` since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,
@@ -1190,6 +1266,8 @@ pub struct Checker<'p, 's> {
     recent_unions: instantiate::Recent,
     /// The same for `union_unreduced`, in the order of the arguments.
     recent_unreduced_unions: instantiate::Recent,
+    /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.
+    unions_of_union_types: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The `stack` of `getResolvedBaseConstraint`: the recursion identities of the nested
     /// constraint computations in progress.
     constraint_stack: Vec<relate::RecursionId>,
@@ -1236,8 +1314,9 @@ pub struct Checker<'p, 's> {
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
-    /// `flowAnalysisDisabled`: the file whose nodes the `.types` writer rechecks with the flag set.
-    flow_analysis_disabled_in: Option<FileId>,
+    /// `flowAnalysisDisabled`. Only `checkBlock` restores it, so after a reference outside any
+    /// function or module block it stays set for the files that this checker checks afterwards.
+    flow_analysis_disabled: bool,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.
@@ -1262,6 +1341,9 @@ pub struct Checker<'p, 's> {
     widening_contexts: Vec<symbols::WideningContext<'p>>,
     /// `cachedTypes[CachedTypeKindWidened]`
     widened_types: FxHashMap<TypeId, TypeId>,
+    /// `iterationTypesCache`, by the type and `IterationUse::cache_flags`. The flag: tsgo has the
+    /// entry too (`iterable_types`).
+    iteration_types_cache: FxHashMap<(TypeId, u8), (symbols::Iter3, bool)>,
     /// The calls of immediately invoked function expressions whose arguments are being checked to
     /// type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
@@ -1292,9 +1374,16 @@ pub struct Checker<'p, 's> {
     /// The class expressions that have two entries in `deferred_nodes`, the first for their type
     /// parameters, and whether `checkDeferredNodes` has come to the first.
     deferred_type_parameters: Vec<(ExprId, bool)>,
+    /// With `importHelpers`: the class expressions without a name of the file being checked, in the
+    /// order in which `checkClassExpression` first came to them, each with
+    /// `current_source_element` at that time. Until `check_external_emit_helpers`.
+    checked_class_expressions: Vec<(FileId, ExprId, Option<CurrentNode>)>,
     /// The identifiers `getResolvedSymbol` could not resolve, until
     /// `report_unresolved_identifiers`.
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
+    /// `links.resolvedSymbol == c.unknownSymbol`, for the identifiers of the file being checked:
+    /// the error of `onFailedToResolveSymbol` has been created. `true`: and discarded.
+    unknown_symbols: FxHashMap<ExprId, bool>,
     is_deferred_node: crate::util::FxHashSet<ExprId>,
     /// `deferredDiagnosticCallbacks`: the declarations for which `checkWeakMapSetCollision` or
     /// `checkReflectCollision` is deferred. The other callbacks are in `reported`
@@ -1308,11 +1397,28 @@ pub struct Checker<'p, 's> {
     within_unreachable_code: bool,
     /// `reportedUnreachableNodes` for the file being checked.
     reported_unreachable_nodes: Vec<StmtId>,
+    /// `renamedBindingElementsInTypes`
+    renamed_binding_elements_in_types: Vec<PatPropId>,
+    /// The expressions of the file being checked whose parent's check has returned before them,
+    /// each with the start of its node: initializers and computed property names
+    /// (`checkVariableLikeDeclaration`), operands of `yield` (`checkYieldExpression`). Such an
+    /// expression is checked only if the type of a declaration is computed from it.
+    unvisited_exprs: Vec<(u32, ExprId)>,
+    /// The initializers in the parameters of functions without a body that
+    /// `getTypeFromBindingElement` has checked: `checkExpressionWithContextualType` stores no type.
+    checked_with_contextual_type: Vec<(FileId, ExprId)>,
+    /// `getContextualSignature` as `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` got
+    /// it, before the inference context instantiates it, for the functions in which
+    /// `check_empty_binding_pattern` asks for it.
+    contextual_signatures_at_check: Vec<((FileId, FnId), SigId)>,
     /// `discriminatedContextualTypes`: the result of `discriminate_by_object_members` for an object
     /// literal and a union, where it is final.
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom, Option<TypeId>), Option<TypeId>>,
+    /// `resolvedApparentType`, `cachedTypes[CachedTypeKindApparentType]`: by the intersection and
+    /// the `this` argument.
+    apparent_types_of_intersections: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The next target to be related to is a member of an intersection.
     /// The diagnostics `resolveCall` has just reported. `resolved_signature` takes them, and stores
     /// them only together with the entry of `calls`.
@@ -1602,6 +1708,7 @@ impl<'p, 's> Checker<'p, 's> {
             has_result: false,
             incomplete_flow,
             is_stored_by_nested_visit: false,
+            source_element: self.current_source_element,
         });
         true
     }
@@ -1808,8 +1915,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `checkExpression`, `checkPropertyAssignment`, `getTypeFromTypeNode` and, for a declaration
         // whose name is a pattern, `getTypeForVariableLikeDeclaration` have no re-entrancy guard. The
-        // second visit takes `any` for the return type that is being resolved, or finds the members
-        // in place or the intersection as it is, and closes no cycle.
+        // second visit takes `any` for the return type that is being resolved, does without the
+        // base constraint that is being resolved, or finds the members in place or the
+        // intersection as it is, and closes no cycle. Nor does it below a stale entry, where
+        // `findResolutionCycleStartIndex` stops.
         // Or it comes to the `typeToStringEx` call that led here, with no type resolution on the way,
         // and prints one serialization level higher. That can close a cycle through what the first
         // call is resolving. At `maxSerializationLevel` the printer returns "?" and resolves nothing.
@@ -1822,8 +1931,12 @@ impl<'p, 's> Checker<'p, 's> {
         ) && !self.is_resolution(q)
             && (is_through_printing && !self.reprinting
                 || self.ends_at_non_circular_return(i)
+                || self.ends_at_array_or_tuple_constraint(i)
                 || self.ends_at_declared_members(i)
-                || self.ends_at_reduction_in_progress(i))
+                || self.ends_at_reduction_in_progress(i)
+                || self.ends_at_default_in_progress(i)
+                || self.ends_at_members_of_mapped_type(i)
+                || self.is_below_stale_resolution(i))
         {
             return false;
         }
@@ -1909,18 +2022,31 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
+    /// Whether the first resolution on the path from `stack[i]` is a base constraint that
+    /// `instantiateMappedType` has requested. It requests none that
+    /// `findResolutionCycleStartIndex` finds.
+    fn ends_at_array_or_tuple_constraint(&self, i: usize) -> bool {
+        !self.array_or_tuple_constraint_requests.is_empty()
+            && (self.stack[i..].iter().position(|&q| self.is_resolution(q))).is_some_and(|above| {
+                matches!(self.stack[i + above], Query::Constraint(_))
+                    && (self.array_or_tuple_constraint_requests).contains(&(i + above))
+            })
+    }
+
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
-    /// whose index signatures are being resolved: `resolveDeclaredMembers` sets
-    /// `declaredMembersResolved` first.
+    /// whose computed names are being bound or whose index signatures are being resolved:
+    /// `getResolvedMembersOrExportsOfSymbol` assigns `earlySymbols` to its links first, and
+    /// `resolveDeclaredMembers` sets `declaredMembersResolved` first.
     fn ends_at_declared_members(&self, i: usize) -> bool {
-        if self.declared_index_infos_in_progress.is_empty() {
+        if self.declared_index_infos_in_progress.is_empty() && self.late_binding.is_empty() {
             return false;
         }
         let mut from_here = self.stack[i..].iter();
         let resolution = from_here.position(|&q| self.is_resolution(q));
         let resolution = resolution.map_or(self.stack.len(), |at| i + at);
-        let mut began = self.declared_index_infos_in_progress.iter();
-        began.any(|it| it.0 > i && it.0 <= resolution)
+        let index_infos = self.declared_index_infos_in_progress.iter().map(|it| it.0);
+        let mut began = index_infos.chain(self.late_binding.iter().map(|it| it.0));
+        began.any(|height| height > i && height <= resolution)
     }
 
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at an
@@ -1937,6 +2063,38 @@ impl<'p, 's> Checker<'p, 's> {
         began.any(|&height| height > i && height <= resolution)
     }
 
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at a type
+    /// parameter whose default is being resolved: `getResolvedTypeParameterDefault` assigns
+    /// `resolvingDefaultType` first, and returns `circularConstraintType` the next time.
+    fn ends_at_default_in_progress(&self, i: usize) -> bool {
+        if self.defaults_in_progress.is_empty() {
+            return false;
+        }
+        let mut from_here = self.stack[i..].iter();
+        let resolution = from_here.position(|&q| self.is_resolution(q));
+        let resolution = resolution.map_or(self.stack.len(), |at| i + at);
+        let mut began = self.defaults_in_progress.iter();
+        began.any(|&(_, height, _)| height > i && height <= resolution)
+    }
+
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at a mapped
+    /// type whose members are being resolved: `resolveMappedTypeMembers` installs empty members
+    /// first.
+    fn ends_at_members_of_mapped_type(&self, i: usize) -> bool {
+        let mut before_first_resolution = self.stack[i..]
+            .iter()
+            .take_while(|&&q| !self.is_resolution(q));
+        before_first_resolution.any(|&q| {
+            matches!(q, Query::Shape(ty) if matches!(
+                self.data(ty),
+                TypeData::Anon {
+                    origin: Origin::Mapped(..),
+                    ..
+                }
+            ))
+        })
+    }
+
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
     /// that are already installed.
     fn ends_at_members_in_place(&self, i: usize) -> bool {
@@ -1944,9 +2102,11 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .take_while(|&&q| !self.is_resolution(q));
         before_first_resolution.enumerate().any(|(above, &q)| {
-            // `resolveDeclaredMembers` has them in place while it resolves the index signatures.
+            // `resolveDeclaredMembers` has them in place while it resolves the index signatures, and
+            // `getResolvedMembersOrExportsOfSymbol` the early-bound ones while it binds the rest.
             self.has_members_in_place(q)
                 || (self.declared_index_infos_in_progress.iter()).any(|it| it.0 == i + above + 1)
+                || self.late_binding.iter().any(|it| it.0 == i + above + 1)
         })
     }
 
@@ -1959,8 +2119,10 @@ impl<'p, 's> Checker<'p, 's> {
         cycle
             .iter()
             .all(|q| matches!(q, Query::TypeNode(..) | Query::Cond(..)))
-            // Every round takes a level of instantiation.
-            && cycle.iter().any(|q| matches!(q, Query::Cond(..)))
+            // Every round takes a level of instantiation. Without a conditional type:
+            // `instantiateMappedArrayType` instantiates the template at once.
+            && (cycle.iter().any(|q| matches!(q, Query::Cond(..)))
+                || self.instantiation_depth > frames[0].entry_depth)
             && (frames.iter().zip(&frames[1..])).all(|(a, b)| b.entry_depth <= a.entry_depth + 1)
             && frames
                 .last()
@@ -2111,7 +2273,9 @@ impl<'p, 's> Checker<'p, 's> {
             | Query::BaseConstructor(_)
             | Query::Constraint(_)
             | Query::InitializerIsUndefined(..)
-            | Query::TypeArguments(_) => true,
+            | Query::TypeArguments(_)
+            | Query::AliasTarget(_)
+            | Query::WriteType(..) => true,
             // `getTypeOfSymbol` tests for a variable or a property first. `getTypeOfFuncClassEnumModule` and `getTypeOfEnumMember`
             // push no resolution.
             Query::Symbol(sym) => {
@@ -2132,6 +2296,8 @@ impl<'p, 's> Checker<'p, 's> {
                     PatKind::Ident(_) | PatKind::Missing
                 )
             }
+            // `getTypeOfAccessors` of an accessor of an object literal. `Query::Return` of the getter stands for it, if there is one.
+            Query::LiteralProp(file, p) => self.hir(file)[p].kind == PropKind::Setter,
             // `getDeclaredTypeOfTypeAlias` is the only one to push `TypeSystemPropertyNameDeclaredType`.
             Query::Declared(sym) => self.files().flags(sym).contains(SymFlags::TYPE_ALIAS),
             _ => false,
@@ -2141,7 +2307,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// `typeResolutionHasProperty` for the frames from `i` up. In tsgo `links` belong to one checker. A result that another thread
     /// has cached in the meantime is a valid value for any caller, but is unrelated to the queries this checker has in flight.
     fn is_resolved_since(&self, i: usize) -> bool {
-        self.frames[i..].iter().any(|frame| frame.has_result)
+        self.frames[i..].iter().any(|frame| frame.has_result) || self.is_below_stale_resolution(i)
+    }
+
+    /// Whether an entry is left on `typeResolutions` above `stack[i]`.
+    fn is_below_stale_resolution(&self, i: usize) -> bool {
+        (self.stale_resolutions.last()).is_some_and(|stale| stale.0 > i)
     }
 
     /// False if `q` is not on `stack`. Reads the per-class counter that `enter` tests before it scans the stack.
@@ -2216,19 +2387,37 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `c.currentNode`. What `checkExpression` sets is derived from the queries in progress.
     /// `getTypeFromTypeNode` never sets it, but `checkSourceElement` visits a type node before
-    /// anything resolves it: the type nodes `check_type_node` queries, a type node in an expression
-    /// (`checkAssertion`), and the type arguments of a call (`resolveCall`). A type node reached
-    /// through any other query is resolved on demand and does not change `currentNode`.
+    /// anything resolves it: a type node in an expression (`checkAssertion`), the type arguments
+    /// of a call (`resolveCall`), and the type nodes that the checks after `check_source_file`
+    /// query. A type node reached through any other query is resolved on demand and does not
+    /// change `currentNode`.
     /// `None`: `currentNode` is what `checkSourceElement` set, see `current_source_element`.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
         let innermost_expr = self
             .stack
             .iter()
             .rposition(|q| matches!(q, Query::Expr(..)));
+        // `checkSourceElement` has set it since the innermost `checkExpression` began.
+        let before = innermost_expr.and_then(|i| self.frames[i].source_element);
+        if self.current_source_element != before {
+            return None;
+        }
         let mut inner = &self.stack[innermost_expr.unwrap_or(0)..];
         let mut current = None;
         if let [Query::Expr(file, e), rest @ ..] = inner {
             current = Some(CurrentNode::Expr(*file, *e));
+            if !matches!(
+                self.hir(*file)[*e].kind,
+                ExprKind::As { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::Instantiation { .. }
+                    | ExprKind::Call(_)
+                    | ExprKind::New(_)
+                    | ExprKind::TaggedTemplate(_)
+                    | ExprKind::Jsx(_)
+            ) {
+                return current;
+            }
             inner = match rest {
                 [Query::Call(..), rest @ ..] => rest,
                 _ => rest,
@@ -2241,6 +2430,17 @@ impl<'p, 's> Checker<'p, 's> {
             current = Some(CurrentNode::TypeNode(file, node));
         }
         current
+    }
+
+    /// `IsPartOfTypeNode(c.currentNode)`
+    fn is_current_node_part_of_type_node(&self) -> bool {
+        let (file, node) = match self.current_node().or(self.current_source_element) {
+            Some(CurrentNode::Expr(file, e)) => (file, self.hir(file).node(e)),
+            Some(CurrentNode::TypeNode(file, node)) => (file, self.hir(file).node(node)),
+            Some(CurrentNode::Node(file, node)) => (file, node),
+            None => return false,
+        };
+        self.hir(file).is_part_of_type_node(node)
     }
 
     /// `GetErrorRangeForNode(c.currentNode)`
@@ -2417,7 +2617,11 @@ impl<'p, 's> Checker<'p, 's> {
         if self.in_progress[frame.class as usize] != 0 && (!frame.tainted || frame.circular) {
             self.note_result(q);
         }
-        self.left_a_cycle = frame.circular;
+        self.left_a_cycle = if self.stale_resolutions.is_empty() {
+            frame.circular
+        } else {
+            self.pop_type_resolution(q, frame.circular)
+        };
         if self.reported.len() > frame.reported_from as usize {
             self.settle_reported(frame, q);
         }
@@ -2426,6 +2630,59 @@ impl<'p, 's> Checker<'p, 's> {
             return Err(Open);
         }
         Ok(Stored::new())
+    }
+
+    /// `leave` for `module` or `exports`: the first time, its entry stays on `typeResolutions`.
+    fn leave_without_pop(&mut self, symbol: Sym) -> Result<Stored, Open> {
+        if let Some(frame) = self.frames.last()
+            && self.unpopped_resolutions.insert(symbol)
+        {
+            let (height, circular) = (self.frames.len() - 1, frame.circular);
+            let above = (self.stale_resolutions).partition_point(|stale| stale.0 <= height);
+            self.stale_resolutions.insert(above, (height, circular));
+        }
+        self.leave(Query::Symbol(symbol))
+    }
+
+    /// `popTypeResolution` for the frame of `q`, which `leave` has just popped, while there are
+    /// `stale_resolutions`. It pops the last entry: a resolution with stale entries above its own
+    /// takes the result of the last of them, and its own entry stays in their place.
+    /// `circular`: `!result` of the entry of `q`. Returns `!result` of the entry that is popped.
+    #[cold]
+    #[inline(never)]
+    fn pop_type_resolution(&mut self, q: Query, circular: bool) -> bool {
+        let height = self.stack.len();
+        let above = (self.stale_resolutions).partition_point(|stale| stale.0 <= height);
+        for stale in &mut self.stale_resolutions[above..] {
+            stale.0 = height;
+        }
+        let of_pat = self.popped_for_symbol.take();
+        let is_module_exports = matches!(q, Query::Symbol(symbol)
+            if self.files().flags(symbol).contains(SymFlags::MODULE_EXPORTS));
+        let mut popped = of_pat.unwrap_or(circular);
+        if of_pat.is_none()
+            && !is_module_exports
+            && self.is_resolution(q)
+            && above < self.stale_resolutions.len()
+            && let Some((_, last)) = self.stale_resolutions.pop()
+        {
+            self.stale_resolutions.insert(above, (height, circular));
+            popped = last;
+            // The two queries are one resolution in tsgo.
+            if let Query::Pat(file, pat) = q {
+                let symbol = self.bound(file).pat_symbol[pat.idx()];
+                if symbol.is_some()
+                    && self.stack.last() == Some(&Query::Symbol(self.files().sym(file, symbol)))
+                {
+                    self.popped_for_symbol = Some(popped);
+                }
+            }
+        }
+        // Nothing is going to pop them, and there is no entry below them to close a cycle at.
+        if !self.stack.iter().any(|&below| self.is_resolution(below)) {
+            self.stale_resolutions.clear();
+        }
+        popped
     }
 
     /// See `rechecks_at`.
@@ -2622,6 +2879,11 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         };
         let flow = frame.incomplete_flow;
+        // tsgo computes it again, and then finds in `flowLoopCache` the loop of which this
+        // computation saw the types collected so far.
+        if flow && self.is_flow_loop_cached_since(frame.serial) {
+            return;
+        }
         let scope = if flow {
             // No loop on `flow_loops`: `type_of_expr_outside_loops` has set them aside, so the height is unknown and nothing is stored.
             let innermost_loop = self.flow_loops.last().map(|in_progress| in_progress.5);
@@ -2883,7 +3145,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_anonymous_object_type(&self, ty: TypeId) -> bool {
         match self.data(ty) {
             TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
-            TypeData::Fns { .. } | TypeData::Synth(_) => true,
+            TypeData::Fns { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } => true,
             _ => false,
         }
     }
@@ -3088,6 +3350,32 @@ impl<'p, 's> Checker<'p, 's> {
         self.add_diagnostic_of(owner, diagnostic);
     }
 
+    /// `getGlobalSymbol`. `diagnostic`: the message if there is none. `resolveName` has no location,
+    /// so `onFailedToResolveSymbol` reports in no file.
+    pub(super) fn get_global_symbol(
+        &mut self,
+        name: Atom,
+        meaning: SymFlags,
+        diagnostic: Option<u32>,
+    ) -> Option<Sym> {
+        let symbol = self.files.global(name, meaning);
+        if symbol.is_none()
+            && let Some(name_not_found_message) = diagnostic
+        {
+            let diagnostic = self.name_not_found_diagnostic(
+                None,
+                explain::NOWHERE,
+                Arg::Atom(name),
+                name,
+                meaning,
+                name_not_found_message,
+            );
+            let owner = self.stack.last().copied();
+            self.add_diagnostic_of(owner, diagnostic);
+        }
+        symbol
+    }
+
     #[inline]
     pub fn global_type_symbol(&self, name: Atom) -> Option<Sym> {
         self.files.global_type_symbol(name)
@@ -3100,11 +3388,60 @@ impl<'p, 's> Checker<'p, 's> {
         self.files.global_type_of_arity(name, arity)
     }
 
+    /// `getGlobalType`. `None`: `emptyGenericType`, or `emptyObjectType` for an `arity` of 0.
+    pub(super) fn get_global_type(
+        &mut self,
+        name: Atom,
+        arity: usize,
+        report_errors: bool,
+    ) -> Option<Sym> {
+        let (code, symbol) = match self.files.get_global_type(name, arity) {
+            Ok(symbol) => return Some(symbol),
+            Err(_) if !report_errors => return None,
+            Err(error) => error,
+        };
+        let Some(symbol) = symbol else {
+            return self.get_global_symbol(name, SymFlags::TYPE, Some(code));
+        };
+        let declaration = self.files.global_type_declaration(symbol);
+        let error_node =
+            declaration.and_then(|(file, node)| self.error_place_of_declaration(file, node));
+        // Only 2317 names the number.
+        let args = [Arg::Atom(name), Arg::Number(arity)];
+        let args = &args[..1 + usize::from(code == 2317)];
+        let diagnostic = self.new_diagnostic(error_node.unwrap_or(explain::NOWHERE), code, args);
+        let owner = self.stack.last().copied();
+        self.add_diagnostic_of(owner, diagnostic);
+        None
+    }
+
+    /// `initializeChecker`: what its calls of `getGlobalType` report at a declaration in `file`, or
+    /// in no file for `None`.
+    fn check_required_global_types(&mut self, file: Option<FileId>) {
+        let p = self.p;
+        for (name, arity) in p.required_global_types() {
+            if let Err((_, symbol)) = self.files.get_global_type(name, arity) {
+                let declaration = symbol.and_then(|it| self.files.global_type_declaration(it));
+                if declaration.map(|(declared_in, _)| declared_in) == file {
+                    self.get_global_type(name, arity, true);
+                }
+            }
+        }
+    }
+
     /// `Name<args>` for a global class or interface. If it does not exist the result is `{}`, which
     /// is a valid result, not a missing one (`createTypeFromGenericGlobalType`, and `getGlobalType`
     /// itself for one without type parameters).
     pub fn global_ref(&mut self, name: Atom, args: &[TypeId]) -> TypeId {
         match self.global_type_of_arity(name, args.len()) {
+            Some(target) => self.intern_key(TypeKey::Ref { target, args }),
+            None => TypeId::EMPTY_OBJECT,
+        }
+    }
+
+    /// `global_ref`, where the resolver of the global type has `reportErrors`.
+    pub(super) fn global_ref_checked(&mut self, name: Atom, args: &[TypeId]) -> TypeId {
+        match self.get_global_type(name, args.len(), true) {
             Some(target) => self.intern_key(TypeKey::Ref { target, args }),
             None => TypeId::EMPTY_OBJECT,
         }
@@ -3124,16 +3461,42 @@ impl<'p, 's> Checker<'p, 's> {
         self.global_ref(name, &[element])
     }
 
-    /// `createPromiseType` for an awaited type: `unknown` if `Promise` does not exist.
-    pub fn promise_of(&mut self, value: TypeId) -> TypeId {
-        match self.global_ref(known::Promise, &[value]) {
-            TypeId::EMPTY_OBJECT => TypeId::UNKNOWN,
-            promise => promise,
-        }
+    /// `createPromiseType`
+    pub fn promise_of(&mut self, promised_type: TypeId) -> TypeId {
+        // `getGlobalPromiseTypeChecked`
+        let Some(target) = self.get_global_type(known::Promise, 1, true) else {
+            return TypeId::UNKNOWN;
+        };
+        let unwrapped = self.unwrap_awaited_type(promised_type);
+        let promised_type = self.awaited_no_alias(unwrapped).unwrap_or(TypeId::UNKNOWN);
+        self.intern_key(TypeKey::Ref {
+            target,
+            args: &[promised_type],
+        })
     }
 
-    /// `createGeneratorType`: if `Generator` does not exist `IterableIterator` is used, and if
-    /// neither exists, `{}`, and the missing `IterableIterator` is reported, without a file.
+    /// `createPromiseReturnType`. `error_node`: `fn`, which is an `import()` call
+    /// (`is_import_call`) or an async function.
+    pub(super) fn create_promise_return_type(
+        &mut self,
+        error_node: (FileId, u32, u32),
+        is_import_call: bool,
+        promised_type: TypeId,
+    ) -> TypeId {
+        let promise_type = self.promise_of(promised_type);
+        if promise_type == TypeId::UNKNOWN {
+            self.error_at(error_node, if is_import_call { 2711 } else { 2697 }, &[]);
+            return TypeId::ERROR;
+        }
+        // `getGlobalPromiseConstructorSymbol`
+        let constructor = self.get_global_symbol(known::Promise, SymFlags::VALUE, Some(2468));
+        if constructor.is_none() {
+            self.error_at(error_node, if is_import_call { 2712 } else { 2705 }, &[]);
+        }
+        promise_type
+    }
+
+    /// `createGeneratorType`
     pub fn generator_of(
         &mut self,
         yielded: TypeId,
@@ -3141,39 +3504,38 @@ impl<'p, 's> Checker<'p, 's> {
         next: TypeId,
         is_async: bool,
     ) -> TypeId {
-        // `resolveIterationType`
-        let (yielded, returned) = if is_async {
-            (self.awaited(yielded), self.awaited(returned))
-        } else {
-            (yielded, returned)
-        };
-        let (generator, iterator) = if is_async {
+        let (generator, iterable_iterator) = if is_async {
             (known::AsyncGenerator, known::AsyncIterableIterator)
         } else {
             (known::Generator, known::IterableIterator)
         };
-        let name = if self.global_type_of_arity(generator, 3).is_some() {
-            generator
+        // `resolveIterationType`
+        let (yielded, returned) = if is_async {
+            (
+                self.awaited_or_none(yielded).unwrap_or(TypeId::UNKNOWN),
+                self.awaited_or_none(returned).unwrap_or(TypeId::UNKNOWN),
+            )
         } else {
-            // `getGlobalIterableIteratorTypeChecked`
-            if self.global_type_symbol(iterator).is_none() {
-                self.report_global_error(2318, vec![self.atom_text(iterator)]);
-            }
-            iterator
+            (yielded, returned)
         };
-        self.global_ref(name, &[yielded, returned, next])
+        let args = [yielded, returned, next];
+        if self.global_type_of_arity(generator, 3).is_some() {
+            return self.global_ref(generator, &args);
+        }
+        // "Fall back to the global IterableIterator type."
+        self.global_ref_checked(iterable_iterator, &args)
     }
 
-    /// Whether `ty` is a reference to the global class or interface `name`.
-    fn is_reference_to_global(&self, ty: TypeId, name: Atom) -> bool {
+    /// Whether `ty` is a reference to `getGlobalType(name, arity)`.
+    fn is_reference_to_global(&self, ty: TypeId, name: Atom, arity: usize) -> bool {
         matches!(self.data(ty), TypeData::Ref { target, .. }
             if self.files().symbol(*target).name == name
-                && self.global_type_symbol(name) == Some(*target))
+                && self.global_type_of_arity(name, arity) == Some(*target))
     }
 
-    /// The type arguments of `ty`, if it is a reference to the global class or interface `name`.
-    fn is_global_ref(&mut self, ty: TypeId, name: Atom) -> Option<&'p [TypeId]> {
-        if self.is_reference_to_global(ty, name) {
+    /// The type arguments of `ty`, if it is a reference to `getGlobalType(name, arity)`.
+    fn is_global_ref(&mut self, ty: TypeId, name: Atom, arity: usize) -> Option<&'p [TypeId]> {
+        if self.is_reference_to_global(ty, name, arity) {
             Some(self.type_arguments(ty))
         } else {
             None
@@ -3191,8 +3553,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isArrayType`
     pub fn is_array(&self, ty: TypeId) -> bool {
-        self.is_reference_to_global(ty, known::Array)
-            || self.is_reference_to_global(ty, known::ReadonlyArray)
+        self.is_reference_to_global(ty, known::Array, 1)
+            || self.is_reference_to_global(ty, known::ReadonlyArray, 1)
     }
 
     pub fn is_tuple(&self, ty: TypeId) -> bool {
@@ -3236,7 +3598,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `TupleNormalizer.normalize`: an element before a required element is required too.
         for info in &mut infos[..last_required] {
             if info.contains(ElemFlags::OPTIONAL) {
-                *info = ElemFlags::REQUIRED.with_label(info.label());
+                *info = ElemFlags::REQUIRED.with_label(info.labeled_declaration());
             }
         }
         // Everything from the first rest element to the last optional or rest element collapses
@@ -3321,13 +3683,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `removeMissingOrUndefinedType`. Without the option it is `getTypeWithFacts(ty, TypeFactsNEUndefined)`, which `void` does
-    /// not pass either.
+    /// `removeMissingOrUndefinedType`
     pub fn remove_missing_or_undefined_type(&mut self, ty: TypeId) -> TypeId {
         if self.p.files.options.exact_optional_property_types {
             self.filter(ty, |_, m| m != TypeId::MISSING)
         } else {
-            self.filter(ty, |_, m| !m.is_undefined() && m != TypeId::VOID)
+            self.type_with_ne_undefined(ty)
         }
     }
 

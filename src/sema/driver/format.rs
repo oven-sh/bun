@@ -10,7 +10,7 @@ use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, relative_normalized};
-use bun_sema::resolve::is_same_path;
+use bun_sema::resolve::{get_root_length, is_same_path};
 use bun_sema::util::FxHashMap;
 use std::io::Write;
 
@@ -74,8 +74,12 @@ pub(crate) fn get_relative_path_from_directory(
     path: &[u8],
     is_case_sensitive: bool,
 ) -> BString {
+    /// `/`, or `//server`.
+    fn root(path: &[u8]) -> &[u8] {
+        strings::without_trailing_slash(&path[..get_root_length(path)])
+    }
     // It has another root.
-    if crate::host::is_bundled(path) {
+    if crate::host::is_bundled(path) || !root(path).eq_ignore_ascii_case(root(from)) {
         return crate::host::to_native(path).into();
     }
     if is_case_sensitive || path.starts_with(from) {

@@ -1,15 +1,17 @@
-//! Small independent checks: 2698, 2358 2359, 2491, 2414 2427 2431 2457, 2432, 1344.
+//! Small independent checks: 2698, 2358 2359, 2491, 2414 2427 2431 2457, 2432 2473, 1344.
 //!
 //! Follows `isValidSpreadType`, `checkInstanceOfExpression` with `resolveInstanceofExpression`,
 //! `checkForInStatement`, `checkTypeNameIsReserved` and `checkEnumDeclaration` of TypeScript
 //! 7.0.2's checker.go, and `checkStrictModeLabeledStatement` of its binder.go.
 
 use super::*;
-use crate::bind::{Decl, Parent, PatParent, ScopeKind, SymbolId, string_literal_text};
+use crate::bind::{
+    Decl, Parent, PatParent, ScopeKind, SymbolId, is_module_exports_inside_parentheses,
+};
 
 /// What `getSymbolAtLocation` returns.
 #[derive(PartialEq, Eq)]
-enum SymbolAtLocation<'p> {
+pub(super) enum SymbolAtLocation<'p> {
     /// `getMergedSymbol` of a symbol of the binder.
     Symbol(Sym),
     /// A property that has no symbol of the binder. The properties of a mapped type have one
@@ -31,18 +33,6 @@ fn is_same_symbol<'p>(a: &Option<SymbolAtLocation<'p>>, b: &Option<SymbolAtLocat
     a == b && !matches!(a, Some(SymbolAtLocation::IndexOfSeveral))
 }
 
-/// `IsModuleExportsAccessExpression` for `e` without the parentheses around it.
-fn is_module_exports_access_expression(hir: &File, e: ExprId) -> bool {
-    let (obj, name) = match hir[e].kind {
-        ExprKind::Dot { obj, name, .. } => (obj, name),
-        ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
-        _ => return false,
-    };
-    name == known::exports
-        && matches!(hir[obj].kind, ExprKind::Ident(known::module))
-        && !is_parenthesized(hir, obj)
-}
-
 impl<'p> Checker<'p, '_> {
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot be hoisted past a `let` or a
     /// `const` of the same name.
@@ -54,7 +44,15 @@ impl<'p> Checker<'p, '_> {
             };
             let own = bound.pat_symbol[pat.idx()];
             let mut scope = written_in;
-            while scope.is_some() && matches!(bound.scopes[scope.idx()].kind, ScopeKind::Block) {
+            // `namesShareScope`: in the body of a function, a module or a file.
+            while scope.is_some()
+                && match bound.scopes[scope.idx()].kind {
+                    ScopeKind::Block => true,
+                    // A `ClassStaticBlockDeclaration` is not function-like.
+                    ScopeKind::Fn(f) => hir[f].kind == FnKind::StaticBlock,
+                    _ => false,
+                }
+            {
                 let found = bound
                     .lookup(bound.scopes[scope.idx()].locals, name)
                     .filter(|&s| bound.symbols[s.idx()].flags.intersects(SymFlags::VARIABLE));
@@ -184,7 +182,7 @@ impl<'p> Checker<'p, '_> {
             } => right,
             _ => test,
         };
-        if is_module_exports_access_expression(hir, location) {
+        if is_module_exports_inside_parentheses(hir, location) {
             return;
         }
         if is_logical(location) {
@@ -473,7 +471,7 @@ impl<'p> Checker<'p, '_> {
     }
 
     /// `t.symbol`
-    fn symbol_of_type(&self, ty: TypeId) -> Option<SymbolAtLocation<'p>> {
+    pub(super) fn symbol_of_type(&self, ty: TypeId) -> Option<SymbolAtLocation<'p>> {
         let files = self.files();
         Some(match *self.data(ty) {
             TypeData::ThisParam(symbol) | TypeData::Enum { symbol, .. } => {
@@ -670,20 +668,36 @@ impl<'p> Checker<'p, '_> {
         }
     }
 
-    /// The end of `checkEnumDeclaration`: 2432. "Only perform this check once per symbol": at its first declaration.
+    /// The end of `checkEnumDeclaration`: 2473, 2432.
     pub(super) fn check_first_members_of_enum_declarations(&mut self, file: FileId, e: EnumId) {
         let symbol = self.bound(file).enum_symbol[e.idx()];
         if symbol.is_none() {
             return;
         }
-        let declarations = self.files().decls(self.files().sym(file, symbol));
+        let files = self.files();
+        let enum_symbol = files.sym(file, symbol);
+        let declarations = files.decls(enum_symbol);
         let enums = declarations.into_iter().filter_map(|(f, d)| match d {
             Decl::Enum(e) => Some((f, e)),
             _ => None,
         });
         let enums: smallvec::SmallVec<[(FileId, EnumId); 2]> = enums.collect();
-        if enums.len() < 2 || enums[0] != (file, e) {
+        if enums.len() < 2 {
             return;
+        }
+        // "Only perform this check once per symbol": where `getSymbolOfDeclaration` first answers
+        // it. The local symbol of an exported declaration lists that declaration too.
+        let first_checked = enums
+            .iter()
+            .find(|&&(f, e)| files.sym(f, self.bound(f).enum_symbol[e.idx()]) == enum_symbol);
+        if first_checked != Some(&(file, e)) {
+            return;
+        }
+        let enum_is_const = self.hir(file)[e].flags.contains(Flags::CONST);
+        for &(f, e) in &enums {
+            if self.hir(f)[e].flags.contains(Flags::CONST) != enum_is_const {
+                self.error(f, self.hir(f).name(self.hir(f).node(e)), 2473, &[]);
+            }
         }
         let mut seen_enum_missing_initial_initializer = false;
         for (f, e) in enums {

@@ -34,9 +34,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             } else {
                 Mark::Satisfies
             };
-            p.lexer.next()?;
+            p.lexer.next_token()?;
             p.skip_type_script_type(Level::Lowest)?;
             p.note_token_full_start(&mut left.loc, Mark::End);
+            if kind == Mark::As && p.is_saved_type_parenthesized() {
+                p.note_flag(&mut left.loc, Mark::ParenthesizedType);
+            }
             p.note_type(&mut left.loc, kind);
 
             // These tokens are not allowed to follow a cast expression. This isn't
@@ -67,6 +70,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if p.is_tolerant() && Self::sfx_operator_cannot_follow_cast(p, level, left) {
                 return Ok(Continuation::Done);
             }
+            return Ok(Continuation::Next);
+        }
+        if p.lexer.token == T::TEscapedKeyword
+            && (p.lexer.is_keyword(T::TIn) || p.lexer.is_keyword(T::TInstanceof))
+        {
             return Ok(Continuation::Next);
         }
         Ok(Continuation::Done)
@@ -374,6 +382,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         },
                         loc,
                     );
+                    // `parseCallExpressionRest` ends after the missing name: no access and no
+                    // assertion continues it.
+                    if matches!(p.lexer.token, T::TDot | T::TQuestionDot | T::TExclamation) {
+                        p.forbid_suffix_after_as_loc = p.lexer.loc();
+                    }
                 } else if p.lexer.token == T::TPrivateIdentifier
                     && (p.allow_private_identifiers || p.is_tolerant())
                 {
@@ -440,14 +453,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        if old_optional_chain.is_some() {
+        let type_arguments = p.take_type_arguments();
+        if Self::sfx_tag_is_optional_chain(p, old_optional_chain, left) {
             p.log().add_range_error(
                 Some(p.source),
                 p.lexer.range(),
                 b"Template literals cannot have an optional chain as a tag",
             );
         }
-        let type_arguments = p.take_type_arguments();
         // `hasCorrectArity`: a call with an unterminated template is incomplete.
         let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == p.lexer.start;
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
@@ -488,7 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let backtick = p.lexer.loc();
         let head = p.tagged_template_contents();
         let (parts, tail_loc) = p.parse_template_parts(true)?;
-        if old_optional_chain.is_some() && p.is_tolerant() {
+        if p.is_tolerant() && Self::sfx_tag_is_optional_chain(p, old_optional_chain, left) {
             // `checkGrammarTaggedTemplateChain`: said of `node.Template`.
             p.lexer.ts_grammar_error(p.lexer.range_from(backtick), 1358);
         }
@@ -1171,6 +1184,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         chain
     }
 
+    /// `parseTaggedTemplateRest`: whether the tag `left`, which was parsed in `chain`, has
+    /// `NodeFlagsOptionalChain`. `x!` only gets it before an access or a call
+    /// (`tryReparseOptionalChain`).
+    #[inline]
+    fn sfx_tag_is_optional_chain(p: &Self, chain: Option<OptionalChain>, left: &Expr) -> bool {
+        chain.is_some() && !(p.is_tolerant() && p.last_cast(left) == Some(Mark::NonNull))
+    }
+
     fn sfx_t_less_than(
         p: &mut Self,
         level: Level,
@@ -1187,10 +1208,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
         let less_than = p.lexer.loc();
+        let is_optional_chain = Self::sfx_tag_is_optional_chain(p, old_optional_chain, left);
         if Self::IS_TYPESCRIPT_ENABLED
             // `tryParseTypeArgumentsInExpression`
             && !p.lexer.is_javascript_file()
-            && p.try_skip_type_script_type_arguments_with_backtracking()?
+            && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             // `parseSuperExpression`: type arguments after `super` are reported starting at the end
@@ -1301,9 +1323,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
         let less_than = p.lexer.loc();
+        let is_optional_chain = Self::sfx_tag_is_optional_chain(p, old_optional_chain, left);
+        // `parseUpdateExpression` returns a JSX element as it is: `parseMemberExpressionRest`, which
+        // tries type arguments, does not see it.
+        let is_jsx_element = p.is_tolerant()
+            && matches!(left.data, ExprData::EJsxElement(_))
+            && p.noted(left.loc, Mark::Paren).is_none();
         if Self::IS_TYPESCRIPT_ENABLED
             && !p.lexer.is_javascript_file()
-            && p.try_skip_type_script_type_arguments_with_backtracking()?
+            && !is_jsx_element
+            && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
             p.note_type_arguments(left, less_than);
@@ -1371,6 +1400,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Continuation::Next)
     }
 
+    /// `reScanGreaterThanToken` in `parseBinaryExpressionRest`, at a `>>=` or `>>>=` that the
+    /// expression parsed at `level` does not take.
+    #[inline]
+    fn sfx_rescan_greater_than_token(p: &mut Self, level: Level) {
+        if p.is_tolerant() && level.lt(Level::Prefix) {
+            p.lexer.rescanned_greater_than_at = p.lexer.start;
+        }
+    }
+
     fn sfx_t_greater_than_greater_than_equals(
         p: &mut Self,
         level: Level,
@@ -1378,6 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         flags: EFlags,
     ) -> CResult {
         if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+            Self::sfx_rescan_greater_than_token(p, level);
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
@@ -1425,6 +1464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         flags: EFlags,
     ) -> CResult {
         if level.gte(Level::Assign) || Self::sfx_takes_no_assignment(p, left) {
+            Self::sfx_rescan_greater_than_token(p, level);
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
@@ -1790,7 +1830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        p.lexer.next()?;
+        p.lexer.next_token()?;
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;
@@ -1820,7 +1860,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
         }
-        p.lexer.next()?;
+        p.lexer.next_token()?;
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::Compare)?;

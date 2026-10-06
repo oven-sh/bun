@@ -41,9 +41,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut type_arguments = crate::sema::ts_syntax::Types::EMPTY;
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            // `</` is one token for TypeScript. It opens no type arguments. Nor are there any in a JavaScript file
-            // (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
-            if !(p.is_tolerant() && p.lexer.is_less_than_slash())
+            // `</` is one token for TypeScript. It opens no type arguments, and `parseTypeArguments` does not rescan `<<`. Nor are
+            // there any in a JavaScript file (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
+            if (!p.is_tolerant() || p.is_at_less_than_token())
                 && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {
@@ -450,9 +450,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 T::TLessThan => {
                     let less_than_loc = p.lexer.loc();
                     let less_than_full_start = p.lexer.full_start();
-                    p.lexer.next_inside_jsx_element()?;
+                    // `ScanJsxTokenEx`: for TypeScript "</" is one token. Nothing comes between its
+                    // characters, and its "/" starts no comment.
+                    let is_less_than_slash = p.is_tolerant() && p.lexer.code_point == 0x2F;
+                    if is_less_than_slash {
+                        p.lexer.step();
+                    } else {
+                        p.lexer.next_inside_jsx_element()?;
+                    }
 
-                    if p.lexer.token != T::TSlash {
+                    if !is_less_than_slash && (p.lexer.token != T::TSlash || p.is_tolerant()) {
                         // This is a child element
 
                         if p.is_tolerant() {
@@ -709,6 +716,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     fn recover_jsx_attribute(p: &mut Self) -> crate::CrateResult<bool> {
+        // `isListElement`: `tokenIsIdentifierOrKeyword` holds for a private identifier too.
+        if p.lexer.token == T::TPrivateIdentifier {
+            p.lexer.scan_jsx_identifier();
+            return Ok(true);
+        }
         // `isListTerminator`. A speculative parse must still fail on errors.
         if matches!(p.lexer.token, T::TGreaterThan | T::TSlash | T::TEndOfFile)
             || p.lexer.is_log_disabled
@@ -726,6 +738,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.is_in_some_parsing_context() {
             p.lexer.put_up_with(before)?;
             return Ok(false);
+        }
+        if p.lexer.is_less_than_slash() {
+            p.lexer.step();
         }
         p.lexer.next_inside_jsx_element()?;
         Ok(true)

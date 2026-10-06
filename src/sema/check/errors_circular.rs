@@ -104,10 +104,7 @@ impl Checker<'_, '_> {
             // through a conditional type.
             if !is_circular && bound.type_param_symbol[p].is_some() {
                 let param = self.type_param(file, own);
-                is_circular = self
-                    .constraint_from_type_param(param)
-                    .is_some_and(|extended| self.has_circular_base_constraint(param, extended));
-                is_circular = is_circular || !self.has_non_circular_base_constraint(param);
+                is_circular = !self.has_non_circular_base_constraint(param);
             }
             if is_circular {
                 let start = start_of_type(hir, constraint);
@@ -169,6 +166,7 @@ impl Checker<'_, '_> {
             if !matches!(hir[pat].kind, PatKind::Ident(_))
                 || matches!(bound.pat_parent[i], PatParent::None)
                 || unchecked.contain(hir[pat].pos)
+                || self.returns_before_type_of_symbol(file, pat)
             {
                 continue;
             }
@@ -212,8 +210,16 @@ impl Checker<'_, '_> {
             let is_member = matches!(hir[func].kind, FnKind::Getter | FnKind::Setter)
                 && !(hir[func].kind == FnKind::Getter
                     && matches!(bound.fns[i].owner, FnOwner::Expr(_)));
+            // `checkFunctionOrMethodDeclaration` requests the inferred return type of a generator only,
+            // `checkReturnStatement` that of the function it is in.
+            let is_requested = !matches!(hir[func].kind, FnKind::Decl | FnKind::Method)
+                || matches!(bound.fns[i].owner, FnOwner::Expr(_))
+                || hir[func].flags.contains(Flags::GENERATOR)
+                || !bound.fns[i].returns.is_empty();
             if hir[func].ret.is_some() && !is_member
-                || hir[func].ret.is_none() && !matches!(hir[func].body, FnBody::None)
+                || hir[func].ret.is_none()
+                    && !matches!(hir[func].body, FnBody::None)
+                    && is_requested
             {
                 self.return_type_of_fn(file, func);
             }
@@ -241,8 +247,8 @@ impl Checker<'_, '_> {
         });
         let annotated_setter = setter.filter(|&(file, s)| {
             let hir = self.hir(file);
-            let first = hir[hir[s].func].params.iter().next();
-            first.is_some_and(|p| hir[p].ty.is_some())
+            let node = hir[hir[s].func].effective_set_accessor_type_annotation_node(hir);
+            node.is_some()
         });
         let auto_accessor = of_kind(self, MemberKind::Property);
         // `symbolToString`
@@ -281,7 +287,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkExportAssignment`, `checkBinaryLikeExpression`: the types of `export default e`,
-    /// `export = e`, `module.exports = e` and `exports.a = e` are requested.
+    /// `export = e` and `module.exports = e` are requested.
     fn check_circular_exports(&mut self, file: FileId) {
         for (i, symbol) in self.bound(file).symbols.iter().enumerate() {
             if symbol
@@ -289,7 +295,7 @@ impl Checker<'_, '_> {
                 .intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
                 && matches!(
                     symbol.decls.first(),
-                    Some(Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_))
+                    Some(Decl::ExportExpr(_) | Decl::ModuleExports(_))
                 )
             {
                 let sym = self.files().sym(file, SymbolId(i as u32));
@@ -298,19 +304,20 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkPropertyAccessExpression` resolves the type of a property declared by `f.a = e` or `this.a = e` when it checks the left
-    /// side. `Object.defineProperty(f, "a", descriptor)` resolves it only if the descriptor reads the property.
+    /// `checkPropertyAccessExpression` resolves the type of a property declared by `f.a = e`, `this.a = e` or `exports.a = e` when
+    /// it checks the left side, if that is the property it finds there: beside `module.exports = e`, `exports` has the type of `e`.
+    /// `Object.defineProperty(f, "a", descriptor)` resolves it only if the descriptor reads the property.
     fn check_circular_assignment_declarations(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !hir.is_js {
             return;
         }
-        let this_properties =
-            (bound.symbols.iter().flat_map(|symbol| &symbol.decls)).filter_map(|decl| match decl {
-                Decl::ThisProperty(e) => Some(e),
+        let of_this_or_exports = (bound.symbols.iter().flat_map(|symbol| &symbol.decls))
+            .filter_map(|decl| match decl {
+                Decl::ThisProperty(e) | Decl::ExportsProperty(e) => Some(e),
                 _ => None,
             });
-        for &declaration in bound.expando_declarations.iter().chain(this_properties) {
+        for &declaration in (bound.expando_declarations.iter()).chain(of_this_or_exports) {
             let checked = match hir[declaration].kind {
                 ExprKind::Assign { target, .. } => target,
                 _ => declaration,
@@ -380,7 +387,7 @@ impl Checker<'_, '_> {
     }
 
     /// The end of `getReturnTypeOfSignature`, where `popTypeResolution` finds the cycle: 2577, 7023
-    /// at the name of the function, 7024 at a function without a name. For a getter of an object
+    /// at the name of the function, 7024 at a function without a name. For an accessor of an object
     /// literal it is the end of `getTypeOfAccessors`. `owner`: see `add_diagnostic_of`.
     pub(super) fn report_circular_return_type(
         &mut self,
@@ -404,17 +411,22 @@ impl Checker<'_, '_> {
         if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
             // The accessors of classes, interfaces and type literals are reported with the property
             // they declare.
-            if hir[func].kind == FnKind::Getter && matches!(fn_owner, FnOwner::Expr(_)) {
-                let setter = self
-                    .sibling_accessor(file, func, FnKind::Setter)
-                    .filter(|&s| {
-                        let first = hir[s].params.iter().next();
-                        first.is_some_and(|p| hir[p].ty.is_some())
-                    });
-                match setter {
-                    _ if hir[func].ret.is_some() => named(self, func, 2502),
-                    Some(setter) => named(self, setter, 2502),
-                    None => no_implicit_any && named(self, func, 7023),
+            if matches!(fn_owner, FnOwner::Expr(_)) {
+                let getter = (hir[func].kind == FnKind::Getter).then_some(func);
+                let setter = match getter {
+                    Some(getter) => (self.sibling_accessor(file, getter, FnKind::Setter))
+                        .map(|(_, setter)| setter),
+                    None => Some(func),
+                };
+                let setter = setter.filter(|&s| {
+                    let node = hir[s].effective_set_accessor_type_annotation_node(hir);
+                    node.is_some()
+                });
+                match (getter, setter) {
+                    (Some(getter), _) if hir[getter].ret.is_some() => named(self, getter, 2502),
+                    (_, Some(setter)) => named(self, setter, 2502),
+                    (Some(getter), None) => no_implicit_any && named(self, getter, 7023),
+                    (None, None) => false,
                 };
             }
         } else if hir[func].ret.is_some() {

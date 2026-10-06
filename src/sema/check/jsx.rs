@@ -38,9 +38,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// The `JsxOpeningElement`, `JsxSelfClosingElement` or `JsxOpeningFragment` of the element or
+    /// fragment `e`.
+    pub(super) fn jsx_opening_like(&self, file: FileId, e: ExprId) -> Node {
+        let hir = self.hir(file);
+        let node = hir.node(e);
+        match hir.kind(node) {
+            Kind::JsxSelfClosingElement => node,
+            _ => node.with(Part::Opening),
+        }
+    }
+
     /// `getJsxType`. `None`: the error type.
-    pub(super) fn jsx_type(&mut self, file: FileId, name: Atom) -> Option<TypeId> {
-        let namespace = self.jsx_namespace_at(file, false)?;
+    pub(super) fn jsx_type(&mut self, file: FileId, location: Node, name: Atom) -> Option<TypeId> {
+        let namespace = self.jsx_namespace_at(file, location)?;
         let type_symbol = self.files().namespace_member(namespace, name)?;
         if !self.files().means(type_symbol, SymFlags::TYPE) {
             return None;
@@ -52,8 +63,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getSymbol(jsxNamespace.Exports, name, SymbolFlagsType)`: `getJsxLibraryManagedAttributes`,
     /// `getJsxElementTypeSymbol` and the start of `getNameFromJsxElementAttributesContainer`. That
     /// table lacks what arrives through `export *`, and an alias found in it stays an alias.
-    fn jsx_symbol(&mut self, file: FileId, name: Atom) -> Option<Sym> {
-        let jsx_namespace = self.jsx_namespace_at(file, false)?;
+    fn jsx_symbol(&mut self, file: FileId, location: Node, name: Atom) -> Option<Sym> {
+        let jsx_namespace = self.jsx_namespace_at(file, location)?;
         let symbol = self.files().export(jsx_namespace, name)?;
         let is_type = self.files().means(symbol, SymFlags::TYPE);
         is_type.then_some(symbol)
@@ -64,12 +75,18 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         managed_sym: Sym,
         type_arguments: &[TypeId],
+        in_javascript: bool,
     ) -> Option<TypeId> {
-        let flags = self.files().flags(managed_sym);
-        if flags.contains(SymFlags::TYPE_ALIAS)
-            && self.type_params_of_symbol(managed_sym).len() >= type_arguments.len()
+        if self
+            .files()
+            .flags(managed_sym)
+            .contains(SymFlags::TYPE_ALIAS)
         {
-            return Some(self.type_reference(managed_sym, type_arguments));
+            let params = self.local_type_params_of_symbol(managed_sym);
+            if params.len() >= type_arguments.len() {
+                let args = self.fill_type_args_as(&params, type_arguments, in_javascript);
+                return Some(self.type_reference(managed_sym, &args));
+            }
         }
         // `ObjectFlagsClassOrInterface`: the declared type of a class or an interface, and no other
         // reference to it.
@@ -77,22 +94,38 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::Ref { target, .. } = *self.data(declared_managed_type) else {
             return None;
         };
-        (self.declared_type(target) == declared_managed_type
-            && self.type_params_of_symbol(target).len() >= type_arguments.len())
-        .then(|| self.type_reference(target, type_arguments))
+        if self.declared_type(target) != declared_managed_type {
+            return None;
+        }
+        let params = self.local_type_params_of_symbol(target);
+        if params.len() < type_arguments.len() {
+            return None;
+        }
+        let args = self.fill_type_args_as(&params, type_arguments, in_javascript);
+        Some(self.type_reference(target, &args))
     }
 
     /// `getJsxElementTypeTypeAt`: `JSX.ElementType`, with its type parameters instantiated to their
     /// defaults.
-    pub(super) fn jsx_element_type_constraint(&mut self, file: FileId) -> Option<TypeId> {
-        let sym = self.jsx_symbol(file, known::ElementType)?;
-        let t = self.instantiate_alias_or_interface_with_defaults(sym, &[])?;
+    pub(super) fn jsx_element_type_constraint(
+        &mut self,
+        file: FileId,
+        location: Node,
+    ) -> Option<TypeId> {
+        let sym = self.jsx_symbol(file, location, known::ElementType)?;
+        let in_javascript = self.hir(file).is_js;
+        let t = self.instantiate_alias_or_interface_with_defaults(sym, &[], in_javascript)?;
         (!self.is_error_type(t)).then_some(t)
     }
 
     /// `getNameFromJsxElementAttributesContainer`
-    fn jsx_name_from_container(&mut self, file: FileId, container: Atom) -> JsxName {
-        let Some(symbol) = self.jsx_symbol(file, container) else {
+    fn jsx_name_from_container(
+        &mut self,
+        file: FileId,
+        location: Node,
+        container: Atom,
+    ) -> JsxName {
+        let Some(symbol) = self.jsx_symbol(file, location, container) else {
             return JsxName::Missing;
         };
         let ty = self.declared_type_of_jsx_symbol(symbol);
@@ -109,14 +142,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getJsxElementChildrenPropertyName`
-    pub(super) fn jsx_children_property_name(&mut self, file: FileId) -> JsxName {
+    pub(super) fn jsx_children_property_name(&mut self, file: FileId, location: Node) -> JsxName {
         if matches!(
             self.p.files.options.jsx,
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
         ) {
             return JsxName::Name(known::children);
         }
-        self.jsx_name_from_container(file, known::ElementChildrenAttribute)
+        self.jsx_name_from_container(file, location, known::ElementChildrenAttribute)
     }
 
     /// `isJsxIntrinsicTagName`, and the name used to look up the element.
@@ -159,21 +192,23 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(vec![self.any_signature()]);
         }
         if let Some(name) = self.string_literal_value(element_type) {
-            let attributes = match self.jsx_attributes_of_literal_tag(file, name) {
-                Ok(Some(attributes)) => attributes,
-                Ok(None) => {
-                    let hir = self.hir(file);
-                    let ExprKind::Jsx(j) = hir[caller].kind else {
-                        return None;
-                    };
-                    let at = (file, hir[caller].pos, hir[j].opening_end);
-                    let container = Arg::Bytes(b"JSX.IntrinsicElements");
-                    self.error_at(at, 2339, &[Arg::Atom(name), container]);
-                    return Some(Vec::new());
-                }
-                Err(()) => TypeId::ANY,
+            let location = self.jsx_opening_like(file, caller);
+            let Some(intrinsic_type) = self.jsx_attributes_of_literal_tag(file, location, name)
+            else {
+                let hir = self.hir(file);
+                let ExprKind::Jsx(j) = hir[caller].kind else {
+                    return None;
+                };
+                let at = (file, hir[caller].pos, hir[j].opening_end);
+                let container = Arg::Bytes(b"JSX.IntrinsicElements");
+                self.error_at(at, 2339, &[Arg::Atom(name), container]);
+                return Some(Vec::new());
             };
-            return Some(vec![self.jsx_intrinsic_signature(file, attributes)]);
+            return Some(vec![self.jsx_intrinsic_signature(
+                file,
+                location,
+                intrinsic_type,
+            )]);
         }
         let apparent = self.apparent_type(element_type);
         // "Resolve the signatures, preferring constructor"
@@ -210,15 +245,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `createSignatureForJSXIntrinsic`: `(props: attributes) => JSX.Element`, the signature that a
     /// tag that is not a component resolves to.
-    pub(super) fn jsx_intrinsic_signature(&mut self, file: FileId, attributes: TypeId) -> SigId {
-        let ret = self.jsx_element_type(file);
+    pub(super) fn jsx_intrinsic_signature(
+        &mut self,
+        file: FileId,
+        location: Node,
+        attributes: TypeId,
+    ) -> SigId {
+        let ret = self.jsx_element_type(file, location);
         let params = [SigParam {
             name: known::props,
             ty: attributes,
             optional: false,
             is_required_rest: false,
             rest: false,
-            has_declaration: false,
+            declaration: None,
         }];
         self.types().intern_sig(SigData::Synth {
             type_params: ArenaBox::empty(),
@@ -230,26 +270,48 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `getOrCreateTypeFromSignature` of that.
-    fn jsx_intrinsic_function_type(&mut self, file: FileId, attributes: TypeId) -> TypeId {
-        let sig = self.jsx_intrinsic_signature(file, attributes);
-        self.type_of_signature(sig, false)
+    /// `getOrCreateTypeFromSignature` of that. It has no declaration, which makes `isConstructor`
+    /// true.
+    fn jsx_intrinsic_function_type(
+        &mut self,
+        file: FileId,
+        location: Node,
+        attributes: TypeId,
+    ) -> TypeId {
+        let sig = self.jsx_intrinsic_signature(file, location, attributes);
+        self.type_of_signature(sig, true)
     }
 
     /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement`: the type `JSX.IntrinsicElements`
     /// declares for the tag `name`.
-    pub(super) fn jsx_intrinsic_attributes(&mut self, file: FileId, name: Atom) -> Option<TypeId> {
-        let elements = self.jsx_type(file, known::IntrinsicElements)?;
-        // The type from an index signature is used as is, regardless of noUncheckedIndexedAccess.
-        if self.prop_ref(elements, name).is_none()
-            && let Some(members) = self.members(elements)
-            && let Some(value) = self
-                .applicable_index_info_for_name(&members, name)
-                .map(|info| info.value)
+    pub(super) fn jsx_intrinsic_attributes(
+        &mut self,
+        file: FileId,
+        location: Node,
+        name: Atom,
+    ) -> Option<TypeId> {
+        let intrinsic_elements_type = self.jsx_type(file, location, known::IntrinsicElements)?;
+        self.type_of_intrinsic_tag_symbol(intrinsic_elements_type, name)
+    }
+
+    /// `getIntrinsicTagSymbol`, and the type that
+    /// `getIntrinsicAttributesTypeFromJsxOpeningLikeElement` takes from what it finds.
+    /// `None`: `unknownSymbol`.
+    pub(super) fn type_of_intrinsic_tag_symbol(
+        &mut self,
+        intrinsic_elements_type: TypeId,
+        prop_name: Atom,
+    ) -> Option<TypeId> {
+        // `JsxFlagsIntrinsicNamedElement`
+        if let Some((intrinsic_prop, mapper)) =
+            self.get_property_of_type(intrinsic_elements_type, prop_name)
         {
-            return Some(value);
+            return Some(self.type_of_prop(intrinsic_prop, mapper));
         }
-        self.type_of_property(elements, name)
+        // `JsxFlagsIntrinsicIndexedElement`
+        let members = self.members_for_index_infos(intrinsic_elements_type)?;
+        let index_info = self.applicable_index_info_for_name(&members, prop_name)?;
+        Some(index_info.value)
     }
 
     /// `TypeFlagsStringLiteral`: the value of a string literal type, including that of an enum
@@ -267,42 +329,46 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getIntrinsicAttributesTypeFromStringLiteralType`: the attributes accepted by a tag that is
     /// a value whose type is the string literal `name`.
-    /// `Ok(None)`: `JSX.IntrinsicElements` has no entry for it. `Err`: that interface does not
-    /// exist, or is unresolved: anything is accepted.
-    pub(super) fn jsx_attributes_of_literal_tag(
+    /// `None`: `JSX.IntrinsicElements` has no entry for it.
+    fn jsx_attributes_of_literal_tag(
         &mut self,
         file: FileId,
+        location: Node,
         name: Atom,
-    ) -> Result<Option<TypeId>, ()> {
-        let Some(elements) = self.jsx_type(file, known::IntrinsicElements) else {
-            return Err(());
+    ) -> Option<TypeId> {
+        let Some(intrinsic_elements_type) = self.jsx_type(file, location, known::IntrinsicElements)
+        else {
+            return Some(TypeId::ANY);
         };
-        // `getPropertyOfType`: properties that every object has count.
-        let object = self.global_ref(known::Object, &[]);
-        for holder in [elements, object] {
-            if let Some((prop, mapper)) = self.prop_ref(holder, name) {
-                return Ok(Some(self.type_of_prop(prop, mapper)));
-            }
+        if let Some((intrinsic_prop, mapper)) =
+            self.get_property_of_type(intrinsic_elements_type, name)
+        {
+            return Some(self.type_of_prop(intrinsic_prop, mapper));
         }
-        // Otherwise, the string index signature and no other.
-        let Some(members) = self.members(elements) else {
-            return Err(());
-        };
-        Ok(self
-            .find_index_info(&members, TypeId::STRING)
-            .map(|info| info.value))
+        self.index_type_of_type(intrinsic_elements_type, TypeId::STRING)
     }
 
-    /// `getJSXFragmentType`: the type of the component that the fragment `e` is created with.
-    /// `None`: any type, or it is not found.
-    pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    /// `getJSXFragmentType`: the type of the component that the fragments of `file` are created
+    /// with. The names are resolved from `e`, the fragment that asks first.
+    pub(super) fn jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> TypeId {
+        if let Some(known) = (self.p.jsx_fragment_types).get(&self.task, &file) {
+            return known;
+        }
+        let resolved = self.resolve_jsx_fragment_type(file, e);
+        let ty = resolved.unwrap_or(TypeId::ERROR);
+        (self.p.jsx_fragment_types).rewrite(&self.task, file, ty, Stored::new());
+        ty
+    }
+
+    /// `None`: `errorType`.
+    fn resolve_jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, files) = (self.hir(file), self.files());
         let (options, atoms) = (&files.options, self.atoms());
         let name = super::errors_jsx::jsx_namespace(files, atoms, hir, true);
         if options.jsx != JsxEmit::React && options.jsx_fragment_factory.is_empty()
             || atoms.bytes(name) == b"null"
         {
-            return None;
+            return Some(TypeId::ANY);
         }
         let fragment = atoms.intern(b"Fragment");
         // `getJsxNamespaceContainerForImplicitImport`, or else the name as it is in scope.
@@ -337,12 +403,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getJsxManagedAttributesFromLocatedAttributes`: `JSX.LibraryManagedAttributes<typeof Component, Props>`
     fn jsx_managed_attributes(&mut self, file: FileId, e: ExprId, attributes: TypeId) -> TypeId {
-        let Some(managed_sym) = self.jsx_symbol(file, known::LibraryManagedAttributes) else {
+        let context = self.jsx_opening_like(file, e);
+        let Some(managed_sym) = self.jsx_symbol(file, context, known::LibraryManagedAttributes)
+        else {
             return attributes;
         };
         let ctor_type = self.static_type_of_referenced_jsx_constructor(file, e);
-        self.instantiate_alias_or_interface_with_defaults(managed_sym, &[ctor_type, attributes])
-            .unwrap_or(attributes)
+        let (type_arguments, in_javascript) = ([ctor_type, attributes], self.hir(file).is_js);
+        self.instantiate_alias_or_interface_with_defaults(
+            managed_sym,
+            &type_arguments,
+            in_javascript,
+        )
+        .unwrap_or(attributes)
     }
 
     /// `getStaticTypeOfReferencedJsxConstructor`
@@ -353,20 +426,21 @@ impl<'p, 's> Checker<'p, 's> {
             _ => ExprId::NONE,
         };
         if tag.is_none() {
-            return self.jsx_fragment_type(file, e).unwrap_or(TypeId::ANY);
+            return self.jsx_fragment_type(file, e);
         }
+        let context = self.jsx_opening_like(file, e);
         if let Some(name) = self.jsx_intrinsic_tag_name(file, tag) {
-            let result = self.jsx_intrinsic_attributes(file, name);
-            return self.jsx_intrinsic_function_type(file, result.unwrap_or(TypeId::ERROR));
+            let result = self.jsx_intrinsic_attributes(file, context, name);
+            let result = result.unwrap_or(TypeId::ERROR);
+            return self.jsx_intrinsic_function_type(file, context, result);
         }
         let tag_type = self.type_of_expr(file, tag);
         let Some(name) = self.string_literal_value(tag_type) else {
             return tag_type;
         };
-        match self.jsx_attributes_of_literal_tag(file, name) {
-            Ok(Some(result)) => self.jsx_intrinsic_function_type(file, result),
-            Ok(None) => TypeId::ERROR,
-            Err(()) => self.jsx_intrinsic_function_type(file, TypeId::ANY),
+        match self.jsx_attributes_of_literal_tag(file, context, name) {
+            Some(result) => self.jsx_intrinsic_function_type(file, context, result),
+            None => TypeId::ERROR,
         }
     }
 
@@ -378,7 +452,8 @@ impl<'p, 's> Checker<'p, 's> {
         props: TypeId,
     ) -> TypeId {
         let props = self.jsx_managed_attributes(file, e, props);
-        match self.jsx_type(file, known::IntrinsicAttributes) {
+        let context = self.jsx_opening_like(file, e);
+        match self.jsx_type(file, context, known::IntrinsicAttributes) {
             Some(intrinsic) => self.intersection(&[intrinsic, props]),
             None => props,
         }
@@ -420,24 +495,20 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         sig: SigId,
     ) -> TypeId {
-        // `getTypeOfFirstParameterOfSignatureWithFallback`: for a rest parameter, its first element
-        // type.
-        let first_parameter = |c: &mut Self| {
-            let params = c.sig_params(sig);
-            c.param_type_at(&params, 0).unwrap_or(TypeId::UNKNOWN)
-        };
         let tag = match self.hir(file)[e].kind {
             ExprKind::Jsx(j) => self.hir(file)[j].tag,
             _ => ExprId::NONE,
         };
         if tag.is_none() || self.jsx_reference_kind(file, tag) != JsxReferenceKind::Component {
-            let props = first_parameter(self);
+            let props = self.type_of_first_parameter_with_fallback(sig, TypeId::UNKNOWN);
             return self.jsx_props_from_first_parameter(file, e, props);
         }
         // `getJsxPropsTypeFromClassType`
-        let attributes = match self.jsx_name_from_container(file, known::ElementAttributesProperty)
-        {
-            JsxName::Missing => first_parameter(self),
+        let context = self.jsx_opening_like(file, e);
+        let forced_lookup_location =
+            self.jsx_name_from_container(file, context, known::ElementAttributesProperty);
+        let attributes = match forced_lookup_location {
+            JsxName::Missing => self.type_of_first_parameter_with_fallback(sig, TypeId::UNKNOWN),
             JsxName::Empty => self.sig_return(sig),
             JsxName::Name(name) => match self.jsx_props_from_member(sig, name) {
                 Some(props) => props,
@@ -458,8 +529,8 @@ impl<'p, 's> Checker<'p, 's> {
             return attributes;
         }
         let mut parts = Vec::with_capacity(3);
-        parts.extend(self.jsx_type(file, known::IntrinsicAttributes));
-        if let Some(declared) = self.jsx_type(file, known::IntrinsicClassAttributes) {
+        parts.extend(self.jsx_type(file, context, known::IntrinsicAttributes));
+        if let Some(declared) = self.jsx_type(file, context, known::IntrinsicClassAttributes) {
             // The type parameters are those of the symbol of the type: those of the aliased type,
             // and an alias's own stay uninstantiated.
             let of_instance = match *self.data(declared) {
@@ -469,7 +540,8 @@ impl<'p, 's> Checker<'p, 's> {
                         declared
                     } else {
                         let instance = self.sig_return(sig);
-                        let args = self.fill_type_args(&params, &[instance]);
+                        let in_javascript = self.hir(file).is_js;
+                        let args = self.fill_type_args_as(&params, &[instance], in_javascript);
                         let mapper = self.mapper_from(&params, &args);
                         self.instantiate(declared, mapper)
                     }
@@ -521,11 +593,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.is_array_like(ty)
             && self
-                .type_of_property(ty, known::length)
-                .is_some_and(|length| {
-                    self.every_type(length, |c, m| {
-                        matches!(c.data(m), TypeData::NumberLit { .. })
-                    })
+                .type_of_property_of_type(ty, known::length)
+                .is_some_and(|length_type| {
+                    self.every_type(length_type, |c, t| c.flags(t) & tf::NUMBER_LITERAL != 0)
                 })
     }
 
@@ -536,7 +606,8 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::UNRESOLVED;
         };
         let jsx = &hir[j];
-        let children_property_name = self.jsx_children_property_name(file);
+        let opening_like_element = self.jsx_opening_like(file, e);
+        let children_property_name = self.jsx_children_property_name(file, opening_like_element);
         // `emptyJsxObjectType`, onto which everything is spread.
         let empty = self.synth(Shape {
             literal: Literalness::JsxAttributes,

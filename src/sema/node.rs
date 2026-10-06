@@ -129,6 +129,33 @@ impl Kind {
             )
     }
 
+    /// `IsTypeNodeKind`
+    pub fn is_type_node(self) -> bool {
+        use Kind::*;
+        is_in_type_node_range(self)
+            || matches!(
+                self,
+                AnyKeyword
+                    | UnknownKeyword
+                    | NumberKeyword
+                    | BigIntKeyword
+                    | ObjectKeyword
+                    | BooleanKeyword
+                    | StringKeyword
+                    | SymbolKeyword
+                    | VoidKeyword
+                    | UndefinedKeyword
+                    | NeverKeyword
+                    | IntrinsicKeyword
+                    | ExpressionWithTypeArguments
+                    | JSDocAllType
+                    | JSDocNullableType
+                    | JSDocNonNullableType
+                    | JSDocOptionalType
+                    | JSDocVariadicType
+            )
+    }
+
     /// `IsDeclarationNode`: the kinds whose nodes have a `DeclarationBase`.
     #[rustfmt::skip]
     pub fn is_declaration(self) -> bool {
@@ -636,7 +663,8 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             NodeData::Prop(p) => {
                 let (property, method) = (&file[p], file.method_of(p));
                 let value = file.exprs.get(property.value.idx()).map(|e| e.kind);
-                self.one(file.name(node))
+                !file.modifiers_of_props.is_empty() && self.span(file.prop_modifiers(p))
+                    || self.one(file.name(node))
                     || self.one(file.jsdoc_type(JsDocTypeOwner::Prop(p)))
                     || match (property.kind, value) {
                         _ if method.is_some() => self.function(method, node),
@@ -790,6 +818,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
         match file[e].kind {
             ExprKind::Missing
             | ExprKind::Ident(_)
+            | ExprKind::PrivateIdentifier(_)
             | ExprKind::This
             | ExprKind::Super
             | ExprKind::Null
@@ -999,6 +1028,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             TypeNodeKind::Array(t)
             | TypeNodeKind::Keyof(t)
             | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::Unique(t)
             | TypeNodeKind::JSDoc { ty: t, .. } => self.one(t),
             TypeNodeKind::Tuple(elements) => self.span(elements),
             TypeNodeKind::Fn(f) => self.function(f, node),
@@ -1270,6 +1300,7 @@ impl<'s> File<'s> {
                 self[e].kind,
                 ExprKind::Missing
                     | ExprKind::Ident(_)
+                    | ExprKind::PrivateIdentifier(_)
                     | ExprKind::This
                     | ExprKind::Super
                     | ExprKind::Null
@@ -1519,7 +1550,7 @@ impl<'s> File<'s> {
 
     /// The key of a member, a property, a binding element or a member of an enum, and its syntactic
     /// form.
-    fn key_of(&self, row: Node) -> (PropKey, NameKind) {
+    pub(crate) fn key_of(&self, row: Node) -> (PropKey, NameKind) {
         match self.data(row) {
             NodeData::Member(m) => {
                 let flags = self[m].flags;
@@ -1553,7 +1584,10 @@ impl<'s> File<'s> {
         };
         match self.data(node) {
             NodeData::Expr(e) => match self[e].kind {
-                ExprKind::Ident(text) | ExprKind::String(text) | ExprKind::BigInt(text) => text,
+                ExprKind::Ident(text)
+                | ExprKind::PrivateIdentifier(text)
+                | ExprKind::String(text)
+                | ExprKind::BigInt(text) => text,
                 _ => Atom::NONE,
             },
             NodeData::Pat(p) => match self[p].kind {
@@ -1997,6 +2031,8 @@ impl<'s> File<'s> {
                     Kind::ComputedPropertyName
                 }
                 (_, NameKind::StringLiteral) => Kind::StringLiteral,
+                // `1n` as the name of a class member.
+                (PropKey::None, NameKind::NumericLiteral) => Kind::BigIntLiteral,
                 (_, NameKind::NumericLiteral) => Kind::NumericLiteral,
                 // A name that declares nothing (`getDeclarationName`) is stored as no name.
                 (_, NameKind::Identifier | NameKind::Jsx) => {
@@ -2032,7 +2068,7 @@ impl<'s> File<'s> {
             ExprKind::True => Kind::TrueKeyword,
             ExprKind::False => Kind::FalseKeyword,
             ExprKind::Number(_) => Kind::NumericLiteral,
-            ExprKind::String(_) if is_private_name_at(self, self[e].pos) => Kind::PrivateIdentifier,
+            ExprKind::PrivateIdentifier(_) => Kind::PrivateIdentifier,
             ExprKind::String(_) if self.is_namespaced_tag_name(e) => Kind::JsxNamespacedName,
             // The name of a tag.
             ExprKind::String(_)
@@ -2189,9 +2225,10 @@ impl<'s> File<'s> {
             TypeNodeKind::Infer(_) => Kind::InferType,
             TypeNodeKind::Mapped(_) => Kind::MappedType,
             TypeNodeKind::IndexedAccess { .. } => Kind::IndexedAccessType,
-            TypeNodeKind::Keyof(_) | TypeNodeKind::Readonly(_) | TypeNodeKind::UniqueSymbol => {
-                Kind::TypeOperator
-            }
+            TypeNodeKind::Keyof(_)
+            | TypeNodeKind::Readonly(_)
+            | TypeNodeKind::UniqueSymbol
+            | TypeNodeKind::Unique(_) => Kind::TypeOperator,
             TypeNodeKind::JSDoc { kind, .. } => match kind {
                 JSDocTypeKind::Nullable => Kind::JSDocNullableType,
                 JSDocTypeKind::NonNullable => Kind::JSDocNonNullableType,
@@ -2517,6 +2554,7 @@ impl File<'_> {
             NodeData::Type(t) => match self[t].kind {
                 TypeNodeKind::Keyof(ty)
                 | TypeNodeKind::Readonly(ty)
+                | TypeNodeKind::Unique(ty)
                 | TypeNodeKind::JSDoc { ty, .. }
                 | TypeNodeKind::Predicate { ty, .. } => ty,
                 TypeNodeKind::Mapped(m) => self[m].ty,
@@ -2570,7 +2608,7 @@ impl File<'_> {
                 StmtKind::Enum(e) => self[e].flags,
                 StmtKind::Module(m) => self[m].flags,
                 StmtKind::ImportEquals(i) => self[i].flags,
-                _ => Flags::empty(),
+                _ => self.modifiers_to_flags(self[s].modifiers),
             },
             NodeData::VarDecl(d) => self[d].flags,
             NodeData::Param(p) => self[p].flags,
@@ -2697,16 +2735,21 @@ impl File<'_> {
         })
     }
 
+    /// `IsPrologueDirective`
+    fn is_prologue_directive(&self, node: Node) -> bool {
+        self.kind(node) == Kind::ExpressionStatement
+            && self.kind(self.expression(node)) == Kind::StringLiteral
+    }
+
     /// `FindUseStrictPrologue`
     pub fn find_use_strict_prologue(&self, statements: IdList<StmtId>) -> StmtId {
         for statement in self.ids(statements) {
-            // `IsPrologueDirective`
-            let expression = self.expression(self.node(statement));
-            if self.kind(expression) != Kind::StringLiteral {
+            let node = self.node(statement);
+            if !self.is_prologue_directive(node) {
                 break;
             }
-            // `IsUseStrictPrologue`
-            let start = self.start(expression) as usize;
+            // `isUseStrictPrologueDirective`
+            let start = self.start(self.expression(node)) as usize;
             if let Some(b"\"use strict\"" | b"'use strict'") = self.text.get(start..start + 12) {
                 return statement;
             }
@@ -2814,6 +2857,76 @@ impl File<'_> {
         self.kind(parent) == Kind::HeritageClause
             && (!self.kind(self.parent(parent)).is_class_like()
                 || parent.part() == Some(Part::Implements))
+    }
+
+    /// `IsPartOfTypeNode`
+    pub fn is_part_of_type_node(&self, node: Node) -> bool {
+        use Kind::*;
+        match self.kind(node) {
+            kind if is_in_type_node_range(kind) => true,
+            AnyKeyword | UnknownKeyword | NumberKeyword | BigIntKeyword | StringKeyword
+            | BooleanKeyword | SymbolKeyword | ObjectKeyword | UndefinedKeyword | NullKeyword
+            | NeverKeyword => true,
+            VoidKeyword => self.kind(self.parent(node)) != VoidExpression,
+            ExpressionWithTypeArguments => {
+                self.is_part_of_type_expression_with_type_arguments(node)
+            }
+            TypeParameter => matches!(self.kind(self.parent(node)), MappedType | InferType),
+            Identifier => {
+                let parent = self.parent(node);
+                let is_right_side =
+                    matches!(self.kind(parent), QualifiedName | PropertyAccessExpression)
+                        && self.name(parent) == node;
+                self.is_part_of_type_node_in_parent(if is_right_side { parent } else { node })
+            }
+            QualifiedName | PropertyAccessExpression | ThisKeyword => {
+                self.is_part_of_type_node_in_parent(node)
+            }
+            _ => false,
+        }
+    }
+
+    /// `isPartOfTypeNodeInParent`
+    fn is_part_of_type_node_in_parent(&self, node: Node) -> bool {
+        use Kind::*;
+        let parent = self.parent(node);
+        match self.kind(parent) {
+            TypeQuery => false,
+            ImportType => !matches!(self.data(parent), NodeData::Type(t)
+                if matches!(self[t].kind, TypeNodeKind::Import { is_typeof: true, .. })),
+            kind if is_in_type_node_range(kind) => true,
+            ExpressionWithTypeArguments => {
+                self.is_part_of_type_expression_with_type_arguments(parent)
+            }
+            TypeParameter => matches!(self.data(parent), NodeData::TypeParam(p)
+                if self.node(self[p].constraint) == node),
+            VariableDeclaration
+            | Parameter
+            | PropertyDeclaration
+            | PropertySignature
+            | FunctionDeclaration
+            | FunctionExpression
+            | ArrowFunction
+            | Constructor
+            | MethodDeclaration
+            | MethodSignature
+            | GetAccessor
+            | SetAccessor
+            | CallSignature
+            | ConstructSignature
+            | IndexSignature
+            | TypeAssertionExpression => self.type_node(parent) == node,
+            CallExpression | NewExpression | TaggedTemplateExpression => match self.data(parent) {
+                NodeData::Expr(e) => match self[e].kind {
+                    ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => self
+                        .ids(self[c].type_args)
+                        .any(|argument| self.node(argument) == node),
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     /// `IsDeclarationName`
@@ -3092,6 +3205,11 @@ impl File<'_> {
         self.context_of(node, Flags::ASYNC)
     }
 
+    /// `node.Flags&NodeFlagsYieldContext != 0`
+    pub fn yield_context(&self, node: Node) -> bool {
+        self.context_of(node, Flags::GENERATOR) == Ok(true)
+    }
+
     /// The state of `NodeFlagsAwaitContext` (`ASYNC`) or `NodeFlagsYieldContext` (`GENERATOR`) that
     /// `setContextFlags` had set where `node` was parsed.
     fn context_of(&self, node: Node, modifier: Flags) -> Result<bool, Node> {
@@ -3101,9 +3219,10 @@ impl File<'_> {
             let kind = self.kind(above);
             match kind {
                 Kind::SourceFile => return Err(below),
-                Kind::Unknown | Kind::EnumDeclaration | Kind::ModuleDeclaration => {
-                    return Ok(false);
-                }
+                Kind::Unknown => return Ok(false),
+                // `parseEnumDeclaration` exits both contexts for the members only.
+                // `parseModuleBlock` stays in those around it.
+                Kind::EnumDeclaration if self.kind(below) == Kind::EnumMember => return Ok(false),
                 // `parseType` exits both contexts. The types a class implements are parsed as
                 // expressions.
                 _ if matches!(self.data(above), NodeData::Type(_))
@@ -3138,16 +3257,28 @@ impl File<'_> {
                 {
                     return Ok(true);
                 }
+                // `parseSimpleArrowFunctionExpression`: the name had been parsed as an expression.
+                Kind::ArrowFunction if self.is_parameter_without_parentheses(above, below) => {}
                 _ if kind.is_function_like()
                     && (matches!(self.data(below), NodeData::Param(_))
                         || below == self.body(above)) =>
                 {
-                    return Ok(self.flags(above).contains(modifier));
+                    // The `*` of a method is a flag of its function only.
+                    let function = self.fns.get(self.function_of(above).idx());
+                    return Ok(function.is_some_and(|function| function.flags.contains(modifier)));
                 }
                 _ => {}
             }
             (below, above) = (above, self.parent(above));
         }
+    }
+
+    /// Whether `child` is the parameter of the arrow function `x => ..` or `async x => ..`.
+    fn is_parameter_without_parentheses(&self, arrow_function: Node, child: Node) -> bool {
+        let (first_token, start) = (self.start(arrow_function), self.start(child));
+        matches!(self.data(child), NodeData::Param(_))
+            && (start == first_token
+                || start_of_token_before(&self.text, start, b"async") == Some(first_token))
     }
 
     /// The ranges in which `isInAmbientOrTypeNode` is true: the interfaces, type aliases and type
@@ -3291,6 +3422,11 @@ impl File<'_> {
             }
         }
     }
+}
+
+/// `KindFirstTypeNode <= kind && kind <= KindLastTypeNode`
+fn is_in_type_node_range(kind: Kind) -> bool {
+    (Kind::TypePredicate..=Kind::ImportType).contains(&kind)
 }
 
 /// The inverse of `ModifierToFlag`.

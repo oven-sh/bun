@@ -48,7 +48,7 @@ impl Checker<'_, '_> {
         let class = &hir[c];
         let sym = self.class_sym(file, c);
         let class_type = self.declared_type(sym);
-        let name_or_node = class.name_pos;
+        let name_or_node = self.error_range_of_class(file, c).0;
         let this = self.intern(TypeData::ThisParam(sym));
         if class.extends.is_some()
             && let Some(&base) = self.base_types(sym).first()
@@ -69,10 +69,6 @@ impl Checker<'_, '_> {
             self.check_kinds_of_property_member_overrides(file, c, sym, class_type, base);
         }
         for node in hir.ids(class.implements) {
-            // Not the primitive type: an unresolved name.
-            if matches!(hir[node].kind, TypeNodeKind::Keyword(_)) {
-                continue;
-            }
             let implemented = self.type_from_node(file, node);
             let implemented = self.reduced(implemented);
             if self.is_any(implemented) {
@@ -278,7 +274,7 @@ impl Checker<'_, '_> {
             // `createUnionOrIntersectionProperty` synthesizes from several is not
             // `SymbolFlagsPrototype`.
             if prop.name == known::prototype && !matches!(prop.source, PropSource::Intersected(..))
-                || self.atoms().bytes(prop.name).first() == Some(&b'#')
+                || self.is_static_private_name(prop)
             {
                 continue;
             }
@@ -331,7 +327,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             // `declaredProp.Name != ast.InternalSymbolNameComputed`
-            let Some(name) = self.member_name(file, member.key) else {
+            let Some(name) = self.declared_member_name(file, member.key) else {
                 continue;
             };
             let (Some((prop, mapper)), Some((base_prop, base_mapper))) = (
@@ -361,7 +357,8 @@ impl Checker<'_, '_> {
             }
         }
         if !issued_member_error {
-            let at = self.place_of_token(file, hir[c].name_pos);
+            let (start, end) = self.error_range_of_class(file, c);
+            let at = (file, start, end);
             self.check_type_assignable_to(
                 type_with_this,
                 base_with_this,
@@ -643,7 +640,7 @@ impl Checker<'_, '_> {
                 args.push(super::sink::number_text(names.len() - 4));
             }
             self.add_diagnostic(super::sink::Reported::new(
-                (file, hir[c].name_pos, 0),
+                (file, self.error_range_of_class(file, c).0, 0),
                 code,
                 held(args),
             ));

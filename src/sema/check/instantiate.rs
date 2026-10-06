@@ -416,13 +416,15 @@ impl<'p, 's> Checker<'p, 's> {
         let hit_the_limit = self.instantiation_limit_hits != hits_before;
         match self.end_scope_by_counters(scope) {
             Ok(stored) if !hit_the_limit => {
-                let kept = (self.p.instantiations).insert(&self.task, (ty, mapper), result, stored);
+                // `data.instantiations[key] = result`: of two instantiations with one key, one
+                // within the other, the outer one assigns last.
+                (self.p.instantiations).rewrite(&self.task, (ty, mapper), result, stored);
                 // The table stores nothing task-local under a shared key.
                 if ty.is_local() || mapper.is_local() || !result.is_local() {
                     self.recent_instantiations
-                        .put_tagged(ty.0, mapper.0, kept.0, serial);
+                        .put_tagged(ty.0, mapper.0, result.0, serial);
                 }
-                kept
+                result
             }
             _ => {
                 let is_tainted = self.limits != limits_before;
@@ -521,9 +523,13 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiate_union_or_intersection(ty, mapper, None)
             }
             TypeData::Ref { target, .. } => {
-                let args = self.type_arguments(ty);
-                let args: SmallVec<[TypeId; 8]> =
-                    args.iter().map(|&t| self.instantiate(t, mapper)).collect();
+                let resolved_type_arguments = self.type_arguments(ty);
+                let args: SmallVec<[TypeId; 8]> = (resolved_type_arguments.iter())
+                    .map(|&t| self.instantiate(t, mapper))
+                    .collect();
+                if args[..] == *resolved_type_arguments {
+                    return ty;
+                }
                 self.intern_key(TypeKey::Ref {
                     target: *target,
                     args: &args,
@@ -532,8 +538,11 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Tuple {
                 flags, readonly, ..
             } => {
-                let elems = self.type_arguments(ty);
-                let elems = self.instantiate_all(elems, mapper);
+                let resolved_type_arguments = self.type_arguments(ty);
+                let elems = self.instantiate_all(resolved_type_arguments, mapper);
+                if elems[..] == *resolved_type_arguments {
+                    return ty;
+                }
                 self.normalized_tuple(&elems, flags, *readonly)
             }
             TypeData::Anon {
@@ -617,6 +626,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `instantiateAnonymousType`
                 new.instantiation_expression = shape.instantiation_expression;
                 new.is_js_literal = shape.is_js_literal;
+                new.mapper = self.map_mapper(shape.mapper, mapper);
                 let stored = self.end_scope_by_counters(scope);
                 if let Some(arguments) = shape.single_signature_arguments {
                     // `new` has no arguments, so it never equals `shape`.
@@ -743,7 +753,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if self.is_any(elem) {
                 out_elems.push(elem);
-                out_flags.push(ElemFlags::REST.with_label(flag.label()));
+                out_flags.push(ElemFlags::REST.with_label(flag.labeled_declaration()));
                 continue;
             }
             // A generic element stays as it is: `TypeFlagsInstantiableNonPrimitive`,
@@ -773,9 +783,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let inner = self.type_arguments(elem);
                 // Too large to represent (2799, 2800): the error type.
                 if inner.len() + out_elems.len() >= 10_000 {
-                    // `IsPartOfTypeNode(c.currentNode)`
-                    let is_type_node =
-                        matches!(self.current_node(), Some(CurrentNode::TypeNode(..)));
+                    let is_type_node = self.is_current_node_part_of_type_node();
                     self.error_at_current_node(if is_type_node { 2799 } else { 2800 });
                     return TypeId::ERROR;
                 }
@@ -798,7 +806,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             };
             out_elems.push(element);
-            out_flags.push(ElemFlags::REST.with_label(flag.label()));
+            out_flags.push(ElemFlags::REST.with_label(flag.labeled_declaration()));
         }
         self.tuple(&out_elems, &out_flags, readonly)
     }
@@ -840,12 +848,6 @@ impl<'p, 's> Checker<'p, 's> {
         let TypeData::Synth(shape) = self.data(created) else {
             return created;
         };
-        if !self.has_instantiable_symbol(sig) {
-            return self.synth(Shape {
-                has_no_instantiable_symbol: true,
-                ..(**shape).clone_in(self.arena)
-            });
-        }
         let TypeData::Fns { mapper: outer, .. } = self.data(returned) else {
             return created;
         };
@@ -1094,9 +1096,16 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                 },
+                // `CompositeTypeMapper.Map` instantiates a type argument when its type parameter
+                // is mapped, which is never if the signature has no reference to it.
                 None => {
-                    if let Some(actual) = self.types().map(own, declared) {
-                        pairs.push((declared, self.instantiate(actual, second)));
+                    if let Some(mut actual) = self.types().map(own, declared) {
+                        if self.has_type_variables(actual)
+                            && self.is_own_type_parameter_possibly_referenced(file, func, tp)
+                        {
+                            actual = self.instantiate(actual, second);
+                        }
+                        pairs.push((declared, actual));
                     }
                 }
             }

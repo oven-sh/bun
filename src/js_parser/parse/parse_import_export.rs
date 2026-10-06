@@ -30,7 +30,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));
             } else if p.is_tolerant() {
-                if let Some(expr) = p.parse_other_import_meta_property(loc)? {
+                if let Some(expr) = p.parse_other_import_meta_property(loc, &mut type_arguments)? {
                     return Ok(expr);
                 }
                 // `import.defer(..)` is an import call.
@@ -45,7 +45,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // a speculative parse does not fail on it either.
             let less_than = p.lexer.loc();
             let (logged, errors) = (p.log().msgs.len(), p.log().errors);
-            if !p.try_skip_type_script_type_arguments_with_backtracking()? {
+            if p.lexer.is_javascript_file()
+                || !p.try_skip_type_script_type_arguments_with_backtracking()?
+            {
                 // `import < a`: nothing is reported, and the caller continues with the comparison.
                 return Ok(p.new_expr(E::Missing {}, loc));
             }
@@ -64,12 +66,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.note_type_arguments(&mut keyword, less_than);
                 return Ok(keyword);
             }
-            // `import<T>(x)` is the call. `checkImportCallExpression` never checks its type
-            // arguments, so the errors the list logged about itself (1099, 1009) are removed.
-            let log = p.log();
-            log.msgs.truncate(logged);
-            log.errors = errors;
-            type_arguments = p.saved_type_arguments();
+            // `import<T>(x)` is the call.
+            type_arguments = p.type_arguments_of_import_call(logged, errors);
         }
 
         if level.gt(Level::Call) {
@@ -160,16 +158,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         ))
     }
 
+    /// The type arguments just parsed, which are those of an import call.
+    /// `checkImportCallExpression` never checks them, so the errors the list logged about itself
+    /// (1099, 1009) are removed: the log had `logged` messages and `errors` errors before it.
+    fn type_arguments_of_import_call(&mut self, logged: usize, errors: u32) -> Option<u32> {
+        let log = self.log();
+        log.msgs.truncate(logged);
+        log.errors = errors;
+        self.saved_type_arguments()
+    }
+
     /// `import.name` where the name is not `meta`, after the dot
     /// (`parseLeftHandSideExpressionOrHigher`). It is a meta property of the error type whatever
     /// the name is, and `checkGrammarMetaProperty` reports it. It is represented as a property
     /// access of the name on a missing expression at the keyword's position, which has that type.
-    /// `None`: `import.defer` before its arguments.
+    /// `None`: `import.defer` before its arguments. `type_arguments` gets those of that call.
     #[cold]
     #[inline(never)]
     fn parse_other_import_meta_property(
         &mut self,
         loc: bun_ast::Loc,
+        type_arguments: &mut Option<u32>,
     ) -> Result<Option<Expr>, Error> {
         let p = self;
         if !p.lexer.is_identifier_or_keyword() {
@@ -182,17 +191,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let text = E::Str::new(word);
         let is_defer = word == b"defer";
         p.lexer.next()?;
-        let is_callee = p.lexer.token == T::TOpenParen;
-        if is_defer && is_callee {
+        // `parseMemberExpressionRest`: type arguments are tried after it as after any expression.
+        // `parseCallExpressionRest` makes them those of the call whose arguments follow them.
+        let less_than = p.lexer.loc();
+        let (logged, errors) = (p.log().msgs.len(), p.log().errors);
+        let has_type_arguments = TYPESCRIPT
+            && p.lexer.token == T::TLessThan
+            && !p.lexer.is_javascript_file()
+            && p.try_skip_type_script_type_arguments_with_backtracking()?;
+        if is_defer && p.lexer.token == T::TOpenParen {
+            if has_type_arguments {
+                *type_arguments = p.type_arguments_of_import_call(logged, errors);
+            }
             return Ok(None);
         }
+        let is_callee = p.lexer.token == T::TOpenParen
+            || (!has_type_arguments
+                && p.lexer.token == T::TQuestionDot
+                && p.next_token_matches(|p| {
+                    matches!(
+                        p.lexer.token,
+                        T::TOpenParen | T::TLessThan | T::TLessThanLessThan
+                    )
+                }));
         if is_defer {
-            // "(" expected, at the end of the meta property.
-            let end = bun_ast::Loc {
-                start: name.loc.start + name.len,
-            };
-            p.lexer
-                .ts_grammar_expected(bun_ast::Range { loc: end, len: 0 }, "(");
+            if !is_callee {
+                // "(" expected, at the end of the meta property.
+                let end = bun_ast::Range {
+                    loc: name.end(),
+                    len: 0,
+                };
+                p.lexer.ts_grammar_expected(end, "(");
+            }
         } else if is_callee {
             p.lexer.ts_grammar_error_about(name, 18061, word);
         } else {
@@ -200,7 +230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.ts_grammar_error_about(name, 17012, &named);
         }
         let target = p.new_expr(E::Missing {}, loc);
-        Ok(Some(p.new_expr(
+        let mut property = p.new_expr_ending_at(
             E::Dot {
                 target,
                 name: text,
@@ -208,7 +238,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 ..Default::default()
             },
             loc,
-        )))
+            name.end(),
+        );
+        if has_type_arguments {
+            p.note_type_arguments(&mut property, less_than);
+        }
+        Ok(Some(property))
     }
 
     /// `parseArgumentList` after `import` or `import.defer`: any number of arguments, including
@@ -248,8 +283,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             );
         }
         if let Some(type_arguments) = type_arguments {
-            // `checkGrammarImportCallExpression`
-            p.lexer.ts_grammar_error(p.lexer.range_from(loc), 1326);
             p.note(
                 &mut call.loc,
                 crate::sema::Mark::TypeArguments,
@@ -558,7 +591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         if can_parse_as_keyword && p.lexer.is_contextual_keyword(b"as") {
             property_name = Some(name);
-            p.lexer.next()?;
+            p.lexer.next_token()?;
             name = p.parse_module_export_name_tolerant(is_import)?;
         }
         // The name an import declares is neither a reserved word nor a string.
@@ -618,6 +651,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         };
         p.lexer.next()?;
         Ok(name)
+    }
+
+    /// `parseNamespaceExport`: the name after `export * as`. Returns its text and its position.
+    pub(crate) fn parse_namespace_export(&mut self) -> Result<(&'a [u8], bun_ast::Loc), Error> {
+        let p = self;
+        let loc = p.lexer.loc();
+        // `parseModuleExportName`: a token that is no name is not consumed, and the name is missing.
+        let is_missing = p.is_tolerant() && !p.can_parse_module_export_name();
+        let name: &'a [u8] = if is_missing {
+            b""
+        } else if p.lexer.token == T::TPrivateIdentifier && p.is_tolerant() {
+            p.lexer.identifier
+        } else {
+            p.parse_clause_alias(b"export")?
+        };
+        p.note_namespace_export(Some(name));
+        if is_missing {
+            p.lexer.expect(T::TIdentifier)?;
+        } else {
+            p.lexer.next()?;
+        }
+        Ok((name, loc))
     }
 
     pub(crate) fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {

@@ -276,7 +276,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkTypeRelatedToEx`: at most one diagnostic, to `diagnostic_output` or else to the sink.
     /// A non-reporting run comes first, because most pairs are related. tsgo has no such run, so it
-    /// caches no failure. An undetermined result counts as related, and nothing is reported.
+    /// caches no failure. Without an `error_node` it is the only run, as in tsgo. An undetermined
+    /// result counts as related, and nothing is reported.
     pub(super) fn check_type_related_to_ex(
         &mut self,
         source: TypeId,
@@ -293,7 +294,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.reduced(source);
             self.reduced(target);
         }
-        let is_related = self.try_is_type_related_to(source, target, relation, true);
+        let is_trial = error_node.is_some();
+        let is_related = self.try_is_type_related_to(source, target, relation, is_trial);
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) | (_, None) => {
                 self.end_comparison(is_outermost);
@@ -374,6 +376,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
+        r.relation_count = self.initial_relation_count(relation);
         let is_outermost = self.begin_comparison(Some(error_node).filter(|at| at.2 != 0));
         // These two are never a `headMessage`: they are the defaults `reportRelationError` reports
         // without one.
@@ -396,6 +399,18 @@ impl<'p, 's> Checker<'p, 's> {
             overflow = self.record_overflow(&r, source, target);
             if overflow.is_none() {
                 self.report_error_results_alone(&mut r, source, target, head);
+            }
+        }
+        // "Likely an incorrect import."
+        if head.is_some()
+            && overflow.is_none()
+            && r.error_chain.is_some()
+            && !result.holds()
+            && let Some((module, import)) = self.originating_import(source)
+        {
+            let imported = self.type_of_symbol(module);
+            if self.check_type_related_to_ex(imported, target, relation, None, None, None) {
+                r.related_info.push(import);
             }
         }
         self.relation_too_complex = too_complex;
@@ -544,7 +559,7 @@ impl<'p, 's> Checker<'p, 's> {
             return element_flags.label();
         }
         match declaration {
-            Some((file, func)) if rest_parameter.has_declaration => {
+            Some((file, func)) if rest_parameter.declaration.is_some() => {
                 let hir = self.hir(file);
                 let node = &hir[hir[func].params.at(param_count)];
                 let has_dot_dot_dot = node.flags.contains(Flags::REST);
@@ -556,7 +571,7 @@ impl<'p, 's> Checker<'p, 's> {
                     element_flags,
                 )
             }
-            None if rest_parameter.has_declaration
+            None if rest_parameter.declaration.is_some()
                 && element_flags.intersects(ElemFlags::REST | ElemFlags::VARIADIC) =>
             {
                 name_of(param_count)
@@ -566,7 +581,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTupleElementLabelFromBindingElement`. `pat`: `node.Name()`.
-    fn tuple_element_label_from_binding_element(
+    pub(super) fn tuple_element_label_from_binding_element(
         &self,
         file: FileId,
         pat: PatId,
@@ -627,27 +642,24 @@ impl<'p, 's> Checker<'p, 's> {
         self.atoms().intern(&[name, b"_", digits].concat())
     }
 
-    /// `typePredicateToString`. `params`: the parameters of the signature it is the predicate of.
-    pub(super) fn type_predicate_text(
-        &mut self,
-        predicate: &super::decl::Predicate,
-        params: &[SigParam],
-    ) -> Vec<u8> {
-        use super::print::{IGNORE_ERRORS, USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE};
+    /// `typePredicateToString`
+    pub(super) fn type_predicate_text(&mut self, predicate: &super::decl::Predicate) -> Vec<u8> {
+        use super::print::{
+            IGNORE_ERRORS, USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE,
+            WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME,
+        };
         let mut text = Vec::new();
         if predicate.asserts {
             text.extend_from_slice(b"asserts ");
         }
         match predicate.param {
-            // `parameterName` is the name of the parameter it was found by.
-            Some(index) if index < params.len() => {
-                text.extend_from_slice(self.atoms().bytes(params[index].name));
-            }
-            Some(_) => {}
+            Some(_) => text.extend_from_slice(self.atoms().bytes(predicate.name)),
             None => text.extend_from_slice(b"this"),
         }
         if let Some(ty) = predicate.ty {
-            let flags = USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE | IGNORE_ERRORS;
+            let flags = USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE
+                | IGNORE_ERRORS
+                | WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME;
             text.extend_from_slice(b" is ");
             text.extend(self.type_to_type_node(ty, None, flags, None));
         }
@@ -750,7 +762,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (base, is_final) = if !has_heritage_clause
             || !extends_entity_name
             // `ObjectFlagsReference`
-            || !self.is_declared_as_reference(target, 0)
+            || !self.has_this_type(target)
         {
             (None, true)
         } else {
@@ -812,14 +824,14 @@ impl<'p, 's> Checker<'p, 's> {
         let is_jsx = matches!(self.data(source), TypeData::Synth(shape) if shape.literal == Literalness::JsxAttributes);
         if self.is_object_type(source) && self.has_primitive_flag(target) {
             self.try_elaborate_errors_for_primitives_and_objects(r, source, target);
-        } else if self.is_reference_to_global(source, known::Object) {
+        } else if self.is_reference_to_global(source, known::Object, 0) {
             self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
             if let TypeData::Intersection(parts) = self.data(target)
                 && let Some(file) = self.task.file
                 && let (Some(a), Some(b)) = (
-                    self.jsx_type(file, known::IntrinsicAttributes),
-                    self.jsx_type(file, known::IntrinsicClassAttributes),
+                    self.jsx_type(file, Node::FILE, known::IntrinsicAttributes),
+                    self.jsx_type(file, Node::FILE, known::IntrinsicClassAttributes),
                 )
                 && (parts.contains(&a) || parts.contains(&b))
             {
@@ -1077,7 +1089,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let is_readonly = match self.data(source) {
             TypeData::Tuple { readonly, .. } => *readonly,
-            _ => self.is_reference_to_global(source, known::ReadonlyArray),
+            _ => self.is_reference_to_global(source, known::ReadonlyArray, 1),
         };
         if is_readonly && self.is_mutable_array_or_tuple(target) {
             if report {
@@ -1108,7 +1120,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeId::SYMBOL => known::Symbol,
             _ => return,
         };
-        if self.is_reference_to_global(source, wrapper) {
+        if self.is_reference_to_global(source, wrapper, 0) {
             self.report_error(r, 2692, &[Arg::Type(target), Arg::Type(source)]);
         }
     }

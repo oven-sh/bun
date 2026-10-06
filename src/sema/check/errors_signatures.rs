@@ -6,14 +6,14 @@
 //!   2681 2784.
 //! * Accessors, methods, constructors, properties: 1005 1318, 1221 1222, 1092 1093, 1245 1267, 2676
 //!   2808.
-//! * Return types: 2505 1064 1058 1062, 2705 2712, 1228 1229 2677 1230 1225.
+//! * Return types: 2505 1064 1058 1062, 1228 1229 2677 1230 1225.
 //! * `erasableSyntaxOnly`: 1294.
 //!
 //! Follows `checkTypeParameter`, `checkTypeParameterDeferred`, `checkTypeParameters`,
 //! `checkTypeParametersNotReferenced`, `checkParameter`, `checkPropertyDeclaration`,
 //! `checkSignatureDeclaration`, `checkAsyncFunctionReturnType`, `checkMethodDeclaration`,
-//! `checkAccessorDeclaration`, `checkTypePredicate`, `createPromiseReturnType`,
-//! `getAwaitedTypeNoAliasEx` and `checkAssertion` of TypeScript 7.0.2's checker.go,
+//! `checkAccessorDeclaration`, `checkTypePredicate`, `getAwaitedTypeNoAliasEx` and
+//! `checkAssertion` of TypeScript 7.0.2's checker.go,
 //! `checkGrammarTypeParameterList`, `checkGrammarParameterList`,
 //! `checkGrammarForUseStrictSimpleParameterList`, `checkGrammarArrowFunction`,
 //! `checkGrammarForGenerator`, `checkGrammarAccessor`, `checkGrammarMethod` and
@@ -25,155 +25,49 @@
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
-use crate::util::FxHashSet;
 
 // ───────────────────────────── the grammar of signatures ─────────────────────────────
 
 impl Checker<'_, '_> {
-    pub(super) fn check_x_signatures(&mut self, file: FileId) {
-        self.check_type_parameter_declarations(file);
-        self.check_promise_constructor_exists(file);
-    }
-
     // ───────────────────────────── type parameters ─────────────────────────────
 
-    /// `checkTypeParameter`: 2716, 2344.
-    fn check_type_parameter_declarations(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if !hir.type_params.iter().any(|p| p.default.is_some()) {
-            return;
-        }
-        // In source order: which parameter of a cycle gets the error depends on where the cycle is
-        // entered.
-        let mut order: Vec<usize> = (0..hir.type_params.len())
-            .filter(|&i| bound.type_param_symbol[i].is_some())
-            .collect();
-        order.sort_by_key(|&i| hir.type_params[i].pos);
-        let mut resolution = DefaultResolution::default();
-        for i in order {
-            let (tp, decl) = (TypeParamId(i as u32), &hir.type_params[i]);
-            self.resolve_type_node_eagerly(file, decl.constraint, &mut resolution, 0);
-            self.resolve_type_node_eagerly(file, decl.default, &mut resolution, 0);
-            if decl.default.is_some() {
-                self.resolve_type_parameter_default((file, tp), &mut resolution, 0);
-                let start = start_of_type(hir, decl.default);
-                if resolution.states.get(&(file, tp)) == Some(&DefaultState::Circular) {
-                    let end = self.end_of_type_node_from(file, decl.default, start);
-                    {
-                        let param = self.type_param(file, tp);
-                        self.error_at((file, start, end), 2716, &[Arg::Type(param)]);
-                    }
-                } else {
-                    // `getConstraintOfTypeParameter`: another declaration of a merged class or
-                    // interface may declare the constraint.
-                    let param = self.type_param(file, tp);
-                    if let (Some(constraint), Some(default)) = (
-                        self.constraint_of_type_param(param),
-                        self.default_of_type_param(param),
-                    ) {
-                        let mapper = self.mapper_from(&[param], &[default]);
-                        let constraint = self.instantiate(constraint, mapper);
-                        let constraint = self.type_with_this_argument(constraint, default);
-                        let at = (
-                            file,
-                            start,
-                            self.end_of_type_node_from(file, decl.default, start),
-                        );
-                        // `checkTypeParameters` does not go through `checkSourceElement`.
-                        let declaration = CurrentNode::Node(file, hir.parent(hir.node(tp)));
-                        let saved = self.current_source_element.replace(declaration);
-                        self.check_type_assignable_to(default, constraint, Some(at), Some(2344));
-                        self.current_source_element = saved;
-                    }
-                }
-            }
-        }
-    }
-
-    /// `getResolvedTypeParameterDefault`: a default requested while its resolution is in progress
-    /// is circular.
-    fn resolve_type_parameter_default(
-        &mut self,
-        param: (FileId, TypeParamId),
-        resolution: &mut DefaultResolution,
-        depth: u32,
-    ) {
-        if let Some(state) = resolution.states.get_mut(&param) {
-            if *state == DefaultState::Resolving {
-                *state = DefaultState::Circular;
-            }
-            return;
-        }
-        resolution.states.insert(param, DefaultState::Resolving);
-        let default = self.hir(param.0)[param.1].default;
-        self.resolve_type_node_eagerly(param.0, default, resolution, depth + 1);
-        if let Some(state) = resolution.states.get_mut(&param)
-            && *state == DefaultState::Resolving
-        {
-            *state = DefaultState::Resolved;
-        }
-    }
-
-    /// `getTypeFromTypeNode`, restricted to the type parameter defaults it requests: those of a
-    /// generic type referenced without type arguments (`fillMissingTypeArguments`). Only eagerly
-    /// resolved nodes count: not the contents of an object type or a function type, nor the target
-    /// of a type alias, where such a reference is deferred until it is needed.
-    fn resolve_type_node_eagerly(
+    /// `checkTypeParameter`, from `getResolvedTypeParameterDefault` to the comparison of the
+    /// default with the constraint: 2716, 2344. `param`: the type parameter that `tp` declares.
+    pub(super) fn check_type_parameter_default(
         &mut self,
         file: FileId,
-        node: TypeNodeId,
-        resolution: &mut DefaultResolution,
-        depth: u32,
+        tp: TypeParamId,
+        param: TypeId,
     ) {
-        if node.is_none() || depth > 64 || resolution.done.contains(&(file, node)) {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        match hir[node].kind {
-            TypeNodeKind::Union(list) | TypeNodeKind::Intersection(list) => {
-                for t in hir.ids(list) {
-                    self.resolve_type_node_eagerly(file, t, resolution, depth + 1);
-                }
-            }
-            TypeNodeKind::Array(t)
-            | TypeNodeKind::Keyof(t)
-            | TypeNodeKind::Readonly(t)
-            | TypeNodeKind::JSDoc { ty: t, .. } => {
-                self.resolve_type_node_eagerly(file, t, resolution, depth + 1)
-            }
-            TypeNodeKind::Tuple(elems) => {
-                for e in elems.iter() {
-                    self.resolve_type_node_eagerly(file, hir[e].ty, resolution, depth + 1);
-                }
-            }
-            TypeNodeKind::IndexedAccess { obj, index } => {
-                self.resolve_type_node_eagerly(file, obj, resolution, depth + 1);
-                self.resolve_type_node_eagerly(file, index, resolution, depth + 1);
-            }
-            TypeNodeKind::Ref { name, args } => {
-                for t in hir.ids(args) {
-                    self.resolve_type_node_eagerly(file, t, resolution, depth + 1);
-                }
-                let scope = bound.type_scope[node.idx()];
-                if let Some(sym) = self.resolve_type_reference_name(file, scope, name, true) {
-                    let (least, most) = self.type_argument_arity(sym);
-                    if (least..=most).contains(&args.len()) {
-                        let params = self.type_params_of_symbol(sym);
-                        for &param in params.iter().skip(args.len()) {
-                            if let TypeData::TypeParam(of, tp, _) = *self.data(param) {
-                                self.resolve_type_parameter_default(
-                                    (of, tp),
-                                    resolution,
-                                    depth + 1,
-                                );
-                            }
-                        }
+        let hir = self.hir(file);
+        // `tpNode.DefaultType`. `None`: only another declaration of the class or interface has it.
+        let error_node = hir[tp].default.some().map(|default_type| {
+            let start = start_of_type(hir, default_type);
+            let end = self.end_of_type_node_from(file, default_type, start);
+            (file, start, end)
+        });
+        let Some(default) = self.default_of_type_param(param) else {
+            if self.has_circular_default(param) {
+                match error_node {
+                    Some(at) => {
+                        self.error_at(at, 2716, &[Arg::Type(param)]);
+                    }
+                    // An error at no node is in no file.
+                    None => {
+                        let name = self.type_to_string(param);
+                        self.report_global_error(2716, vec![name]);
                     }
                 }
             }
-            _ => {}
-        }
-        resolution.done.insert((file, node));
+            return;
+        };
+        let Some(constraint) = self.constraint_of_type_param(param) else {
+            return;
+        };
+        let mapper = self.mapper_from(&[param], &[default]);
+        let constraint = self.instantiate(constraint, mapper);
+        let constraint = self.type_with_this_argument(constraint, default);
+        self.check_type_assignable_to(default, constraint, error_node, Some(2344));
     }
 
     /// `checkTypeParameterDeferred` for the type parameters `params` of a declaration of the class,
@@ -288,12 +182,15 @@ impl Checker<'_, '_> {
             return;
         };
         let text = &hir.text[..];
-        // `getTypePredicateParent`
+        // `getTypePredicateParent`. A `ParenthesizedType`, which has no node, is no such parent.
         let parent = hir
             .function_of(hir.parent(hir.node(node)))
             .some()
             .filter(|&f| {
                 hir[f].ret == node
+                    && (self.parenthesized_types_around(file, node, hir[f].start))
+                        .next()
+                        .is_none()
                     && matches!(
                         hir[f].kind,
                         FnKind::Arrow
@@ -394,8 +291,9 @@ impl Checker<'_, '_> {
         if self.is_error_type(ret) {
             return;
         }
-        if self.global_type_symbol(known::Promise).is_some()
-            && self.is_global_ref(ret, known::Promise).is_none()
+        // `getGlobalPromiseTypeChecked`
+        if self.get_global_type(known::Promise, 1, true).is_some()
+            && self.is_global_ref(ret, known::Promise, 1).is_none()
         {
             let start = start_of_type(hir, func.ret);
             let end = self.end_of_type_node_from(file, func.ret, start);
@@ -410,95 +308,4 @@ impl Checker<'_, '_> {
             1058,
         );
     }
-
-    /// `createPromiseReturnType`, where `Promise` exists as a type but not as a constructor value:
-    /// 2712, 2705.
-    fn check_promise_constructor_exists(&mut self, file: FileId) {
-        if self.global_type_symbol(known::Promise).is_none()
-            || self
-                .files()
-                .global(known::Promise, SymFlags::VALUE)
-                .is_some()
-        {
-            return;
-        }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let by_kind = self.exprs_by_kind(file);
-        for &id in by_kind.of(ExprTag::ImportCall) {
-            let e = &hir[id];
-            if !bound.is_unchecked(id.idx()) && word_at(&hir.text, e.pos as usize) == b"import" {
-                let end = self.end_inside_parentheses(file, id);
-                self.error_at((file, e.pos, end), 2712, &[]);
-                // `getGlobalPromiseConstructorSymbol`
-                self.report_global_error(2468, vec![b"Promise".to_vec()]);
-            }
-        }
-        // `getReturnTypeFromBody` only reaches that point for a function that returns nothing,
-        // apart from recursive calls.
-        for i in 0..hir.fns.len() {
-            let (f, func) = (FnId(i as u32), &hir.fns[i]);
-            let info = &bound.fns[i];
-            if !func.flags.contains(Flags::ASYNC)
-                || func.flags.contains(Flags::GENERATOR)
-                || func.ret.is_some()
-                || !matches!(func.body, FnBody::Block(_))
-                || bound.ids(info.returns).any(|s| match hir[s].kind {
-                    StmtKind::Return(e) if e.is_some() => match hir[e].kind {
-                        ExprKind::Await(operand) => !is_call_of_itself(hir, bound, f, operand),
-                        _ => !is_call_of_itself(hir, bound, f, e),
-                    },
-                    _ => false,
-                })
-            {
-                continue;
-            }
-            // Its return type must be requested: that always happens for a function expression,
-            // through a `return`, and through a call.
-            let is_requested = match (func.kind, info.owner) {
-                (FnKind::Expr | FnKind::Arrow | FnKind::Method, FnOwner::Expr(_)) => true,
-                (FnKind::Decl | FnKind::Method, FnOwner::Stmt(_) | FnOwner::Member(_))
-                    if !info.returns.is_empty() =>
-                {
-                    true
-                }
-                (FnKind::Decl, FnOwner::Stmt(_)) => {
-                    let symbol = bound.fn_symbol[i];
-                    symbol.is_some()
-                        && bound.symbols[symbol.idx()].decls.len() == 1
-                        && hir.exprs.iter().any(|e| {
-                            matches!(e.kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(_)) && bound.expr_symbol[hir[call].callee.idx()] == symbol)
-                        })
-                }
-                _ => false,
-            };
-            if is_requested {
-                let (start, end) = self.error_range_of_fn(file, f);
-                self.error_at((file, start, end), 2705, &[]);
-                self.report_global_error(2468, vec![b"Promise".to_vec()]);
-            }
-        }
-    }
-}
-
-/// Whether `e` calls the function `f` by its own name, which contributes nothing to the return type
-/// of `f`.
-fn is_call_of_itself(hir: &hir::File, bound: &Bound, f: FnId, e: ExprId) -> bool {
-    let symbol = bound.fn_symbol[f.idx()];
-    symbol.is_some()
-        && matches!(hir[e].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(_)) && bound.expr_symbol[hir[call].callee.idx()] == symbol)
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum DefaultState {
-    Resolving,
-    Resolved,
-    Circular,
-}
-
-/// The resolution state of `getResolvedTypeParameterDefault` for each type parameter requested, and
-/// the type nodes whose resolution has completed.
-#[derive(Default)]
-struct DefaultResolution {
-    states: FxHashMap<(FileId, TypeParamId), DefaultState>,
-    done: FxHashSet<(FileId, TypeNodeId)>,
 }

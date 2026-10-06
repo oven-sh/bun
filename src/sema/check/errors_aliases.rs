@@ -17,17 +17,18 @@
 use super::explain::NOWHERE;
 use super::sink::{NO_DIRECTIVE, held};
 use super::*;
-use crate::bind::{ClassOwner, Decl, MemberOwner, Parent, PatParent, SymbolId};
+use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
 use crate::program::{TypeOnlyDeclaration, source_file_may_be_emitted};
 use crate::resolve::{
-    ModuleKind, Options, has_ts_implementation_extension, is_declaration_file_name, join,
-    path_is_relative, try_extract_ts_extension,
+    ModuleKind, Options, file_extension_is, get_relative_path_from_directory,
+    has_ts_implementation_extension, is_declaration_file_name, join, path_is_relative,
+    try_extract_ts_extension,
 };
 use crate::verify::relative_from_file;
 use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, relative_normalized};
+use bun_paths::resolve_path::dirname;
 
 const ALL_MEANINGS: SymFlags = SymFlags::VALUE
     .union(SymFlags::TYPE)
@@ -288,6 +289,7 @@ impl Checker<'_, '_> {
             // reports a parameter that gets no type from there, and the result is not stored.
             if let Some((func, pat)) = parameter
                 && self.contextual_signature(file, func).is_none()
+                && !self.is_private_within_ambient(file, func)
             {
                 self.report_implicit_any_of_name(file, pat, TypeId::ANY);
             }
@@ -381,10 +383,17 @@ impl Checker<'_, '_> {
         if self.bound(file).export_stars.len() < 2 || !files.module(file).is_module() {
             return;
         }
+        // `visit` reports here too when it comes from another module.
+        let own = files.file_symbol(file);
+        let others = files.modules_with_nested_export_collisions.iter();
+        let others = others.copied().filter(|&module| {
+            module != own && self.are_exports_of_module_resolved_no_later_than(module, file)
+        });
+        let modules: Vec<Sym> = std::iter::once(own).chain(others).collect();
         // Diagnostics at the same position are ordered by message.
         let mut reported: Vec<(StmtId, Vec<Vec<u8>>)> = Vec::new();
-        let links = files.module_links(files.file_symbol(file));
-        for collision in links.export_collisions.iter() {
+        let links = modules.iter().map(|&module| files.module_links(module));
+        for collision in links.flat_map(|links| links.export_collisions.iter()) {
             let (of, first) = collision.first;
             if collision.duplicate.0 == file
                 && let StmtKind::ExportStar { spec, .. } = self.hir(of)[first].kind
@@ -395,11 +404,53 @@ impl Checker<'_, '_> {
             }
         }
         reported.sort();
+        reported.dedup();
         for (star, arguments) in reported {
             let start = hir[star].start;
             let end = self.end_of_stmt(file, star);
             self.add_diagnostic(Reported::new((file, start, end), 2308, held(arguments)));
         }
+    }
+
+    /// Whether `getExportsOfModule(module)` has been called when the diagnostics of `file` are
+    /// collected: by `checkExternalModuleExports`, or for an alias of a file that has been checked.
+    fn are_exports_of_module_resolved_no_later_than(&self, module: Sym, file: FileId) -> bool {
+        let files = self.files();
+        let checked = files
+            .order
+            .iter()
+            .take(files.rank_of_file(file) as usize + 1);
+        self.are_module_exports_checked(module, file)
+            || checked.copied().any(|other| {
+                // What a leaf has is freed after its task.
+                (other == file || !files.module(other).is_leaf)
+                    && self.is_checked_no_later_than(other, file)
+                    && self.has_alias_from_exports_of_module(other, module)
+            })
+    }
+
+    /// Whether the target of an alias of `file` is looked up in `getExportsOfModule(module)`: by
+    /// `getExternalModuleMember`, or by `resolveESModuleSymbol` for `import * as ns`.
+    fn has_alias_from_exports_of_module(&self, file: FileId, module: Sym) -> bool {
+        let (files, hir) = (self.files(), self.hir(file));
+        let aliases = self.bound(file).symbols.iter();
+        let aliases = aliases.filter(|symbol| symbol.flags.contains(SymFlags::ALIAS));
+        aliases.flat_map(|symbol| symbol.decls.iter()).any(|&decl| {
+            let specifier = match decl {
+                Decl::ImportNamespace(import) => {
+                    let import = &hir[import];
+                    Some((import.spec, files.mode_of_import(file, import.mode)))
+                }
+                // `{ default as d }` is another syntax for the default import, but not in a binding
+                // pattern.
+                _ => (files.external_module_member_of(file, decl))
+                    .filter(|it| it.2 != known::default || matches!(decl, Decl::Require(_)))
+                    .map(|it| (it.0, it.1)),
+            };
+            specifier.is_some_and(|(spec, mode)| {
+                files.module_of_specifier_as(file, spec, mode) == Some(module)
+            })
+        })
     }
 
     // ───────────────────────────── alias declarations ─────────────────────────────
@@ -545,10 +596,7 @@ impl Checker<'_, '_> {
             let specifier = match decl {
                 Decl::ImportDefault(x) | Decl::ImportNamespace(x) => hir[x].spec,
                 Decl::ImportSpec(s) => hir[hir[s].import].spec,
-                Decl::ImportEquals(x) => match hir[x].target {
-                    ImportEqualsTarget::Require(spec) => spec,
-                    ImportEqualsTarget::Entity(_) => Atom::NONE,
-                },
+                Decl::ImportEquals(x) => hir[x].target.spec(),
                 Decl::Require(pat) => bound.required_by(hir, pat).map_or(Atom::NONE, |it| it.0),
                 _ => Atom::NONE,
             };
@@ -598,7 +646,10 @@ impl Checker<'_, '_> {
             return;
         }
         let is_verbatim = options.verbatim_module_syntax;
-        let type_only_alias = files.alias_links(sym).type_only_declaration;
+        // `getTypeOnlyAliasDeclaration(symbol)`: the export symbol of a local name is no alias.
+        let type_only_alias = (files.flags(symbol).contains(SymFlags::ALIAS))
+            .then(|| files.alias_links(symbol).type_only_declaration)
+            .flatten();
         let related = type_only_alias
             .filter(|_| !is_type)
             .map(|type_only| (type_only, type_only.is_export()));
@@ -729,17 +780,16 @@ impl Checker<'_, '_> {
             return false;
         }
         // `ShouldPreserveConstEnums`
-        project_reference_from_output_dts(files.options, files.module(file).file_name())
+        (files.options)
+            .project_reference_from_output_dts(files.module(file).file_name())
             .is_none_or(|redirect| !redirect.preserve_const_enums && !redirect.isolated_modules)
     }
 
-    /// The end of `onSuccessfullyResolvedSymbol`: 2866 at an import that does not resolve to a
-    /// value, where its name is used for a global value.
+    /// `aliases_import_hiding_global_value` for the identifiers of `file` that are expressions.
     fn aliases_imports_hiding_global_values(&mut self, file: FileId) {
         let files = self.files();
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `IsExternalOrCommonJSModule`
-        if !files.options.isolated_modules_reported || !files.module(file).is_module() {
+        if !files.options.isolated_modules_reported {
             return;
         }
         for &(e, scope) in &bound.alias_idents {
@@ -749,39 +799,63 @@ impl Checker<'_, '_> {
             // `checkExportAssignment`: a name that is not a value is not checked as an expression.
             let is_checked = match bound.expr_parent[e.idx()] {
                 Parent::None => false,
-                Parent::Stmt(s) if s.is_some() => !matches!(
-                    hir[s].kind,
-                    StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
-                ),
+                Parent::Stmt(s) if s.is_some() => {
+                    is_parenthesized(hir, e)
+                        || !matches!(
+                            hir[s].kind,
+                            StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)
+                        )
+                }
                 _ => true,
             };
             if !is_checked || hir.is_in_with(hir[e].pos) {
                 continue;
             }
-            // `getSymbol(lastLocation.Locals(), name, ^SymbolFlagsValue)`
-            let Some(id) = bound.lookup(bound.scopes[0].locals, name) else {
-                continue;
-            };
-            let found = files.resolve_name(file, scope, name, SymFlags::VALUE);
-            if found.is_none() || found != files.global(name, SymFlags::VALUE) {
-                continue;
+            if let Some(result) = files.resolve_name(file, scope, name, SymFlags::VALUE) {
+                self.aliases_import_hiding_global_value(file, result, SymFlags::VALUE);
             }
-            let import = bound.symbols[id.idx()].decls.iter().copied().find(|d| {
-                matches!(
-                    d,
-                    Decl::ImportDefault(_)
-                        | Decl::ImportNamespace(_)
-                        | Decl::ImportSpec(_)
-                        | Decl::ImportEquals(_)
-                )
-            });
-            // `IsTypeOnlyImportDeclaration`
-            if let Some(import) = import
-                && !files.is_type_only_import_or_export_declaration(file, import)
-                && let Some(at) = self.place_of_alias_declaration(Sym { file, id }, import)
-            {
-                self.error_at(at, 2866, &[Arg::Atom(name)]);
-            }
+        }
+    }
+
+    /// The end of `onSuccessfullyResolvedSymbol` for `result`, which a name in `file` resolved to
+    /// with `meaning`: 2866 at the import of that name, which does not resolve to a value, if
+    /// `result` is the global value.
+    pub(super) fn aliases_import_hiding_global_value(
+        &mut self,
+        file: FileId,
+        result: Sym,
+        meaning: SymFlags,
+    ) {
+        let (files, bound) = (self.files(), self.bound(file));
+        let name = files.symbol(result).name;
+        // `compilerOptions.isolatedModules` itself, not `GetIsolatedModules`. `isInExternalModule`,
+        // `isGlobal`
+        if !files.options.isolated_modules_reported
+            || !files.module(file).is_module()
+            || !meaning.contains(SymFlags::VALUE)
+            || files.global(name, meaning) != Some(result)
+        {
+            return;
+        }
+        // `getSymbol(lastLocation.Locals(), name, ^SymbolFlagsValue)`
+        let Some(id) = bound.lookup(bound.scopes[0].locals, name) else {
+            return;
+        };
+        let import = bound.symbols[id.idx()].decls.iter().copied().find(|d| {
+            matches!(
+                d,
+                Decl::ImportDefault(_)
+                    | Decl::ImportNamespace(_)
+                    | Decl::ImportSpec(_)
+                    | Decl::ImportEquals(_)
+            )
+        });
+        // `IsTypeOnlyImportDeclaration`
+        if let Some(import) = import
+            && !files.is_type_only_import_or_export_declaration(file, import)
+            && let Some(at) = self.place_of_alias_declaration(Sym { file, id }, import)
+        {
+            self.error_at(at, 2866, &[Arg::Atom(name)]);
         }
     }
 
@@ -801,39 +875,20 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        // `getParameterTypeNodeForDecoratorCheck`, `GetRestParameterElementType`
-        let type_of_parameter = |p: ParamId| {
-            let ty = hir[p].ty;
-            if ty.is_none() || !hir[p].flags.contains(Flags::REST) {
-                return ty;
-            }
-            match hir[ty].kind {
-                TypeNodeKind::Array(element) => element,
-                TypeNodeKind::Ref { args, .. } if !args.is_empty() => hir.id_at(args, 0),
-                _ => TypeNodeId::NONE,
-            }
-        };
-        let signature = |f: FnId, types: &mut Vec<TypeNodeId>| {
-            types.push(hir[f].this_ty(hir));
-            types.extend(hir[f].params.iter().map(&type_of_parameter));
-            types.push(hir[f].ret);
-        };
         // `getAnnotatedAccessorTypeNode`
-        let type_of_accessor = |m: MemberId| {
+        let annotated_accessor_type_node = |(of, m): (FileId, MemberId)| {
+            let hir = files.hir(of);
             let f = hir[m].func;
-            if f.is_none() {
+            let annotation = if f.is_none() {
                 TypeNodeId::NONE
             } else if hir[m].kind == MemberKind::Getter {
                 hir[f].ret
             } else {
-                hir[f]
-                    .params
-                    .iter()
-                    .next()
-                    .map_or(TypeNodeId::NONE, |p| hir[p].ty)
-            }
+                hir[f].effective_set_accessor_type_annotation_node(hir)
+            };
+            (of, annotation)
         };
-        let mut types: Vec<TypeNodeId> = Vec::new();
+        let mut types: Vec<(FileId, TypeNodeId)> = Vec::new();
         let mut last = None;
         for &(owner, e) in &hir.decorators {
             // The decorators of one node are consecutive.
@@ -845,11 +900,19 @@ impl Checker<'_, '_> {
             if bound.is_unchecked(e.idx()) || bound.refused_decorators.contains(&e) {
                 continue;
             }
-            match owner {
+            // `markLinkedReferences`: of what is ambient, only a property contributes.
+            let (location, is_property) = match owner {
+                DecoratorOwner::Class(c) => (hir.node(c), false),
+                DecoratorOwner::Member(m) => (hir.node(m), hir[m].kind == MemberKind::Property),
+                DecoratorOwner::Param(p) => (hir.node(p), false),
+            };
+            if !is_property && hir.is_ambient(location) {
+                continue;
+            }
+            // The function whose parameters are serialized, and the type that is.
+            let (function, ty) = match owner {
                 DecoratorOwner::Class(c) => {
-                    if !matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_))
-                        || hir[c].flags.contains(Flags::AMBIENT)
-                    {
+                    if !matches!(bound.class_owner[c.idx()], ClassOwner::Stmt(_)) {
                         continue;
                     }
                     // `GetFirstConstructorWithBody`
@@ -858,40 +921,53 @@ impl Checker<'_, '_> {
                             && hir[m].func.is_some()
                             && !matches!(hir[hir[m].func].body, FnBody::None)
                     });
-                    if let Some(constructor) = constructor {
-                        signature(hir[constructor].func, &mut types);
-                    }
+                    let constructor = constructor.map_or(FnId::NONE, |m| hir[m].func);
+                    (constructor, (file, TypeNodeId::NONE))
                 }
                 DecoratorOwner::Member(m) => match hir[m].kind {
-                    MemberKind::Property => types.push(hir[m].ty),
-                    MemberKind::Method => signature(hir[m].func, &mut types),
-                    MemberKind::Getter | MemberKind::Setter => {
-                        let mut ty = type_of_accessor(m);
-                        if ty.is_none()
-                            && let MemberOwner::Class(c) = bound.member_owner[m.idx()]
-                        {
-                            let other = hir[c].members.iter().find(|&o| {
-                                matches!(hir[o].kind, MemberKind::Getter | MemberKind::Setter)
-                                    && hir[o].kind != hir[m].kind
-                                    && hir[o].key == hir[m].key
-                                    && hir[o].flags.contains(Flags::STATIC)
-                                        == hir[m].flags.contains(Flags::STATIC)
-                            });
-                            ty = other.map_or(TypeNodeId::NONE, &type_of_accessor);
-                        }
-                        types.push(ty);
+                    MemberKind::Property => (FnId::NONE, (file, hir[m].ty)),
+                    MemberKind::Method => (hir[m].func, (file, hir[hir[m].func].ret)),
+                    kind @ (MemberKind::Getter | MemberKind::Setter) => {
+                        let other_kind = match kind {
+                            MemberKind::Setter => MemberKind::Getter,
+                            _ => MemberKind::Setter,
+                        };
+                        // `GetDeclarationOfKind(getSymbolOfDeclaration(node), otherKind)`
+                        let declarations = self.declarations_of_member(file, Decl::Member(m));
+                        let other_accessor = declarations.iter().find_map(|&(of, d)| match d {
+                            Decl::Member(o) if files.hir(of)[o].kind == other_kind => Some((of, o)),
+                            _ => None,
+                        });
+                        let annotation = annotated_accessor_type_node((file, m));
+                        let annotation = match other_accessor {
+                            Some(other) if annotation.1.is_none() => {
+                                annotated_accessor_type_node(other)
+                            }
+                            _ => annotation,
+                        };
+                        (FnId::NONE, annotation)
                     }
-                    _ => {}
+                    _ => continue,
                 },
                 DecoratorOwner::Param(p) => {
                     let f = bound.param_fn[p.idx()];
-                    if f.is_some() {
-                        signature(f, &mut types);
-                    }
+                    let ret = hir.fns.get(f.idx()).map_or(TypeNodeId::NONE, |f| f.ret);
+                    (f, (file, ret))
+                }
+            };
+            if function.is_some() {
+                let this = hir[function].this_param.some();
+                for p in this.into_iter().chain(hir[function].params.iter()) {
+                    types.push((
+                        file,
+                        self.get_parameter_type_node_for_decorator_check(file, p),
+                    ));
                 }
             }
+            types.push(ty);
         }
-        for ty in types {
+        for (file, ty) in types {
+            let (hir, bound) = (self.hir(file), self.bound(file));
             let Some(reference) = self.aliases_entity_name_for_decorator_metadata(file, ty) else {
                 continue;
             };
@@ -934,6 +1010,23 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `getParameterTypeNodeForDecoratorCheck`
+    fn get_parameter_type_node_for_decorator_check(&self, file: FileId, p: ParamId) -> TypeNodeId {
+        let hir = self.hir(file);
+        let ty = hir[p].ty;
+        if ty.is_none() || !hir[p].flags.contains(Flags::REST) {
+            return ty;
+        }
+        // `GetRestParameterElementType`: a `ParenthesizedType` has no element type.
+        let mut parentheses = self.parenthesized_types_around(file, ty, hir[p].pos);
+        match hir[ty].kind {
+            _ if parentheses.next().is_some() => TypeNodeId::NONE,
+            TypeNodeKind::Array(element) => element,
+            TypeNodeKind::Ref { args, .. } if !args.is_empty() => hir.id_at(args, 0),
+            _ => TypeNodeId::NONE,
+        }
+    }
+
     /// `getEntityNameForDecoratorMetadata`: the type reference whose name represents `ty` in the
     /// metadata.
     fn aliases_entity_name_for_decorator_metadata(
@@ -956,7 +1049,10 @@ impl Checker<'_, '_> {
         // `getEntityNameForDecoratorMetadataFromTypeList`
         let mut common: Option<TypeNodeId> = None;
         for part in parts {
+            let mut parentheses = self.parenthesized_types_around(file, part, hir[ty].pos);
             match hir[part].kind {
+                // A `ParenthesizedType` is no keyword.
+                _ if parentheses.next().is_some() => {}
                 TypeNodeKind::Keyword(Keyword::Never) => continue,
                 TypeNodeKind::Keyword(Keyword::Null | Keyword::Undefined)
                     if !self.files().options.strict_null_checks =>
@@ -993,6 +1089,20 @@ impl Checker<'_, '_> {
         written: SpecifierUse,
         site: SpecifierSite,
     ) -> bool {
+        let at = self.place_of_token(file, written.pos);
+        self.resolve_external_module_at(file, written, site, at, None)
+    }
+
+    /// `resolveExternalModule` with the `errorNode` at `at`. `module_not_found_error`:
+    /// `moduleNotFoundError`. `None`: what the callers pass for a specifier such as `written`.
+    pub(super) fn resolve_external_module_at(
+        &mut self,
+        file: FileId,
+        written: SpecifierUse,
+        site: SpecifierSite,
+        at: (FileId, u32, u32),
+        module_not_found_error: Option<u32>,
+    ) -> bool {
         let files = self.files();
         let (options, importing) = (&files.options, files.module(file));
         let SpecifierUse {
@@ -1006,9 +1116,12 @@ impl Checker<'_, '_> {
         if is_side_effect && !options.no_unchecked_side_effect_imports {
             return true;
         }
-        let mode =
-            crate::program::mode_for_usage_location(options, importing.default_mode, &written);
-        let (key, at) = ((spec, mode), self.place_of_token(file, start));
+        let mode = crate::program::mode_for_usage_location(
+            files.compiler_options_for_file(file),
+            importing.default_mode,
+            &written,
+        );
+        let key = (spec, mode);
         let text = self.atoms().bytes(spec);
         if let Some(without_prefix) = text.strip_prefix(b"@types/") {
             self.error_at(at, 6137, &[Arg::Bytes(without_prefix), Arg::Atom(spec)]);
@@ -1030,8 +1143,8 @@ impl Checker<'_, '_> {
         };
         // `GetResolutionDiagnostic`, `needJsx`
         let needs_jsx = resolved_file_name_in(&importing.jsx_imports);
-        if let Some(&target) = target {
-            let target = files.module(target);
+        if let Some(&source_file) = target {
+            let target = files.module(source_file);
             // "we need to report it even if a sourceFile is found"
             if let Some(path) = needs_jsx {
                 self.error_at(at, 6142, &[Arg::Atom(spec), Arg::Atom(path)]);
@@ -1086,7 +1199,11 @@ impl Checker<'_, '_> {
                 let should_rewrite =
                     path_is_relative(text) && has_ts_implementation_extension(text);
                 if !using_ts_extension && should_rewrite {
-                    let path = relative_from_file(importing.file_name(), resolved_file_name);
+                    let path = relative_from_file(
+                        importing.file_name(),
+                        resolved_file_name,
+                        files.is_case_sensitive,
+                    );
                     self.error_at(at, 2876, &[Arg::Bytes(&path)]);
                 } else if using_ts_extension
                     && !should_rewrite
@@ -1112,11 +1229,11 @@ impl Checker<'_, '_> {
                         b"" => other_root_dir,
                         out_dir => out_dir,
                     };
-                    // A copy: `relative_normalized` returns a slice of a per-thread buffer.
-                    let root_dir_path =
-                        relative_normalized::<Posix, true>(own_root_dir, other_root_dir).to_vec();
-                    let out_dir_path =
-                        relative_normalized::<Posix, true>(own_out_dir, other_out_dir);
+                    let relative = |from: &[u8], to: &[u8]| {
+                        get_relative_path_from_directory(from, to, files.is_case_sensitive)
+                    };
+                    let root_dir_path = relative(own_root_dir, other_root_dir);
+                    let out_dir_path = relative(own_out_dir, other_out_dir);
                     if root_dir_path != out_dir_path {
                         self.error_at(at, 2878, &[]);
                     }
@@ -1128,13 +1245,14 @@ impl Checker<'_, '_> {
                 }
                 return false;
             }
-            // `require` cannot load an ECMAScript module. Only what has code in it is of either kind.
-            let is_sync_import = !importing.is_esm && kind != SpecifierKind::ImportCall
+            // `require` cannot load an ECMAScript module.
+            let importing_mode = files.default_resolution_mode_for_file(file);
+            let is_sync_import = importing_mode == ResolutionMode::Require
+                && kind != SpecifierKind::ImportCall
                 || kind == SpecifierKind::Require;
             if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18)
                 && is_sync_import
-                && target.is_esm
-                && !target.file_name().ends_with(b".json")
+                && files.default_resolution_mode_for_file(source_file) == ResolutionMode::Import
                 // `HasResolutionModeOverride`
                 && !(matches!(
                     kind,
@@ -1193,7 +1311,7 @@ impl Checker<'_, '_> {
             return false;
         }
         let mut extensionless = importing.extensionless_imports.iter();
-        if !options.resolve_json_module && text.ends_with(b".json") {
+        if !options.resolve_json_module && file_extension_is(text, b".json") {
             self.error_at(at, 2732, &[Arg::Atom(spec)]);
         } else if options.resolves_like_node
             && mode == ResolutionMode::Import
@@ -1208,6 +1326,8 @@ impl Checker<'_, '_> {
                 }
                 None => self.error_at(at, 2834, &[]),
             };
+        } else if let Some(code) = module_not_found_error {
+            self.error_at(at, code, &[Arg::Atom(spec)]);
         } else if site.is_for_augmentation {
             self.error_at(at, 2664, &[Arg::Atom(spec)]);
         } else if is_side_effect {
@@ -1283,14 +1403,21 @@ impl Checker<'_, '_> {
         match hir[e].kind {
             // `checkImportCallExpression`
             ExprKind::ImportCall { args, .. } => {
-                let argument = hir.id_at(args, 0);
-                if matches!(hir[argument].kind, ExprKind::Missing | ExprKind::Spread(_)) {
+                let specifier = hir.id_at(args, 0);
+                // `len(args) == 0`
+                if matches!(hir[specifier].kind, ExprKind::Missing) {
                     return;
                 }
-                let ty = self.type_of_expr(file, argument);
+                let operand_type = self.type_of_expr(file, specifier);
+                let ty = match hir[specifier].kind {
+                    ExprKind::Spread(_) => {
+                        self.type_of_spread_expression(file, specifier, operand_type)
+                    }
+                    _ => operand_type,
+                };
                 if ty.is_undefined() || ty.is_null() || !self.is_assignable(ty, TypeId::STRING) {
-                    let start = self.start_of(file, argument);
-                    let end = self.end_of_expr(file, argument);
+                    let start = self.start_of(file, specifier);
+                    let end = self.end_of_expr(file, specifier);
                     self.error_at((file, start, end), 7036, &[Arg::Type(ty)]);
                 }
             }
@@ -1343,77 +1470,18 @@ impl Checker<'_, '_> {
         {
             return Vec::new();
         }
-        let Some(DirectivesOfFile {
-            line_starts,
-            by_line,
-        }) = DirectivesOfFile::new(hir)
-        else {
+        let Some(DirectivesOfFile { by_line, .. }) = DirectivesOfFile::new(hir) else {
             return Vec::new();
         };
-        if !by_line.iter().any(|directive| directive.2) {
-            return Vec::new();
-        }
-        let text = &hir.text[..];
-        let mut statement_starts: Vec<u32> = hir.stmts.iter().map(|s| s.start).collect();
-        statement_starts.sort_unstable();
-        let exprs = indices_by_position(hir.exprs.iter().map(|e| e.pos));
-        let types = indices_by_position(hir.types.iter().map(|node| node.pos));
         let mut expected = Vec::new();
-        for &(line, start, _) in by_line.iter().filter(|directive| directive.2) {
-            // The range it applies to: the next line that is neither empty nor a comment, plus
-            // whatever starts there, up to the next statement.
-            let mut next = line + 1;
-            while next < line_starts.len()
-                && is_comment_or_blank_line(text, line_starts[next] as usize)
-            {
-                next += 1;
-            }
-            let end = text.len() as u32;
-            let from = line_starts.get(next).copied().unwrap_or(end);
-            let line_end = line_starts.get(next + 1).copied().unwrap_or(end);
-            let next_statement = statement_starts.partition_point(|&pos| pos < line_end);
-            let to = statement_starts.get(next_statement).copied().unwrap_or(end);
-            if self.aliases_is_all_known(file, (&exprs[..], &types[..]), from, to) {
-                let directive = hir.comment_directives.iter().find(|it| it.start == start);
-                let at = (file, start, directive.map_or(0, |it| it.end));
-                let mut unused = Reported::new(at, 2578, Default::default());
-                self.settle_place(&mut unused);
-                expected.push(unused);
-            }
+        for &(_, start, _) in by_line.iter().filter(|directive| directive.2) {
+            let directive = hir.comment_directives.iter().find(|it| it.start == start);
+            let at = (file, start, directive.map_or(0, |it| it.end));
+            let mut unused = Reported::new(at, 2578, Default::default());
+            self.settle_place(&mut unused);
+            expected.push(unused);
         }
         expected
-    }
-
-    /// Whether the type of every node from `from` up to `to` has been resolved. An error that
-    /// depends on an unresolved type is withheld. `exprs`, `types`: `indices_by_position` of the
-    /// expressions and the type nodes of `file`.
-    fn aliases_is_all_known(
-        &mut self,
-        file: FileId,
-        (exprs, types): (&[(u32, u32)], &[(u32, u32)]),
-        from: u32,
-        to: u32,
-    ) -> bool {
-        let bound = self.bound(file);
-        for i in indices_in_range(exprs, from, to) {
-            if bound.is_unchecked(i as usize) {
-                continue;
-            }
-            let ty = self.type_at(file, ExprId(i));
-            if self.is_non_inferrable_type(ty) {
-                return false;
-            }
-        }
-        for i in indices_in_range(types, from, to) {
-            if bound.is_unchecked_type(i as usize) {
-                continue;
-            }
-            let ty = self.type_from_node(file, TypeNodeId(i));
-            if self.is_non_inferrable_type(ty) {
-                return false;
-            }
-        }
-        true
     }
 }
 
@@ -1433,14 +1501,6 @@ fn is_erased(hir: &hir::File, node: Node) -> bool {
     hir.is_in_ambient_or_type_node(node) || hir.find_ancestor(node, is_dropped).is_some()
 }
 
-/// `GetProjectReferenceFromOutputDts(path).Resolved.CompilerOptions()`
-fn project_reference_from_output_dts<'a>(options: &'a Options, path: &[u8]) -> Option<&'a Options> {
-    let outputs = &options.referenced_output_dts;
-    let index = options.find_by_path(outputs, |it| &it.0, path)?;
-    let project = options.referenced_sources[outputs[index].1 as usize].3;
-    Some(&options.referenced_options[project as usize])
-}
-
 /// `GetCommonSourceDirectory` without the `/` at its end, for a project that has a configuration
 /// file: every project that references another one, or is referenced.
 fn common_source_directory(options: &Options) -> &[u8] {
@@ -1448,22 +1508,6 @@ fn common_source_directory(options: &Options) -> &[u8] {
         b"" => dirname::<Posix>(&options.config_path),
         root_dir => root_dir,
     }
-}
-
-/// `(position, index)` for each of `positions`, sorted.
-fn indices_by_position(positions: impl Iterator<Item = u32>) -> Vec<(u32, u32)> {
-    let mut sorted: Vec<(u32, u32)> = positions.zip(0..).collect();
-    sorted.sort_unstable();
-    sorted
-}
-
-/// The indices in `sorted` (`indices_by_position`) whose position is in `from..to`, ascending.
-fn indices_in_range(sorted: &[(u32, u32)], from: u32, to: u32) -> Vec<u32> {
-    let first = sorted.partition_point(|&(pos, _)| pos < from);
-    let end = sorted.partition_point(|&(pos, _)| pos < to).max(first);
-    let mut indices: Vec<u32> = sorted[first..end].iter().map(|&(_, i)| i).collect();
-    indices.sort_unstable();
-    indices
 }
 
 // ───────────────────────────── scanning the source text ─────────────────────────────

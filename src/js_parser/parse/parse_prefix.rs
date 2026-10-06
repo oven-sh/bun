@@ -128,6 +128,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 },
                 loc,
             ));
+        } else {
+            // `parseIdentifierName`
+            p.lexer.expect(T::TIdentifier)?;
         }
         Ok(p.new_expr(
             E::Dot {
@@ -1257,6 +1260,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             } else {
                 // This property may turn out to be a type in TypeScript, which should be ignored
                 let mut property_opts = PropertyOpts::default();
+                let modifiers_base = p.pushed_modifiers();
                 if let Some(mut prop) = p.parse_property(
                     PropertyKind::Normal,
                     &mut property_opts,
@@ -1264,6 +1268,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 )? {
                     debug_assert!(prop.key.is_some() || prop.value.is_some());
                     if let Some(key) = &mut prop.key {
+                        p.end_parameter_modifiers(modifiers_base, &mut key.loc);
                         if p.real_loc(key.loc) != element_start {
                             p.note_loc(&mut key.loc, crate::sema::Mark::MemberStart, element_start);
                         }
@@ -1278,6 +1283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                     properties.push(prop);
                 }
+                p.drop_modifiers(modifiers_base);
             }
 
             if p.lexer.token != T::TComma {
@@ -1477,6 +1483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if p.preserves_type_syntax() {
                 p.skip_type_script_type(Level::Lowest)?;
                 let ty = p.saved_type_or_error();
+                let is_parenthesized = p.is_saved_type_parenthesized();
                 p.lexer.expect_greater_than::<false>()?;
                 // The cast covers "x.y" in "<T>x.y", which the caller's suffix
                 // loop would otherwise apply to the annotated "x".
@@ -1484,6 +1491,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.parse_expr_with_flags(Level::Prefix, flags, &mut value)?;
                 p.note_token_full_start(&mut value.loc, crate::sema::Mark::End);
                 p.note_loc(&mut value.loc, crate::sema::Mark::LessThan, loc);
+                if is_parenthesized {
+                    p.note_flag(&mut value.loc, crate::sema::Mark::ParenthesizedType);
+                }
                 p.note_saved_type(&mut value.loc, crate::sema::Mark::As, ty);
                 if p.lexer.token == T::TAsteriskAsterisk
                     && p.is_tolerant()

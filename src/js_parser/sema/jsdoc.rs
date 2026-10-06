@@ -29,7 +29,7 @@ use crate::parse::lists::ListKind;
 pub(crate) struct Name {
     pub(crate) start: u32,
     pub(crate) end: u32,
-    /// The token's source text.
+    /// `TokenValue`: the token's source text, with its unicode escapes decoded.
     pub(crate) text: StoreStr,
 }
 
@@ -355,12 +355,12 @@ fn name_at_token(p: &P<'_, true, false, true>) -> Name {
     Name {
         start: p.lexer.start as u32,
         end: u32::try_from(p.lexer.end).expect("int cast"),
-        text: StoreStr::new(p.lexer.raw()),
+        text: StoreStr::new(p.lexer.identifier),
     }
 }
 
 /// The identifier `text` with its unicode escapes decoded.
-pub(crate) fn unescaped_name(text: &[u8]) -> Vec<u8> {
+fn unescaped_name(text: &[u8]) -> Vec<u8> {
     let mut name = Vec::with_capacity(text.len());
     let mut at = 0;
     while let Some(&c) = text.get(at) {
@@ -516,11 +516,11 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.p.lexer.ts_error(range, code);
     }
 
-    /// `'{0}' tag already specified.`, of the tag named `name`.
+    /// `'{0}' tag already specified.`, of the tag named `name`, up to the current token.
     fn tag_already_specified(&mut self, name: Name) {
         let range = Range {
             loc: bun_ast::usize2loc(name.start as usize),
-            len: 0,
+            len: (self.start - name.start as usize) as i32,
         };
         self.p.lexer.ts_error_about(range, 1223, name.text.slice());
     }
@@ -554,6 +554,15 @@ impl<'p, 'a> Reader<'p, 'a> {
 
     fn token_text(&self) -> &'a [u8] {
         &self.text[self.start..self.end]
+    }
+
+    /// `TokenValue`, of a word.
+    fn token_value(&self) -> &'a [u8] {
+        let text = self.token_text();
+        if bun_core::strings::contains_char(text, b'\\') {
+            return self.p.arena.alloc_slice_copy(&unescaped_name(text));
+        }
+        text
     }
 
     /// `mark`
@@ -892,8 +901,17 @@ impl<'p, 'a> Reader<'p, 'a> {
                 ..Import::default()
             };
         }
+        let mut import = Import {
+            clause_start: self.start as u32,
+            ..Import::default()
+        };
+        // `isIdentifier`, `parseIdentifier`: the token after the tag name is one of
+        // `ScanJSDocToken`, whose words can contain `-`.
+        if self.token == Token::Word && crate::lexer::keyword(self.token_value()).is_none() {
+            import.default = Some(self.name_at_word());
+            self.next_token();
+        }
         self.enter_lexer();
-        let mut import = Import::default();
         self.p.scopes_in_order.truncate(0);
         self.p.begin_module_syntax(&Default::default());
         let result = Self::read_import_declaration(self.p, &mut import);
@@ -908,11 +926,6 @@ impl<'p, 'a> Reader<'p, 'a> {
         p: &mut P<'a, true, false, true>,
         import: &mut Import,
     ) -> Result<(), Error> {
-        import.clause_start = p.token_start();
-        if p.is_identifier_in_context() {
-            import.default = Some(name_at_token(p));
-            p.lexer.next()?;
-        }
         // `tryParseImportClause`
         if import.default.is_some() || matches!(p.lexer.token, T::TAsterisk | T::TOpenBrace) {
             import.has_clause = true;
@@ -1265,7 +1278,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.token == Token::OpenBrace
             && self.next_jsdoc() == Token::At
             && self.next_jsdoc() == Token::Word
-            && matches!(self.token_text(), b"link" | b"linkcode" | b"linkplain")
+            && matches!(self.token_value(), b"link" | b"linkcode" | b"linkplain")
     }
 
     // ───────────────────────────── tags ─────────────────────────────
@@ -1354,13 +1367,18 @@ impl<'p, 'a> Reader<'p, 'a> {
             }
             return Name::missing(self.full_start() as u32);
         }
-        let name = Name {
-            start: self.start as u32,
-            end: self.end as u32,
-            text: StoreStr::new(self.token_text()),
-        };
+        let name = self.name_at_word();
         self.next_jsdoc();
         name
+    }
+
+    /// The current token, a word, as a `Name`.
+    fn name_at_word(&self) -> Name {
+        Name {
+            start: self.start as u32,
+            end: self.end as u32,
+            text: StoreStr::new(self.token_value()),
+        }
     }
 
     /// `parseJSDocEntityName`

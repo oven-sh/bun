@@ -6,10 +6,11 @@
 //! with the first one.
 
 use super::enclosing_declaration::Enclosing;
-use super::print::quoted;
+use super::errors_declaration_emit::{EndOfChain, Meaning};
+use super::print::{YieldModuleSymbol, quoted};
 use super::visit_node::{VisitedKind, VisitedNode};
 use super::*;
-use crate::bind::{ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind};
+use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind};
 
 /// `typeWriterResult`
 pub struct SymbolAtLocation {
@@ -320,11 +321,12 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             // A type reference that resolves to nothing.
             VisitedKind::ConstOfAsConst(_) => Some(Found::Undeclared("const".to_owned())),
             // `getIntrinsicTagSymbol`
-            VisitedKind::JsxIntrinsicTagName(_, tag) => {
+            VisitedKind::JsxIntrinsicTagName(element, tag) => {
                 let (ExprKind::String(name) | ExprKind::Ident(name)) = hir[tag].kind else {
                     return None;
                 };
-                let elements = self.c.jsx_type(file, known::IntrinsicElements)?;
+                let location = hir.node(element);
+                let elements = self.c.jsx_type(file, location, known::IntrinsicElements)?;
                 match self.c.prop_ref(elements, name) {
                     Some((prop, _)) => Some(Found::Property(prop.clone_in(self.c.arena))),
                     None => match self.get_applicable_index_symbol(elements, name) {
@@ -472,12 +474,11 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             ExprKind::Dot {
                 obj, name, chain, ..
             } => {
-                let ty = self
-                    .c
-                    .left_type_of_property_access(file, obj, chain)
-                    .0
-                    .ok()?;
-                let ty = self.c.widened_left_type_of_property_access(file, e, ty);
+                let (access, _) = self.c.left_type_of_property_access(file, e, obj, chain);
+                if access.any_like.is_some() {
+                    return None;
+                }
+                let ty = access.widened;
                 if self.c.is_apparently_unknown(ty) {
                     return None;
                 }
@@ -511,6 +512,9 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                         self.get_applicable_index_symbol(ty, name)
                     }
                 }
+            }
+            ExprKind::PrivateIdentifier(name) if hir.is_expression_node(hir.node(e)) => {
+                self.get_symbol_for_private_identifier_expression(e, name)
             }
             ExprKind::String(_) | ExprKind::Number(_) | ExprKind::Template { .. } => {
                 self.get_symbol_of_literal(e)
@@ -616,22 +620,29 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         found.map(Found::Symbol)
     }
 
+    /// `getSymbolForPrivateIdentifierExpression`, for the `#x` of `#x in a`.
+    fn get_symbol_for_private_identifier_expression(
+        &mut self,
+        e: ExprId,
+        name: Atom,
+    ) -> Option<Found<'s>> {
+        let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
+        let &class = bound.private_class.get(&e)?;
+        // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
+        let declaration = |is_static: bool| {
+            hir[class].members.iter().find(|&member| {
+                hir[member].key == PropKey::Private(name)
+                    && hir[member].flags.contains(Flags::STATIC) == is_static
+            })
+        };
+        let member = declaration(false).or_else(|| declaration(true))?;
+        Some(self.property_of_member(member))
+    }
+
     /// `getSymbolAtLocation` for a string, a number or a template without substitutions.
     fn get_symbol_of_literal(&mut self, e: ExprId) -> Option<Found<'s>> {
         let file = self.file;
         let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
-        // `getSymbolForPrivateIdentifierExpression`: the `#x` of `#x in a`.
-        if let (ExprKind::String(name), Some(&class)) = (hir[e].kind, bound.private_class.get(&e)) {
-            // `lookupSymbolForPrivateIdentifierDeclaration`: the members of the class before its statics.
-            let declaration = |is_static: bool| {
-                hir[class].members.iter().find(|&member| {
-                    hir[member].key == PropKey::Private(name)
-                        && hir[member].flags.contains(Flags::STATIC) == is_static
-                })
-            };
-            let member = declaration(false).or_else(|| declaration(true))?;
-            return Some(self.property_of_member(member));
-        }
         let Parent::Expr(parent) = bound.expr_parent[e.idx()] else {
             return None;
         };
@@ -716,7 +727,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             FnKind::Setter => self.c.sibling_accessor(file, function, FnKind::Getter),
             _ => None,
         };
-        if let Some(found) = other.and_then(|other| self.this_parameter(file, other)) {
+        if let Some(found) = other.and_then(|(file, other)| self.this_parameter(file, other)) {
             return Some(found);
         }
         // `assignContextualParameterTypes`: a copy of that of the contextual signature, with its declarations.
@@ -841,7 +852,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             if members.shape().prop(name).is_some() && self.c.prop_ref(ty, name).is_none() {
                 return None;
             }
-            let (prop, _) = self.c.property_in(&members, name)?;
+            let (prop, _) = self.c.property_in_type(ty, &members, name)?;
             // `bindClassLikeDeclaration`
             if name == known::prototype
                 && matches!(prop.source, PropSource::Type(_))
@@ -1358,23 +1369,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
     /// `getNameOfSymbolAsWritten`, and the specifier `createExpressionFromSymbolChain` prints for
     /// an external module. `is_initial`: `FlagsInInitialEntityName`.
     fn get_name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> String {
-        let files = self.c.files();
-        let declared = files.symbol(symbol);
-        // `InternalSymbolNameMissing`: a class declaration without a name that is not a default
-        // export. The binder stores it as `default`.
-        if let [Decl::Class(class)] = declared.decls[..]
-            && self.c.hir(symbol.file)[class].name.is_none()
-            && !self.c.hir(symbol.file)[class]
-                .flags
-                .contains(Flags::DEFAULT)
-            && matches!(
-                self.c.bound(symbol.file).class_owner[class.idx()],
-                ClassOwner::Stmt(_)
-            )
-        {
-            return "__missing".to_owned();
-        }
-        let is_default_export = declared.name == known::default;
+        let is_default_export = self.c.files().symbol(symbol).name == known::default;
         // `isDefaultBindingContext`, at file granularity.
         if is_default_export && (!is_initial || symbol.file != self.file) {
             return "default".to_owned();
@@ -1383,9 +1378,8 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         // `startsWithSingleOrDoubleQuote`: a function that `declare module "m" {}` augments keeps
         // its own name.
         if name.starts_with(['"', '\'']) && self.c.is_external_module_symbol(symbol) {
-            let specifier =
-                self.c
-                    .specifier_for_module_symbol(symbol, self.file, ResolutionMode::None);
+            let at = Enclosing::at_scope(self.file, ScopeId(0));
+            let specifier = (self.c).specifier_for_module_symbol(symbol, at, ResolutionMode::None);
             // `getSpecifierForModuleSymbol`: without a file, `StripQuotes(symbol.Name)` (`isAmbientModuleSymbolName`).
             if !specifier.is_empty() {
                 return crate::messages::text(&quoted(&specifier, b'"', true));
@@ -1403,7 +1397,7 @@ fn is_literal_name_at(hir: &hir::File, pos: u32) -> bool {
 /// `print::push_access`
 fn push_access(text: &mut String, name: &str, is_enum_member: bool) {
     let mut access = Vec::new();
-    super::print::push_access(&mut access, name.as_bytes(), is_enum_member);
+    super::print::push_access(&mut access, name.as_bytes(), is_enum_member, true);
     text.push_str(&crate::messages::text(&access));
 }
 
@@ -1428,12 +1422,13 @@ impl<'p, 's> Checker<'p, 's> {
         is_parent: bool,
         at: Enclosing,
     ) -> (bool, Vec<Sym>) {
-        let (meaning, depth) = if is_parent {
-            (super::errors_declaration_emit::Meaning::Namespace, 1)
+        let (meaning, end_of_chain) = if is_parent {
+            (Meaning::Namespace, EndOfChain::No)
         } else {
-            (super::errors_declaration_emit::Meaning::None, 0)
+            (Meaning::None, EndOfChain::Yes)
         };
-        let mut chain = self.symbol_chain_ex(symbol, at, meaning, false, depth);
+        let mut chain =
+            self.symbol_chain_ex(symbol, at, meaning, YieldModuleSymbol::No, end_of_chain);
         let starts_with_global_this =
             chain.len() > 1 && chain[0] == self.files().global_this_symbol;
         if starts_with_global_this {

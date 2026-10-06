@@ -8,8 +8,10 @@
 //!
 //! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So
 //! the requesting positions are collected and sorted in the order it visits them: source order,
-//! except for nodes that `checkNodeDeferred` defers until everything else is checked. An expression
-//! that is checked early, because its type is requested, is handled in its regular order here.
+//! except for nodes that `checkNodeDeferred` defers until everything else is checked. A class
+//! expression that is checked early, because its type is requested, is placed where that happened
+//! (`check_class_expression_external_helpers`). Any other expression is handled in its regular
+//! order.
 
 use super::sink::held;
 use super::*;
@@ -78,8 +80,16 @@ struct Request {
     helpers: u32,
 }
 
+/// `AllAccessorDeclarations`, without `GetAccessor`, which nothing here reads.
+struct AllAccessorDeclarations {
+    first_accessor: MemberId,
+    second_accessor: Option<MemberId>,
+    set_accessor: Option<MemberId>,
+}
+
 impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
+        let checked = std::mem::take(&mut self.checked_class_expressions);
         let files = self.files();
         let (options, module) = (&files.options, files.module(file));
         // `IsEffectiveExternalModule`. All of a declaration file is ambient.
@@ -91,7 +101,7 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        let mut requests = self.emit_helpers_requests(file);
+        let mut requests = self.emit_helpers_requests(file, &checked);
         requests.sort_by_key(|request| request.order);
         // `externalHelpersModule`, `requestedExternalEmitHelpers`
         let (mut resolved, mut requested) = (None, 0);
@@ -143,31 +153,28 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `resolveHelpersModule`, and `resolveExternalModule` for the synthetic import of `tslib` the
-    /// loader added. Nothing is reported for a `tslib` that is untyped JavaScript
-    /// (`errorOnImplicitAnyModule`).
+    /// `resolveHelpersModule`
     fn emit_helpers_resolve_helpers_module(
         &mut self,
         file: FileId,
         request: Request,
     ) -> Option<Sym> {
-        let files = self.files();
-        let (tslib, module) = (known::tslib, files.module(file));
-        let mode = module.default_mode;
-        if let Some(found) = files.module_of_specifier_as(file, tslib, mode) {
-            return Some(found);
-        }
-        let (code, args) = match module.imports.get(&(tslib, mode)) {
-            Some(&target) => (2306, vec![files.module(target).file_name().to_vec()]),
-            None if module.untyped_imports.contains(&(tslib, mode)) => return None,
-            None => (2354, vec![TSLIB.as_bytes().to_vec()]),
+        let mode = self.files().module(file).default_mode;
+        // `GetImportHelpersImportSpecifier`: the specifier of the synthetic import the loader
+        // added, which has no import clause and is nowhere in the text.
+        let location = SpecifierUse {
+            spec: known::tslib,
+            pos: u32::MAX,
+            kind: SpecifierKind::Import,
+            mode,
         };
-        self.add_diagnostic(Reported::new(
-            (file, request.start, request.end),
-            code,
-            held(args),
-        ));
-        None
+        let error_node = (file, request.start, request.end);
+        let site = SpecifierSite::default();
+        if !self.resolve_external_module_at(file, location, site, error_node, Some(2354)) {
+            return None;
+        }
+        self.files()
+            .module_of_specifier_as(file, known::tslib, mode)
     }
 
     /// `hasSignatureWithArityGreaterThan` for the symbol `symbol` aliases (`resolveSymbol`).
@@ -177,11 +184,7 @@ impl Checker<'_, '_> {
         arity: usize,
     ) -> bool {
         let files = self.files();
-        let flags = files.flags(symbol);
-        // `IsNonLocalAlias`
-        let is_alias = flags.contains(SymFlags::ALIAS)
-            && !flags.intersects(SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE);
-        let target = if is_alias {
+        let target = if files.is_non_local_alias(symbol) {
             files.resolve_alias(symbol)
         } else {
             Some(symbol)
@@ -214,7 +217,12 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── who asks ─────────────────────────────
 
-    fn emit_helpers_requests(&mut self, file: FileId) -> Vec<Request> {
+    /// `checked`: `Checker::checked_class_expressions`
+    fn emit_helpers_requests(
+        &mut self,
+        file: FileId,
+        checked: &[(FileId, ExprId, Option<CurrentNode>)],
+    ) -> Vec<Request> {
         // `GetEmitScriptTarget`
         let target = match self.files().options.target {
             ScriptTarget::None => ScriptTarget::ES2025,
@@ -226,7 +234,7 @@ impl Checker<'_, '_> {
         self.emit_helpers_of_statements(file, target, &mut requests);
         self.emit_helpers_of_rest_elements(file, target, &index, &mut requests);
         self.emit_helpers_of_decorators(file, target, &mut requests);
-        self.emit_helpers_of_class_expressions(file, target, &mut requests);
+        self.emit_helpers_of_class_expressions(file, target, checked, &mut requests);
         self.emit_helpers_of_private_names(file, target, &index, &mut requests);
         requests
     }
@@ -758,6 +766,94 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `GetAllAccessorDeclarations` for the accessor `accessor` of `class`.
+    fn get_all_accessor_declarations(
+        &self,
+        file: FileId,
+        class: ClassId,
+        accessor: MemberId,
+    ) -> AllAccessorDeclarations {
+        let hir = self.hir(file);
+        let node = hir[accessor];
+        let is_setter = node.kind == MemberKind::Setter;
+        let other_kind = if is_setter {
+            MemberKind::Getter
+        } else {
+            MemberKind::Setter
+        };
+        let name_of = |member: &Member| {
+            self.get_property_name_for_property_name_node(file, member.key, member.name_pos)
+        };
+        // "dynamic names can only be match up via checker symbol lookup"
+        let has_dynamic_name = matches!(node.key, PropKey::Computed(e) if is_dynamic_name(hir, e));
+        let other_accessor = if has_dynamic_name {
+            None
+        } else {
+            let accessor_name = name_of(&node);
+            let accessor_static = node.flags.contains(Flags::STATIC);
+            hir[class].members.iter().find(|&m| {
+                let member = &hir[m];
+                member.kind == other_kind
+                    && member.flags.contains(Flags::STATIC) == accessor_static
+                    && name_of(member) == accessor_name
+            })
+        };
+        // `GetAllAccessorDeclarationsForDeclaration`
+        let (first_accessor, second_accessor) = match other_accessor {
+            Some(other) if hir[other].start < node.start => (other, Some(accessor)),
+            _ => (accessor, other_accessor),
+        };
+        AllAccessorDeclarations {
+            first_accessor,
+            second_accessor,
+            set_accessor: if is_setter {
+                Some(accessor)
+            } else {
+                other_accessor
+            },
+        }
+    }
+
+    /// `ClassElementOrClassElementParameterIsDecorated` for the member `node` of the class
+    /// `parent`, with `useLegacyDecorators` as the options say: `refused_decorators` holds what
+    /// `NodeCanBeDecorated` answers for that.
+    fn class_element_or_class_element_parameter_is_decorated(
+        &self,
+        file: FileId,
+        node: MemberId,
+        parent: ClassId,
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let has_decorators = |accessor: &MemberId| {
+            let mut decorators = hir.decorators.iter();
+            decorators.any(|d| d.0 == DecoratorOwner::Member(*accessor))
+        };
+        let node_is_decorated = |of: DecoratorOwner| {
+            let mut decorators = hir.decorators.iter();
+            decorators.any(|d| d.0 == of && !bound.refused_decorators.contains(&d.1))
+        };
+        let parameters = match hir[node].kind {
+            MemberKind::Getter | MemberKind::Setter => {
+                let decls = self.get_all_accessor_declarations(file, parent, node);
+                let accessors = [Some(decls.first_accessor), decls.second_accessor];
+                let mut accessors = accessors.into_iter().flatten();
+                let first_accessor_with_decorators = accessors.find(has_decorators);
+                if first_accessor_with_decorators != Some(node) {
+                    return false;
+                }
+                decls
+                    .set_accessor
+                    .map_or(FnId::NONE, |setter| hir[setter].func)
+            }
+            MemberKind::Method => hir[node].func,
+            _ => FnId::NONE,
+        };
+        node_is_decorated(DecoratorOwner::Member(node))
+            || parameters.is_some()
+                && (hir[parameters].params.iter())
+                    .any(|parameter| node_is_decorated(DecoratorOwner::Param(parameter)))
+    }
+
     /// `getFirstTransformableStaticClassElement`: `GetErrorRangeForNode` of it.
     fn emit_helpers_first_transformable_static_element(
         &self,
@@ -786,7 +882,7 @@ impl Checker<'_, '_> {
         for m in hir[class].members.iter() {
             let member = hir[m];
             if let Some(first) = of_class
-                && decorator_of(DecoratorOwner::Member(m)).is_some()
+                && self.class_element_or_class_element_parameter_is_decorated(file, m, class)
             {
                 return Some(self.emit_helpers_range_of_decorator(file, first));
             }
@@ -804,16 +900,105 @@ impl Checker<'_, '_> {
         None
     }
 
-    /// `checkClassExpressionExternalHelpers`
+    /// `checkClassExpressionExternalHelpers`, where `checkClassExpression` calls it for `node`,
+    /// which is `class`: notes when that is. `emit_helpers_of_class_expressions` makes the request.
+    pub(super) fn check_class_expression_external_helpers(
+        &mut self,
+        file: FileId,
+        node: ExprId,
+        class: ClassId,
+    ) {
+        if self.files().options.import_helpers
+            && self.task.file == Some(file)
+            && !self.is_type_checked
+            && self.hir(file)[class].name.is_none()
+            && !(self.checked_class_expressions.iter()).any(|it| (it.0, it.1) == (file, node))
+        {
+            let current = self.current_source_element;
+            self.checked_class_expressions.push((file, node, current));
+        }
+    }
+
+    /// `Request::order` of what is checked while `c.currentNode` is `current`, as
+    /// `checkSourceElement` or `checkDeferredNode` has set it, because something asks for its type.
+    /// `None`: `current` is the innermost such node around `e`, so `e` is checked in its regular
+    /// order.
+    fn emit_helpers_order_of_early_check(
+        &self,
+        file: FileId,
+        e: ExprId,
+        current: Option<CurrentNode>,
+    ) -> Option<(u32, u32)> {
+        let hir = self.hir(file);
+        let node = match current {
+            // `checkSourceFile` has not begun.
+            None => return Some((0, 0)),
+            Some(CurrentNode::Expr(of, x)) if of == file => hir.node(x),
+            Some(CurrentNode::TypeNode(of, t)) if of == file => hir.node(t),
+            Some(CurrentNode::Node(of, node)) if of == file => node,
+            Some(_) => return None,
+        };
+        // Of the nodes that the two are called with, those that can contain an expression.
+        let is_source_element = |n: Node| match hir.data(n) {
+            NodeData::Stmt(_)
+            | NodeData::VarDecl(_)
+            | NodeData::Param(_)
+            | NodeData::PatProp(_)
+            | NodeData::PatElem(_)
+            | NodeData::Member(_) => true,
+            NodeData::Prop(p) => matches!(
+                hir[p].kind,
+                PropKind::Method | PropKind::Getter | PropKind::Setter
+            ),
+            NodeData::Expr(x) => matches!(
+                hir[x].kind,
+                ExprKind::Fn(_)
+                    | ExprKind::Class(_)
+                    | ExprKind::Jsx(_)
+                    | ExprKind::Unary { op: UnOp::Void, .. }
+            ),
+            _ => false,
+        };
+        if hir.find_ancestor(hir.parent(hir.node(e)), is_source_element) == node {
+            return None;
+        }
+        let around = hir.find_ancestor(node, is_source_element);
+        let inside = match hir.data(around) {
+            NodeData::Stmt(s) => Parent::Stmt(s),
+            NodeData::VarDecl(d) => Parent::VarInit(d),
+            NodeData::Param(p) => Parent::ParamDefault(p),
+            NodeData::PatProp(p) => Parent::PatPropDefault(p),
+            NodeData::PatElem(p) => Parent::PatElemDefault(p),
+            NodeData::Member(m) => Parent::MemberInit(m),
+            NodeData::Prop(_) => Parent::FnBody(hir.function_of(around)),
+            NodeData::Expr(x) => match hir[x].kind {
+                ExprKind::Fn(f) => Parent::FnBody(f),
+                ExprKind::Class(class) => match hir[class].members.iter().next() {
+                    Some(m) => Parent::MemberInit(m),
+                    None => Parent::ClassExtends(class),
+                },
+                _ => Parent::Expr(x),
+            },
+            _ => Parent::File,
+        };
+        // Nothing is deferred in an ambient context.
+        let deferred = self.emit_helpers_span(file, inside).unwrap_or(0);
+        Some((deferred, hir.start(node)))
+    }
+
+    /// `checkClassExpressionExternalHelpers`. `checked`: `Checker::checked_class_expressions`.
     fn emit_helpers_of_class_expressions(
         &self,
         file: FileId,
         target: ScriptTarget,
+        checked: &[(FileId, ExprId, Option<CurrentNode>)],
         requests: &mut Vec<Request>,
     ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
         let is_computed_name_at = |pos: u32| hir.text.get(pos as usize) == Some(&b'[');
+        // Each with its rank in the order in which `checkClassExpression` came to them.
+        let mut found: Vec<(usize, Request)> = Vec::new();
         for (i, class) in hir.classes.iter().enumerate() {
             let ClassOwner::Expr(e) = bound.class_owner[i] else {
                 continue;
@@ -909,17 +1094,36 @@ impl Checker<'_, '_> {
             let Some((start, end)) = location else {
                 continue;
             };
-            requests.push(Request {
-                order: (deferred, class.name_pos),
-                start,
-                end,
-                helpers: if has_computed_name {
-                    SET_FUNCTION_NAME | PROP_KEY
-                } else {
-                    SET_FUNCTION_NAME
+            let noted = checked.iter().position(|it| (it.0, it.1) == (file, e));
+            // The check of an earlier file has come to it.
+            let (rank, order) = if self.p.deferred_nodes.get(&self.task, &(file, e)).is_some() {
+                (0, (0, 0))
+            } else {
+                let early = noted
+                    .and_then(|at| self.emit_helpers_order_of_early_check(file, e, checked[at].2));
+                (
+                    noted.map_or(usize::MAX, |at| at + 1),
+                    early.unwrap_or((deferred, class.name_pos)),
+                )
+            };
+            let helpers = if has_computed_name {
+                SET_FUNCTION_NAME | PROP_KEY
+            } else {
+                SET_FUNCTION_NAME
+            };
+            found.push((
+                rank,
+                Request {
+                    order,
+                    start,
+                    end,
+                    helpers,
                 },
-            });
+            ));
         }
+        // The sort by `order` is stable.
+        found.sort_by_key(|it| it.0);
+        requests.extend(found.into_iter().map(|it| it.1));
     }
 
     /// `checkPropertyAccessExpressionOrQualifiedName`, `checkInExpression`
@@ -966,8 +1170,7 @@ impl Checker<'_, '_> {
                 continue;
             };
             let start = hir[left].pos;
-            if matches!(hir[left].kind, ExprKind::String(_))
-                && is_private_name_at(hir, start)
+            if matches!(hir[left].kind, ExprKind::PrivateIdentifier(_))
                 && !is_parenthesized(self.hir(file), left)
                 && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
             {

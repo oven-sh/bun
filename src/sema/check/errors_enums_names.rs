@@ -13,8 +13,24 @@
 //!
 //! Runs after the passes that report unresolved names: some of their diagnostics are reworded here.
 
+use super::errors_names_and_exports::is_valid_type_only_alias_use_site;
 use super::*;
-use crate::bind::{Decl, Parent, ScopeId, ScopeKind};
+use crate::bind::{Decl, ScopeId, ScopeKind};
+use crate::program::SymbolTable;
+
+/// `isInRightSideOfImportOrExportAssignment`
+fn is_in_right_side_of_import_or_export_assignment(hir: &hir::File, mut node: Node) -> bool {
+    while hir.kind(hir.parent(node)) == Kind::QualifiedName {
+        node = hir.parent(node);
+    }
+    let parent = hir.parent(node);
+    match hir.kind(parent) {
+        // Its other identifier is its name.
+        Kind::ImportEqualsDeclaration => hir.name(parent) != node,
+        Kind::ExportAssignment => hir.expression(parent) == node,
+        _ => false,
+    }
+}
 
 impl Checker<'_, '_> {
     pub(super) fn check_x_enums_names(&mut self, file: FileId) {
@@ -39,54 +55,56 @@ impl Checker<'_, '_> {
     /// `checkConstEnumAccess` for `e` and for each parenthesized expression around it, which has
     /// the same type.
     pub(super) fn check_const_enum_access(&mut self, file: FileId, e: ExprId, ty: TypeId) {
-        let (hir, bound, options) = (self.hir(file), self.bound(file), &self.p.files.options);
-        let parent = bound.expr_parent[e.idx()];
-        // `typeof E.A` consists of names, not of property accesses.
-        let in_type_query = bound.is_in_type_query(e);
-        let is_object_of_access = !in_type_query
-            && matches!(parent, Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == e));
-        // The span of each, from the outermost inwards.
-        let mut levels: Vec<(u32, u32)> = Vec::new();
-        if let Some(open) = open_parenthesis(hir, e) {
-            let inside = self.start_inside_parentheses(file, e) as usize;
-            let mut at = open as usize;
-            while at < inside && hir.text.get(at) == Some(&b'(') {
-                levels.push((at as u32, self.end_of_expr_from(file, e, at as u32)));
-                at = skip_trivia(&hir.text, at + 1);
-            }
-        }
-        let is_parenthesized = !levels.is_empty();
-        levels.push(self.get_error_range_for_node(file, hir.node(e)));
-        // Only the outermost level occupies the position recorded for `e`, and only a name is the
-        // right side of an import or an export assignment.
-        let is_ok = |level: usize| {
-            level == 0
-                && (is_object_of_access
-                    || !is_parenthesized
-                        && (in_type_query && !matches!(parent, Parent::Expr(_))
-                            || matches!(hir[e].kind, ExprKind::Ident(_))
-                                && matches!(parent, Parent::Stmt(s) if s.is_some() && matches!(hir[s].kind, StmtKind::ExportAssign(_) | StmtKind::ExportDefault(_)))))
+        let (hir, files) = (self.hir(file), self.files());
+        let TypeData::Anon {
+            origin: Origin::EnumObject(symbol),
+            ..
+        } = *self.data(ty)
+        else {
+            return;
         };
-        let is_ambient = matches!(*self.data(ty), TypeData::Anon { origin: Origin::EnumObject(sym), .. } if self.aliases_is_ambient_const_enum(sym))
-            && !super::errors_names_and_exports::is_valid_type_only_alias_use_site(
-                hir,
-                hir.node(e),
-            );
-        // Imports of ambient `const` enums are checked in `checkAliasSymbol`.
-        let local = bound.expr_symbol[first_identifier(hir, e).idx()];
-        let is_import =
-            local.is_some() && bound.symbols[local.idx()].flags.contains(SymFlags::ALIAS);
-        let flag_name = super::errors_modules::isolated_modules_like_flag_name(self.files());
-        for (level, &(start, end)) in levels.iter().enumerate() {
-            if !is_ok(level) {
-                self.error_at((file, start, end), 2475, &[]);
+        // `resolveName(node, GetFirstIdentifier(node).Text(), SymbolFlagsAlias, nil, false, true)`
+        let first = first_identifier(hir, e);
+        let resolves_to_import = match hir[first].kind {
+            ExprKind::Ident(name) if files.options.verbatim_module_syntax => {
+                let scope = self.enclosing_scope_of_expr(file, first);
+                let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
+                    // `excludeGlobals`
+                    let is_global = matches!(table, SymbolTable::Globals);
+                    held.filter(|&held| !is_global && files.means(held, meaning))
+                };
+                let found = files.resolve_with(file, scope, name, SymFlags::ALIAS, false, lookup);
+                matches!(found, Ok(Some(_)))
             }
-            if is_ambient
-                && (options.isolated_modules_reported
-                    || options.verbatim_module_syntax && is_ok(level) && !is_import)
+            _ => false,
+        };
+        let flag_name = super::errors_modules::isolated_modules_like_flag_name(files);
+        let mut node = hir.node(e);
+        loop {
+            let parent = hir.parent(node);
+            // The other children of a `TypeQuery` are types.
+            let ok = matches!(
+                hir.kind(parent),
+                Kind::PropertyAccessExpression | Kind::ElementAccessExpression
+            ) && hir.expression(parent) == node
+                || matches!(hir.kind(node), Kind::Identifier | Kind::QualifiedName)
+                    && is_in_right_side_of_import_or_export_assignment(hir, node)
+                || matches!(hir.kind(parent), Kind::TypeQuery | Kind::ExportSpecifier);
+            if !ok {
+                self.error(file, node, 2475, &[]);
+            }
+            // Imports of ambient `const` enums are checked in `checkAliasSymbol`.
+            if (files.options.isolated_modules_reported
+                || files.options.verbatim_module_syntax && ok && !resolves_to_import)
+                && self.aliases_is_ambient_const_enum(symbol)
+                && !is_valid_type_only_alias_use_site(hir, node)
             {
-                self.error_at((file, start, end), 2748, &[Arg::Bytes(flag_name)]);
+                self.error(file, node, 2748, &[Arg::Bytes(flag_name)]);
             }
+            if hir.kind(parent) != Kind::ParenthesizedExpression {
+                break;
+            }
+            node = parent;
         }
     }
 
@@ -339,6 +357,7 @@ impl Checker<'_, '_> {
         if associated_declaration.is_some() {
             self.check_reference_in_parameter(file, error_location, result, associated_declaration);
         }
+        self.aliases_import_hiding_global_value(file, result, meaning);
     }
 }
 

@@ -84,13 +84,12 @@ impl Checker<'_, '_> {
     pub(super) fn check_getter_returns_a_value(&mut self, file: FileId, f: FnId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let func = &hir[f];
-        if hir.kind == FileKind::Declaration
-            || func.kind != FnKind::Getter
-            || func.flags.contains(Flags::AMBIENT)
+        if func.kind != FnKind::Getter
             || matches!(func.body, FnBody::None)
             || bound.fns[f.idx()].end == UNREACHABLE
             || bound.fns[f.idx()].end.is_none()
-            || !bound.fns[f.idx()].returns.is_empty()
+            || self.has_explicit_return(file, f)
+            || hir.is_ambient(hir.node(f))
         {
             return;
         }
@@ -103,6 +102,14 @@ impl Checker<'_, '_> {
             _ => return,
         };
         self.error_at((file, start, end), 2378, &[]);
+    }
+
+    /// `NodeFlagsHasExplicitReturn`: the binder skips a `return` that it knows is unreachable.
+    pub(super) fn has_explicit_return(&self, file: FileId, f: FnId) -> bool {
+        let bound = self.bound(file);
+        bound
+            .ids(bound.fns[f.idx()].returns)
+            .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE)
     }
 
     /// `SkipOuterExpressions`
@@ -162,22 +169,52 @@ impl Checker<'_, '_> {
                 self.bound(file).get_assigned_name(hir, e)
             }
             ExprKind::Class(c) if hir[c].name.is_some() => Some(hir[c].name_pos),
-            // The last word before the type and before a leading `(`, `|` or `&`, which are not
-            // stored, or the `{` of `@satisfies {T}` (`findOriginatingJSDocSatisfiesTag`: the name
-            // of the tag).
-            ExprKind::Satisfies { ty, .. } => {
-                let mut before =
-                    trim_trivia_end(hir.text.get(..hir[ty].pos as usize).unwrap_or_default());
-                while let [rest @ .., b'(' | b'|' | b'&' | b'{'] = before {
-                    before = trim_trivia_end(rest);
-                }
-                before
-                    .ends_with(b"satisfies")
-                    .then(|| (before.len() - b"satisfies".len()) as u32)
-            }
+            // Its first token. Its decorators belong to it.
+            ExprKind::Class(c) => Some(hir[c].start),
+            // The name of the tag, or else the token after the expression.
+            ExprKind::Satisfies { expr, ty } => Some(
+                self.find_originating_jsdoc_satisfies_tag(file, e, ty)
+                    .unwrap_or_else(|| self.skip_trivia_from(file, self.end_of_expr(file, expr))),
+            ),
             _ => None,
         };
         elsewhere.unwrap_or_else(|| self.start_inside_parentheses(file, e))
+    }
+
+    /// `findOriginatingJSDocSatisfiesTag` for `node`, an `x satisfies T` whose `T` is
+    /// `target_type`: the position of the name of the tag.
+    fn find_originating_jsdoc_satisfies_tag(
+        &self,
+        file: FileId,
+        node: ExprId,
+        target_type: TypeNodeId,
+    ) -> Option<u32> {
+        let hir = self.hir(file);
+        let target = hir[target_type].pos;
+        if !hir.is_in_jsdoc(target) {
+            return None;
+        }
+        let mut current = hir.parent(hir.node(node));
+        while current.is_some() {
+            let Some(host) = hir.jsdoc_host_at(hir.start(current)) else {
+                current = hir.parent(current);
+                continue;
+            };
+            if !(host.comments.pos..host.comments.end).contains(&target) {
+                let first = host.first_satisfies_tag;
+                return (first != u32::MAX).then_some(first);
+            }
+            // The tag with that type: the last word before the type, its `{` and a leading `(`,
+            // `|` or `&`, which are not stored.
+            let mut before = trim_trivia_end(hir.text.get(..target as usize).unwrap_or_default());
+            while let [rest @ .., b'(' | b'|' | b'&' | b'{'] = before {
+                before = trim_trivia_end(rest);
+            }
+            return before
+                .ends_with(b"satisfies")
+                .then(|| (before.len() - b"satisfies".len()) as u32);
+        }
+        None
     }
 
     /// `getSyntacticTruthySemantics`
@@ -298,7 +335,9 @@ impl Checker<'_, '_> {
             }
         };
         let Some(name) = name else { return };
-        if self.is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. }) {
+        let is_private =
+            self.is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
+        if is_private {
             self.error_at((file, start, end), 18011, &[]);
         }
         let object = self.type_of_expr(file, obj);
@@ -322,6 +361,9 @@ impl Checker<'_, '_> {
             return;
         }
         // `links.resolvedSymbol`
+        if is_private && !self.is_private_name_in_reach(file, operand, object, name) {
+            return;
+        }
         let Some((prop, mapper)) = self.get_property_of_type(object, name) else {
             return;
         };

@@ -2,7 +2,7 @@
 //! `checkExportsOnMergedDeclarations`: 2395 2652.
 
 use super::*;
-use crate::bind::{Decl, MemberOwner, Parent, PatParent, ScopeKind, SymbolId};
+use crate::bind::{Decl, MemberOwner, Parent, PatParent, SymbolId};
 use smallvec::SmallVec;
 
 type Declaration = (FileId, Decl);
@@ -34,15 +34,20 @@ impl Checker<'_, '_> {
             if symbol.export_symbol.is_some() && symbol.decls.len() > 1 {
                 self.check_exports_on_merged_declarations(file, id);
             }
-            let functions = symbol.decls.iter().filter_map(|&decl| {
+            let first = symbol.decls.iter().find_map(|&decl| {
                 let function = self.function_of_declaration((file, decl))?;
                 Some((decl, function))
             });
-            let Some((first, function)) = functions.into_iter().next() else {
+            let class = symbol
+                .decls
+                .iter()
+                .find(|decl| matches!(decl, Decl::Class(_)));
+            if first.is_none() && class.is_none() {
                 continue;
-            };
+            }
             // A single declaration with a body: no error is possible.
-            if symbol.decls.len() == 1
+            if let Some((_, function)) = first
+                && symbol.decls.len() == 1
                 && !symbol.flags.contains(SymFlags::MERGED)
                 && symbol.name != known::computed
                 && has_body(&hir[function])
@@ -54,26 +59,29 @@ impl Checker<'_, '_> {
             if sym.file == file && sym.id != id {
                 continue;
             }
-            // `hasBindableName`
-            if let Decl::Member(m) = first
-                && symbol.name == known::computed
-                && self.declared_member_name(file, hir[m].key).is_none()
-            {
-                continue;
+            // The declarations in other files ask when those files are checked.
+            let is_checked_by_function = match first {
+                None => false,
+                // `hasBindableName`
+                Some((Decl::Member(m), _))
+                    if symbol.name == known::computed
+                        && self.declared_member_name(file, hir[m].key).is_none() =>
+                {
+                    false
+                }
+                // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a duplicate", but
+                // "run check on export symbol" (`symbol.Parent != nil`). A constructor has a parent.
+                Some(_) => !hir.is_js || symbol.parent.is_some(),
+            };
+            // `checkClassLikeDeclaration` checks `getSymbolOfDeclaration(node)`, which is not the
+            // local symbol of an export. FOR SPEED: no error is possible in what is no function.
+            let is_checked_by_class = class.is_some_and(|&decl| {
+                files.flags(sym).contains(SymFlags::FUNCTION)
+                    && files.sym(file, bound.symbol_of_declaration(decl)) == sym
+            });
+            if is_checked_by_function || is_checked_by_class {
+                self.check_function_or_constructor_symbol(sym);
             }
-            // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a duplicate", but
-            // "run check on export symbol" (`symbol.Parent != nil`). `checkClassLikeDeclaration` checks its symbol in every file.
-            if hir.is_js
-                && symbol.parent.is_none()
-                && files.decls_of(sym).iter().all(|&(of, d)| {
-                    let is_class_of_symbol = matches!(d, Decl::Class(_))
-                        && files.sym(of, self.bound(of).symbol_of_declaration(d)) == sym;
-                    self.hir(of).is_js && !is_class_of_symbol
-                })
-            {
-                continue;
-            }
-            self.check_function_or_constructor_symbol(sym);
         }
     }
 
@@ -98,7 +106,7 @@ impl Checker<'_, '_> {
         let mut duplicate_function_declaration = false;
         let mut multiple_constructor_implementation = false;
         let mut has_non_ambient_class = false;
-        let mut function_declarations: SmallVec<[(Declaration, FnId); 4]> = SmallVec::new();
+        let mut function_declarations: SmallVec<[Declaration; 4]> = SmallVec::new();
         for &node in declarations.iter() {
             let in_ambient_context = self.is_in_ambient_context(node);
             let in_ambient_context_or_interface = in_ambient_context
@@ -114,7 +122,7 @@ impl Checker<'_, '_> {
             let Some(function) = self.function_of_declaration(node) else {
                 continue;
             };
-            function_declarations.push((node, function));
+            function_declarations.push(node);
             let current_node_flags = self.get_effective_declaration_flags(node, FLAGS_TO_CHECK);
             some_node_flags |= current_node_flags;
             all_node_flags &= current_node_flags;
@@ -132,8 +140,7 @@ impl Checker<'_, '_> {
                 && let Some(before) = files.loc_of_declaration(previous.0, previous.1)
                 && let Some(loc) = files.loc_of_declaration(node.0, node.1)
                 && before.end != loc.pos
-                && let Some(it) = self.function_of_declaration(previous)
-                && !self.hir(previous.0)[it].flags.contains(Flags::REPARSED)
+                && !self.is_reparsed(previous)
             {
                 self.report_implementation_expected_error(previous, is_constructor);
             }
@@ -151,7 +158,7 @@ impl Checker<'_, '_> {
             (multiple_constructor_implementation, 2392),
             (duplicate_function_declaration, 2393),
         ] {
-            for &(declaration, _) in function_declarations.iter().filter(|_| is_reported) {
+            for &declaration in function_declarations.iter().filter(|_| is_reported) {
                 self.error_at_declaration(declaration, code, &[]);
             }
         }
@@ -231,20 +238,25 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        let Some((body_declaration, implementation)) = function_declarations
-            .iter()
-            .find(|it| Some(it.0) == body_declaration)
-            .copied()
-        else {
+        let Some(body_declaration) = body_declaration else {
+            return;
+        };
+        let Some(implementation) = self.function_of_declaration(body_declaration) else {
             return;
         };
         let body_signature = self.sig_of_fn(body_declaration.0, implementation);
-        for &(declaration, function) in &function_declarations {
-            // `getSignaturesOfSymbol`: the implementation is not a signature.
-            if has_body(&self.hir(declaration.0)[function]) {
+        // `getSignaturesOfSymbol`
+        for (i, &declaration) in declarations.iter().enumerate() {
+            let Some(function) = self.function_of_declaration(declaration) else {
+                continue;
+            };
+            if i > 0
+                && has_body_node(&self.hir(declaration.0)[function])
+                && self.immediately_precedes(declarations[i - 1], declaration)
+            {
                 continue;
             }
-            let signature = self.sig_of_fn(declaration.0, function);
+            let signature = self.sig_of_declaration(declaration.0, function);
             if !self.is_implementation_compatible_with_overload(body_signature, signature) {
                 {
                     let (file, decl) = body_declaration;
@@ -307,37 +319,34 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `node.Parent`, precise enough to tell whether two declarations have the same parent.
-    fn parent_of_declaration(&self, (file, decl): Declaration) -> (FileId, Parent, MemberOwner) {
-        let bound = self.bound(file);
-        match (decl, self.files().statement_of_declaration(file, decl)) {
-            (Decl::Member(m), _) => (file, Parent::None, bound.member_owner[m.idx()]),
-            (_, Some(s)) => (file, bound.stmt_parent[s.idx()], MemberOwner::None),
-            _ => (file, Parent::None, MemberOwner::None),
-        }
+    /// `node.Parent`
+    fn parent_of_declaration(&self, (file, decl): Declaration) -> (FileId, Node) {
+        let hir = self.hir(file);
+        (file, hir.parent(hir.node(decl)))
     }
 
     /// `node.Flags&ast.NodeFlagsAmbient != 0`
     fn is_in_ambient_context(&self, (file, decl): Declaration) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        hir.kind == FileKind::Declaration
-            || match decl {
-                // `parseClassElement`: its own `declare` makes a method ambient. Not so a constructor.
-                Decl::Member(m) => {
-                    hir[m].kind == MemberKind::Method && hir[m].flags.contains(Flags::AMBIENT)
-                        || matches!(bound.member_owner[m.idx()], MemberOwner::Class(c)
-                            if hir[c].flags.contains(Flags::AMBIENT))
-                }
-                // An import has no flags of its own.
-                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => {
-                    let scope = bound
-                        .scopes
-                        .get(bound.scope_of_declaration(hir, decl).idx());
-                    matches!(scope.map(|it| it.kind), Some(ScopeKind::Module(m))
-                        if hir[m].flags.contains(Flags::AMBIENT) || !matches!(hir[m].name, ModuleName::Ident(_)))
-                }
-                _ => bound.modifier_flags(hir, decl).contains(Flags::AMBIENT),
-            }
+        let hir = self.hir(file);
+        // FOR SPEED: the parents of the nodes of a declaration file are not needed.
+        hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl))
+    }
+
+    /// `node.Flags&ast.NodeFlagsReparsed != 0`
+    fn is_reparsed(&self, declaration: Declaration) -> bool {
+        let function = self.function_of_declaration(declaration);
+        function.is_some_and(|it| self.hir(declaration.0)[it].flags.contains(Flags::REPARSED))
+    }
+
+    /// `getSignaturesOfSymbol`: "the previous node is of the same kind and immediately precedes the implementation node (i.e. has the
+    /// same parent and ends where the implementation starts)".
+    fn immediately_precedes(&self, previous: Declaration, implementation: Declaration) -> bool {
+        let kind = |(file, decl): Declaration| self.hir(file).kind(self.hir(file).node(decl));
+        let loc = |(file, decl): Declaration| self.files().loc_of_declaration(file, decl);
+        self.parent_of_declaration(implementation) == self.parent_of_declaration(previous)
+            && kind(implementation) == kind(previous)
+            && (loc(implementation).map(|it| it.pos) == loc(previous).map(|it| it.end)
+                || self.is_reparsed(previous))
     }
 
     /// `isOptionalDeclaration`
@@ -346,8 +355,9 @@ impl Checker<'_, '_> {
     }
 
     /// `ast.HasSyntacticModifier(node, ast.ModifierFlagsAbstract)`
-    fn is_abstract_declaration(&self, (file, decl): Declaration) -> bool {
-        matches!(decl, Decl::Member(m) if self.hir(file)[m].flags.contains(Flags::ABSTRACT))
+    fn is_abstract_declaration(&self, declaration: Declaration) -> bool {
+        self.get_combined_modifier_flags(declaration)
+            .contains(Flags::ABSTRACT)
     }
 
     /// `getCanonicalOverload`: "the implementation is the canonical signature only if it is in the same container as the first overload".
@@ -370,41 +380,28 @@ impl Checker<'_, '_> {
     ) -> Flags {
         let (file, decl) = declaration;
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut flags = self.get_combined_modifier_flags(declaration);
         // "children of classes (even ambient classes) should not be marked as ambient or export"
-        if let Decl::Member(m) = decl {
-            return hir[m].flags & flags_to_check & !(Flags::AMBIENT | Flags::EXPORT);
-        }
-        let mut flags = bound.modifier_flags(hir, decl) & !Flags::AMBIENT;
-        if self.is_in_ambient_context(declaration) {
-            let statement = match decl {
-                Decl::Var(mut pat) => loop {
-                    match bound.pat_parent[pat.idx()] {
-                        PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-                        PatParent::Var(d) => break bound.var_stmt[d.idx()].some(),
-                        _ => break None,
-                    }
-                },
-                _ => self.files().statement_of_declaration(file, decl),
-            };
-            // `flags&ast.ModifierFlagsAmbient == 0`: it has no `declare` modifier of its own.
-            let has_declare_keyword = statement.is_some_and(|s| {
-                hir.find_modifier(hir[s].modifiers, Flags::AMBIENT)
-                    .is_some()
-            });
+        let is_child_of_class_or_interface = matches!(decl, Decl::Member(m)
+            if !matches!(bound.member_owner[m.idx()], MemberOwner::TypeLiteral(_)));
+        if !is_child_of_class_or_interface && self.is_in_ambient_context(declaration) {
+            let statement = self.statement_with_modifiers(declaration);
             // `ast.IsModuleBlock(n.Parent) && ast.IsGlobalScopeAugmentation(n.Parent.Parent)`
-            let is_in_global_augmentation = !matches!(decl, Decl::Var(_))
+            let is_in_global_augmentation = !matches!(decl, Decl::Var(_) | Decl::Require(_))
                 && statement.is_some_and(|s| {
                     matches!(bound.stmt_parent[s.idx()], Parent::Module(m) if hir[m].name == ModuleName::Global)
                 });
             // `getEnclosingContainer`, which starts at `n.Parent`: the container the statement is
             // in, not the scope a namespace creates.
-            let container = match statement {
-                Some(s) => bound.stmt_scope[s.idx()],
-                None => bound.scope_of_declaration(hir, decl),
+            let container = match (decl, statement) {
+                // The type literal, which is no export context.
+                (Decl::Member(_), _) => None,
+                (_, Some(s)) => bound.stmt_scope[s.idx()].some(),
+                _ => bound.scope_of_declaration(hir, decl).some(),
             };
-            if container.is_some()
-                && bound.scopes[bound.container_scope(container).idx()].is_export_context
-                && !has_declare_keyword
+            if container
+                .is_some_and(|it| bound.scopes[bound.container_scope(it).idx()].is_export_context)
+                && !flags.contains(Flags::AMBIENT)
                 && !is_in_global_augmentation
             {
                 // "It is nested in an ambient export context, which means it is automatically exported"
@@ -415,36 +412,66 @@ impl Checker<'_, '_> {
         flags & flags_to_check
     }
 
-    /// `subsequentNode`, if it starts at the end of `node` and has the same kind as `node`.
-    fn subsequent_declaration(&self, (file, decl): Declaration) -> Option<Decl> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if let Decl::Member(m) = decl {
-            let next = MemberId(m.0 + 1);
-            return (bound.member_owner.get(next.idx()) == Some(&bound.member_owner[m.idx()])
-                && hir[next].loc.pos == hir[m].loc.end
-                && hir[next].kind == hir[m].kind)
-                .then_some(Decl::Member(next));
-        }
-        let s = self.files().statement_of_declaration(file, decl)?;
-        let list = match bound.stmt_parent[s.idx()] {
-            Parent::File => hir.body,
-            Parent::Module(m) => hir[m].body,
-            Parent::Case(case) => hir[case].body,
-            Parent::FnBody(f) => match hir[f].body {
-                FnBody::Block(list) => list,
-                _ => return None,
+    /// The statement that has the modifiers of `decl`: for a variable, the `VariableStatement`.
+    fn statement_with_modifiers(&self, (file, decl): Declaration) -> Option<StmtId> {
+        let bound = self.bound(file);
+        match decl {
+            Decl::Var(name) | Decl::Require(name) => match root_declaration(bound, name) {
+                PatParent::Var(d) => bound.var_stmt[d.idx()].some(),
+                _ => None,
             },
-            Parent::Stmt(block) => match hir[block].kind {
-                StmtKind::Block(list) => list,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let next = hir.ids(list).skip_while(|&it| it != s).nth(1)?;
-        match hir[next].kind {
-            StmtKind::Fn(f) if hir[next].loc.pos == hir[s].loc.end => Some(Decl::Fn(f)),
+            Decl::Fn(_)
+            | Decl::Class(_)
+            | Decl::Interface(_)
+            | Decl::Alias(_)
+            | Decl::Enum(_)
+            | Decl::Module(_)
+            | Decl::ImportEquals(_) => self.files().statement_of_declaration(file, decl),
             _ => None,
         }
+    }
+
+    /// `GetCombinedModifierFlags`. The flags stored with a declaration lack the modifiers that are
+    /// errors on it, and have `AMBIENT` for `NodeFlagsAmbient`. Here it is the `declare` modifier.
+    fn get_combined_modifier_flags(&self, declaration: Declaration) -> Flags {
+        let (file, decl) = declaration;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (flags, modifiers) = match decl {
+            Decl::Member(m) => (hir[m].flags, hir[m].modifiers),
+            _ => {
+                let statement = self.statement_with_modifiers(declaration);
+                let modifiers = statement.map_or(Span::EMPTY, |s| hir[s].modifiers);
+                (bound.modifier_flags(hir, decl), modifiers)
+            }
+        };
+        (flags - Flags::AMBIENT) | hir.modifiers_to_flags(modifiers)
+    }
+
+    /// `subsequentNode`, if it starts at the end of `node` and has the same kind as `node`.
+    fn subsequent_declaration(&self, (file, decl): Declaration) -> Option<Decl> {
+        let (hir, files) = (self.hir(file), self.files());
+        let node = hir.node(decl);
+        let (mut seen, mut subsequent_node) = (false, Node::NONE);
+        hir.for_each_child(hir.parent(node), &mut |child| {
+            if seen {
+                subsequent_node = child;
+                return true;
+            }
+            seen = child == node;
+            false
+        });
+        let subsequent = match hir.data(subsequent_node) {
+            NodeData::Stmt(s) => match hir[s].kind {
+                StmtKind::Fn(f) => Decl::Fn(f),
+                _ => return None,
+            },
+            NodeData::Member(m) => Decl::Member(m),
+            _ => return None,
+        };
+        (files.loc_of_declaration(file, subsequent)?.pos
+            == files.loc_of_declaration(file, decl)?.end
+            && hir.kind(subsequent_node) == hir.kind(node))
+        .then_some(subsequent)
     }
 
     /// `reportImplementationExpectedError`
@@ -590,11 +617,17 @@ impl Checker<'_, '_> {
             Decl::Module(_) => EXPORT_NAMESPACE | EXPORT_VALUE,
             Decl::Class(_) | Decl::Enum(_) | Decl::EnumMember(_) => EXPORT_TYPE | EXPORT_VALUE,
             Decl::File => EXPORT_TYPE | EXPORT_VALUE | EXPORT_NAMESPACE,
-            Decl::Var(_) | Decl::Fn(_) | Decl::ImportSpec(_) => EXPORT_VALUE,
+            Decl::Var(_) | Decl::Require(_) | Decl::Fn(_) | Decl::ImportSpec(_) => EXPORT_VALUE,
             // "Export assigned entity name expressions act as aliases and should fall through, otherwise they export values."
-            Decl::ExportExpr(_) if !files.flags(symbol).contains(SymFlags::ALIAS) => EXPORT_VALUE,
+            Decl::ExportExpr(_) | Decl::ModuleExports(_) | Decl::ExportsProperty(_)
+                if !files.flags(symbol).contains(SymFlags::ALIAS) =>
+            {
+                EXPORT_VALUE
+            }
             // "The below options all declare an Alias, which is allowed to merge with other values within the importing module."
             Decl::ExportExpr(_)
+            | Decl::ModuleExports(_)
+            | Decl::ExportsProperty(_)
             | Decl::ImportDefault(_)
             | Decl::ImportNamespace(_)
             | Decl::ImportEquals(_)

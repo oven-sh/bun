@@ -194,10 +194,7 @@ impl Checker<'_, '_> {
         if end.is_none() || end == UNREACHABLE || !self.is_reachable(file, end) {
             return;
         }
-        // `NodeFlagsHasExplicitReturn`: the binder skips a `return` that it knows is unreachable.
-        let has_explicit_return = bound
-            .ids(bound.fns[func.idx()].returns)
-            .any(|s| bound.stmt_flow[s.idx()] != UNREACHABLE);
+        let has_explicit_return = self.has_explicit_return(file, func);
         let start = if error_node.is_some() {
             start_of_type(hir, error_node)
         } else {

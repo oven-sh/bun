@@ -964,6 +964,13 @@ where
         }
         *(task.buffer().typed_or_new(&self.slot)).insert(spread, key, value)
     }
+
+    pub fn rewrite(&self, task: &Task<'s>, key: K, value: V, _: Stored) {
+        let spread = spread_hash(&key);
+        if self.published(spread, &key).is_none() {
+            (task.buffer().typed_or_new(&self.slot)).replace(spread, key, value);
+        }
+    }
 }
 
 // ───────────────────────────── `Buffered`: the end of a task, and the barrier ─────────────────────────────

@@ -51,17 +51,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             match &key.data {
                 js_ast::ExprData::EString(str_) => {
                     if !opts.is_static && str_.eql_comptime(b"constructor") {
-                        if (kind == PropertyKind::Get || kind == PropertyKind::Set)
-                            && p.is_tolerant()
-                        {
-                            // `checkAccessorDeclaration` reports the identifier; the string is an
-                            // ordinary name.
-                            if !matches!(
-                                p.lexer.contents.get(key_range.loc.start as usize),
-                                Some(b'"' | b'\'')
-                            ) {
-                                p.lexer.ts_grammar_error(key_range, 1341);
-                            }
+                        if p.is_tolerant() {
+                            // `checkAccessorDeclaration`, `checkMethodDeclaration` and
+                            // `checkGrammarModifiers` report the others.
+                            is_constructor = !matches!(kind, PropertyKind::Get | PropertyKind::Set)
+                                && !opts.is_async
+                                && !opts.is_generator;
                         } else if kind == PropertyKind::Get {
                             p.log().add_range_error(
                                 Some(p.source),
@@ -147,19 +142,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // Skip this property entirely
                 p.pop_and_discard_scope(scope_index);
                 return Ok(None);
-            }
-            if !opts.is_class && func.body.loc.is_empty() {
-                // `checkGrammarMethod`, `checkGrammarAccessor`: '{' expected, at the last character of the member.
-                let end = p.lexer.full_start();
-                p.lexer.ts_grammar_expected(
-                    bun_ast::Range {
-                        loc: bun_ast::Loc {
-                            start: end.start - 1,
-                        },
-                        len: 1,
-                    },
-                    "{",
-                );
             }
         }
 
@@ -295,6 +277,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         initializer
     }
 
+    /// `parseComputedPropertyName`, between the brackets: any expression.
+    /// `checkGrammarComputedPropertyName` reports a comma. `parsePropertyName` restores
+    /// `statementHasAwaitIdentifier`, so `reparseTopLevelAwait` parses no statement again for an
+    /// `await` in a name: at the top level it is read outside the await context.
+    #[cold]
+    #[inline(never)]
+    fn parse_expression_of_computed_name(&mut self) -> crate::CrateResult<Expr> {
+        let old_await = self.fn_or_arrow_data_parse.allow_await;
+        if self.fn_or_arrow_data_parse.is_top_level && old_await == AwaitOrYield::AllowExpr {
+            self.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
+        }
+        let expression = self.parse_expr(Level::Lowest);
+        self.fn_or_arrow_data_parse.allow_await = old_await;
+        expression
+    }
+
     pub(crate) fn parse_property(
         &mut self,
         kind_: PropertyKind,
@@ -307,15 +305,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         let mut kind = kind_;
         let mut errors = errors_;
-        // Tolerant mode: modifiers consumed before a member of an object literal.
-        // `lone_object_modifier` is the only one, if `checkGrammarMethod` reports it (1184).
-        let mut has_object_modifier = false;
-        let mut lone_object_modifier: Option<bun_ast::Range> = None;
-        // Tolerant mode: the `async` modifiers consumed before a member of an object literal.
-        let mut object_async_modifiers: smallvec::SmallVec<[bun_ast::Range; 1]> =
-            smallvec::SmallVec::new();
+        // `Lexer::escaped_word` of the word consumed last, until it is known to be a name.
+        let mut escaped_word: Option<bun_ast::Range> = None;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
+            p.lexer.keyword_was_taken(escaped_word.take());
             // Every match arm below assigns `key` (or `continue 'restart` /
             // `return`) before any read.
             let mut key: Expr;
@@ -349,19 +343,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.lexer.next()?;
                 }
                 T::TPrivateIdentifier => {
-                    // `parsePropertyNameWorker` accepts a private name regardless of the member's
-                    // decorators; `checkGrammarModifiers` reports the decorators.
-                    if !opts.is_class
-                        || (opts.ts_decorators.len() > 0
-                            && !p.options.features.standard_decorators
-                            && !p.is_tolerant())
+                    // `parsePropertyNameWorker` accepts a private name wherever it is called.
+                    // `checkGrammarObjectLiteralExpression` reports the name, and
+                    // `checkGrammarModifiers` the decorators.
+                    if !p.is_tolerant()
+                        && (!opts.is_class
+                            || (opts.ts_decorators.len() > 0
+                                && !p.options.features.standard_decorators))
                     {
-                        if p.is_tolerant() {
-                            // In an object literal: `checkGrammarObjectLiteralExpression`
-                            p.lexer.ts_grammar_error(p.lexer.range(), 18016);
-                        } else {
-                            p.lexer.expected(T::TIdentifier)?;
-                        }
+                        p.lexer.expected(T::TIdentifier)?;
                     }
 
                     let ident = p.lexer.identifier;
@@ -386,28 +376,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
                     p.lexer.next()?;
                     let was_identifier = p.lexer.token == T::TIdentifier;
-                    let mut expr = p.parse_expr(Level::Comma)?;
-
-                    if p.lexer.token == T::TComma
-                        && p.is_tolerant()
-                        // `nextIsUnambiguouslyIndexSignature`: `[id,` in a class starts an index signature.
-                        && !(opts.is_class
-                            && was_identifier
-                            && matches!(expr.data, js_ast::ExprData::EIdentifier(_)))
-                    {
-                        // `parseComputedPropertyName` accepts any expression;
-                        // `checkGrammarComputedPropertyName` reports the comma. In a class other
-                        // checks of the member run first.
-                        let start = p.real_loc(expr.loc);
-                        p.parse_suffix(&mut expr, Level::Lowest, None, js_ast::expr::EFlags::None)?;
-                        if !opts.is_class {
-                            p.lexer.ts_grammar_error(p.lexer.range_from(start), 1171);
-                        }
-                    }
+                    let expr = if p.is_tolerant() {
+                        p.parse_expression_of_computed_name()?
+                    } else {
+                        p.parse_expr(Level::Comma)?
+                    };
 
                     if Self::IS_TYPESCRIPT_ENABLED {
                         // Handle index signatures
-                        if p.lexer.token == T::TColon && was_identifier && opts.is_class {
+                        if p.lexer.token == T::TColon
+                            && was_identifier
+                            && opts.is_class
+                            && !p.is_tolerant()
+                        {
                             match expr.data {
                                 js_ast::ExprData::EIdentifier(_) => {
                                     p.lexer.next()?;
@@ -447,7 +428,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 _ => 'name: {
                     let name = p.lexer.identifier;
-                    let raw = p.lexer.raw();
+                    // `GetIdentifierToken`: a keyword also if it is written with an escape.
+                    let raw = if p.is_tolerant() { name } else { p.lexer.raw() };
                     let name_range = p.lexer.range();
 
                     if !p.lexer.is_identifier_or_keyword() {
@@ -469,6 +451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         p.lexer.expect(T::TIdentifier)?;
                     }
 
+                    escaped_word = p.lexer.escaped_word();
                     p.lexer.next()?;
 
                     // Support contextual keywords
@@ -506,23 +489,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             | PropertyModifierKeyword::PAsync
                                     )
                                     && PropertyModifierKeyword::find(raw) == Some(keyword)
-                                    && (keyword == PropertyModifierKeyword::PStatic
-                                        || !p.lexer.has_newline_before)
+                                    // `tryParseModifier`: a second `static` is a name.
+                                    && match keyword {
+                                        PropertyModifierKeyword::PStatic => !opts.is_static,
+                                        _ => !p.lexer.has_newline_before,
+                                    }
                                 {
-                                    // `checkGrammarModifiers` has separate errors for these three
-                                    // on a method.
-                                    let is_plain = !matches!(
-                                        keyword,
-                                        PropertyModifierKeyword::PReadonly
-                                            | PropertyModifierKeyword::PAbstract
-                                            | PropertyModifierKeyword::PAccessor
-                                    );
-                                    lone_object_modifier =
-                                        (is_plain && !has_object_modifier && !opts.is_async)
-                                            .then_some(name_range);
-                                    has_object_modifier = true;
-                                    // `checkGrammarObjectLiteralExpression`
-                                    p.lexer.ts_grammar_error(name_range, 1042);
+                                    opts.is_static |= keyword == PropertyModifierKeyword::PStatic;
+                                    p.push_member_modifier(keyword, name_range.loc);
                                     continue 'restart;
                                 }
                                 match keyword {
@@ -530,13 +504,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                         // `parseClassElement` and `parseObjectLiteralElement`
                                         // consume every modifier first, including "async", and
                                         // then check for "get". The accessor is not parsed in an
-                                        // await context, and the "async" is reported (1042): that
-                                        // of a class member when it is lowered.
+                                        // await context. The checker reports the "async" (1042).
                                         if (!opts.is_async || p.is_tolerant())
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PGet)
                                         {
-                                            p.async_cannot_be_used_here(&object_async_modifiers);
                                             opts.is_async = false;
                                             kind = PropertyKind::Get;
                                             errors = None;
@@ -549,7 +521,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PSet)
                                         {
-                                            p.async_cannot_be_used_here(&object_async_modifiers);
                                             opts.is_async = false;
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
                                             kind = PropertyKind::Set;
@@ -565,16 +536,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                                 == Some(PropertyModifierKeyword::PAsync)
                                             && !p.lexer.has_newline_before
                                         {
-                                            if opts.is_async && !opts.is_class {
-                                                // `checkGrammarModifiers`. Those of a class member
-                                                // are checked when it is lowered.
-                                                p.lexer.ts_grammar_error(name_range, 1030);
-                                            }
                                             opts.is_async = true;
-                                            p.push_member_modifier(opts, keyword, name_range.loc);
-                                            if !opts.is_class && p.is_tolerant() {
-                                                object_async_modifiers.push(name_range);
-                                            }
+                                            p.push_member_modifier(keyword, name_range.loc);
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 
@@ -590,7 +553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                                 == Some(PropertyModifierKeyword::PStatic)
                                         {
                                             opts.is_static = true;
-                                            p.push_member_modifier(opts, keyword, name_range.loc);
+                                            p.push_member_modifier(keyword, name_range.loc);
                                             kind = PropertyKind::Normal;
                                             errors = None;
                                             continue 'restart;
@@ -604,7 +567,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             && !p.lexer.has_newline_before
                                             && raw == b"declare"
                                         {
-                                            p.push_member_modifier(opts, keyword, name_range.loc);
+                                            p.lexer.keyword_was_taken(escaped_word.take());
+                                            p.push_member_modifier(keyword, name_range.loc);
                                             let scope_index = p.scopes_in_order.len();
                                             if let Some(_prop) =
                                                 p.parse_property(kind, opts, None)?
@@ -636,7 +600,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             && raw == b"abstract"
                                         {
                                             opts.is_ts_abstract = true;
-                                            p.push_member_modifier(opts, keyword, name_range.loc);
+                                            p.lexer.keyword_was_taken(escaped_word.take());
+                                            p.push_member_modifier(keyword, name_range.loc);
                                             let scope_index = p.scopes_in_order.len();
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
@@ -667,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {
-                                            p.push_member_modifier(opts, keyword, name_range.loc);
+                                            p.push_member_modifier(keyword, name_range.loc);
                                             kind = PropertyKind::AutoAccessor;
                                             errors = None;
                                             continue 'restart;
@@ -685,7 +650,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             && PropertyModifierKeyword::find(raw) == Some(keyword)
                                             && !(p.lexer.has_newline_before && p.is_tolerant())
                                         {
-                                            p.push_member_modifier(opts, keyword, name_range.loc);
+                                            p.push_member_modifier(keyword, name_range.loc);
                                             errors = None;
                                             continue 'restart;
                                         }
@@ -695,23 +660,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 && Self::IS_TYPESCRIPT_ENABLED
                                 && p.is_uncommon_modifier(raw, opts.is_class)
                             {
-                                if !opts.is_class {
-                                    lone_object_modifier = (raw == b"export"
-                                        && !has_object_modifier
-                                        && !opts.is_async)
-                                        .then_some(name_range);
-                                    has_object_modifier = true;
-                                    // `checkGrammarObjectLiteralExpression`
-                                    p.lexer.ts_grammar_error(name_range, 1042);
-                                } else {
-                                    p.push_uncommon_member_modifier(raw, name_range.loc);
-                                }
+                                p.push_uncommon_member_modifier(raw, name_range.loc);
                                 continue 'restart;
                             }
                         } else if opts.is_class
                             && p.lexer.token == T::TOpenBrace
                             && name == b"static"
                         {
+                            p.lexer.keyword_was_taken(escaped_word.take());
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -754,16 +710,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 ..Default::default()
                             }));
                         } else if matches!(p.lexer.token, T::TOpenBrace | T::TDotDotDot)
-                            && opts.is_class
                             && p.is_tolerant()
                             && !p.lexer.is_log_disabled
-                            && p.is_modifier_without_name(raw, opts.is_static)
+                            && p.is_modifier_without_name(raw, opts)
                         {
+                            p.lexer.keyword_was_taken(escaped_word.take());
                             opts.is_static = opts.is_static || raw == b"static";
-                            is_declaration_missing = true;
-                            key = p.missing_declaration_after_modifiers();
+                            is_declaration_missing = opts.is_class;
+                            key = if is_declaration_missing {
+                                p.missing_declaration_after_modifiers()
+                            } else {
+                                p.missing_property_name()?
+                            };
                             break 'name;
                         }
+                    }
+
+                    // The word is a name, which `tryParseConstructorDeclaration` takes as a keyword.
+                    if let Some(word) = escaped_word.take()
+                        && opts.is_class
+                        && name == b"constructor"
+                        && !opts.is_generator
+                        && matches!(kind, PropertyKind::Normal | PropertyKind::AutoAccessor)
+                    {
+                        p.lexer.keyword_was_taken(Some(word));
                     }
 
                     // Handle invalid identifiers in property names
@@ -846,7 +816,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
 
                     if is_shorthand_property {
-                        p.async_cannot_be_used_here(&object_async_modifiers);
                         let ref_ = p.store_name_in_ref(name);
                         let value = p.new_expr(E::Identifier::init(ref_), key.loc);
 
@@ -1097,12 +1066,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // `parseObjectLiteralElement`: a "<" after the name makes a method. `parse_fn` reports the missing "(".
                 || (has_type_parameters && p.is_tolerant())
             {
-                if let Some(modifier) = lone_object_modifier
-                    && kind == PropertyKind::Normal
-                {
-                    // `checkGrammarMethod`
-                    p.lexer.ts_grammar_error(modifier, 1184);
-                }
                 return Self::parse_method_expression(
                     p,
                     kind,
@@ -1115,7 +1078,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
 
             // Parse an object key/value pair
-            p.async_cannot_be_used_here(&object_async_modifiers);
             p.lexer.expect(T::TColon)?;
             let mut prop_flags = flags::PropertySet::empty();
             if is_computed {
@@ -1191,7 +1153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn can_follow_default_keyword(&mut self) -> bool {
         let expected = match self.lexer.token {
             T::TClass | T::TFunction | T::TAt => return true,
-            T::TIdentifier => match self.lexer.raw() {
+            T::TIdentifier => match self.lexer.identifier {
                 b"interface" => return true,
                 b"abstract" => T::TClass,
                 b"async" => T::TFunction,
@@ -1208,25 +1170,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         found
     }
 
-    /// `checkGrammarObjectLiteralExpression`: `async` is allowed on a method only. `modifiers`:
-    /// those of a member of an object literal that is not a method.
-    #[inline]
-    fn async_cannot_be_used_here(&mut self, modifiers: &[bun_ast::Range]) {
-        for &modifier in modifiers {
-            self.lexer.ts_grammar_error(modifier, 1042);
-        }
-    }
-
-    /// Whether `word` is a modifier of a class member before the `{` or `...` the lexer is at. `canFollowModifier` accepts both,
+    /// Whether `word` is a modifier of a member before the `{` or `...` the lexer is at. `canFollowModifier` accepts both,
     /// and neither starts a name.
     #[cold]
     #[inline(never)]
-    fn is_modifier_without_name(&self, word: &[u8], has_static: bool) -> bool {
+    fn is_modifier_without_name(&self, word: &[u8], opts: &PropertyOpts) -> bool {
         match word {
             // `tryParseModifier`: a second `static` is a name.
-            b"static" => !has_static,
+            b"static" => !opts.is_static,
             // `canFollowExportModifier`
             b"export" => self.lexer.token != T::TOpenBrace,
+            // Without `permitConstAsModifier`, only before `enum`.
+            b"const" if !opts.is_class => false,
             b"abstract" | b"accessor" | b"async" | b"const" | b"declare" | b"in" | b"out"
             | b"override" | b"private" | b"protected" | b"public" | b"readonly" => {
                 !self.lexer.has_newline_before

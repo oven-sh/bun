@@ -10,7 +10,8 @@ use bun_core::strings;
 use bun_paths::fs::Path;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, windows_volume_name_len};
+use bun_paths::resolve_path::{dirname, slashes_to_posix_in_place, windows_volume_name_len};
+use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -96,7 +97,7 @@ pub trait Host: Sync {
         let (mut directories, mut files): (Vec<Vec<u8>>, Vec<Vec<u8>>) = self
             .list_dir(path)
             .into_iter()
-            .partition(|name| self.is_dir(&join(path, name)));
+            .partition(|name| self.is_dir(&inside(path, name)));
         files.sort();
         directories.sort();
         (files, directories)
@@ -125,9 +126,12 @@ pub trait Host: Sync {
         atoms: &crate::atom::Interner<'s>,
         options: &Options,
     ) -> crate::hir::File<'s>;
-    /// `packagejson.Parse`. `None`: `text` is not an object in JSON, and typescript-go goes on as
-    /// if the file had no fields. What the parser leaves in `arena`, which belongs to the calling
-    /// thread, is garbage.
+    /// `packagejson.Parse`: an object with the fields of `Fields` that `text` has, and no others.
+    /// `None`: an error, after which typescript-go goes on as if the file had no fields.
+    /// An `Expected[T]` that is `Valid` is its `Value`. One that is not is a value of its
+    /// `ActualJSONType` that is no `T`: for a `map[string]string` and an object, `Value` with a
+    /// name repeated at the end. One that is `Null` has a `null` too, behind its other value.
+    /// What the parser leaves in `arena`, which belongs to the calling thread, is garbage.
     fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
@@ -300,6 +304,14 @@ impl Options {
         (self.find_by_path(&self.referenced_sources, |it| &it.0, path)).is_some()
     }
 
+    /// `GetProjectReferenceFromOutputDts(path).Resolved.CompilerOptions()`
+    pub fn project_reference_from_output_dts(&self, path: &[u8]) -> Option<&Options> {
+        let outputs = &self.referenced_output_dts;
+        let index = self.find_by_path(outputs, |it| &it.0, path)?;
+        let project = self.referenced_sources[outputs[index].1 as usize].3;
+        Some(&self.referenced_options[project as usize])
+    }
+
     /// The index of the file with this name in a table that is sorted by `tspath.Path`.
     pub(crate) fn find_by_path<T>(
         &self,
@@ -315,18 +327,6 @@ impl Options {
             return find(name);
         }
         find(&to_path_in(name, false, &mut path_buffer_pool::get()[..]))
-    }
-
-    /// `GetSourceOfProjectReferenceIfOutputIncluded`: the source that the declaration file at `path` is read in place of, else `path`.
-    pub fn source_of_project_reference_if_output_included<'a>(
-        &'a self,
-        path: &'a [u8],
-    ) -> &'a [u8] {
-        let outputs = &self.referenced_output_dts;
-        match self.find_by_path(outputs, |it| &it.0, path) {
-            Some(index) => &self.referenced_sources[outputs[index].1 as usize].1,
-            None => path,
-        }
     }
 }
 
@@ -495,7 +495,7 @@ pub struct Options {
     /// `tsc -b` reads the declaration file in place of the source (`getParseFileRedirect`).
     /// `OutputDts` is empty if no declaration file is emitted for the file.
     pub referenced_sources: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, u32)>,
-    /// `UseCaseSensitiveFileNames`, for the paths in these tables.
+    /// `UseCaseSensitiveFileNames` of the host that the project was read from.
     pub use_case_sensitive_file_names: bool,
     /// `outputDtsToProjectReference`, sorted: the `tspath.Path` of `OutputDts` and its index in
     /// `referenced_sources`.
@@ -582,6 +582,9 @@ pub struct Options {
     pub is_incremental: bool,
     /// `Build`: the program belongs to a `tsc -b` run. Set for a project with `references` and for every project it references.
     pub is_build: bool,
+    /// `GetBuildInfoFileName`, set together with `is_build`. Any other program has `noEmit`, and
+    /// nothing asks.
+    pub build_info_file_name: Vec<u8>,
     /// `noErrorTruncation`
     pub no_error_truncation: bool,
     /// `emitDecoratorMetadata`
@@ -615,10 +618,37 @@ impl Options {
             .collect()
     }
 
+    /// `importSyntaxAffectsModuleResolution`
+    pub fn import_syntax_affects_module_resolution(&self) -> bool {
+        self.resolves_like_node
+            || self.resolve_package_json_exports
+            || self.resolve_package_json_imports
+    }
+
+    /// `getModeForUsageLocation` for a plain `import` in a file whose emit format is
+    /// `implied_format`.
+    pub fn default_mode(&self, implied_format: ResolutionMode) -> ResolutionMode {
+        if self.import_syntax_affects_module_resolution() {
+            self.emit_syntax_for_import(implied_format)
+        } else {
+            ResolutionMode::None
+        }
+    }
+
+    /// `getModeForUsageLocation` for the argument of `import()`, in a file whose plain `import`s
+    /// have `default_mode`.
+    pub fn import_call_mode(&self, default_mode: ResolutionMode) -> ResolutionMode {
+        if self.import_syntax_affects_module_resolution() {
+            self.emit_syntax_for_import_call(default_mode)
+        } else {
+            ResolutionMode::None
+        }
+    }
+
     /// `getEmitSyntaxForUsageLocationWorker` for a plain `import` in a file whose emit format is
     /// `implied_format`: if the file name and its package do not determine the format, `module`
     /// does.
-    pub fn default_mode(&self, implied_format: ResolutionMode) -> ResolutionMode {
+    pub fn emit_syntax_for_import(&self, implied_format: ResolutionMode) -> ResolutionMode {
         match implied_format {
             ResolutionMode::None => match self.module {
                 ModuleKind::CommonJs => ResolutionMode::Require,
@@ -633,13 +663,13 @@ impl Options {
         }
     }
 
-    /// The same for the argument of `import()`, in a file whose plain `import`s have
-    /// `default_mode`. `ShouldTransformImportCall`: the call is preserved unless the file is
-    /// emitted in a module format older than ECMAScript modules.
-    pub fn import_call_mode(&self, default_mode: ResolutionMode) -> ResolutionMode {
+    /// The same for the argument of `import()`, in a file whose plain `import`s are emitted as
+    /// `of_import`. `ShouldTransformImportCall`: the call is preserved unless the file is emitted
+    /// in a module format older than ECMAScript modules.
+    pub fn emit_syntax_for_import_call(&self, of_import: ResolutionMode) -> ResolutionMode {
         if self.module.is_node()
             || self.module == ModuleKind::Preserve
-            || default_mode == ResolutionMode::Import
+            || of_import == ResolutionMode::Import
         {
             ResolutionMode::Import
         } else {
@@ -823,11 +853,13 @@ impl Options {
         options.jsx = *JSX_EMITS
             .get_ascii_case_insensitive(one_of(b"jsx"))
             .unwrap_or(&JsxEmit::None);
-        options.jsx_import_source = word(b"jsxImportSource").unwrap_or(b"react").to_vec();
+        // `GetJSXImplicitImportBase`, of a file without pragmas.
+        let import_source = word(b"jsxImportSource").filter(|source| !source.is_empty());
+        options.jsx_import_source = import_source.unwrap_or(b"react").to_vec();
         let runtime: &[u8] = match options.jsx {
             JsxEmit::ReactJsxDev => b"/jsx-dev-runtime",
             JsxEmit::ReactJsx => b"/jsx-runtime",
-            _ if compiler.get(b"jsxImportSource").is_some() => b"/jsx-runtime",
+            _ if import_source.is_some() => b"/jsx-runtime",
             _ => b"",
         };
         if !runtime.is_empty() {
@@ -862,14 +894,34 @@ impl Options {
     }
 }
 
-/// `GetLibFileName`: the `N` of the `lib.N.d.ts` that a name in `lib` or in `/// <reference lib>`
-/// refers to.
+/// The library that a name in `lib` refers to. `LIB_FALLBACKS` has the file of one that has moved.
 pub fn lib_name(name: &[u8]) -> Vec<u8> {
     match name.to_ascii_lowercase().as_slice() {
         b"es6" => b"es2015".to_vec(),
         b"es7" => b"es2016".to_vec(),
         other => other.to_vec(),
     }
+}
+
+/// `LibMap.Get`: the `N` of the `lib.N.d.ts` that is the value of `key`.
+fn lib_map_get(key: &[u8]) -> Option<&[u8]> {
+    let value: &[u8] = match key {
+        b"es6" => b"es2015",
+        b"es7" => b"es2016",
+        _ => LIB_FALLBACKS.get(key).map_or(key, |it| *it),
+    };
+    LIBS.contains(key).then_some(value)
+}
+
+/// `GetLibFileName`: the `N` of the `lib.N.d.ts` that a name in `/// <reference lib>` refers to.
+/// `None`: it is neither a key of `LibMap` nor one of its values, which are the file names.
+pub fn get_lib_file_name(name: &[u8]) -> Option<Vec<u8>> {
+    let name = to_file_name_lower_case(name);
+    // `LibFilesSet`
+    let file = (name.strip_prefix(b"lib.")).and_then(|it| it.strip_suffix(b".d.ts"));
+    file.filter(|&lib| lib_map_get(lib) == Some(lib))
+        .or_else(|| lib_map_get(&name))
+        .map(<[u8]>::to_vec)
 }
 
 bun_core::comptime_string_map! {
@@ -1012,24 +1064,133 @@ pub(crate) fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
 /// `ForEachAncestorDirectory`: `dir`, then each of its ancestor directories up to the root.
 pub fn ancestors(dir: &[u8]) -> impl Iterator<Item = &[u8]> {
     std::iter::successors(Some(dir), |&dir| {
-        (dir != b"/" && !dir.is_empty()).then(|| dirname::<Posix>(dir))
+        (get_root_length(dir) < dir.len()).then(|| dirname::<Posix>(dir))
     })
 }
 
-/// The path of `name` in `dir`. Only the root directory ends in `/`.
+/// The path of `name` in `dir`: `CombinePaths` for a `name` without a root.
 pub fn inside(dir: &[u8], name: &[u8]) -> Vec<u8> {
-    [if dir == b"/" { b"" } else { dir }, b"/", name].concat()
+    let separator: &[u8] = if dir.ends_with(b"/") { b"" } else { b"/" };
+    [dir, separator, name].concat()
+}
+
+/// `NormalizeSlashes`
+fn normalize_slashes(path: &[u8]) -> Cow<'_, [u8]> {
+    if !strings::contains_char(path, b'\\') {
+        return Cow::Borrowed(path);
+    }
+    let mut normalized = path.to_vec();
+    slashes_to_posix_in_place(&mut normalized);
+    Cow::Owned(normalized)
+}
+
+/// `GetEncodedRootLength`
+fn get_encoded_root_length(path: &[u8]) -> isize {
+    let is_volume = |c: &u8| c.is_ascii_alphabetic();
+    match path {
+        [] => return 0,
+        // UNC: `//server` or `//server/`
+        [ch0 @ (b'/' | b'\\'), ch1, rest @ ..] if ch0 == ch1 => {
+            let server = strings::index_of_char_usize(rest, *ch0);
+            return server.map_or(path.len(), |end| end + 3) as isize;
+        }
+        // POSIX
+        [b'/' | b'\\', ..] => return 1,
+        // DOS: `c:`, `c:/` or `c:\`, but not `c:d`
+        [volume, b':'] if is_volume(volume) => return 2,
+        [volume, b':', b'/' | b'\\', ..] if is_volume(volume) => return 3,
+        // Untitled
+        [b'^', b'/', ..] => return 2,
+        _ => {}
+    }
+    // URL
+    let Some(scheme_end) = strings::index_of(path, b"://") else {
+        return 0;
+    };
+    let authority_start = scheme_end + b"://".len();
+    let Some(authority_length) = strings::index_of_char_usize(&path[authority_start..], b'/')
+    else {
+        return !(path.len() as isize);
+    };
+    let authority_end = authority_start + authority_length;
+    // A local `file` URL includes the DOS volume: `file:///c:/`, `file://localhost/c%3a/`.
+    if &path[..scheme_end] == b"file"
+        && matches!(&path[authority_start..authority_end], b"" | b"localhost")
+        && path.get(authority_end + 1).is_some_and(is_volume)
+    {
+        // `getFileUrlVolumeSeparatorEnd`
+        let volume_separator_end = match &path[authority_end + 2..] {
+            [b':', ..] => Some(authority_end + 3),
+            [b'%', b'3', b'a' | b'A', ..] => Some(authority_end + 5),
+            _ => None,
+        };
+        match volume_separator_end.map(|end| (end, path.get(end))) {
+            Some((end, None)) => return !(end as isize),
+            Some((end, Some(b'/'))) => return !(end as isize + 1),
+            _ => {}
+        }
+    }
+    !(authority_end as isize + 1)
+}
+
+/// `GetRootLength`
+pub fn get_root_length(path: &[u8]) -> usize {
+    let encoded = get_encoded_root_length(path);
+    (if encoded < 0 { !encoded } else { encoded }) as usize
+}
+
+/// `GetPathComponents(path, "")`, after `normalize_slashes`: the root, then the names.
+fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
+    let (root, rest) = path.split_at(get_root_length(path));
+    let mut components: SmallVec<[&[u8]; 8]> = smallvec![root];
+    components.extend(strings::split(rest, b"/"));
+    if components.len() > 1 && components.last().is_some_and(|last| last.is_empty()) {
+        components.pop();
+    }
+    components
+}
+
+/// What the file system takes `path` for. It follows `.`, `..` and an empty name, which no listing
+/// of a directory has as an entry. `None`: `path` is absolute and normalized.
+fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
+    let names = &path[get_root_length(path)..];
+    let is_normalized = path.starts_with(b"/")
+        && (names.is_empty()
+            || !strings::split(names, b"/").any(|it| matches!(it, b"" | b"." | b".."))
+            // The root of a URL has a `/` before it in a path of the checker's.
+            || get_encoded_root_length(&path[1..]) < 0);
+    (!is_normalized).then(|| join(b"/", path))
+}
+
+/// `NormalizePath` of an absolute path, which keeps a separator at the end.
+fn normalize_path(path: Vec<u8>) -> Vec<u8> {
+    let Some(mut normalized) = normalized_for_lookup(strings::without_trailing_slash(&path)) else {
+        return path;
+    };
+    if path.ends_with(b"/") && !normalized.ends_with(b"/") {
+        normalized.push(b'/');
+    }
+    normalized
+}
+
+/// The length of the `//server` that `path` begins with. 0: it begins with no such root.
+fn unc_root_length(path: &[u8]) -> usize {
+    match path {
+        [b'/' | b'\\', b'/' | b'\\', after @ ..] => {
+            2 + strings::index_of_any(after, b"/\\").unwrap_or(after.len())
+        }
+        _ => 0,
+    }
 }
 
 /// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute and is copied as is: one
 /// pass over `rest`, one allocation.
 /// (`bun_paths::join_abs_string_buf` copies the whole path three times before it reaches a `Vec`.)
 pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
-    // `GetEncodedRootLength`: on Windows `C:\a` is an absolute path too. It is represented as
-    // `/C:/a` here.
-    let has_drive = cfg!(windows)
-        && matches!(rest, [drive, b':'] | [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic());
-    let is_rooted = has_drive || matches!(rest.first(), Some(b'/' | b'\\'));
+    // `GetEncodedRootLength`: `C:\a` and `^/a` are absolute paths too, on every system. They are
+    // represented as `/C:/a` and `/^/a` here.
+    let has_drive = matches!(rest, [drive, b':'] | [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic());
+    let is_rooted = is_rooted_disk_path(rest);
     let dir = if is_rooted || dir == b"/" { b"" } else { dir };
     let mut out = Vec::with_capacity(dir.len() + rest.len() + 1);
     out.extend_from_slice(dir);
@@ -1049,6 +1210,16 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
             }
             (root, rest) = (out.len(), after);
         }
+    } else if !cfg!(windows) {
+        // Elsewhere `//server/a` is what it is for typescript-go, which has `//server/` for a root
+        // on every system.
+        let server = unc_root_length(rest);
+        if server > 0 {
+            out.extend_from_slice(b"//");
+            out.extend_from_slice(&rest[2..server]);
+            rest = &rest[server..];
+        }
+        root = unc_root_length(&out);
     }
     for part in strings::split_any(rest, b"/\\") {
         match part {
@@ -1068,6 +1239,47 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
         out.push(b'/');
     }
     out
+}
+
+/// `HasTrailingDirectorySeparator`
+fn has_trailing_directory_separator(path: &[u8]) -> bool {
+    matches!(path.last(), Some(b'/' | b'\\'))
+}
+
+/// `CombinePaths`
+pub(crate) fn combine_paths(first_path: &[u8], trailing_path: &[u8]) -> Vec<u8> {
+    let trailing_path = normalize_slashes(trailing_path);
+    if first_path.is_empty() || get_root_length(&trailing_path) != 0 {
+        return trailing_path.into_owned();
+    }
+    let mut result = normalize_slashes(first_path).into_owned();
+    if !trailing_path.is_empty() {
+        if !result.ends_with(b"/") {
+            result.push(b'/');
+        }
+        result.extend_from_slice(&trailing_path);
+    }
+    result
+}
+
+/// `ResolvePath`, which is `NormalizePath(CombinePaths(dir, rest))`: `join`, but a separator at the
+/// end of `rest` is kept.
+fn resolve_path(dir: &[u8], rest: &[u8]) -> Vec<u8> {
+    let mut path = join(dir, rest);
+    if has_trailing_directory_separator(rest) && !path.ends_with(b"/") {
+        path.push(b'/');
+    }
+    path
+}
+
+/// `normalizePathForCJSResolution`: a name that ends in dots can only be a directory.
+fn normalize_path_for_cjs_resolution(containing_directory: &[u8], module_name: &[u8]) -> Vec<u8> {
+    let mut candidate = resolve_path(containing_directory, module_name);
+    let last_part = strings::last_index_of_any(module_name, b"/\\").map_or(0, |at| at + 1);
+    if matches!(&module_name[last_part..], b"." | b"..") && !candidate.ends_with(b"/") {
+        candidate.push(b'/');
+    }
+    candidate
 }
 
 struct Package<'h> {
@@ -1128,6 +1340,9 @@ struct Outcome {
     package_id: RefCell<Option<(Vec<u8>, Vec<u8>)>>,
     /// `resolved.originalPath != ""`
     has_original_path: Cell<bool>,
+    /// Targets of `imports` name one another without an end that the stack has room for.
+    /// typescript-go dies of that. Here the search is over, and has found nothing.
+    is_out_of_stack: Cell<bool>,
 }
 
 /// `resolutionState`: the parameters of a lookup.
@@ -1149,9 +1364,6 @@ struct Look<'a> {
     json: bool,
     /// `isConfigLookup`
     is_config_lookup: bool,
-    /// Number of `imports` targets naming a module that have been followed so far. They can form a
-    /// cycle.
-    depth: u8,
     /// `candidateEndingIsFromConfig`: the extension of the candidate comes from `paths`, `typesVersions` or a `package.json` field, not
     /// from the specifier.
     ending_from_config: bool,
@@ -1159,6 +1371,8 @@ struct Look<'a> {
     /// Not `NodeResolutionFeaturesExports`: the `exports` of a package in `node_modules` are
     /// ignored.
     ignores_exports: bool,
+    /// `resolvePackageDirectoryOnly`
+    resolve_package_directory_only: bool,
 }
 
 impl Look<'_> {
@@ -1243,13 +1457,6 @@ impl Found {
     }
 }
 
-/// `HasTrailingDirectorySeparator(candidate)`: the candidate can only be a directory.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum EndsInSlash {
-    No,
-    Yes,
-}
-
 /// `considerPackageJson`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum ConsiderPackageJson {
@@ -1307,8 +1514,6 @@ pub struct ResolvedModule<'h> {
     /// `file_name` replaces a declaration file, and `Extension` is that of the declaration file.
     pub is_project_reference_redirect: bool,
     pub package_id: Option<PackageId<'h>>,
-    /// `PackageId.Name`, unless it is empty.
-    pub package_name: Option<&'h [u8]>,
 }
 
 pub struct Resolver<'h> {
@@ -1363,12 +1568,35 @@ fn guess_directory_link(real: &[u8], link: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> 
     is_directory.then(|| (a.join(&b"/"[..]), b.join(&b"/"[..])))
 }
 
+/// `GetRelativePathFromDirectory` for two absolute, normalized paths.
+pub(crate) fn get_relative_path_from_directory(
+    from_directory: &[u8],
+    to: &[u8],
+    is_case_sensitive: bool,
+) -> Vec<u8> {
+    // `GetPathComponentsRelativeTo`
+    let from_components = get_path_components(from_directory);
+    let to_components = get_path_components(to);
+    let start = (from_components.iter().zip(&to_components).enumerate())
+        .take_while(|&(at, (from, to))| {
+            from == to
+                || (at == 0 || !is_case_sensitive) && equate_string_case_insensitive(from, to)
+        })
+        .count();
+    if start == 0 {
+        return to.to_vec();
+    }
+    let up = std::iter::repeat_n(&b".."[..], from_components.len() - start);
+    let names: Vec<&[u8]> = up.chain(to_components[start..].iter().copied()).collect();
+    names.join(&b"/"[..])
+}
+
 /// `GetOutputDeclarationFileNameWorker` for a file that a declaration file is emitted for.
-/// `output`: `declarationDir` or `outDir`, and `CommonSourceDirectory`, both without a trailing
-/// `/`. `None`: next to the source.
+/// `output`: `declarationDir` or `outDir`, `CommonSourceDirectory`, which need not contain the
+/// file, and `UseCaseSensitiveFileNames`. `None`: next to the source.
 pub fn output_declaration_file_name(
     source: &[u8],
-    output: Option<(&[u8], &[u8])>,
+    output: Option<(&[u8], &[u8], bool)>,
 ) -> Option<Vec<u8>> {
     if is_declaration_file_name(source) {
         return None;
@@ -1383,11 +1611,13 @@ pub fn output_declaration_file_name(
     let stem = remove_file_extension(source);
     match output {
         None => Some([stem, extension].concat()),
-        Some((output_dir, root_dir)) => {
-            let relative = stem
-                .strip_prefix(root_dir)
-                .filter(|it| it.starts_with(b"/"))?;
-            Some([output_dir, relative, extension].concat())
+        // `getOutputPathWithoutChangingExtension`
+        Some((output_dir, common_source_directory, is_case_sensitive)) => {
+            let relative =
+                get_relative_path_from_directory(common_source_directory, stem, is_case_sensitive);
+            let mut path = join(output_dir, &relative);
+            path.extend_from_slice(extension);
+            Some(path)
         }
     }
 }
@@ -1429,9 +1659,14 @@ pub(crate) fn extra_supported_extensions<'h>(
         .filter(move |it| !builtins.iter().any(|group| group.contains(it)))
 }
 
+/// `FileExtensionIs`: a path that is nothing but the extension has none.
+pub(crate) fn file_extension_is(path: &[u8], extension: &[u8]) -> bool {
+    path.len() > extension.len() && path.ends_with(extension)
+}
+
 /// `FileExtensionIsOneOf`
 pub(crate) fn file_extension_is_one_of(path: &[u8], extensions: &[&[u8]]) -> bool {
-    extensions.iter().any(|e| path.ends_with(e))
+    (extensions.iter()).any(|e| file_extension_is(path, e))
 }
 
 /// Whether the file name has a TypeScript extension, including the declaration file extensions.
@@ -1443,7 +1678,7 @@ pub(crate) fn has_ts_implementation_extension(path: &[u8]) -> bool {
 pub(crate) fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
     (SUPPORTED_DECLARATION_EXTENSIONS.into_iter())
         .chain(SUPPORTED_TS_IMPLEMENTATION_EXTENSIONS)
-        .find(|&e| path.ends_with(e))
+        .find(|&e| file_extension_is(path, e))
 }
 
 /// `GetImpliedNodeFormatForFile`, as far as the extension alone determines it.
@@ -1468,7 +1703,7 @@ const KNOWN_EXTENSIONS: [&[u8]; 12] = [
 pub(crate) fn known_extension(path: &[u8]) -> &'static [u8] {
     KNOWN_EXTENSIONS
         .into_iter()
-        .find(|e| path.len() > e.len() && path.ends_with(e))
+        .find(|e| file_extension_is(path, e))
         .unwrap_or(b"")
 }
 
@@ -1477,11 +1712,35 @@ pub(crate) fn remove_file_extension(path: &[u8]) -> &[u8] {
     &path[..path.len() - known_extension(path).len()]
 }
 
+/// `GetBaseFileName`
+pub(crate) fn get_base_file_name(path: &[u8]) -> &[u8] {
+    let normalized = normalize_slashes(path);
+    if get_root_length(&normalized) == normalized.len() {
+        return b"";
+    }
+    let without_separator = normalized.strip_suffix(b"/").unwrap_or(&normalized);
+    let start = strings::last_index_of_char(without_separator, b'/').map_or(0, |at| at + 1);
+    &path[start.max(get_root_length(without_separator))..without_separator.len()]
+}
+
 /// `IsDeclarationFileName`: the name ends in `.d.ts`, `.d.mts`, `.d.cts` or `.d.*.ts`.
 pub fn is_declaration_file_name(path: &[u8]) -> bool {
-    let base = &path[strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..];
-    file_extension_is_one_of(base, &SUPPORTED_DECLARATION_EXTENSIONS)
-        || base.ends_with(b".ts") && strings::contains(base, b".d.")
+    !get_declaration_file_extension(path).is_empty()
+}
+
+/// `GetDeclarationFileExtension`: for `a.d.b.d.json.ts` it is `.d.b.d.json.ts`, from the first
+/// `.d.` on. Empty: `path` names no declaration file.
+pub fn get_declaration_file_extension(path: &[u8]) -> &[u8] {
+    let base = get_base_file_name(path);
+    if let Some(extension) =
+        (SUPPORTED_DECLARATION_EXTENSIONS.into_iter()).find(|extension| base.ends_with(extension))
+    {
+        return extension;
+    }
+    match strings::index_of(base, b".d.") {
+        Some(index) if base.ends_with(b".ts") => &base[index..],
+        _ => b"",
+    }
 }
 
 /// `GetNodeModulePathParts`: the start of the first `/node_modules` in `path`, the index of the `/`
@@ -1603,21 +1862,57 @@ impl<'h> Resolver<'h> {
 
     /// `realPath`
     fn real_path(&self, path: &[u8], look: Look) -> Vec<u8> {
-        let real = self.host.realpath(path);
+        let normalized = normalized_for_lookup(path);
+        let real = self.host.realpath(normalized.as_deref().unwrap_or(path));
         look.trace(6130, &[path, &real]);
         real
     }
 
-    /// `getOriginalAndResolvedFileName`: the real path of `found`.
-    fn followed(&self, found: &[u8], look: Look) -> Vec<u8> {
-        let real = self.real_path(found, look);
-        // One that differs only in case: the name as it is written, which the program reports.
-        if is_same_path(&real, found, self.host.is_case_sensitive()) {
-            return found.to_vec();
+    /// `getOriginalAndResolvedFileName`: `resolvedFileName`. `None`: `originalPath` is empty.
+    fn get_original_and_resolved_file_name(&self, file_name: &[u8], look: Look) -> Option<Vec<u8>> {
+        let real = self.real_path(file_name, look);
+        // `ComparePaths`. One that differs only in case: the name as it is written, which the
+        // program reports.
+        let is_real = |name: &[u8]| is_same_path(&real, name, self.host.is_case_sensitive());
+        if is_real(file_name) || normalized_for_lookup(file_name).is_some_and(|it| is_real(&it)) {
+            return None;
         }
+        Some(real)
+    }
+
+    /// The real path of `found`, which becomes `resolved.originalPath`.
+    fn followed(&self, found: &[u8], look: Look) -> Vec<u8> {
+        let Some(real) = self.get_original_and_resolved_file_name(found, look) else {
+            return found.to_vec();
+        };
         look.outcome.has_original_path.set(true);
         self.links.lock().push((self.keep(found), self.keep(&real)));
         real
+    }
+
+    /// `ResolvePackageDirectory`: `OriginalPath`, unless it is empty, and `ResolvedFileName`.
+    fn resolve_package_directory(
+        &self,
+        module_name: &[u8],
+        containing_directory: &[u8],
+    ) -> Option<(Option<Vec<u8>>, Vec<u8>)> {
+        let outcome = Outcome::default();
+        let look = Look {
+            resolve_package_directory_only: true,
+            ..self.look(ResolutionMode::Require, true, &outcome)
+        };
+        let path = (self.node_modules(module_name, containing_directory, look)).file()?;
+        // `createResolvedModuleHandlingSymlink`
+        let follows_links = !self.options.preserve_symlinks
+            && strings::contains(&path, b"/node_modules/")
+            && !is_relative(module_name);
+        let real = follows_links
+            .then(|| self.get_original_and_resolved_file_name(&path, look))
+            .flatten();
+        Some(match real {
+            Some(real) => (Some(path), real),
+            None => (None, path),
+        })
     }
 
     /// `GetSymlinkCache`, `DirectoriesByRealpath`: each directory known to be a symlink target,
@@ -1647,8 +1942,9 @@ impl<'h> Resolver<'h> {
         links.sort();
         links.dedup();
         for (link, real) in &links {
-            note(real, link);
+            note(real, &join(b"/", link));
         }
+        let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
         for path in emitted {
             let Some((directory, package)) = self.package_scope(dirname::<Posix>(path)) else {
@@ -1668,25 +1964,30 @@ impl<'h> Resolver<'h> {
                     continue;
                 };
                 for (name, _) in entries {
-                    // `ResolvePackageDirectory`
-                    let packages = [
-                        [b"node_modules/", &name[..]].concat(),
-                        [b"node_modules/@types/", &mangle_scoped(name)[..]].concat(),
-                    ];
-                    let link = ancestors(directory)
-                        .flat_map(|around| packages.iter().map(move |it| inside(around, it)))
-                        .find(|candidate| self.is_dir(candidate));
-                    if let Some(link) = link {
-                        let real = self.host.realpath(&link);
-                        if real != link {
-                            note(
-                                &inside(&real, b"package.json"),
-                                &inside(&link, b"package.json"),
-                            );
+                    match self.resolve_package_directory(name, directory) {
+                        Some((Some(original_path), resolved_file_name)) => note(
+                            &inside(&resolved_file_name, b"package.json"),
+                            &inside(&original_path, b"package.json"),
+                        ),
+                        Some((None, resolved_file_name)) => {
+                            if !not_linked.contains(&resolved_file_name) {
+                                not_linked.push(resolved_file_name);
+                            }
                         }
+                        None => {}
                     }
                 }
             }
+        }
+        // `CombinePaths(packageResolution.OriginalPath, "package.json")` without an `OriginalPath`
+        // is a file in the current directory, which so becomes a link to the first dependency that
+        // is none. Of several, the order of a Go map decides which is first, and each one is more
+        // likely not to be.
+        if let [resolved_file_name] = &not_linked[..] {
+            note(
+                &inside(resolved_file_name, b"package.json"),
+                &inside(&self.options.current_directory, b"package.json"),
+            );
         }
         found.sort();
         found
@@ -1695,6 +1996,9 @@ impl<'h> Resolver<'h> {
     fn is_dir(&self, path: &[u8]) -> bool {
         if let Some(&known) = self.dirs.get_ref(path) {
             return known;
+        }
+        if let Some(normalized) = normalized_for_lookup(path) {
+            return self.is_dir(&normalized);
         }
         // `projectReferenceDtsFakingVfs.DirectoryExists`
         let result = self.host.is_dir(path)
@@ -1710,14 +2014,22 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.files.get_ref(path) {
             return known;
         }
+        if let Some(normalized) = normalized_for_lookup(path) {
+            return self.is_file(&normalized);
+        }
         // Most misses are in directories that do not exist.
         let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
         self.files.insert(self.keep(path), result)
     }
 
     fn package(&self, dir: &[u8]) -> Option<&Package<'h>> {
+        let dir = strings::without_trailing_slash(dir);
         if let Some(known) = self.packages.get_ref(dir) {
             return known.as_ref();
+        }
+        // `packageJsonInfoCache` has `tspath.Path` as its key.
+        if let Some(normalized) = normalized_for_lookup(dir) {
+            return self.package(&normalized);
         }
         let path = inside(dir, b"package.json");
         // `getPackageJsonInfo`: a file that cannot be read or parsed is a package without fields.
@@ -1740,6 +2052,7 @@ impl<'h> Resolver<'h> {
     /// silence. It is logged as found in `packageJsonInfoCache`: which lookup is the first one is
     /// known when the log is put in order.
     fn get_package_json_info(&self, dir: &[u8], look: Look) -> Option<&Package<'h>> {
+        let dir = strings::without_trailing_slash(dir);
         let package = self.package(dir);
         if look.tracer.is_some() {
             let path = inside(dir, b"package.json");
@@ -1822,7 +2135,8 @@ impl<'h> Resolver<'h> {
             // would first bring it up to date with the source.
             let source = self.source_of_project_reference_redirect(&path);
             let is_project_reference_redirect = source.is_some();
-            let file_name = self.keep(&source.unwrap_or(path));
+            // `parseTask.addSubTask`: the program has a file under its normalized name.
+            let file_name = self.keep(&source.unwrap_or_else(|| normalize_path(path)));
             self.propagate_package_id(file_name, package_id);
             ResolvedModule {
                 is_project_reference_redirect,
@@ -1832,7 +2146,6 @@ impl<'h> Resolver<'h> {
                 is_external_library_import: outcome.is_external.get(),
                 alternate_result: alternate_result.map(|types| self.keep(&types)),
                 package_id,
-                package_name: package_id.map(|id| id.name),
             }
         });
         if tracer.is_some() {
@@ -1931,7 +2244,7 @@ impl<'h> Resolver<'h> {
             && (look.typescript || look.declarations)
             && !is_relative(spec)
             && look.outcome.is_external.get()
-            && look.import
+            && self.condition_matches(b"import", look)
             && is_untyped())
         {
             return Some((path, None));
@@ -1965,10 +2278,10 @@ impl<'h> Resolver<'h> {
             js: is_module,
             json: is_module && self.options.resolve_json_module,
             is_config_lookup: false,
-            depth: 0,
             ending_from_config: false,
             outcome,
             ignores_exports: false,
+            resolve_package_directory_only: false,
         }
     }
 
@@ -1989,11 +2302,10 @@ impl<'h> Resolver<'h> {
                 found
             }
         };
-        // `tryLoadModuleUsingPathsIfEligible`: `paths` applies to every specifier that does not
-        // start with dots, including `/a`.
-        let starts_with_dots =
-            spec.starts_with(b"./") || spec.starts_with(b"../") || spec == b"." || spec == b"..";
-        if !starts_with_dots && let Some(found) = self.through_paths(spec, look) {
+        // `tryLoadModuleUsingPathsIfEligible`: also for `/a`.
+        if !path_is_relative(spec)
+            && let Some(found) = self.through_paths(spec, look)
+        {
             return Some(real(found));
         }
         if is_relative(spec) {
@@ -2043,15 +2355,14 @@ impl<'h> Resolver<'h> {
         let Some(name) = package.json.get(b"name").and_then(Json::as_str) else {
             return Found::No;
         };
-        // Compared component by component, and a trailing slash is ignored (`GetPathComponents`).
-        let Some(rest) = spec.strip_suffix(b"/").unwrap_or(spec).strip_prefix(name) else {
+        let (spec, name) = (normalize_slashes(spec), normalize_slashes(name));
+        let (parts, name_parts) = (get_path_components(&spec), get_path_components(&name));
+        let Some(trailing_parts) = parts.strip_prefix(&name_parts[..]) else {
             return Found::No;
         };
-        let key = match rest.strip_prefix(b"/") {
-            Some(subpath) => [&b"./"[..], subpath].concat(),
-            None if rest.is_empty() => b".".to_vec(),
-            None => return Found::No,
-        };
+        // `CombinePaths(".", trailingParts...)`
+        let key = (trailing_parts.iter())
+            .fold(b".".to_vec(), |subpath, part| combine_paths(&subpath, part));
         // With `allowJs`, a project's exports may be its own JavaScript sources, which then take
         // priority over the declarations emitted from them.
         if self.options.allow_js && !strings::contains(from_dir, b"/node_modules/") {
@@ -2154,10 +2465,14 @@ impl<'h> Resolver<'h> {
             json,
             b"peerDependencies",
             b"object",
-            // A map of strings.
+            // `IsValid`, which `Host::parse_package_json` has decided: see there.
             |field| {
                 let peers = field.as_object()?;
-                (peers.iter().all(|peer| peer.1.as_str().is_some())).then_some(peers)
+                let is_valid = peers.iter().enumerate().all(|(i, (name, version))| {
+                    matches!(version, Json::String(_) | Json::Null)
+                        && !peers[..i].iter().any(|earlier| earlier.0 == *name)
+                });
+                is_valid.then_some(peers)
             },
             look,
         );
@@ -2279,7 +2594,8 @@ impl<'h> Resolver<'h> {
                 None => look.trace(6119, &[name, &found, primary]),
             }
         }
-        let found = source.unwrap_or(found);
+        // `parseTask.addSubTask`: the program has a file under its normalized name.
+        let found = source.unwrap_or_else(|| normalize_path(found));
         self.propagate_package_id(&found, package_id);
         Some((found, is_external, package_id))
     }
@@ -2294,18 +2610,20 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         for root in roots {
-            // `getCandidateFromTypeRoot`
+            // `getCandidateFromTypeRoot`. It is not normalized, and neither is what is found there.
             let candidate = if root.ends_with(b"/node_modules/@types") {
-                inside(root, &look.mangle_scoped_package_name(name))
+                combine_paths(root, &look.mangle_scoped_package_name(name))
             } else {
-                inside(root, name)
+                combine_paths(root, name)
             };
             if !self.is_dir(root) {
                 look.trace(6148, &[root]);
                 continue;
             }
             if from_config && let Some(found) = self.file(&candidate, look) {
-                if let Some(directory) = parse_node_module_from_path(&found) {
+                let normalized = normalized_for_lookup(&found);
+                let path = normalized.as_deref().unwrap_or(&found);
+                if let Some(directory) = parse_node_module_from_path(path) {
                     let package = self.get_package_json_info(directory, look);
                     self.get_package_id(&found, directory, package, look);
                 }
@@ -2328,7 +2646,7 @@ impl<'h> Resolver<'h> {
             return None;
         }
         look.trace(6091, &[spec]);
-        let (pattern, targets, matched) = best_pattern(self.options.paths.as_slice(), spec)?;
+        let (pattern, targets, matched) = best_pattern(self.options.paths.iter(), spec)?;
         look.trace(6092, &[spec, pattern]);
         targets.iter().find_map(|target| {
             let base = if self.options.paths_base_dir.is_empty() {
@@ -2338,16 +2656,13 @@ impl<'h> Resolver<'h> {
             };
             let filled = target.replacen(b"*", matched, 1);
             look.trace(6093, &[target, &filled]);
-            let path = join(base, &filled);
+            let candidate = resolve_path(base, &filled);
             let look = Look {
                 ending_from_config: look.ending_from_config || !known_extension(target).is_empty(),
                 ..look
             };
-            self.very_file(target, &path, look)
-                .or_else(|| match filled.ends_with(b"/") {
-                    true => self.directory(&path, look),
-                    false => self.file_or_directory(&path, look),
-                })
+            self.very_file(target, &candidate, look)
+                .or_else(|| self.file_or_directory(&candidate, look))
         })
     }
 
@@ -2369,11 +2684,7 @@ impl<'h> Resolver<'h> {
             return None;
         }
         look.trace(6107, &[spec]);
-        // `NormalizePath` keeps a slash at the end.
-        let mut candidate = join(from_dir, spec);
-        if spec.ends_with(b"/") && candidate != b"/" {
-            candidate.push(b'/');
-        }
+        let candidate = resolve_path(from_dir, spec);
         // The longest of them that contains it. Ties go to the first.
         let mut matched: Option<&[u8]> = None;
         for root in roots {
@@ -2398,13 +2709,8 @@ impl<'h> Resolver<'h> {
         };
         let (prefix, suffix) = candidate.split_at(prefix);
         look.trace(6108, &[&candidate, prefix]);
-        let load = |path: &[u8]| match path.strip_suffix(b"/") {
-            Some(b"") => self.directory(path, look),
-            Some(directory) => self.directory(directory, look),
-            None => self.file_or_directory(path, look),
-        };
         look.trace(6109, &[suffix, prefix, &candidate]);
-        if let Some(found) = load(&candidate) {
+        if let Some(found) = self.file_or_directory(&candidate, look) {
             return Some(found);
         }
         look.trace(6110, &[]);
@@ -2414,7 +2720,7 @@ impl<'h> Resolver<'h> {
                 _ => inside(root, suffix),
             };
             look.trace(6109, &[suffix, root, &candidate]);
-            if let Some(found) = load(&candidate) {
+            if let Some(found) = self.file_or_directory(&candidate, look) {
                 return Some(found);
             }
         }
@@ -2434,79 +2740,48 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         look.trace(6208, &[version, VERSION, name]);
-        let (pattern, targets, matched) = best_pattern(mapping.as_object()?, name)?;
+        // `GetPaths`: an entry that is no array is left out, and an element that is no string is
+        // the empty substitution.
+        let paths = (mapping.as_object()?.iter()).filter(|path| path.1.as_array().is_some());
+        let (pattern, targets, matched) = best_pattern(paths, name)?;
         look.trace(6092, &[name, pattern]);
         targets
             .as_array()?
             .iter()
-            .filter_map(Json::as_str)
+            .map(|target| target.as_str().unwrap_or_default())
             .find_map(|target| {
                 let filled = target.replacen(b"*", matched, 1);
                 look.trace(6093, &[target, &filled]);
-                let path = join(dir, &filled);
-                self.very_file(target, &path, look)
-                    .or_else(|| load(&path, !known_extension(target).is_empty()))
+                let candidate = resolve_path(dir, &filled);
+                self.very_file(target, &candidate, look)
+                    .or_else(|| load(&candidate, !known_extension(target).is_empty()))
             })
     }
 
     /// Resolves the relative specifier `spec` from `from_dir`.
     fn relative(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
-        let path = join(from_dir, spec);
-        // `normalizePathForCJSResolution`: a specifier that ends in a slash or in dots can only be
-        // a directory.
-        let is_directory = spec.ends_with(b"/")
-            || spec == b"."
-            || spec == b".."
-            || spec.ends_with(b"/.")
-            || spec.ends_with(b"/..");
-        if is_directory {
-            self.directory(&path, look)
-        } else {
-            self.file_or_directory(&path, look)
-        }
+        self.file_or_directory(&normalize_path_for_cjs_resolution(from_dir, spec), look)
     }
 
     /// `nodeLoadModuleByRelativeName` with `considerPackageJson`.
-    fn file_or_directory(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
-        self.node_load_module_by_relative_name(
-            path,
-            EndsInSlash::No,
-            ConsiderPackageJson::Yes,
-            look,
-        )
+    fn file_or_directory(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
+        self.node_load_module_by_relative_name(candidate, ConsiderPackageJson::Yes, look)
     }
 
-    /// The same for a candidate that ends in a slash, which `path` lacks.
-    fn directory(&self, path: &[u8], look: Look) -> Option<Vec<u8>> {
-        self.node_load_module_by_relative_name(
-            path,
-            EndsInSlash::Yes,
-            ConsiderPackageJson::Yes,
-            look,
-        )
-    }
-
-    /// `ends_in_slash`: the candidate is `path` with a slash at its end, and can only be a
-    /// directory.
+    /// `nodeLoadModuleByRelativeName`. A `candidate` that ends in a slash can only be a directory.
     fn node_load_module_by_relative_name(
         &self,
-        path: &[u8],
-        ends_in_slash: EndsInSlash,
+        candidate: &[u8],
         consider_package_json: ConsiderPackageJson,
         look: Look,
     ) -> Option<Vec<u8>> {
-        let ends_in_slash = ends_in_slash == EndsInSlash::Yes;
         let consider_package_json = consider_package_json == ConsiderPackageJson::Yes;
         let is_traced = look.tracer.is_some();
-        let candidate: Cow<[u8]> = if is_traced && ends_in_slash && path != b"/" {
-            Cow::Owned([path, b"/"].concat())
-        } else {
-            Cow::Borrowed(path)
-        };
         if is_traced {
-            look.trace(6095, &[&candidate[..], &look.extensions()]);
+            look.trace(6095, &[candidate, &look.extensions()]);
         }
-        if !ends_in_slash {
+        let path = strings::without_trailing_slash(candidate);
+        if !has_trailing_directory_separator(candidate) {
             // Without a tracer, `is_file` finds nothing in a directory that does not exist.
             if is_traced {
                 let parent = dirname::<Posix>(path);
@@ -2536,7 +2811,7 @@ impl<'h> Resolver<'h> {
         }
         // Under Node's rules for `import` a directory does not resolve, whether it exists or not.
         if (is_traced || !look.esm) && !self.is_dir(path) {
-            look.trace(6148, &[&candidate[..]]);
+            look.trace(6148, &[candidate]);
             return None;
         }
         if look.esm {
@@ -2583,6 +2858,8 @@ impl<'h> Resolver<'h> {
         {
             return None;
         }
+        let normalized = normalized_for_lookup(path);
+        let path = normalized.as_deref().unwrap_or(path);
         self.file_exists_if_project_reference_dts(path).or_else(|| {
             // `fileOrDirectoryExistsUsingSource`
             let real = self.path_through_linked_package(path)?;
@@ -2683,13 +2960,15 @@ impl<'h> Resolver<'h> {
         path: &[u8],
         look: Look,
     ) -> Option<Vec<u8>> {
-        let name = &path[strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1)..];
-        let dot = strings::last_index_of_char(name, b'.')?;
+        // `GetBaseFileName` passes over a separator at the end.
+        let name = path.strip_suffix(b"/").unwrap_or(path);
+        let base = strings::last_index_of_char(name, b'/').map_or(0, |i| i + 1);
+        let dot = base + strings::last_index_of_char(&name[base..], b'.')?;
         // `RemoveFileExtension`: `.d.ts` is removed as a whole.
         let extension = SUPPORTED_DECLARATION_EXTENSIONS
             .into_iter()
-            .find(|e| name.ends_with(e))
-            .unwrap_or_else(|| &name[dot..]);
+            .find(|e| path.ends_with(e))
+            .unwrap_or_else(|| &path[dot..]);
         look.trace(6132, &[path, extension]);
         self.with_extensions(&path[..path.len() - extension.len()], extension, look)
     }
@@ -2768,10 +3047,20 @@ impl<'h> Resolver<'h> {
         let is_implementation = !is_declaration && has_ts_implementation_extension(path);
         if look.typescript && is_implementation || look.declarations && is_declaration {
             let found = self.try_file(path, look)?;
+            // None, if a separator follows the name.
+            let extension = try_extract_ts_extension(&found);
             // A trailing `*` matches a part of the specifier that includes the extension.
             look.outcome
                 .using_ts_extension
-                .set(package_json_value.ends_with(b"*"));
+                .set(package_json_value.ends_with(b"*") && extension.is_some());
+            look.outcome.arbitrary_extension.set(extension.is_none());
+            return Some(found);
+        }
+        if look.is_config_lookup
+            && look.json
+            && known_extension(path) == b".json"
+            && let Some(found) = self.try_file(path, look)
+        {
             return Some(found);
         }
         self.load_module_from_file_no_implicit_extensions(path, look)
@@ -2784,13 +3073,13 @@ impl<'h> Resolver<'h> {
         self.directory_entry(dir, package, true, look)
     }
 
-    /// `loadNodeModuleFromDirectoryWorker`: the file the directory `dir` resolves to: the file its
-    /// `package.json` names, or its `index`.
-    /// `package` is the `package.json` of `dir` if `is_package_dir`. Otherwise it is that of the
-    /// package enclosing `dir`, and only its `typesVersions` apply.
+    /// `loadNodeModuleFromDirectoryWorker`: the file the directory `candidate` resolves to: the
+    /// file its `package.json` names, or its `index`.
+    /// `package` is the `package.json` of `candidate` if `is_package_dir`. Otherwise it is that of
+    /// the package enclosing `candidate`, and only its `typesVersions` apply.
     fn directory_entry(
         &self,
-        dir: &[u8],
+        candidate: &[u8],
         package: Option<&Package>,
         is_package_dir: bool,
         look: Look,
@@ -2801,6 +3090,9 @@ impl<'h> Resolver<'h> {
             b"index"
         };
         if let Some(package) = package {
+            // Whatever is combined with `candidate` here is normalized afterwards.
+            let normalized = normalized_for_lookup(candidate);
+            let dir = normalized.as_deref().unwrap_or(candidate);
             let version_paths = get_version_paths(&package.json, look);
             // `getPackageFile`: only the first of these fields that has a value.
             let fields: &[&[u8]] = match (is_package_dir, look.declarations) {
@@ -2828,38 +3120,28 @@ impl<'h> Resolver<'h> {
                     ending_from_config: look.ending_from_config || has_extension_from_config,
                     ..look
                 };
-                // `HasTrailingDirectorySeparator`: it has no extension, and is not looked up as a file.
-                if let Some(directory) = path.strip_suffix(b"/").filter(|it| !it.is_empty()) {
-                    return self.node_load_module_by_relative_name(
-                        directory,
-                        EndsInSlash::Yes,
-                        ConsiderPackageJson::No,
-                        inner,
-                    );
-                }
                 self.named_file(path, package_file, as_named).or_else(|| {
-                    self.node_load_module_by_relative_name(
-                        path,
-                        EndsInSlash::No,
-                        ConsiderPackageJson::No,
-                        inner,
-                    )
+                    self.node_load_module_by_relative_name(path, ConsiderPackageJson::No, inner)
                 })
             };
             // `typesVersions` also apply to the entry, if it is inside the package, and to `index`
-            // if there is no entry.
-            let in_package = match &entry {
-                Some(entry) => entry
-                    .strip_prefix(dir)
-                    .and_then(|rest| rest.strip_prefix(b"/"))
-                    .map(|rest| rest.strip_suffix(b"/").unwrap_or(rest)),
-                None => Some(index),
-            };
+            // if there is no entry. With the zero `ComparePathsOptions`: without case, on every
+            // file system.
             if let Some(paths) = version_paths
-                && let Some(name) = in_package
-                && let Some(found) = self.through_types_versions(paths, dir, name, &load, look)
+                && (entry.as_ref()).is_none_or(|entry| contains_path(dir, entry, false))
             {
-                return Some(found);
+                // `GetRelativePathFromDirectory`
+                let module_name = match &entry {
+                    Some(entry) => get_path_components(entry)
+                        .get(get_path_components(dir).len()..)
+                        .unwrap_or_default()
+                        .join(&b"/"[..]),
+                    None => index.to_vec(),
+                };
+                let found = self.through_types_versions(paths, dir, &module_name, &load, look);
+                if found.is_some() {
+                    return found;
+                }
             }
             if let Some(entry) = &entry
                 && let Some(found) = load(entry, false)
@@ -2870,7 +3152,7 @@ impl<'h> Resolver<'h> {
         if look.esm {
             None
         } else {
-            self.file(&inside(dir, index), look)
+            self.file(&inside(candidate, index), look)
         }
     }
 
@@ -2929,11 +3211,21 @@ impl<'h> Resolver<'h> {
 
     /// `loadModuleFromSpecificNodeModulesDirectory`: `spec` in `modules`, which is a `node_modules` or the `@types` in one.
     fn in_modules(&self, modules: &[u8], spec: &[u8], look: Look) -> Found {
-        let spec = spec.strip_suffix(b"/").unwrap_or(spec);
-        let (name, rest) = split_package_name(spec);
-        // `NormalizePath`
+        // `RemoveTrailingDirectorySeparator(NormalizePath(..))`
         let candidate = join(modules, spec);
-        let package_dir = [modules, b"/", name].concat();
+        let (name, rest) = split_package_name(spec);
+        // Without `rest`, `packageInfo` is the `package.json` in `candidate`.
+        let package_dir = if name.is_empty() || rest.is_empty() {
+            candidate.clone()
+        } else {
+            inside(modules, name)
+        };
+        if look.resolve_package_directory_only {
+            return match self.is_dir(&package_dir) {
+                true => Found::File(package_dir),
+                false => Found::No,
+            };
+        }
         let package = self.package(&package_dir);
         let respects_exports = self.options.resolve_package_json_exports && !look.ignores_exports;
         let exports = package
@@ -2973,12 +3265,7 @@ impl<'h> Resolver<'h> {
         if let Some(exports) = exports
             && !is_falsy(exports)
         {
-            let key = if rest.is_empty() {
-                b".".to_vec()
-            } else {
-                [&b"./"[..], rest].concat()
-            };
-            return self.exports(&package_dir, exports, &key, look);
+            return self.exports(&package_dir, exports, &combine_paths(b".", rest), look);
         }
         let load = |candidate: &[u8], has_extension_from_config: bool| -> Option<Vec<u8>> {
             let look = Look {
@@ -2991,9 +3278,10 @@ impl<'h> Resolver<'h> {
                 None
             };
             // The `package.json` of the package also applies to the directories inside the package.
-            let is_package_dir = candidate == package_dir;
+            let directory = strings::without_trailing_slash(candidate);
+            let is_package_dir = directory == package_dir;
             let found = from_file
-                .or_else(|| self.directory_entry(candidate, package, is_package_dir, look))
+                .or_else(|| self.directory_entry(directory, package, is_package_dir, look))
                 .or_else(|| {
                     // Under Node's rules for `import`, a package with no entry and no `exports`
                     // still resolves to `index.js`.
@@ -3002,7 +3290,7 @@ impl<'h> Resolver<'h> {
                             matches!(p.json.get(b"exports"), None | Some(Json::Null))
                         });
                     if look.esm && is_silent {
-                        self.file(&[candidate, b"/index.js"].concat(), look)
+                        self.file(&inside(directory, b"index.js"), look)
                     } else {
                         None
                     }
@@ -3023,14 +3311,12 @@ impl<'h> Resolver<'h> {
     /// `loadModuleFromExports`: resolves `key`, which is `.` or `./sub/path`, through the `exports`
     /// of the package in `package_dir`.
     fn exports(&self, package_dir: &[u8], exports: &Json, key: &[u8], look: Look) -> Found {
-        // `IsConditions`, `IsSubpaths`: none of the keys starts with a dot, or all of them do.
-        fn dotted(entries: &[(Vec<u8>, Json)]) -> usize {
-            entries.iter().filter(|e| e.0.starts_with(b".")).count()
-        }
         if key == b"." {
             let main = match exports {
                 Json::String(_) | Json::Array(_) => Some(exports),
-                Json::Object(entries) if dotted(entries) == 0 => Some(exports),
+                Json::Object(entries) if object_kind(entries) == ObjectKind::Conditions => {
+                    Some(exports)
+                }
                 Json::Object(entries) => entries.iter().find(|e| e.0 == b".").map(|e| &e.1),
                 _ => None,
             };
@@ -3047,7 +3333,7 @@ impl<'h> Resolver<'h> {
                 );
             }
         } else if let Json::Object(entries) = exports
-            && dotted(entries) == entries.len()
+            && object_kind(entries) == ObjectKind::Subpaths
         {
             match self.lookup_table(package_dir, entries, key, IsImports::No, look) {
                 Found::No => {}
@@ -3159,29 +3445,35 @@ impl<'h> Resolver<'h> {
                     // directory of the `package.json`.
                     if is_imports == IsImports::Yes
                         && !target_string.starts_with(b"../")
-                        && !target_string.starts_with(b"/")
-                        && look.depth < 8
+                        && !is_rooted_disk_path(target_string)
                     {
-                        let look = Look {
-                            depth: look.depth + 1,
-                            ..look
-                        };
+                        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+                            look.outcome.is_out_of_stack.set(true);
+                            return Found::Blocked;
+                        }
                         if look.tracer.is_some() {
                             look.trace(6404, &[field, key, &filled]);
                             look.trace(6086, &[&filled, &inside(package_dir, b"")]);
                         }
                         let from = inside(package_dir, b"package.json");
-                        let found = self.resolve_node_like(&filled, &from, look);
-                        return Found::of(found.map(|found| found.0));
+                        return match self.resolve_node_like(&filled, &from, look) {
+                            Some(found) => Found::File(found.0),
+                            None if look.outcome.is_out_of_stack.get() => Found::Blocked,
+                            None => Found::No,
+                        };
                     }
                     look.trace(6275, &[package_dir, module_name]);
                     return Found::No;
                 }
                 // The target must stay inside the package and outside the packages nested in it.
-                let leads_away = |part: &[u8]| matches!(part, b".." | b"." | b"node_modules");
-                if strings::split(target_string, b"/").skip(1).any(leads_away)
-                    || strings::split(subpath, b"/").any(leads_away)
-                {
+                let leads_away = |path: &[u8], parts_before: usize| {
+                    let path = normalize_slashes(path);
+                    let parts = get_path_components(&path);
+                    let mut parts = parts.iter().skip(parts_before);
+                    parts.any(|part| matches!(*part, b".." | b"." | b"node_modules"))
+                };
+                // `partsAfterFirst`: those after the root, which is empty, and the `.`.
+                if leads_away(target_string, 2) || leads_away(subpath, 0) {
                     look.trace(6275, &[package_dir, module_name]);
                     return Found::No;
                 }
@@ -3337,8 +3629,7 @@ impl<'h> Resolver<'h> {
             .collect()
     }
 
-    /// `conditionMatches` against the conditions `GetConditions` returns. (See `version_in_range`
-    /// for `types@<range>`.)
+    /// `conditionMatches` against the conditions `GetConditions` returns, which have `types`.
     fn condition_matches(&self, condition: &[u8], look: Look) -> bool {
         let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
         condition == b"default"
@@ -3350,9 +3641,7 @@ impl<'h> Resolver<'h> {
                 .custom_conditions
                 .iter()
                 .any(|c| c == condition)
-            || condition
-                .strip_prefix(b"types@")
-                .is_some_and(|range| version_in_range(TYPESCRIPT_VERSION, range))
+            || is_applicable_versioned_types_key(condition)
     }
 
     /// `loadModuleFromImports`: `#name`, through the `imports` of the nearest `package.json`.
@@ -3403,14 +3692,38 @@ pub fn resolve_config(
     resolver.resolve_with(module_name, containing_file, look)
 }
 
+/// The same character for all that `unicode.SimpleFold` leads to from `c`: those that differ from
+/// it only in case.
+fn simple_fold(c: char) -> char {
+    /// A mapping to several characters is not a simple one.
+    fn simple(mut mapped: impl Iterator<Item = char>, unmapped: char) -> char {
+        match (mapped.next(), mapped.next()) {
+            (Some(only), None) => only,
+            _ => unmapped,
+        }
+    }
+    // `caseOrbit`: the capital `i` with a dot and the small one without fold with nothing.
+    if matches!(c, '\u{130}' | '\u{131}') {
+        return c;
+    }
+    let upper = simple(c.to_uppercase(), c);
+    simple(upper.to_lowercase(), upper)
+}
+
+/// `EquateStringCaseInsensitive`, which is `strings.EqualFold`.
+pub(crate) fn equate_string_case_insensitive(a: &[u8], b: &[u8]) -> bool {
+    match a.is_ascii() && b.is_ascii() {
+        true => strings::eql_case_insensitive_ascii_check_length(a, b),
+        false => a.chars().map(simple_fold).eq(b.chars().map(simple_fold)),
+    }
+}
+
 /// `ContainsPath` for two absolute, normalized paths: `child` equals `parent` or is inside it.
 pub fn contains_path(parent: &[u8], child: &[u8], is_case_sensitive: bool) -> bool {
     if !is_case_sensitive && !(parent.is_ascii() && child.is_ascii()) {
-        let (parent, child) = (
-            to_file_name_lower_case(parent),
-            to_file_name_lower_case(child),
-        );
-        return contains_path(&parent, &child, true);
+        let (parent, child) = (get_path_components(parent), get_path_components(child));
+        return child.len() >= parent.len()
+            && (parent.iter().zip(&child)).all(|(a, b)| equate_string_case_insensitive(a, b));
     }
     let Some(start) = child.get(..parent.len()) else {
         return false;
@@ -3424,13 +3737,45 @@ pub fn contains_path(parent: &[u8], child: &[u8], is_case_sensitive: bool) -> bo
         && (child.len() == parent.len() || parent.ends_with(b"/") || child[parent.len()] == b'/')
 }
 
-/// `IsFalsy` for a value in a `package.json`.
+/// `IsFalsy` for a value in a `package.json`. No number is: `v.Value == 0` compares a `float64` in
+/// an `any` with an `int`.
 fn is_falsy(json: &Json) -> bool {
     match json {
         Json::Null | Json::Bool(false) => true,
         Json::String(text) => text.is_empty(),
-        Json::Number(n) => *n == 0.0,
         _ => false,
+    }
+}
+
+/// `objectKind`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ObjectKind {
+    Subpaths,
+    Conditions,
+    Imports,
+    Invalid,
+}
+
+/// `initObjectKind`: what the keys of an object in `exports` or `imports` are.
+fn object_kind(entries: &[(Vec<u8>, Json)]) -> ObjectKind {
+    let (mut seen_dot, mut seen_hash, mut seen_other) = (false, false, false);
+    for (key, _) in entries {
+        match key.first() {
+            None => continue,
+            Some(b'.') => seen_dot = true,
+            Some(b'#') => seen_hash = true,
+            Some(_) => seen_other = true,
+        }
+        if seen_other && (seen_dot || seen_hash) {
+            return ObjectKind::Invalid;
+        }
+    }
+    if seen_dot {
+        ObjectKind::Subpaths
+    } else if seen_hash {
+        ObjectKind::Imports
+    } else {
+        ObjectKind::Conditions
     }
 }
 
@@ -3489,17 +3834,14 @@ fn get_package_json_path_field(
         look.trace(6220, &[name]);
         return None;
     }
-    // `NormalizePath` keeps a trailing separator.
-    let mut path = join(dir, value);
-    if value.ends_with(b"/") && !path.ends_with(b"/") {
-        path.push(b'/');
-    }
+    let path = resolve_path(dir, value);
     look.trace(6101, &[name, value, &path]);
     Some(path)
 }
 
 /// `GetVersionPaths`: the first entry of `typesVersions` in the `package.json` `json` whose range
-/// contains the compiler's version: the range, and the paths, which are an object.
+/// contains the compiler's version: the range, and the paths, which are an object. `None`: it does
+/// not `Exists`. Neither does an entry whose range is the empty text, which ends the search.
 fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Json)> {
     let Some(field) = json.get(b"typesVersions") else {
         look.trace(6100, &[b"typesVersions"]);
@@ -3510,22 +3852,22 @@ fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Js
         return None;
     };
     look.trace(6206, &[b"typesVersions"]);
-    for (range, paths) in versions {
-        if look.tracer.is_some() && !is_version_range(range) {
-            look.trace(6209, &[range]);
+    for (key, value) in versions {
+        let Some(key_range) = try_parse_version_range(key) else {
+            look.trace(6209, &[key]);
+            continue;
+        };
+        if !key_range.test(&TYPESCRIPT_VERSION) {
             continue;
         }
-        if !version_in_range(TYPESCRIPT_VERSION, range) {
-            continue;
+        if value.as_object().is_none() {
+            if look.tracer.is_some() {
+                let name = [b"typesVersions['", key.as_slice(), b"']"].concat();
+                look.trace(6105, &[&name, b"object", json_type(value)]);
+            }
+            return None;
         }
-        if paths.as_object().is_some() {
-            return Some((range.as_slice(), paths));
-        }
-        if look.tracer.is_some() {
-            let name = [b"typesVersions['", range.as_slice(), b"']"].concat();
-            look.trace(6105, &[&name, b"object", json_type(paths)]);
-        }
-        return None;
+        return (!key.is_empty()).then_some((key.as_slice(), value));
     }
     look.trace(6207, &[VERSION_MAJOR_MINOR]);
     None
@@ -3548,12 +3890,12 @@ fn resolution_key(spec: &[u8], from: &[u8], mode: ResolutionMode) -> Vec<u8> {
 /// `MatchPatternOrExact`: the entry of `table` for `name`: an exact match, or else the matching
 /// pattern with the longest prefix, the first of those on a tie. Returns the pattern, the value
 /// and the text matched by the `*`.
-pub(crate) fn best_pattern<'t, 'n, T>(
-    table: &'t [(Vec<u8>, T)],
+pub(crate) fn best_pattern<'t, 'n, T: 't>(
+    table: impl Iterator<Item = &'t (Vec<u8>, T)> + Clone,
     name: &'n [u8],
 ) -> Option<(&'t [u8], &'t T, &'n [u8])> {
     if let Some((pattern, exact)) = table
-        .iter()
+        .clone()
         .find(|e| e.0 == name && !strings::contains_char(&e.0, b'*'))
     {
         return Some((pattern.as_slice(), exact, b""));
@@ -3603,8 +3945,9 @@ fn match_pattern<'a>(pattern: &[u8], text: &'a [u8]) -> Option<&'a [u8]> {
     None
 }
 
-/// `ParseNodeModuleFromPath`: the directory of the package that the file at `path` is in. A file
-/// right in the `node_modules`, or in the directory of a scope, has that directory.
+/// `ParseNodeModuleFromPath`: the directory of the package that the file at `path` is in. A file in
+/// the directory of a scope has that directory. A file right in the `node_modules` has that, with
+/// the slash after it, which costs `SubModuleName` its first letter.
 fn parse_node_module_from_path(path: &[u8]) -> Option<&[u8]> {
     let marker = b"/node_modules/";
     let at = strings::last_index_of(path, marker)? + marker.len();
@@ -3617,7 +3960,7 @@ fn parse_node_module_from_path(path: &[u8]) -> Option<&[u8]> {
     if path.get(at) == Some(&b'@') {
         end = next(end);
     }
-    Some(&path[..if end == at { at - 1 } else { end }])
+    Some(&path[..end])
 }
 
 /// `@scope/name/sub/path` is (`@scope/name`, `sub/path`).
@@ -3642,71 +3985,372 @@ pub(crate) fn mangle_scoped(name: &[u8]) -> Vec<u8> {
     }
 }
 
-/// The TypeScript version whose behavior is reproduced, for packages that ship different
-/// declarations for different versions.
-const TYPESCRIPT_VERSION: [u64; 3] = [7, 0, 2];
+/// `typeScriptVersion`: `semver.MustParse(core.Version())`
+const TYPESCRIPT_VERSION: Version<'static> = Version {
+    major: 7,
+    minor: 0,
+    patch: 2,
+    prerelease: b"",
+};
 /// `core.Version`
 pub const VERSION_C: &core::ffi::CStr = c"7.0.2";
 const VERSION: &[u8] = VERSION_C.to_bytes();
 /// `core.VersionMajorMinor`
 const VERSION_MAJOR_MINOR: &[u8] = b"7.0";
 
-/// `VersionRange.Test`
-fn version_in_range([major, minor, patch]: [u64; 3], range: &[u8]) -> bool {
-    let version = bun_semver::Version {
-        major,
-        minor,
-        patch,
-        ..Default::default()
-    };
-    bun_semver::query::parse(range, bun_semver::SlicedString::init(range, range))
-        .is_ok_and(|group| group.satisfies(version, range, b""))
+/// `IsApplicableVersionedTypesKey`
+pub(crate) fn is_applicable_versioned_types_key(key: &[u8]) -> bool {
+    key.strip_prefix(b"types@")
+        .and_then(try_parse_version_range)
+        .is_some_and(|range| range.test(&TYPESCRIPT_VERSION))
 }
 
-/// Whether `TryParseVersionRange` accepts `text`.
-fn is_version_range(text: &[u8]) -> bool {
-    /// `partialRegExp`
-    fn is_partial(text: &[u8]) -> bool {
-        let is_xr = |part: &[u8]| match part {
-            b"x" | b"X" | b"*" | b"0" => true,
-            [b'1'..=b'9', rest @ ..] => rest.iter().all(u8::is_ascii_digit),
-            _ => false,
-        };
-        let is_parts = |parts: &[u8]| {
-            let is_part = |c: &u8| c.is_ascii_alphanumeric() || b"-.".contains(c);
-            !parts.is_empty() && parts.iter().all(is_part)
-        };
-        let mut parts = text.splitn(3, |&c| c == b'.');
-        let (major, minor, rest) = (parts.next(), parts.next(), parts.next());
-        let rest = rest.unwrap_or(b"*");
-        let end = strings::index_of_any(rest, b"-+").unwrap_or(rest.len());
-        let (patch, qualifier) = rest.split_at(end);
-        let (pre, build) = match strings::split_once_char(qualifier, b'+') {
-            Some((pre, build)) => (pre, Some(build)),
-            None => (qualifier, None),
-        };
-        major.is_some_and(is_xr)
-            && minor.is_none_or(is_xr)
-            && is_xr(patch)
-            && (pre.is_empty() || is_parts(&pre[1..]))
-            && build.is_none_or(is_parts)
-    }
-    strings::split(text, b"||").all(|range| {
-        let simples: Vec<&[u8]> = strings::tokenize_any(range, b" \t\n\x0C\r").collect();
-        // `hyphenRegExp`
-        if let [left, b"-", right] = simples[..] {
-            return is_partial(left) && is_partial(right);
+/// `semver.Version`, without `build`. `prerelease` is its identifiers joined by `.`, or empty.
+#[derive(Copy, Clone)]
+struct Version<'a> {
+    major: u32,
+    minor: u32,
+    patch: u32,
+    prerelease: &'a [u8],
+}
+
+/// `versionZero`
+const VERSION_ZERO: Version<'static> = Version {
+    major: 0,
+    minor: 0,
+    patch: 0,
+    prerelease: b"0",
+};
+
+impl Version<'_> {
+    /// `incrementMajor`
+    fn increment_major(self) -> Version<'static> {
+        Version {
+            major: self.major.wrapping_add(1),
+            minor: 0,
+            patch: 0,
+            prerelease: b"",
         }
-        // `rangeRegExp`
-        simples.iter().all(|simple| {
-            let operator = simple.iter().take_while(|c| b"~^<>=".contains(c)).count();
-            let (operator, partial) = simple.split_at(operator);
-            matches!(
-                operator,
-                b"" | b"~" | b"^" | b"<" | b">" | b"=" | b"<=" | b">="
-            ) && is_partial(partial)
-        })
+    }
+
+    /// `incrementMinor`
+    fn increment_minor(self) -> Version<'static> {
+        Version {
+            major: self.major,
+            minor: self.minor.wrapping_add(1),
+            patch: 0,
+            prerelease: b"",
+        }
+    }
+
+    /// `incrementPatch`
+    fn increment_patch(self) -> Version<'static> {
+        Version {
+            major: self.major,
+            minor: self.minor,
+            patch: self.patch.wrapping_add(1),
+            prerelease: b"",
+        }
+    }
+
+    /// `Version.Compare`
+    fn compare(&self, other: &Version) -> Ordering {
+        (self.major.cmp(&other.major))
+            .then(self.minor.cmp(&other.minor))
+            .then(self.patch.cmp(&other.patch))
+            .then_with(|| compare_pre_release_identifiers(self.prerelease, other.prerelease))
+    }
+}
+
+/// `comparePreReleaseIdentifiers`
+fn compare_pre_release_identifiers(left: &[u8], right: &[u8]) -> Ordering {
+    // A version that has none comes after the same version with some.
+    if left.is_empty() || right.is_empty() {
+        return left.is_empty().cmp(&right.is_empty());
+    }
+    // `slices.CompareFunc`
+    let (left, right) = (strings::split(left, b"."), strings::split(right, b"."));
+    (left.clone().zip(right.clone()))
+        .map(|(left, right)| compare_pre_release_identifier(left, right))
+        .find(|order| order.is_ne())
+        .unwrap_or_else(|| left.count().cmp(&right.count()))
+}
+
+/// `comparePreReleaseIdentifier`
+fn compare_pre_release_identifier(left: &[u8], right: &[u8]) -> Ordering {
+    let compare_result = left.cmp(right);
+    if compare_result.is_eq() {
+        return compare_result;
+    }
+    match (is_numeric_identifier(left), is_numeric_identifier(right)) {
+        (false, false) => compare_result,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (true, true) => match (get_uint_component(left), get_uint_component(right)) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            _ => left.len().cmp(&right.len()).then(compare_result),
+        },
+    }
+}
+
+/// `numericIdentifierRegExp`
+fn is_numeric_identifier(text: &[u8]) -> bool {
+    match text {
+        b"0" => true,
+        [b'1'..=b'9', rest @ ..] => rest.iter().all(u8::is_ascii_digit),
+        _ => false,
+    }
+}
+
+/// `getUintComponent`. `None`: it does not fit.
+fn get_uint_component(text: &[u8]) -> Option<u32> {
+    bun_core::fmt::parse_unsigned(text, 10).ok()
+}
+
+/// `comparatorOperator`
+#[derive(Copy, Clone)]
+enum ComparatorOperator {
+    LessThan,
+    LessThanEqual,
+    Equal,
+    GreaterThanEqual,
+    GreaterThan,
+}
+
+/// `versionComparator`
+struct VersionComparator<'a> {
+    operator: ComparatorOperator,
+    operand: Version<'a>,
+}
+
+type VersionComparators<'a> = SmallVec<[VersionComparator<'a>; 2]>;
+
+/// `semver.VersionRange`
+struct VersionRange<'a> {
+    alternatives: Vec<VersionComparators<'a>>,
+}
+
+impl VersionRange<'_> {
+    /// `VersionRange.Test`. A range without alternatives is `*`.
+    fn test(&self, version: &Version) -> bool {
+        self.alternatives.is_empty()
+            || (self.alternatives.iter())
+                .any(|alternative| alternative.iter().all(|it| test_comparator(it, version)))
+    }
+}
+
+/// `testComparator`
+fn test_comparator(comparator: &VersionComparator, version: &Version) -> bool {
+    let cmp = version.compare(&comparator.operand);
+    match comparator.operator {
+        ComparatorOperator::LessThan => cmp.is_lt(),
+        ComparatorOperator::LessThanEqual => cmp.is_le(),
+        ComparatorOperator::Equal => cmp.is_eq(),
+        ComparatorOperator::GreaterThanEqual => cmp.is_ge(),
+        ComparatorOperator::GreaterThan => cmp.is_gt(),
+    }
+}
+
+/// `TryParseVersionRange`
+fn try_parse_version_range(text: &[u8]) -> Option<VersionRange<'_>> {
+    let alternatives = parse_alternatives(text)?;
+    Some(VersionRange { alternatives })
+}
+
+/// `strings.TrimSpace`
+fn trim_space(text: &[u8]) -> &[u8] {
+    text.trim_with(char::is_whitespace)
+}
+
+/// `parseAlternatives`
+fn parse_alternatives(text: &[u8]) -> Option<Vec<VersionComparators<'_>>> {
+    let mut alternatives = Vec::new();
+    for range in strings::split(trim_space(text), b"||") {
+        let range = trim_space(range);
+        if range.is_empty() {
+            continue;
+        }
+        let mut comparators = VersionComparators::new();
+        // `whitespaceRegExp`
+        let simples: Vec<&[u8]> = strings::tokenize_any(range, b" \t\n\x0C\r").collect();
+        // `hyphenRegExp`. What is not in its character classes is no partial version either.
+        if let [left, b"-", right] = simples[..] {
+            comparators.extend(parse_hyphen(left, right)?);
+        } else {
+            for &simple in &simples {
+                // `rangeRegExp`
+                let simple = trim_space(simple);
+                let operator = simple.iter().take_while(|c| b"~^<>=".contains(c)).count();
+                let (operator, partial) = simple.split_at(operator);
+                if !matches!(
+                    operator,
+                    b"" | b"~" | b"^" | b"<" | b">" | b"=" | b"<=" | b">="
+                ) {
+                    return None;
+                }
+                comparators.extend(parse_comparator(operator, partial)?);
+            }
+        }
+        alternatives.push(comparators);
+    }
+    Some(alternatives)
+}
+
+/// `parseHyphen`
+fn parse_hyphen<'a>(left: &'a [u8], right: &'a [u8]) -> Option<VersionComparators<'a>> {
+    let left = parse_partial(left)?;
+    let right = parse_partial(right)?;
+    let mut comparators = VersionComparators::new();
+    if !is_wildcard(left.major_str) {
+        comparators.push(VersionComparator {
+            operator: ComparatorOperator::GreaterThanEqual,
+            operand: left.version,
+        });
+    }
+    if !is_wildcard(right.major_str) {
+        let (operator, operand) = if is_wildcard(right.minor_str) {
+            (
+                ComparatorOperator::LessThan,
+                right.version.increment_major(),
+            )
+        } else if is_wildcard(right.patch_str) {
+            (
+                ComparatorOperator::LessThan,
+                right.version.increment_minor(),
+            )
+        } else {
+            (ComparatorOperator::LessThanEqual, right.version)
+        };
+        comparators.push(VersionComparator { operator, operand });
+    }
+    Some(comparators)
+}
+
+/// `partialVersion`
+struct PartialVersion<'a> {
+    version: Version<'a>,
+    major_str: &'a [u8],
+    minor_str: &'a [u8],
+    patch_str: &'a [u8],
+}
+
+/// `parsePartial`
+fn parse_partial(text: &[u8]) -> Option<PartialVersion<'_>> {
+    // `partialRegExp`
+    let is_xr = |part: &[u8]| is_wildcard(part) || is_numeric_identifier(part);
+    // Under `(?i)`, `[a-z]` has what folds to a letter too: U+017F to `s`, U+212A to `k`.
+    let is_parts = |parts: &[u8]| {
+        let is_part =
+            |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '\u{17f}' | '\u{212a}');
+        !parts.is_empty() && parts.chars().all(is_part)
+    };
+    let mut parts = text.splitn(3, |&c| c == b'.');
+    let major_str = parts.next()?;
+    let minor_str = parts.next().unwrap_or(b"*");
+    let rest = parts.next().unwrap_or(b"*");
+    let end = strings::index_of_any(rest, b"-+").unwrap_or(rest.len());
+    let (patch_str, qualifier) = rest.split_at(end);
+    let (pre, build) = match strings::split_once_char(qualifier, b'+') {
+        Some((pre, build)) => (pre, Some(build)),
+        None => (qualifier, None),
+    };
+    let prerelease = pre.get(1..).unwrap_or_default();
+    if !(is_xr(major_str)
+        && is_xr(minor_str)
+        && is_xr(patch_str)
+        && (pre.is_empty() || is_parts(prerelease))
+        && build.is_none_or(is_parts))
+    {
+        return None;
+    }
+    let (mut major, mut minor, mut patch) = (0, 0, 0);
+    if !is_wildcard(major_str) {
+        major = get_uint_component(major_str)?;
+        if !is_wildcard(minor_str) {
+            minor = get_uint_component(minor_str)?;
+            if !is_wildcard(patch_str) {
+                patch = get_uint_component(patch_str)?;
+            }
+        }
+    }
+    Some(PartialVersion {
+        version: Version {
+            major,
+            minor,
+            patch,
+            prerelease,
+        },
+        major_str,
+        minor_str,
+        patch_str,
     })
+}
+
+/// `parseComparator`. `operator` is the first group of `rangeRegExp`.
+fn parse_comparator<'a>(operator: &[u8], text: &'a [u8]) -> Option<VersionComparators<'a>> {
+    use ComparatorOperator::{Equal, GreaterThan, GreaterThanEqual, LessThan, LessThanEqual};
+    let result = parse_partial(text)?;
+    let version = result.version;
+    let is_minor_wildcard = is_wildcard(result.minor_str);
+    let is_partial = is_minor_wildcard || is_wildcard(result.patch_str);
+    let comparator = |operator, operand| VersionComparator { operator, operand };
+    let with_prerelease_zero = |version: Version<'a>| Version {
+        prerelease: b"0",
+        ..version
+    };
+    // The versions that a partial `version` stands for start at `first` and end before `next`.
+    let first = if is_partial {
+        with_prerelease_zero(version)
+    } else {
+        version
+    };
+    let next = if is_minor_wildcard {
+        version.increment_major()
+    } else {
+        version.increment_minor()
+    };
+    if is_wildcard(result.major_str) {
+        return Some(match operator {
+            b"<" | b">" => smallvec![comparator(LessThan, VERSION_ZERO)],
+            _ => VersionComparators::new(),
+        });
+    }
+    Some(match operator {
+        b"~" => smallvec![
+            comparator(GreaterThanEqual, version),
+            comparator(LessThan, next),
+        ],
+        b"^" => {
+            let second_version = if version.major > 0 || is_minor_wildcard {
+                version.increment_major()
+            } else if version.minor > 0 || is_partial {
+                version.increment_minor()
+            } else {
+                version.increment_patch()
+            };
+            smallvec![
+                comparator(GreaterThanEqual, version),
+                comparator(LessThan, second_version),
+            ]
+        }
+        b"<" => smallvec![comparator(LessThan, first)],
+        b">=" => smallvec![comparator(GreaterThanEqual, first)],
+        b"<=" if is_partial => smallvec![comparator(LessThan, with_prerelease_zero(next))],
+        b">" if is_partial => smallvec![comparator(GreaterThanEqual, with_prerelease_zero(next))],
+        b"<=" => smallvec![comparator(LessThanEqual, version)],
+        b">" => smallvec![comparator(GreaterThan, version)],
+        // `=`, or nothing.
+        _ if is_partial => smallvec![
+            comparator(GreaterThanEqual, first),
+            comparator(LessThan, with_prerelease_zero(next)),
+        ],
+        _ => smallvec![comparator(Equal, version)],
+    })
+}
+
+/// `isWildcard`
+fn is_wildcard(text: &[u8]) -> bool {
+    matches!(text, b"*" | b"x" | b"X")
 }
 
 bun_core::comptime_string_set! {

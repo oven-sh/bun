@@ -15010,6 +15010,41 @@ describe.concurrent("--check", () => {
     expect([after.stderr.split("\n")[0], after.exitCode]).toEqual([`error: Unknown flag "--smol"`, 1]);
   });
 
+  describe("`--build` is what follows `check`, in every spelling", () => {
+    const project = ["-p", "tsconfig.json"];
+    const expected: Record<string, [string[], string][]> = {
+      "a check": [
+        [["check"], "TS2322"],
+        [["check", ...project], "TS2322"],
+        [["-b", "check"], "TS2322"],
+        [["-b", "check", ...project], "TS2322"],
+        // `b` is the project.
+        [["check", "-pb"], "TS5058"],
+        // `-b` is a file.
+        [["check", "--", "-b"], "TS6053"],
+      ],
+      "a build": [
+        [["check", "-b"], "TS5096"],
+        [["check", "--build"], "TS5096"],
+        [["check", "-b", ...project], "TS5096"],
+        [["check", "-bp", "tsconfig.json"], "TS5096"],
+        [["-b", "check", "-b"], "TS5096"],
+        [["-b", "check", "-bp", "tsconfig.json"], "TS5096"],
+      ],
+    };
+    test.each(Object.keys(expected))("%s", async kind => {
+      // Only a build minds that nothing may be emitted: TS5096.
+      using dir = tempDir("bun-check-build-flag", {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [], "allowImportingTsExtensions": true } }`,
+        "a.ts": `export const a: number = "1";\n`,
+      });
+      const results = await Promise.all(expected[kind].map(([args]) => run(String(dir), args)));
+      expect(
+        results.map((it, index) => [expected[kind][index][0].join(" "), /TS\d+/.exec(it.stdout + it.stderr)?.[0]]),
+      ).toEqual(expected[kind].map(([args, code]) => [args.join(" "), code]));
+    });
+  });
+
   test("a page that is imported stands for its scripts", async () => {
     const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
     const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;

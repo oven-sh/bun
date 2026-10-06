@@ -67,6 +67,20 @@ pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJE
 static TABLE: &clap::ConvertedTable =
     clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS), cold);
 
+/// Whether `--build` is among `args`, in any spelling that `clap` takes: by itself, or in a chain of
+/// short flags, before the one that takes a value.
+fn names_build(args: &[&ZStr]) -> bool {
+    (args.iter().map(|arg| arg.as_bytes()))
+        .take_while(|arg| *arg != b"--")
+        .any(|arg| match arg {
+            b"--build" => true,
+            [b'-', shorts @ ..] if !shorts.starts_with(b"-") => (shorts.iter())
+                .take_while(|short| **short != b'p')
+                .any(|short| *short == b'b'),
+            _ => false,
+        })
+}
+
 /// `args`: what follows `check`.
 fn parse(args: &[&ZStr]) -> Options {
     let mut diagnostic = clap::Diagnostic::default();
@@ -106,9 +120,7 @@ fn parse(args: &[&ZStr]) -> Options {
         project: parsed.option(b"--project").map(<[u8]>::to_vec),
         all: parsed.flag(b"--all"),
         // Before `check`, `-b` is `--bun`.
-        build: (args.iter().map(|arg| arg.as_bytes()))
-            .take_while(|arg| *arg != b"--")
-            .any(|arg| arg == b"-b" || arg == b"--build"),
+        build: parsed.flag(b"--build") && names_build(args),
         timing: parsed.flag(b"--timing"),
         ..Default::default()
     };
@@ -648,19 +660,21 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     let shown_from = bun_sema_driver::host::from_native(cwd);
     // The errors are the output, as with `tsc`. The summary is printed separately.
     let mut out = Vec::new();
-    format::write_diagnostics(
-        &mut out,
-        report,
-        &Style {
-            is_case_sensitive: report.is_case_sensitive,
-            ..style_for(
-                &shown_from,
-                options.pretty,
-                Destination::stdout(),
-                options.all,
-            )
-        },
-    );
+    if !bun_sema_driver::is_quiet(&options.compiler_options) {
+        format::write_diagnostics(
+            &mut out,
+            report,
+            &Style {
+                is_case_sensitive: report.is_case_sensitive,
+                ..style_for(
+                    &shown_from,
+                    options.pretty,
+                    Destination::stdout(),
+                    options.all,
+                )
+            },
+        );
+    }
     let _ = Output::writer().write_all(&out);
     let mut summary = Vec::new();
     format::write_summary(
@@ -904,7 +918,7 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
         location: (!reported.path.is_empty()).then(|| bun_ast::Location {
             file: Cow::Owned(bun_sema_driver::host::to_native(&reported.path).to_vec()),
             line_text: line_text(),
-            length: (reported.end - reported.start) as usize,
+            length: reported.end.saturating_sub(reported.start) as usize,
             offset: reported.start as usize,
             line: reported.line as i32,
             column: reported.column as i32,

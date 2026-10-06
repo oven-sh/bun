@@ -13,9 +13,11 @@ use super::*;
 use crate::bind::{FnOwner, Parent};
 
 /// `getImpliedConstraint`: reduces `[X] extends [Y]` to `X extends Y`, repeatedly. In tsgo's AST an element with a name, a `?` or a
-/// `...` is not a tuple type node, so unwrapping stops there. A plain type node is returned as an element without any of those.
+/// `...` is not a tuple type node, and neither is a `ParenthesizedType`, so unwrapping stops there. A plain type node is returned as an
+/// element without any of those. `conditional`: the node that `check` and `extends` are parts of.
 fn unwrap_unary_tuples(
     hir: &hir::File,
+    conditional: TypeNodeId,
     check: TypeNodeId,
     extends: TypeNodeId,
 ) -> (TupleElem, TupleElem) {
@@ -30,16 +32,27 @@ fn unwrap_unary_tuples(
         start: hir[ty].pos,
         end: hir[ty].end,
     };
-    let is_plain =
-        |elem: &TupleElem| elem.ty.is_some() && elem.name.is_none() && !elem.optional && !elem.rest;
+    // Whether `elem`, a part of `parent`, is just a type node.
+    let is_plain = |elem: &TupleElem, parent: TypeNodeId| {
+        elem.ty.is_some()
+            && elem.name.is_none()
+            && !elem.optional
+            && !elem.rest
+            && super::spans::Spans::of(hir)
+                .parens_before(hir[parent].pos as usize, hir[elem.ty].pos as usize)
+                .next()
+                .is_none()
+    };
     let (mut check, mut extends) = (plain(check), plain(extends));
-    while is_plain(&check)
-        && is_plain(&extends)
+    let (mut parent_of_check, mut parent_of_extends) = (conditional, conditional);
+    while is_plain(&check, parent_of_check)
+        && is_plain(&extends, parent_of_extends)
         && let (TypeNodeKind::Tuple(a), TypeNodeKind::Tuple(b)) =
             (hir[check.ty].kind, hir[extends.ty].kind)
         && a.len() == 1
         && b.len() == 1
     {
+        (parent_of_check, parent_of_extends) = (check.ty, extends.ty);
         check = hir[a.at(0)];
         extends = hir[b.at(0)];
     }
@@ -65,41 +78,6 @@ impl Checker<'_, '_> {
     pub(super) fn check_assignments(&mut self, file: FileId) {
         let hir = self.hir(file);
         let bound = self.bound(file);
-        // `checkPropertyAssignment`, `checkShorthandPropertyAssignment`: the value is checked
-        // against the type of the `@type` tag.
-        for &(owner, node) in &hir.jsdoc_types {
-            let JsDocTypeOwner::Prop(p) = owner else {
-                continue;
-            };
-            let (value, literal) = (hir[p].value, bound.prop_owner[p.idx()]);
-            // `checkDestructuringAssignment` does not reach it.
-            if value.is_none()
-                || literal.is_none()
-                || self.is_definite_assignment_target(file, literal)
-            {
-                continue;
-            }
-            let target = self.type_from_node(file, node);
-            let source = self.type_of_expr(file, value);
-            // `checkExpressionForMutableLocation`, with `target` as the contextual type.
-            let source = if self.is_const_context(file, value) {
-                self.regular(source)
-            } else if matches!(hir[value].kind, ExprKind::As { .. } | ExprKind::AsConst(_)) {
-                source
-            } else {
-                self.widen_literal_for_context(source, Some(target))
-            };
-            let at = (file, hir[p].pos, self.end_of_prop(file, p));
-            self.check_type_assignable_to_and_optionally_elaborate(
-                source,
-                target,
-                Some(at),
-                Some((file, value)),
-                false,
-                None,
-                None,
-            );
-        }
         self.check_literals_against_patterns(file);
         // `checkExportAssignment`: the exported expression is checked against the type of its
         // `@type` tag.
@@ -224,11 +202,14 @@ impl Checker<'_, '_> {
         {
             self.check_literals_expected_by_pattern(file, decl.init);
         }
-        if decl.ty.is_none() || decl.init.is_none() || bound.var_stmt[d.idx()].is_none() {
+        let stmt = bound.var_stmt[d.idx()];
+        if decl.init.is_none() || stmt.is_none() {
             return;
         }
-        // An initializer in a `for`-`in` is an error already.
-        if matches!(bound.stmt_parent[bound.var_stmt[d.idx()].idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForIn { .. }))
+        // FOR SPEED: without an annotation the type of the variable is the widened type of the
+        // initializer, except in a `for`-`of`, where it is the type of the elements.
+        if decl.ty.is_none()
+            && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == stmt))
         {
             return;
         }
@@ -242,11 +223,11 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        let target = self.type_from_node(file, decl.ty);
+        let target = self.type_of_pat(file, decl.pat);
+        let target = self.convert_auto_to_any(target);
         let source = self.type_of_expr(file, decl.init);
         // `getESSymbolLikeTypeForNode`, `isValidESSymbolDeclaration`: for a `const` with an
         // identifier name, in a statement of its own.
-        let stmt = bound.var_stmt[d.idx()];
         let source = match hir[decl.pat].kind {
             PatKind::Ident(name)
                 if decl.kind == VarKind::Const
@@ -437,10 +418,7 @@ impl Checker<'_, '_> {
         // Resolving the parameter also resolves the enclosing call, whose signature `open_contextual_signature` reads.
         let resolved = self.type_of_param(file, p);
         let func = bound.param_fn[p.idx()];
-        // `HasContextSensitiveParameters`: a function with type parameters gets no contextual parameter types.
-        if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_))
-            || !hir[func].type_params.is_empty()
-        {
+        if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
             return resolved;
         }
         // A binding pattern is compared with `getWidenedTypeForVariableLikeDeclaration`, not with the type of a symbol.
@@ -448,11 +426,11 @@ impl Checker<'_, '_> {
         // `getContextuallyTypedParameterType` sees the callee's signature before its type arguments are inferred. The adjustments of
         // `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
         let index = (p.0 - hir[func].params.start) as usize;
-        match self.contextual_param_type(file, func, index) {
-            Some(ty) if is_optional => self.optional(ty),
-            Some(ty) => ty,
-            None => resolved,
-        }
+        let Some(ty) = self.contextual_param_type(file, func, index) else {
+            return resolved;
+        };
+        let ty = if is_optional { self.optional(ty) } else { ty };
+        self.widened_for_declaration(ty, None)
     }
 
     /// `needCheckWidenedType` of `checkVariableLikeDeclaration`: a pattern none of whose elements has a name.
@@ -469,13 +447,10 @@ impl Checker<'_, '_> {
     /// `getAnnotatedAccessorType` of the setter that shares its symbol with the getter `getter`:
     /// the annotated type of its parameter.
     pub(super) fn annotated_setter_type(&mut self, file: FileId, getter: FnId) -> Option<TypeId> {
-        let setter = self.sibling_accessor(file, getter, FnKind::Setter)?;
+        let (file, setter) = self.sibling_accessor(file, getter, FnKind::Setter)?;
         let hir = self.hir(file);
-        let p = hir[setter].params.iter().next()?;
-        hir[p]
-            .ty
-            .is_some()
-            .then(|| self.type_from_node(file, hir[p].ty))
+        let node = hir[setter].effective_set_accessor_type_annotation_node(hir);
+        node.is_some().then(|| self.type_from_node(file, node))
     }
 
     /// `checkAssertionDeferred`: reports 2352 for `x as T` when neither type is comparable to the other.
@@ -656,11 +631,13 @@ impl Checker<'_, '_> {
             ) {
                 continue;
             }
-            let Ok(name) = self.symbol_name_of_literal_member(file, prop.key) else {
+            if prop.key == PropKey::None {
                 continue;
-            };
+            }
+            // `getSymbolOfDeclaration`
+            let name = self.declared_member_name(file, prop.key);
             // `getPropertyOfType`: the properties common to all objects are included.
-            if !name.is_some_and(|name| self.property_in(&members, name).is_some()) {
+            if !name.is_some_and(|name| self.property_in_type(context, &members, name).is_some()) {
                 let end = self.end_of_prop_name(file, p);
                 self.error_at(
                     (file, prop.pos, end),
@@ -672,51 +649,6 @@ impl Checker<'_, '_> {
                 );
             }
         }
-    }
-
-    /// The symbol name of a member of an object literal (`getSymbolOfDeclaration`): a plain name, a
-    /// literal in brackets (`getDeclarationName`), or the value of `a` or `a.b` in brackets if it
-    /// is statically known (`isLateBindableName`). `Ok(None)`: any other computed key is not a
-    /// name. `Err`: unknown.
-    fn symbol_name_of_literal_member(
-        &mut self,
-        file: FileId,
-        key: PropKey,
-    ) -> Result<Option<Atom>, ()> {
-        let hir = self.hir(file);
-        let k = match key {
-            PropKey::Computed(k) => k,
-            PropKey::None => return Err(()),
-            PropKey::Name(name) | PropKey::Private(name) => return Ok(Some(name)),
-        };
-        if is_parenthesized(hir, k) {
-            return Ok(None);
-        }
-        match hir[k].kind {
-            ExprKind::String(_) | ExprKind::Number(_) => return Ok(self.member_name(file, key)),
-            ExprKind::Template { exprs, .. } if exprs.is_empty() => {
-                return Ok(self.member_name(file, key));
-            }
-            // `IsSignedNumericLiteral`: the sign is preserved, even a `+`.
-            ExprKind::Unary {
-                op: op @ (UnOp::Plus | UnOp::Minus),
-                operand,
-            } if !is_parenthesized(hir, operand) => {
-                let ExprKind::Number(n) = hir[operand].kind else {
-                    return Ok(None);
-                };
-                let digits = self.number_name(hir.numbers[n as usize]);
-                let sign: &[u8] = if op == UnOp::Plus { b"+" } else { b"-" };
-                let text = cat!(sign, self.atoms().bytes(digits));
-                return Ok(Some(self.atoms().intern(&text)));
-            }
-            _ => {}
-        }
-        // `isLateBindableAST`
-        if !is_entity_name_expression(hir, k) {
-            return Ok(None);
-        }
-        Ok(self.member_name(file, key))
     }
 
     /// `symbol.ValueDeclaration` of the symbol the name `pat` declares.
@@ -899,13 +831,8 @@ impl Checker<'_, '_> {
         let (at, ty) = if hir[m].name_ty.is_some() {
             (hir[m].name_ty, self.type_from_node(file, hir[m].name_ty))
         } else {
-            // `getConstraintTypeFromMappedType`: a circular constraint is an error, which is
-            // reported elsewhere.
+            // `getConstraintTypeFromMappedType`: the error type, if the constraint is circular.
             let param = self.type_param(file, hir[m].param);
-            // `getConstraintOfTypeParameter`
-            if !self.has_non_circular_base_constraint(param) {
-                return;
-            }
             let Some(constraint) = self.constraint_of_type_param(param) else {
                 return;
             };
@@ -968,7 +895,7 @@ impl Checker<'_, '_> {
             } = hir[parent].kind
                 && yes == node
                 && (is_variable || covariant)
-                && let Some(constraint) = self.implied_constraint(file, ty, check, extends)
+                && let Some(constraint) = self.implied_constraint(file, ty, parent, check, extends)
             {
                 constraints.push(constraint);
             }
@@ -1023,15 +950,16 @@ impl Checker<'_, '_> {
         Some((self.type_param(file, hir[m].param), index))
     }
 
-    /// `getImpliedConstraint`
-    pub(super) fn implied_constraint(
+    /// `getImpliedConstraint` for `CheckType` and `ExtendsType` of the node `conditional`.
+    fn implied_constraint(
         &mut self,
         file: FileId,
         ty: TypeId,
+        conditional: TypeNodeId,
         check: TypeNodeId,
         extends: TypeNodeId,
     ) -> Option<TypeId> {
-        let (check, extends) = unwrap_unary_tuples(self.hir(file), check, extends);
+        let (check, extends) = unwrap_unary_tuples(self.hir(file), conditional, check, extends);
         let checked = self.type_from_tuple_element(file, check);
         (self.actual_type_variable(checked) == self.actual_type_variable(ty))
             .then(|| self.type_from_tuple_element(file, extends))
@@ -1040,9 +968,9 @@ impl Checker<'_, '_> {
     /// `getTypeFromTypeNode` of a tuple element: `getTypeFromOptionalTypeNode`, `getTypeFromRestTypeNode`,
     /// `getTypeFromNamedTupleTypeNode`.
     pub(super) fn type_from_tuple_element(&mut self, file: FileId, elem: TupleElem) -> TypeId {
-        if elem.rest {
-            let element = array_element_type_node(self.hir(file), elem.ty).unwrap_or(elem.ty);
-            return self.type_from_node(file, element);
+        if elem.has_dots {
+            let element = super::errors_type_nodes::rest_element_type_node(self.hir(file), &elem);
+            return self.type_from_node(file, element.unwrap_or(elem.ty));
         }
         let ty = self.type_from_node(file, elem.ty);
         if elem.optional {
@@ -1166,10 +1094,18 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getReturnTypeFromAnnotation`: a getter without an annotation uses its setter's parameter
-    /// type, any other function the signature of its `@type` tag.
+    /// `getReturnTypeFromAnnotation`: a constructor is to return an instance of its class. A getter
+    /// without an annotation uses its setter's parameter type, any other function the signature of
+    /// its `@type` tag.
     pub(super) fn return_type_from_annotation(&mut self, file: FileId, f: FnId) -> Option<TypeId> {
         let func = &self.hir(file)[f];
+        if func.kind == FnKind::Constructor
+            && let FnOwner::Member(m) = self.bound(file).fns[f.idx()].owner
+            && let crate::bind::MemberOwner::Class(class) = self.bound(file).member_owner[m.idx()]
+        {
+            let sym = self.class_sym(file, class);
+            return Some(self.declared_type(sym));
+        }
         if func.ret.is_some() {
             Some(self.type_from_node(file, func.ret))
         } else if func.kind == FnKind::Getter {
@@ -1409,11 +1345,7 @@ impl Checker<'_, '_> {
         diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let hir = self.hir(file);
-        // `isOrHasGenericConditional`
-        let is_conditional = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Cond { .. });
-        if is_conditional(self, target)
-            || matches!(self.data(target), TypeData::Intersection(parts) if parts.iter().any(|&p| is_conditional(self, p)))
-        {
+        if self.is_or_has_generic_conditional(target) {
             return false;
         }
         // `elaborateDidYouMeanToCallOrConstruct`: the result of calling it is assignable.
@@ -1530,7 +1462,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             // `getLiteralTypeFromProperty(.., TypeFlagsStringOrNumberLiteralOrUnique)`
-            let name_type = self.literal_type_from_property_name(file, prop.key, prop.pos);
+            let name_type = self.literal_type_from_property_name(file, prop.key, prop.name_kind);
             let Some(name_type) = name_type.filter(|&it| self.property_name_of_type(it).is_some())
             else {
                 continue;
@@ -1623,21 +1555,10 @@ impl Checker<'_, '_> {
         let Some(name) = self.property_name_of_type(name_type) else {
             return false;
         };
-        // `getBestMatchIndexedAccessTypeOrUndefined`
-        let mut target_prop_type = match self.indexed_access_if_any(target, name_type, false) {
-            Some(target_prop_type) => target_prop_type,
-            None if self.is_union(target) => {
-                let best =
-                    self.best_matching_type(source, target, &mut |c, s, t| c.is_assignable(s, t));
-                let Some(best) = best else {
-                    return false;
-                };
-                let Some(of_best) = self.indexed_access_if_any(best, name_type, false) else {
-                    return false;
-                };
-                of_best
-            }
-            None => return false,
+        let Some(mut target_prop_type) =
+            self.get_best_match_indexed_access_type_or_undefined(source, target, name_type)
+        else {
+            return false;
         };
         // "Don't elaborate on indexes on generic variables"
         if matches!(self.data(target_prop_type), TypeData::IndexedAccess { .. }) {
@@ -1833,12 +1754,14 @@ impl Checker<'_, '_> {
         if is_primitive(self, source) {
             return None;
         }
-        let source_keys = self.keyof(source);
+        // `getIndexType(source)` is not asked for a union of primitive types.
+        let mut source_keys = None;
         let (mut best, mut matching) = (None, 0);
         for &t in parts {
             if is_primitive(self, t) {
                 continue;
             }
+            let source_keys = *source_keys.get_or_insert_with(|| self.keyof(source));
             let target_keys = self.keyof(t);
             let overlap = self.intersection(&[source_keys, target_keys]);
             // The very same keys.
@@ -1938,10 +1861,7 @@ impl Checker<'_, '_> {
         {
             // The comparisons made here are independent of the comparison being reported.
             let too_complex = self.relation_too_complex;
-            // `createPromiseType`
-            let unwrapped = self.map_type(actual, |c, m| c.awaited_argument(m).unwrap_or(m));
-            let awaited = self.awaited_no_alias(unwrapped).unwrap_or(TypeId::UNKNOWN);
-            let promise = self.promise_of(awaited);
+            let promise = self.promise_of(actual);
             let is_intended_to_be_async = self.is_assignable(promise, expected);
             self.relation_too_complex = too_complex;
             if is_intended_to_be_async {
@@ -2004,56 +1924,12 @@ impl Checker<'_, '_> {
     /// instantiate, or an intersection with such a member.
     pub(super) fn takes_this_argument(&mut self, ty: TypeId) -> bool {
         match self.data(ty) {
-            TypeData::Ref { target, .. } => self.is_declared_as_reference(*target, 0),
+            TypeData::Ref { target, .. } => self.has_this_type(*target),
             TypeData::Tuple { .. } => true,
             TypeData::Intersection(parts) => {
                 parts.iter().any(|&part| self.takes_this_argument(part))
             }
             _ => false,
         }
-    }
-
-    /// Whether the declared type of the class or interface `sym` is a type reference, one with a
-    /// `this` type (`getDeclaredTypeOfClassOrInterface`): all are, except interfaces without type
-    /// parameters, own or outer, that are guaranteed not to reference `this`
-    /// (`isThislessInterface`).
-    pub(super) fn is_declared_as_reference(&mut self, sym: Sym, depth: u32) -> bool {
-        use crate::bind::Decl;
-        if depth > 32 || self.files().flags(sym).contains(SymFlags::CLASS) {
-            return true;
-        }
-        for (file, decl) in self.files().decls(sym) {
-            let Decl::Interface(i) = decl else { continue };
-            let (hir, bound) = (self.hir(file), self.bound(file));
-            if !hir[i].type_params.is_empty() || bound.interface_contains_this[i.idx()] {
-                return true;
-            }
-            let own = bound.interface_scope[i.idx()];
-            if own.is_none() {
-                continue;
-            }
-            let around = self.outer_type_params(file, bound.scopes[own.idx()].parent);
-            if around
-                .iter()
-                .any(|&p| matches!(self.data(p), TypeData::TypeParam(..)))
-            {
-                return true;
-            }
-            // Its base types must be interfaces that are themselves not declared as references.
-            for node in hir.ids(hir[i].extends) {
-                let TypeNodeKind::Ref { name, .. } = hir[node].kind else {
-                    continue;
-                };
-                let scope = bound.type_scope[node.idx()];
-                let base = self.resolve_type_reference_name(file, scope, name, true);
-                if !base.is_some_and(|b| {
-                    self.files().flags(b).contains(SymFlags::INTERFACE)
-                        && !self.is_declared_as_reference(b, depth + 1)
-                }) {
-                    return true;
-                }
-            }
-        }
-        false
     }
 }

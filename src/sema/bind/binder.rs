@@ -15,6 +15,20 @@ struct Label {
 /// index in `Binder::label_edges`.
 const PENDING: u32 = 1 << 31;
 
+/// `isReplaceableByMethod` of `declareSymbolEx`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum IsReplaceableByMethod {
+    No,
+    Yes,
+}
+
+/// `isComputedName` of `declareSymbolEx`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum IsComputedName {
+    No,
+    Yes,
+}
+
 pub(super) struct Binder<'f, 's> {
     f: &'f File<'s>,
     options: BindOptions,
@@ -79,10 +93,10 @@ pub(super) struct Binder<'f, 's> {
     yields: Vec<u32>,
     /// `seenThisKeyword`
     seen_this: bool,
-    /// There is a `this` in the computed name of the method or accessor about to be bound.
+    /// There is a `this` in the decorators or the computed name of the function about to be bound.
     this_in_name: bool,
-    /// The flow node after the computed name of the method or accessor about to be bound. `NONE`:
-    /// it has no computed name.
+    /// The flow node after the decorators and the computed name of the function about to be bound.
+    /// `NONE`: it has neither.
     flow_after_name: FlowId,
     /// `isResolvedByTypeAlias` for the type node about to be bound.
     by_alias: bool,
@@ -338,7 +352,12 @@ impl<'f, 's> Binder<'f, 's> {
             Decl::Interface(it) => f[it].name,
             Decl::Alias(it) => f[it].name,
             Decl::Enum(it) => f[it].name,
-            // Neither `#a` nor `1n` is a name.
+            Decl::EnumMember(it)
+                if is_private_name_at(f, f[it].pos) && self.containing_class().is_some() =>
+            {
+                self.name_of_property_name(PropKey::Private(f[it].name))
+            }
+            // Neither `#a` outside a class nor `1n` is a name.
             Decl::EnumMember(it)
                 if is_private_name_at(f, f[it].pos) || is_bigint_literal_at(f, f[it].pos) =>
             {
@@ -346,6 +365,11 @@ impl<'f, 's> Binder<'f, 's> {
             }
             Decl::EnumMember(it) => return f[it].name,
             Decl::Module(it) => match f[it].name {
+                ModuleName::String(name) if name.is_some() => {
+                    let quote = &b"\""[..];
+                    self.atoms
+                        .intern(&[quote, self.atoms.bytes(name), quote].concat())
+                }
                 ModuleName::Ident(name) | ModuleName::String(name) => name,
                 ModuleName::Global => known::global_augmentation,
             },
@@ -382,6 +406,55 @@ impl<'f, 's> Binder<'f, 's> {
         if name.is_some() { name } else { known::missing }
     }
 
+    /// `GetContainingClass` for the declaration being bound.
+    fn containing_class(&self) -> ClassId {
+        let mut scope = self.scope;
+        while scope.is_some() {
+            let s = &self.b.scopes[scope.idx()];
+            if let ScopeKind::Class(class) = s.kind {
+                return class;
+            }
+            scope = s.parent;
+        }
+        ClassId::NONE
+    }
+
+    /// Notes `decl`, which no class declares, if its name `key` is an `#x`.
+    fn note_private_name(&mut self, decl: Decl, key: PropKey) {
+        if let PropKey::Private(_) = key {
+            let class = self.containing_class();
+            self.note_symbol_id_of_class(class);
+            if class.is_some() {
+                self.b
+                    .private_names_outside_class_bodies
+                    .push((decl, class));
+            }
+        }
+    }
+
+    /// `GetSymbolId(containingClass.Symbol())`, which `getDeclarationName` asks for if the name of
+    /// `decl` is an `#x`: a symbol gets its id when it is first asked for. A member of an object
+    /// literal is noted by `note_private_name`, in its turn among the children of the literal.
+    fn note_class_of_private_name(&mut self, decl: Decl) {
+        let f = self.f;
+        let is_private = match decl {
+            Decl::Member(it) => matches!(f[it].key, PropKey::Private(_)),
+            Decl::EnumMember(it) => is_private_name_at(f, f[it].pos),
+            _ => false,
+        };
+        if is_private {
+            let class = self.containing_class();
+            self.note_symbol_id_of_class(class);
+        }
+    }
+
+    /// `GetSymbolId` for the symbol of `class`: only the first call hands out an id.
+    fn note_symbol_id_of_class(&mut self, class: ClassId) {
+        if class.is_some() && !self.b.classes_of_private_names.contains(&class) {
+            self.b.classes_of_private_names.push(class);
+        }
+    }
+
     /// `getDeclarationName` for the name of a member. `known::computed`: `HasDynamicName`.
     fn name_of_property_name(&self, key: PropKey) -> Atom {
         match key {
@@ -413,12 +486,25 @@ impl<'f, 's> Binder<'f, 's> {
         includes: SymFlags,
         excludes: SymFlags,
     ) -> SymbolId {
-        self.declare_symbol_ex(table, parent, decl, includes, excludes, false)
+        self.declare_symbol_ex(
+            table,
+            parent,
+            decl,
+            includes,
+            excludes,
+            IsReplaceableByMethod::No,
+            IsComputedName::No,
+        )
     }
 
     /// `declareSymbolEx`: the declarations of one name in one table merge into one symbol if they
     /// are compatible. A conflicting declaration gets its own symbol, which is not reachable by
     /// name.
+    /// So does a declaration with a dynamic name (`bindPropertyOrMethodOrAccessor`,
+    /// `HasDynamicName`). With `is_computed_name` the original has one `__computed` symbol in the
+    /// table for all of them. Here each has its own, in no table:
+    /// `Checker::declarations_of_property` identifies a late-bound symbol by the symbol of its first
+    /// declaration.
     fn declare_symbol_ex(
         &mut self,
         table: TableId,
@@ -426,61 +512,63 @@ impl<'f, 's> Binder<'f, 's> {
         decl: Decl,
         includes: SymFlags,
         excludes: SymFlags,
-        is_replaceable_by_method: bool,
+        is_replaceable_by_method: IsReplaceableByMethod,
+        is_computed_name: IsComputedName,
     ) -> SymbolId {
+        let is_replaceable_by_method = is_replaceable_by_method == IsReplaceableByMethod::Yes;
         // "The exported symbol for an export default function/class node is always named "default""
-        let name =
-            if parent.is_some() && self.b.modifier_flags(self.f, decl).contains(Flags::DEFAULT) {
-                known::default
-            } else {
-                self.get_declaration_name(decl)
-            };
+        let name = if is_computed_name == IsComputedName::Yes {
+            known::computed
+        } else if parent.is_some() && self.b.modifier_flags(self.f, decl).contains(Flags::DEFAULT) {
+            known::default
+        } else {
+            self.note_class_of_private_name(decl);
+            self.get_declaration_name(decl)
+        };
         // `InternalSymbolNameMissing`, `HasDynamicName`
         let is_in_no_table = name.is_none() || name == known::missing || name == known::computed;
         let existing = self.tables[table.idx()].get(&name).copied();
         let existing = existing.filter(|_| !is_in_no_table);
-        let there = existing.map_or(SymFlags::empty(), |it| self.b.symbols[it.idx()].flags);
-        let is_replaceable = there.contains(SymFlags::REPLACEABLE_BY_METHOD);
-        // "A symbol already exists, so don't add this as a declaration."
-        if let Some(existing) = existing
-            && is_replaceable_by_method
-            && !is_replaceable
-        {
-            return existing;
-        }
-        // "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
-        let (variable, assignment) = (SymFlags::VARIABLE, SymFlags::ASSIGNMENT);
-        let is_assignment = includes.intersects(variable) && there.contains(assignment)
-            || includes.contains(assignment) && there.intersects(variable);
+        let replaceable = SymFlags::REPLACEABLE_BY_METHOD;
         let symbol = match existing {
-            Some(existing) if !there.intersects(excludes) || !is_replaceable && is_assignment => {
-                existing
-            }
-            _ => {
-                // The symbol of an unnamed function or class is named `default`.
-                let is_cached =
-                    name == known::missing && matches!(decl, Decl::Fn(_) | Decl::Class(_));
-                let kept = if is_cached { known::default } else { name };
-                let symbol = self.new_symbol(SymFlags::empty(), kept);
-                match existing {
-                    Some(existing) if !is_replaceable => {
-                        self.report_redeclaration(existing, includes, decl);
-                        // "we mark the symbol as a full accessor such that all subsequent declarations are considered conflicting"
-                        let accessor = SymFlags::ACCESSOR;
-                        if there.intersects(accessor) && there & accessor != includes & accessor {
-                            self.b.symbols[existing.idx()].flags |= accessor;
-                        }
-                    }
-                    _ if is_in_no_table => {}
-                    // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
-                    _ => {
-                        self.tables[table.idx()].insert(name, symbol);
-                        if is_replaceable_by_method {
-                            self.b.symbols[symbol.idx()].flags |= SymFlags::REPLACEABLE_BY_METHOD;
-                        }
-                    }
+            None => {
+                let symbol = self.new_symbol(SymFlags::empty(), name);
+                if !is_in_no_table {
+                    self.tables[table.idx()].insert(name, symbol);
+                }
+                if is_replaceable_by_method {
+                    self.b.symbols[symbol.idx()].flags |= replaceable;
                 }
                 symbol
+            }
+            Some(existing) => {
+                let there = self.b.symbols[existing.idx()].flags;
+                // "A symbol already exists, so don't add this as a declaration."
+                if is_replaceable_by_method && !there.contains(replaceable) {
+                    return existing;
+                }
+                let (variable, assignment) = (SymFlags::VARIABLE, SymFlags::ASSIGNMENT);
+                if !there.intersects(excludes) {
+                    existing
+                } else if there.contains(replaceable) {
+                    // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
+                    let symbol = self.new_symbol(SymFlags::empty(), name);
+                    self.tables[table.idx()].insert(name, symbol);
+                    symbol
+                } else if includes.intersects(variable) && there.contains(assignment)
+                    || includes.contains(assignment) && there.intersects(variable)
+                {
+                    // "Assignment declarations are allowed to merge with variables, no matter what other flags they have."
+                    existing
+                } else {
+                    self.report_redeclaration(existing, includes, decl);
+                    // "we mark the symbol as a full accessor such that all subsequent declarations are considered conflicting"
+                    let accessor = SymFlags::ACCESSOR;
+                    if there.intersects(accessor) && there & accessor != includes & accessor {
+                        self.b.symbols[existing.idx()].flags |= accessor;
+                    }
+                    self.new_symbol(SymFlags::empty(), name)
+                }
             }
         };
         self.add_declaration_to_symbol(symbol, decl, includes);
@@ -778,14 +866,33 @@ impl<'f, 's> Binder<'f, 's> {
                 is_string_or_numeric_literal_like(self.f, index)
                     || is_entity_name_expression(self.f, index) && self.is_narrowable_reference(obj)
             }
-            ExprKind::Assign { target, .. } => self.is_narrowable_reference(target),
             ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
                 ..
             } => self.is_narrowable_reference(right),
+            ExprKind::Assign { target, .. } => self.is_left_hand_side_expression(target),
             _ => false,
         }
+    }
+
+    /// `IsLeftHandSideExpression`
+    fn is_left_hand_side_expression(&self, e: ExprId) -> bool {
+        is_parenthesized(self.f, e)
+            || match self.f[e].kind {
+                ExprKind::Fn(f) => self.f[f].kind != FnKind::Arrow,
+                ExprKind::Unary { .. }
+                | ExprKind::Binary { .. }
+                | ExprKind::Assign { .. }
+                | ExprKind::Cond { .. }
+                | ExprKind::Spread(_)
+                | ExprKind::Await(_)
+                | ExprKind::Yield { .. }
+                | ExprKind::As { .. }
+                | ExprKind::Satisfies { .. }
+                | ExprKind::AsConst(_) => false,
+                _ => true,
+            }
     }
 
     /// `containsNarrowableReference`
@@ -1189,12 +1296,39 @@ impl<'f, 's> Binder<'f, 's> {
                 local
             });
         }
-        if s.symbol.is_none() {
+        let container = self.symbol_of_container(scope);
+        if container.is_none() {
             return None;
         }
-        self.tables[self.b.symbols[s.symbol.idx()].exports.idx()]
-            .get(&name)
-            .copied()
+        self.export_of(container, name)
+    }
+
+    /// `container.Symbol()` of the container whose scope is `scope`. `NONE` also where
+    /// `fn_symbol` is: such a symbol has no exports yet.
+    fn symbol_of_container(&self, scope: ScopeId) -> SymbolId {
+        let s = &self.b.scopes[scope.idx()];
+        match s.kind {
+            ScopeKind::Fn(f) => match self.b.fns[f.idx()].owner {
+                FnOwner::Member(m) => self.b.member_symbol[m.idx()],
+                _ => self.b.fn_symbol[f.idx()],
+            },
+            ScopeKind::Class(c) => self.b.class_symbol[c.idx()],
+            ScopeKind::Interface(i) => self.b.interface_symbol[i.idx()],
+            _ => s.symbol,
+        }
+    }
+
+    /// `b.container.Symbol()`
+    fn container_symbol(&mut self) -> SymbolId {
+        let container = self.b.container_scope(self.scope);
+        if let ScopeKind::Fn(f) = self.b.scopes[container.idx()].kind
+            && matches!(self.f[f].kind, FnKind::Expr | FnKind::Arrow)
+            && self.b.fn_symbol[f.idx()].is_none()
+        {
+            let name = known::anonymous_function;
+            self.bind_anonymous_declaration(Decl::Fn(f), SymFlags::FUNCTION, name);
+        }
+        self.symbol_of_container(container)
     }
 
     /// `lookupEntity`. `IsEntityNameExpressionEx`: `a["b"]` and `a[0]` are entity names only in
@@ -1225,40 +1359,43 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `getInitializerSymbol`
     fn initializer_symbol(&mut self, symbol: SymbolId) -> Option<SymbolId> {
-        // `symbol.ValueDeclaration`: the first declaration that is not a namespace.
-        for i in 0..self.b.symbols[symbol.idx()].decls.len() {
-            let decl = self.b.symbols[symbol.idx()].decls[i];
-            match decl {
-                Decl::Fn(f) if matches!(self.b.fns[f.idx()].owner, FnOwner::Stmt(_)) => {
-                    return Some(symbol);
-                }
-                Decl::Class(_) if self.f.is_js => return Some(symbol),
-                Decl::Var(pat) => {
-                    let PatParent::Var(d) = self.b.pat_parent[pat.idx()] else {
-                        return None;
-                    };
-                    let decl = &self.f[d];
-                    if decl.kind != VarKind::Const && !self.f.is_js {
-                        return None;
-                    }
-                    return self.symbol_of_expando_initializer(decl.init, decl.ty.is_some());
-                }
-                // There is a case for a binary expression in JavaScript and none for a call.
-                Decl::Expando(first) => {
-                    let ExprKind::Assign { value, .. } = self.f[first].kind else {
-                        return None;
-                    };
-                    if !self.f.is_js {
-                        return None;
-                    }
-                    let annotation = self.f.jsdoc_type(JsDocTypeOwner::Assign(first));
-                    return self.symbol_of_expando_initializer(value, annotation.is_some());
-                }
-                Decl::Class(_) | Decl::Enum(_) | Decl::Param(_) => return None,
-                _ => {}
+        let of = &self.b.symbols[symbol.idx()];
+        let declaration = *of.decls.get(of.value_declaration as usize)?;
+        match declaration {
+            // `IsFunctionDeclaration`, `IsClassDeclaration`
+            Decl::Fn(f) if matches!(self.b.fns[f.idx()].owner, FnOwner::Stmt(_)) => Some(symbol),
+            Decl::Class(c)
+                if self.f.is_js && matches!(self.b.class_owner[c.idx()], ClassOwner::Stmt(_)) =>
+            {
+                Some(symbol)
             }
+            // `IsVariableDeclaration`: not a binding element.
+            Decl::Var(pat) => {
+                let PatParent::Var(d) = self.b.pat_parent[pat.idx()] else {
+                    return None;
+                };
+                let decl = &self.f[d];
+                // `NodeFlagsConst`, a bit that `NodeFlagsAwaitUsing` has too.
+                if !matches!(decl.kind, VarKind::Const | VarKind::AwaitUsing) && !self.f.is_js {
+                    return None;
+                }
+                self.symbol_of_expando_initializer(decl.init, decl.ty.is_some())
+            }
+            // `IsBinaryExpression`: there is no case for the call `Object.defineProperty(..)`.
+            Decl::ModuleExports(e)
+            | Decl::ExportsProperty(e)
+            | Decl::Expando(e)
+            | Decl::ThisProperty(e)
+                if self.f.is_js =>
+            {
+                let ExprKind::Assign { value, .. } = self.f[e].kind else {
+                    return None;
+                };
+                let annotation = self.f.jsdoc_type(JsDocTypeOwner::Assign(e));
+                self.symbol_of_expando_initializer(value, annotation.is_some())
+            }
+            _ => None,
         }
-        None
     }
 
     /// `IsExpandoInitializer`, `initializer.Symbol()`. `bindAnonymousDeclaration` gives every
@@ -1310,18 +1447,34 @@ impl<'f, 's> Binder<'f, 's> {
             .is_some_and(|existing| !flags(existing).contains(SymFlags::ASSIGNMENT))
     }
 
-    /// `GetContainerFlags`: an object literal and the attributes of a JSX element are containers
-    /// without locals, so `lookupName` finds nothing for an expression directly inside one. A
-    /// computed member name is bound inside its member or class, which does not declare the
-    /// enclosing names either.
-    fn is_in_container_without_locals(&self, e: ExprId) -> bool {
-        let mut parent = self.b.expr_parent[e.idx()];
+    /// `bindExpandoPropertyAssignment`: `b.blockScopeContainer` at `e`, which is bound in `scope`.
+    /// A decorator and a computed name are children of what they decorate or name, in whose scope
+    /// they are not bound. `None`: an object literal, the attributes of a JSX element or a type
+    /// literal, containers (`GetContainerFlags`) that have neither locals nor exports.
+    fn container_of_expando(&self, e: ExprId, scope: ScopeId) -> Option<ScopeId> {
+        let (f, b) = (self.f, &self.b);
+        let of_function = |func: FnId| func.is_some().then(|| b.fns[func.idx()].scope);
+        let mut parent = b.expr_parent[e.idx()];
         loop {
             parent = match parent {
-                Parent::Expr(outer) if outer.is_some() => self.b.expr_parent[outer.idx()],
-                Parent::Prop(_) | Parent::MemberKey(_) | Parent::MethodKey(_) => return true,
-                Parent::PropKey(..) => return true,
-                _ => return false,
+                Parent::Expr(outer) if outer.is_some() => b.expr_parent[outer.idx()],
+                Parent::Prop(_) | Parent::PropKey(..) => return None,
+                Parent::MethodKey(p) => return of_function(f.function_of(f.node(p))),
+                Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+                    return of_function(b.param_fn[p.idx()]);
+                }
+                Parent::MemberKey(m) | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+                    return match b.member_owner[m.idx()] {
+                        _ if f[m].func.is_some() => of_function(f[m].func),
+                        MemberOwner::Class(c) => Some(b.class_scope[c.idx()]),
+                        MemberOwner::Interface(i) => Some(b.interface_scope[i.idx()]),
+                        MemberOwner::TypeLiteral(_) | MemberOwner::None => None,
+                    };
+                }
+                Parent::Decorator(c, DecoratorOwner::Class(_)) => {
+                    return Some(b.class_scope[c.idx()]);
+                }
+                _ => return Some(scope),
             };
         }
     }
@@ -1330,9 +1483,9 @@ impl<'f, 's> Binder<'f, 's> {
     /// `Object.defineProperty(f, key, descriptor)` declare a property of `f`.
     fn bind_deferred_expando_assignments(&mut self) {
         for (e, scope) in std::mem::take(&mut self.expando_assignments) {
-            if self.is_in_container_without_locals(e) {
+            let Some(scope) = self.container_of_expando(e, scope) else {
                 continue;
-            }
+            };
             // `getParentOfPropertyAssignment`, `getDeclarationName`: the text of a literal key. `key` is `NONE` for `obj.name`.
             let (obj, name, key) = match self.f[e].kind {
                 ExprKind::Assign { target, .. } => {
@@ -1398,88 +1551,210 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
-    fn finish(mut self) -> BoundBuilder {
-        // Resolves names, now that everything is declared.
-        let idents = std::mem::take(&mut self.idents);
-        let tables = &self.tables;
-        let file = self.f;
-        // `Resolve`: the functions that have an `arguments` of their own.
-        let has_arguments = |b: &BoundBuilder, f: FnId| match file[f].kind {
+    /// `Resolve`: whether `f` has an `arguments` of its own.
+    fn has_arguments(&self, f: FnId) -> bool {
+        match self.f[f].kind {
             FnKind::Decl | FnKind::Expr | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
                 true
             }
             // A method of a class or an object literal, not a method signature.
-            FnKind::Method => !matches!(b.fns[f.idx()].owner, FnOwner::Member(m)
-                if matches!(b.member_owner[m.idx()], MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))),
+            FnKind::Method => !matches!(self.b.fns[f.idx()].owner, FnOwner::Member(m)
+                if matches!(self.b.member_owner[m.idx()], MemberOwner::Interface(_) | MemberOwner::TypeLiteral(_))),
             _ => false,
+        }
+    }
+
+    /// `Resolve` for the value `name`, among what the file declares, once everything is declared.
+    /// `None`: `argumentsSymbol`.
+    fn resolve(&self, mut scope: ScopeId, name: Atom) -> Option<SymbolId> {
+        let (b, tables) = (&self.b, &self.tables);
+        // `lastLocation`: the kind of the scope the search has just left.
+        let mut from = ScopeKind::Block;
+        while scope.is_some() {
+            let s = &b.scopes[scope.idx()];
+            // `Bound::property_with_invalid_initializer`, while the tables are not flattened yet.
+            // `Resolve` eventually returns nil: the name is left to `Files::resolve`, which reports
+            // the reason.
+            if let ScopeKind::PropertyDeclaration(_, constructor)
+            | ScopeKind::PropertyType(_, constructor) = s.kind
+                && let Some(&local) =
+                    tables[b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()].get(&name)
+                && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
+            {
+                return Some(SymbolId::NONE);
+            }
+            if let Some(&symbol) = tables[s.locals.idx()].get(&name)
+                && b.symbols[symbol.idx()]
+                    .flags
+                    .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
+                && b.is_seen_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
+            {
+                return Some(b.export_symbol_of_value_symbol_if_exported(symbol));
+            }
+            // The name `default` does not resolve in the scope that exports it. For an enum and a
+            // namespace merged into one symbol, the enum scope sees only the members and the
+            // namespace scope everything but the members.
+            if s.symbol.is_some()
+                && name != known::default
+                && let Some(&symbol) = tables[b.symbols[s.symbol.idx()].exports.idx()].get(&name)
+                && !b.symbols[symbol.idx()].flags.contains(SymFlags::EXPORT_ONLY)
+                // An export of a CommonJS module is only in scope inside the module if it is a
+                // type.
+                && !(s.kind == ScopeKind::File
+                    && b.commonjs_indicator.is_some()
+                    && !b.symbols[symbol.idx()].flags.intersects(SymFlags::TYPE))
+                && b.symbols[symbol.idx()].flags.intersects(match s.kind {
+                    ScopeKind::Enum(_) => SymFlags::ENUM_MEMBER,
+                    _ => (SymFlags::VALUE | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
+                })
+            {
+                return Some(symbol);
+            }
+            // The name of a method or an accessor is a child of it: its locals are searched. From
+            // there `useResult` is false for a type and for a function scoped variable.
+            if let ScopeKind::FunctionName(f) = s.kind
+                && let Some(&symbol) =
+                    tables[b.scopes[b.fns[f.idx()].scope.idx()].locals.idx()].get(&name)
+                && b.symbols[symbol.idx()]
+                    .flags
+                    .intersects(SymFlags::VALUE | SymFlags::ALIAS)
+                && !(b.symbols[symbol.idx()].flags & SymFlags::VALUE)
+                    .intersects(SymFlags::TYPE | SymFlags::FUNCTION_SCOPED_VARIABLE)
+            {
+                return Some(symbol);
+            }
+            if name == known::arguments
+                && let ScopeKind::Fn(f) | ScopeKind::FunctionName(f) = s.kind
+                && self.has_arguments(f)
+            {
+                return None;
+            }
+            from = s.kind;
+            scope = s.parent;
+        }
+        Some(SymbolId::NONE)
+    }
+
+    /// `containsArgumentsReference`
+    fn contains_arguments_reference(&mut self, func: FnId) -> bool {
+        self.visit_for_arguments_reference(self.f.body(self.f.node(func)))
+    }
+
+    /// `visit` of `containsArgumentsReference`
+    fn visit_for_arguments_reference(&mut self, node: Node) -> bool {
+        if node.is_none() || self.is_out_of_stack() {
+            return false;
+        }
+        let f = self.f;
+        let kind = f.kind(node);
+        match kind {
+            Kind::Identifier => {
+                return f.text(node) == known::arguments && self.is_arguments_symbol_at(node);
+            }
+            Kind::PropertyDeclaration
+            | Kind::MethodDeclaration
+            | Kind::GetAccessor
+            | Kind::SetAccessor
+                if f.kind(f.name(node)) == Kind::ComputedPropertyName =>
+            {
+                return self.visit_for_arguments_reference(f.name(node));
+            }
+            Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
+                return self.visit_for_arguments_reference(f.expression(node));
+            }
+            Kind::PropertyAssignment => {
+                return self.visit_for_arguments_reference(f.initializer(node));
+            }
+            _ => {}
+        }
+        if Self::node_starts_new_lexical_environment(kind) || f.is_part_of_type_node(node) {
+            return false;
+        }
+        f.for_each_child(node, &mut |child| self.visit_for_arguments_reference(child))
+    }
+
+    /// `nodeStartsNewLexicalEnvironment`
+    fn node_starts_new_lexical_environment(kind: Kind) -> bool {
+        matches!(
+            kind,
+            Kind::Constructor
+                | Kind::FunctionExpression
+                | Kind::FunctionDeclaration
+                | Kind::ArrowFunction
+                | Kind::MethodDeclaration
+                | Kind::GetAccessor
+                | Kind::SetAccessor
+                | Kind::ModuleDeclaration
+                | Kind::SourceFile
+        )
+    }
+
+    /// `c.IsArgumentsSymbol(c.getResolvedSymbol(node))` for an identifier named `arguments`.
+    fn is_arguments_symbol_at(&mut self, node: Node) -> bool {
+        if let NodeData::Expr(e) = self.f.data(node) {
+            return self.b.arguments_objects.binary_search(&e).is_ok();
+        }
+        let scope = self.scope_of_name(node);
+        let Some(symbol) = self.resolve(scope, known::arguments) else {
+            return true;
         };
-        // `Err`: the arguments object of a function, with the innermost function that contains the
-        // name, even if that is an arrow function.
-        let resolve =
-            |b: &BoundBuilder, mut scope: ScopeId, name: Atom| -> Result<SymbolId, FnId> {
-                // `lastLocation`: the kind of the scope the search has just left.
-                let mut from = ScopeKind::Block;
-                let mut innermost = FnId::NONE;
-                while scope.is_some() {
-                    let s = &b.scopes[scope.idx()];
-                    if let ScopeKind::Fn(f) = s.kind
-                        && innermost.is_none()
-                    {
-                        innermost = f;
-                    }
-                    // `Bound::property_with_invalid_initializer`, while the tables are not flattened
-                    // yet. `Resolve` eventually returns nil: the name is left to `Files::resolve`,
-                    // which reports the reason.
-                    if let ScopeKind::PropertyDeclaration(_, constructor)
-                    | ScopeKind::PropertyType(_, constructor) = s.kind
-                        && let Some(&local) = tables
-                            [b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()]
-                        .get(&name)
-                        && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
-                    {
-                        return Ok(SymbolId::NONE);
-                    }
-                    if let Some(&symbol) = tables[s.locals.idx()].get(&name)
-                        && b.symbols[symbol.idx()]
-                            .flags
-                            .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
-                        && b.is_seen_from(from, b.symbols[symbol.idx()].flags, SymFlags::VALUE)
-                    {
-                        return Ok(b.export_symbol_of_value_symbol_if_exported(symbol));
-                    }
-                    // The name `default` does not resolve in the scope that exports it. For an enum and
-                    // a namespace merged into one symbol, the enum scope sees only the members and the
-                    // namespace scope everything but the members.
-                    if s.symbol.is_some()
-                    && name != known::default
-                    && let Some(&symbol) =
-                        tables[b.symbols[s.symbol.idx()].exports.idx()].get(&name)
-                    && !b.symbols[symbol.idx()]
-                        .flags
-                        .contains(SymFlags::EXPORT_ONLY)
-                    // An export of a CommonJS module is only in scope inside the module if it is a type.
-                    && !(s.kind == ScopeKind::File
-                        && b.commonjs_indicator.is_some()
-                        && !b.symbols[symbol.idx()].flags.intersects(SymFlags::TYPE))
-                    && b.symbols[symbol.idx()].flags.intersects(match s.kind {
-                        ScopeKind::Enum(_) => SymFlags::ENUM_MEMBER,
-                        _ => (SymFlags::VALUE | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER,
-                    }) {
-                        return Ok(symbol);
-                    }
-                    if name == known::arguments
-                        && let ScopeKind::Fn(f) = s.kind
-                        && has_arguments(b, f)
-                    {
-                        return Err(innermost);
-                    }
-                    from = s.kind;
-                    scope = s.parent;
+        self.b
+            .names_resolved_for_arguments
+            .push((node, scope, symbol));
+        false
+    }
+
+    /// The scope from which `Resolve` looks up `name`, an identifier that is not an expression.
+    fn scope_of_name(&self, name: Node) -> ScopeId {
+        let (f, b) = (self.f, &self.b);
+        let (mut below, mut node) = (name, f.parent(name));
+        loop {
+            let scope = match f.data(node) {
+                NodeData::None | NodeData::File => return ScopeId(0),
+                // `Resolve` finds `arguments` at a method or an accessor wherever it comes from.
+                NodeData::Member(_) | NodeData::Prop(_)
+                    if below == f.name(node) && f.function_of(node).is_some() =>
+                {
+                    b.fns[f.function_of(node).idx()].scope
                 }
-                Ok(SymbolId::NONE)
+                NodeData::Member(m) => b.member_scope[m.idx()],
+                NodeData::EnumMember(m) => b.enum_scope[b.enum_member_owner[m.idx()].idx()],
+                NodeData::TypeParam(p) => b.type_param_scope[p.idx()],
+                NodeData::Expr(e) => match f[e].kind {
+                    ExprKind::Class(c) => b.class_scope[c.idx()],
+                    ExprKind::Fn(func) => b.fns[func.idx()].scope,
+                    _ => ScopeId::NONE,
+                },
+                NodeData::Part(Part::CatchClause, row) => match f.data(row) {
+                    NodeData::Stmt(s) => match f[s].kind {
+                        StmtKind::Try { handler, .. } => b.stmt_scope[handler.idx()],
+                        _ => ScopeId::NONE,
+                    },
+                    _ => ScopeId::NONE,
+                },
+                NodeData::Stmt(s) => match f[s].kind {
+                    StmtKind::Class(c) => b.class_scope[c.idx()],
+                    StmtKind::Interface(i) => b.interface_scope[i.idx()],
+                    StmtKind::TypeAlias(a) => b.alias_scope[a.idx()],
+                    // "If lastLocation is the name of a namespace or enum, skip the parent"
+                    StmtKind::Enum(e) if below != f.name(node) => b.enum_scope[e.idx()],
+                    StmtKind::For { body, .. }
+                    | StmtKind::ForIn { body, .. }
+                    | StmtKind::ForOf { body, .. } => b.stmt_scope[body.idx()],
+                    _ => b.stmt_scope[s.idx()],
+                },
+                _ => ScopeId::NONE,
             };
-        // `containsArgumentsReference`
-        let mut refer_to_arguments = Vec::new();
+            if scope.is_some() {
+                return scope;
+            }
+            (below, node) = (node, f.parent(node));
+        }
+    }
+
+    fn finish(mut self) -> BoundBuilder {
+        // Resolves names, now that everything is declared.
+        let idents = std::mem::take(&mut self.idents);
         for &(expr, scope) in &idents {
             let ExprKind::Ident(name) = self.f[expr].kind else {
                 continue;
@@ -1489,15 +1764,9 @@ impl<'f, 's> Binder<'f, 's> {
             if name == known::empty {
                 continue;
             }
-            let symbol = match resolve(&self.b, scope, name) {
-                Ok(symbol) => symbol,
-                Err(innermost) => {
-                    self.b.arguments_objects.push(expr);
-                    if !self.f.jsdoc_param_errors.is_empty() {
-                        refer_to_arguments.push(innermost);
-                    }
-                    continue;
-                }
+            let Some(symbol) = self.resolve(scope, name) else {
+                self.b.arguments_objects.push(expr);
+                continue;
             };
             self.b.expr_symbol[expr.idx()] = symbol;
             // There are two for every `<div></div>`, and only the baseline writers resolve them.
@@ -1532,9 +1801,18 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.arguments_objects.as_mut_slice().sort_unstable();
         // `checkUnmatchedJSDocParameters`: a function that refers to `arguments` is checked less
         // strictly.
-        for (index, (func, diagnostic)) in self.f.jsdoc_param_errors.iter().enumerate() {
-            if (diagnostic.code == 8029) == refer_to_arguments.contains(func) {
-                self.b.jsdoc_param_errors.push(index as u32);
+        let f = self.f;
+        // FOR SPEED: no identifier is named `arguments` unless the text has the word or an escape.
+        let has_the_name = !f.functions_with_param_tags.is_empty()
+            && (bun_core::strings::contains(&f.text, b"arguments")
+                || bun_core::strings::contains(&f.text, b"\\u"));
+        let mut errors = f.jsdoc_param_errors.iter().enumerate().peekable();
+        for &func in f.functions_with_param_tags.iter() {
+            let contains_arguments = has_the_name && self.contains_arguments_reference(func);
+            while let Some((index, (_, diagnostic))) = errors.next_if(|error| error.1.0 == func) {
+                if (diagnostic.code == 8029) == contains_arguments {
+                    self.b.jsdoc_param_errors.push(index as u32);
+                }
             }
         }
         self.b
@@ -1618,17 +1896,25 @@ impl<'f, 's> Binder<'f, 's> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// Function declarations first: they are hoisted to the top of the block.
+    /// `bindChildren` for a block, the body of a namespace or the file.
     fn stmts(&mut self, list: IdList<StmtId>, parent: Parent) {
         self.statement_lists.push(list);
-        for s in self.f.ids(list) {
-            if matches!(self.f[s].kind, StmtKind::Fn(_)) {
+        if self.flow == UNREACHABLE {
+            // `bindEachChild`
+            for s in self.f.ids(list) {
                 self.stmt(s, parent);
             }
-        }
-        for s in self.f.ids(list) {
-            if !matches!(self.f[s].kind, StmtKind::Fn(_)) {
-                self.stmt(s, parent);
+        } else {
+            // `bindEachStatementFunctionsFirst`: those are hoisted to the top of the block.
+            for s in self.f.ids(list) {
+                if matches!(self.f[s].kind, StmtKind::Fn(_)) {
+                    self.stmt(s, parent);
+                }
+            }
+            for s in self.f.ids(list) {
+                if !matches!(self.f[s].kind, StmtKind::Fn(_)) {
+                    self.stmt(s, parent);
+                }
             }
         }
         self.statement_lists.pop();
@@ -1665,6 +1951,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.b.stmt_flow[id.idx()] = self.flow;
         let around_reached = std::mem::replace(&mut self.is_reached, self.flow != UNREACHABLE);
         let me = Parent::Stmt(id);
+        let counted = self.yields.len();
         // `checkDecorators` never reaches the decorators of a statement that is not a class. Those
         // of a class are bound with it.
         for modifier in self.f[id].modifiers.iter() {
@@ -1756,8 +2043,6 @@ impl<'f, 's> Binder<'f, 's> {
                 let symbol = self.bind_block_scoped_declaration(Decl::Enum(e), flags, excludes);
                 let exports = self.get_exports(symbol);
                 self.b.enum_scope[e.idx()] = self.push_scope(ScopeKind::Enum(e), symbol);
-                // `forEachYieldExpression` does not descend into an enum.
-                let counted = self.yields.len();
                 for m in decl.members.iter() {
                     // `bindPropertyOrMethodOrAccessor`
                     self.declare_symbol(
@@ -1775,7 +2060,6 @@ impl<'f, 's> Binder<'f, 's> {
                         self.expr(self.f[m].init, Parent::EnumInit(m));
                     }
                 }
-                self.yields.truncate(counted);
                 self.pop_scope();
             }
             StmtKind::Module(m) => self.module(m),
@@ -1973,18 +2257,17 @@ impl<'f, 's> Binder<'f, 's> {
                     Decl::ExportStarAs(id),
                     SymFlags::ALIAS | SymFlags::EXPORT_ONLY,
                 );
-                let container = self.b.scopes[self.b.container_scope(self.scope).idx()].symbol;
-                if alias.is_some() && container.is_none() {
+                let container = self.container_symbol();
+                if container.is_none() {
                     // "Export * in some sort of block construct"
-                    self.bind_anonymous_declaration(decl, flags, alias);
-                } else if alias.is_some() {
-                    let exports = self.b.symbols[container.idx()].exports;
-                    self.declare_symbol(exports, container, decl, flags, SymFlags::ALIAS_EXCLUDES);
-                } else {
-                    let container = self.b.scopes[self.scope.idx()].symbol;
-                    if container.is_some() {
-                        self.b.export_stars.push((container, id));
+                    if alias.is_some() {
+                        self.bind_anonymous_declaration(decl, flags, alias);
                     }
+                } else if alias.is_none() {
+                    self.b.export_stars.push((container, id));
+                } else {
+                    let exports = self.get_exports(container);
+                    self.declare_symbol(exports, container, decl, flags, SymFlags::ALIAS_EXCLUDES);
                 }
             }
             StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
@@ -1997,13 +2280,8 @@ impl<'f, 's> Binder<'f, 's> {
                 } else {
                     SymFlags::PROPERTY
                 } | SymFlags::EXPORT_ONLY;
-                // `bindExportAssignment`: `b.container.Symbol()`. A block is not a container, a
-                // function is.
-                let container = &self.b.scopes[self.b.container_scope(self.scope).idx()];
-                let container = match container.kind {
-                    ScopeKind::Fn(f) => self.b.fn_symbol[f.idx()],
-                    _ => container.symbol,
-                };
+                // `bindExportAssignment`
+                let container = self.container_symbol();
                 let decl = Decl::ExportExpr(id);
                 if container.is_some() {
                     let exports = self.get_exports(container);
@@ -2030,6 +2308,17 @@ impl<'f, 's> Binder<'f, 's> {
                     self.b.umd_globals.push((name, symbol));
                 }
             }
+        }
+        // `forEachYieldExpression` descends into none of these.
+        if matches!(
+            self.f[id].kind,
+            StmtKind::Enum(_)
+                | StmtKind::Interface(_)
+                | StmtKind::Module(_)
+                | StmtKind::TypeAlias(_)
+                | StmtKind::Fn(_)
+        ) {
+            self.yields.truncate(counted);
         }
         self.is_reached = around_reached;
     }
@@ -2309,12 +2598,7 @@ impl<'f, 's> Binder<'f, 's> {
                 ScopeKind::File
             );
         let symbol = match decl.name {
-            // `declareModuleMember`: a local of its enclosing container, under a name that nothing
-            // can refer to. 2435
-            ModuleName::String(name) if !is_global && !is_augmentation => {
-                self.bind_anonymous_declaration(Decl::Module(m), flags, name)
-            }
-            ModuleName::String(name) => {
+            ModuleName::String(name) if is_global || is_augmentation => {
                 // `collectModuleReferences`: a module augmentation must resolve its module, like an
                 // import. At the top level of a script it declares the module itself.
                 if !is_at_top {
@@ -2345,10 +2629,23 @@ impl<'f, 's> Binder<'f, 's> {
             ModuleName::Ident(name) if decl.flags.contains(Flags::CLASS_ELEMENT) => {
                 self.bind_anonymous_declaration(Decl::Module(m), flags, name)
             }
-            ModuleName::Ident(_) | ModuleName::Global => {
+            // `declareModuleMember`: with a quoted name it is a local of its container, under a
+            // name that nothing can refer to. 2435
+            ModuleName::Ident(_) | ModuleName::String(_) | ModuleName::Global => {
                 self.declare_symbol_and_add_to_symbol_table(Decl::Module(m), flags, excludes)
             }
         };
+        // `bindModuleDeclaration`, `TryParsePattern`
+        if let ModuleName::String(name) = decl.name
+            && !is_augmentation
+            && name.is_some()
+            && (self.atoms.bytes(name).iter())
+                .filter(|&&c| c == b'*')
+                .count()
+                == 1
+        {
+            self.b.pattern_ambient_modules.push((name, symbol));
+        }
         // `collectModuleReferences`: anywhere else it augments nothing. 2669
         if decl.name == ModuleName::Global
             && is_augmentation
@@ -2379,10 +2676,7 @@ impl<'f, 's> Binder<'f, 's> {
         self.return_target = FlowId::NONE;
         self.exception_target = FlowId::NONE;
         let seen_this = self.seen_this;
-        // `forEachYieldExpression` does not descend into a namespace.
-        let counted = self.yields.len();
         self.stmts(decl.body, Parent::Module(m));
-        self.yields.truncate(counted);
         self.seen_this = seen_this;
         (
             self.flow,
@@ -2443,11 +2737,15 @@ impl<'f, 's> Binder<'f, 's> {
         visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
     ) -> ModuleInstanceState {
         match self.f[s].kind {
-            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Import(_) => {
-                ModuleInstanceState::NonInstantiated
-            }
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) => ModuleInstanceState::NonInstantiated,
             StmtKind::Enum(e) if self.f[e].flags.contains(Flags::CONST) => {
                 ModuleInstanceState::ConstEnumOnly
+            }
+            // `HasSyntacticModifier(node, ModifierFlagsExport)`
+            StmtKind::Import(_)
+                if (self.f.find_modifier(self.f[s].modifiers, Flags::EXPORT)).is_none() =>
+            {
+                ModuleInstanceState::NonInstantiated
             }
             StmtKind::ImportEquals(i) if !self.f[i].flags.contains(Flags::EXPORT) => {
                 ModuleInstanceState::NonInstantiated
@@ -2566,9 +2864,11 @@ impl<'f, 's> Binder<'f, 's> {
         self.is_reached = around_reached;
     }
 
+    /// `bindInitializedVariableFlow`
     fn initialized(&mut self, pat: PatId, decl: Option<VarDeclId>) {
         match self.f[pat].kind {
-            PatKind::Ident(_) => {
+            // Whatever is not a pattern, like the element without a name in `[,]`.
+            PatKind::Ident(_) | PatKind::Missing => {
                 let target = match decl {
                     Some(d) => FlowTarget::Var(d),
                     None => FlowTarget::Pat(pat),
@@ -2588,7 +2888,6 @@ impl<'f, 's> Binder<'f, 's> {
                     self.initialized(self.f[e].pat, None);
                 }
             }
-            PatKind::Missing => {}
         }
     }
 
@@ -2614,7 +2913,10 @@ impl<'f, 's> Binder<'f, 's> {
                 } else if flags.contains(SymFlags::PARAMETER) {
                     (Decl::Param(pat), flags, SymFlags::PARAMETER_EXCLUDES)
                 } else {
-                    if self.b.container_scope(self.scope) != self.scope {
+                    if self.b.container_scope(self.scope) != self.scope
+                        || matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::Fn(f)
+                            if self.f[f].kind == FnKind::StaticBlock)
+                    {
                         self.b.hoisted_vars.push((pat, self.scope));
                     }
                     (
@@ -2699,7 +3001,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `bindTypeParameter`: declared among the members of a class or an interface, which hold the
     /// type parameters of all its declarations, or else among the locals of `scope`. `Resolve`
-    /// searches the locals. The name of a class expression is declared there first.
+    /// searches the locals.
     fn bind_type_parameter(&mut self, p: TypeParamId, scope: ScopeId) -> SymbolId {
         self.b.type_param_scope[p.idx()] = scope;
         let s = &self.b.scopes[scope.idx()];
@@ -2755,12 +3057,14 @@ impl<'f, 's> Binder<'f, 's> {
 
     fn func(&mut self, id: FnId, owner: FnOwner) {
         let f = &self.f[id];
-        // `NodeCanBeDecorated`: only a parameter of a class member can be decorated, and `Binder::class` binds its decorators.
+        self.b.fns[id.idx()].owner = owner;
+        // `NodeCanBeDecorated`: only a parameter of a class member can be decorated. Its decorators
+        // are bound with it.
         let is_class_member = matches!(owner, FnOwner::Member(m) if matches!(self.b.member_owner[m.idx()], MemberOwner::Class(_)));
         if !is_class_member && !f.params.is_empty() && !self.f.decorators.is_empty() {
             let counted = self.yields.len();
-            // The state `function_key` left for this function does not apply to a function inside a
-            // decorator.
+            // The state `leave_function_head` left for this function does not apply to a function
+            // inside a decorator.
             let from_name = (
                 std::mem::take(&mut self.this_in_name),
                 std::mem::replace(&mut self.flow_after_name, FlowId::NONE),
@@ -2911,6 +3215,14 @@ impl<'f, 's> Binder<'f, 's> {
         for p in f.params.iter() {
             self.b.param_fn[p.idx()] = id;
             let param = &self.f[p];
+            // `bindParameterFlow`: the modifiers come first.
+            let modifiers = self.f.param_modifiers(p);
+            if let FnOwner::Member(m) = owner
+                && let MemberOwner::Class(class) = self.b.member_owner[m.idx()]
+                && self.has_decorators(modifiers)
+            {
+                self.decorators_in_member(modifiers, class, m, DecoratorOwner::Param(p));
+            }
             if param.ty.is_some() {
                 self.ty(param.ty);
             }
@@ -3050,18 +3362,23 @@ impl<'f, 's> Binder<'f, 's> {
         // `Resolve`, `KindDecorator`: only from a decorator of a class declaration does the search
         // skip the class. A decorator of a class expression sees its name and type parameters.
         if let ClassOwner::Stmt(_) = owner {
-            self.class_decorators(id, owner);
+            self.decorators(c.modifiers, id, DecoratorOwner::Class(id));
+        }
+        // `Resolve`: the name of a class expression is compared after the type parameters of the
+        // class are searched.
+        let has_own_name = matches!(owner, ClassOwner::Expr(_)) && c.name.is_some();
+        if has_own_name {
+            self.push_scope(ScopeKind::Block, SymbolId::NONE);
+            let (flags, excludes) = (SymFlags::CLASS, SymFlags::CLASS_EXCLUDES);
+            self.bind_block_scoped_declaration(Decl::Class(id), flags, excludes);
         }
         let scope = self.push_scope(ScopeKind::Class(id), SymbolId::NONE);
         self.b.class_scope[id.idx()] = scope;
         if let ClassOwner::Expr(_) = owner {
-            let (decl, flags) = (Decl::Class(id), SymFlags::CLASS);
-            if c.name.is_some() {
-                self.bind_block_scoped_declaration(decl, flags, SymFlags::CLASS_EXCLUDES);
-            } else {
-                self.bind_anonymous_declaration(decl, flags, Atom::NONE);
+            if !has_own_name {
+                self.bind_anonymous_declaration(Decl::Class(id), SymFlags::CLASS, Atom::NONE);
             }
-            self.class_decorators(id, owner);
+            self.decorators(c.modifiers, id, DecoratorOwner::Class(id));
         }
         // `bindClassLikeDeclaration`: "Every class automatically contains a static property member named 'prototype'".
         let symbol = self.b.class_symbol[id.idx()];
@@ -3101,77 +3418,51 @@ impl<'f, 's> Binder<'f, 's> {
         let around = std::mem::replace(&mut self.is_unchecked, true);
         self.tys(c.other_implements);
         self.is_unchecked = around;
-        // The decorators of members and parameters see the scope of the class, not that of the
-        // method. `requiresScopeChangeWorker` inspects only the name of a member.
-        let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
-        for i in 0..self.f.decorators.len() {
-            let (of, e) = self.f.decorators[i];
-            let member = match of {
-                DecoratorOwner::Class(_) => None,
-                DecoratorOwner::Member(m) => c.members.range().contains(&m.idx()).then_some(m),
-                DecoratorOwner::Param(p) => c.members.iter().find(|&m| {
-                    let func = self.f[m].func;
-                    func.is_some() && self.f[func].params.range().contains(&p.idx())
-                }),
-            };
-            if let Some(member) = member {
-                // `forEachYieldExpression` visits only the computed name of a method, an accessor
-                // or a constructor.
-                let counted = self.yields.len();
-                // `Resolve`, `KindDecorator`: the class is reached from the member.
-                let is_static = self.is_static(member, MemberOwner::Class(id));
-                if is_static {
-                    self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
-                }
-                let of_a_function = match of {
-                    DecoratorOwner::Member(m) => self.f[m].func.is_some(),
-                    DecoratorOwner::Param(_) => true,
-                    DecoratorOwner::Class(_) => false,
-                };
-                // `bindContainer`: a decorator is a child of the node it decorates, where a new
-                // control flow starts.
-                let saved = (self.flow, self.exception_target);
-                if of_a_function || self.f[member].init.is_some() {
-                    let is_in_expression = of_a_function && matches!(owner, ClassOwner::Expr(_));
-                    self.flow = self.new_flow(Flow::Start {
-                        outer: if is_in_expression {
-                            saved.0
-                        } else {
-                            FlowId::NONE
-                        },
-                        arrow: false,
-                    });
-                    self.exception_target = FlowId::NONE;
-                }
-                self.expr(e, Parent::Decorator(id, of));
-                (self.flow, self.exception_target) = saved;
-                if is_static {
-                    self.pop_scope();
-                }
-                if of_a_function {
-                    self.yields.truncate(counted);
-                }
-                if !self.can_be_decorated(of, id, owner) {
-                    self.b.refused_decorators.push(e);
-                }
-            }
-        }
-        self.scope_change_of = scope_change_of;
         self.members(c.members, MemberOwner::Class(id));
         self.pop_scope();
+        if has_own_name {
+            self.pop_scope();
+        }
     }
 
-    /// The decorators of the class itself.
-    fn class_decorators(&mut self, id: ClassId, owner: ClassOwner) {
-        for i in 0..self.f.decorators.len() {
-            let (of, e) = self.f.decorators[i];
-            if of == DecoratorOwner::Class(id) {
-                self.expr(e, Parent::Decorator(id, of));
-                if !self.can_be_decorated(of, id, owner) {
+    /// The decorators among `modifiers`, which are the modifiers of `of`: `class`, a member of it
+    /// or a parameter of a member.
+    fn decorators(&mut self, modifiers: Span<ModifierId>, class: ClassId, of: DecoratorOwner) {
+        let owner = self.b.class_owner[class.idx()];
+        for modifier in modifiers.iter() {
+            if let ModifierKind::Decorator(e) = self.f[modifier].kind {
+                self.expr(e, Parent::Decorator(class, of));
+                if !self.can_be_decorated(of, class, owner) {
                     self.b.refused_decorators.push(e);
                 }
             }
         }
+    }
+
+    /// The decorators of the member `m` of `class`, or of its parameter `of`. `Resolve`,
+    /// `KindDecorator`: the search goes on at the class, which it reaches from the member.
+    /// `requiresScopeChangeWorker` inspects only the name of a member.
+    fn decorators_in_member(
+        &mut self,
+        modifiers: Span<ModifierId>,
+        class: ClassId,
+        m: MemberId,
+        of: DecoratorOwner,
+    ) {
+        let around = std::mem::replace(&mut self.scope, self.b.class_scope[class.idx()]);
+        let scope_change_of = std::mem::replace(&mut self.scope_change_of, FnId::NONE);
+        if self.is_static(m, MemberOwner::Class(class)) {
+            self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
+        }
+        // `forEachYieldExpression` visits only the computed name of a method, an accessor or a
+        // constructor.
+        let counted = self.yields.len();
+        self.decorators(modifiers, class, of);
+        if self.f[m].func.is_some() {
+            self.yields.truncate(counted);
+        }
+        self.scope_change_of = scope_change_of;
+        self.scope = around;
     }
 
     /// `NodeCanBeDecorated`
@@ -3293,15 +3584,55 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 self.note_scope_change(!self.options.emit_standard_class_fields);
             }
-            // `GetContainerFlags`: a property with an initializer starts a new control flow, which
-            // includes its name and its type, and has no exception target.
+            let class = match owner {
+                MemberOwner::Class(c) => c,
+                _ => ClassId::NONE,
+            };
+            if class.is_none() {
+                self.note_private_name(Decl::Member(m), member.key);
+            }
+            // `GetContainerFlags`: a property declaration with an initializer starts a new control
+            // flow, which has no exception target. Without one it is no container at all.
+            let is_initialized_property =
+                class.is_some() && member.kind == MemberKind::Property && member.init.is_some();
             let saved = (self.flow, self.exception_target);
-            if member.init.is_some() {
+            if is_initialized_property {
                 self.flow = self.new_flow(Flow::Start {
                     outer: FlowId::NONE,
                     arrow: false,
                 });
                 self.exception_target = FlowId::NONE;
+            }
+            // `ContainerFlagsIsThisContainer`
+            let outer_this = self.this_member;
+            if is_initialized_property
+                || class.is_some()
+                    && matches!(
+                        member.kind,
+                        MemberKind::Method
+                            | MemberKind::Getter
+                            | MemberKind::Setter
+                            | MemberKind::Constructor
+                            | MemberKind::StaticBlock
+                    )
+            {
+                self.this_member = m;
+            }
+            // `bindEachChild`: the decorators and the name are the first children of the member.
+            let has_decorators = class.is_some() && self.has_decorators(member.modifiers);
+            let head = (member.func.is_some()
+                && !matches!(
+                    member.kind,
+                    MemberKind::StaticBlock | MemberKind::IndexSignature
+                )
+                && (has_decorators || matches!(member.key, PropKey::Computed(_))))
+            .then(|| {
+                self.enter_function_head(
+                    is_in_class_expression && member.kind != MemberKind::Constructor,
+                )
+            });
+            if has_decorators {
+                self.decorators_in_member(member.modifiers, class, m, DecoratorOwner::Member(m));
             }
             if let PropKey::Computed(key) = member.key {
                 // `checkComputedPropertyName`: `[P in K]` outside a mapped type is an error of its own and is not checked.
@@ -3317,7 +3648,9 @@ impl<'f, 's> Binder<'f, 's> {
                     self.b.expr_scope.insert(key, computed_name);
                 }
                 if member.func.is_some() {
-                    self.function_key(key, Parent::MemberKey(m), is_in_class_expression);
+                    self.push_scope(ScopeKind::FunctionName(member.func), SymbolId::NONE);
+                    self.expr(key, Parent::MemberKey(m));
+                    self.pop_scope();
                 } else if constructor.is_some() {
                     self.push_scope(
                         ScopeKind::PropertyDeclaration(m, constructor),
@@ -3346,7 +3679,6 @@ impl<'f, 's> Binder<'f, 's> {
                 self.cur_member
             };
             let outer_member = std::mem::replace(&mut self.cur_member, container);
-            let outer_this = std::mem::replace(&mut self.this_member, of_class);
             let is_static = self.is_static(m, owner);
             if is_static {
                 self.push_scope(ScopeKind::StaticMember, SymbolId::NONE);
@@ -3363,6 +3695,9 @@ impl<'f, 's> Binder<'f, 's> {
                 }
             }
             if member.func.is_some() {
+                if let Some(head) = head {
+                    self.leave_function_head(head);
+                }
                 self.func(member.func, FnOwner::Member(m));
             }
             if member.init.is_some() {
@@ -3384,12 +3719,10 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.scope_change_of = scope_change_of;
                 self.associated_declaration.0 = associated;
+            }
+            if is_initialized_property {
                 (self.flow, self.exception_target) = saved;
-                // `GetContainerFlags`: a property with an initializer is its own container,
-                // including its name and type.
-                if member.kind == MemberKind::Property && matches!(owner, MemberOwner::Class(_)) {
-                    self.seen_this = seen_this;
-                }
+                self.seen_this = seen_this;
             }
             if is_static {
                 self.pop_scope();
@@ -3399,27 +3732,40 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
-    /// `bindContainer`: the computed name of a method or an accessor is part of it. A new control
-    /// flow starts before the name and continues into the function, which is bound next, and a
-    /// `this` in the name counts as a `this` in the function.
+    fn has_decorators(&self, modifiers: Span<ModifierId>) -> bool {
+        modifiers
+            .iter()
+            .any(|modifier| matches!(self.f[modifier].kind, ModifierKind::Decorator(_)))
+    }
+
+    /// `bindContainer`: the decorators and the computed name of a method, an accessor or a
+    /// constructor are part of it. A new control flow starts before them and continues into the
+    /// function, and a `this` in them counts as a `this` in the function.
     /// `is_in_expression`: `IsObjectLiteralOrClassExpressionMethodOrAccessor`, outer narrowings
-    /// hold.
-    fn function_key(&mut self, key: ExprId, parent: Parent, is_in_expression: bool) {
-        let around = std::mem::replace(&mut self.seen_this, false);
-        let saved = (self.flow, self.exception_target);
+    /// hold. Returns what `leave_function_head` restores.
+    fn enter_function_head(&mut self, is_in_expression: bool) -> (bool, FlowId, FlowId) {
+        let around = (
+            std::mem::replace(&mut self.seen_this, false),
+            self.flow,
+            self.exception_target,
+        );
         self.flow = self.new_flow(Flow::Start {
             outer: if is_in_expression {
-                saved.0
+                around.1
             } else {
                 FlowId::NONE
             },
             arrow: false,
         });
         self.exception_target = FlowId::NONE;
-        self.expr(key, parent);
+        around
+    }
+
+    /// The function is bound next.
+    fn leave_function_head(&mut self, around: (bool, FlowId, FlowId)) {
         self.flow_after_name = self.flow;
-        (self.flow, self.exception_target) = saved;
-        self.this_in_name = std::mem::replace(&mut self.seen_this, around);
+        self.this_in_name = std::mem::replace(&mut self.seen_this, around.0);
+        (self.flow, self.exception_target) = (around.1, around.2);
     }
 
     // ───────────────────────────── types ─────────────────────────────
@@ -3436,6 +3782,14 @@ impl<'f, 's> Binder<'f, 's> {
         {
             self.b.infer_positions.push((param, position));
         }
+    }
+
+    /// Whether `node` is in a `ParenthesizedType` that starts at `floor` or later.
+    fn is_parenthesized_type(&self, node: TypeNodeId, floor: u32) -> bool {
+        crate::check::spans::Spans::of(self.f)
+            .parens_before(floor as usize, self.f[node].pos as usize)
+            .next()
+            .is_some()
     }
 
     /// A type is not a possible parent of an expression: an expression inside a type gets the
@@ -3462,11 +3816,14 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         let around = (self.by_alias, self.scope_change_of);
+        let counted = self.yields.len();
         // A chain of type operators (`T[][][]..`) does not recurse.
         while let Some(operand) = self.ty_or_operand(id) {
             id = operand;
         }
         (self.by_alias, self.scope_change_of) = around;
+        // `forEachYieldExpression`: `IsPartOfTypeNode`
+        self.yields.truncate(counted);
     }
 
     /// Binds `id`. If `id` is a type operator, returns its operand unbound, with `by_alias` and `scope_change_of` set for it.
@@ -3489,6 +3846,7 @@ impl<'f, 's> Binder<'f, 's> {
                     | TypeNodeKind::Cond { .. }
                     | TypeNodeKind::Keyof(_)
                     | TypeNodeKind::Readonly(_)
+                    | TypeNodeKind::Unique(_)
                     | TypeNodeKind::Array(_)
                     | TypeNodeKind::Tuple(_)
             );
@@ -3512,7 +3870,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.tys(args)
             }
-            // `checkInterfaceDeclaration` reports it (2499) and does not check it.
+            // The checker reports it (2499, 2500) and does not check it.
             TypeNodeKind::Heritage(expr) => {
                 let parent = self.parent_of_expression_in_type();
                 let saved = (self.true_target, self.false_target);
@@ -3552,14 +3910,16 @@ impl<'f, 's> Binder<'f, 's> {
             TypeNodeKind::Array(t)
             | TypeNodeKind::Keyof(t)
             | TypeNodeKind::Readonly(t)
+            | TypeNodeKind::Unique(t)
             | TypeNodeKind::JSDoc { ty: t, .. } => {
                 return Some(t);
             }
             TypeNodeKind::Tuple(elems) => {
                 for e in elems.iter() {
                     let elem = &self.f[e];
-                    if elem.rest {
-                        self.note_infer(elem.ty, InferPosition::Rest);
+                    // A `RestType`, or a `NamedTupleMember` with a `DotDotDotToken`.
+                    if elem.has_dots || elem.member_type == TupleMemberType::Rest {
+                        self.note_infer(elem.written, InferPosition::Rest);
                     }
                     // `T?` and `...T` without a name are separate nodes, which
                     // `isResolvedByTypeAlias` does not look through.
@@ -3604,6 +3964,12 @@ impl<'f, 's> Binder<'f, 's> {
                 if let (TypeNodeKind::Mapped(checked), TypeNodeKind::Mapped(expected)) =
                     (self.f[check].kind, self.f[extends].kind)
                     && self.f[checked].ty.is_some()
+                    && self.f[expected].ty.is_some()
+                    // A `ParenthesizedType` is neither a `MappedType` nor an `InferType`, and
+                    // `SkipParentheses` skips none.
+                    && !self.is_parenthesized_type(check, self.f[id].pos)
+                    && !self.is_parenthesized_type(extends, self.f[check].end)
+                    && !self.is_parenthesized_type(self.f[expected].ty, self.f[extends].pos)
                 {
                     self.note_infer(self.f[expected].ty, InferPosition::MappedTemplate(checked));
                 }
@@ -3765,18 +4131,8 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 self.private_name(id, name)
             }
-            // `#x in a`
-            ExprKind::Binary {
-                op: BinOp::In,
-                left,
-                ..
-            } => {
-                if let ExprKind::String(name) = self.f[left].kind
-                    && is_private_name_at(self.f, self.f[left].pos)
-                {
-                    self.private_name(left, name);
-                }
-            }
+            // `getSymbolForPrivateIdentifierExpression`
+            ExprKind::PrivateIdentifier(name) => self.private_name(id, name),
             _ => {}
         }
     }
@@ -3847,6 +4203,7 @@ impl<'f, 's> Binder<'f, 's> {
         }
         match self.f[id].kind {
             ExprKind::Missing
+            | ExprKind::PrivateIdentifier(_)
             | ExprKind::Null
             | ExprKind::True
             | ExprKind::False
@@ -4049,7 +4406,9 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 // As the default of a pattern element it is not an assignment itself: the
                 // assignment whose left side is the pattern performs it.
-                if self.b.get_assignment_target(self.f, id).is_none() {
+                if !self.b.is_shorthand_property_assignment(self.f, id)
+                    && self.b.get_assignment_target(self.f, id).is_none()
+                {
                     self.assignment_target(target);
                     if op.is_none()
                         && let ExprKind::Index { obj, .. } = self.f[target].kind
@@ -4177,12 +4536,22 @@ impl<'f, 's> Binder<'f, 's> {
                 self.get_members(class)
             };
         let mut flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
+        let mut is_computed_name = IsComputedName::No;
         // `HasDynamicName`. `node.Symbol` ends up as the symbol declared last.
         if self.get_declaration_name(decl).is_none() {
             self.add_late_bound_assignment_declaration_to_symbol(decl, class);
             flags = SymFlags::PROPERTY;
+            is_computed_name = IsComputedName::Yes;
         }
-        self.declare_symbol_ex(table, class, decl, flags, SymFlags::empty(), true);
+        self.declare_symbol_ex(
+            table,
+            class,
+            decl,
+            flags,
+            SymFlags::empty(),
+            IsReplaceableByMethod::Yes,
+            is_computed_name,
+        );
     }
 
     /// `bindExportsOrObjectDefineProperty` for the call `Object.defineProperty(exports, key,
@@ -4453,14 +4822,23 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.prop_owner[p.idx()] = owner;
             self.jsdoc_type(JsDocTypeOwner::Prop(p));
             let prop = &self.f[p];
+            self.note_private_name(Decl::Property(p), prop.key);
             if let PropKey::Computed(key) = prop.key {
                 self.in_assignment_pattern = false;
                 let names_a_function = !matches!(
                     prop.kind,
                     PropKind::Init | PropKind::Spread | PropKind::Shorthand
                 );
-                if names_a_function && prop.value.is_some() {
-                    self.function_key(key, Parent::MethodKey(p), true);
+                let method = self.f.function_of(self.f.node(p));
+                if method.is_some() {
+                    let head = self.enter_function_head(true);
+                    // `thisContainer` is the method, which is no member of a class.
+                    let outer_this = std::mem::replace(&mut self.this_member, MemberId::NONE);
+                    self.push_scope(ScopeKind::FunctionName(method), SymbolId::NONE);
+                    self.expr(key, Parent::MethodKey(p));
+                    self.pop_scope();
+                    self.this_member = outer_this;
+                    self.leave_function_head(head);
                 } else {
                     self.expr(
                         key,

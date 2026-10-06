@@ -224,6 +224,21 @@ known_atoms! {
 /// contains the byte 0xFE, so no name in the source is such a name.
 pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 
+/// Prefix of the name of a property that a class declares as `#x`
+/// (`GetSymbolNameForPrivateIdentifier`): `InternalSymbolNamePrefix` and `#`. The string `"#x"` is
+/// another name.
+pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
+
+/// `SymbolName`: the `#x` of a private name, which is spelled `\xFE#x@<class>`. Any other name
+/// unchanged.
+pub fn written_name(name: &[u8]) -> &[u8] {
+    if !name.starts_with(PRIVATE_NAME_PREFIX) {
+        return name;
+    }
+    let written = &name[1..];
+    &written[..bun_core::strings::index_of_char_usize(written, b'@').unwrap_or(written.len())]
+}
+
 /// Per-thread cache of recently seen names, with the spelling stored inline: a file repeats the
 /// same few names, and a lookup in the shared table touches three distant memory locations.
 struct Recent {

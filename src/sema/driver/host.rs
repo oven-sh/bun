@@ -3,7 +3,8 @@
 //! The checker's paths are absolute, use `/`, and start with one. On Windows it represents `C:\a\b`
 //! as `/C:/a/b`.
 
-use bun_core::strings::{BOM, contains, index_of, is_all_whitespace, without_trailing_slash};
+use bun_ast::e::{JsonValue, ObjectJSON};
+use bun_core::strings::{BOM, contains, index_of, is_valid_utf8, without_trailing_slash};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
@@ -625,53 +626,362 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     if let Directory::Listed(listing) = list(path) {
         let mut names = listing.files.iter().chain(&listing.directories);
         if let Some(other) = names.find_map(|name| swapped(name)) {
-            return !bun_sys::exists(&join(path, &other));
+            return !bun_sys::exists(&inside(path, &other));
         }
     }
     // Only the name: what is above it can be on another file system, like `/mnt` of `/mnt/c`.
     for path in ancestors(path) {
         let Split { parent, name } = split(path);
         if let Some(other) = swapped(name) {
-            return !bun_sys::exists(&join(parent, &other));
+            return !bun_sys::exists(&inside(parent, &other));
         }
     }
     true
 }
 
-/// `packagejson.Parse`, with Bun's JSON parser. That one also takes strings in single quotes and
-/// the number literals of JavaScript, which typescript-go refuses.
+/// `jsonwire.ConsumeWhitespace`: the offset of what follows the white space at `n` in `b`.
+fn consume_whitespace(b: &[u8], mut n: usize) -> usize {
+    while matches!(b.get(n), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+        n += 1;
+    }
+    n
+}
+
+/// `jsonwire.ConsumeLiteral`: the end of `lit`, if it is at `n` in `b`.
+fn consume_literal(b: &[u8], n: usize, lit: &[u8]) -> Option<usize> {
+    b[n..].starts_with(lit).then_some(n + lit.len())
+}
+
+/// `parseHexUint16`, of four bytes.
+fn parse_hex_uint16(b: &[u8]) -> Option<u16> {
+    let mut v = 0;
+    for &c in b {
+        v = v * 16 + (c as char).to_digit(16)? as u16;
+    }
+    Some(v)
+}
+
+/// `jsonwire.ConsumeString`: the end of the string that starts at `n` in `b`, which is valid UTF-8.
+fn consume_string(b: &[u8], mut n: usize) -> Option<usize> {
+    if *b.get(n)? != b'"' {
+        return None;
+    }
+    n += 1;
+    loop {
+        match *b.get(n)? {
+            b'"' => return Some(n + 1),
+            b'\\' => match *b.get(n + 1)? {
+                b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => n += 2,
+                b'u' => {
+                    let v1 = parse_hex_uint16(b.get(n + 2..n + 6)?)?;
+                    n += 6;
+                    // `utf16.IsSurrogate`
+                    if (0xD800..0xE000).contains(&v1) {
+                        let v2 = parse_hex_uint16(b.get(n..n + 6)?.strip_prefix(b"\\u")?)?;
+                        // `utf16.DecodeRune`
+                        if v1 >= 0xDC00 || !(0xDC00..0xE000).contains(&v2) {
+                            return None;
+                        }
+                        n += 6;
+                    }
+                }
+                _ => return None,
+            },
+            0..=0x1F => return None,
+            _ => n += 1,
+        }
+    }
+}
+
+/// `jsonwire.ConsumeNumber`: the end of the number that starts at `n` in `b`.
+fn consume_number(b: &[u8], mut n: usize) -> Option<usize> {
+    // At least one.
+    let consume_digits = |start: usize| {
+        let mut n = start;
+        while b.get(n).is_some_and(u8::is_ascii_digit) {
+            n += 1;
+        }
+        (n > start).then_some(n)
+    };
+    if b.get(n) == Some(&b'-') {
+        n += 1;
+    }
+    n = if b.get(n) == Some(&b'0') {
+        n + 1
+    } else {
+        consume_digits(n)?
+    };
+    if b.get(n) == Some(&b'.') {
+        n = consume_digits(n + 1)?;
+    }
+    if matches!(b.get(n), Some(b'e' | b'E')) {
+        n += 1;
+        if matches!(b.get(n), Some(b'-' | b'+')) {
+            n += 1;
+        }
+        n = consume_digits(n)?;
+    }
+    Some(n)
+}
+
+/// `consumeValue`, with `consumeObject` and `consumeArray`: the end of the value at `n` in `b`.
+fn consume_value(b: &[u8], mut n: usize) -> Option<usize> {
+    /// `maxNestingDepth`
+    const MAX_NESTING_DEPTH: usize = 10000;
+    // The end of each object and array that `n` is in.
+    let mut open: Vec<u8> = Vec::new();
+    loop {
+        if open.last() == Some(&b'}') {
+            n = consume_whitespace(b, consume_string(b, n)?);
+            if *b.get(n)? != b':' {
+                return None;
+            }
+            n = consume_whitespace(b, n + 1);
+        }
+        n = match *b.get(n)? {
+            b'n' => consume_literal(b, n, b"null")?,
+            b'f' => consume_literal(b, n, b"false")?,
+            b't' => consume_literal(b, n, b"true")?,
+            b'"' => consume_string(b, n)?,
+            b'-' | b'0'..=b'9' => consume_number(b, n)?,
+            begin @ (b'{' | b'[') => {
+                if open.len() == MAX_NESTING_DEPTH {
+                    return None;
+                }
+                let end = if begin == b'{' { b'}' } else { b']' };
+                n = consume_whitespace(b, n + 1);
+                if *b.get(n)? != end {
+                    open.push(end);
+                    continue;
+                }
+                n + 1
+            }
+            _ => return None,
+        };
+        // After a value: a comma, or the end of what the value is in, which is a value too.
+        loop {
+            let Some(&end) = open.last() else {
+                return Some(n);
+            };
+            n = consume_whitespace(b, n);
+            let delimiter = *b.get(n)?;
+            n += 1;
+            if delimiter == b',' {
+                n = consume_whitespace(b, n);
+                break;
+            }
+            if delimiter != end {
+                return None;
+            }
+            open.pop();
+        }
+    }
+}
+
+/// `jsontext.Value.IsValid` under `AllowDuplicateNames`
+fn is_valid(b: &[u8]) -> bool {
+    is_valid_utf8(b)
+        && consume_value(b, consume_whitespace(b, 0))
+            .is_some_and(|n| consume_whitespace(b, n) == b.len())
+}
+
+/// `actualJSONType` of `data`, as a value of that type without what `data` contains.
+fn actual_json_type(data: &JsonValue) -> Json {
+    match data {
+        JsonValue::Null => Json::Null,
+        JsonValue::Boolean(_) => Json::Bool(false),
+        JsonValue::Number(_) => Json::Number(0.0),
+        JsonValue::String(_) => Json::String(Vec::new()),
+        JsonValue::Array(_) => Json::Array(Vec::new()),
+        JsonValue::Object(_) => Json::Object(Vec::new()),
+    }
+}
+
+/// `json.Unmarshal(data, &e.Value)`, without `AllowDuplicateNames`, for an object and a map, which
+/// keeps what it has. It stops at a member that is neither a string nor `null`, whose name it still
+/// enters, and at a repeated name. Then this returns `value` with that name repeated at the end.
+fn unmarshal_map(
+    object: &ObjectJSON,
+    has_duplicates: bool,
+    value: &mut Vec<(Vec<u8>, Json)>,
+) -> Option<Json> {
+    let properties = object.properties();
+    let kept = value.len();
+    for (i, property) in properties.iter().enumerate() {
+        let name = property.key.slice();
+        let text = match &property.value {
+            JsonValue::String(text) => Some(text.slice()),
+            JsonValue::Null => Some(&b""[..]),
+            _ => None,
+        };
+        let is_repeated =
+            has_duplicates && properties[..i].iter().any(|seen| seen.key.slice() == name);
+        if !is_repeated {
+            match value[..kept].iter_mut().find(|known| known.0 == name) {
+                Some(known) => {
+                    if let Some(text) = text {
+                        known.1 = Json::String(text.to_vec());
+                    }
+                }
+                None => {
+                    value.push((
+                        name.to_vec(),
+                        Json::String(text.unwrap_or_default().to_vec()),
+                    ));
+                }
+            }
+        }
+        if is_repeated || text.is_none() {
+            let mut refused = value.clone();
+            refused.push((name.to_vec(), actual_json_type(&property.value)));
+            return Some(Json::Object(refused));
+        }
+    }
+    None
+}
+
+/// `packagejson.Expected[T]`
+#[derive(Default)]
+struct Expected {
+    /// A value of `actualJSONType` that is no `T`.
+    actual: Option<Json>,
+    null: bool,
+    valid: bool,
+    value: Option<Json>,
+}
+
+impl Expected {
+    /// `Expected.UnmarshalJSON`. `T` is `map[string]string` or `string`.
+    fn unmarshal_json(&mut self, data: &JsonValue, is_map: bool, has_duplicates: bool) {
+        let refused = match data {
+            JsonValue::Null => {
+                *self = Expected {
+                    actual: Some(Json::Null),
+                    null: true,
+                    ..Default::default()
+                };
+                return;
+            }
+            JsonValue::String(text) if !is_map => {
+                self.value = Some(Json::String(text.slice().to_vec()));
+                None
+            }
+            JsonValue::Object(object) if is_map => {
+                let mut value = match self.value.take() {
+                    Some(Json::Object(value)) => value,
+                    _ => Vec::new(),
+                };
+                let refused = unmarshal_map(object.get(), has_duplicates, &mut value);
+                self.value = Some(Json::Object(value));
+                refused
+            }
+            _ => Some(actual_json_type(data)),
+        };
+        match refused {
+            None => self.valid = true,
+            Some(_) => self.actual = refused,
+        }
+    }
+}
+
+/// `unmarshalJSONValueV2`. `None`: `strconv.ParseFloat` returns `ErrRange` for a number, or the
+/// stack, which grows in Go, is at its end.
+fn unmarshal_json_value(value: &JsonValue, has_duplicates: bool) -> Option<Json> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
+    Some(match value {
+        JsonValue::Null => Json::Null,
+        JsonValue::Boolean(value) => Json::Bool(*value),
+        JsonValue::Number(number) if number.value().is_infinite() => return None,
+        JsonValue::Number(number) => Json::Number(number.value()),
+        JsonValue::String(text) => Json::String(text.slice().to_vec()),
+        JsonValue::Array(array) => {
+            let items = array.get().items();
+            let mut elements = Vec::with_capacity(items.len());
+            for item in items {
+                elements.push(unmarshal_json_value(item, has_duplicates)?);
+            }
+            Json::Array(elements)
+        }
+        JsonValue::Object(object) => {
+            let properties = object.get().properties();
+            let mut entries: Vec<(Vec<u8>, Json)> = Vec::with_capacity(properties.len());
+            for property in properties {
+                let key = property.key.slice();
+                let value = unmarshal_json_value(&property.value, has_duplicates)?;
+                // `OrderedMap.Set`: the last value, at the place of the first.
+                let known = has_duplicates.then(|| entries.iter_mut().find(|it| it.0 == key));
+                match known.flatten() {
+                    Some(known) => known.1 = value,
+                    None => entries.push((key.to_vec(), value)),
+                }
+            }
+            Json::Object(entries)
+        }
+    })
+}
+
+/// `json.Unmarshal(data, &f, json.AllowDuplicateNames(true))` for an object: `Fields`, in the form
+/// of `Host::parse_package_json`. Every value of a repeated name is decoded into the one field.
+fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
+    let mut expected: Vec<(&[u8], Expected)> = Vec::new();
+    let mut fields: Vec<(Vec<u8>, Json)> = Vec::new();
+    for property in object.properties() {
+        let (name, data) = (property.key.slice(), &property.value);
+        let is_map = match name {
+            b"name" | b"version" | b"type" | b"tsconfig" | b"main" | b"types" | b"typings" => false,
+            b"dependencies"
+            | b"devDependencies"
+            | b"peerDependencies"
+            | b"optionalDependencies" => true,
+            b"typesVersions" | b"imports" | b"exports" => {
+                let value = unmarshal_json_value(data, has_duplicates)?;
+                let known = has_duplicates.then(|| fields.iter_mut().find(|it| it.0 == name));
+                match known.flatten() {
+                    Some((_, known)) => {
+                        // `json.UnmarshalDecode(dec, &v.Value)`, which decodes a string, a boolean
+                        // and a number, decodes into the type of what `v.Value` holds.
+                        let fits = matches!(known, Json::Null)
+                            || matches!(value, Json::Null | Json::Array(_) | Json::Object(_))
+                            || std::mem::discriminant(&*known) == std::mem::discriminant(&value);
+                        if !fits {
+                            return None;
+                        }
+                        *known = value;
+                    }
+                    None => fields.push((name.to_vec(), value)),
+                }
+                continue;
+            }
+            // `SkipValue`
+            _ => continue,
+        };
+        let known = has_duplicates.then(|| expected.iter().position(|it| it.0 == name));
+        let at = known.flatten().unwrap_or_else(|| {
+            expected.push((name, Expected::default()));
+            expected.len() - 1
+        });
+        expected[at].1.unmarshal_json(data, is_map, has_duplicates);
+    }
+    for (name, field) in expected {
+        let shown = if field.valid {
+            field.value
+        } else {
+            field.actual
+        };
+        let null = (field.null && shown != Some(Json::Null)).then_some(Json::Null);
+        fields.extend(shown.into_iter().chain(null).map(|it| (name.to_vec(), it)));
+    }
+    Some(Json::Object(fields))
+}
+
+/// `packagejson.Parse`. Bun's JSON parser, which makes the values, also takes what is no JSON.
 fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
-    use bun_ast::e::{JsonValue, ObjectJSON};
     use bun_parsers::json::ParsedJson;
-    fn json_of_object(object: &ObjectJSON, has_duplicates: bool) -> Json {
-        let properties = object.properties();
-        let mut entries: Vec<(Vec<u8>, Json)> = Vec::with_capacity(properties.len());
-        for property in properties {
-            let key = property.key.slice();
-            let value = json_of(&property.value, has_duplicates);
-            // `json.AllowDuplicateNames`: the last value, at the place of the first.
-            let earlier = has_duplicates.then(|| entries.iter_mut().find(|entry| entry.0 == key));
-            match earlier.flatten() {
-                Some(entry) => entry.1 = value,
-                None => entries.push((key.to_vec(), value)),
-            }
-        }
-        Json::Object(entries)
+    if !is_valid(text) {
+        return None;
     }
-    fn json_of(value: &JsonValue, has_duplicates: bool) -> Json {
-        match value {
-            JsonValue::Null => Json::Null,
-            JsonValue::Boolean(value) => Json::Bool(*value),
-            JsonValue::Number(number) => Json::Number(number.value()),
-            JsonValue::String(text) => Json::String(text.slice().to_vec()),
-            JsonValue::Array(array) => {
-                let items = array.get().items().iter();
-                Json::Array(items.map(|item| json_of(item, has_duplicates)).collect())
-            }
-            JsonValue::Object(object) => json_of_object(object.get(), has_duplicates),
-        }
-    }
-    let text = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), text);
@@ -680,10 +990,8 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
         return None;
     };
-    // The parser stops at the end of the first value. The object of an empty file has no `}`.
-    let end = usize::try_from(root.close_brace_loc.start).ok()? + 1;
     // The only warning is about a duplicate key.
-    is_all_whitespace(&text[end..]).then(|| json_of_object(root.get(), log.warnings > 0))
+    unmarshal_fields(root.get(), log.warnings > 0)
 }
 
 impl Host for Disk {

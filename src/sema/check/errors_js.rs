@@ -47,7 +47,7 @@ impl Checker<'_, '_> {
     }
 
     /// `SkipTypeChecking`: whether anything other than syntax errors is reported.
-    pub(super) fn reports_semantic_errors(&self, file: FileId) -> bool {
+    pub fn reports_semantic_errors(&self, file: FileId) -> bool {
         let options = &self.files().options;
         let hir = self.hir(file);
         if options.no_check
@@ -86,33 +86,6 @@ impl Checker<'_, '_> {
                 let start = hir[s].start;
                 self.error_at((file, start, 0), 1046, &[]);
                 return;
-            }
-        }
-    }
-
-    /// `checkGrammarVariableDeclarationList`: 1123. `var ;` parses as an empty declaration list. It
-    /// is reported where the list would start: right after the keyword.
-    pub(super) fn check_empty_declaration_lists(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        if hir.text.is_empty() {
-            return;
-        }
-        for (s, stmt) in hir.stmts.iter().enumerate() {
-            if !matches!(stmt.kind, StmtKind::Var(decls) if decls.is_empty()) {
-                continue;
-            }
-            let mut at = self.start_after_modifiers(file, StmtId(s as u32)) as usize;
-            loop {
-                let word = word_at(&hir.text, at);
-                let end = at + word.len();
-                match word {
-                    b"var" | b"let" | b"const" | b"using" => {
-                        self.error_at((file, end as u32, end as u32), 1123, &[]);
-                        break;
-                    }
-                    b"await" => at = skip_trivia(&hir.text, end),
-                    _ => break,
-                }
             }
         }
     }

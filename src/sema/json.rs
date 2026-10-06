@@ -5,8 +5,8 @@ use crate::atom::Interner;
 use crate::check::spans::Spans;
 use crate::config_options::Declaration;
 use crate::hir::{
-    Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKey, PropKind, StmtKind, UnOp,
-    is_parenthesized, start_of,
+    Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
+    is_bigint_literal_at, is_parenthesized, is_private_name_at, start_of,
 };
 use crate::resolve::{Host, Options};
 use crate::session::Session;
@@ -22,30 +22,48 @@ pub enum Json {
     Object(Vec<(Vec<u8>, Json)>),
 }
 
+/// `jsonwire.AppendQuote` under `AllowInvalidUTF8`, without `EscapeForHTML` and `EscapeForJS`.
+fn append_quote(out: &mut Vec<u8>, text: &[u8]) {
+    use std::io::Write;
+    out.push(b'"');
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        let size = bun_core::lexer::char_and_size(text, at).1;
+        match byte {
+            b'"' | b'\\' => out.extend_from_slice(&[b'\\', byte]),
+            0x08 => out.extend_from_slice(b"\\b"),
+            0x0C => out.extend_from_slice(b"\\f"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            _ if byte < 0x20 => {
+                let _ = write!(out, "\\u{byte:04x}");
+            }
+            // `isInvalidUTF8`
+            _ if byte >= 0x80 && size == 1 => out.extend_from_slice("\u{FFFD}".as_bytes()),
+            _ => out.extend_from_slice(&text[at..at + size]),
+        }
+        at += size;
+    }
+    out.push(b'"');
+}
+
 impl Json {
     /// `core.StringifyJson` without indentation.
     pub fn stringify(&self, out: &mut Vec<u8>) {
-        use std::io::Write;
-        let text = |text: &[u8], out: &mut Vec<u8>| {
-            out.push(b'"');
-            for &byte in text {
-                if matches!(byte, b'"' | b'\\') {
-                    out.push(b'\\');
-                }
-                out.push(byte);
-            }
-            out.push(b'"');
-        };
         match self {
             Json::Null => out.extend_from_slice(b"null"),
             Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
-            Json::Number(value) => {
-                let _ = write!(out, "{value}");
-            }
-            Json::String(value) => text(value, out),
+            // `jsonwire.AppendFloat`
+            Json::Number(value) => out.extend_from_slice(
+                bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut [0; 124], *value),
+            ),
+            Json::String(value) => append_quote(out, value),
             Json::Array(items) => {
                 out.push(b'[');
-                for (index, item) in items.iter().enumerate() {
+                // `convertArrayLiteralExpressionToJson` leaves out what is `null`.
+                let converted = items.iter().filter(|item| !matches!(item, Json::Null));
+                for (index, item) in converted.enumerate() {
                     if index > 0 {
                         out.push(b',');
                     }
@@ -59,7 +77,7 @@ impl Json {
                     if index > 0 {
                         out.push(b',');
                     }
-                    text(name, out);
+                    append_quote(out, name);
                     out.push(b':');
                     value.stringify(out);
                 }
@@ -112,6 +130,20 @@ fn root_expression(hir: &File) -> Option<ExprId> {
     })
 }
 
+/// The index in `File::numbers` of `n`, if `e` is `-n` and `n` a `NumericLiteral`.
+fn negated_numeric_literal(hir: &File, e: ExprId) -> Option<u32> {
+    match hir[e].kind {
+        ExprKind::Unary {
+            op: UnOp::Minus,
+            operand,
+        } if !is_parenthesized(hir, operand) => match hir[operand].kind {
+            ExprKind::Number(n) => Some(n),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The end of `parseJSONText` for the file `hir` with source `text`: the errors of
 /// `validateJsonValue` are parse diagnostics.
 pub fn validate_json(hir: &mut File, text: &[u8]) {
@@ -125,10 +157,7 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
             ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
             ExprKind::String(_) if is_double_quoted(start) => return,
             ExprKind::String(_) if spans.text.get(start as usize) != Some(&b'`') => 1327,
-            ExprKind::Unary {
-                op: UnOp::Minus,
-                operand,
-            } if matches!(hir[operand].kind, ExprKind::Number(_)) => return,
+            ExprKind::Unary { .. } if negated_numeric_literal(hir, e).is_some() => return,
             ExprKind::Array(items) => {
                 return hir
                     .ids(items)
@@ -164,6 +193,71 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
         }));
 }
 
+/// `tokenValue` of the private identifier `text`: `scanIdentifierParts` decodes the escapes.
+fn private_identifier_token_value(text: &[u8]) -> Vec<u8> {
+    let mut value = Vec::with_capacity(text.len());
+    let mut at = 0;
+    while let Some(&byte) = text.get(at) {
+        let escape = match byte {
+            b'\\' => bun_core::lexer::peek_unicode_escape(text, at),
+            _ => None,
+        };
+        match escape.and_then(|(ch, size)| Some((char::from_u32(ch as u32)?, size))) {
+            Some((ch, size)) => {
+                value.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+                at += size;
+            }
+            None => {
+                value.push(byte);
+                at += 1;
+            }
+        }
+    }
+    value
+}
+
+/// `jsnum.ParsePseudoBigInt`: the base 10 digits of the bigint literal `text`.
+fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
+    let text = text.strip_suffix(b"n").unwrap_or(text);
+    let (radix, digits) = match text.get(1) {
+        Some(b'b' | b'B') => (2, &text[2..]),
+        Some(b'o' | b'O') => (8, &text[2..]),
+        Some(b'x' | b'X') => (16, &text[2..]),
+        _ => (10, text),
+    };
+    // Least significant first.
+    let mut decimal = vec![0u8];
+    for &digit in digits {
+        let mut carry = char::from(digit).to_digit(radix).unwrap_or(0);
+        for place in &mut decimal {
+            let value = u32::from(*place) * radix + carry;
+            *place = (value % 10) as u8;
+            carry = value / 10;
+        }
+        while carry > 0 {
+            decimal.push((carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+    decimal.iter().rev().map(|place| place + b'0').collect()
+}
+
+/// `tokenValue` of the bigint literal `text`: `scanHexDigits`, `scanBigIntSuffix`.
+pub(crate) fn bigint_token_value(text: &[u8]) -> Vec<u8> {
+    let without_separators = text.iter().filter(|&&byte| byte != b'_');
+    let mut value: Vec<u8> = without_separators.map(u8::to_ascii_lowercase).collect();
+    // `Scan`: for a radix prefix without digits, the digit is 0.
+    if matches!(value.as_slice(), [b'0', b'x' | b'b' | b'o', b'n']) {
+        value.insert(2, b'0');
+    }
+    if !matches!(value.get(1), Some(b'b' | b'o')) {
+        return value;
+    }
+    let mut decimal = parse_pseudo_big_int(&value);
+    decimal.push(b'n');
+    decimal
+}
+
 /// `TsConfigSourceFile`
 pub struct TsConfigSourceFile<'s> {
     hir: File<'s>,
@@ -184,7 +278,8 @@ impl<'s> TsConfigSourceFile<'s> {
         let path = b"/tsconfig.json";
         let mut hir = host.parse(session.arena(), path, &text, &atoms, &Options::default());
         hir.text = text;
-        let is_object = |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_));
+        let is_object =
+            |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_)) && !is_parenthesized(&hir, *e);
         let root = root_expression(&hir).filter(|_| !hir.has_errors)?;
         let root = match hir[root].kind {
             ExprKind::Array(items) => hir.ids(items).find(is_object),
@@ -197,32 +292,66 @@ impl<'s> TsConfigSourceFile<'s> {
     pub fn diagnostics(&self) -> impl Iterator<Item = (u32, Vec<Vec<u8>>, u32, u32)> {
         let diagnostics = self.hir.diagnostics.iter();
         let parse_errors = diagnostics.filter(|d| d.kind == DiagnosticKind::Parse);
-        parse_errors.map(|d| {
+        let spans = Spans::of(&self.hir);
+        parse_errors.map(move |d| {
             let args = d.args.iter().map(|arg| arg.to_vec()).collect();
-            let end = if d.end == Diagnostic::NO_LENGTH {
-                0
-            } else {
-                d.end
-            };
-            (d.code, args, d.start, end.max(d.start))
+            (d.code, args, d.start, spans.diagnostic_end(d.start, d.end))
         })
     }
 
-    /// `ForEachPropertyAssignment`: the first property of `object` called `name` or `other`.
-    pub fn property(&self, object: ExprId, name: &[u8], other: &[u8]) -> Option<PropId> {
-        let ExprKind::Object(props) = self.hir[object].kind else {
+    /// `TryGetTextOfPropertyName` for the name of `p`.
+    fn try_get_text_of_property_name(&self, p: PropId) -> Option<&[u8]> {
+        let (hir, prop) = (&self.hir, self.hir[p]);
+        if let Some(name) = prop.key.name() {
+            return Some(self.atoms.bytes(name));
+        }
+        // A private identifier and a bigint literal declare nothing: the key is without their text.
+        let written = hir
+            .text
+            .get(prop.pos as usize..Spans::of(hir).prop_name(p))?;
+        let token_value = if is_private_name_at(hir, prop.pos) {
+            private_identifier_token_value(written)
+        } else if is_bigint_literal_at(hir, prop.pos) {
+            bigint_token_value(written)
+        } else {
             return None;
         };
-        props.iter().find(|&p| match self.hir[p] {
-            crate::hir::Prop {
-                kind: PropKind::Init,
-                key: PropKey::Name(key),
-                ..
-            } => {
-                let key = self.atoms.bytes(key);
-                key == name || !other.is_empty() && key == other
-            }
-            _ => false,
+        Some(self.atoms.bytes(self.atoms.intern(&token_value)))
+    }
+
+    /// The properties for which `convertObjectLiteralExpressionToJson` calls `onPropertySet`, in
+    /// source order, each with `keyText`. None if `object` is no object literal.
+    pub(crate) fn properties(&self, object: ExprId) -> impl Iterator<Item = (PropId, &[u8])> {
+        let props = match self.hir[object].kind {
+            ExprKind::Object(props) if !is_parenthesized(&self.hir, object) => props,
+            _ => Default::default(),
+        };
+        let assignments = props
+            .iter()
+            .filter(move |&p| self.hir[p].kind == PropKind::Init);
+        assignments
+            .filter_map(move |p| Some((p, self.try_get_text_of_property_name(p)?)))
+            .filter(|property| !property.1.is_empty())
+    }
+
+    /// `getTsConfigObjectLiteralExpression`: `root`, if it is the expression of the first statement
+    /// itself. What is reported after the conversion looks its node up from here.
+    pub(crate) fn object_literal_expression(&self) -> Option<ExprId> {
+        self.root
+            .filter(|&root| root_expression(&self.hir) == Some(root))
+    }
+
+    /// `ForEachPropertyAssignment`: the first property of `object` called `key` or `key2`. An empty
+    /// `key2` is a name like any other.
+    pub fn property(&self, object: ExprId, key: &[u8], key2: Option<&[u8]>) -> Option<PropId> {
+        let props = match self.hir[object].kind {
+            ExprKind::Object(props) if !is_parenthesized(&self.hir, object) => props,
+            _ => return None,
+        };
+        let mut assignments = props.iter().filter(|&p| self.hir[p].kind == PropKind::Init);
+        assignments.find(|&p| {
+            let prop_name = self.try_get_text_of_property_name(p);
+            prop_name.is_some_and(|prop_name| prop_name == key || key2 == Some(prop_name))
         })
     }
 
@@ -271,10 +400,7 @@ impl<'s> TsConfigSourceFile<'s> {
             _ if is_parenthesized(hir, e) => {}
             ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
             ExprKind::String(_) if !self.is_template(e) => return,
-            ExprKind::Unary {
-                op: UnOp::Minus,
-                operand,
-            } if matches!(hir[operand].kind, ExprKind::Number(_)) => return,
+            ExprKind::Unary { .. } if negated_numeric_literal(hir, e).is_some() => return,
             // `convertArrayLiteralExpressionToJson`
             ExprKind::Array(_) => {
                 return (self.elements(e))
@@ -283,17 +409,20 @@ impl<'s> TsConfigSourceFile<'s> {
             // `convertObjectLiteralExpressionToJson`
             ExprKind::Object(props) => {
                 for p in props.iter() {
-                    let (PropKind::Init, key) = (hir[p].kind, hir[p].key) else {
-                        errors.push((1136, Vec::new(), self.loc(hir[p].start, spans.prop(p))));
+                    let prop = hir[p];
+                    if prop.kind != PropKind::Init {
+                        errors.push((1136, Vec::new(), self.loc(prop.start, spans.prop(p))));
                         continue;
-                    };
-                    let of_key = match key {
-                        PropKey::Name(key) => {
-                            option.and_then(|it| it.element(self.atoms.bytes(key)))
-                        }
-                        _ => None,
-                    };
-                    self.conversion_errors(hir[p].value, of_key, errors);
+                    }
+                    // `QuestionToken`
+                    let token = prop.postfix_token;
+                    if token != 0 && hir.text.get(token as usize) == Some(&b'?') {
+                        let loc = self.loc(token, token as usize + 1);
+                        errors.push((8009, vec![b"?".to_vec()], loc));
+                    }
+                    let key_text = self.try_get_text_of_property_name(p).unwrap_or_default();
+                    let of_key = option.and_then(|it| it.element(key_text));
+                    self.conversion_errors(prop.value, of_key, errors);
                 }
                 return;
             }
@@ -303,11 +432,17 @@ impl<'s> TsConfigSourceFile<'s> {
             Some(option) => (5024, vec![option.name().to_vec(), option.takes().to_vec()]),
             None => (1328, Vec::new()),
         };
-        errors.push((code, args, self.loc(start_of(hir, e), spans.expr(e))));
+        let end = spans.expr(e);
+        let loc = match hir[e].kind {
+            // `createMissingNode`: it is empty, at the end of the token before it.
+            ExprKind::Missing if !is_parenthesized(hir, e) => (end as u32, end as u32),
+            _ => self.loc(start_of(hir, e), end),
+        };
+        errors.push((code, args, loc));
     }
 
     /// `convertPropertyValueToJson`. A value that is not in the expected format becomes `null`,
-    /// which is preserved in an array.
+    /// which stays in an array (`[null]` is a nil slice, `[]` is not): the readers leave it out.
     pub fn convert_property_value_to_json(&self, e: ExprId) -> Json {
         let hir = &self.hir;
         match hir[e].kind {
@@ -316,26 +451,17 @@ impl<'s> TsConfigSourceFile<'s> {
             ExprKind::False => Json::Bool(false),
             ExprKind::String(text) => Json::String(self.atoms.bytes(text).to_vec()),
             ExprKind::Number(n) => Json::Number(hir.numbers[n as usize]),
-            ExprKind::Unary {
-                op: UnOp::Minus,
-                operand,
-            } => match hir[operand].kind {
-                ExprKind::Number(n) => Json::Number(-hir.numbers[n as usize]),
-                _ => Json::Null,
-            },
+            ExprKind::Unary { .. } => negated_numeric_literal(hir, e)
+                .map_or(Json::Null, |n| Json::Number(-hir.numbers[n as usize])),
             ExprKind::Array(_) => Json::Array(
                 self.elements(e)
                     .map(|element| self.convert_property_value_to_json(element))
                     .collect(),
             ),
             // `convertObjectLiteralExpressionToJson`
-            ExprKind::Object(props) => {
+            ExprKind::Object(_) => {
                 let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
-                for p in props.iter() {
-                    let (PropKind::Init, PropKey::Name(key)) = (hir[p].kind, hir[p].key) else {
-                        continue;
-                    };
-                    let key = self.atoms.bytes(key);
+                for (p, key) in self.properties(e) {
                     let value = self.convert_property_value_to_json(hir[p].value);
                     match result.iter_mut().find(|entry| entry.0 == key) {
                         Some(entry) => entry.1 = value,

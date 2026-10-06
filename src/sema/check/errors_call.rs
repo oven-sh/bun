@@ -15,8 +15,7 @@ use super::explain::{Line, NOWHERE};
 use super::relate::Relation;
 use super::sink::{held, number_text};
 use super::*;
-use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent};
-use smallvec::SmallVec;
+use crate::bind::{Decl, FnOwner, Parent, PatParent};
 
 /// The argument counts the candidates of a call accept.
 pub(super) struct ArgumentCounts {
@@ -290,7 +289,8 @@ impl Checker<'_, '_> {
         )
     }
 
-    /// `invocationError`. `head`: the decorator head message to chain on top, if any.
+    /// `invocationError`. `head`: the head message that `resolveDecorator` chains on top of
+    /// `invocationErrorDetails`, before `invocationErrorRecovery`.
     pub(super) fn invocation_error(
         &mut self,
         at: (FileId, u32, u32),
@@ -303,17 +303,10 @@ impl Checker<'_, '_> {
         let mut diagnostic = Reported::bare(at, code);
         let lines = self.invocation_error_lines(apparent, construct);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
-        match head {
-            Some(head) => diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, head, &[]),
-            None => {
-                diagnostic.related_information = self.related_to_invocation_error(
-                    at.0,
-                    target,
-                    apparent,
-                    construct,
-                    has_one_argument,
-                )
-            }
+        diagnostic.related_information =
+            self.related_to_invocation_error(at.0, target, apparent, construct, has_one_argument);
+        if let Some(head) = head {
+            diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, head, &[]);
         }
         self.add_diagnostic(diagnostic);
     }
@@ -358,7 +351,7 @@ impl Checker<'_, '_> {
 
     /// `exportTypeLinks.Get(t.symbol)` for a type created by `import * as ns`: its `target`, which
     /// is the imported symbol, and 7038 at its `originatingImport`.
-    fn originating_import(&self, ty: TypeId) -> Option<(Sym, Reported)> {
+    pub(super) fn originating_import(&self, ty: TypeId) -> Option<(Sym, Reported)> {
         let TypeData::Anon {
             origin:
                 Origin::Namespace {
@@ -488,50 +481,70 @@ impl Checker<'_, '_> {
     /// `getExplicitTypeOfSymbol` has no type because it is a variable or a property without a type
     /// annotation. 2782
     fn name_in_need_of_a_type_annotation(&mut self, file: FileId, e: ExprId) -> Option<Reported> {
-        if self.explicit_type(file, e).is_some() {
+        let hir = self.hir(file);
+        if hir.is_in_with(hir[e].pos) || self.explicit_type(file, e).is_some() {
             return None;
         }
-        let (at, name) = match self.hir(file)[e].kind {
+        match hir[e].kind {
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
-                self.variable_in_need_of_a_type_annotation(sym)?
+                self.symbol_in_need_of_a_type_annotation(sym)
             }
             ExprKind::Dot { obj, name, .. } => {
                 let Some(object) = self.explicit_type(file, obj) else {
                     return self.name_in_need_of_a_type_annotation(file, obj);
                 };
-                let object = self.apparent_type(object);
-                let (prop, _) = self.prop_ref(object, name)?;
-                match &prop.source {
-                    PropSource::Symbol(sym) if !self.is_member_symbol(*sym) => {
-                        self.variable_in_need_of_a_type_annotation(*sym)?
-                    }
-                    // Neither is `SymbolFlagsProperty`.
-                    _ if prop
-                        .flags
-                        .intersects(PropFlags::ACCESSOR | PropFlags::METHOD) =>
-                    {
-                        return None;
-                    }
-                    _ => (self.place_of_prop(prop)?, self.prop_to_string(prop)),
-                }
+                let (prop, _) = self.get_property_of_type(object, name)?;
+                self.property_in_need_of_a_type_annotation(prop)
             }
-            _ => return None,
+            _ => None,
+        }
+    }
+
+    /// What `getExplicitTypeOfSymbol` adds to its diagnostic for `sym`, for which it has no type.
+    fn symbol_in_need_of_a_type_annotation(&mut self, sym: Sym) -> Option<Reported> {
+        let Some(sym) = self.files().resolve_alias_if_needed(sym) else {
+            // `resolveSymbol`: a target that is not in the symbol tables is a property.
+            let AliasTarget::Property(obj, name, _) = self.resolve_alias(sym) else {
+                return None;
+            };
+            let (prop, _) = self.get_property_of_type(obj, name)?;
+            return self.property_in_need_of_a_type_annotation(prop);
         };
+        let variable_or_property = SymFlags::VARIABLE | SymFlags::PROPERTY;
+        if !self.files().flags(sym).intersects(variable_or_property) {
+            return None;
+        }
+        let (file, declaration) = self.files().value_declaration(sym)?;
+        let at = self.error_place_of_declaration(file, declaration)?;
+        let name = self.symbol_to_string(sym);
         Some(self.new_diagnostic(at, 2782, &[sink::Arg::Bytes(&name)]))
     }
 
-    /// The same for the symbol a name or a namespace export resolves to: the position of its
-    /// declaration, and `symbolToString`.
-    fn variable_in_need_of_a_type_annotation(
-        &mut self,
-        sym: Sym,
-    ) -> Option<((FileId, u32, u32), Vec<u8>)> {
-        let sym = self.files().resolve_alias_if_needed(sym)?;
-        if !self.files().flags(sym).intersects(SymFlags::VARIABLE) {
+    /// The same for a property, which has a `Sym` only if it is declared as it is.
+    fn property_in_need_of_a_type_annotation(&mut self, prop: &Prop) -> Option<Reported> {
+        match &prop.source {
+            PropSource::Symbol(sym) if !self.is_member_symbol(*sym) => {
+                return self.symbol_in_need_of_a_type_annotation(*sym);
+            }
+            // `syntheticOrigin`. The mapped property itself has no `ValueDeclaration`.
+            PropSource::Mapped(..) => {
+                let origin = prop.declared_by_modifiers_property().first()?;
+                return self.property_in_need_of_a_type_annotation(origin);
+            }
+            _ => {}
+        }
+        // Neither is `SymbolFlagsProperty`.
+        if prop
+            .flags
+            .intersects(PropFlags::ACCESSOR | PropFlags::METHOD)
+        {
             return None;
         }
-        Some((self.place_of_symbol(sym)?, self.symbol_to_string(sym)))
+        let (file, declaration) = self.value_declaration_of_prop(prop)?;
+        let at = self.error_place_of_declaration(file, declaration)?;
+        let name = self.prop_to_string(prop);
+        Some(self.new_diagnostic(at, 2782, &[sink::Arg::Bytes(&name)]))
     }
 
     /// `resolveCallExpression`, where the callee is `super`.
@@ -763,11 +776,11 @@ impl Checker<'_, '_> {
     }
 
     /// `getMinTypeArgumentCount`
-    pub(super) fn min_type_argument_count(&mut self, type_params: &[TypeId]) -> usize {
-        (0..type_params.len())
-            .rev()
-            .find(|&i| self.default_of_type_param(type_params[i]).is_none())
-            .map_or(0, |i| i + 1)
+    pub(super) fn min_type_argument_count(&self, type_params: &[TypeId]) -> usize {
+        type_params
+            .iter()
+            .rposition(|&param| !self.has_type_parameter_default(param))
+            .map_or(0, |last| last + 1)
     }
 
     /// `getThisArgumentOfCall`
@@ -919,57 +932,6 @@ impl Checker<'_, '_> {
             )],
             None => Vec::new(),
         }
-    }
-
-    /// `addImplementationSuccessElaboration`: the first declaration with a body of the symbol that
-    /// declares the overload `failed`, as a `getSignatureFromDeclaration` signature. `None`: there
-    /// is none, or the symbol has no declaration other than that of `failed`.
-    pub(super) fn implementation_of_overload(&mut self, failed: SigId) -> Option<SigId> {
-        let declared = self.declared_sig(failed);
-        let SigData::Construct {
-            class, file, func, ..
-        } = *self.types().sig(declared)
-        else {
-            return self.implementation_signature(failed);
-        };
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let FnOwner::Member(member) = bound.fns[func.idx()].owner else {
-            return None;
-        };
-        let MemberOwner::Class(written) = bound.member_owner[member.idx()] else {
-            return None;
-        };
-        let constructors: SmallVec<[FnId; 4]> = hir[written]
-            .members
-            .iter()
-            .filter(|&m| {
-                hir[m].kind == MemberKind::Constructor && !hir[m].flags.contains(Flags::STATIC)
-            })
-            .map(|m| hir[m].func)
-            .collect();
-        if constructors.len() < 2 {
-            return None;
-        }
-        let implementation = constructors.iter().copied().find(|&f| has_body(&hir[f]))?;
-        // The mapper of the declared construct signatures of the class.
-        let statics = self.type_of_symbol(class);
-        let mapper = self.signatures(statics, true).iter().find_map(|&sig| {
-            match *self.types().sig(sig) {
-                SigData::Construct {
-                    class: of,
-                    file: at,
-                    mapper,
-                    ..
-                } if of == class && at == file => Some(mapper),
-                _ => None,
-            }
-        })?;
-        Some(self.types().intern_sig(SigData::Construct {
-            class,
-            file,
-            func: implementation,
-            mapper,
-        }))
     }
 
     /// The related information `reportCallResolutionErrors` adds to each diagnostic for `last`, the
@@ -1141,18 +1103,6 @@ impl Checker<'_, '_> {
                 self.reported.extend(diagnostics);
                 let place = self.span_of_parenthesized_expr(file, node);
                 self.maybe_add_missing_await_info(place, actual, expected, reported);
-                // `checkTypeRelatedToEx`: the target of `import * as ns` would have been
-                // assignable.
-                if let Some((module, import)) = self.originating_import(actual) {
-                    let imported = self.type_of_symbol(module);
-                    let is_it = |d: &&mut Reported| d.start == at && d.code == 2345;
-                    if self.is_assignable(imported, expected)
-                        && let Some(diagnostic) =
-                            self.reported[reported..].iter_mut().rev().find(is_it)
-                    {
-                        diagnostic.add_related_info(import);
-                    }
-                }
             }
             return false;
         }
@@ -1405,22 +1355,19 @@ impl Checker<'_, '_> {
 
     /// `isPromiseResolveArityError`: the callee is the `resolve` of `new Promise((resolve) =>
     /// ...)`. Not if `resolve`, the function or `Promise` is parenthesized: parentheses are nodes.
-    fn is_promise_resolve_arity_error(&mut self, file: FileId, e: ExprId, c: CallId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn is_promise_resolve_arity_error(&self, file: FileId, e: ExprId, c: CallId) -> bool {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let callee = hir[c].callee;
-        if !matches!(hir[e].kind, ExprKind::Call(_))
-            || !matches!(hir[callee].kind, ExprKind::Ident(_))
-            || is_parenthesized(hir, callee)
-        {
+        let ExprKind::Ident(name) = hir[callee].kind else {
+            return false;
+        };
+        if !matches!(hir[e].kind, ExprKind::Call(_)) || is_parenthesized(hir, callee) {
             return false;
         }
-        let symbol = bound.expr_symbol[callee.idx()];
-        if symbol.is_none() {
+        let Some(symbol) = self.symbol_of_identifier(file, callee, name) else {
             return false;
-        }
-        // `valueDeclaration`: the first declaration, in case a `var` in the body redeclares the
-        // name.
-        let Some(&Decl::Param(pat)) = bound.symbols[symbol.idx()].decls.first() else {
+        };
+        let Some((_, Decl::Param(pat))) = files.value_declaration(symbol) else {
             return false;
         };
         let PatParent::Param(p) = bound.pat_parent[pat.idx()] else {
@@ -1435,11 +1382,18 @@ impl Checker<'_, '_> {
         let ExprKind::New(outer) = hir[parent].kind else {
             return false;
         };
-        if is_parenthesized(hir, function) || is_parenthesized(hir, hir[outer].callee) {
+        let constructor = hir[outer].callee;
+        let ExprKind::Ident(constructor_name) = hir[constructor].kind else {
+            return false;
+        };
+        if is_parenthesized(hir, function) || is_parenthesized(hir, constructor) {
             return false;
         }
-        matches!(hir[hir[outer].callee].kind, ExprKind::Ident(known::Promise))
-            && bound.expr_symbol[hir[outer].callee.idx()].is_none()
+        // `getGlobalPromiseConstructorSymbolOrNil`
+        let global_promise_symbol = files.global(known::Promise, SymFlags::VALUE);
+        global_promise_symbol.is_some()
+            && self.symbol_of_identifier(file, constructor, constructor_name)
+                == global_promise_symbol
     }
 
     /// `typeArgumentList.Loc.End()`: a trailing comma is part of the list.
@@ -1518,26 +1472,9 @@ impl Checker<'_, '_> {
     }
 }
 
-/// `SkipTriviaEx` with `StopAfterLineBreak`: whether the line ends after `at`, with only whitespace
-/// and comments in between.
-fn line_breaks_after(text: &[u8], mut at: usize) -> bool {
-    loop {
-        match text.get(at) {
-            Some(b'\n' | b'\r') => return true,
-            Some(b' ' | b'\t' | 0x0B | 0x0C) => at += 1,
-            Some(b'/') if text.get(at + 1) == Some(&b'/') => {
-                while text.get(at).is_some_and(|b| !matches!(b, b'\n' | b'\r')) {
-                    at += 1;
-                }
-            }
-            Some(b'/') if text.get(at + 1) == Some(&b'*') => {
-                at += 2;
-                while at < text.len() && !text[at..].starts_with(b"*/") {
-                    at += 1;
-                }
-                at += 2;
-            }
-            _ => return false,
-        }
-    }
+/// `IsLineBreak(rune(text[SkipTriviaEx(text, at, StopAfterLineBreak) - 1]))`: it looks at one byte,
+/// so U+2028 and U+2029, which are skipped as white space, do not count.
+fn line_breaks_after(text: &[u8], at: usize) -> bool {
+    let end = super::spans::skip_trivia_ex(text, at, true);
+    matches!(text[..end].last(), Some(b'\n' | b'\r'))
 }

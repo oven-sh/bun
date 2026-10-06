@@ -182,7 +182,6 @@ pub(crate) struct ParserSnapshot<'a> {
     latest_arrow_arg_loc: bun_ast::Loc,
     forbid_suffix_after_as_loc: bun_ast::Loc,
     after_arrow_body_loc: bun_ast::Loc,
-    after_update_expr: bool,
     esm_import_keyword: bun_ast::Range,
     esm_export_keyword: bun_ast::Range,
     enclosing_class_keyword: bun_ast::Range,
@@ -705,8 +704,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     //     Expression , AssignmentExpression
     //
     pub(crate) after_arrow_body_loc: bun_ast::Loc,
-    /// Tolerant mode only: the token at `after_arrow_body_loc` follows `x++` or `x--`, not the body of an arrow function.
-    pub(crate) after_update_expr: bool,
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
@@ -1991,17 +1988,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Binding::alloc(self.arena, t, self.real_loc(loc))
     }
 
-    /// `b` for the binding that the expression whose `loc` is `loc` turned out to be. It is the
-    /// same node: the notes of the expression are the notes of the binding.
+    /// `b` for the name that the identifier `expr` turned out to be. It is the same node: the
+    /// notes of the expression are the notes of the binding.
     #[inline]
-    fn binding_of_expr<T>(&mut self, t: T, expr: &Expr) -> Binding
-    where
-        T: js_ast::binding::BindingAlloc,
-    {
-        let mut binding = Binding::alloc(self.arena, t, expr.loc);
+    fn binding_of_expr(&mut self, name: B::Identifier, expr: &Expr) -> Binding {
+        let mut binding = Binding::alloc(self.arena, name, expr.loc);
         // The range of the declaration is about to be recorded in the entry that holds the end of
         // the expression.
-        if let Some(end) = self.end_of_literal(expr) {
+        if let Some(end) = self.noted_end(expr.loc) {
             self.note_loc(&mut binding.loc, crate::sema::Mark::PatternEnd, end);
         }
         binding
@@ -4087,10 +4081,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let mut is_spread = false;
                 for i in 0..ex.items.len_u32() as usize {
                     let mut item = ex.items.slice()[i];
-                    let mut dots = bun_ast::Loc::EMPTY;
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
-                        dots = self.real_loc(item.loc);
                         item = item
                             .data
                             .e_spread()
@@ -4103,29 +4095,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         is_spread,
                     );
 
-                    // It's valid for it to be missing
-                    // An example:
-                    //      Promise.all(promises).then(([, len]) => true);
-                    //                                   ^ Binding is missing there
-                    let mut binding = res
-                        .binding
-                        .unwrap_or_else(|| self.binding_of_expr(B::Missing {}, &item));
-                    if !dots.is_empty() {
-                        self.note_loc(&mut binding.loc, crate::sema::Mark::DotDotDot, dots);
-                    }
                     items.push(bun_ast::ArrayBinding {
-                        binding,
+                        // It's valid for it to be missing
+                        // An example:
+                        //      Promise.all(promises).then(([, len]) => true);
+                        //                                   ^ Binding is missing there
+                        binding: res
+                            .binding
+                            .unwrap_or_else(|| self.b(B::Missing {}, item.loc)),
                         default_value: res.expr,
                     });
                 }
 
-                return Some(self.binding_of_expr(
+                return Some(self.b(
                     B::Array {
                         items: bun_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
                         has_spread: is_spread,
                         is_single_line: ex.is_single_line,
                     },
-                    &expr,
+                    expr.loc,
                 ));
             }
             js_ast::ExprData::EObject(mut ex) => {
@@ -4191,12 +4179,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     });
                 }
 
-                return Some(self.binding_of_expr(
+                return Some(self.b(
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
                     },
-                    &expr,
+                    expr.loc,
                 ));
             }
             _ => {
@@ -8443,7 +8431,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             latest_arrow_arg_loc: self.latest_arrow_arg_loc,
             forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
             after_arrow_body_loc: self.after_arrow_body_loc,
-            after_update_expr: self.after_update_expr,
             esm_import_keyword: self.esm_import_keyword,
             esm_export_keyword: self.esm_export_keyword,
             enclosing_class_keyword: self.enclosing_class_keyword,
@@ -8500,7 +8487,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
         self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
         self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
-        self.after_update_expr = snapshot.after_update_expr;
         self.esm_import_keyword = snapshot.esm_import_keyword;
         self.esm_export_keyword = snapshot.esm_export_keyword;
         self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
@@ -10062,7 +10048,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
-            after_update_expr: false,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

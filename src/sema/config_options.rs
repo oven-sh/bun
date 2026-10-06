@@ -1,6 +1,6 @@
 //! Validates the `compilerOptions` of a config file: unknown options and values of the wrong type.
 
-use crate::hir::ExprId;
+use crate::hir::{ExprId, PropId};
 use crate::json::{Json, TsConfigSourceFile};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -171,8 +171,8 @@ bun_core::comptime_string_set! {
 /// An error in an option.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Problem {
-    /// The option name, as spelled in the source.
-    pub name: Vec<u8>,
+    /// `propertyAssignment`
+    pub property: PropId,
     /// Which element of the list it is about. `None`: the whole value.
     pub index: Option<usize>,
     /// The code of TypeScript's message, and the message arguments.
@@ -236,23 +236,36 @@ fn is_lib(name: &[u8]) -> bool {
     crate::resolve::LIBS.contains(&name.to_ascii_lowercase())
 }
 
-/// The rest of `convertJsonOption`, for a value of the right type. A list is without the elements
-/// for which `is_invalid` holds and, unless `listPreserveFalsyValues`, without the falsy ones.
-pub fn converted(name: &[u8], value: &Json, is_invalid: impl Fn(usize) -> bool) -> Json {
+/// The rest of `convertJsonOption`, for a value of the right type. `convertJsonOptionOfListType`
+/// converts the elements first, those for which `is_invalid` holds to nil. Unless
+/// `listPreserveFalsyValues`, what is falsy then is left out: not `""` as a path.
+pub fn converted(
+    name: &[u8],
+    value: &Json,
+    base_path: &[u8],
+    is_invalid: impl Fn(usize) -> bool,
+) -> Json {
     let is_falsy = |item: &Json| match item {
         Json::Null | Json::Bool(false) => true,
         Json::Number(number) => *number == 0.0,
         Json::String(text) => text.is_empty() && name != b"moduleSuffixes",
         _ => false,
     };
-    match (kind_of(name), value) {
-        (Some(Kind::List(_)), Json::Array(items)) => Json::Array(
-            (items.iter().enumerate())
-                .filter(|(index, item)| !is_invalid(*index) && !is_falsy(item))
-                .map(|(_, item)| item.clone())
-                .collect(),
+    let normalized = |is_file_path: bool, value: &Json| match value {
+        Json::String(path) if is_file_path => Json::String(
+            crate::config::normalize_non_list_option_value(path, base_path),
         ),
         _ => value.clone(),
+    };
+    match (kind_of(name), value) {
+        (Some(Kind::List(element)), Json::Array(items)) => Json::Array(
+            (items.iter().enumerate())
+                .filter(|(index, _)| !is_invalid(*index))
+                .map(|(_, item)| normalized(element == Element::FilePath, item))
+                .filter(|item| !is_falsy(item))
+                .collect(),
+        ),
+        (kind, _) => normalized(kind == Some(Kind::FilePath), value),
     }
 }
 
@@ -267,6 +280,26 @@ pub fn is_file_path(name: &[u8]) -> bool {
         kind_of(name),
         Some(Kind::FilePath | Kind::List(Element::FilePath))
     )
+}
+
+/// `CommandLineOptionTypeList` is the kind of the option `name`.
+pub(crate) fn is_list(name: &[u8]) -> bool {
+    matches!(kind_of(name), Some(Kind::List(_)))
+}
+
+/// `CommandLineOptionTypeEnum` is the kind of the option `name`.
+pub(crate) fn is_enum(name: &[u8]) -> bool {
+    matches!(kind_of(name), Some(Kind::OneOf(..)))
+}
+
+/// `CommandLineCompilerOptionsMap.Get(name)`, its name: `name` in whatever letter case. The map has
+/// the command-line-only options too.
+fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
+    let is_name = |option: &&'static [u8]| option.eq_ignore_ascii_case(name);
+    match OPTIONS.get_ascii_case_insensitive(name) {
+        Some(option) => Some(option.0),
+        None => COMMAND_LINE_ONLY_OPTIONS.iter().find(is_name),
+    }
 }
 
 /// `getSpellingSuggestion`, as `createUnknownOptionError` called it before TypeScript 7: the option
@@ -369,41 +402,33 @@ fn kind_of_root(name: &[u8]) -> Option<Kind> {
     })
 }
 
-/// Runs `convertJsonOption` on each of `options`, the converted value of the object `written` of `file`.
-pub fn problems(
-    file: &TsConfigSourceFile,
-    written: ExprId,
-    options: &[(Vec<u8>, Json)],
-    within: In,
-) -> Vec<Problem> {
-    let span_of = |name: &[u8], of_value: bool| {
-        let property = file.property(written, name, b"")?;
-        Some(if of_value {
-            file.span(file.initializer(property))
-        } else {
-            file.name_span(property)
-        })
-    };
+/// The errors of `onPropertySet`, which runs `convertJsonOption`, for each property of the object
+/// `written` of `file`.
+pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<Problem> {
     let mut out = Vec::new();
-    for (name, value) in options {
+    for (property, name) in file.properties(written) {
+        let name = &name.to_vec();
+        let value = &file.convert_property_value_to_json(file.initializer(property));
+        let name_span = Some(file.name_span(property));
+        let value_span = Some(file.span(file.initializer(property)));
         if matches!(within, In::CompilerOptions { .. }) && COMMAND_LINE_ONLY_OPTIONS.contains(name)
         {
             out.push(Problem {
-                name: name.clone(),
+                property,
                 index: None,
                 code: 6266,
                 args: vec![name.clone()],
-                span: span_of(name, false),
+                span: name_span,
             });
             continue;
         }
         if within == In::Root && name == b"excludes" {
             out.push(Problem {
-                name: name.clone(),
+                property,
                 index: None,
                 code: 6114,
                 args: Vec::new(),
-                span: span_of(name, false),
+                span: name_span,
             });
             continue;
         }
@@ -427,34 +452,35 @@ pub fn problems(
                     let other_case = options.find(|option| option.0.eq_ignore_ascii_case(name));
                     (other_case.map(|option| option.0), 17018, 17010)
                 }
-                In::CompilerOptions {
-                    as_typescript_does: true,
-                } => {
-                    let other_case = OPTIONS.get_ascii_case_insensitive(name);
-                    (other_case.map(|option| option.0), 5025, 5023)
+                In::CompilerOptions { as_typescript_does } => {
+                    let other_case = possible_option(name);
+                    let suggestion = match as_typescript_does {
+                        true => other_case,
+                        false => other_case.or_else(|| nearest(name)),
+                    };
+                    (suggestion, 5025, 5023)
                 }
-                In::CompilerOptions { .. } => (nearest(name), 5025, 5023),
             };
             let (code, args) = match suggestion {
                 Some(suggestion) => (with, vec![name.clone(), suggestion.to_vec()]),
                 None => (without, vec![name.clone()]),
             };
             out.push(Problem {
-                name: name.clone(),
+                property,
                 index: None,
                 code,
                 args,
-                span: span_of(name, false),
+                span: name_span,
             });
             continue;
         };
         let mut wrong = |takes: &[u8]| {
             out.push(Problem {
-                name: name.clone(),
+                property,
                 index: None,
                 code: 5024,
                 args: vec![name.clone(), takes.to_vec()],
-                span: span_of(name, true),
+                span: value_span,
             });
         };
         // `createDiagnosticForInvalidEnumType`
@@ -479,9 +505,7 @@ pub fn problems(
                 None => wrong(b"Array"),
                 // `convertJsonOptionOfListType`: each element is converted by itself.
                 Some(items) => {
-                    let elements: Vec<ExprId> = (file.property(written, name, b""))
-                        .map(|property| file.elements(file.initializer(property)).collect())
-                        .unwrap_or_default();
+                    let elements: Vec<ExprId> = file.elements(file.initializer(property)).collect();
                     // `commandLineOptionElements`
                     let of_element = match &name[..] {
                         b"customConditions" => b"condition".to_vec(),
@@ -513,7 +537,7 @@ pub fn problems(
                             (Element::Lib, _) => (5024, vec![of_element.clone(), b"enum".to_vec()]),
                         };
                         out.push(Problem {
-                            name: name.clone(),
+                            property,
                             index: Some(index),
                             code,
                             args,
@@ -530,11 +554,11 @@ pub fn problems(
                     let specified = specified.to_ascii_lowercase();
                     if !now.iter().chain(once).any(|&one| one == specified) {
                         out.push(Problem {
-                            name: name.clone(),
+                            property,
                             index: None,
                             code: 6046,
                             args: not_one_of(&mut now.iter().copied()),
-                            span: span_of(name, true),
+                            span: value_span,
                         });
                     }
                 }

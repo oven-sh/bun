@@ -9,8 +9,8 @@ use bun_ast::{LexerLog, Loc, Log, Range, Source, TypeScriptKind};
 use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
 pub(crate) use bun_core::lexer::{
-    char_and_size, end_of_run, is_white_space_single_line, is_whitespace, last_char,
-    peek_unicode_escape, starts_with_line_break,
+    char_and_size, end_of_run, is_type_script_identifier_part, is_white_space_single_line,
+    is_whitespace, last_char, peek_unicode_escape, scan_identifier_parts, starts_with_line_break,
 };
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
@@ -95,6 +95,8 @@ pub enum StringLiteralRawFormat {
     Ascii,
     Utf16,
     NeedsDecode,
+    /// The value as `scanString` computes it. Tolerant mode only.
+    Decoded,
 }
 
 /// `packed struct(u8) { suffix_len: u2, needs_decode: bool, _padding: u5 = 0 }`
@@ -174,6 +176,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
     pub(crate) list_contexts: u32,
+    pub(crate) rescanned_greater_than_at: usize,
     pub(crate) await_name_seen: bool,
     // Vec buffer lengths — restore() truncates back to these.
     pub(crate) all_comments_len: usize,
@@ -251,6 +254,9 @@ pub struct Lexer<'a> {
     /// `parsingContexts`: one bit per `parse::lists::ListKind` that is currently being parsed. Only maintained in tolerant mode. It lives
     /// in the lexer, and in its snapshot, because backtracking out of a list only restores the lexer.
     pub(crate) list_contexts: u32,
+    /// Tolerant mode: start of the most recent `>>=` or `>>>=` that `reScanGreaterThanToken` has
+    /// made of a `>`.
+    pub(crate) rescanned_greater_than_at: usize,
     /// Tolerant mode: start of the most recent unterminated string or template
     /// (`TokenFlagsUnterminated`).
     pub(crate) unterminated_at: usize,
@@ -402,6 +408,7 @@ impl<'a> Lexer<'a> {
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
             list_contexts: self.list_contexts,
+            rescanned_greater_than_at: self.rescanned_greater_than_at,
             await_name_seen: self.await_name_seen,
             all_comments_len: self.all_comments.len(),
             comment_directives_len: self.comment_directives.len(),
@@ -444,6 +451,7 @@ impl<'a> Lexer<'a> {
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
         self.list_contexts = original.list_contexts;
+        self.rescanned_greater_than_at = original.rescanned_greater_than_at;
         self.await_name_seen = original.await_name_seen;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
@@ -472,6 +480,12 @@ impl<'a> Lexer<'a> {
         (self.token as u32) >= (T::TIdentifier as u32)
     }
 
+    /// `IsIdentifierPart`, by TypeScript's table for the type checker.
+    #[inline]
+    fn is_identifier_part(&self, c: CodePoint) -> bool {
+        is_identifier_continue(c) || (self.tolerant && is_type_script_identifier_part(c))
+    }
+
     // deinit → Drop (see impl Drop below)
 
     fn decode_escape_sequences(
@@ -482,7 +496,7 @@ impl<'a> Lexer<'a> {
     ) -> Result<(), Error> {
         let iterator = CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
-        'text: while iterator.next(&mut iter) {
+        while iterator.next(&mut iter) {
             let width = iter.width;
             match iter.c {
                 0x0D => {
@@ -542,12 +556,6 @@ impl<'a> Lexer<'a> {
 
                         // legacy octal literals
                         0x30..=0x37 => {
-                            if self.tolerant {
-                                iter.i =
-                                    self.octal_escape(start, text, iter.i as usize, buf) as u32;
-                                continue;
-                            }
-
                             let octal_start = (iter.i as usize + width2 as usize).saturating_sub(2);
 
                             // 1-3 digit octal
@@ -620,21 +628,6 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         0x38 | 0x39 => {
-                            if self.tolerant {
-                                // `scanEscapeSequence`: reported, and it decodes to the digit. In a
-                                // tagged template it decodes to its own source text.
-                                let escape = [b'\\', c2 as u8];
-                                self.escape_error_about(
-                                    start,
-                                    iter.i as usize - 1,
-                                    2,
-                                    1488,
-                                    Some(&escape),
-                                );
-                                if self.is_under_tag {
-                                    buf.push(u16::from(b'\\'));
-                                }
-                            }
                             iter.c = c2;
                         }
                         // 2-digit hexadecimal
@@ -644,10 +637,6 @@ impl<'a> Lexer<'a> {
                             let mut width3: u8;
 
                             if !iterator.next(&mut iter) {
-                                if self.tolerant {
-                                    self.bad_escape(start, text, text.len(), buf);
-                                    return Ok(());
-                                }
                                 return self.syntax_error();
                             }
                             c3 = iter.c;
@@ -655,11 +644,6 @@ impl<'a> Lexer<'a> {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
-                                    if self.tolerant {
-                                        self.bad_escape(start, text, iter.i as usize, buf);
-                                        iter.width = 0;
-                                        continue 'text;
-                                    }
                                     self.end =
                                         (start + iter.i as usize).saturating_sub(width3 as usize);
                                     return self.syntax_error();
@@ -667,10 +651,6 @@ impl<'a> Lexer<'a> {
                             }
 
                             if !iterator.next(&mut iter) {
-                                if self.tolerant {
-                                    self.bad_escape(start, text, text.len(), buf);
-                                    return Ok(());
-                                }
                                 return self.syntax_error();
                             }
                             c3 = iter.c;
@@ -678,11 +658,6 @@ impl<'a> Lexer<'a> {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
-                                    if self.tolerant {
-                                        self.bad_escape(start, text, iter.i as usize, buf);
-                                        iter.width = 0;
-                                        continue 'text;
-                                    }
                                     self.end =
                                         (start + iter.i as usize).saturating_sub(width3 as usize);
                                     return self.syntax_error();
@@ -697,10 +672,6 @@ impl<'a> Lexer<'a> {
                             let mut value: i64 = 0;
 
                             if !iterator.next(&mut iter) {
-                                if self.tolerant {
-                                    self.bad_escape(start, text, text.len(), buf);
-                                    return Ok(());
-                                }
                                 return self.syntax_error();
                             }
                             let mut c3 = iter.c;
@@ -720,33 +691,12 @@ impl<'a> Lexer<'a> {
                                 'variable_length: loop {
                                     if !iterator.next(&mut iter) {
                                         // Ran out of literal before the closing `}`.
-                                        if self.tolerant {
-                                            self.bad_extended_escape(
-                                                start,
-                                                text,
-                                                text.len(),
-                                                is_out_of_range,
-                                                buf,
-                                            );
-                                            return Ok(());
-                                        }
                                         return self.syntax_error();
                                     }
                                     c3 = iter.c;
 
                                     if c3 == 0x7D {
                                         if is_first {
-                                            if self.tolerant {
-                                                self.bad_extended_escape(
-                                                    start,
-                                                    text,
-                                                    iter.i as usize,
-                                                    false,
-                                                    buf,
-                                                );
-                                                iter.width = 0;
-                                                continue 'text;
-                                            }
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
                                             return self.syntax_error();
@@ -758,17 +708,6 @@ impl<'a> Lexer<'a> {
                                         // digit count still reports the range error.
                                         Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
-                                            if self.tolerant {
-                                                self.bad_extended_escape(
-                                                    start,
-                                                    text,
-                                                    iter.i as usize,
-                                                    is_out_of_range,
-                                                    buf,
-                                                );
-                                                iter.width = 0;
-                                                continue 'text;
-                                            }
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
                                             return self.syntax_error();
@@ -784,16 +723,6 @@ impl<'a> Lexer<'a> {
                                 }
 
                                 if is_out_of_range {
-                                    if self.tolerant {
-                                        self.bad_extended_escape(
-                                            start,
-                                            text,
-                                            iter.i as usize,
-                                            true,
-                                            buf,
-                                        );
-                                        continue 'text;
-                                    }
                                     self.add_range_error(
                                         Range {
                                             loc: Loc {
@@ -818,11 +747,6 @@ impl<'a> Lexer<'a> {
                                     match hex_digit_value_u32(c3 as u32) {
                                         Some(d) => value = (value * 16) | d as i64,
                                         None => {
-                                            if self.tolerant {
-                                                self.bad_escape(start, text, iter.i as usize, buf);
-                                                iter.width = 0;
-                                                continue 'text;
-                                            }
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
                                             return self.syntax_error();
@@ -831,10 +755,6 @@ impl<'a> Lexer<'a> {
 
                                     if j < 3 {
                                         if !iterator.next(&mut iter) {
-                                            if self.tolerant {
-                                                self.bad_escape(start, text, text.len(), buf);
-                                                return Ok(());
-                                            }
                                             return self.syntax_error();
                                         }
                                         c3 = iter.c;
@@ -1049,6 +969,9 @@ impl<'a> Lexer<'a> {
             StringLiteralRawFormat::Ascii
         };
         self.string_literal_start = self.start;
+        if QUOTE != 0x60 && string_literal_details.needs_decode() && self.tolerant {
+            self.scan_string();
+        }
         Ok(())
     }
 
@@ -1092,6 +1015,19 @@ impl<'a> Lexer<'a> {
             return first as CodePoint;
         }
 
+        self.next_codepoint_multibyte(contents, first)
+    }
+
+    /// The character at `self.current`, which starts with `first` and is not ASCII. The type
+    /// checker decodes it as TypeScript's scanner does (`charAndSize`).
+    #[cold]
+    #[inline(never)]
+    fn next_codepoint_multibyte(&mut self, contents: &[u8], first: u8) -> CodePoint {
+        if self.tolerant {
+            let (code_point, size) = char_and_size(contents, self.current);
+            self.current += size;
+            return code_point;
+        }
         strings::lexer_step::next_codepoint_multibyte(contents, &mut self.current, first)
     }
 
@@ -1117,12 +1053,16 @@ impl<'a> Lexer<'a> {
 
     #[inline]
     pub fn expect(&mut self, token: T) -> Result<(), Error> {
-        if self.token != token {
+        if self.token != token && !self.is_keyword(token) {
             let at = self.prev_error_loc;
             self.expected(token)?;
             if self.tolerant {
                 return self.put_up_with(at);
             }
+        }
+        // `parseExpected` leaves the token with `nextToken`. `token` is a constant for the callers.
+        if token.is_reserved_word() {
+            return self.next_token();
         }
         self.next()
     }
@@ -1182,7 +1122,7 @@ impl<'a> Lexer<'a> {
         });
         if let Some(last) = last
             && matches!(
-                crate::sema::early_error(&self.log().msgs[last], b""),
+                crate::sema::early_error(&self.log().msgs[last]),
                 Some((1005, _))
             )
         {
@@ -1315,13 +1255,13 @@ impl<'a> Lexer<'a> {
             .is_some_and(|comment| comment.loc.start < to.start)
     }
 
-    /// Whether scanning may continue after an error that TypeScript's scanner only reports: logs
-    /// `code` at `at`.
-    /// Not during a speculative parse, which must fail.
+    /// Whether scanning may continue after an error that TypeScript's scanner only reports
+    /// (`errorAt`): logs `code` at `at`. The scanner always returns a token, so a speculative parse
+    /// goes on too, and keeps the error if it succeeds (`swallowed`).
     #[cold]
     #[inline(never)]
     fn tolerate(&mut self, at: usize, len: usize, code: u32) -> bool {
-        if !self.tolerant || self.is_log_disabled {
+        if !self.tolerant {
             return false;
         }
         self.ts_error(
@@ -1341,7 +1281,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn tolerate_unterminated(&mut self, quote: i32) -> bool {
-        if !self.tolerant || self.is_log_disabled {
+        if !self.tolerant {
             return false;
         }
         let at = self.end;
@@ -1351,10 +1291,7 @@ impl<'a> Lexer<'a> {
             // TypeScript decodes the escape sequences of a string before it reaches this point:
             // their errors are reported first, and suppress the error reported here if it is at the
             // same position.
-            let mut scratch = core::mem::take(&mut self.temp_buffer_u16);
-            let _ = self.decode_escape_sequences(self.start + 1, text, &mut scratch);
-            scratch.clear();
-            self.temp_buffer_u16 = scratch;
+            self.scan_string_value(self.start + 1, text);
         }
         self.unterminated_at = self.start;
         // `scanEscapeSequence`: a backslash followed by nothing, also in a tagged template.
@@ -1391,9 +1328,8 @@ impl<'a> Lexer<'a> {
             return;
         }
         let is_unterminated = start.checked_sub(1) == Some(self.unterminated_at);
-        // TypeScript decodes the escape sequences of a string while scanning it: those of an
-        // unterminated string were processed then, and are not reported again when its value is
-        // requested.
+        // `tolerate_unterminated` has reported those of an unterminated string. `scan_string` goes
+        // over them again for the value.
         if is_unterminated && matches!(self.contents[self.unterminated_at], b'"' | b'\'') {
             return;
         }
@@ -1413,7 +1349,7 @@ impl<'a> Lexer<'a> {
     /// `scanEscapeSequence` on `\0` to `\7`; `digit` is the index of the first digit in `text`.
     /// `\0` not followed by a digit is NUL. Anything else consumes up to three octal digits, two if
     /// it starts with `4` to `7`, is reported, and decodes to the character with that code. Returns
-    /// the index of the last digit in `text`.
+    /// the index after the last digit in `text`.
     #[cold]
     #[inline(never)]
     fn octal_escape(
@@ -1421,13 +1357,13 @@ impl<'a> Lexer<'a> {
         start: usize,
         text: &[u8],
         digit: usize,
-        buf: &mut Vec<u16>,
+        value: &mut Vec<u8>,
     ) -> usize {
         let is_octal = |i: usize| matches!(text.get(i), Some(b'0'..=b'7'));
         let mut end = digit + 1;
         if text[digit] == b'0' && !text.get(end).is_some_and(u8::is_ascii_digit) {
-            buf.push(0);
-            return digit;
+            value.push(0);
+            return end;
         }
         if text[digit] <= b'3' && is_octal(end) {
             end += 1;
@@ -1436,8 +1372,8 @@ impl<'a> Lexer<'a> {
             end += 1;
         }
         if self.is_under_tag {
-            buf.extend(text[digit - 1..end].iter().map(|&b| u16::from(b)));
-            return end - 1;
+            value.extend_from_slice(&text[digit - 1..end]);
+            return end;
         }
         let code = text[digit..end]
             .iter()
@@ -1450,33 +1386,39 @@ impl<'a> Lexer<'a> {
             HEX[usize::from(code) & 15],
         ];
         self.escape_error_about(start, digit - 1, end + 1 - digit, 1487, Some(&escape));
-        buf.push(code);
-        end - 1
+        encode_js_string_rune(u32::from(code), value);
+        end
     }
 
     /// `scanEscapeSequence` on `\x` or `\uXXXX` with too few digits: 1125 where the scan stopped,
     /// which is index `stop` in `text`, and the escape decodes to its own source text.
     #[cold]
     #[inline(never)]
-    fn bad_escape(&mut self, start: usize, text: &[u8], stop: usize, buf: &mut Vec<u16>) {
+    fn bad_escape(
+        &mut self,
+        start: usize,
+        text: &[u8],
+        backslash: usize,
+        stop: usize,
+        value: &mut Vec<u8>,
+    ) {
         self.escape_error(start, stop, 0, 1125);
-        let backslash = last_backslash(&text[..stop]);
-        buf.extend(text[backslash..stop].iter().map(|&b| u16::from(b)));
+        value.extend_from_slice(&text[backslash..stop]);
     }
 
     /// `scanUnicodeEscape` on a malformed `\u{` escape, which decodes to its own source text.
-    /// `stop`: the index in `text` where its digits end.
+    /// `stop`: the index in `text` where its digits end. Returns the index after the escape.
     #[cold]
     #[inline(never)]
     fn bad_extended_escape(
         &mut self,
         start: usize,
         text: &[u8],
+        backslash: usize,
         stop: usize,
         is_out_of_range: bool,
-        buf: &mut Vec<u16>,
-    ) {
-        let backslash = last_backslash(&text[..stop]);
+        value: &mut Vec<u8>,
+    ) -> usize {
         let digits = backslash + 3;
         let mut end = stop;
         if stop == digits {
@@ -1493,7 +1435,145 @@ impl<'a> Lexer<'a> {
                 self.escape_error(start, stop, 0, 1199);
             }
         }
-        buf.extend(text[backslash..end].iter().map(|&b| u16::from(b)));
+        value.extend_from_slice(&text[backslash..end]);
+        end
+    }
+
+    /// The `u` case of `scanEscapeSequence`, on the backslash at index `backslash` of `text`.
+    #[cold]
+    #[inline(never)]
+    fn scan_unicode_escape(
+        &mut self,
+        start: usize,
+        text: &[u8],
+        backslash: usize,
+        value: &mut Vec<u8>,
+    ) -> usize {
+        let Some((code_point, len)) = peek_unicode_escape(text, backslash) else {
+            let is_extended = text.get(backslash + 2) == Some(&b'{');
+            let digits = &text[backslash + 2 + usize::from(is_extended)..];
+            let count = digits.iter().take_while(|c| c.is_ascii_hexdigit()).count();
+            let stop = text.len() - digits.len() + count;
+            if !is_extended {
+                self.bad_escape(start, text, backslash, stop, value);
+                return stop;
+            }
+            let is_out_of_range = digits[..count].iter().fold(0u32, |code, &digit| {
+                code.saturating_mul(16)
+                    .saturating_add(char::from(digit).to_digit(16).unwrap_or(0))
+            }) > 0x10FFFF;
+            return self.bad_extended_escape(start, text, backslash, stop, is_out_of_range, value);
+        };
+        let (mut code_point, mut end) = (code_point as u32, backslash + len);
+        // `scanLowSurrogateEscape`
+        if (0xD800..=0xDBFF).contains(&code_point)
+            && text.get(end) == Some(&b'\\')
+            && let Some((low, low_len)) = peek_unicode_escape(text, end)
+            && (0xDC00..=0xDFFF).contains(&low)
+        {
+            code_point = 0x10000 + ((code_point - 0xD800) << 10) + (low as u32 - 0xDC00);
+            end += low_len;
+        }
+        encode_js_string_rune(code_point, value);
+        end
+    }
+
+    /// `scanEscapeSequence` on the backslash at index `backslash` of `text`, which starts at
+    /// `start`: appends what the escape sequence stands for to `value`, and returns the index after
+    /// it.
+    #[cold]
+    #[inline(never)]
+    fn scan_escape_sequence(
+        &mut self,
+        start: usize,
+        text: &[u8],
+        backslash: usize,
+        value: &mut Vec<u8>,
+    ) -> usize {
+        let mut pos = backslash + 1;
+        // `tolerate_unterminated` reports a backslash followed by nothing.
+        let Some(&ch) = text.get(pos) else {
+            return pos;
+        };
+        pos += 1;
+        match ch {
+            b'0'..=b'7' => return self.octal_escape(start, text, pos - 1, value),
+            b'8' | b'9' => {
+                let escape = &text[backslash..pos];
+                self.escape_error_about(start, backslash, 2, 1488, Some(escape));
+                value.extend_from_slice(if self.is_under_tag {
+                    escape
+                } else {
+                    &escape[1..]
+                });
+            }
+            b'b' => value.push(0x08),
+            b't' => value.push(b'\t'),
+            b'n' => value.push(b'\n'),
+            b'v' => value.push(0x0B),
+            b'f' => value.push(0x0C),
+            b'r' => value.push(b'\r'),
+            b'u' => return self.scan_unicode_escape(start, text, backslash, value),
+            b'x' => {
+                let digits = &text[pos..text.len().min(pos + 2)];
+                let count = digits.iter().take_while(|c| c.is_ascii_hexdigit()).count();
+                pos += count;
+                if count < 2 {
+                    self.bad_escape(start, text, backslash, pos, value);
+                } else {
+                    let code = digits.iter().fold(0, |code, &digit| {
+                        code * 16 + char::from(digit).to_digit(16).unwrap_or(0)
+                    });
+                    encode_js_string_rune(code, value);
+                }
+            }
+            // A line continuation stands for nothing.
+            b'\r' => pos += usize::from(text.get(pos) == Some(&b'\n')),
+            b'\n' => {}
+            _ => {
+                let (c, size) = char_and_size(text, pos - 1);
+                pos += size - 1;
+                if !matches!(c, 0x2028 | 0x2029) {
+                    encode_js_string_rune(c as u32, value);
+                }
+            }
+        }
+        pos
+    }
+
+    /// `scanString`, `scanTemplateAndSetTokenValue`: the value of the literal that has `text`
+    /// between its delimiters, which starts at `start`. What is no escape sequence is copied as it
+    /// is, also what is no valid UTF-8. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn scan_string_value(&mut self, start: usize, text: &[u8]) -> Vec<u8> {
+        let mut value = Vec::with_capacity(text.len());
+        let mut pos = 0;
+        while let Some(at) = strings::index_of_any_pos(text, b"\\\r", pos) {
+            value.extend_from_slice(&text[pos..at]);
+            if text[at] == b'\\' {
+                pos = self.scan_escape_sequence(start, text, at, &mut value);
+            } else {
+                // In a template `\r\n` and `\r` are `\n`.
+                pos = at + 1 + usize::from(text.get(at + 1) == Some(&b'\n'));
+                value.push(b'\n');
+            }
+        }
+        value.extend_from_slice(&text[pos..]);
+        value
+    }
+
+    /// `scanString` computes the value of a string token, and reports the errors in its escape
+    /// sequences, when it scans the token, whether or not the parser uses it.
+    #[cold]
+    #[inline(never)]
+    fn scan_string(&mut self) {
+        let text = self.string_literal_raw_content;
+        if strings::contains_char(text, b'\\') {
+            let value = self.scan_string_value(self.start + 1, text);
+            self.string_literal_raw_content = self.arena.alloc_slice_copy(&value);
+        }
+        self.string_literal_raw_format = StringLiteralRawFormat::Decoded;
     }
 
     /// The identifier contains an escape sequence and the parser expects the keyword it spells:
@@ -1507,6 +1587,89 @@ impl<'a> Lexer<'a> {
         self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
     }
 
+    /// `HasUnicodeEscape` or `HasExtendedUnicodeEscape`, of a token that is an identifier or a
+    /// keyword. An escape is longer than the character it decodes to.
+    #[inline]
+    pub(crate) fn has_unicode_escape(&self) -> bool {
+        self.identifier.len() != self.end - self.start
+    }
+
+    /// `nextToken`, where `next` is `nextTokenWithoutCheck`: for a word that the parser takes as
+    /// the keyword it spells, and not as a name (`createIdentifier`).
+    #[inline]
+    pub(crate) fn next_token(&mut self) -> Result<(), Error> {
+        if self.tolerant && self.is_identifier_or_keyword() && self.has_unicode_escape() {
+            self.keyword_cannot_contain_escape();
+        }
+        self.next()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn keyword_cannot_contain_escape(&mut self) {
+        if self.token != T::TIdentifier
+            || crate::typescript::identifier::is_contextual_keyword(self.identifier)
+        {
+            self.ts_error(self.range(), 1260);
+        }
+    }
+
+    /// The range of the current token, an identifier or a keyword, if it contains an escape: for
+    /// `keyword_was_taken`. `None` outside tolerant mode.
+    #[inline]
+    pub(crate) fn escaped_word(&self) -> Option<Range> {
+        (self.tolerant && self.has_unicode_escape()).then(|| self.range())
+    }
+
+    /// `nextToken` for a keyword that `next` has consumed, once the tokens after it have shown that
+    /// it is no name. `word`: its `escaped_word`.
+    #[inline]
+    pub(crate) fn keyword_was_taken(&mut self, word: Option<Range>) {
+        if let Some(r) = word {
+            self.escaped_keyword_was_taken(r);
+        }
+    }
+
+    /// The error precedes those reported since the keyword was consumed.
+    #[cold]
+    #[inline(never)]
+    fn escaped_keyword_was_taken(&mut self, r: Range) {
+        let last = self.prev_error_loc;
+        self.ts_error(r, 1260);
+        self.prev_error_loc = last;
+    }
+
+    /// Whether the token is the reserved word `keyword`. TypeScript's scanner returns the keyword
+    /// also for a word written with an escape, so in tolerant mode the token becomes `keyword`;
+    /// `next_token` reports the escape.
+    #[inline]
+    pub(crate) fn is_keyword(&mut self, keyword: T) -> bool {
+        if self.token == T::TEscapedKeyword
+            && self.tolerant
+            && tables::keyword(self.identifier) == Some(keyword)
+        {
+            self.token = keyword;
+        }
+        self.token == keyword
+    }
+
+    /// `ScanJsxIdentifier` on a private identifier, for which `tokenIsIdentifierOrKeyword` holds
+    /// too: the token goes on over every `-` and identifier part, and becomes an identifier whose
+    /// text starts with the `#`. `next_inside_jsx_element` does the same for any other name.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn scan_jsx_identifier(&mut self) {
+        debug_assert!(self.tolerant && self.token == T::TPrivateIdentifier);
+        self.move_to(self.start + 1);
+        while self.is_identifier_part(self.code_point) || self.code_point == 0x2D {
+            self.step();
+        }
+        if self.code_point != 0x5C || !self.jsx_identifier_with_escapes() {
+            self.identifier = self.raw();
+            self.token = T::TIdentifier;
+        }
+    }
+
     /// A JSX name that contains `\u` escapes. TypeScript scans and decodes them
     /// (`ScanJsxIdentifier`, `scanIdentifierParts`) and then reports an error
     /// (`parseIdentifierNameErrorOnUnicodeEscapeSequence`). The name starts at `self.start`; the
@@ -1515,9 +1678,6 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn jsx_identifier_with_escapes(&mut self) -> bool {
-        if self.is_log_disabled {
-            return false;
-        }
         let mut name: Vec<u8> = self.contents[self.start..self.end].to_vec();
         let mut has_escape = false;
         loop {
@@ -1528,7 +1688,7 @@ impl<'a> Lexer<'a> {
                 let fits = if name.is_empty() {
                     is_identifier_start(c)
                 } else {
-                    is_identifier_continue(c)
+                    is_type_script_identifier_part(c)
                 };
                 let Some(c) = char::from_u32(c as u32).filter(|_| fits) else {
                     break;
@@ -1537,7 +1697,7 @@ impl<'a> Lexer<'a> {
                 self.current = self.end + len;
                 self.step();
                 has_escape = true;
-            } else if is_identifier_continue(self.code_point)
+            } else if self.is_identifier_part(self.code_point)
                 || (self.code_point == 0x2D && !name.is_empty())
             {
                 name.extend_from_slice(&self.contents[self.end..self.current]);
@@ -1574,7 +1734,7 @@ impl<'a> Lexer<'a> {
         had_newline_before: bool,
     ) -> bool {
         let (text, pos) = (self.contents, self.end);
-        if self.is_log_disabled || !is_conflict_marker(text, pos) {
+        if !is_conflict_marker(text, pos) {
             return false;
         }
         self.report_closers_in_jsx_text(text_start);
@@ -1666,7 +1826,7 @@ impl<'a> Lexer<'a> {
                             if is_first {
                                 is_identifier_start(c)
                             } else {
-                                is_identifier_continue(c)
+                                is_type_script_identifier_part(c)
                             }
                         });
                     if !fits && !is_first {
@@ -1735,7 +1895,7 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            if !is_identifier_continue(self.code_point) {
+            if !self.is_identifier_part(self.code_point) {
                 break;
             }
             self.step();
@@ -1765,7 +1925,8 @@ impl<'a> Lexer<'a> {
             &result.contents[1..]
         };
 
-        if !is_identifier(identifier) {
+        // In tolerant mode every character and every escape has been tested by itself.
+        if !self.tolerant && !is_identifier(identifier) {
             self.add_range_error(
                 Range {
                     loc: bun_ast::usize2loc(self.start),
@@ -1840,7 +2001,7 @@ impl<'a> Lexer<'a> {
             }
             return Err(Error::UnexpectedSyntax);
         }
-        self.next()
+        self.next_token()
     }
 
     pub(crate) fn maybe_expand_equals(&mut self) -> Result<(), Error> {
@@ -1869,12 +2030,15 @@ impl<'a> Lexer<'a> {
     /// The first character of the current token has been consumed. `rest` is the remainder of the
     /// token.
     #[inline]
-    fn split_token(&mut self, rest: T) {
+    pub(crate) fn split_token(&mut self, rest: T) {
         self.token = rest;
         self.start += 1;
         self.token_full_start = self.start;
     }
 
+    /// For TypeScript only `<<` is split (`ReScanLessThanToken`), and only by
+    /// `parseTypeArgumentsOfTypeReference` and `parseTypeArgumentsInExpression`: the callers test
+    /// for that.
     pub(crate) fn expect_less_than<const IS_INSIDE_JSX_ELEMENT: bool>(
         &mut self,
     ) -> Result<(), Error> {
@@ -2022,7 +2186,7 @@ impl<'a> Lexer<'a> {
                             }
 
                             self.step_with(contents);
-                            while is_identifier_continue(self.code_point) {
+                            while self.is_identifier_part(self.code_point) {
                                 self.step_with(contents);
                             }
                             if self.code_point == 0x5C {
@@ -2091,7 +2255,7 @@ impl<'a> Lexer<'a> {
                 0x40 => {
                     self.step_with(contents);
                     if self.jsc_builtin_syntax && is_identifier_start(self.code_point) {
-                        while is_identifier_continue(self.code_point) {
+                        while self.is_identifier_part(self.code_point) {
                             self.step_with(contents);
                         }
                         self.identifier = self.raw();
@@ -2497,7 +2661,7 @@ impl<'a> Lexer<'a> {
                     self.step_with(contents);
 
                     if self.code_point >= 0x80 {
-                        while is_identifier_continue(self.code_point) {
+                        while self.is_identifier_part(self.code_point) {
                             self.step_with(contents);
                         }
                     }
@@ -2534,7 +2698,7 @@ impl<'a> Lexer<'a> {
 
                     if is_identifier_start(self.code_point) {
                         self.step_with(contents);
-                        while is_identifier_continue(self.code_point) {
+                        while self.is_identifier_part(self.code_point) {
                             self.step_with(contents);
                         }
                         if self.code_point == 0x5C {
@@ -2594,12 +2758,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn rest_is_no_text(&mut self) -> bool {
-        // A byte that cannot start a character is decoded as the code point equal to its value.
-        let starts_no_character = matches!(
-            self.contents.get(self.start),
-            Some(0x80..=0xBF | 0xF8..=0xFF)
-        );
-        if self.code_point != 0xFFFD && !starts_no_character {
+        if self.code_point != 0xFFFD {
             return false;
         }
         self.ts_error(
@@ -2684,6 +2843,10 @@ impl<'a> Lexer<'a> {
             let loc = self.full_start();
             self.ts_error(Range { loc, len: 0 }, 1003);
             Ok(())
+        } else if token == T::TIdentifier && self.token == T::TEscapedKeyword && self.tolerant {
+            // `isReservedWord`
+            self.ts_error(self.range(), 1359);
+            Ok(())
         } else if !tokenToString_get(token).is_empty() {
             self.expected_string(tokenToString_get(token))
         } else {
@@ -2719,8 +2882,18 @@ impl<'a> Lexer<'a> {
         &self.contents[self.start..self.end]
     }
 
+    /// For TypeScript (`GetIdentifierToken`) a word is the keyword also if it is written with an
+    /// escape.
     pub(crate) fn is_contextual_keyword(&self, keyword: &'static [u8]) -> bool {
-        self.token == T::TIdentifier && self.raw() == keyword
+        if self.token != T::TIdentifier {
+            return false;
+        }
+        let word = if self.tolerant {
+            self.identifier
+        } else {
+            self.raw()
+        };
+        word == keyword
     }
 
     #[cold]
@@ -3146,6 +3319,7 @@ impl<'a> Lexer<'a> {
             is_under_tag: false,
             await_name_seen: false,
             list_contexts: 0,
+            rescanned_greater_than_at: usize::MAX,
             unterminated_at: usize::MAX,
             comments_to_preserve_before: Vec::new(),
             code_point: -1,
@@ -3178,9 +3352,17 @@ impl<'a> Lexer<'a> {
 
     pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
         match self.string_literal_raw_format {
-            StringLiteralRawFormat::Ascii => {
+            StringLiteralRawFormat::Ascii | StringLiteralRawFormat::Decoded => {
                 // string_literal_raw_content contains ascii without escapes
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
+            }
+            // A template: `ReScanTemplateToken`.
+            StringLiteralRawFormat::NeedsDecode if self.tolerant => {
+                let value = self.scan_string_value(
+                    self.string_literal_start + 1,
+                    self.string_literal_raw_content,
+                );
+                Ok(js_ast::E::String::init(self.arena.alloc_slice_copy(&value)))
             }
             StringLiteralRawFormat::Utf16 => {
                 // string_literal_raw_content is already parsed, duplicated, and utf-16.
@@ -3254,7 +3436,7 @@ impl<'a> Lexer<'a> {
 
     pub(crate) fn scan_reg_exp(&mut self) -> Result<(), Error> {
         let result = self.scan_reg_exp_strictly();
-        if result.is_err() && self.tolerant && !self.is_log_disabled {
+        if result.is_err() && self.tolerant {
             self.end_unterminated_reg_exp();
             return Ok(());
         }
@@ -3276,7 +3458,7 @@ impl<'a> Lexer<'a> {
                         { (MAX_FLAG - MIN_FLAG) as usize + 1 },
                     >::init_empty();
                     let _ = FLAG_CHARACTERS;
-                    while is_identifier_continue(self.code_point) {
+                    while self.is_identifier_part(self.code_point) {
                         match self.code_point {
                             0x64 | 0x67 | 0x69 | 0x6D | 0x73 | 0x75 | 0x79 | 0x76 => {
                                 if !has_set_flags_start {
@@ -3422,6 +3604,10 @@ impl<'a> Lexer<'a> {
                     }
                     self.step();
                     self.token = T::TEquals;
+                    // `=>`, `==` and `===` are one token each.
+                    if self.tolerant {
+                        self.maybe_expand_equals()?;
+                    }
                 }
                 0x7B => {
                     self.step();
@@ -3434,6 +3620,10 @@ impl<'a> Lexer<'a> {
                 0x3C => {
                     if self.skip_conflict_marker_inside_jsx_element(b'<') {
                         continue;
+                    }
+                    // `<<`, `<<=` and `<=` are one token each.
+                    if self.tolerant {
+                        return self.next_ordinary_token_inside_jsx_element();
                     }
                     self.step();
                     self.token = T::TLessThan;
@@ -3511,10 +3701,18 @@ impl<'a> Lexer<'a> {
                             }
                             continue;
                         }
+                        0x3D if self.tolerant => {
+                            self.step();
+                            self.token = T::TSlashEquals;
+                        }
                         _ => {
                             self.token = T::TSlash;
                         }
                     }
+                }
+                // Only `next_jsx_attribute_value` scans a JSX string.
+                0x27 | 0x22 if self.tolerant => {
+                    return self.next_ordinary_token_inside_jsx_element();
                 }
                 0x27 => {
                     self.step();
@@ -3532,7 +3730,7 @@ impl<'a> Lexer<'a> {
 
                     if is_identifier_start(self.code_point) {
                         self.step();
-                        while is_identifier_continue(self.code_point) || self.code_point == 0x2D {
+                        while self.is_identifier_part(self.code_point) || self.code_point == 0x2D {
                             self.step();
                         }
 
@@ -3552,7 +3750,7 @@ impl<'a> Lexer<'a> {
                             self.step();
 
                             if is_identifier_start(self.code_point) {
-                                while is_identifier_continue(self.code_point)
+                                while self.is_identifier_part(self.code_point)
                                     || self.code_point == 0x2D
                                 {
                                     self.step();
@@ -3636,11 +3834,38 @@ impl<'a> Lexer<'a> {
     }
 
     /// `KindLessThanSlashToken`: in a JSX file `Scan` scans `</` as one token, unless the `/`
-    /// starts a comment.
+    /// starts a comment. This lexer stops before the `/`: whoever skips the token has to `step`
+    /// over it first, or `//` after the `<` is scanned as a comment.
     pub(crate) fn is_less_than_slash(&self) -> bool {
         self.token == T::TLessThan
             && self.code_point == 0x2F
             && self.contents.get(self.current) != Some(&b'*')
+    }
+
+    /// `ScanJsxAttributeValue`, at the `=` of an attribute. A quote starts a JSX string only if
+    /// nothing but white space precedes it. Anything else, a comment too, is left to `Scan`.
+    pub(crate) fn next_jsx_attribute_value(&mut self) -> Result<(), Error> {
+        if !self.tolerant {
+            return self.next_inside_jsx_element();
+        }
+        self.token_full_start = self.end;
+        // `IsWhiteSpaceLike`
+        while is_white_space_single_line(self.code_point) || PragmaArg::is_newline(self.code_point)
+        {
+            self.step();
+        }
+        self.start = self.end;
+        match self.code_point {
+            0x27 => {
+                self.step();
+                self.parse_jsx_string_literal::<b'\''>()
+            }
+            0x22 => {
+                self.step();
+                self.parse_jsx_string_literal::<b'"'>()
+            }
+            _ => self.next_inside_jsx_element(),
+        }
     }
 
     pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
@@ -3713,7 +3938,9 @@ impl<'a> Lexer<'a> {
         self.token = T::TStringLiteral;
 
         let raw_content_slice = &self.contents[self.start + 1..self.end - usize::from(is_closed)];
-        if needs_decode {
+        // `scanString(jsxAttributeString)`: for the type checker the value is the text between the
+        // quotes. TypeScript decodes the entities when it emits.
+        if needs_decode && !self.tolerant {
             debug_assert!(self.temp_buffer_u16.is_empty());
             let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
             tmp.reserve(raw_content_slice.len());
@@ -3814,6 +4041,15 @@ impl<'a> Lexer<'a> {
                         self.report_closers_in_jsx_text(original_start);
                     }
                     let raw_content_slice = &self.contents[original_start..self.end];
+
+                    // `checkJsxChildren`: it is no child (`ContainsOnlyTriviaWhiteSpaces`).
+                    if self.tolerant
+                        && needs_fixing
+                        && is_jsx_text_all_white_spaces(raw_content_slice)
+                    {
+                        self.has_newline_before = true;
+                        continue;
+                    }
 
                     if needs_fixing {
                         debug_assert!(self.temp_buffer_u16.is_empty());
@@ -4076,14 +4312,14 @@ impl<'a> Lexer<'a> {
             }
             0x0D | 0x0A | 0x2028 | 0x2029 => {
                 // `scan_reg_exp` recovers and reports.
-                if self.tolerant && !self.is_log_disabled {
+                if self.tolerant {
                     return Err(Error::SyntaxError);
                 }
                 // Newlines aren't allowed in regular expressions
                 self.syntax_error()?;
             }
             -1 => {
-                if self.tolerant && !self.is_log_disabled {
+                if self.tolerant {
                     return Err(Error::SyntaxError);
                 }
                 // EOF
@@ -4112,13 +4348,14 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    /// `scanTemplateAndSetTokenValue` in a tagged template: the cooked value of the raw text `raw`.
+    /// `scanTemplateAndSetTokenValue(false)`: the cooked value of the raw text `raw`. It is the
+    /// value in a tagged template, and that of every template token until the parser rescans it
+    /// (`Scan`, the backtick case).
     pub(crate) fn cooked_template_contents(&mut self, raw: &[u8]) -> Vec<u8> {
         self.is_under_tag = true;
-        let mut units = Vec::new();
-        let _ = self.decode_escape_sequences(0, raw, &mut units);
+        let value = self.scan_string_value(0, raw);
         self.is_under_tag = false;
-        utf16_to_wtf8(&units)
+        value
     }
 
     pub(crate) fn raw_template_contents(&mut self) -> &'a [u8] {
@@ -4313,6 +4550,11 @@ impl<'a> Lexer<'a> {
 
                 self.step_with(contents);
                 is_first = false;
+            }
+
+            // Below 2^53 no step of the sum above was rounded.
+            if self.tolerant && self.number >= 9_007_199_254_740_992.0 {
+                self.number = number_from_digits(&self.raw()[2..], base as u32);
             }
 
             let is_big_integer_literal = self.code_point == 0x6E && !has_dot_or_exponent;
@@ -4663,10 +4905,7 @@ impl<'a> Lexer<'a> {
                 self.token = T::TBigIntegerLiteral;
                 pos += 1;
             } else {
-                self.number = digits.iter().fold(0.0, |number, &digit| {
-                    number * f64::from(radix)
-                        + f64::from(char::from(digit).to_digit(radix).unwrap_or(0))
-                });
+                self.number = number_from_digits(&digits, radix);
             }
             return self.move_to(pos);
         }
@@ -4684,22 +4923,20 @@ impl<'a> Lexer<'a> {
             }
             let rest = &text[start + 1..pos];
             if rest.iter().all(|&digit| digit <= b'7') {
-                self.number = rest
-                    .iter()
-                    .fold(0.0, |number, &digit| number * 8.0 + f64::from(digit - b'0'));
-                // After a `-` token the error starts one byte earlier, whatever that byte is. A run
-                // of `-` of odd length ends with that token.
-                let before = text[..start].trim_ascii_end();
+                // `strconv.ParseInt(digits, 8, 64)`
+                let val = rest.iter().fold(0i64, |val, &digit| {
+                    val.saturating_mul(8)
+                        .saturating_add(i64::from(digit - b'0'))
+                });
+                self.number = val as f64;
+                // After a `-` token, whatever trivia follows it, the error starts one byte earlier,
+                // whatever that byte is. A run of `-` of odd length ends with that token.
+                let before = &text[..self.token_full_start];
                 let is_after_minus =
                     before.iter().rev().take_while(|&&ch| ch == b'-').count() % 2 == 1;
                 // Octal literals are not allowed.
-                let significant = rest.iter().position(|&digit| digit != b'0');
-                let mut suggestion: Vec<u8> = if is_after_minus {
-                    b"-0o".to_vec()
-                } else {
-                    b"0o".to_vec()
-                };
-                suggestion.extend_from_slice(significant.map_or(b"0", |first| &rest[first..]));
+                let sign = if is_after_minus { "-" } else { "" };
+                let suggestion = format!("{sign}0o{val:o}").into_bytes();
                 self.ts_error_about(
                     range(start - usize::from(is_after_minus), pos),
                     1121,
@@ -4753,14 +4990,11 @@ impl<'a> Lexer<'a> {
         if !is_identifier_start(self.code_point) {
             return;
         }
-        // `scanIdentifierParts`
         let identifier_start = pos;
-        while is_identifier_continue(self.code_point) {
-            self.step();
-        }
-        let identifier_end = self.end;
+        let identifier_end = scan_identifier_parts(text, identifier_start);
         if self.token != T::TBigIntegerLiteral && &text[identifier_start..identifier_end] == b"n" {
             // The `n` stays part of the token.
+            self.move_to(identifier_end);
             if is_scientific {
                 // A bigint literal cannot use exponential notation.
                 return self.ts_error(range(start, identifier_end), 1352);
@@ -4787,28 +5021,44 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
 
 /// `EncodeJSStringRune`: UTF-8, with a lone surrogate encoded as the three-byte sequence its code
 /// point would have if UTF-8 allowed it. The type checker distinguishes such strings.
+fn encode_js_string_rune(ch: u32, text: &mut Vec<u8>) {
+    match char::from_u32(ch) {
+        Some(ch) => text.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()),
+        None => text.extend_from_slice(&[
+            0xED,
+            0x80 | (ch >> 6 & 0x3F) as u8,
+            0x80 | (ch & 0x3F) as u8,
+        ]),
+    }
+}
+
+/// `units` in the encoding of `EncodeJSStringRune`.
 #[cold]
 pub(crate) fn utf16_to_wtf8(units: &[u16]) -> Vec<u8> {
     let mut text = Vec::with_capacity(units.len());
     for unit in char::decode_utf16(units.iter().copied()) {
-        match unit {
-            Ok(ch) => text.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()),
-            Err(lone) => {
-                let unit = lone.unpaired_surrogate();
-                text.extend_from_slice(&[
-                    0xED,
-                    0x80 | (unit >> 6 & 0x3F) as u8,
-                    0x80 | (unit & 0x3F) as u8,
-                ]);
-            }
-        }
+        let ch = unit.map_or_else(|lone| u32::from(lone.unpaired_surrogate()), u32::from);
+        encode_js_string_rune(ch, &mut text);
     }
     text
 }
 
-/// Start of the escape sequence that the end of `text` truncates.
-fn last_backslash(text: &[u8]) -> usize {
-    bun_core::strings::last_index_of_char(text, b'\\').unwrap_or(0)
+/// `tryParseInt` (`jsnum.FromString`): the exact value of `digits`, which are in base 2, 8 or 16,
+/// rounded once. Separators are skipped.
+#[cold]
+fn number_from_digits(digits: &[u8], radix: u32) -> f64 {
+    let bits = radix.trailing_zeros();
+    // As many of the leading digits as fit. The others only give a power of two, and decide a tie.
+    let (mut leading, mut exponent, mut is_inexact) = (0u64, 0i32, false);
+    for digit in digits.iter().filter_map(|&c| char::from(c).to_digit(radix)) {
+        if leading >> (64 - bits) == 0 {
+            leading = leading << bits | u64::from(digit);
+        } else {
+            exponent = exponent.saturating_add(bits as i32);
+            is_inexact |= digit != 0;
+        }
+    }
+    (leading | u64::from(is_inexact)) as f64 * 2f64.powi(exponent)
 }
 
 /// Number of trailing bytes of `text` that are whitespace or line breaks (`IsWhiteSpaceLike`).
@@ -4823,6 +5073,23 @@ fn trailing_whitespace_len(text: &[u8]) -> usize {
         end = start;
     }
     text.len() - end
+}
+
+/// `KindJsxTextAllWhiteSpaces` (`ScanJsxTokenEx`): the JSX text has a line break, and every
+/// character of it is `IsWhiteSpaceLike`.
+#[cold]
+fn is_jsx_text_all_white_spaces(text: &[u8]) -> bool {
+    let (mut at, mut has_line_break) = (0, false);
+    while at < text.len() {
+        let (c, size) = char_and_size(text, at);
+        if PragmaArg::is_newline(c) {
+            has_line_break = true;
+        } else if !is_white_space_single_line(c) {
+            return false;
+        }
+        at += size;
+    }
+    has_line_break
 }
 
 /// `isConflictMarkerTrivia`: the character at `pos` repeated seven times, followed by a space

@@ -359,6 +359,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
+    /// Whether the type that `parse_and_keep_type` parsed last is a `ParenthesizedType`. That has no
+    /// node, so the type starts before its node.
+    #[inline]
+    pub(crate) fn is_saved_type_parenthesized(&self) -> bool {
+        match &self.type_syntax {
+            Some(syntax) if SEMA && syntax.last_type.is_some() => {
+                syntax.b.file[syntax.last_type].pos as i32 != syntax.last_type_start
+            }
+            _ => false,
+        }
+    }
+
     /// The type that `parse_and_keep_type` parsed last, for `note_saved_type`. `NONE` outside of type checking.
     #[inline]
     pub(crate) fn saved_type_or_error(&mut self) -> ts::TypeId {
@@ -712,20 +724,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
             _ => {}
         }
-    }
-
-    /// `node.End()` of the array or object literal `literal`, which may not have been recorded
-    /// (`note_expr_end`).
-    pub(crate) fn end_of_literal(&self, literal: &Expr) -> Option<Loc> {
-        let close = match literal.data {
-            bun_ast::ExprData::EArray(array) => array.close_bracket_loc,
-            bun_ast::ExprData::EObject(object) => object.close_brace_loc,
-            _ => return self.noted_end(literal.loc),
-        };
-        let after = Loc {
-            start: self.real_loc(close).start + 1,
-        };
-        Some(self.noted_end(literal.loc).unwrap_or(after))
     }
 
     /// `new_expr` for an expression that is created after tokens that follow it have been consumed.

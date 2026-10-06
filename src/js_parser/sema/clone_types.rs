@@ -34,6 +34,8 @@ pub(crate) enum PendingPart {
     PatternKey(PatPropId, Expr),
     /// `(name = expression) => T`
     ParamDefault(ParamId, Expr),
+    /// `new (@expression name) => T`: the decorators among the modifiers.
+    ParamDecorators(ParamId, ts::Span<ts::Modifier>),
     /// `({ name = expression }) => T`
     PatternPropertyDefault(PatPropId, Expr),
     /// `([name = expression]) => T`
@@ -171,11 +173,12 @@ impl Builder<'_> {
         }
     }
 
-    /// `import("specifier")`. `argument`: the type that appears in place of a string literal.
+    /// `import("specifier")`. `argument`: the type that appears in place of a string literal, from
+    /// `start` to `end` as written.
     pub(crate) fn add_import_type(
         &mut self,
         specifier: (&[u8], u32),
-        argument: TypeNodeId,
+        (argument, (start, end)): (TypeNodeId, (u32, u32)),
         (mode, assert_keyword_loc, attributes): super::keep::ImportTypeAttributes,
         is_typeof: bool,
     ) -> TypeNodeKind {
@@ -191,8 +194,7 @@ impl Builder<'_> {
         // `checkImportType` still checks `T`, which is stored in `args` of a node without a
         // specifier. The type arguments are never checked.
         if argument.is_some() {
-            let bun_sema::hir::TypeNode { pos, end, .. } = self.file[argument];
-            self.file.error(DiagnosticKind::Checker, pos, end, 1141);
+            self.file.error(DiagnosticKind::Checker, start, end, 1141);
             return TypeNodeKind::Import {
                 spec: Atom::NONE,
                 name: Span::EMPTY,
@@ -224,9 +226,9 @@ impl Builder<'_> {
     }
 
     /// `checkJSDocTypeIsInJsFile`
-    pub(crate) fn check_jsdoc_type_is_in_js_file(&mut self, at: u32, code: u32) {
+    pub(crate) fn check_jsdoc_type_is_in_js_file(&mut self, at: u32, end: u32, code: u32) {
         if !self.is_js {
-            self.file.error(DiagnosticKind::Grammar, at, 0, code);
+            self.file.error(DiagnosticKind::Grammar, at, end, code);
         }
     }
 
@@ -287,6 +289,7 @@ impl Builder<'_> {
         }
         let modifiers: smallvec::SmallVec<[(Flags, u32); 4]> = self.ts[written]
             .iter()
+            .filter(|modifier| modifier.decorator.is_none())
             .map(|modifier| (modifier.flag, pos(modifier.loc)))
             .collect();
         self.add_modifier_list(&modifiers)
@@ -356,6 +359,10 @@ impl Builder<'_> {
             }
             let list = self.modifier_list(param.modifiers);
             self.file.set_param_modifiers(id, list);
+            if list.len() != param.modifiers.len() {
+                let part = PendingPart::ParamDecorators(id, param.modifiers);
+                self.pending.push(part);
+            }
         }
         created
     }
@@ -404,7 +411,7 @@ impl Builder<'_> {
                 default: ExprId::NONE,
                 is_rest: property.is_rest,
                 pos: pos(property.loc),
-                key_pos: pos(property.loc),
+                key_pos: pos(property.key_loc),
                 end: pos(property.end),
             })
             .collect();
@@ -795,6 +802,7 @@ impl Builder<'_> {
                 TypeNodeKind::Array(ty)
                 | TypeNodeKind::Keyof(ty)
                 | TypeNodeKind::Readonly(ty)
+                | TypeNodeKind::Unique(ty)
                 | TypeNodeKind::JSDoc { ty, .. }
                 | TypeNodeKind::Predicate { ty, .. } => id!(ty, types),
                 TypeNodeKind::Tuple(elements) => run!(elements, tuple_elems),
@@ -897,7 +905,9 @@ impl Builder<'_> {
                 PendingPart::FunctionBody(signature, _) => id!(signature, fns),
                 PendingPart::PatternKey(property, _)
                 | PendingPart::PatternPropertyDefault(property, _) => id!(property, pat_props),
-                PendingPart::ParamDefault(param, _) => id!(param, params),
+                PendingPart::ParamDefault(param, _) | PendingPart::ParamDecorators(param, _) => {
+                    id!(param, params)
+                }
                 PendingPart::PatternElementDefault(element, _) => id!(element, pat_elems),
                 PendingPart::HeritageExpression(node, _) => id!(node, types),
                 PendingPart::ImportAttributes(_) => {}

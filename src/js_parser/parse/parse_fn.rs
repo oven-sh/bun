@@ -65,9 +65,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let range = p.lexer.range();
                 p.lexer.ts_error(range, 18016);
                 p.lexer.next()?;
-            } else if p.lexer.token != T::TIdentifier && p.is_tolerant() && !p.lexer.is_log_disabled
-            {
-                name_loc = p.report_missing_fn_name()?;
+            } else if p.lexer.token != T::TIdentifier && p.is_tolerant() {
+                name_loc = p.report_missing_identifier()?;
                 name_text = b"";
             } else {
                 p.lexer.expect(T::TIdentifier)?;
@@ -193,12 +192,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(p.s(S::Function { func }, loc))
     }
 
-    /// `createIdentifierWithDiagnostic`, where the name of a function declaration is missing.
+    /// `createIdentifierWithDiagnostic`, where the name of a declaration is missing.
     /// Nothing is consumed.
     /// Returns the position of the empty name (`createMissingIdentifier`).
     #[cold]
     #[inline(never)]
-    fn report_missing_fn_name(&mut self) -> Result<bun_ast::Loc, Error> {
+    pub(crate) fn report_missing_identifier(&mut self) -> Result<bun_ast::Loc, Error> {
+        // A speculative parse fails here.
+        if self.lexer.is_log_disabled {
+            return Err(Error::Backtrack);
+        }
         let full_start = self.lexer.full_start();
         let before = self.lexer.prev_error_loc;
         let range = if self.lexer.token == T::TEndOfFile {
@@ -608,7 +611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 has_static |= p.lexer.is_contextual_keyword(b"static");
                 let (flag, loc) = (p.modifier_flag_here(), p.lexer.loc());
                 p.push_statement_modifier(flag, loc);
-                p.lexer.next()?;
+                p.lexer.next_token()?;
                 has_trailing_modifier |= has_trailing_decorator;
                 has_keyword = true;
             }
@@ -625,7 +628,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// something a modifier can apply to. `has_static`: a second "static" is a name (`tryParseModifier`).
     #[cold]
     #[inline(never)]
-    fn is_at_modifier(&mut self, has_static: bool) -> bool {
+    pub(crate) fn is_at_modifier(&mut self, has_static: bool) -> bool {
         if !self.is_modifier_kind() || (has_static && self.lexer.is_contextual_keyword(b"static")) {
             return false;
         }
@@ -674,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // `nextTokenCanFollowDefaultKeyword`
             let expected = match p.lexer.token {
                 T::TClass | T::TFunction | T::TAt => return true,
-                T::TIdentifier => match p.lexer.raw() {
+                T::TIdentifier => match p.lexer.identifier {
                     b"interface" => return true,
                     b"abstract" => T::TClass,
                     b"async" => T::TFunction,

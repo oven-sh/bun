@@ -3,29 +3,30 @@
 //!
 //! A port of `verifyCompilerOptions` (TypeScript 7.0.2, compiler/program.go) without the checks that depend on output paths.
 
+use crate::check::spans::{line_end, unescaped_identifier};
 use crate::config::{
     Project, resolve_config_file_name_of_project_reference, starts_with_config_dir_template,
 };
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
-    JsxEmit, ModuleKind, Options, ensure_path_is_non_module_name, is_rooted_disk_path,
-    path_is_relative,
+    JsxEmit, ModuleKind, Options, combine_paths, ensure_path_is_non_module_name,
+    get_relative_path_from_directory, get_root_length, path_is_relative, to_path,
 };
 use crate::util::FxHashSet;
-use bstr::ByteSlice;
+use bun_core::lexer;
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, relative_normalized};
-use strings::without_trailing_slash;
+use bun_paths::resolve_path::dirname;
+use std::borrow::Cow;
 
 /// `hasZeroOrOneAsteriskCharacter`
 fn has_at_most_one_asterisk(text: &[u8]) -> bool {
     bun_core::strings::count_char(text, b'*') <= 1
 }
 
-/// `PathIsAbsolute`: `GetEncodedRootLength(path) != 0`, which is negative for a URL.
+/// `PathIsAbsolute`
 fn path_is_absolute(path: &[u8]) -> bool {
-    is_rooted_disk_path(path) || strings::contains(path, b"://")
+    get_root_length(path) != 0
 }
 
 /// The elements of a list option as tsoptions parses it. `None` is Go's nil slice: `value` is not an array, or it is a non-empty array
@@ -36,28 +37,113 @@ fn parsed_list(value: &Json) -> Option<&[Json]> {
         .filter(|items| items.is_empty() || items.iter().any(|item| !matches!(item, Json::Null)))
 }
 
-/// `IsWhiteSpaceLike`
-fn is_white_space_like(ch: char) -> bool {
-    ch.is_whitespace() || matches!(ch, '\u{200B}' | '\u{FEFF}')
-}
-
 /// `IsIdentifierText`
-fn is_identifier(text: &[u8]) -> bool {
-    bun_core::lexer::is_identifier(text)
+fn is_identifier_text(text: &[u8]) -> bool {
+    let (first, size) = lexer::char_and_size(text, 0);
+    lexer::is_identifier_start(first as u32)
+        && lexer::end_of_run(text, size, lexer::is_type_script_identifier_part) == text.len()
 }
 
-/// `ParseIsolatedEntityName`: whether `text` is an identifier or a qualified name. Keywords count as identifiers, and white space may
-/// surround each name. Comments, `\u` escapes and a leading `#!` line are not supported: a text that contains one is rejected.
-pub fn is_entity_name(text: &[u8]) -> bool {
-    let mut names =
-        bun_core::strings::split(text, b".").map(|name| name.trim_with(is_white_space_like));
+/// A token, as far as `parseEntityName` tells tokens apart.
+#[derive(PartialEq, Eq)]
+enum Token {
+    /// `KindIdentifier`, or a keyword.
+    Identifier,
+    PrivateIdentifier,
+    Dot,
+    EndOfFile,
+}
+
+/// The part of `Scanner` that `ParseIsolatedEntityName` depends on.
+struct Scanner<'a> {
+    text: &'a [u8],
+    token_start: usize,
+    pos: usize,
+}
+
+impl<'a> Scanner<'a> {
+    /// `scanIdentifier`, and what `Scan` does at a `\`: the end of the identifier that starts at
+    /// `at`, if one does.
+    fn scan_identifier(&self, at: usize) -> Option<usize> {
+        let (first, size) = match self.text.get(at)? {
+            b'\\' => lexer::peek_unicode_escape(self.text, at)?,
+            _ => lexer::char_and_size(self.text, at),
+        };
+        lexer::is_identifier_start(first as u32)
+            .then(|| lexer::scan_identifier_parts(self.text, at + size))
+    }
+
+    /// `Scan`. `None`: a token that is in no entity name, or an error of the scanner.
+    fn scan(&mut self) -> Option<Token> {
+        let text = self.text;
+        loop {
+            self.token_start = self.pos;
+            let rest = &text[self.pos..];
+            match rest {
+                [] => return Some(Token::EndOfFile),
+                [b'.', b'0'..=b'9', ..] | [b'.', b'.', b'.', ..] => return None,
+                [b'.', ..] => {
+                    self.pos += 1;
+                    return Some(Token::Dot);
+                }
+                [b'/', b'/', ..] => self.pos = line_end(text, self.pos + 2),
+                [b'/', b'*', ..] => self.pos += strings::index_of(&rest[2..], b"*/")? + 4,
+                [b'#', b'!', ..] if self.pos == 0 => self.pos = line_end(text, 2),
+                [b'#', b'!', ..] => return None,
+                [b'#', ..] => {
+                    self.pos = self.scan_identifier(self.pos + 1)?;
+                    return Some(Token::PrivateIdentifier);
+                }
+                _ => {
+                    if let Some(end) = self.scan_identifier(self.pos) {
+                        self.pos = end;
+                        return Some(Token::Identifier);
+                    }
+                    let (ch, size) = lexer::char_and_size(text, self.pos);
+                    let is_trivia = lexer::is_white_space_single_line(ch)
+                        || lexer::starts_with_line_break(rest);
+                    if !is_trivia {
+                        return None;
+                    }
+                    self.pos += size;
+                }
+            }
+        }
+    }
+
+    /// `TokenValue`
+    fn token_value(&self) -> Cow<'a, [u8]> {
+        unescaped_identifier(&self.text[self.token_start..self.pos])
+    }
+}
+
+/// `ParseIsolatedEntityName`: the identifiers of `text`, from left to right. `None`: it is neither
+/// an identifier nor a qualified name.
+pub(crate) fn parse_isolated_entity_name(text: &[u8]) -> Option<Vec<Cow<'_, [u8]>>> {
+    let mut scanner = Scanner {
+        text,
+        token_start: 0,
+        pos: 0,
+    };
     // `tokenIsIdentifierOrKeyword` is true for a private identifier, so `parseEntityName` accepts
-    // `#a` as the first name.
-    // `parseRightSideOfDot` rejects it after a dot.
-    names
-        .next()
-        .is_some_and(|first| is_identifier(first.strip_prefix(b"#").unwrap_or(first)))
-        && names.all(is_identifier)
+    // `#a` as the first name. `parseRightSideOfDot` rejects it after a dot. What its look-ahead
+    // rejects, a name after the name, is not the end of the text either.
+    let first = scanner.scan()?;
+    if first != Token::Identifier && first != Token::PrivateIdentifier {
+        return None;
+    }
+    let mut entity = vec![scanner.token_value()];
+    loop {
+        match scanner.scan()? {
+            Token::EndOfFile => return Some(entity),
+            Token::Dot => {}
+            _ => return None,
+        }
+        if scanner.scan()? != Token::Identifier {
+            return None;
+        }
+        entity.push(scanner.token_value());
+    }
 }
 
 /// The location in the configuration file at which an options diagnostic is reported.
@@ -69,7 +155,7 @@ pub enum Place {
     /// `createCompilerOptionsDiagnostic`: at the property name `compilerOptions`.
     CompilerOptions,
     /// `createDiagnosticForOption`: at the name of whichever of two options appears first in the
-    /// file. The second option may be absent.
+    /// file. The second may be `""`.
     Key(&'static [u8], &'static [u8]),
     /// At the value of the option.
     Value(&'static [u8]),
@@ -133,9 +219,9 @@ impl Problem {
         if self.at == Place::Nowhere {
             return None;
         }
-        let root = file.root?;
+        let root = file.object_literal_expression()?;
         let value_of =
-            |object, name: &[u8]| Some(file.initializer(file.property(object, name, b"")?));
+            |object, name: &[u8]| Some(file.initializer(file.property(object, name, None)?));
         if let Place::Reference(index) = self.at {
             let list = value_of(root, b"references")?;
             return file.elements(list).nth(index).map(|e| file.span(e));
@@ -157,14 +243,18 @@ impl Problem {
             let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
             return file.elements(list).find(is_it).map(|e| file.span(e));
         }
-        let options = file.property(root, b"compilerOptions", b"")?;
+        let options = file.property(root, b"compilerOptions", None)?;
         let written = file.initializer(options);
         if let Place::Element(name, specified) = &self.at {
             let is_it = |&e: &_| file.convert_property_value_to_json(e).as_str() == Some(specified);
             let mut elements = file.elements(value_of(written, name)?);
             return elements.find(is_it).map(|e| file.span(e));
         }
-        let in_paths = |key: &[u8]| file.property(value_of(written, b"paths")?, key, b"");
+        let in_paths = |key: &[u8], key2| file.property(value_of(written, b"paths")?, key, key2);
+        // `createOptionDiagnosticInObjectLiteralSyntax` always passes a second key.
+        let empty_key2 = Some(&b""[..]);
+        let name_span = |p| file.name_span(p);
+        let value_span = |p| file.span(file.initializer(p));
         let found = match &self.at {
             Place::Nowhere
             | Place::CompilerOptions
@@ -173,13 +263,11 @@ impl Problem {
             | Place::Reference(_)
             | Place::File(..)
             | Place::Element(..) => None,
-            Place::Key(name, other) => file
-                .property(written, name, other)
-                .map(|p| file.name_span(p)),
-            Place::Value(name) => value_of(written, name).map(|e| file.span(e)),
-            Place::PathsKey(key) => in_paths(key).map(|p| file.name_span(p)),
-            Place::PathsValue(key) => in_paths(key).map(|p| file.span(file.initializer(p))),
-            Place::PathsElement(key, index) => in_paths(key)
+            Place::Key(name, other) => file.property(written, name, Some(*other)).map(name_span),
+            Place::Value(name) => file.property(written, name, empty_key2).map(value_span),
+            Place::PathsKey(key) => in_paths(key, empty_key2).map(name_span),
+            Place::PathsValue(key) => in_paths(key, empty_key2).map(value_span),
+            Place::PathsElement(key, index) => in_paths(key, None)
                 .and_then(|p| file.elements(file.initializer(p)).nth(*index))
                 .map(|e| file.span(e)),
         };
@@ -187,15 +275,17 @@ impl Problem {
     }
 }
 
-/// `GetRelativePathFromFile` for two absolute paths.
-pub(crate) fn relative_from_file(from: &[u8], to: &[u8]) -> Vec<u8> {
-    let relative = relative_normalized::<Posix, true>(dirname::<Posix>(from), to);
-    ensure_path_is_non_module_name(relative.to_vec())
+/// `GetRelativePathFromFile` for two absolute, normalized paths.
+pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool) -> Vec<u8> {
+    let from_directory = dirname::<Posix>(from);
+    let relative = get_relative_path_from_directory(from_directory, to, is_case_sensitive);
+    ensure_path_is_non_module_name(relative)
 }
 
 /// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
-/// transitively, each with the configuration file that references it. `resolved`: the project of a
-/// configuration file, if the file exists.
+/// transitively, each with the configuration file that references it. `resolved`:
+/// `configToProjectReference`, the project of the configuration file with a `tspath.Path`, if the
+/// file exists.
 pub fn verify_project_references<'a>(
     root: &'a Project,
     resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,
@@ -206,17 +296,19 @@ pub fn verify_project_references<'a>(
         root.get_build_info_file_name()
     };
     let mut out = Vec::new();
+    let is_case_sensitive = root.options.use_case_sensitive_file_names;
+    let path_of = |file_name: &[u8]| to_path(file_name, is_case_sensitive).into_owned();
     // `rangeResolvedReferenceWorker`: a project and the index of its next reference.
-    let mut seen = FxHashSet::from_iter([root.config_path.clone()]);
+    let mut seen_ref = FxHashSet::from_iter([path_of(&root.config_path)]);
     let mut pending = vec![(root, 0)];
     while let Some((parent, index)) = pending.pop() {
         let Some(reference) = parent.references.get(index).map(|r| r.path.as_slice()) else {
             continue;
         };
         pending.push((parent, index + 1));
-        let path = resolve_config_file_name_of_project_reference(reference);
+        let path = path_of(&resolve_config_file_name_of_project_reference(reference));
         let config = resolved(&path);
-        if !seen.insert(path) {
+        if !seen_ref.insert(path) {
             continue;
         }
         let mut say = |code, args: &[&[u8]]| {
@@ -291,58 +383,67 @@ pub fn verify_compiler_options(
         out.push(Problem::new(code, &args, Place::Key(one, other)));
     }
     // `createRemovedOptionDiagnostic`
-    fn removed(out: &mut Vec<Problem>, name: &'static [u8], value: &[u8]) {
-        out.push(if value.is_empty() {
+    fn removed(out: &mut Vec<Problem>, name: &'static [u8], value: &[u8], use_instead: &[u8]) {
+        let problem = if value.is_empty() {
             Problem::new(5102, &[name], Place::Key(name, b""))
         } else {
             Problem::new(5108, &[name, value], Place::Value(name))
+        };
+        out.push(if use_instead.is_empty() {
+            problem
+        } else {
+            problem.with(1, 5106, &[use_instead])
         });
     }
 
     // Removed options.
     if specified(b"baseUrl") {
-        removed(&mut out, b"baseUrl", b"");
+        let mut use_instead = Vec::new();
         if !config_path.is_empty() {
-            let mut relative = relative_from_file(config_path, text(b"baseUrl"));
+            let base_url = text(b"baseUrl");
+            let is_case_sensitive = options.use_case_sensitive_file_names;
+            let mut relative = relative_from_file(config_path, base_url, is_case_sensitive);
             // So `..` becomes `./..`.
             if !(relative.starts_with(b"./") || relative.starts_with(b"../")) {
                 relative.splice(0..0, *b"./");
             }
-            let suggestion = without_trailing_slash(&relative);
-            let instead = [b"\"paths\": {\"*\": [\"", suggestion, b"/*\"]}"].concat();
-            out.last_mut().unwrap().chain.push((1, 5106, vec![instead]));
+            let suggestion = Json::String(combine_paths(&relative, b"*"));
+            use_instead.extend_from_slice(b"\"paths\": {\"*\": [");
+            suggestion.stringify(&mut use_instead);
+            use_instead.extend_from_slice(b"]}");
         }
+        removed(&mut out, b"baseUrl", b"", &use_instead);
     }
     if specified(b"outFile") {
-        removed(&mut out, b"outFile", b"");
+        removed(&mut out, b"outFile", b"", b"");
     }
     if lower(b"target") == b"es5" {
-        removed(&mut out, b"target", b"ES5");
+        removed(&mut out, b"target", b"ES5", b"");
     }
     match lower(b"module").as_slice() {
-        b"amd" => removed(&mut out, b"module", b"AMD"),
-        b"system" => removed(&mut out, b"module", b"System"),
-        b"umd" => removed(&mut out, b"module", b"UMD"),
+        b"amd" => removed(&mut out, b"module", b"AMD", b""),
+        b"system" => removed(&mut out, b"module", b"System", b""),
+        b"umd" => removed(&mut out, b"module", b"UMD", b""),
         _ => {}
     }
     let resolution_reported = lower(b"moduleResolution");
     if resolution_reported == b"classic" {
-        removed(&mut out, b"moduleResolution", b"Classic");
+        removed(&mut out, b"moduleResolution", b"Classic", b"");
     }
     if is_false(b"alwaysStrict") {
-        removed(&mut out, b"alwaysStrict", b"false");
+        removed(&mut out, b"alwaysStrict", b"false", b"");
     }
     if is_false(b"esModuleInterop") {
-        removed(&mut out, b"esModuleInterop", b"false");
+        removed(&mut out, b"esModuleInterop", b"false", b"");
     }
     if is_false(b"allowSyntheticDefaultImports") {
-        removed(&mut out, b"allowSyntheticDefaultImports", b"false");
+        removed(&mut out, b"allowSyntheticDefaultImports", b"false", b"");
     }
     if matches!(resolution_reported.as_slice(), b"node10" | b"node") {
-        removed(&mut out, b"moduleResolution", b"node10");
+        removed(&mut out, b"moduleResolution", b"node10", b"");
     }
     if flag(b"downlevelIteration").is_some() {
-        removed(&mut out, b"downlevelIteration", b"");
+        removed(&mut out, b"downlevelIteration", b"", b"");
     }
 
     for name in [
@@ -499,33 +600,29 @@ pub fn verify_compiler_options(
             &[],
         );
     }
-    // `JsxEmit.String`
-    let jsx: &[u8] = match options.jsx {
+    // `JsxEmit.String`. 5089 passes it to `createDiagnosticForOptionName` as the second option.
+    let jsx: &'static [u8] = match options.jsx {
         JsxEmit::ReactJsx => b"react-jsx",
         JsxEmit::ReactJsxDev => b"react-jsxdev",
         JsxEmit::React => b"react",
         _ => b"",
     };
     let is_automatic = matches!(options.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev);
-    // `Option_0_cannot_be_specified_when_option_jsx_is_1`
-    let not_with_jsx = |out: &mut Vec<Problem>, name: &'static [u8]| {
-        out.push(Problem::new(5089, &[name, jsx], Place::Key(name, b"")));
-    };
     if specified(b"jsxFactory") {
         if specified(b"reactNamespace") {
             about(&mut out, 5053, b"reactNamespace", b"jsxFactory", &[]);
         }
         if is_automatic {
-            not_with_jsx(&mut out, b"jsxFactory");
+            about(&mut out, 5089, b"jsxFactory", jsx, &[]);
         }
-        if !is_entity_name(text(b"jsxFactory")) {
+        if parse_isolated_entity_name(text(b"jsxFactory")).is_none() {
             out.push(Problem::new(
                 5067,
                 &[text(b"jsxFactory")],
                 Place::Value(b"jsxFactory"),
             ));
         }
-    } else if specified(b"reactNamespace") && !is_identifier(text(b"reactNamespace")) {
+    } else if specified(b"reactNamespace") && !is_identifier_text(text(b"reactNamespace")) {
         out.push(Problem::new(
             5059,
             &[text(b"reactNamespace")],
@@ -537,9 +634,9 @@ pub fn verify_compiler_options(
             about(&mut out, 5052, b"jsxFragmentFactory", b"jsxFactory", &[]);
         }
         if is_automatic {
-            not_with_jsx(&mut out, b"jsxFragmentFactory");
+            about(&mut out, 5089, b"jsxFragmentFactory", jsx, &[]);
         }
-        if !is_entity_name(text(b"jsxFragmentFactory")) {
+        if parse_isolated_entity_name(text(b"jsxFragmentFactory")).is_none() {
             out.push(Problem::new(
                 18035,
                 &[text(b"jsxFragmentFactory")],
@@ -548,10 +645,10 @@ pub fn verify_compiler_options(
         }
     }
     if specified(b"reactNamespace") && is_automatic {
-        not_with_jsx(&mut out, b"reactNamespace");
+        about(&mut out, 5089, b"reactNamespace", jsx, &[]);
     }
     if specified(b"jsxImportSource") && options.jsx == JsxEmit::React {
-        not_with_jsx(&mut out, b"jsxImportSource");
+        about(&mut out, 5089, b"jsxImportSource", jsx, &[]);
     }
     if is_true(b"allowImportingTsExtensions")
         && !(is_true(b"noEmit")

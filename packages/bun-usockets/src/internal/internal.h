@@ -257,6 +257,7 @@ void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_sock
 struct us_socket_t *us_internal_ssl_on_open(us_socket_r s, int is_client, char *ip, int ip_length);
 struct us_socket_t *us_internal_ssl_on_data(us_socket_r s, char *data, int length);
 struct us_socket_t *us_internal_ssl_on_writable(us_socket_r s);
+struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
@@ -337,7 +338,8 @@ struct us_socket_t {
    * spill drains so those records are not cut off by our FIN/close_notify. */
   unsigned char ssl_shutdown_after_spill : 1;
   /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
-   * close re-runs from the writable event once the spill drains. */
+   * close re-runs from the writable event once the spill drains, or without it
+   * from the socket's timeout. */
   unsigned char ssl_close_after_spill : 1;
   /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
    * already dispatched to the user layer; both EOF paths can fire for one

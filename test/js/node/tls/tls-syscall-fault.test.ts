@@ -555,6 +555,20 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
     });
   });
 
+  test("destroy() from the write callback does not cut off ciphertext the kernel has yet to take", async () => {
+    let received!: () => Buffer;
+    let serverSide!: ReturnType<typeof observe>;
+    using p = await connectedTLSPair(s => {
+      received = collect(s);
+      serverSide = observe(s);
+    });
+    fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1, fd: fdOf(p.client) });
+    const payload = Buffer.alloc(256 * 1024, "d");
+    p.client.write(payload, () => p.client.destroy());
+    await serverSide.closed;
+    expect(received().length).toBe(payload.length);
+  });
+
   test("client.end() under 1-byte sends still delivers close_notify and peer sees clean 'end'", async () => {
     let serverSide!: ReturnType<typeof observe>;
     using p = await connectedTLSPair(s => (serverSide = observe(s)));

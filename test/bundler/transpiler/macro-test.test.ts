@@ -130,13 +130,13 @@ test("namespace import", () => {
   expect(macros.escape()).toBe("\\\f\n\r\t\v\0'\"`$\x00\x0B\x0C");
 });
 
-// test("template string ascii", () => {
-//   expect(identity(`A${""}`)).toBe("A");
-// });
+test("template string ascii", () => {
+  expect(identity(`A${""}`)).toBe("A");
+});
 
-// test("template string latin1", () => {
-//   expect(identity(`©${""}`)).toBe("©");
-// });
+// A macro runs when this file is transpiled, so a call that fails cannot stand in a test body.
+// identity(`©${""}`) needs the join of a non-ASCII piece: #42019.
+test.todo("template string latin1");
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
@@ -607,6 +607,8 @@ describe("constant arguments", () => {
     export function getObj() { return { a: 1, b: "two" }; }
   `;
   const header = `import { id, getFoo, getObj } from "./m.ts" with { type: "macro" };\n`;
+  const identifierError = '"Cannot convert identifier to JS. Try a statically-known value" error in macro';
+  const argumentError = '"Cannot convert argument type to JS" error in macro';
 
   async function bun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
@@ -621,8 +623,8 @@ describe("constant arguments", () => {
   ];
 
   // Debug builds print "[macro] call id" to stdout, so only the last line is compared.
-  async function lastLineOf(entry: string, build: string[] | null) {
-    using dir = tempDir("macro-constant-arguments", { "m.ts": macroFile, "entry.ts": header + entry });
+  async function lastLineOf(entry: string, build: string[] | null, files: Record<string, string> = {}) {
+    using dir = tempDir("macro-constant-arguments", { "m.ts": macroFile, "entry.ts": entry, ...files });
     let file = "entry.ts";
     if (build) {
       const built = await bun(String(dir), "build", ...build, "entry.ts", "--outfile=out.js");
@@ -658,40 +660,182 @@ describe("constant arguments", () => {
       return id(data);
     }
     out.push(inFunction());
+    const o = getObj();
+    out.push(id(o), id(o.b));
     console.log(JSON.stringify(out));
   `;
+  const acceptedOutput = JSON.stringify([
+    5,
+    "foo",
+    1,
+    5,
+    6,
+    { a: 5, b: [5] },
+    "foo",
+    "https://example.com/foo",
+    "a/foo",
+    "n=42",
+    12,
+    40,
+    { a: 1, b: "two" },
+    "two",
+  ]);
 
   test.concurrent.each(modes)("$mode accepts a const in any statement position", async ({ build }) => {
-    expect(await lastLineOf(accepted, build)).toEqual({
-      stdout: JSON.stringify([
-        5,
-        "foo",
-        1,
-        5,
-        6,
-        { a: 5, b: [5] },
-        "foo",
-        "https://example.com/foo",
-        "a/foo",
-        "n=42",
-        12,
-        40,
-      ]),
+    expect(await lastLineOf(header + accepted, build)).toEqual({
+      stdout: acceptedOutput,
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("Bun.build and Bun.Transpiler accept a const in any statement position", async () => {
+    using dir = tempDir("macro-constant-arguments-api", {
+      "m.ts": macroFile,
+      "entry.ts": header + accepted,
+      "api.ts": `
+        const built = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", outdir: "./dist" });
+        if (!built.success) throw new AggregateError(built.logs);
+        const source = await Bun.file("entry.ts").text();
+        const options = { "default": {}, "inline": { inline: true }, "minify": { minify: { syntax: true } } };
+        for (const [name, option] of Object.entries(options)) {
+          await Bun.write("transpiled-" + name + ".js", new Bun.Transpiler({ loader: "ts", ...option }).transformSync(source));
+        }
+        for (const file of ["./dist/entry.js", ...Object.keys(options).map(name => "./transpiled-" + name + ".js")]) {
+          await import(file);
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await bun(String(dir), "run", "api.ts");
+    expect({ lines: stdout.split("\n").filter(line => line.startsWith("[5,")), stderr, exitCode }).toEqual({
+      lines: [acceptedOutput, acceptedOutput, acceptedOutput, acceptedOutput],
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("the example of docs/bundler/macros.mdx builds", async () => {
+    const files = {
+      "getText.ts": `export function getText(url) { return "<" + url + ">"; }`,
+      "getFoo.ts": `export function getFoo() { return "foo"; }`,
+    };
+    const entry = `
+      import { getText } from "./getText.ts" with { type: "macro" };
+      import { getFoo } from "./getFoo.ts" with { type: "macro" };
+
+      export function howLong() {
+        // this works because getFoo() is statically known
+        const foo = getFoo();
+        const text = getText(\`https://example.com/\${foo}\`);
+        console.log("The page is", text.length, "characters long");
+      }
+      howLong();
+    `;
+    expect(await lastLineOf(entry, ["--target=bun"], files)).toEqual({
+      stdout: "The page is 25 characters long",
       stderr: expect.any(String),
       exitCode: 0,
     });
   });
 
   const rejected = [
-    { what: "a let binding", entry: `let N = 5; console.log(id(N));` },
-    { what: "a var binding", entry: `var N = 5; console.log(id(N));` },
-    { what: "a let binding that holds a macro result", entry: `let x = getFoo(); x = "bar"; console.log(id(x));` },
+    { what: "a let binding", entry: `let N = 5; console.log(id(N));`, error: identifierError },
+    { what: "a var binding", entry: `var N = 5; console.log(id(N));`, error: identifierError },
+    {
+      what: "a let binding that holds a macro result",
+      entry: `let x = getFoo(); x = "bar"; console.log(id(x));`,
+      error: identifierError,
+    },
+    {
+      what: "a const with a value that is not known",
+      entry: `const foo = Math.random() ? "foo" : "bar"; console.log(id(foo));`,
+      error: identifierError,
+    },
+    {
+      what: "a template that holds such a const",
+      entry: `const foo = Math.random() ? "foo" : "bar"; console.log(id(\`https://example.com/\${foo}\`));`,
+      error: argumentError,
+    },
+    { what: "a loop const", entry: `for (const i of [1, 2]) console.log(id(i));`, error: identifierError },
+    {
+      what: "an array const with an item that is not known",
+      entry: `const c = [getFoo(), Math.random()]; console.log(id(c));`,
+      error: identifierError,
+    },
+    {
+      what: "a const that stands below the call",
+      entry: `const g = () => id(N); const N = 5; console.log(g());`,
+      error: identifierError,
+    },
+    {
+      what: "a function that declares a const",
+      entry: `console.log(id(() => { const K = 1; return K; }));`,
+      error: argumentError,
+    },
   ];
 
-  test.concurrent.each(rejected)("bun build rejects $what", async ({ entry }) => {
-    expect(await lastLineOf(entry, ["--target=bun"])).toMatchObject({
-      stderr: expect.stringContaining('"Cannot convert identifier to JS. Try a statically-known value" error in macro'),
+  test.concurrent.each(rejected)("bun build rejects $what", async ({ entry, error }) => {
+    expect(await lastLineOf(header + entry, ["--target=bun"])).toMatchObject({
+      stderr: expect.stringContaining(error),
       exitCode: 1,
     });
   });
+
+  // The table that macro arguments read must not change what happens to other code in the
+  // same file: a const below a statement is not inlined there, so its TDZ error stays.
+  test.concurrent("code outside the arguments keeps the rules of the inliner", async () => {
+    const tdz = `
+      let result;
+      try { read(); result = "no throw"; } catch (e) { result = e.name; }
+      const N = 5;
+      function read() { return N; }
+      console.log(result, id(N));
+    `;
+    const assignment = `
+      console.log("a statement");
+      const N = 5;
+      N = 6;
+      console.log(id(N));
+    `;
+    const specifiers = `
+      const x = "foo";
+      console.log(id(x));
+      export const p = () => import(\`./a/\${x}.js\`);
+      export const q = () => require(\`./b/\${x}.js\`);
+    `;
+    using dir = tempDir("macro-constant-arguments-specifiers", { "m.ts": macroFile, "entry.ts": header + specifiers });
+    const [tdzResult, assignmentResult, specifiersResult] = await Promise.all([
+      lastLineOf(header + tdz, null),
+      lastLineOf(header + assignment, null),
+      bun(String(dir), "build", "--target=bun", "entry.ts"),
+    ]);
+    expect(tdzResult).toMatchObject({ stdout: "ReferenceError 5", exitCode: 0 });
+    expect(assignmentResult).toMatchObject({
+      stderr: expect.stringContaining('This assignment will throw because "N" is a constant'),
+      exitCode: 1,
+    });
+    expect(specifiersResult).toMatchObject({
+      stdout: expect.stringMatching(/import\(`\.\/a\/\$\{x\}\.js`\)[^]*require\(`\.\/b\/\$\{x\}\.js`\)/),
+      exitCode: 0,
+    });
+  });
+
+  // The runtime transpiler inlines a macro result that a let, a var or a destructuring holds.
+  test.concurrent("bun run still passes a let or var that holds a macro result", async () => {
+    const entry = `
+      let x = getFoo();
+      var v = getFoo();
+      let { a } = getObj();
+      console.log(JSON.stringify([id(x), id(v), id(a)]));
+    `;
+    expect(await lastLineOf(header + entry, null)).toMatchObject({ stdout: '["foo","foo",1]', exitCode: 0 });
+  });
+
+  test.concurrent("a macro call in dead code does not need a known argument", async () => {
+    const entry = `if (false) console.log(id(unknownGlobal)); console.log("ok");`;
+    expect(await lastLineOf(header + entry, ["--target=bun"])).toMatchObject({ stdout: "ok", exitCode: 0 });
+  });
+
+  // The join of a non-ASCII piece belongs to the string folds: #42019.
+  test.todo("a template or a + with a non-ASCII piece");
 });

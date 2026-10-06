@@ -4293,6 +4293,28 @@ describe("bundler", () => {
     },
     run: { stdout: "m user" },
   });
+
+  // A `+` of string literals is one string when the bundler reads the specifier or the loader.
+  itBundled("edgecase/RequireResolveJoinedStringLiterals", {
+    files: {
+      "/entry.js": `console.log(require(require.resolve("./sub" + "/b" + ".js")));`,
+      "/sub/index.js": `module.exports = "index";`,
+      "/sub/b.js": `module.exports = "b";`,
+    },
+    target: "bun",
+    run: { stdout: "b" },
+  });
+  itBundled("edgecase/ImportAttributeTypeJoinedStringLiterals", {
+    files: {
+      "/entry.js": `
+        const imported = await import("./not-code.js", { with: { type: "te" + "xt" } });
+        console.log(imported.default);
+      `,
+      "/not-code.js": `this is text, not code`,
+    },
+    target: "bun",
+    run: { stdout: "this is text, not code" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

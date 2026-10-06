@@ -222,6 +222,23 @@ console.log(result);
     });
   }
 
+  // Under --minify-syntax a `+` of string literals is one string when feature() reads the name.
+  itBundled("feature_flag/JoinedStringLiteralName", {
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+if (feature("SUPER" + "_SECRET")) {
+  console.log("feature enabled");
+} else {
+  console.log("feature disabled");
+}
+`,
+    },
+    features: ["SUPER_SECRET"],
+    minifySyntax: true,
+    run: { stdout: "feature enabled" },
+  });
+
   // Error cases - only test with CLI since error handling might differ
   itBundled("feature_flag/NonStringArgError", {
     backend: "cli",

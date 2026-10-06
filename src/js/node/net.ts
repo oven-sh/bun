@@ -696,6 +696,11 @@ function onConnectEnd() {
   }
 }
 
+// The native layer hands a fatal TLS error on an established session to `error`, then closes.
+function establishedTLSError(self, error) {
+  if (self._secureEstablished && error?.code === "EPROTO") return require("internal/tls").tlsHandshakeError(error);
+}
+
 // Node reports a throwing 'data' listener as uncaughtException and keeps reading.
 function pushDataToSocket(self, socket, buffer) {
   // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
@@ -1319,6 +1324,8 @@ const ServerHandlers = {
     const bunTLS = data[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
+      const tlsError = establishedTLSError(data, error);
+      if (tlsError) error = tlsError;
       const callback = data[kwriteCallback];
       if (callback) {
         data[kwriteCallback] = null;
@@ -1339,6 +1346,8 @@ const ServerHandlers = {
       ) {
         // Ignore server's authorization errors
         data.destroy();
+      } else if (tlsError && !callback) {
+        data._emitTLSError(error);
       } else {
         // Node emits through _emitTLSError and leaves the socket alive. Bun
         // still destroys here: its tls.Server completes the handshake for a
@@ -1669,11 +1678,17 @@ const SocketHandlers2 = {
     const { self } = socket.data;
     if (self._hadError) return;
     self._hadError = true;
+    const tlsError = establishedTLSError(self, error);
+    if (tlsError) error = tlsError;
 
     const callback = self[kwriteCallback];
     if (callback) {
       self[kwriteCallback] = null;
       callback(error);
+    } else if (tlsError) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
+      self._emitTLSError(error);
+      return;
     }
 
     if (!self.destroyed) process.nextTick(destroyNT, self, error);

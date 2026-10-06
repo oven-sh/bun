@@ -577,6 +577,8 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* 1 when the verify step of this handshake asked the owner for the server's name. */
 int us_ssl_identity_checked(struct ssl_st *ssl);
+/* Why the SSL_* call that just returned failed, NUL-terminated. Clears the thread's queue. 0 when nothing is queued. */
+int us_ssl_take_error_reason(char *reason, size_t length);
 /* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
 void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
 /* `ctx` is the X509_STORE_CTX of a verify callback. */

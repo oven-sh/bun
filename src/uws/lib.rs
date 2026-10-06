@@ -1618,6 +1618,7 @@ pub use bun_uws_sys::socket::{
 /// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket
 /// `WebSocketProxyTunnel`) where the inner socket may be either transport and
 /// may be detached. Distinct from [`AnySocket`] which has no `None` variant.
+#[derive(Clone, Copy)]
 pub enum MaybeAnySocket {
     Tcp(SocketTCP),
     Ssl(SocketTLS),

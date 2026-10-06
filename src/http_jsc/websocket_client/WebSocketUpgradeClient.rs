@@ -1370,6 +1370,9 @@ where
                 // Same order as the non-tunnel arm below, which detaches the socket
                 // before did_connect.
                 this.state.set(State::Done);
+                // The connected client holds its own.
+                this.poll_ref
+                    .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
 
                 // Create the WebSocket client with the tunnel
                 ws.did_connect_with_tunnel(
@@ -1486,7 +1489,11 @@ where
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_timeout(this: ThisPtr<Self>, _: Socket<SSL>) {
+    pub fn handle_timeout(this: ThisPtr<Self>, socket: Socket<SSL>) {
+        if this.state.get() == State::Done {
+            super::close_at_close_timeout(socket);
+            return;
+        }
         Self::terminate(this, ErrorCode::Timeout);
     }
 

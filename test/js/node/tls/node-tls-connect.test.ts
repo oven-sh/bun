@@ -1738,17 +1738,26 @@ describe("application data written over a Duplex transport before the handshake 
       }
     });
 
-    // The identity verdict always comes after the handshake. A client can act
-    // on the chain verdict as soon as it has it, and a TLS 1.2 client has it
-    // before the flight this write waits for. So the chain row is TLS 1.3 only.
+    // A checkServerIdentity function gives its verdict after the handshake. A client acts
+    // on the chain and on the built-in name check as soon as it has the certificate, and
+    // a TLS 1.2 client has it before the flight this write waits for. So those rows are TLS 1.3 only.
+    const wrongName = { ca: COMMON_CERT_.cert, servername: "wrong.example" };
     const verdicts = [
       {
-        verdict: "identity",
-        options: { ca: COMMON_CERT_.cert, servername: "wrong.example" },
+        verdict: "identity (function)",
+        options: {
+          ...wrongName,
+          checkServerIdentity: (...args: Parameters<typeof checkServerIdentity>) => checkServerIdentity(...args),
+        },
         code: "ERR_TLS_CERT_ALTNAME_INVALID",
       },
-      // The self-signed fixture fails verification under the default rejectUnauthorized.
-      ...(version === "TLSv1.3" ? [{ verdict: "chain", options: {}, code: "DEPTH_ZERO_SELF_SIGNED_CERT" }] : []),
+      ...(version === "TLSv1.3"
+        ? [
+            { verdict: "identity", options: wrongName, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+            // The self-signed fixture fails verification under the default rejectUnauthorized.
+            { verdict: "chain", options: {}, code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+          ]
+        : []),
     ];
     it.each(verdicts)("client: a rejected $verdict fails the write and sends nothing", async ({ options, code }) => {
       const received: Buffer[] = [];
@@ -4403,9 +4412,14 @@ describe("how a TLS client's way of closing reaches the server", () => {
     ],
 
     // In a full TLS 1.2 handshake the client's flight leaves before the server's Finished.
-    ["TLSv1.2", "checkServerIdentity", delivered("", 0, [altnameInvalid, "close:true"])],
+    ["TLSv1.2", "checkServerIdentity function", delivered("", 0, ["error:ERR_PINNED_KEY", "close:true"])],
     ["TLSv1.2", "destroy()", delivered("", 0)],
   ] as const;
+
+  // The built-in name check also runs inside the handshake, ahead of that flight. In node the certificate leaves.
+  it("TLSv1.2 checkServerIdentity", async () => {
+    expect(await closeReport("checkServerIdentity", "TLSv1.2")).toEqual(turnedDown(altnameInvalid, "close:true"));
+  });
 
   it.each(rows)("%s %s", async (version, mode, expected) => {
     expect(await closeReport(mode, version)).toEqual(expected);

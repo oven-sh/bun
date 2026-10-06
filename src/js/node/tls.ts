@@ -1034,6 +1034,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
   return {
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
+    builtinCheckServerIdentity: checkServerIdentity,
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,

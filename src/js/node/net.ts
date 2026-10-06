@@ -268,6 +268,11 @@ const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
+const checkServerIdentityInHandshake = $newRustFunction(
+  "runtime/socket/socket.rs",
+  "jsCheckServerIdentityInHandshake",
+  2,
+);
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
@@ -571,6 +576,20 @@ function writeAfterFIN(chunk, encoding, cb) {
 
   return false;
 }
+// The built-in name check also runs natively inside the handshake: a refusal there keeps the client certificate off the wire.
+function startNameCheckInHandshake(self, socket) {
+  const options = self[bunTLSConnectOptions];
+  if (!options) return;
+  checkServerIdentityInHandshake(
+    socket,
+    self._rejectUnauthorized === true &&
+      !self[kStandaloneWrap] &&
+      options.checkServerIdentity === options.builtinCheckServerIdentity &&
+      // The native check reads the SNI name. Any other host stays with the check after the handshake.
+      !!options.serverName &&
+      options.serverName === self.servername,
+  );
+}
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1647-L1707
 function onClientHandshake(self, socket, success, verifyError) {
   if (!success && verifyError?.code === "ECONNRESET") {
@@ -597,6 +616,9 @@ function onClientHandshake(self, socket, success, verifyError) {
     }
   }
 
+  // The chain verified. The JS check below gives node's error for the name that the native check refused.
+  const refusedName = verifyError?.code === "ERR_TLS_CERT_ALTNAME_INVALID" ? verifyError : undefined;
+  if (refusedName) verifyError = null;
   self._securePending = false;
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
@@ -628,6 +650,7 @@ function onClientHandshake(self, socket, success, verifyError) {
         verifyError = checkServerIdentity.$call(receiver, hostname, cert);
       }
     }
+    verifyError ||= refusedName;
     let rejectUnauthorized;
     if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
       if (verifyError) {
@@ -823,6 +846,7 @@ const SocketHandlers = {
         (self as TLSSocketInstance).setSession(session);
       }
     }
+    startNameCheckInHandshake(self, socket);
 
     if (self[kSetNoDelay]) {
       socket.setNoDelay(true);
@@ -1581,6 +1605,7 @@ const SocketHandlers2 = {
         }
       }
     }
+    startNameCheckInHandshake(self, socket);
     if (!self[kupgraded]) req.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
   },

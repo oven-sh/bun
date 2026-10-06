@@ -2203,6 +2203,7 @@ Socket.prototype.connect = function connect(...args) {
       this._securePending = true;
       this[kConnectOptions] = options;
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1811
+      this.removeListener("end", onConnectEnd);
       if (!this[kStandaloneWrap]) this.prependListener("end", onConnectEnd);
     }
     // start using existing connection
@@ -3293,6 +3294,23 @@ function lookupAndConnectMultiple(self, lookup, host, options, dnsopts, port, lo
   });
 }
 
+// Per attempt, not per connect(): setServername()/setSession() calls made after tls.connect() must reach the dial.
+function clientTLSOptionsForAttempt(self, options, port): TLSConnectOptions | undefined {
+  const bunTLS = self[bunTlsSymbol];
+  if (typeof bunTLS !== "function") return undefined;
+  const tls = bunTLS.$call(self, port, self._host, true);
+  if (tls) {
+    const { rejectUnauthorized, session, checkServerIdentity } = options;
+    applyRejectUnauthorized(self, tls, rejectUnauthorized);
+    tls.requestCert = true;
+    tls.session = session || tls.session;
+    self.servername = tls.servername;
+    tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
+    self[bunTLSConnectOptions] = tls;
+  }
+  return tls;
+}
+
 function internalConnect(self, options, path);
 function internalConnect(self, options, address, port, addressType, localAddress, localPort, _flags?);
 function internalConnect(self, options, address, port?, addressType?, localAddress?, localPort?, _flags?) {
@@ -3326,30 +3344,7 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     }
   }
 
-  //TLS
-  let tls: TLSConnectOptions | undefined = undefined;
-  const bunTLS = self[bunTlsSymbol];
-  if (typeof bunTLS === "function") {
-    tls = bunTLS.$call(self, port, self._host, true);
-    self._requestCert = true; // Client always request Cert
-    if (tls) {
-      const { rejectUnauthorized, session, checkServerIdentity } = options;
-      applyRejectUnauthorized(self, tls, rejectUnauthorized);
-      tls.requestCert = true;
-      tls.session = session || tls.session;
-      self.servername = tls.servername;
-      tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
-      self[bunTLSConnectOptions] = tls;
-    }
-    self.authorized = false;
-    self.secureConnecting = true;
-    self[kPreHandshakeWrite] = false;
-    self._secureEstablished = false;
-    self._securePending = true;
-    self[kConnectOptions] = options;
-    self.prependListener("end", onConnectEnd);
-  }
-  //TLS
+  const tls = clientTLSOptionsForAttempt(self, options, port);
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
@@ -3468,30 +3463,7 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  //TLS
-  let tls: TLSConnectOptions | undefined = undefined;
-  const bunTLS = self[bunTlsSymbol];
-  if (typeof bunTLS === "function") {
-    tls = bunTLS.$call(self, port, self._host, true);
-    self._requestCert = true; // Client always request Cert
-    if (tls) {
-      const { rejectUnauthorized, session, checkServerIdentity } = context.options;
-      applyRejectUnauthorized(self, tls, rejectUnauthorized);
-      tls.requestCert = true;
-      tls.session = session || tls.session;
-      self.servername = tls.servername;
-      tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
-      self[bunTLSConnectOptions] = tls;
-    }
-    self.authorized = false;
-    self.secureConnecting = true;
-    self[kPreHandshakeWrite] = false;
-    self._secureEstablished = false;
-    self._securePending = true;
-    self[kConnectOptions] = context.options;
-    self.prependListener("end", onConnectEnd);
-  }
-  //TLS
+  const tls = clientTLSOptionsForAttempt(self, context.options, port);
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);

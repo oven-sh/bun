@@ -4569,3 +4569,87 @@ describe("signature algorithms a peer may sign with", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/44365
+describe("a self-issued certificate that may not sign certificates, like the one of `dotnet dev-certs`", () => {
+  const pem = (name: string) => readFileSync(join(import.meta.dir, "fixtures", "pinned-leaf", `${name}.pem`), "utf8");
+  const identity = (name: string, ...chain: string[]) => ({
+    key: pem(`${name}-key`),
+    cert: [name, ...chain].map(name => pem(`${name}-cert`)).join(""),
+  });
+
+  /** What each side says of the other's certificate: `true`, or the verification error. */
+  async function verdicts(serverOptions: tls.TlsOptions, clientOptions: tls.ConnectionOptions, overDuplex = false) {
+    const accepted = Promise.withResolvers<true | string>();
+    const server = tls.createServer({ rejectUnauthorized: false, ...serverOptions }, socket => {
+      accepted.resolve(socket.authorized || String(socket.authorizationError));
+      socket.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const transport = overDuplex
+      ? { socket: new SocketProxy(net.connect(port, "127.0.0.1")) }
+      : { port, host: "127.0.0.1" };
+    const client = tls.connect({ ...transport, servername: "localhost", rejectUnauthorized: false, ...clientOptions });
+    try {
+      await once(client, "secureConnect");
+      return { ofServer: client.authorized || String(client.authorizationError), ofClient: await accepted.promise };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s", maxVersion => {
+    it.each([false, true])("is trusted when `ca` holds that very certificate (over a Duplex: %p)", async overDuplex => {
+      const { ofServer } = await verdicts(identity("dev"), { ca: pem("dev-cert"), maxVersion }, overDuplex);
+      expect(ofServer).toBe(true);
+    });
+
+    // Node.js v26.3.0 refuses "after": it looks at a single certificate of the subject.
+    it.each([
+      ["before", ["dev-cert", "other-key-cert"]],
+      ["after", ["other-key-cert", "dev-cert"]],
+    ])("is trusted when it comes %s another certificate of the same subject in `ca`", async (_name, names) => {
+      expect((await verdicts(identity("dev"), { ca: names.map(pem), maxVersion })).ofServer).toBe(true);
+    });
+
+    it("is trusted as the certificate of a client", async () => {
+      const server = { ...identity("dev"), requestCert: true, ca: pem("dev-cert") };
+      expect((await verdicts(server, { ...identity("dev"), maxVersion })).ofClient).toBe(true);
+      expect((await verdicts(server, { ...identity("other-key"), maxVersion })).ofClient).not.toBe(true);
+    });
+
+    it("is refused once it has expired", async () => {
+      const { ofServer } = await verdicts(identity("expired"), { ca: pem("expired-cert"), maxVersion });
+      expect(ofServer).toBe("CERT_HAS_EXPIRED");
+    });
+
+    it.each([
+      ["no `ca` holds it", identity("dev"), undefined],
+      ["`ca` holds other certificates", identity("dev"), [pem("root-cert"), pem("client-eku-cert")]],
+      ["`ca` holds one of the same subject and another key", identity("other-key"), [pem("dev-cert")]],
+      ["it is not for a server", identity("client-eku"), [pem("client-eku-cert")]],
+    ])("is refused when %s", async (_name, server, ca) => {
+      expect((await verdicts(server, { ca, maxVersion })).ofServer).not.toBe(true);
+    });
+
+    it.each([
+      ["the trusted one signed", identity("issued-by-dev"), [pem("dev-cert")]],
+      ["the trusted one signed and comes with", identity("issued-by-dev", "dev"), [pem("dev-cert")]],
+      ["a trusted intermediate signed", identity("issued-by-intermediate"), [pem("intermediate-cert")]],
+      [
+        "a trusted intermediate signed, next to the trusted one",
+        identity("issued-by-intermediate", "intermediate"),
+        [pem("intermediate-cert"), pem("dev-cert")],
+      ],
+    ])("does not make an anchor for a certificate of the same subject that %s", async (_name, server, ca) => {
+      expect((await verdicts(server, { ca, maxVersion })).ofServer).not.toBe(true);
+    });
+
+    it("leaves the chain of that intermediate valid under its root", async () => {
+      const server = identity("issued-by-intermediate", "intermediate");
+      expect((await verdicts(server, { ca: pem("root-cert"), maxVersion })).ofServer).toBe(true);
+    });
+  });
+});

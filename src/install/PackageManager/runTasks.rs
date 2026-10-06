@@ -1997,8 +1997,10 @@ pub fn generate_network_task_for_tarball<'a>(
     if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
     }
-    // Only reached when the tarball is not already extracted in the cache. Under
-    // --offline nothing can be fetched: report it once (the dedupe entry above stays,
+    // Under --offline nothing can be fetched, and the caller already looked for an
+    // extraction of this tarball in the cache. (The resolve arm of a `github:` dependency
+    // with no lockfile row cannot look: the commit names its cache folder, and only the
+    // download tells the commit.) Report the miss once (the dedupe entry above stays,
     // so later edges to the same package are quiet) — as an error only if some edge
     // requires it — and let the caller treat it like an already-failed download.
     if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {

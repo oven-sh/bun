@@ -249,6 +249,96 @@ it("--offline reports an uncached tarball-URL / github dependency once, and skip
   expect(r2.code).toBe(0);
 });
 
+async function lockedPackages(dir: string) {
+  const lock = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as { packages: Record<string, unknown[]> };
+  return lock.packages;
+}
+
+describe.each(["hoisted", "isolated"] as const)(
+  "--offline with a cached tarball-URL dependency (%s linker)",
+  linker => {
+    it("installs it from the cache when bun.lock does not have it", async () => {
+      const urls: string[] = [];
+      setHandler(dummyRegistry(urls));
+      const tarball = `${root_url}/baz-0.0.3.tgz`;
+      const info = { bin: { "baz-run": "index.js" } };
+
+      // online: the download gives the package its name and bun.lock the hash of the tarball
+      const warm = await newProject({ baz: tarball }, cache_dir, linker);
+      const w = await install(warm, []);
+      expect(w.err).not.toContain("error:");
+      expect(await lockedPackages(warm)).toEqual({ baz: [`baz@${tarball}`, info, expect.stringMatching(/^sha512-/)] });
+      expect(w.code).toBe(0);
+      const before = urls.length;
+
+      // no bun.lock: the package is read from the extraction in the cache
+      const dir = await newProject({ baz: tarball }, cache_dir, linker);
+      const r = await install(dir, ["--offline"]);
+      expect(r.err).not.toContain("error:");
+      expect(urls.slice(before)).toEqual([]);
+      expect(await readdirSorted(join(dir, "node_modules", "baz"))).toContain("package.json");
+      // the cache keeps no tarball to hash, so this entry has no integrity
+      expect(await lockedPackages(dir)).toEqual({ baz: [`baz@${tarball}`, info] });
+      expect(r.code).toBe(0);
+    });
+  },
+);
+
+it("--offline resolves what a cached tarball-URL dependency depends on, also when it is optional", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, latest: "0.0.3" }));
+  // the package in this tarball is `@barn/moo`; it depends on bar@0.0.2 and baz@latest
+  const tarball = `${root_url}/moo-0.1.0.tgz`;
+  const warm = await newProject({ moo: tarball });
+  const w = await install(warm, []);
+  expect(w.err).not.toContain("error:");
+  expect(w.code).toBe(0);
+  const before = urls.length;
+
+  const dir = mkdtemp();
+  await writeFile(join(dir, "bunfig.toml"), await Bun.file(join(warm, "bunfig.toml")).text());
+  await writeFile(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "app", version: "1.0.0", optionalDependencies: { moo: tarball } }),
+  );
+  const r = await install(dir, ["--offline"]);
+  expect(r.err).not.toContain("error:");
+  expect(urls.slice(before)).toEqual([]);
+  expect(Object.keys(await lockedPackages(dir)).sort()).toEqual(["bar", "baz", "moo"]);
+  expect(await readdirSorted(join(dir, "node_modules"))).toEqual(["bar", "baz", "moo"]);
+  expect(r.code).toBe(0);
+});
+
+it("bun add --offline takes a cached tarball URL that the project does not have", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  const tarball = `${root_url}/baz-0.0.3.tgz`;
+  const warm = await newProject({ baz: tarball });
+  const w = await install(warm, []);
+  expect(w.err).not.toContain("error:");
+  expect(w.code).toBe(0);
+  const before = urls.length;
+
+  const dir = await newProject({});
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "--offline", tarball],
+    cwd: dir,
+    env: installEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(urls.slice(before)).toEqual([]);
+  expect(await Bun.file(join(dir, "package.json")).json()).toEqual({
+    name: "app",
+    version: "1.0.0",
+    dependencies: { baz: tarball },
+  });
+  expect(await readdirSorted(join(dir, "node_modules", "baz"))).toContain("package.json");
+  expect(code).toBe(0);
+});
+
 it('install.prefer = "offline" and install.offline = true in bunfig.toml behave like the flags', async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

@@ -194,6 +194,8 @@ bun install --offline
 
 An install is only certain to cache the packages that it places in `node_modules`. To warm the cache for an `--offline` install, run an install on the same platform that places at least the same packages. An install with `--production` or `--omit` does not cache the groups it leaves out.
 
+Without a `bun.lock`, `--offline` resolves a registry package from its cached manifest, a git dependency from its cached clone, and a tarball URL from its cached extraction. The `bun.lock` it writes has no integrity hash for that tarball URL. The next install that downloads the tarball adds the hash, unless the lockfile is frozen. A `github:` dependency cannot be resolved offline without its `bun.lock` entry, because the cache does not record which commit a branch or tag names.
+
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
 ---

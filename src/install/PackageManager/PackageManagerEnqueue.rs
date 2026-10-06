@@ -416,6 +416,58 @@ fn offline_git_miss(
     true
 }
 
+/// Under `--offline`, a tarball URL with no lockfile row cannot be downloaded to learn
+/// which package it holds. When the cache has its extraction, append the package from
+/// that `package.json`, as the extract task would. The lockfile integrity stays unset:
+/// it is a hash of the tarball bytes, which the cache does not keep.
+fn append_cached_remote_tarball(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    dependency_id: DependencyID,
+    url: &[u8],
+    resolution: &Resolution,
+) -> bool {
+    debug_assert!(resolution.tag == ResolutionTag::RemoteTarball);
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    // `get_cache_directory` populates `cache_directory_path` as a side effect.
+    let _ = get_cache_directory(this);
+    let mut folder_buf = Path::path_buffer_pool::get();
+    let folder =
+        package_manager_real::cached_tarball_folder_name_print(&mut folder_buf.0, url, None);
+    let mut json_path_buf = Path::path_buffer_pool::get();
+    let json_path = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+        this.cache_directory_path.as_bytes(),
+        &mut json_path_buf.0,
+        &[folder.as_bytes(), b"package.json"],
+    );
+    let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), json_path) else {
+        return false;
+    };
+    let data = install::ExtractData {
+        url: Box::from(url),
+        json: Some(install::ExtractDataJson {
+            path: Box::from(json_path),
+            buf: json_buf,
+        }),
+        ..Default::default()
+    };
+    let mut package_id = invalid_package_id;
+    let log_level = this.options.log_level;
+    let Some(package) = this.process_extracted_tarball_package(
+        &mut package_id,
+        dependency_id,
+        resolution,
+        &data,
+        log_level,
+    ) else {
+        return false;
+    };
+    this.appended_task_packages.insert(task_id, package.meta.id);
+    true
+}
+
 /// # Safety
 /// `network_task` must point to a live, exclusively-owned `NetworkTask` pool
 /// slot for the duration of the enqueued resolve task.
@@ -1747,7 +1799,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
-                if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
+                let mut appended = resolve_from_appended_task(this, task_id, id);
+                // The cached extraction stands in for the download, so like the download
+                // a peer does not start it before `install_peer`.
+                if appended.is_none()
+                    && matches!(tarball.uri, dependency::tarball::Uri::Remote(_))
+                    && (!dependency.behavior.is_peer() || install_peer)
+                    && append_cached_remote_tarball(this, task_id, id, url, &res)
+                {
+                    appended = resolve_from_appended_task(this, task_id, id);
+                }
+                if let Some(pkg_id) = appended {
                     success_fn(this, id, pkg_id);
                     return Ok(());
                 }

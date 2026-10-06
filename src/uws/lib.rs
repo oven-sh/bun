@@ -728,8 +728,9 @@ pub mod ssl_wrapper {
                     let _ = boring_sys::SSL_shutdown(ssl.as_ptr());
                 }
                 self.flags.set_received_ssl_shutdown(true);
+                self.handle_end_of_renegotiation();
                 // Reset pending handshake because we are closed for sure now
-                if self.flags.handshake_state() != HandshakeState::HandshakeCompleted {
+                if self.flags.handshake_state() == HandshakeState::HandshakePending {
                     self.flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
                     self.trigger_handshake_callback(HandshakeOutcome::Aborted);
@@ -1227,7 +1228,10 @@ pub mod ssl_wrapper {
                         return false;
                     } else {
                         log!("wanna read/write just break");
-                        // we wanna read/write just break
+                        self.handle_end_of_renegotiation();
+                        if self.ssl.get().is_none() || self.flags.closed_notified() {
+                            return false;
+                        }
                         break;
                     }
                 }

@@ -1025,11 +1025,6 @@ where
     pub(crate) fn on_proxy_tls_handshake_complete(this: ThisPtr<Self>) {
         log!("onProxyTLSHandshakeComplete");
 
-        // TLS handshake done - free the CONNECT request buffer and send the
-        // WebSocket upgrade request through the tunnel.
-        this.state.set(State::Reading);
-        this.clear_input();
-
         // Take the WebSocket upgrade request from proxy state (transfers
         // ownership) along with the tunnel to send it through.
         let step = this.proxy.with_mut(|proxy| {
@@ -1041,10 +1036,14 @@ where
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
+        // A renegotiation that finished: the first report took the request.
         if request_buf.is_empty() {
-            Self::terminate(this, ErrorCode::FailedToWrite);
             return;
         }
+        // TLS handshake done - free the CONNECT request buffer and send the
+        // WebSocket upgrade request through the tunnel.
+        this.state.set(State::Reading);
+        this.clear_input();
         // Store it in input_body_buf so handle_writable can retry on drain.
         this.to_send_len.set(request_buf.len());
         this.input_body_buf.set(request_buf);

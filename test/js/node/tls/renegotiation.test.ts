@@ -673,3 +673,298 @@ it("Bun.connect sends the client certificate a renegotiation asks for", async ()
     socket.end();
   }
 });
+
+// TLS 1.2 servers that renegotiate at a moment when no application data follows, so only the end of the renegotiation
+// itself can report it. The process prints the ports of:
+// 1. "ends": renegotiates right after the handshake, then ends the connection.
+// 2. "stays open": the same, then sends nothing and keeps the connection open.
+// 3, 4. A relay to 1 and to 2 that gives the client the server's Finished and the HelloRequest in one write.
+// 5. A relay to 1 that gives the client the Finished of the renegotiation and the close_notify in one write.
+// 6. A relay to 2 that answers the ClientHello of the renegotiation with a FIN.
+// 7. An HTTP origin that renegotiates when a request arrived, then answers it. For an Upgrade request it answers 101, a
+//    text frame and a Close frame. When a connection closes it prints the path and how many request lines it got.
+const quietRenegotiationServers = /* js */ `
+  const crypto = require("crypto");
+  const net = require("net");
+  const tls = require("tls");
+  const options = {
+    cert: process.env.SERVER_CERT,
+    key: process.env.SERVER_KEY,
+    minVersion: "TLSv1.2",
+    maxVersion: "TLSv1.2",
+    // A full handshake each time, so the server's Finished is the last message for every client.
+    secureOptions: crypto.constants.SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION,
+  };
+  const quiet = then =>
+    tls.createServer(options, socket => {
+      socket.on("error", () => {});
+      socket.resume();
+      socket.renegotiate({ rejectUnauthorized: false }, err => err || then(socket));
+    });
+  const ends = quiet(socket => socket.end());
+  const staysOpen = quiet(() => {});
+
+  const CHANGE_CIPHER_SPEC = 20;
+  // Calls shape(record, from, to) for each whole TLS record, in both directions.
+  const relay = (target, shape) =>
+    net.createServer(client => {
+      const upstream = net.connect(target.address().port, "127.0.0.1");
+      for (const [from, to] of [[client, upstream], [upstream, client]]) {
+        let pending = Buffer.alloc(0);
+        from.on("error", () => {});
+        from.on("close", () => to.destroy());
+        from.on("end", () => to.end());
+        const state = {};
+        from.on("data", chunk => {
+          pending = Buffer.concat([pending, chunk]);
+          while (pending.length >= 5 && pending.length >= 5 + pending.readUInt16BE(3)) {
+            const record = pending.subarray(0, 5 + pending.readUInt16BE(3));
+            pending = pending.subarray(record.length);
+            shape(record, from === client, to, state, client);
+          }
+        });
+      }
+    });
+  // Gives the client the server's ChangeCipherSpec number \`nth\` and the two records behind it in one write.
+  const coalesce = nth => (record, fromClient, to, state) => {
+    if (fromClient || state.released) return void to.write(record);
+    if (!state.held && (record[0] !== CHANGE_CIPHER_SPEC || (state.seen = (state.seen ?? 0) + 1) !== nth)) {
+      return void to.write(record);
+    }
+    (state.held ??= []).push(record);
+    if (state.held.length < 3) return;
+    state.released = true;
+    to.write(Buffer.concat(state.held));
+  };
+  // Behind the client's first ChangeCipherSpec come its Finished and the ClientHello of the renegotiation.
+  const cut = (record, fromClient, to, state, client) => {
+    if (!fromClient) return void to.write(record);
+    if (state.behind === 1) return void client.end();
+    if (state.behind === 0 || record[0] === CHANGE_CIPHER_SPEC) state.behind = state.behind === 0 ? 1 : 0;
+    to.write(record);
+  };
+
+  const origin = tls.createServer(options, socket => {
+    let received = "";
+    let asked = false;
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (asked || !received.includes("\\r\\n\\r\\n")) return;
+      asked = true;
+      socket.renegotiate({ rejectUnauthorized: false }, err => {
+        if (err) return socket.destroy();
+        const key = /sec-websocket-key:\\s*(\\S+)/i.exec(received)?.[1];
+        if (!key) return socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+        const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+            "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+        );
+        socket.end(Buffer.from([0x81, 0x02, 0x68, 0x69, 0x88, 0x02, 0x03, 0xe8]));
+      });
+    });
+    socket.on("close", () => {
+      const lines = received.match(/(GET|POST) \\S+ HTTP\\/1\\.1\\r\\n/g) ?? [];
+      console.log(lines[0]?.split(" ")[1] + " " + lines.length);
+    });
+  });
+
+  const servers = [
+    ends,
+    staysOpen,
+    relay(ends, coalesce(1)),
+    relay(staysOpen, coalesce(1)),
+    relay(ends, coalesce(2)),
+    relay(staysOpen, cut),
+    origin,
+  ];
+  let listening = 0;
+  for (const server of servers) {
+    server.listen(0, "127.0.0.1", () => {
+      if (++listening === servers.length) console.log(servers.map(server => server.address().port).join(" "));
+    });
+  }
+`;
+
+let quiet: Record<"ends" | "staysOpen" | "endsCoalesced" | "staysOpenCoalesced" | "closeCoalesced" | "cut", number>;
+let renegotiatingOrigin: number;
+let quietServers: Subprocess<"ignore", "pipe", "inherit">;
+// Resolves with the number of request lines that the origin got on the connection that asked for `path`.
+const requestLines = new Map<string, PromiseWithResolvers<number>>();
+function requestLinesFor(path: string) {
+  if (!requestLines.has(path)) requestLines.set(path, Promise.withResolvers<number>());
+  return requestLines.get(path)!;
+}
+beforeAll(async () => {
+  quietServers = Bun.spawn({
+    cmd: ["node", "-e", quietRenegotiationServers],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+  const ports = Promise.withResolvers<number[]>();
+  (async () => {
+    let output = "";
+    for await (const chunk of quietServers.stdout.pipeThrough(new TextDecoderStream())) {
+      output += chunk;
+      const lines = output.split("\n");
+      output = lines.pop()!;
+      for (const line of lines) {
+        const [path, count] = line.split(" ");
+        if (path.startsWith("/")) requestLinesFor(path).resolve(Number(count));
+        else ports.resolve(line.split(" ").map(Number));
+      }
+    }
+    ports.reject(new Error("the servers exited before they printed their ports"));
+  })();
+  const [ends, staysOpen, endsCoalesced, staysOpenCoalesced, closeCoalesced, cut, origin] = await ports.promise;
+  quiet = { ends, staysOpen, endsCoalesced, staysOpenCoalesced, closeCoalesced, cut };
+  renegotiatingOrigin = origin;
+});
+afterAll(() => quietServers?.kill());
+
+// A node:tls client over TCP, or over a Duplex in front of a TCP socket. Resolves with its events at 'close', or at
+// handshake report number `until`.
+async function nodeTlsEvents(transport: "TCP" | "a Duplex", port: number, until = Infinity) {
+  const events: string[] = [];
+  const done = Promise.withResolvers<void>();
+  let raw: ReturnType<typeof netConnect> | undefined;
+  let duplex: Duplex | undefined;
+  if (transport === "a Duplex") {
+    const tcp = (raw = netConnect(port, "127.0.0.1"));
+    tcp.on("error", () => {});
+    duplex = new Duplex({
+      read() {},
+      write(chunk: Buffer, _encoding: string, callback: () => void) {
+        tcp.write(chunk, callback);
+      },
+      final(callback: () => void) {
+        tcp.end();
+        callback();
+      },
+    });
+    tcp.on("data", (chunk: Buffer) => duplex!.push(chunk));
+    tcp.on("end", () => duplex!.push(null));
+    tcp.on("close", () => duplex!.destroy());
+  }
+  const socket = tlsConnect({
+    ca: tls.cert,
+    servername: "localhost",
+    ...(duplex ? { socket: duplex } : { port, host: "127.0.0.1" }),
+  });
+  socket.on("secureConnect", () => events.push("secureConnect"));
+  socket.on("secure", () => events.push("secure") === until * 2 && done.resolve());
+  socket.on("data", (chunk: Buffer) => events.push(`data ${chunk}`));
+  socket.on("end", () => events.push("end"));
+  socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+  socket.on("close", (hadError: boolean) => {
+    events.push(`close ${hadError}`);
+    done.resolve();
+  });
+  try {
+    await done.promise;
+    return events;
+  } finally {
+    socket.destroy();
+    raw?.destroy();
+  }
+}
+
+const twoHandshakes = ["secureConnect", "secure", "secureConnect", "secure"];
+
+it.concurrent.each(["TCP", "a Duplex"] as const)(
+  "a renegotiation with no data behind it is reported when it ends, over %s",
+  async transport => {
+    expect(await nodeTlsEvents(transport, quiet.staysOpen, 2)).toEqual(twoHandshakes);
+  },
+);
+
+it.concurrent.each(["ends", "closeCoalesced"] as const)(
+  "a renegotiation that the server's close follows is reported before the close (%s)",
+  async server => {
+    expect(await nodeTlsEvents("TCP", quiet[server])).toEqual([...twoHandshakes, "end", "close false"]);
+  },
+);
+
+it.concurrent(
+  "a HelloRequest in the same read as the server's Finished does not hide the first handshake",
+  async () => {
+    expect(await nodeTlsEvents("TCP", quiet.staysOpenCoalesced, 2)).toEqual(twoHandshakes);
+    expect(await nodeTlsEvents("TCP", quiet.endsCoalesced)).toEqual([...twoHandshakes, "end", "close false"]);
+  },
+);
+
+it.concurrent.each([
+  { server: "ends", reports: ["handshake true null", "handshake true null"] },
+  { server: "cut", reports: ["handshake true null"] },
+] as const)("Bun.connect gets one report for each handshake that finished ($server)", async ({ server, reports }) => {
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: quiet[server],
+    tls: { ca: tls.cert, serverName: "localhost" },
+    socket: {
+      data() {},
+      handshake: (_socket, success, error) => void events.push(`handshake ${success} ${error && (error as any).code}`),
+      error: (_socket, error) => void events.push(`error ${(error as any).code}`),
+      close: () => closed.resolve(),
+    },
+  });
+  await closed.promise;
+  expect(events).toEqual([...reports]);
+});
+
+// The repeat report must not restart the request: the tunnel rewound to the request headers, and a JS
+// checkServerIdentity parked a request that was already waiting for its response.
+it.concurrent.each([
+  { route: "direct", checkServerIdentity: true },
+  { route: "a CONNECT proxy", checkServerIdentity: false },
+  { route: "a CONNECT proxy", checkServerIdentity: true },
+])(
+  "fetch over $route sends its request once when the origin renegotiates (checkServerIdentity: $checkServerIdentity)",
+  async ({ route, checkServerIdentity }) => {
+    using proxy = route === "direct" ? undefined : await startRecordingProxy();
+    const path = `/${route === "direct" ? "direct" : "proxied"}-${checkServerIdentity}`;
+    const outcome = await fetch(`https://localhost:${renegotiatingOrigin}${path}`, {
+      method: "POST",
+      body: "0123456789",
+      keepalive: false,
+      tls: { ca: tls.cert, ...(checkServerIdentity && { checkServerIdentity: () => undefined }) },
+      proxy: proxy ? { url: `http://127.0.0.1:${proxy.port}`, respectNoProxy: false } : false,
+    }).then(
+      async response => `${response.status} ${await response.text()}`,
+      e => e.code,
+    );
+    expect({ outcome, requestLines: await requestLinesFor(path).promise }).toEqual({
+      outcome: "200 ok",
+      requestLines: 1,
+    });
+  },
+);
+
+it.concurrent(
+  "WebSocket through a CONNECT proxy opens when the origin renegotiates before it answers 101",
+  async () => {
+    using proxy = await startRecordingProxy();
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const ws = new WebSocket(`wss://localhost:${renegotiatingOrigin}/upgrade`, {
+      tls: { ca: tls.cert },
+      proxy: `http://127.0.0.1:${proxy.port}`,
+    });
+    ws.onopen = () => events.push("open");
+    ws.onmessage = event => events.push(`message: ${event.data}`);
+    ws.onclose = event => {
+      events.push(`close ${event.code}`);
+      closed.resolve();
+    };
+    await closed.promise;
+    expect({ events, requestLines: await requestLinesFor("/upgrade").promise }).toEqual({
+      events: ["open", "message: hi", "close 1000"],
+      requestLines: 1,
+    });
+  },
+);

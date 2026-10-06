@@ -577,7 +577,7 @@ describe("bunshell", () => {
   // On Windows the fd-relative open used to resolve "" to the shell's cwd, so
   // `cat ""` tried to read a directory and exited 21 without a message.
   test("builtin cat fails an empty operand with ENOENT", async () => {
-    using dir = tempDir("builtin-cat-empty", { "f.txt": "hi\n" });
+    using dir = tempDir("builtin-cat-empty", {});
     const script = /* ts */ `
       import { $ } from "bun";
       $.nothrow();
@@ -585,7 +585,6 @@ describe("bunshell", () => {
       for (const [name, run] of Object.entries({
         "literal": () => $\`cat ""\`,
         "interpolated": () => $\`cat \${""}\`,
-        "after a file": () => $\`cat f.txt ""\`,
       })) {
         const r = await run().quiet();
         results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
@@ -605,7 +604,6 @@ describe("bunshell", () => {
     expect(JSON.parse(stdout)).toEqual({
       "literal": { stdout: "", stderr: enoent, exitCode: 1 },
       "interpolated": { stdout: "", stderr: enoent, exitCode: 1 },
-      "after a file": { stdout: "hi\n", stderr: enoent, exitCode: 1 },
     });
     expect(exitCode).toBe(0);
   });

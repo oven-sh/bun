@@ -6849,6 +6849,9 @@ declare module "bun" {
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
      * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
+     * In the `handshake` callback of a TLS 1.3 client, this refuses the server
+     * before the client certificate is sent.
+     *
      * @example
      * ```ts
      * socket.terminate();

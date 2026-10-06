@@ -2135,7 +2135,9 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
         loop_ssl_data->ssl_write_batch_owner == s && !us_socket_is_closed(s)) {
-      ssl_flush_write_batch(loop_ssl_data, s);
+      /* A reset sends nothing more: terminate() in the handshake callback refuses the peer. */
+      if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET) ssl_release_batch(s->group->loop, s);
+      else ssl_flush_write_batch(loop_ssl_data, s);
     }
   }
   /* Neither node's `_handle.close()` (FAST_SHUTDOWN, no reason) nor a graceful

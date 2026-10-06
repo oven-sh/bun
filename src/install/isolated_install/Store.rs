@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::{ArrayHashMap, HashMap, MultiArrayList};
 use bun_semver::String as SemverString;
 use bun_wyhash::Wyhash;
 
@@ -26,6 +26,10 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
+    /// For each workspace package, the node that owns its dependencies. The entry of that node
+    /// is linked into the workspace's node_modules. Every other entry of the package is a link
+    /// to the workspace directory.
+    pub(crate) workspace_owners: HashMap<PackageID, node::Id>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

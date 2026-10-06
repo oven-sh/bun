@@ -1577,6 +1577,166 @@ test("peer satisfied by a workspace package keeps the workspace across installs 
   });
 });
 
+// A workspace has one directory and one node_modules. One node of the store owns
+// its dependencies. Every other edge that reaches the workspace is a link to the
+// directory and lays out nothing below it.
+describe("a workspace's dependencies have one owner", () => {
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("a peer bound by name to a workspace is a link to it", async () => {
+    // `peer-a-dep-caret-1-0-2` has a peer on `a-dep@^1.0.2`. The workspace `a-dep`
+    // is 2.0.0, so the resolver does not link the peer to it. The isolated linker
+    // binds the peer by name to app's `a-dep`, which is the workspace, and the
+    // edge stays an npm range on every install. `lib/node_modules` is laid out
+    // for the workspace's own place in the tree (the root's no-deps 1.0.0). The
+    // peer edge must not lay out `peer-deps` again for app's no-deps 2.0.0, and
+    // app's no-deps is not a peer of the package that has the edge.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-peer-by-name",
+          workspaces: ["lib", "app"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "lib/package.json": JSON.stringify({
+          name: "a-dep",
+          version: "2.0.0",
+          dependencies: { "peer-deps": "1.0.0" },
+        }),
+        "app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "a-dep": "workspace:*", "peer-a-dep-caret-1-0-2": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      },
+    });
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = [
+      "no-deps@1.0.0",
+      "no-deps@2.0.0",
+      "node_modules",
+      "peer-a-dep-caret-1-0-2@1.0.0+e718bb38612ed067",
+      "peer-deps@1.0.0+7347ae2d86f1441a",
+    ];
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+    expect(
+      await file(join(bunDir, "peer-deps@1.0.0+7347ae2d86f1441a", "node_modules", "no-deps", "package.json")).json(),
+    ).toEqual({ name: "no-deps", version: "1.0.0" });
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+  });
+
+  test.concurrent("a range the resolver links to a workspace is a link to it, fresh and from bun.lock", async () => {
+    // `one-range-dep` depends on `no-deps@^1.0.0`, and the resolver links that
+    // range to the workspace `no-deps` (1.0.0). On a fresh resolve the edge is an
+    // npm range. Loaded from bun.lock it is a workspace edge. Both are one store:
+    // `one-range-dep` has no peers, so its entry has no peer hash, and the
+    // workspace's `peer-a-dep-star` is laid out once, for the root's a-dep 1.0.1.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-linked-range",
+          workspaces: ["lib", "app"],
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+        "lib/package.json": JSON.stringify({
+          name: "no-deps",
+          version: "1.0.0",
+          dependencies: { "peer-a-dep-star": "1.0.0" },
+        }),
+        "app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "one-range-dep": "1.0.0", "a-dep": "1.0.2" },
+        }),
+      },
+    });
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = [
+      "a-dep@1.0.1",
+      "a-dep@1.0.2",
+      "node_modules",
+      "one-range-dep@1.0.0",
+      "peer-a-dep-star@1.0.0+fe523e66214b73d9",
+    ];
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+
+    // `bun prune` names the store from bun.lock and removes every other entry.
+    expect(await bun(packageDir, "prune")).toMatchObject({
+      stdout: expect.stringContaining("nothing to prune"),
+      exitCode: 0,
+    });
+    expect(await file(join(packageDir, "app", "node_modules", "one-range-dep", "package.json")).json()).toMatchObject({
+      name: "one-range-dep",
+    });
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+  });
+
+  test.concurrent("--filter lays out a workspace that a selected workspace depends on as a full install does", async () => {
+    // `lib` is not selected and `app` depends on it, so root does not queue
+    // `lib` and the reference from `app` reaches it. `lib` still gets its own
+    // place in the tree: nothing above it provides no-deps to its `peer-deps`,
+    // which takes the version the lockfile binds (2.0.0). It does not take app's
+    // no-deps 1.0.0. `bun prune` names the store without the filter and would
+    // remove that entry from under `lib`.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-filter",
+          workspaces: ["aaa", "app", "lib"],
+        }),
+        "aaa/package.json": JSON.stringify({
+          name: "aaa",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0" },
+        }),
+        "app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "a-dep": "workspace:*", "no-deps": "1.0.0" },
+        }),
+        "lib/package.json": JSON.stringify({
+          name: "a-dep",
+          version: "2.0.0",
+          dependencies: { "peer-deps": "1.0.0" },
+        }),
+      },
+    });
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = ["no-deps@1.0.0", "no-deps@2.0.0", "node_modules", "peer-deps@1.0.0+e27e69f8c16af2a6"];
+
+    expect(await bun(packageDir, "install", "--filter", "app")).toMatchObject({ exitCode: 0 });
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+
+    expect(await bun(packageDir, "prune")).toMatchObject({
+      stdout: expect.stringContaining("nothing to prune"),
+      exitCode: 0,
+    });
+    expect(await file(join(packageDir, "lib", "node_modules", "peer-deps", "package.json")).json()).toMatchObject({
+      name: "peer-deps",
+    });
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+  });
+});
+
 describe("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
     const { packageDir } = await registry.createTestDir({

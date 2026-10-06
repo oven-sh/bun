@@ -252,6 +252,85 @@ describe("transportParams.maxIdleTimeout", () => {
   });
 });
 
+// The endpoint's session registry is keyed, and the key index only exists
+// above 8 entries (ArrayHashMap's INDEX_THRESHOLD). Every other test here
+// holds one or two sessions, so without this one the indexed lookup path and
+// the removal that rebuilds the index never run.
+describe("a registry past its index threshold", () => {
+  test("serves every session and keeps serving after removals", async () => {
+    const total = 16;
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const tp = { maxIdleTimeout: 30 };
+    let announced = 0;
+    await using server = await listen(
+      (s: any) => {
+        announced++;
+        s.onerror = () => {};
+        s.closed.catch(() => {});
+        s.onstream = (st: any) => {
+          const chunks: Buffer[] = [];
+          (async () => {
+            try {
+              for await (const c of st) chunks.push(...[c].flat());
+            } catch {}
+            st.setBody(Buffer.concat(chunks));
+          })();
+        };
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+
+    // One client endpoint for every session, so the server holds all 16 at
+    // once while its own registry is the thing under test.
+    await using endpoint = new QuicEndpoint();
+    const echo = async (session: any, body: string) => {
+      const stream = await session.createBidirectionalStream({});
+      stream.closed.catch(() => {});
+      stream.writer.writeSync(Buffer.from(body));
+      stream.writer.endSync();
+      const chunks: Buffer[] = [];
+      for await (const c of stream) chunks.push(...[c].flat());
+      return Buffer.concat(chunks).toString();
+    };
+
+    const sessions = [];
+    for (let i = 0; i < total; i++) {
+      const s = await connect(server.address, {
+        endpoint,
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: tp,
+      });
+      s.closed.catch(() => {});
+      await s.opened;
+      sessions.push(s);
+    }
+
+    const before = await Promise.all(sessions.map((s, i) => echo(s, `first-${i}`)));
+
+    // Drop the even ones. Each removal rebuilds the key index under the
+    // sessions that stay, which must still be reachable afterwards.
+    const closed = sessions.filter((_, i) => i % 2 === 0);
+    for (const s of closed) s.close();
+    await Promise.all(closed.map(s => s.closed.catch(() => {})));
+
+    const survivors = sessions.filter((_, i) => i % 2 === 1);
+    const after = await Promise.all(survivors.map((s, i) => echo(s, `second-${i * 2 + 1}`)));
+    for (const s of survivors) s.close();
+
+    expect({
+      announced,
+      before,
+      after,
+    }).toEqual({
+      announced: total,
+      before: Array.from({ length: total }, (_, i) => `first-${i}`),
+      after: Array.from({ length: total / 2 }, (_, i) => `second-${i * 2 + 1}`),
+    });
+  });
+});
+
 // A graceful close() waits for live sessions to drain, but the listener kept
 // accepting: each new session re-filled `sessions`, so the
 // `closing && sessions.is_empty()` finish gate never tripped and `closed`

@@ -5,6 +5,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 
+use bun_collections::ArrayHashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
 use bun_jsc::{
@@ -230,7 +231,10 @@ pub(crate) struct QuicEndpoint {
 
     processing: Cell<bool>,
     followup_due: Cell<bool>,
-    sessions: JsCell<Vec<*mut QuicSession>>,
+    /// Insertion-ordered, so a dispatch pass walks sessions in arrival order,
+    /// and keyed, so `live_session` is a lookup and not a scan of the whole
+    /// registry on every packet.
+    sessions: JsCell<ArrayHashMap<*mut QuicSession, ()>>,
     pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
     pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,
     pending_new_sessions: JsCell<Vec<*mut QuicSession>>,
@@ -462,7 +466,7 @@ extern "C" fn on_data(
     // streams rather than announcing them (RFC 9000 s10.2.1), and ci_close
     // only schedules, so the engines have to run for it to take effect.
     let mut closed_any = false;
-    for session in this.sessions.get().clone() {
+    for session in this.sessions.get().keys().to_vec() {
         if let Some(session) = this.live_session(session) {
             closed_any |= session.flush_pending_graceful();
         }
@@ -1147,7 +1151,7 @@ impl QuicEndpoint {
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
-            sessions: JsCell::new(Vec::new()),
+            sessions: JsCell::new(ArrayHashMap::new()),
             server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             pending_new_sessions: JsCell::new(Vec::new()),
@@ -1444,7 +1448,7 @@ impl QuicEndpoint {
         // A depth-0 pass runs after the previous flight left the socket: safe
         // point for graceful closes stashed during a dispatch.
         if self.send_scope_depth.get() == 0 {
-            for session in self.sessions.get().clone() {
+            for session in self.sessions.get().keys().to_vec() {
                 if let Some(session) = self.live_session(session) {
                     session.flush_pending_graceful();
                 }
@@ -1456,7 +1460,7 @@ impl QuicEndpoint {
         // a later stream writes first, and node decides that over the whole
         // turn -- flushing mid-chain puts a RESET on the wire node never sends.
         if !self.defer_closes.get() {
-            for session in self.sessions.get().clone() {
+            for session in self.sessions.get().keys().to_vec() {
                 if let Some(session) = self.live_session(session) {
                     session.flush_deferred_aborts();
                 }
@@ -1519,7 +1523,7 @@ impl QuicEndpoint {
                 );
             }
         }
-        let sessions: Vec<*mut QuicSession> = self.sessions.get().clone();
+        let sessions: Vec<*mut QuicSession> = self.sessions.get().keys().to_vec();
         for session in sessions {
             let Some(session) = self.live_session(session) else {
                 continue;
@@ -1732,7 +1736,8 @@ impl QuicEndpoint {
             true,
         )?;
         let applied = self.apply_server_session_options(global, session);
-        self.sessions.with_mut(|v| v.push(session));
+        self.sessions
+            .with_mut(|v| bun_core::handle_oom(v.put(session, ())));
         self.pending_new_sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
         self.provisional.with_mut(|v| {
@@ -1889,7 +1894,8 @@ impl QuicEndpoint {
                 if let Err(err) = self.apply_server_session_options(global, session) {
                     crate::dispatch::fold(Err(err));
                 }
-                self.sessions.with_mut(|v| v.push(session));
+                self.sessions
+                    .with_mut(|v| bun_core::handle_oom(v.put(session, ())));
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
@@ -1953,7 +1959,8 @@ impl QuicEndpoint {
     }
 
     pub(super) fn unregister_session(&self, session: *mut QuicSession) {
-        self.sessions.with_mut(|v| v.retain(|&s| s != session));
+        // Ordered, so the sessions that remain keep their arrival order.
+        self.sessions.with_mut(|v| v.remove(&session));
         self.pending_new_sessions
             .with_mut(|v| v.retain(|&s| s != session));
         self.pending_verneg
@@ -2422,7 +2429,8 @@ impl QuicEndpoint {
                 c.use_preferred_address(true);
             }
         }
-        self.sessions.with_mut(|v| v.push(session));
+        self.sessions
+            .with_mut(|v| bun_core::handle_oom(v.put(session, ())));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
@@ -2472,7 +2480,8 @@ impl QuicEndpoint {
         // A probe has no engine, so nothing else would ever arm the timer that
         // runs the sweep expiring it.
         self.schedule_process();
-        self.sessions.with_mut(|v| v.push(session));
+        self.sessions
+            .with_mut(|v| bun_core::handle_oom(v.put(session, ())));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {
             uws::udp::Socket::opaque_mut(socket).send(

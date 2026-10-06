@@ -2,7 +2,7 @@ import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
-import { closeSync, readFileSync } from "fs";
+import { closeSync, fstatSync, readFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1676,6 +1676,114 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
     expect(received).toEqual({ length: reported, otherStartsAt: -1, firstEndsAt: reported - 1 });
   });
 });
+
+// A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
+// it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.
+it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", async () => {
+  const step = Buffer.alloc(1024 * 1024, "a");
+  const probeStep = Buffer.alloc(64 * 1024, "p");
+  // Tells whether the loop batches: the kernel refuses one send(), of a whole batch or of one record.
+  const probeBatching = (socket: Socket) => {
+    if (!socketFaultInjection.available()) return undefined;
+    socketFaultInjection.set({ syscall: "send", action: "zero" });
+    const wrote = socket.write(probeStep);
+    socketFaultInjection.clear();
+    return wrote;
+  };
+  const fdIsOpen = (fd: number) => {
+    try {
+      fstatSync(fd);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // In the order they connect. Half-open: a peer that reads the close_notify does not answer it.
+  const [PROBE, SILENT, DRIPPING, UNANSWERING, DESTROYED] = [0, 1, 2, 3, 4];
+  const peers: Socket<{ received: number }>[] = [];
+  const lastPeerPaused = Promise.withResolvers<void>();
+  const keepsReading = (peer: Socket<{ received: number }>) => peer === peers[PROBE] || peer === peers[UNANSWERING];
+  using server = Bun.listen<{ received: number }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    allowHalfOpen: true,
+    socket: {
+      open(peer) {
+        peer.data = { received: 0 };
+        peers.push(peer);
+        if (!keepsReading(peer)) peer.pause();
+        if (peer === peers[DESTROYED]) lastPeerPaused.resolve();
+      },
+      data(peer, chunk) {
+        peer.data.received += chunk.length;
+        if (!keepsReading(peer)) peer.pause();
+      },
+    },
+  });
+  const connected = (handshake: (socket: Socket) => void, close = () => {}) =>
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: { handshake, close, data() {}, timeout: () => void timeouts++ },
+    });
+  let timeouts = 0;
+  const reported: number[] = [0];
+  // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
+  const fillAndEnd = (socket: Socket) => {
+    let total = 0;
+    for (let wrote = step.length; wrote === step.length; total += Math.max(wrote, 0)) wrote = socket.write(step);
+    reported.push(total);
+    // The owner's own timeout is over with its close.
+    socket.timeout(1);
+    socket.end();
+  };
+
+  const probeReady = Promise.withResolvers<Socket>();
+  await connected(probeReady.resolve);
+  const probe = await probeReady.promise;
+  const closed: Promise<void>[] = [];
+  for (const _peer of [SILENT, DRIPPING, UNANSWERING]) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    closed.push(promise);
+    await connected(fillAndEnd, resolve);
+  }
+  const destroyed = tlsConnect({ port: server.port, host: "127.0.0.1", ca: tls.cert });
+  await Promise.all([once(destroyed, "secureConnect"), lastPeerPaused.promise]);
+  const destroyedFd: number = (destroyed as any)._handle.fd;
+  destroyed.write(Buffer.alloc(12 * step.length, "a"));
+  destroyed.destroy();
+  const openAfterDestroy = fdIsOpen(destroyedFd);
+  await once(destroyed, "close");
+
+  const drip = setInterval(() => peers[DRIPPING].resume(), 2000);
+  try {
+    const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
+    await Promise.all(closed);
+    const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
+    const batches = socketFaultInjection.available();
+    const missing = (peer: number) => reported[peer] - peers[peer].data.received;
+    expect({
+      before,
+      after,
+      timeouts,
+      cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
+      missing: missing(UNANSWERING),
+    }).toEqual({
+      before: { fdIsOpen: true, wrote: batches ? 16 * 1024 : undefined },
+      after: { fdIsOpen: false, wrote: batches ? 64 * 1024 : undefined },
+      timeouts: 0,
+      cutShort: [true, true],
+      missing: 0,
+    });
+  } finally {
+    clearInterval(drip);
+    probe.terminate();
+    for (const peer of peers) peer.terminate();
+  }
+}, 30_000);
 
 describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
   // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /

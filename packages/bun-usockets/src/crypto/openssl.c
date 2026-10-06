@@ -2085,6 +2085,9 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
   return 1;
 }
 
+/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s): Bun.serve's default idleTimeout. */
+#define US_SSL_CLOSE_AFTER_SPILL_TIMEOUT 10
+
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
@@ -2124,6 +2127,9 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
       /* Resume with the SAME code: a graceful close must not come back as a
        * forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
       s->ssl_pending_close_code = (unsigned char) code;
+      /* The owner let go, so its timeouts are over and nobody else bounds this wait. */
+      us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
+      us_socket_long_timeout(s, 0);
       return s;
     }
   }
@@ -2388,6 +2394,18 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
 static struct us_socket_t *ssl_close_if_fatal(struct us_socket_t *s) {
   if (!s || ssl_gone(s) || !s->ssl_fatal_error) return s;
   return ssl_close(s, 0, NULL);
+}
+
+struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
+  if (s->ssl_close_after_spill) {
+    ssl_release_spill(s->group->loop, s);
+    return us_internal_socket_close_raw(s, s->ssl_pending_close_code, NULL);
+  }
+  /* close_notify without the FIN: the spill drained, and the graceful close now waits for the peer's reply. */
+  if ((SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) && us_internal_socket_can_raw_write(s)) {
+    return us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+  }
+  return us_dispatch_timeout(s);
 }
 
 /* The read side delivers what the peer sent before it closes, unless the owner already let go. */

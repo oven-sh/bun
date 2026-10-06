@@ -272,7 +272,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                us_dispatch_timeout(s);
+                s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             }
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
@@ -317,7 +317,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         unsigned char long_stamp = s->group->long_timestamp;
         if (stamp == s->timeout) {
             s->timeout = 255;
-            us_dispatch_timeout(s);
+            s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
         }
         if (long_stamp == s->long_timeout) {

@@ -586,12 +586,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
                     VisitDeclOpts {
                         was_anonymous_named_expr,
-                        could_be_const_value: was_const && (!is_after || self.imports_macro()),
+                        was_const,
                         could_be_macro: if Self::ALLOW_MACROS {
                             prev_macro_call_count != self.macro_call_count
                         } else {
@@ -614,13 +613,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
                             self.visit_decl(
                                 decl,
                                 VisitDeclOpts {
                                     was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const
-                                        && (!is_after || self.imports_macro()),
+                                    was_const,
                                     could_be_macro: false,
                                 },
                             );
@@ -765,29 +762,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
         let VisitDeclOpts {
             was_anonymous_named_expr,
-            could_be_const_value,
+            was_const,
             could_be_macro,
         } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
+                // Only a `const` in the leading declaration run of its scope, or a macro
+                // result, is safe to inline everywhere.
+                let could_be_const_value =
+                    was_const && !self.vis_scope().is_after_const_local_prefix;
                 if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             if self.imports_macro() {
-                                // Only a `const` of the leading declaration run, or a macro
-                                // result, is safe to inline everywhere. A `let` or `var`
-                                // that holds a macro result is inlined when inlining is on,
-                                // so a macro call's arguments see it then too.
-                                let inlinable =
-                                    could_be_macro || !self.vis_scope().is_after_const_local_prefix;
-                                let for_macro_args =
-                                    could_be_const_value || self.options.features.inlining;
+                                // A `let` or `var` that holds a macro result is inlined when
+                                // inlining is on, so a macro call's arguments see it then too.
+                                let for_macro_args = was_const || self.options.features.inlining;
                                 self.record_const_value_for_macros(
                                     id_ref,
                                     val,
-                                    inlinable,
+                                    true,
                                     for_macro_args,
                                 );
                             } else {
@@ -797,6 +793,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else {
                     self.vis_scope().is_after_const_local_prefix = true;
+                    // A macro call's arguments may name a `const` that stands below a statement.
+                    if was_const && self.imports_macro() {
+                        if let Some(val) = decl.value {
+                            if val.can_be_const_value() {
+                                self.record_const_value_for_macros(id_ref, val, false, true);
+                            }
+                        }
+                    }
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let original_name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
@@ -811,13 +815,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        // `could_be_macro` means the file imports a macro, so
-                        // `could_be_const_value` is exactly "declared with `const`" here.
-                        self.visit_binding_and_expr_for_macro(
-                            decl.binding,
-                            value,
-                            could_be_const_value,
-                        );
+                        self.visit_binding_and_expr_for_macro(decl.binding, value, was_const);
                     }
                 }
             }

@@ -707,9 +707,7 @@ pub struct VisitArgsOpts<'a> {
 #[derive(Clone, Copy)]
 pub struct VisitDeclOpts {
     pub(crate) was_anonymous_named_expr: bool,
-    /// A `const` whose value is recorded if it is known: one in the leading declaration
-    /// run of its scope, or any `const` in a file that imports a macro.
-    pub(crate) could_be_const_value: bool,
+    pub(crate) was_const: bool,
     pub(crate) could_be_macro: bool,
 }
 

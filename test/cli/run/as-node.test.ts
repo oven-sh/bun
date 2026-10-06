@@ -119,7 +119,7 @@ describe("fake node cli", () => {
       [["require.cjs"], "default"],
     ])("node %j", (args, expected) => {
       using temp = tempDir("fake-node", files);
-      expect(fakeNodeRun(temp, args).stdout).toBe(expected);
+      expect(fakeNodeRun(temp, args)).toEqual({ stdout: expected, stderr: "" });
     });
   });
 

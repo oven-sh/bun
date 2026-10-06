@@ -315,13 +315,13 @@ describe("Set and Map entries without an identical counterpart", () => {
       inner.set(outer, 1);
       return map([outer, 1]);
     }
-    // The cycle runs through the value of an entry whose key is only deep-equal to its counterpart.
+    // Every Map in the cycle is the value of a key that is only deep-equal to its counterpart.
     function valueUnderEqualKeyCycle(tag: number) {
       const outer = new Map<unknown, unknown>();
       const inner = new Map<unknown, unknown>([["tag", tag]]);
       outer.set({ k: 1 }, inner);
       inner.set({ k: 2 }, outer);
-      return map(["start", outer]);
+      return map([{ k: 0 }, outer]);
     }
 
     it.each(Object.entries(everyEntryPoint))("%s", (_, check) => {

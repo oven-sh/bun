@@ -1198,15 +1198,6 @@ class ChildProcess extends EventEmitter {
       } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
-
-      // 'close' waits for each extra pipe (index >= 3) too. A socket that holds unread bytes never ends, so drain it.
-      const stdio = this.#stdioObject;
-      if (stdio) {
-        for (let i = 3; i < stdio.length; i++) {
-          const pipe = stdio[i];
-          if (pipe && !pipe.destroyed && pipe.readable) pipe.resume?.();
-        }
-      }
     }
 
     const spawnfile = this.spawnfile;
@@ -1232,6 +1223,15 @@ class ChildProcess extends EventEmitter {
     }
 
     this.emit("exit", this.exitCode, this.signalCode);
+
+    // 'close' waits for each extra pipe (index >= 3), and a socket that holds unread bytes never ends.
+    const stdio = this.#stdioObject;
+    if (stdio) {
+      for (let i = 3; i < stdio.length; i++) {
+        const pipe = stdio[i];
+        if (pipe) process.nextTick(flushStdioPipe, pipe);
+      }
+    }
 
     this.#maybeClose();
   }
@@ -1744,6 +1744,11 @@ class ChildProcess extends EventEmitter {
 //------------------------------------------------------------------------------
 // Section 4. ChildProcess helpers
 //------------------------------------------------------------------------------
+// Node's flushStdio, for one stream. It runs on the tick after 'exit', so an 'exit' listener can still start to read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L297-L332
+function flushStdioPipe(pipe) {
+  if (pipe.readable) pipe.resume();
+}
+
 const nodeToBunLookup = {
   ignore: null,
   pipe: "pipe",

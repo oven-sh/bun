@@ -1321,20 +1321,20 @@ done
 });
 
 // Node emits 'close' after the process has ended and every stdio stream has
-// closed, the pipes at index >= 3 included. After 'exit' it also resumes each
-// stdio stream that nobody reads, so that the stream can reach EOF and close.
-// Each script runs as a process of its own: inside the test runner the exit
-// notification and the pipe reads arrive in a different order.
+// closed, the pipes at index >= 3 included. On the tick after 'exit' it also
+// resumes each stdio stream that nobody reads, so that the stream can reach EOF
+// and close. Each script runs as a process of its own: inside the test runner
+// the exit notification and the pipe reads arrive in a different order.
 describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
   async function run(script: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    return { stdout, exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
   }
 
   // The shell exits at once. Its background job keeps fd 3 and fd 4, waits for
@@ -1359,7 +1359,11 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
         console.log(JSON.stringify({ got, order }));
       });
     `);
-    expect(result).toEqual({ stdout: '{"got":"late:go","order":["exit","end","close"]}\n', exitCode: 0 });
+    expect(result).toEqual({
+      stdout: '{"got":"late:go","order":["exit","end","close"]}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("'close' waits for a pipe that the parent starts to read in 'exit'", async () => {
@@ -1374,12 +1378,12 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
       child.on("exit", () => child.stdio[3].on("data", chunk => (got += chunk)));
       child.on("close", () => console.log(JSON.stringify({ got })));
     `);
-    expect(result).toEqual({ stdout: '{"got":"late"}\n', exitCode: 0 });
+    expect(result).toEqual({ stdout: '{"got":"late"}\n', stderr: "", exitCode: 0 });
   });
 
   // Without a reader the socket keeps its bytes and never ends. When nothing
-  // drains it at exit, 'close' never comes and this script prints nothing.
-  it("'close' comes when nobody reads the pipe", async () => {
+  // resumes it after 'exit', 'close' never comes and this script prints nothing.
+  it("'close' comes when nobody reads the pipe, after the pipe has closed", async () => {
     const result = await run(/* js */ `
       const { spawn } = require("node:child_process");
       const { once } = require("node:events");
@@ -1392,10 +1396,26 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
         let out = "";
         child.stdout.on("data", chunk => (out += chunk));
         await once(child, "close");
-        console.log("close came; stdout = " + JSON.stringify(out));
+        console.log(JSON.stringify({ out, pipeClosed: child.stdio[3].destroyed }));
       })();
     `);
-    expect(result).toEqual({ stdout: 'close came; stdout = "result\\n"\n', exitCode: 0 });
+    expect(result).toEqual({ stdout: '{"out":"result\\n","pipeClosed":true}\n', stderr: "", exitCode: 0 });
+  });
+
+  // The resume comes on the tick after 'exit', so a pause() inside an 'exit'
+  // listener does not keep the unread bytes in the socket.
+  it("'close' comes when an 'exit' listener pauses the pipe", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const [file, args] =
+        process.platform === "win32"
+          ? [process.execPath, ["-e", "require('fs').writeSync(3, 'unread')"]]
+          : ["/bin/sh", ["-c", "printf unread >&3"]];
+      const child = spawn(file, args, { stdio: ["ignore", "ignore", "inherit", "pipe"] });
+      child.on("exit", () => child.stdio[3].pause());
+      child.on("close", () => console.log(JSON.stringify({ pipeClosed: child.stdio[3].destroyed })));
+    `);
+    expect(result).toEqual({ stdout: '{"pipeClosed":true}\n', stderr: "", exitCode: 0 });
   });
 
   // The child writes "two" only after the parent has paused the pipe, so "two"
@@ -1416,7 +1436,7 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
       });
       child.on("close", () => console.log(JSON.stringify({ got })));
     `);
-    expect(result).toEqual({ stdout: '{"got":"onetwo"}\n', exitCode: 0 });
+    expect(result).toEqual({ stdout: '{"got":"onetwo"}\n', stderr: "", exitCode: 0 });
   });
 });
 

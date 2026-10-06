@@ -191,6 +191,22 @@ describe.concurrent("bun check", () => {
     });
     // It is not Bun's to declare.
     using dom = project({ "a.ts": `export const a = document;\n` });
+    // `bun install` here does not install what the applications further down list.
+    const application = (name: string) => ({
+      [`apps/${name}/a.ts`]: `import "react";\nimport "@scope/a";\n`,
+      [`apps/${name}/package.json`]: JSON.stringify(manifest),
+    });
+    using furtherDown = project({
+      "a.ts": `import "installed";\n`,
+      "package.json": JSON.stringify(manifest),
+      "node_modules/installed/package.json": `{ "name": "installed", "version": "1.0.0" }`,
+      ...application("a"),
+    });
+    using many = project({
+      ...["a", "b", "c", "d", "e"].reduce((all, name) => ({ ...all, ...application(name) }), {}),
+    });
+    using four = project({ ...["a", "b", "c", "d"].reduce((all, name) => ({ ...all, ...application(name) }), {}) });
+    using deeper = project({ ...application("a"), "apps/a/src/empty.txt": "" });
     const projects = [
       none,
       one,
@@ -203,6 +219,9 @@ describe.concurrent("bun check", () => {
       used,
       ofAPackage,
       dom,
+      furtherDown,
+      many,
+      four,
     ];
     const results = await Promise.all(projects.map(dir => check(dir)));
     expect(results.map(it => note(it.stderr))).toEqual([
@@ -211,16 +230,71 @@ describe.concurrent("bun check", () => {
       [],
       [],
       [],
-      ["note: 1 dependency in package.json is not installed. Run: bun install"],
+      ["note: 1 dependency in packages/a/package.json is not installed. Run: bun install --cwd=packages/a"],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
       ["note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun"],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
       [],
       [],
+      ["note: 2 dependencies in apps/a/package.json are not installed. Run: bun install --cwd=apps/a"],
+      [
+        "note: 2 dependencies in apps/a/package.json are not installed. Run: bun install --cwd=apps/a",
+        "note: 2 dependencies in apps/b/package.json are not installed. Run: bun install --cwd=apps/b",
+        "note: 2 dependencies in apps/c/package.json are not installed. Run: bun install --cwd=apps/c",
+        "note: 2 more package.json files have dependencies that are not installed.",
+      ],
+      [
+        "note: 2 dependencies in apps/a/package.json are not installed. Run: bun install --cwd=apps/a",
+        "note: 2 dependencies in apps/b/package.json are not installed. Run: bun install --cwd=apps/b",
+        "note: 2 dependencies in apps/c/package.json are not installed. Run: bun install --cwd=apps/c",
+        "note: 1 more package.json has dependencies that are not installed.",
+      ],
     ]);
-    expect(results.at(-2)!.stdout).toContain("node_modules/installed/index.d.ts(1,8): error TS2882");
-    expect(results.at(-1)!.stdout).toContain("TS2584: Cannot find name 'document'.");
+    expect(results[9].stdout).toContain("node_modules/installed/index.d.ts(1,8): error TS2882");
+    expect(results[10].stdout).toContain("TS2584: Cannot find name 'document'.");
+    // Where `bun install` reads that `package.json`, from the directory itself and from below it.
+    const inside = await Promise.all(
+      ["apps/a", "apps/a/src"].map(cwd => run(join(String(deeper), cwd), ["check", "-p", String(deeper)])),
+    );
+    expect(inside.map(it => note(it.stderr))).toEqual([
+      ["note: 2 dependencies in package.json are not installed. Run: bun install"],
+      ["note: 2 dependencies in ../package.json are not installed. Run: bun install"],
+    ]);
   });
+
+  // `[eval]` and `[stdin]` are on no disk, so nothing can be found out about the disk from them.
+  test.skipIf(!foldsCase)(
+    "an entry point that is only in memory, and a file that is imported in two cases",
+    async () => {
+      const options = { ...JSON.parse(tsconfig).compilerOptions, forceConsistentCasingInFileNames: false };
+      const main = `import "./src/Button";\nimport "./src/other";\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions: options }),
+        // Not a module: twice in the program, it declares `g` twice.
+        "src/button.ts": `const g = 1;\n`,
+        "src/other.ts": `import "./button";\nexport {};\n`,
+        "main.ts": main,
+      });
+      await using piped = Bun.spawn({
+        cmd: [bunExe(), "--check", "-"],
+        cwd: String(dir),
+        env,
+        stdin: new Blob([main]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const results = await Promise.all([
+        run(String(dir), ["--check", "main.ts"]).then(it => [it.stderr, it.exitCode]),
+        run(String(dir), ["--check", "-e", main]).then(it => [it.stderr, it.exitCode]),
+        Promise.all([piped.stderr.text(), piped.exited]),
+      ]);
+      expect(results).toEqual([
+        ["", 0],
+        ["", 0],
+        ["", 0],
+      ]);
+    },
+  );
 
   // `lib.*.d.ts` are in the executable, so they are those of the TypeScript that the type checker is a port of.
   describe("TypeScript's library files", () => {

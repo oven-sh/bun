@@ -796,14 +796,9 @@ impl Checker<'_, '_> {
             _ => None,
         };
         let name = match bound.pat_parent[element.idx()] {
-            PatParent::Prop(_, p) if !hir[p].is_rest => match hir[p].key {
-                PropKey::Name(name) => Some((self.string_literal(name, false), hir[p].pos)),
-                PropKey::Computed(k) => {
-                    let key = self.type_of_expr(file, k);
-                    Some((self.regular(key), hir[p].pos))
-                }
-                PropKey::Private(_) | PropKey::None => None,
-            },
+            PatParent::Prop(_, p) if !hir[p].is_rest => self
+                .literal_type_from_property_name(file, hir[p].key, hir[p].pos)
+                .map(|key| (key, hir[p].pos)),
             _ => own_name,
         };
         let Some((expr_type, at_name)) = name else {

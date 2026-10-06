@@ -2151,14 +2151,10 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut access_flags = AccessFlags::EXPRESSION_POSITION;
                 let allow_missing = no_tuple_bounds_check || prop.default.is_some();
                 access_flags.set(AccessFlags::ALLOW_MISSING, allow_missing);
-                // `getLiteralTypeFromPropertyName`
-                let index_type = match prop.key {
-                    PropKey::Name(name) => self.string_literal(name, false),
-                    PropKey::Computed(e) => {
-                        let key = self.type_of_expr(file, e);
-                        self.regular(key)
-                    }
-                    PropKey::Private(_) | PropKey::None => return TypeId::UNRESOLVED,
+                let Some(index_type) =
+                    self.literal_type_from_property_name(file, prop.key, prop.pos)
+                else {
+                    return TypeId::UNRESOLVED;
                 };
                 // An identifier directly in the pattern of `const { a } = require("m")` is an alias
                 // (`getTypeOfAlias`): tsgo never looks it up in the initializer, so nothing is
@@ -2298,6 +2294,30 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_rest_of_invalid_type(&mut self, parent_ty: TypeId) -> bool {
         let reduced = self.reduced(parent_ty);
         reduced == TypeId::UNKNOWN || !self.is_valid_spread_type(reduced)
+    }
+
+    /// `getLiteralTypeFromPropertyName` of the name `key`, which starts at `pos`. One that is a
+    /// numeric literal in the source is a number: no index signature for `string & {}` has it.
+    pub(super) fn literal_type_from_property_name(
+        &mut self,
+        file: FileId,
+        key: PropKey,
+        pos: u32,
+    ) -> Option<TypeId> {
+        match key {
+            PropKey::Name(name)
+                if self.is_numeric_name(name)
+                    && self.is_numeric_literal_name_in_source(file, pos) =>
+            {
+                self.key_type_of_name(name)
+            }
+            PropKey::Name(name) => Some(self.string_literal(name, false)),
+            PropKey::Computed(e) => {
+                let key = self.type_of_expr(file, e);
+                Some(self.regular(key))
+            }
+            PropKey::Private(_) | PropKey::None => None,
+        }
     }
 
     /// Whether the property name that starts at `pos` of `file` is a numeric literal in the source:

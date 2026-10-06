@@ -2040,15 +2040,13 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     return ty;
                 }
+                // Also if none of them changes: `` `a${string}` & {} ``, which a type node keeps as
+                // it is written, becomes `` `a${string}` ``.
                 let bounds: Vec<TypeId> = parts
                     .iter()
                     .map(|&p| self.lower_bound_of_key_type(p))
                     .collect();
-                if bounds[..] == parts[..] {
-                    ty
-                } else {
-                    self.intersection(&bounds)
-                }
+                self.intersection(&bounds)
             }
             _ => ty,
         }
@@ -2297,7 +2295,10 @@ impl<'p, 's> Checker<'p, 's> {
             // Only `T` is inspected: `never`, `unknown` and the like have nothing to iterate over,
             // whatever `keyof` yields for them.
             _ if over_keyof => List::Kept(&[]),
-            _ if self.is_generic(constraint) => {
+            // It is the type itself for every other.
+            _ if self.is_generic(constraint)
+                || (self.parts(constraint).iter()).any(|&key| self.is_intersection(key)) =>
+            {
                 let bound = self.lower_bound_of_key_type(constraint);
                 List::Kept(self.parts(bound))
             }

@@ -332,18 +332,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `getLiteralTypeFromPropertyName`
-    fn literal_type_from_property_name(&mut self, file: FileId, key: PropKey) -> Option<TypeId> {
-        match key {
-            PropKey::Name(name) => Some(self.string_literal(name, false)),
-            PropKey::Computed(k) => {
-                let key = self.type_of_expr(file, k);
-                Some(self.regular(key))
-            }
-            PropKey::Private(_) | PropKey::None => None,
-        }
-    }
-
     /// `checkObjectLiteralDestructuringPropertyAssignment`. 1136, for a member that is not a
     /// property assignment, is reported with the grammar checks.
     fn check_object_literal_destructuring_property_assignment(
@@ -373,7 +361,10 @@ impl Checker<'_, '_> {
             {
                 match self.member_name(file, hir[other].key) {
                     Some(name) => names.push(name),
-                    None => keys.extend(self.literal_type_from_property_name(file, hir[other].key)),
+                    None => {
+                        let (key, pos) = (hir[other].key, hir[other].pos);
+                        keys.extend(self.literal_type_from_property_name(file, key, pos));
+                    }
                 }
             }
             let keys = self.union(&keys);
@@ -383,7 +374,9 @@ impl Checker<'_, '_> {
         if !matches!(property.kind, PropKind::Init | PropKind::Shorthand) {
             return;
         }
-        let Some(expr_type) = self.literal_type_from_property_name(file, property.key) else {
+        let Some(expr_type) =
+            self.literal_type_from_property_name(file, property.key, property.pos)
+        else {
             return;
         };
         if let Some(text) = self.property_name_of_type(expr_type)

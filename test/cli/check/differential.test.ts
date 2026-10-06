@@ -529,6 +529,364 @@ differential(
 //
 // Every case is a directory. Most are in one project, so that they take two processes together. An error without a file
 // suppresses the other errors of its project, so a case that can have one is a project of its own.
+/** What `cmd` prints about each line of `a.ts`. A line that continues a message belongs to the error above it. */
+async function messagesOf(cmd: string[], cwd: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const byLine = new Map<number, string[]>();
+  let line = 0;
+  for (const text of stdout.split(/\r?\n/)) {
+    line = +(/^a\.ts\((\d+),\d+\): error TS\d+: /.exec(text)?.[1] ?? line);
+    if (line && text.trim()) byLine.set(line, [...(byLine.get(line) ?? []), text]);
+  }
+  return byLine;
+}
+
+/**
+ * One program, with a case on each line. Returns the cases about which the two say something else, in whole messages.
+ * `step`: a debug build checks every `step`th case.
+ */
+async function casesThatDiffer(options: object, declarations: string[], cases: string[], step = every) {
+  // After a syntax error nothing is checked. The last line shows that it was.
+  const source = [...declarations, ...cases.filter((_, index) => index % step === 0), `const checked: number = "";`];
+  const compilerOptions = { ...JSON.parse(tsconfig).compilerOptions, ...options };
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": JSON.stringify({ compilerOptions }),
+    "a.ts": source.join("\n") + "\n",
+  });
+  const [theirs, ours] = await Promise.all([
+    messagesOf([tsc!, "-p", ".", "--pretty", "false"], String(dir)),
+    messagesOf([bunExe(), "check"], String(dir)),
+  ]);
+  expect(theirs.get(source.length)?.[0]).toContain("error TS2322");
+  return source.flatMap((text, index) => {
+    const [typescript, bun] = [theirs.get(index + 1) ?? [], ours.get(index + 1) ?? []];
+    return Bun.deepEquals(typescript, bun) ? [] : [{ text, tsc: typescript, bun }];
+  });
+}
+
+// `string` is applicable to the key `string & {}`, and is not that key.
+const indexKeys = [
+  "string",
+  "number",
+  "symbol",
+  "string & {}",
+  "number & {}",
+  "symbol & {}",
+  "`a${string}`",
+  "`${number}`",
+  "`a${string}` & {}",
+  "(string & {}) | `a${string}`",
+  "(string & {}) | number",
+  "string | (number & {})",
+  "(string & {}) | (number & {}) | (symbol & {})",
+  "string & { brand: 1 }",
+];
+const indexDeclarations = [
+  "declare const u: unique symbol; declare const str: string; declare const num: number; declare const sym: symbol;",
+  "declare const tpl: `a${string}`; declare const nstr: `${number}`;",
+  "declare const bstr: string & {}; declare const bnum: number & {}; declare const bsym: symbol & {};",
+];
+const indexedBy = [
+  "0",
+  `"a"`,
+  `"ab"`,
+  `"0"`,
+  "Symbol.iterator",
+  "u",
+  "str",
+  "num",
+  "sym",
+  "tpl",
+  "nstr",
+  "bstr",
+  "bnum",
+  "bsym",
+];
+const indexUses = [
+  "s[I];",
+  `s[I] = "x";`,
+  "const k: keyof typeof s = I;",
+  "type T = (typeof s)[TYPE]; const t: T = 1;",
+  "const { [I]: v } = s; const n: never = v;",
+  "delete s[I];",
+  "I in s;",
+];
+const namedUses = [
+  "s.a;",
+  "s.ab;",
+  "s.a = 1;",
+  "const { a } = s; const n: never = a;",
+  "const { ab, ...rest } = s; const n: never = rest;",
+];
+// A name that is written as a number is a number, and no index signature for `string & {}` has it.
+const literalNames = [
+  "0",
+  `"0"`,
+  `"a"`,
+  "a",
+  "1.0",
+  "0x1",
+  "1e3",
+  ".5",
+  "[0]",
+  `["0"]`,
+  "[1.0]",
+  "[-1]",
+  `["-1"]`,
+  `["a"]`,
+  "[(0)]",
+];
+const destructurings = [
+  "const { L: v } = s; const n: never = v;",
+  "let v; ({ L: v } = s); const n: never = v;",
+  "const { L: v, ...rest } = s; const n: never = rest;",
+  "let v, rest; ({ L: v, ...rest } = s); const n: never = rest;",
+  "function f({ L: v }: typeof s) { const n: never = v; }",
+  "const { L: v = 1 } = s; const n: never = v;",
+  "let v; ({ L: v = 1 } = s); const n: never = v;",
+  "for (const { L: v } of [s]) { const n: never = v; }",
+];
+const isKeyOfIndexSignature = (key: string) => /^(string|number|symbol|`[^`]*`)$/.test(key);
+const withIndex = (key: string, value: string) =>
+  isKeyOfIndexSignature(key) ? `{ [k: ${key}]: ${value} }` : `{ [K in ${key}]: ${value} }`;
+const literalsWithKeys = [
+  `{ a: "" }`,
+  `{ ab: "" }`,
+  `{ 0: "" }`,
+  `{ [u]: "" }`,
+  `{ [str]: "" }`,
+  `{ [num]: "" }`,
+  `{ [sym]: "" }`,
+  `{ [tpl]: "" }`,
+  `{ [bstr]: "" }`,
+];
+const indexSources = [
+  ...indexKeys.map(key => `null! as ${withIndex(key, "string")}`),
+  ...[
+    "{ a: string }",
+    "{ ab: string }",
+    "{ 0: string }",
+    `{ "0": string }`,
+    "{ [u]: string }",
+    "{ ab: string; 1: string; [u]: string }",
+    "{ a?: string }",
+    "{ [k: string]: string; [k: number]: string }",
+    "{ [k: `a${string}`]: string; ab: string }",
+  ].map(type => `null! as ${type}`),
+  ...literalsWithKeys,
+];
+const indexAccesses = [
+  ...[...product(indexKeys, indexedBy, indexUses)].map(
+    ([key, index, use]) =>
+      `{ const s = null! as { [K in ${key}]: string }; ${use
+        .replace(/\bI\b/g, () => index)
+        // A literal is its own type.
+        .replace("TYPE", () => (/^[a-z]/i.test(index) ? `typeof ${index}` : index))} }`,
+  ),
+  ...[...product(indexKeys, namedUses)].map(([key, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use} }`),
+  ...[...product(indexKeys, literalNames, destructurings)].map(
+    ([key, name, use]) => `{ const s = null! as { [K in ${key}]: string }; ${use.replace(/\bL\b/g, () => name)} }`,
+  ),
+];
+const indexRelations = [
+  ...[...product(indexSources, indexKeys)].flatMap(([source, key]) => [
+    `{ const s = ${source}; const t: ${withIndex(key, "number")} = s; }`,
+    `{ const s = ${source}; const i = null! as <V>(o: ${withIndex(key, "V")}) => V; const r: never = i(s); }`,
+  ]),
+  ...[...product(literalsWithKeys, indexKeys)].map(([it, key]) => `{ const t: ${withIndex(key, "number")} = ${it}; }`),
+  ...[...product(indexKeys, indexKeys)].map(
+    ([a, b]) => `{ var v: ${withIndex(a, "string")}; var v: ${withIndex(b, "string")}; }`,
+  ),
+  ...[
+    ...product(indexKeys.filter(isKeyOfIndexSignature), [
+      "a: number = 1;",
+      "ab: number = 1;",
+      "0: number = 1;",
+      "[u]: number = 1;",
+      "[k: `ab${string}`]: number;",
+      "[k: number]: number;",
+    ]),
+  ].map(([key, member]) => `{ class C { [k: ${key}]: string; ${member} } }`),
+];
+
+differential(
+  "index signatures: the key, and what it is indexed by",
+  async () => expect(await casesThatDiffer({}, indexDeclarations, indexAccesses, 1)).toEqual([]),
+  timeout,
+);
+differential(
+  "index signatures: the key, and what it is indexed by, under the options about them",
+  async () => {
+    const options = { noPropertyAccessFromIndexSignature: true, noUncheckedIndexedAccess: true };
+    expect(await casesThatDiffer(options, indexDeclarations, indexAccesses, 1)).toEqual([]);
+  },
+  timeout,
+);
+differential(
+  "index signatures: the key of the source, and the key of the target",
+  async () => expect(await casesThatDiffer({}, indexDeclarations, indexRelations, 1)).toEqual([]),
+  timeout,
+);
+
+// What is found out while a circular reference is being resolved is found out again afterwards. The arguments of a call
+// are checked once for each overload, and the last check gives the parameters of a callback their types.
+const overloadDeclarations = [
+  "declare function g<T>(cb: () => T): T; declare function h(cb: () => unknown): unknown;",
+  "declare class G<T> { constructor(cb: () => T); value: T }",
+  "declare function f2(o: { t: 1; m(c: string): void }): void; declare function f2(o: { t: 2; m(c: number): void }): void;",
+  "declare function f2g(o: { t: 1; m(c: string): void }): void; declare function f2g<R>(o: { t: 2; m(c: R[]): void }): void;",
+  "declare function fg2<R>(o: { t: 1; m(c: R[]): void }): void; declare function fg2(o: { t: 2; m(c: number): void }): void;",
+  "declare function f1(o: { t: 1; m(c: string): void }): void;",
+  "declare function f1g<R>(o: { t: 1; r?: R; m(c: R[]): void }): void;",
+  "declare function f3(o: { t: 1; m(c: string): void }): void; declare function f3(o: { t: 2; m(c: number): void }): void; declare function f3(o: { t: 4; m(c: boolean): void }): void;",
+  "declare function a2(o: [1, (c: string) => void]): void; declare function a2(o: [2, (c: number) => void]): void;",
+  "declare function n2(o: { t: 1; o: { m(c: string): void } }): void; declare function n2(o: { t: 2; o: { m(c: number): void } }): void;",
+  "declare function p2(t: 1, m: (c: string) => void): void; declare function p2(t: 2, m: (c: number) => void): void;",
+];
+const overloadedCalls = [
+  ...[
+    ...product(
+      ["f2", "f2g", "fg2", "f1", "f1g", "f3"],
+      ["1", "2", "3"],
+      [
+        "{ t: T, m(c) { c.nope; } }",
+        "{ t: T, m: c => c.nope }",
+        "{ t: T, m: function (c) { c.nope; } }",
+        "{ m(c) { c.nope; }, t: T }",
+      ],
+    ),
+  ].map(([callee, t, argument]) => `${callee}(${argument.replace("T", t)})`),
+  ...["1", "2", "3"].flatMap(t => [
+    `a2([${t}, c => c.nope])`,
+    `n2({ t: ${t}, o: { m(c) { c.nope; } } })`,
+    `p2(${t}, c => c.nope)`,
+  ]),
+];
+// `R`: the reference back. `C`: the call.
+const aroundTheCall = ["R, C", "C, R", "C", "R, C, C"];
+// `X`: the name. `B`: one of `aroundTheCall`.
+const circularDeclarations: [reference: string, declaration: string][] = [
+  ["X", "const X = g(() => [B]);"],
+  ["X", "const X = h(() => [B]);"],
+  ["X", "const X = g(function () { return [B]; });"],
+  ["X", "const X = new G(() => [B]);"],
+  ["X", "const X = { p: g(() => [B]) };"],
+  ["X", "const X = g(() => g(() => [B]));"],
+  ["X", "const X = [B];"],
+  ["X()", "function X() { return g(() => [B]); }"],
+  ["X()", "function X() { return [B]; }"],
+  ["X()", "const X = () => g(() => [B]);"],
+  ["this.p", "class X { p = g(() => [B]); }"],
+  ["this.p()", "class X { p() { return g(() => [B]); } }"],
+];
+const callsAfterCircularReferences = [...product(circularDeclarations, aroundTheCall, overloadedCalls)].map(
+  ([[reference, declaration], around, call], index) =>
+    declaration
+      .replace("B", () => around.replace(/\bR\b/g, () => reference).replace(/\bC\b/g, () => call))
+      .replace(/\bX\b/g, () => `x${index}`),
+);
+
+for (const noImplicitAny of [true, false]) {
+  differential(
+    `a circular reference, and a call with overloads and a callback, noImplicitAny: ${noImplicitAny}`,
+    async () =>
+      expect(await casesThatDiffer({ noImplicitAny }, overloadDeclarations, callsAfterCircularReferences)).toEqual([]),
+    timeout,
+  );
+}
+
+// typescript-go lists the specifier of `import()` and `require()` once for each `import` and `require` in the text of the
+// call, and says why a file is in the program if there is more than one reason.
+differential(
+  "why a file is in the program: the text of a dynamic import",
+  async () => {
+    const typescript = [
+      `import("./import");`,
+      `import("./x");`,
+      `import("./import-import");`,
+      `import(/* import */ "./x");`,
+      `import("./x" /* require */);`,
+      `/* import */ import("./x");`,
+      `// import\nimport("./x");`,
+      `import("./x", { with: { import: "import" } });`,
+      `import("./x", /* import */ { with: {} });`,
+      `import("./x", { with: {} } /* import */);`,
+      `import("./x", imported);\ndeclare const imported: ImportCallOptions;`,
+      `import("./x", (imported));\ndeclare const imported: ImportCallOptions;`,
+      `import("./x", "import" as any);`,
+      `const a = /* import */ import("./x");`,
+      `async function f() { await /* require */ import("./x"); }`,
+      `import("./x").then(m => "import");`,
+      `import("./require");`,
+      `import("./x"); import("./x");`,
+      `import("./x"); /* import */`,
+      "import(`./import`);",
+      `import("./x",);`,
+      `import("./x", /* import */);`,
+      `[import("./import"), import("./x")];`,
+      `import ( "./x" ) ;`,
+      `import("./reimported");`,
+      `import("./iimport");`,
+      `import("./importimport");`,
+      `import("./rrequire");`,
+      `type T = typeof import("./import");`,
+      `type T = import("./import").T;`,
+      `import "./import";`,
+      `import * as i from "./import"; i;`,
+    ];
+    const javascript = [
+      `require("./require");`,
+      `require("./x");`,
+      `require(/* require */ "./x");`,
+      `const a = require("./import");`,
+      `import("./import");`,
+      `/** import */ import("./x");`,
+      `/** import */ /* import */ // import\nimport("./x");`,
+      `/**/ import("./x");`,
+      `x = /** import */ import("./x");`,
+      `/** require */\nconst a = require("./x");`,
+      `require("./x"); // require`,
+      `module.exports = require("./require-import");`,
+    ];
+    const imported = [
+      "import",
+      "x",
+      "import-import",
+      "require",
+      "reimported",
+      "iimport",
+      "importimport",
+      "rrequire",
+      "require-import",
+    ];
+    const cases = [
+      ...typescript.map(text => ["ts", text, "export type T = 1;\n"]),
+      ...javascript.map(text => ["js", text, "module.exports = 1;\n"]),
+    ];
+    using dir = tempDir("bun-check-differential", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { composite: true, noEmit: true, types: [], allowJs: true, skipLibCheck: true },
+        files: cases.map(([extension], i) => `c${i}/a.${extension}`),
+      }),
+      ...Object.fromEntries(
+        cases.flatMap(([extension, text, other], i) => [
+          [`c${i}/a.${extension}`, text + "\n"],
+          ...imported.map(name => [`c${i}/${name}.${extension}`, other]),
+        ]),
+      ),
+    });
+    const root = String(dir);
+    const [bun, theirs] = await Promise.all([
+      linesOf([bunExe(), "check"], root, root),
+      linesOf([tsc!, "--pretty", "false", "--tsBuildInfoFile", join(root, "out.tsbuildinfo")], root, root),
+    ]);
+    expect(theirs.filter(line => line.includes("The file is in the program because:")).length).toBeGreaterThan(20);
+    expect(bun).toEqual(theirs);
+  },
+  timeout,
+);
+
 const swapCase = (text: string) =>
   text.replace(/[a-z]/gi, c => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()));
 // A debug build checks a sample of the projects that take a process each.

@@ -6,10 +6,10 @@
 //! tools already parse.
 
 use crate::{Category, Diagnostic, Report};
-use bstr::{BString, ByteSlice};
+use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::relative_normalized;
+use bun_paths::resolve_path::{dirname, relative_normalized};
 use bun_sema::resolve::is_same_path;
 use bun_sema::util::FxHashMap;
 use std::io::Write;
@@ -667,21 +667,46 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             relative_path(path, style.cwd, style)
         );
     }
-    if !report.not_installed.is_empty() {
-        let (verb, count) = match report.not_installed.len() {
+    // A repository can have a hundred fixtures that nobody installs.
+    const NAMED: usize = 3;
+    for it in report.not_installed.iter().take(NAMED) {
+        let (verb, count) = match it.names.len() {
             1 => ("is", BString::from("1 dependency")),
             n => ("are", alloc_print!("{n} dependencies")),
+        };
+        let manifest = relative_path(&it.manifest, style.cwd, style);
+        let elsewhere = match it.is_of_working_directory {
+            true => BString::default(),
+            false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
         };
         pretty!(
             out,
             style.color,
-            "<blue>note<r><d>:<r> {} in package.json {} not installed. Run: <cyan>bun install<r>\n",
+            "<blue>note<r><d>:<r> {} in {} {} not installed. Run: <cyan>bun install{}<r>\n",
             count,
-            verb
+            manifest,
+            verb,
+            elsewhere
+        );
+    }
+    let more = report.not_installed.len().saturating_sub(NAMED);
+    if more == 1 {
+        pretty!(
+            out,
+            style.color,
+            "<blue>note<r><d>:<r> 1 more package.json has dependencies that are not installed.\n"
+        );
+    } else if more > 1 {
+        pretty!(
+            out,
+            style.color,
+            "<blue>note<r><d>:<r> {} more package.json files have dependencies that are not installed.\n",
+            more
         );
     }
     // `bun install` installs them too.
-    let is_listed = (report.not_installed.iter()).any(|name| name == b"@types/bun");
+    let mut names = report.not_installed.iter().flat_map(|it| &it.names);
+    let is_listed = names.any(|name| name == b"@types/bun");
     if is_missing_bun_types(report) && !is_listed {
         if report.has_bun_types_installed {
             pretty!(

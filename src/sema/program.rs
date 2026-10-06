@@ -4,7 +4,7 @@
 
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
-use crate::check::spans::{skip_trivia, skip_trivia_back};
+use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
 use crate::hir::{self, *};
 use crate::json::Json;
@@ -2126,6 +2126,104 @@ impl Visit {
     }
 }
 
+/// How many times `ForEachDynamicImportOrRequireCall` adds the specifier `u` of a call to
+/// `file.Imports()`: once for each `import` and `require` in the text at which `GetNodeAtPosition`
+/// finds the call. A token is not a node to it (`KindFirstNode`), so that is in the tokens of the
+/// call, the specifier among them, and in the comments before and between them.
+fn times_among_imports(hir: &File, calls: &ExprsByKind, text: &[u8], u: &SpecifierUse) -> usize {
+    let is_it = |args: IdList<ExprId>| hir.ids(args).next().is_some_and(|it| hir[it].pos == u.pos);
+    let of_kind = match u.kind {
+        SpecifierKind::ImportCall => calls.of(ExprTag::ImportCall),
+        _ => calls.of(ExprTag::Call),
+    };
+    let found = of_kind.iter().find_map(|&e| match hir[e].kind {
+        ExprKind::ImportCall { args } if is_it(args) => Some((e, args)),
+        ExprKind::Call(call) if is_it(hir[call].args) => Some((e, hir[call].args)),
+        _ => None,
+    });
+    let Some((call, args)) = found else {
+        return 1;
+    };
+    let spans = Spans::of(hir);
+    // `Loc`
+    let range = |e: ExprId| {
+        (
+            skip_trivia_back(text, start_of(hir, e) as usize),
+            spans.expr(e),
+        )
+    };
+    let is_token = |e: &ExprId| {
+        use ExprKind::*;
+        !is_parenthesized(hir, *e)
+            && matches!(
+                hir[*e].kind,
+                Missing
+                    | Ident(_)
+                    | This
+                    | Super
+                    | Null
+                    | True
+                    | False
+                    | Number(_)
+                    | String(_)
+                    | BigInt(_)
+                    | Regex
+            )
+    };
+    let (mut at, end) = range(call);
+    let mut times = 0;
+    // In JavaScript the `/** */` before a statement are nodes of it (`includeJSDoc`).
+    let start = start_of(hir, call);
+    let is_first = |s: &Stmt| matches!(s.kind, StmtKind::Expr(e) if start_of(hir, e) == start);
+    if hir.is_js && hir.stmts.iter().any(is_first) {
+        times += count_outside_jsdoc(&text[at..start as usize]);
+        at = start as usize;
+    }
+    for (from, to) in hir.ids(args).filter(|e| !is_token(e)).map(range) {
+        times += count_import_or_require(&text[at..from.max(at)]);
+        at = to.max(at);
+    }
+    (times + count_import_or_require(&text[at..end.max(at)])).max(1)
+}
+
+/// `count_import_or_require` in `trivia`, but for the comments `/** */` in it.
+fn count_outside_jsdoc(trivia: &[u8]) -> usize {
+    let (mut at, mut count) = (0, 0);
+    while let Some(next) = strings::index_of_char_usize(&trivia[at..], b'/') {
+        at += next;
+        let rest = &trivia[at..];
+        let end = match rest.get(1) {
+            Some(b'/') => strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len()),
+            _ => {
+                strings::index_of(&rest[2.min(rest.len())..], b"*/").map_or(rest.len(), |it| it + 4)
+            }
+        };
+        // `/**/` is not one.
+        if !(rest.starts_with(b"/**") && end > 4) {
+            count += count_import_or_require(&rest[..end]);
+        }
+        at += end.max(1);
+    }
+    count
+}
+
+/// `findImportOrRequire`, until there is no more.
+fn count_import_or_require(text: &[u8]) -> usize {
+    let (mut at, mut count) = (0, 0);
+    while let Some(next) = strings::index_of_any(&text[at..], b"ir") {
+        at += next;
+        let word: &[u8] = if text[at] == b'i' {
+            b"import"
+        } else {
+            b"require"
+        };
+        let is_word = text[at..].starts_with(word);
+        count += usize::from(is_word);
+        at += if is_word { word.len() } else { 1 };
+    }
+    count
+}
+
 /// The end of the string literal that starts at `start`.
 fn end_of_string_literal(text: &[u8], start: u32) -> u32 {
     let Some(&quote) = text.get(start as usize) else {
@@ -2324,15 +2422,13 @@ impl Included<'_, '_> {
         // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
         let mut uses = hir.specifier_uses.to_vec();
         uses.sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
+        let calls = (uses.iter().any(|u| u.kind.is_call())).then(|| ExprsByKind::new(hir));
         for u in &uses {
             let mode = mode_for_usage_location(options, module.default_mode, u);
-            specifiers.push((
-                u.spec,
-                mode,
-                1393,
-                u.pos,
-                end_of_string_literal(text, u.pos),
-            ));
+            let end = end_of_string_literal(text, u.pos);
+            let times = calls.as_ref().filter(|_| u.kind.is_call());
+            let times = times.map_or(1, |calls| times_among_imports(hir, calls, text, u));
+            specifiers.extend(std::iter::repeat_n((u.spec, mode, 1393, u.pos, end), times));
         }
         for (spec, mode, code, start, end) in specifiers {
             let Some(&target) = module.imports.get(&(spec, mode)) else {

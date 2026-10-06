@@ -558,8 +558,8 @@ pub struct Report {
     pub incomplete: Vec<Vec<u8>>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
-    /// The dependencies of a `package.json` that an error is about and that no `node_modules` has.
-    pub not_installed: Vec<Vec<u8>>,
+    /// By `package.json`.
+    pub not_installed: Vec<NotInstalled>,
     /// The scripts of pages that checked files import, which are not in the program of those files.
     scripts_elsewhere: Vec<Vec<u8>>,
     /// `UseCaseSensitiveFileNames`
@@ -763,7 +763,7 @@ pub fn check_provided_then<R>(
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
     report.is_case_sensitive = disk.is_case_sensitive();
-    report.not_installed = dependencies_not_installed(&disk, &project, &report.diagnostics);
+    report.not_installed = dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
     if cfg!(windows) {
         for reported in &mut report.diagnostics {
             host::show_drives(&mut reported.text);
@@ -785,12 +785,22 @@ pub fn check_provided_then<R>(
     result
 }
 
+/// The dependencies of a `package.json` that an error is about and that no `node_modules` has.
+pub struct NotInstalled {
+    /// The path of the `package.json`.
+    pub manifest: Vec<u8>,
+    pub names: Vec<Vec<u8>>,
+    /// It is the one that `bun install` in the working directory reads.
+    pub is_of_working_directory: bool,
+}
+
 /// `Report::not_installed`. An error without a file is about the project in `project`.
 fn dependencies_not_installed(
     host: &dyn Host,
+    cwd: &[u8],
     project: &[u8],
     diagnostics: &[Diagnostic],
-) -> Vec<Vec<u8>> {
+) -> Vec<NotInstalled> {
     // The name of a package in each message, and the package that has its types.
     let mut missing: Vec<(&[u8], Vec<u8>)> = Vec::new();
     for reported in diagnostics {
@@ -830,10 +840,14 @@ fn dependencies_not_installed(
         }
     }
     let arena = Arena::new();
-    let mut found: Vec<Vec<u8>> = Vec::new();
+    let nearest = |from| {
+        let mut manifests = ancestors(from).map(|dir| join(dir, b"package.json"));
+        manifests.find(|path| host.is_file(path))
+    };
+    let of_working_directory = nearest(cwd);
+    let mut found: Vec<NotInstalled> = Vec::new();
     for (from, package) in missing {
-        let manifest = ancestors(from).map(|dir| join(dir, b"package.json"));
-        let Some(manifest) = { manifest }.find(|path| host.is_file(path)) else {
+        let Some(manifest) = nearest(from) else {
             continue;
         };
         // Yarn Plug'n'Play installs no `node_modules`. Before Yarn 3 the file is `.pnp.js`.
@@ -857,8 +871,17 @@ fn dependencies_not_installed(
             let is_listed =
                 (kinds.iter()).any(|kind| json.get(kind).is_some_and(|it| it.get(&name).is_some()));
             let in_modules = |dir| host.is_dir(&join(&join(dir, b"node_modules"), &name));
-            if is_listed && !ancestors(from).any(in_modules) && !found.contains(&name) {
-                found.push(name);
+            if !is_listed || ancestors(from).any(in_modules) {
+                continue;
+            }
+            match found.iter_mut().find(|it| it.manifest == manifest) {
+                Some(it) if it.names.contains(&name) => {}
+                Some(it) => it.names.push(name),
+                None => found.push(NotInstalled {
+                    is_of_working_directory: of_working_directory.as_ref() == Some(&manifest),
+                    manifest: manifest.clone(),
+                    names: vec![name],
+                }),
             }
         }
     }

@@ -616,6 +616,10 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
         }
         (swapped != name).then_some(swapped)
     };
+    // `[eval]` is only in memory: no spelling of its name is found.
+    let Some(path) = ancestors(path).find(|it| bun_sys::exists(it)) else {
+        return true;
+    };
     // What is in a directory is on its file system. Its own name is not, if it is where that file
     // system is mounted, like `/app` in a container.
     if let Directory::Listed(listing) = list(path) {

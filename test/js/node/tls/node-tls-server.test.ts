@@ -9,6 +9,7 @@ import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import { Duplex } from "node:stream";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { PeerCertificate } from "tls";
@@ -3299,4 +3300,214 @@ it("an accepted socket emits 'close' when a write is the first to see the peer's
   expect(JSON.parse(lines[lines.length - 1])).toEqual({ events: ["error", "close:true"], connections: 1 });
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+describe("key/cert arrays", () => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name), "utf8");
+  const encrypt = (pem: string, passphrase: string) =>
+    crypto.createPrivateKey(pem).export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase }) as string;
+  const rsa = { key: read("agent1-key.pem"), cert: read("agent1-cert.pem") };
+  const ec = { key: read("ec10-key.pem"), cert: read("ec10-cert.pem") };
+  const otherRsa = { key: read("agent2-key.pem"), cert: read("agent2-cert.pem") };
+  const thirdRsa = { key: read("agent3-key.pem"), cert: read("agent3-cert.pem") };
+  const both = { key: [rsa.key, ec.key], cert: [rsa.cert, ec.cert] };
+
+  /** "<CN of the leaf>/<certificates sent>", or the error code. */
+  function served(port: number, options: tls.ConnectionOptions) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...options }, () => {
+      let sent = 0;
+      const seen = new Set<string>();
+      for (let c = socket.getPeerCertificate(true); c && !seen.has(c.fingerprint256); c = c.issuerCertificate) {
+        seen.add(c.fingerprint256);
+        sent++;
+      }
+      resolve(`${socket.getPeerCertificate().subject.CN}/${sent}`);
+      socket.destroy();
+    });
+    socket.on("error", e => resolve((e as NodeJS.ErrnoException).code!.replace("SSL/TLS_ALERT", "SSLV3_ALERT")));
+    socket.on("close", () => resolve("closed"));
+    return promise;
+  }
+
+  async function servedToEachKindOfClient(port: number, options: tls.ConnectionOptions = {}) {
+    return {
+      "TLS 1.2, ECDSA only": await served(port, {
+        ...options,
+        maxVersion: "TLSv1.2",
+        ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256",
+      }),
+      "TLS 1.2, RSA only": await served(port, {
+        ...options,
+        maxVersion: "TLSv1.2",
+        ciphers: "ECDHE-RSA-AES128-GCM-SHA256",
+      }),
+      "TLS 1.3": await served(port, options),
+      "TLS 1.3, RSA only": await served(port, { ...options, sigalgs: "rsa_pss_rsae_sha256" }),
+    };
+  }
+
+  async function listen(server: net.Server) {
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { port: (server.address() as AddressInfo).port, [Symbol.dispose]: () => void server.close() };
+  }
+
+  const each = (ecdsa: string, rsa: string, tls13 = ecdsa) => ({
+    "TLS 1.2, ECDSA only": ecdsa,
+    "TLS 1.2, RSA only": rsa,
+    "TLS 1.3": tls13,
+    "TLS 1.3, RSA only": rsa,
+  });
+  const refused = "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE";
+
+  it.each([
+    ["RSA, then ECDSA", both, each("agent10.example.com/2", "agent1/1")],
+    [
+      "ECDSA, then RSA",
+      { key: [ec.key, rsa.key], cert: [ec.cert, rsa.cert] },
+      each("agent10.example.com/2", "agent1/1"),
+    ],
+    [
+      "keys and certificates in opposite orders",
+      { key: [ec.key, rsa.key], cert: both.cert },
+      each("agent10.example.com/2", "agent1/1"),
+    ],
+    [
+      "a chain in each entry",
+      { key: both.key, cert: [rsa.cert + read("ca1-cert.pem"), ec.cert + read("ca5-cert.pem")] },
+      each("agent10.example.com/3", "agent1/2"),
+    ],
+    [
+      "encrypted keys",
+      { key: [encrypt(rsa.key, "secret"), encrypt(ec.key, "secret")], cert: both.cert, passphrase: "secret" },
+      each("agent10.example.com/2", "agent1/1"),
+    ],
+    ["a key with no certificate", { key: [ec.key, rsa.key], cert: [rsa.cert] }, each(refused, "agent1/1", "agent1/1")],
+    ["a certificate with no key", { key: [rsa.key], cert: both.cert }, each(refused, "agent1/1", "agent1/1")],
+    [
+      "a pfx array",
+      {
+        pfx: [
+          { buf: readFileSync(join(import.meta.dir, "../test/fixtures/keys/agent1.pfx")), passphrase: "sample" },
+          readFileSync(join(import.meta.dir, "../test/fixtures/keys/ec.pfx")),
+        ],
+      },
+      // Bun does not send the extra certificates of a PKCS#12 archive as the chain; Node v26.3.0 serves "agent1/2".
+      each("agent2/1", process.versions.bun ? "agent1/1" : "agent1/2"),
+    ],
+  ] as const)("every identity is served to the clients that can use it: %s", async (_, options, expected) => {
+    using server = await listen(createServer(options as tls.TlsOptions, socket => socket.on("error", () => {})));
+    expect(await servedToEachKindOfClient(server.port)).toEqual(expected);
+  });
+
+  it.each([
+    ["in the order of the certificates", [rsa.key, otherRsa.key]],
+    ["in the opposite order", [otherRsa.key, rsa.key]],
+  ])("of two certificates of one key type the last is served, with its own key: keys %s", async (_, key) => {
+    const options = { key: [...key, ec.key], cert: [rsa.cert, otherRsa.cert, ec.cert] };
+    // Node v26.3.0 refuses these: there every key of a type has to match the last certificate of that type.
+    if (!process.versions.bun) {
+      expect(() => createServer(options)).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH" }),
+      );
+      return;
+    }
+    using server = await listen(createServer(options, socket => socket.on("error", () => {})));
+    expect(await servedToEachKindOfClient(server.port)).toEqual(each("agent10.example.com/2", "agent2/1"));
+  });
+
+  it("two pairs of one key type serve the last pair", async () => {
+    // Node v26.3.0 throws ERR_OSSL_X509_KEY_VALUES_MISMATCH for the first of these.
+    if (process.versions.bun) {
+      using pairs = await listen(createServer({ key: [rsa.key, otherRsa.key], cert: [rsa.cert, otherRsa.cert] }));
+      expect(await served(pairs.port, {})).toBe("agent2/1");
+    }
+    using server = await listen(createServer({ key: [otherRsa.key], cert: [rsa.cert, otherRsa.cert] }));
+    expect(await served(server.port, {})).toBe("agent2/1");
+  });
+
+  it("a certificate whose only same-type keys do not fit is refused", () => {
+    for (const options of [
+      { key: [otherRsa.key, ec.key], cert: both.cert },
+      { key: [rsa.key], cert: [rsa.cert, otherRsa.cert] },
+      { key: [rsa.key, read("ec-key.pem")], cert: both.cert },
+    ]) {
+      expect(() => tls.createSecureContext(options)).toThrow(
+        expect.objectContaining({ code: "ERR_OSSL_X509_KEY_VALUES_MISMATCH" }),
+      );
+    }
+    expect(() => tls.createSecureContext({ key: [rsa.key, "not a key"], cert: [rsa.cert] })).toThrow();
+    expect(() => tls.createSecureContext({ key: [rsa.key], cert: [rsa.cert, "not a certificate"] })).toThrow();
+    expect(() =>
+      tls.createSecureContext({ ...both, key: [encrypt(rsa.key, "secret"), ec.key], passphrase: "no" }),
+    ).toThrow();
+  });
+
+  // Node v26.3.0 copies one identity out of an SNI context, so its RSA-only clients get the default context's certificate.
+  const sni = each("agent10.example.com/2", process.versions.bun ? "agent1/1" : "agent3/1");
+
+  it("addContext() serves every identity of its context", async () => {
+    const tlsServer = createServer(thirdRsa, socket => socket.on("error", () => {}));
+    tlsServer.addContext("a.example", both);
+    using server = await listen(tlsServer);
+    expect(await servedToEachKindOfClient(server.port, { servername: "a.example" })).toEqual(sni);
+    expect(await servedToEachKindOfClient(server.port, { servername: "b.example" })).toEqual(
+      each(refused, "agent3/1", "agent3/1"),
+    );
+  });
+
+  it("SNICallback serves every identity of the context it returns", async () => {
+    const context = tls.createSecureContext(both);
+    const SNICallback = (_: string, callback: (err: Error | null, ctx?: tls.SecureContext) => void) =>
+      callback(null, context);
+    using server = await listen(createServer({ ...thirdRsa, SNICallback }, socket => socket.on("error", () => {})));
+    expect(await servedToEachKindOfClient(server.port, { servername: "a.example" })).toEqual(sni);
+  });
+
+  it("a server over a Duplex serves every identity", async () => {
+    const secureContext = tls.createSecureContext(both);
+    using server = await listen(
+      net.createServer(raw => {
+        const duplex = new Duplex({
+          read() {},
+          write(chunk, _, callback) {
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => duplex.push(chunk));
+        raw.on("end", () => duplex.push(null));
+        raw.on("error", () => {});
+        new TLSSocket(duplex, { isServer: true, secureContext }).on("error", () => raw.destroy());
+      }),
+    );
+    expect(await servedToEachKindOfClient(server.port)).toEqual(each("agent10.example.com/2", "agent1/1"));
+  });
+
+  it.each([
+    ["TLSv1.3", "agent1"],
+    // On TLS 1.2 Node v26.3.0 only considers the last identity, and sends no certificate here.
+    ["TLSv1.2", process.versions.bun ? "agent1" : undefined],
+  ] as const)("a %s client sends the identity the server can verify", async (version, expected) => {
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    const tlsServer = createServer(
+      {
+        ...thirdRsa,
+        requestCert: true,
+        rejectUnauthorized: false,
+        sigalgs: "rsa_pss_rsae_sha256",
+        maxVersion: version,
+      },
+      socket => resolve(socket.getPeerCertificate().subject?.CN),
+    );
+    tlsServer.on("tlsClientError", reject);
+    using server = await listen(tlsServer);
+    const client = connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false, ...both });
+    client.on("error", reject);
+    try {
+      expect(await promise).toBe(expected);
+    } finally {
+      client.destroy();
+    }
+  });
 });

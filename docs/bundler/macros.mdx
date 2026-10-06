@@ -219,6 +219,8 @@ function howLong() {
 export { howLong };
 ```
 
+An argument can name a `const` that is declared above the call, if its initializer is a literal or the result of a macro. A `let` or a `var` is not a constant. A template literal or a `+` is known only if each piece is known, and a piece that contains a non-ASCII character is not joined yet.
+
 ## Examples
 
 ### Embed latest git commit hash

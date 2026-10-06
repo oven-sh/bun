@@ -653,8 +653,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// In a file that imports a macro. `inlinable`: the value may stand in for the binding
     /// everywhere, so it goes to `const_values`. `for_macro_args`: a macro call's arguments
     /// may name the binding, so it goes to `macro_.consts`.
-    #[cold]
-    fn record_const_value_for_macros(
+    fn put_const_value_for_macros(
         &mut self,
         r#ref: Ref,
         value: Expr,
@@ -674,11 +673,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `visit_decl` for an identifier binding in a file that imports a macro.
+    #[cold]
+    fn record_const_value_for_macros(
+        &mut self,
+        r#ref: Ref,
+        value: Option<Expr>,
+        was_const: bool,
+        could_be_macro: bool,
+    ) {
+        let Some(value) = value else { return };
+        if !value.can_be_const_value() {
+            return;
+        }
+        // Only a `const` in the leading declaration run of its scope, or a macro result, is
+        // safe to inline everywhere. A macro call's arguments may name any `const`. A `let`
+        // or `var` that holds a macro result is inlined when inlining is on, so the
+        // arguments see it then too.
+        let inlinable = could_be_macro || !self.vis_scope().is_after_const_local_prefix;
+        let for_macro_args = was_const || self.options.features.inlining;
+        self.put_const_value_for_macros(r#ref, value, inlinable, for_macro_args);
+    }
+
     /// Under inlining a macro result is recorded for every kind of binding, and a macro
     /// call's arguments keep seeing it. Otherwise only a `const` is recorded, for them alone.
     fn record_macro_result(&mut self, r#ref: Ref, value: Expr, is_const: bool) {
         let inlining = self.options.features.inlining;
-        self.record_const_value_for_macros(r#ref, value, inlining, is_const || inlining);
+        self.put_const_value_for_macros(r#ref, value, inlining, is_const || inlining);
     }
 
     pub(crate) fn visit_binding_and_expr_for_macro(
@@ -769,38 +790,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                // Only a `const` in the leading declaration run of its scope, or a macro
-                // result, is safe to inline everywhere.
-                let could_be_const_value =
-                    was_const && !self.vis_scope().is_after_const_local_prefix;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
-                    if let Some(val) = decl.value {
-                        if val.can_be_const_value() {
-                            if self.imports_macro() {
-                                // A `let` or `var` that holds a macro result is inlined when
-                                // inlining is on, so a macro call's arguments see it then too.
-                                let for_macro_args = was_const || self.options.features.inlining;
-                                self.record_const_value_for_macros(
-                                    id_ref,
-                                    val,
-                                    true,
-                                    for_macro_args,
-                                );
-                            } else {
+                if was_const || (Self::ALLOW_MACROS && could_be_macro) {
+                    if self.imports_macro() {
+                        self.record_const_value_for_macros(
+                            id_ref,
+                            decl.value,
+                            was_const,
+                            could_be_macro,
+                        );
+                    } else if !self.vis_scope().is_after_const_local_prefix {
+                        // Only a `const` in the leading declaration run of its scope is safe
+                        // to inline everywhere.
+                        if let Some(val) = decl.value {
+                            if val.can_be_const_value() {
                                 self.const_values.put(id_ref, val).expect("oom");
                             }
                         }
                     }
                 } else {
                     self.vis_scope().is_after_const_local_prefix = true;
-                    // A macro call's arguments may name a `const` that stands below a statement.
-                    if was_const && self.imports_macro() {
-                        if let Some(val) = decl.value {
-                            if val.can_be_const_value() {
-                                self.record_const_value_for_macros(id_ref, val, false, true);
-                            }
-                        }
-                    }
                 }
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let original_name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]

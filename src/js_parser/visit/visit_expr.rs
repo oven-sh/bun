@@ -1873,9 +1873,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// visited, `macro_.consts` stands in for `const_values` and the inliner reads it in
     /// every mode: an argument may name any `const` above the call that has a known value.
     /// Code outside the arguments keeps the narrower rules of `const_values`.
+    ///
+    /// Returns false, with nothing visited, for a call that does not run the macro (dead
+    /// code, which includes a call that `--drop` removes, and the macro runtime) and for a
+    /// macro call that is itself an argument of one: the outer call's swap covers it.
     #[cold]
     #[inline(never)]
-    fn visit_macro_arguments(p: &mut Self, args: &mut [Expr]) {
+    fn visit_macro_arguments(p: &mut Self, args: &mut [Expr]) -> bool {
+        if p.options.features.is_macro_runtime || p.is_control_flow_dead || p.macro_.in_args {
+            return false;
+        }
+
         let old_inlining = p.options.features.inlining;
         core::mem::swap(&mut p.const_values, &mut p.macro_.consts);
         p.macro_.in_args = true;
@@ -1888,6 +1896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.options.features.inlining = old_inlining;
         p.macro_.in_args = false;
         core::mem::swap(&mut p.const_values, &mut p.macro_.consts);
+        true
     }
 
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
@@ -2137,32 +2146,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            'args: {
-                // We want to forcefully fold constants inside of
-                // certain calls even when minification is disabled, so
-                // that if we have an import based on a string template,
-                // it does not cause a bundle error. This is relevant for
-                // macros, as they require constant known values, but also
-                // for `require` and `require.resolve`, as they go through
-                // the module resolver.
-                if is_macro_ref
-                    || matches!(e_.target.data, Data::ERequireCallTarget)
-                    || matches!(e_.target.data, Data::ERequireResolveCallTarget)
-                {
-                    p.options.ignore_dce_annotations = true;
-                    p.should_fold_typescript_constant_expressions = true;
+            // We want to forcefully fold constants inside of
+            // certain calls even when minification is disabled, so
+            // that if we have an import based on a string template,
+            // it does not cause a bundle error. This is relevant for
+            // macros, as they require constant known values, but also
+            // for `require` and `require.resolve`, as they go through
+            // the module resolver.
+            if is_macro_ref
+                || matches!(e_.target.data, Data::ERequireCallTarget)
+                || matches!(e_.target.data, Data::ERequireResolveCallTarget)
+            {
+                p.options.ignore_dce_annotations = true;
+                p.should_fold_typescript_constant_expressions = true;
 
-                    // Only a call that runs the macro needs its arguments as values.
-                    if is_macro_ref
-                        && !p.options.features.is_macro_runtime
-                        && !p.is_control_flow_dead
-                        && !p.macro_.in_args
-                    {
-                        Self::visit_macro_arguments(p, e_.args.slice_mut());
-                        break 'args;
+                // A call that runs a macro visits its arguments with the macro's const table.
+                if !(is_macro_ref && Self::visit_macro_arguments(p, e_.args.slice_mut())) {
+                    for arg in e_.args.slice_mut() {
+                        p.visit_expr(arg);
                     }
                 }
-
+            } else {
                 for arg in e_.args.slice_mut() {
                     p.visit_expr(arg);
                 }

@@ -17,6 +17,7 @@ import assert from "node:assert";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import https from "node:https";
 import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
@@ -949,6 +950,30 @@ describe("an error of the wrapped socket is reported on the TLS socket", () => {
     );
   }
 });
+
+// The shape of https-proxy-agent. node:http reads the socket's _hadError to decide whether it still owes 'socket hang up'.
+for (const when of ["during the handshake", "with the request in flight"]) {
+  test(`an https request over tls.connect({ socket }) hangs up when the wrapped socket is destroyed ${when}`, async () => {
+    const destroyRaw = () => void setImmediate(() => raw.destroy());
+    const server =
+      when === "during the handshake"
+        ? net.createServer(peer => peer.on("error", () => {}).once("data", destroyRaw))
+        : https.createServer({ key, cert }, destroyRaw);
+    const raw = net.connect(await listen(server), "127.0.0.1");
+    try {
+      const events: string[] = [];
+      const req = https.request({ createConnection: () => tls.connect({ socket: raw, rejectUnauthorized: false }) });
+      req.on("response", () => events.push("response"));
+      req.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code} ${err.message}`));
+      req.end();
+      await new Promise(resolve => req.on("close", resolve));
+      assert.deepStrictEqual(events, ["error ECONNRESET socket hang up"]);
+    } finally {
+      raw.destroy();
+      server.close();
+    }
+  });
+}
 
 test("a secureContext that is not one is refused by the constructor", () => {
   const invalid = { name: "TypeError", code: "ERR_TLS_INVALID_CONTEXT", message: "context must be a SecureContext" };

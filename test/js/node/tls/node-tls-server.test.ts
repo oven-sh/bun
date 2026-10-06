@@ -3736,28 +3736,73 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
     ]);
   });
 
+  // In a process of its own: a count taken here would include what earlier tests left for the GC.
   it("the names last as long as the connections, and no longer", async () => {
-    Bun.gc(true);
-    const before = sslCtxLiveCount();
-    // Nothing here outlives the call but the raw client sockets.
-    const raws = await (async () => {
-      const server: Server = createServer({ ...agent(2), sessionTimeout: 4001 });
-      for (let i = 0; i < 4; i++) {
-        server.addContext(`${i}.example`, tls.createSecureContext({ ...agent(1), sessionTimeout: 4002 + i }));
+    const script = `
+      const { sslCtxLiveCount } = require("bun:internal-for-testing");
+      const net = require("node:net"), tls = require("node:tls"), { once } = require("node:events");
+      const agent = ${JSON.stringify([, agent(1), agent(2)])};
+      const before = sslCtxLiveCount();
+      const result = {};
+
+      // Nothing here outlives the call but the raw client sockets and the 'close' promise.
+      async function serve() {
+        const server = tls.createServer({ ...agent[2], sessionTimeout: 4001 }, s => s.on("error", () => {}).end());
+        for (let i = 0; i < 4; i++) {
+          server.addContext(i + ".example", tls.createSecureContext({ ...agent[1], sessionTimeout: 4002 + i }));
+        }
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const accepted = Promise.withResolvers();
+        let connections = 0;
+        server.on("connection", () => ++connections === 4 && accepted.resolve());
+        const raws = [0, 1, 2, 3].map(() => net.connect(server.address().port, "127.0.0.1"));
+        await accepted.promise;
+        const closed = once(server, "close");
+        server.close();
+        return { raws, closed };
       }
-      const raws = await acceptRaw(server, 4);
-      server.close();
-      return raws;
-    })();
-    Bun.gc(true);
-    expect(sslCtxLiveCount() - before).toBeGreaterThanOrEqual(5);
-    expect(await Promise.all(raws.map((raw, i) => servedCN(raw, `${i}.example`)))).toEqual(Array(4).fill("agent1"));
-    // Finalizers run on GC, so wait for the condition.
-    for (let i = 0; i < 100 && sslCtxLiveCount() > before; i++) {
+
+      const { raws, closed } = await serve();
       Bun.gc(true);
-      await new Promise<void>(resolve => setImmediate(resolve));
-    }
-    expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
+      result.open = sslCtxLiveCount() - before;
+      result.served = await Promise.all(
+        raws.map(async (socket, i) => {
+          const client = tls.connect({
+            socket,
+            servername: i + ".example",
+            rejectUnauthorized: false,
+            minVersion: "${version}",
+            maxVersion: "${version}",
+          });
+          await once(client, "secureConnect");
+          const { CN } = client.getPeerCertificate().subject;
+          client.destroy();
+          return CN;
+        }),
+      );
+      await closed;
+      // Finalizers run on GC, so wait for the condition.
+      for (let i = 0; i < 10 && sslCtxLiveCount() !== before; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      result.left = sslCtxLiveCount() - before;
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: JSON.parse(stdout || "null") }).toEqual({
+      stderr: "",
+      result: {
+        // The 4 entries, the listener's default (each accepted SSL holds it), and what the Server the
+        // connections keep alive owns: _sharedCreds and the context the accepted TLSSockets share.
+        open: 7,
+        served: ["agent1", "agent1", "agent1", "agent1"],
+        left: 0,
+      },
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

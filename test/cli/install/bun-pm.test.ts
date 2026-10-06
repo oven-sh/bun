@@ -1150,7 +1150,7 @@ test.concurrent.each([
     "scripted/package.json": JSON.stringify({
       name: "scripted",
       version: "1.0.0",
-      scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall.txt', '')"` },
+      scripts: { postinstall: `"${bunExe()}" -e "require('fs').writeFileSync('postinstall.txt', '')"` },
     }),
   });
   const root = String(dir);

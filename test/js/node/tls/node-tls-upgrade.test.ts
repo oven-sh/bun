@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { spawn } from "child_process";
 import { once } from "events";
-import { tls as certs } from "harness";
+import { bunEnv, bunExe, tls as certs } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -289,3 +290,167 @@ test.each(["connected", "connecting"])(
     }
   },
 );
+
+// A "ping" round trip over tls.connect({ socket }) with a peer that echoes.
+function pingOverTLS(socket: Duplex) {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const tlsSocket = tls.connect({ socket, rejectUnauthorized: false }, () => tlsSocket.write("ping"));
+  tlsSocket.on("error", reject);
+  tlsSocket.on("close", () => reject(new Error("closed before the echo arrived")));
+  tlsSocket.on("data", chunk => resolve(chunk.toString()));
+  return promise;
+}
+
+function wrapAndEcho(transport: Duplex) {
+  const secure = new tls.TLSSocket(transport as net.Socket, { isServer: true, ...certs });
+  secure.on("error", () => {});
+  secure.on("data", chunk => secure.write(chunk));
+  return secure;
+}
+
+test("new TLSSocket(accepted, { isServer: true }) hands over a ClientHello buffered in several chunks", async () => {
+  // Protocol sniffing: read(1) and unshift() leave the ClientHello in the readable buffer as two chunks.
+  const server = net.createServer(accepted => {
+    accepted.once("readable", () => {
+      accepted.unshift(accepted.read(1));
+      wrapAndEcho(accepted);
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  try {
+    expect(await pingOverTLS(socket)).toBe("ping");
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
+test("new TLSSocket(accepted, { isServer: true }) hands an already buffered ClientHello over once", async () => {
+  const surfaced = Promise.withResolvers<{ handedOver: number; emitted: number; buffered: number }>();
+  const server = net.createServer(accepted => {
+    accepted.once("readable", () => {
+      const handedOver = accepted.readableLength;
+      const secure = wrapAndEcho(accepted);
+      let emitted = 0;
+      accepted.on("data", chunk => (emitted += chunk.length));
+      secure.once("data", () => surfaced.resolve({ handedOver, emitted, buffered: accepted.readableLength }));
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  try {
+    expect(await pingOverTLS(socket)).toBe("ping");
+    const { handedOver, ...rest } = await surfaced.promise;
+    expect(handedOver).toBeGreaterThan(0);
+    expect(rest).toEqual({ emitted: handedOver, buffered: 0 });
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
+test("a Duplex that is paused with the ClientHello buffered when it is wrapped still handshakes", async () => {
+  const pipeTo = (peer: () => Duplex) =>
+    new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        peer().push(chunk);
+        callback();
+      },
+    });
+  const serverSide: Duplex = pipeTo(() => clientSide);
+  const clientSide: Duplex = pipeTo(() => serverSide);
+  const echoed = pingOverTLS(clientSide);
+  await once(serverSide, "readable");
+  serverSide.pause();
+  const secure = wrapAndEcho(serverSide);
+  try {
+    expect(await echoed).toBe("ping");
+  } finally {
+    secure.destroy();
+    clientSide.destroy();
+  }
+});
+
+test("TLS over TLS: an outer socket that is paused with the inner ClientHello unshifted still handshakes", async () => {
+  const server = tls.createServer(certs, outer => {
+    outer.on("error", () => {});
+    outer.once("data", chunk => {
+      outer.pause();
+      if (chunk.length > 8) outer.unshift(chunk.subarray(8));
+      wrapAndEcho(outer);
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const outer = tls.connect({
+    port: (server.address() as net.AddressInfo).port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+  });
+  try {
+    await once(outer, "secureConnect");
+    outer.cork();
+    outer.write("STARTTLS");
+    const echoed = pingOverTLS(outer);
+    outer.uncork();
+    expect(await echoed).toBe("ping");
+  } finally {
+    outer.destroy();
+    server.close();
+  }
+});
+
+// Node has one handle under both sockets, so the last call on either decides.
+test.each(["socket.unref();", "socket.ref(); tlsSocket.unref();"])(
+  "after the upgrade, %s lets the process exit",
+  async calls => {
+    const server = net.createServer(accepted => wrapAndEcho(accepted));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const script = `
+      const net = require("net"), tls = require("tls");
+      // A process that cannot exit must not outlive the test.
+      setTimeout(() => process.exit(3), 10_000).unref();
+      const socket = net.connect(${(server.address() as net.AddressInfo).port}, "127.0.0.1", () => {
+        const tlsSocket = tls.connect({ socket, rejectUnauthorized: false }, () => {
+          tlsSocket.resume();
+          ${calls}
+        });
+      });`;
+    const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: ["ignore", "inherit", "inherit"] });
+    try {
+      expect(await once(child, "exit")).toEqual([0, null]);
+    } finally {
+      child.kill();
+      server.close();
+    }
+  },
+);
+
+test("_parent is the wrapped net.Socket", async () => {
+  const server = net.createServer(socket => socket.on("error", () => {}));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const sockets: net.Socket[] = [];
+  const parentOf = (wrap: (raw: net.Socket) => tls.TLSSocket) => {
+    const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+    const tlsSocket = wrap(raw).on("error", () => {});
+    sockets.push(raw, tlsSocket);
+    // @ts-expect-error not in @types/node
+    return tlsSocket._parent === raw;
+  };
+  try {
+    expect({
+      "tls.connect({ socket })": parentOf(socket => tls.connect({ socket })),
+      "new TLSSocket(socket)": parentOf(socket => new tls.TLSSocket(socket)),
+      "new TLSSocket(socket, { isServer })": parentOf(
+        socket => new tls.TLSSocket(socket, { isServer: true, ...certs }),
+      ),
+    }).toEqual({
+      "tls.connect({ socket })": true,
+      "new TLSSocket(socket)": true,
+      "new TLSSocket(socket, { isServer })": true,
+    });
+  } finally {
+    closeAll(server, sockets);
+  }
+});

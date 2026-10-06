@@ -364,3 +364,30 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.polluted).toBe("PerformanceMark {");
   expect(exitCode).toBe(0);
 });
+
+test("eventLoopUtilization reports busy and idle time", async () => {
+  const { eventLoopUtilization } = perf.performance;
+  // Like Node, it reports zeros until the event loop has run once.
+  await Bun.sleep(1);
+
+  // Busy: block the thread for 50ms. That should count as active time.
+  const beforeBusy = eventLoopUtilization();
+  const start = performance.now();
+  while (performance.now() - start < 50) {}
+  const busy = eventLoopUtilization(beforeBusy);
+  expect(busy.active).toBeGreaterThan(40);
+  expect(busy.utilization).toBeGreaterThan(0.9);
+
+  // Idle: wait on a 50ms timer. The loop sleeps, so that should count as idle time.
+  const beforeIdle = eventLoopUtilization();
+  await Bun.sleep(50);
+  const idle = eventLoopUtilization(beforeIdle);
+  expect(idle.idle).toBeGreaterThan(25);
+  expect(idle.utilization).toBeLessThan(0.5);
+
+  // With two samples, the result is their difference.
+  const later = eventLoopUtilization();
+  const diff = eventLoopUtilization(later, beforeIdle);
+  expect(diff.idle).toBe(later.idle - beforeIdle.idle);
+  expect(diff.active).toBe(later.active - beforeIdle.active);
+});

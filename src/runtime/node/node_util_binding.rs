@@ -244,3 +244,29 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     }
     Ok(obj)
 }
+
+#[bun_jsc::host_fn]
+pub(crate) fn event_loop_idle_time(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let loop_data = &global.bun_vm().uws_loop_mut().internal_loop_data;
+    Ok(JSValue::js_number(
+        loop_data.idle_time_ns as f64 / 1_000_000.0,
+    ))
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn event_loop_elapsed_time(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let loop_data = &global.bun_vm().uws_loop_mut().internal_loop_data;
+    let elapsed_ns = if loop_data.loop_start_ns == 0 {
+        0
+    } else {
+        bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns()
+            - loop_data.loop_start_ns
+    };
+    Ok(JSValue::js_number(elapsed_ns as f64 / 1_000_000.0))
+}

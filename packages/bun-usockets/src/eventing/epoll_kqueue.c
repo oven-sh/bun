@@ -479,6 +479,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (loop->num_polls == 0)
         return;
 
+    /* Remember when this loop first ran (for eventLoopUtilization) */
+    if (loop->data.loop_start_ns == 0)
+        loop->data.loop_start_ns = us_internal_monotonic_ns();
+
     loop->data.tick_depth++;
 
     /* Emit pre callback */
@@ -528,6 +532,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    uint64_t idle_start_ns = 0;
+
+    /* We are about to block in the kernel, so measure how long we were idle. */
+    if (will_idle_inside_event_loop)
+        idle_start_ns = us_internal_monotonic_ns();
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -545,6 +555,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
         timeout);
 #endif
+
+    /* We are back from the kernel, so measure how long we were idle. */
+    if (will_idle_inside_event_loop)
+        loop->data.idle_time_ns += us_internal_monotonic_ns() - idle_start_ns;
 
     /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
     loop->current_ready_poll = 0;

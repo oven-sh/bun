@@ -1995,6 +1995,116 @@ describe("addContext with a name of more than 10 labels", () => {
   });
 });
 
+describe("addContext() entries apply to every listen()", () => {
+  // tls.Server keeps every entry, like node's server._contexts, and loads them into each listener it creates.
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
+  const agent2 = { key: fixture("agent2-key.pem"), cert: fixture("agent2-cert.pem") };
+  const agent3 = { key: fixture("agent3-key.pem"), cert: fixture("agent3-cert.pem") };
+
+  async function listen(server: Server) {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return server.address() as AddressInfo;
+  }
+
+  async function relisten(server: Server) {
+    server.close();
+    await once(server, "close");
+    return listen(server);
+  }
+
+  // The CN of the certificate the server presents for `servername`.
+  async function servedCN({ address, port }: AddressInfo, servername: string) {
+    const client = connect({ host: address, port, servername, rejectUnauthorized: false });
+    try {
+      await once(client, "secureConnect");
+      return client.getPeerCertificate().subject.CN;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  it("an entry added while listening is still there after close() and listen()", async () => {
+    const server: Server = createServer(agent1, socket => socket.end());
+    try {
+      const first = await listen(server);
+      server.addContext("added.example", agent2);
+      const whileListening = await servedCN(first, "added.example");
+      const second = await relisten(server);
+      expect({
+        whileListening,
+        afterRelisten: await servedCN(second, "added.example"),
+        otherName: await servedCN(second, "other.example"),
+      }).toEqual({
+        whileListening: "agent2",
+        afterRelisten: "agent2",
+        otherName: "agent1",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("an entry replaced while listening stays replaced after close() and listen()", async () => {
+    const server: Server = createServer(agent1, socket => socket.end());
+    server.addContext("rotated.example", agent2);
+    try {
+      const first = await listen(server);
+      const beforeReplace = await servedCN(first, "rotated.example");
+      server.addContext("rotated.example", agent3);
+      const afterReplace = await servedCN(first, "rotated.example");
+      const second = await relisten(server);
+      expect({
+        beforeReplace,
+        afterReplace,
+        afterRelisten: await servedCN(second, "rotated.example"),
+      }).toEqual({
+        beforeReplace: "agent2",
+        afterReplace: "agent3",
+        afterRelisten: "agent3",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("addContext() without a servername throws ERR_TLS_REQUIRED_SERVER_NAME and keeps no entry", async () => {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    const required = expect.objectContaining({
+      name: "Error",
+      code: "ERR_TLS_REQUIRED_SERVER_NAME",
+      message: '"servername" is required parameter for Server.addContext',
+    });
+    const server: Server = createServer(agent1, socket => socket.end());
+    try {
+      // A kept empty name would make every listen() fail.
+      for (const servername of ["", undefined, null]) {
+        expect(() => server.addContext(servername as any, agent2)).toThrow(required);
+      }
+      await listen(server);
+      expect(() => server.addContext("", agent2)).toThrow(required);
+      expect(await servedCN(await relisten(server), "added.example")).toBe("agent1");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("listen() loads the entries in addContext() call order", async () => {
+    // "ordered.example." and "ordered.example" land on the same native SNI
+    // entry, so the order a listener receives them in decides what it serves.
+    const server: Server = createServer(agent1, socket => socket.end());
+    server.addContext("ordered.example", agent2);
+    server.addContext("ordered.example.", agent2);
+    server.addContext("ordered.example", agent3);
+    try {
+      expect(await servedCN(await listen(server), "ordered.example")).toBe("agent3");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("tls.Server socket destroySoon", () => {
   // destroySoon() after end(big) must deliver every byte even when the TLS write
   // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of

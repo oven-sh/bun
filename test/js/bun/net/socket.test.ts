@@ -5430,3 +5430,32 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+// In a process of its own: BoringSSL's SSL_set_session abort()s once the handshake has started.
+// `finished` separates a finished handshake from one in flight; `reused` is true only if the offer reached the wire.
+it("setSession() after the handshake started is ignored on every Bun socket door", async () => {
+  const expected = {
+    "bun-connect-handshake": { threw: null, finished: true, reused: false },
+    "bun-connect-open-late": { threw: null, finished: true, reused: false },
+    "bun-listen-handshake": { threw: null, finished: true },
+    "bun-upgrade-tls-half": { threw: null, finished: true },
+    "bun-upgrade-raw-half": { threw: null, finished: true },
+    "bun-connect-failed-handshake": { threw: null, finished: false, success: false },
+    "bun-connect-open-after-write": { threw: null, finished: false },
+    "bun-connect-open-legal": { threw: null, finished: false, reused: true },
+  };
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      join(import.meta.dirname, "../../node/tls/node-tls-set-session-after-start.fixture.ts"),
+      ...Object.keys(expected),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(expected);
+  expect(exitCode).toBe(0);
+});

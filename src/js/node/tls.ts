@@ -1081,8 +1081,6 @@ TLSSocket.prototype.setServername = function setServername(name) {
 };
 
 TLSSocket.prototype.setSession = function setSession(session) {
-  // A wrap sent its ClientHello in the constructor, and BoringSSL aborts the process on a session set after that.
-  if (this[kStandaloneWrap]) return;
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);

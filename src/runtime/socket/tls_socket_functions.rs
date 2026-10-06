@@ -101,6 +101,12 @@ pub(super) mod ffi {
             use_context: c_int,
         ) -> c_int;
         pub(crate) safe fn SSL_session_reused(ssl: &SSL) -> c_int;
+        // Copies at most `min(max_out, 32)` bytes, so a 32-byte `out` leaves no precondition.
+        pub(crate) safe fn SSL_get_client_random(
+            ssl: &SSL,
+            out: &mut [u8; 32],
+            max_out: usize,
+        ) -> usize;
         pub(crate) safe fn SSL_get_privatekey(ssl: &SSL) -> *mut EVP_PKEY;
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
@@ -1163,34 +1169,41 @@ pub(super) fn set_session(
         let Some(ssl_ptr) = this.socket.get().ssl() else {
             return Ok(JSValue::UNDEFINED);
         };
+        let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
+        // SSL_set_session abort()s once the ClientHello is built, which is when the client random is filled.
+        let mut client_random = [0u8; 32];
+        ffi::SSL_get_client_random(ssl, &mut client_random, 32);
+        if ffi::SSL_is_server(ssl) != 0 || client_random != [0u8; 32] {
+            return Ok(JSValue::UNDEFINED);
+        }
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
-        let session = unsafe {
+        let session = OwnedSession(unsafe {
             ffi::d2i_SSL_SESSION(
                 core::ptr::null_mut(),
                 &raw mut tmp,
                 c_long::try_from(session_slice.len()).expect("int cast"),
             )
-        };
-        if session.is_null() {
+        });
+        if session.0.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
-        // SSL_set_session takes its own reference ("the caller retains ownership of |session|"),
-        // so we must release the one returned by d2i_SSL_SESSION on every path.
-        // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
-        let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
-        if ffi::SSL_set_session(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-            ffi::SSL_SESSION::opaque_ref(session),
-        ) != 1
-        {
-            return Err(global.throw_value(get_ssl_exception(global, b"SSL_set_session error")));
-        }
+        ffi::SSL_set_session(ssl, ffi::SSL_SESSION::opaque_ref(session.0));
         Ok(JSValue::UNDEFINED)
     } else {
         Err(global.throw(format_args!(
             "Expected session to be a string, Buffer or TypedArray"
         )))
+    }
+}
+
+/// The +1 reference `d2i_SSL_SESSION` returns (or null).
+struct OwnedSession(*mut ffi::SSL_SESSION);
+
+impl Drop for OwnedSession {
+    fn drop(&mut self) {
+        // SAFETY: we own this reference; SSL_SESSION_free accepts null.
+        unsafe { ffi::SSL_SESSION_free(self.0) };
     }
 }
 

@@ -301,6 +301,49 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   });
 });
 
+test("a byte order mark is not a column, wherever the text comes from", async () => {
+  const text = `export const n: number = "1";\n`;
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    "index.ts": "\uFEFF" + text,
+    "build.ts": `
+      const text = ${JSON.stringify(text)};
+      const inMemory = value => ({ entrypoints: ["/virtual/index.ts"], files: { "/virtual/index.ts": value } });
+      for (const options of [
+        { entrypoints: ["index.ts"] },
+        inMemory("\\uFEFF" + text),
+        inMemory(new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(text)])),
+      ]) {
+        const { logs } = await Bun.build({ check: true, throw: false, ...options });
+        console.log(JSON.stringify(logs.map(log => [log.position.line, log.position.column, log.position.lineText])));
+      }
+    `,
+  });
+  const run = async (cmd: string[], stdin?: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env,
+      stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stdout + stderr;
+  };
+  const place = (printed: string) => /[(:]1[,:](\d+)/.exec(printed)?.[1];
+  const printed = await Promise.all([
+    run(["check"]),
+    run(["--check", "index.ts"]),
+    run(["--check", "-"], "\uFEFF" + text),
+    run(["build", "--check", "index.ts", "--outdir", "out"]),
+  ]);
+  expect(printed.map(place)).toEqual(["14", "14", "14", "14"]);
+  expect(printed.filter(it => it.includes("\uFEFF"))).toEqual([]);
+  const line = JSON.stringify([[1, 14, text.trimEnd()]]);
+  expect((await run(["build.ts"])).trim().split("\n")).toEqual([line, line, line]);
+});
+
 test("Bun.build: the check has the conditions and the loaders of the build, not those of the process", async () => {
   const exports = (conditions: object) =>
     JSON.stringify({ name: "it", version: "1.0.0", exports: { ".": conditions } });

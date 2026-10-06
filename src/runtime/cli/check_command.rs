@@ -707,7 +707,6 @@ impl<'a> EntryPoint<'a> {
 /// Type checks `entry_points` and everything they import before they are run. Returns whether they
 /// have no errors. Reports the errors on stderr, which leaves stdout to the program.
 pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
-    use bun_core::strings::without_utf8_bom;
     let cwd = working_directory();
     // `--loader`, `--conditions`
     let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
@@ -717,8 +716,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     let Some((paths, script_kinds)) = what_to_check(&cwd, entry_points, &by_extension) else {
         return true;
     };
-    let mut in_memory =
-        (entry_points.iter()).filter_map(|it| Some((it.path, without_utf8_bom(it.text?))));
+    let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
@@ -776,13 +774,16 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     }))
 }
 
-/// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative.
+/// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative,
+/// and its value may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
+    use bun_core::strings::without_utf8_bom;
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
         .map(|(path, text)| {
             let path = join_abs_string::<Auto>(cwd, &[path]);
-            (bun_sema_driver::host::from_native(path), text.to_vec())
+            let text = without_utf8_bom(text).to_vec();
+            (bun_sema_driver::host::from_native(path), text)
         })
         .collect()
 }

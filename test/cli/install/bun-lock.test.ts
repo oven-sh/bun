@@ -1912,7 +1912,9 @@ function instancesOf(lock: string, name: string): Record<string, string> {
   );
 }
 
-it.concurrent.each<{
+// Sequential on purpose: each case runs two debug installs, and with the five
+// cases an ASAN run allows at once they exceed the per-test timeout on a busy machine.
+it.each<{
   shape: string;
   manifests: OrderedManifests;
   files: Record<string, object>;
@@ -2096,7 +2098,8 @@ it.concurrent.each<{
 );
 
 // Imports resolve one after the other, so the packages an earlier import
-// resolved are in place for every range a later one brings.
+// resolved are in place for every range a later one brings. The second run
+// resolves from the manifest cache without waiting on the registry.
 it.concurrent("runtime auto-install: a later import's range takes the z an earlier import resolved", async () => {
   const ordered = await registryWithHolds({
     a: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
@@ -2110,13 +2113,15 @@ it.concurrent("runtime auto-install: a later import's range takes the z an earli
 const a = require("a@1.0.0");
 console.log(JSON.stringify({ z: z.version, "a/z": a.z.version }));`,
   });
-  await using proc = spawn({
-    cmd: [bunExe(), "index.js"],
-    cwd: String(dir),
-    env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out, err, code }).toEqual({ out: `{"z":"1.0.0","a/z":"1.0.0"}\n`, err: "", code: 0 });
+  for (const cache of ["cold", "warm"]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ cache, out, err, code }).toEqual({ cache, out: `{"z":"1.0.0","a/z":"1.0.0"}\n`, err: "", code: 0 });
+  }
 });

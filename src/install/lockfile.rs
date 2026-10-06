@@ -820,9 +820,8 @@ impl Lockfile {
             .unwrap_or(invalid_package_id)
     }
 
-    /// Brings `workspace_package_ids` up to date. A resolution tag is only
-    /// written in place while a lockfile loads, before the first call, so only
-    /// the packages appended since the last call are scanned.
+    /// Extends `workspace_package_ids` over the packages appended since the
+    /// last call. Tags are rewritten in place only while a lockfile loads.
     fn scan_workspace_package_ids(&mut self) {
         let resolutions = self.packages.items_resolution();
         debug_assert!(self.workspace_package_ids_scanned as usize <= resolutions.len());
@@ -2245,13 +2244,10 @@ impl Lockfile {
         *self.appended_for_mut(id) = AppendedFor { direct, pinned };
     }
 
-    /// Row `dependency_id` resolved to the existing package `id`; `pins` when
-    /// it is a regular row whose range is exactly `id`'s version. A direct row
-    /// makes the package reusable, whichever row appended it: the update path
-    /// enqueues transitive rows before the root's. A transitive row's pin is
-    /// ignored once the package is reusable: from then on rows read `pinned`,
-    /// and which transitive rows have resolved to it by any given moment
-    /// depends on registry timing.
+    /// Row `dependency_id` resolved to the existing package `id` (`pins`: a
+    /// regular row whose range is exactly its version). A direct row makes it
+    /// reusable whichever row appended it. A transitive pin counts only while
+    /// it is not yet reusable; after that, rows read `pinned`.
     pub(crate) fn mark_reused_for(
         &mut self,
         id: PackageID,

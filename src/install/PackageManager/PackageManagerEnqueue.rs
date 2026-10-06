@@ -661,15 +661,17 @@ pub fn enqueue_dependency_to_root(
                 return DependencyToEnqueue::Failure(err);
             }
 
-            // Nothing is in flight: the ranges of a later import may reuse
-            // what this one resolved.
-            this.lockfile.mark_settled_packages();
-
             break 'brk this.lockfile.buffers.resolutions[dep_id as usize];
         }
         // we managed to synchronously resolve the dependency
         pkg_id => pkg_id,
     };
+
+    // Whether this import waited or resolved from the cache, nothing is in
+    // flight now: the ranges of a later import may reuse what it resolved.
+    if this.pending_task_count() == 0 {
+        this.lockfile.mark_settled_packages();
+    }
 
     if resolution_id == invalid_package_id {
         return DependencyToEnqueue::NotFound;
@@ -2329,10 +2331,18 @@ fn get_or_put_resolved_package_with_find_result(
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
+    // Which peer rows have landed on a version by any given moment depends on
+    // what has arrived (they bind on sight or in the peer pass), so only
+    // regular rows' pins are recorded (`AppendedFor::pinned`).
+    let pins = !behavior.is_peer()
+        && version.tag == dependency::version::Tag::Npm
+        && version.npm().version.is_exact();
+
     // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
     if should_update && !behavior.is_peer() {
         if let Some(id) = patched_package_satisfying(this, name_hash, version) {
             this.kept_patched.push(id);
+            this.lockfile.mark_reused_for(id, dependency_id, pins);
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(id as usize),
@@ -2350,12 +2360,6 @@ fn get_or_put_resolved_package_with_find_result(
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
-    // Which peer rows have landed on a version by any given moment depends on
-    // what has arrived (they bind on sight or in the peer pass), so only
-    // regular rows' pins are recorded (`AppendedFor::pinned`).
-    let pins = !behavior.is_peer()
-        && version.tag == dependency::version::Tag::Npm
-        && version.npm().version.is_exact();
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {

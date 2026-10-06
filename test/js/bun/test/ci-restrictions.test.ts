@@ -91,7 +91,7 @@ describe.only("CI test", () => {
     });
   });
 
-  describe.each([
+  describe.concurrent.each([
     ["CI=true", { CI: "true" }],
     ["GITHUB_ACTIONS=1", { CI: undefined, GITHUB_ACTIONS: "1" }],
   ] as const)("read-only snapshots with %s", (_, env) => {

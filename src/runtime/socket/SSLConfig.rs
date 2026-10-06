@@ -264,8 +264,6 @@ impl SSLConfigFromJs for SSLConfig {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
-        } else {
-            apply_default_ciphers(vm, &mut result);
         }
 
         result.client_renegotiation_limit = generated.client_renegotiation_limit;
@@ -275,8 +273,14 @@ impl SSLConfigFromJs for SSLConfig {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
-        // We don't need to deinit `result` if `any` is false.
-        if any { Ok(Some(result)) } else { Ok(None) }
+        if !any {
+            return Ok(None);
+        }
+        // After `any`: the fallback does not make `tls: {}` a TLS configuration.
+        if generated.ciphers.as_ref().is_none() {
+            apply_default_ciphers(vm, &mut result);
+        }
+        Ok(Some(result))
     }
 }
 
@@ -295,6 +299,7 @@ fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
         return;
     };
     cfg.ssl_ciphers = dupe_z(ciphers);
+    cfg.requires_custom_request_ctx = true;
     // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
     if ciphers.is_empty() {
         cfg.ssl_min_version = cfg

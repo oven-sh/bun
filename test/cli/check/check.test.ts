@@ -14322,6 +14322,32 @@ export function f<T>(rest: T) {
       expect(exitCode).toBe(1);
     });
 
+    // The projects of a build are read at the same time.
+    test.skipIf(canReadEverything)("a source file that cannot be read is reported by its project", async () => {
+      const names = ["a", "b", "c", "d", "e", "f"];
+      const config = JSON.stringify({
+        compilerOptions: { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] },
+        include: ["*.ts"],
+      });
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: names.map(name => ({ path: `./${name}` })) }),
+        ...Object.fromEntries(
+          names.flatMap(name => [
+            [`${name}/tsconfig.json`, config],
+            [`${name}/${name}.ts`, `export const wrong: number = "";\n`],
+          ]),
+        ),
+        "b/secret.ts": `export {};\n`,
+        "e/secret.ts": `export {};\n`,
+      });
+      for (const name of ["b", "e"]) chmodSync(join(String(dir), name, "secret.ts"), 0o000);
+      const runs = await Promise.all(Array.from({ length: 6 }, () => check(dir)));
+      const places = runs.map(({ stdout }) => stdout.split("\n").map(line => /[a-f]\/\w+\.ts/.exec(line)?.[0]));
+      expect(places).toEqual(
+        runs.map(() => ["a/a.ts", "b/secret.ts", "b/b.ts", "c/c.ts", "d/d.ts", "e/secret.ts", "e/e.ts", "f/f.ts"]),
+      );
+    });
+
     test("-p with a path that does not exist", async () => {
       using dir = project({});
       const { stdout, stderr, exitCode } = await check(dir, ["-p", "nowhere"]);

@@ -269,18 +269,16 @@ Bun uses the compiler options that [`bun init`](/runtime/templating/init) writes
 
 Run `bun check` once at the root. How Bun finds the projects depends on the root `tsconfig.json`.
 
-**With `references` in the root `tsconfig.json`**, `bun check` follows them, like `tsc -b`. Bun checks each project with its own options.
+**With `references` in the root `tsconfig.json`**, `bun check` follows them, like `tsc -b`. Bun checks each project with its own options, and prints the errors one project at a time, in build order. If two projects include the same file, Bun checks it in both and prints its errors once for each project.
 
 Bun reads a referenced project from its source files. You don't have to build it first, and Bun does not write `.d.ts` or `.tsbuildinfo` files.
 
-**Without a root `tsconfig.json`**, `bun check` checks every TypeScript file below the current directory. Bun checks each file with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
+**Without a root `tsconfig.json`**, `bun check` checks every TypeScript file below the current directory. Bun checks each file once, with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
 
 ```txt
 packages/web/src/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
 Found 1 error in 1 file, checked 2 files across 2 projects [21.00ms]
 ```
-
-Either way, Bun checks each file once.
 
 To check one package, name it:
 

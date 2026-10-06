@@ -1507,6 +1507,8 @@ struct WithOutputs<'h> {
     is_pending: Vec<bool>,
     /// Those of them whose output this project has asked for. What it was answered is wrong.
     awaited: Guarded<Vec<usize>>,
+    /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
+    unreadable: Guarded<Vec<Vec<u8>>>,
 }
 
 impl WithOutputs<'_> {
@@ -1574,11 +1576,14 @@ impl Host for WithOutputs<'_> {
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         match self.written(path) {
             Some(written) => Cow::Owned(written.clone()),
-            None => self.disk.read_source(path),
+            None => self.disk.read(path).unwrap_or_else(|| {
+                self.unreadable.lock().push(path.to_vec());
+                Cow::default()
+            }),
         }
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
-        self.disk.take_unreadable()
+        std::mem::take(&mut *self.unreadable.lock())
     }
     fn is_file(&self, path: &[u8]) -> bool {
         self.disk.is_file(path) || self.written(path).is_some()
@@ -1803,6 +1808,7 @@ fn check_with_references(
             expected: &expected,
             is_pending: (0..count).map(|i| i < index && !is_built[i]).collect(),
             awaited: Guarded::new(Vec::new()),
+            unreadable: Guarded::new(Vec::new()),
         };
         for i in (0..index).filter(|&i| is_built[i]) {
             for (path, text) in emitted[i].lock().iter() {

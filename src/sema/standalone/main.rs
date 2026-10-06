@@ -55,93 +55,14 @@ fn list_loaded(program: &bun_sema::check::Program) {
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
-/// What `parseStrings` makes of the arguments of `cli`.
-#[derive(Default)]
-struct CommandLine {
-    paths: Vec<Vec<u8>>,
-    project: Option<String>,
-    compiler_options: Vec<bun_sema_driver::CompilerOption>,
-    /// The code of each, and the response file it is about.
-    errors: Vec<(u32, Vec<u8>)>,
-}
-
-impl CommandLine {
-    /// `parseStrings`. `cwd` is in the checker's path format. A flag that is no compiler option is
-    /// one of the tool's own, which `main` looks for. So is `--all`, as for `bun check`.
-    fn parse_strings(&mut self, args: &[String], cwd: &[u8]) {
-        use bun_sema_driver::{FlagError, compiler_option_from_flag, is_boolean_compiler_option};
-        let mut rest = args.iter().peekable();
-        while let Some(arg) = rest.next() {
-            if let Some(file_name) = arg.strip_prefix('@') {
-                self.parse_response_file(file_name.as_bytes(), cwd);
-            } else if arg == "-p" || arg == "--project" {
-                self.project = rest.next().cloned();
-            } else if let Some(name) = arg.strip_prefix("--") {
-                // `parseOptionValue`: a boolean takes the next argument only if that is its value.
-                let is_boolean = is_boolean_compiler_option(name.as_bytes());
-                let is_value = |next: &&String| !is_boolean || *next == "true" || *next == "false";
-                let value = rest.peek().copied().filter(is_value);
-                match compiler_option_from_flag(name.as_bytes(), value.map(String::as_bytes)) {
-                    _ if name == "all" => {}
-                    Ok(option) => {
-                        self.compiler_options.push(option);
-                        if value.is_some() {
-                            rest.next();
-                        }
-                    }
-                    Err(FlagError::Unknown) => {}
-                    Err(_) => error_line!("{arg} is left out: it has no value that it accepts"),
-                }
-            } else if !arg.is_empty() {
-                self.paths.push(arg.clone().into_bytes());
-            }
-        }
-    }
-
-    /// `parseResponseFile`
-    fn parse_response_file(&mut self, file_name: &[u8], cwd: &[u8]) {
-        let file_name = bun_sema::resolve::join(cwd, file_name);
-        // `tryReadFile`
-        let Some(contents) = read_file(&text(bun_sema_driver::host::to_native(&file_name))) else {
-            return self.errors.push((5083, file_name));
-        };
-        let contents = bun_core::strings::without_utf8_bom(&contents);
-        let mut args = Vec::new();
-        let mut pos = 0;
-        while pos < contents.len() {
-            while pos < contents.len() && contents[pos] <= b' ' {
-                pos += 1;
-            }
-            if pos >= contents.len() {
-                break;
-            }
-            let start = pos;
-            if contents[pos] == b'"' {
-                pos += 1;
-                while pos < contents.len() && contents[pos] != b'"' {
-                    pos += 1;
-                }
-                if pos < contents.len() {
-                    args.push(text(&contents[start + 1..pos]));
-                    pos += 1;
-                } else {
-                    self.errors.push((6045, file_name.clone()));
-                }
-            } else {
-                while pos < contents.len() && contents[pos] > b' ' {
-                    pos += 1;
-                }
-                args.push(text(&contents[start..pos]));
-            }
-        }
-        self.parse_strings(&args, cwd);
-    }
-}
-
 fn main() {
     // The main thread parses tsconfig.json. Its stack is 8 MB on macOS and Linux.
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();
+    run(&args);
+}
+
+fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         // hir <files or directories> --print: the HIR the front end produces for each file. For
         // detecting whether a change to the front end changes any HIR.
@@ -229,7 +150,7 @@ fn main() {
             }
         }
         Some("cli") => {
-            // cli [paths..] [@<response file>] [-p <project>] [--<compiler option> [value]]
+            // cli [paths..] [@<response file>] [-b] [-p <project>] [--<compiler option> [value]]
             // [--threads=n] [--plain] [--no-color] [--github]: behaves like `bun check`.
             use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
             let has = |flag: &str| args.iter().any(|a| a == flag);
@@ -237,26 +158,14 @@ fn main() {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            let mut command_line = CommandLine::default();
-            command_line.parse_strings(
-                &args[1..],
-                &bun_sema_driver::host::from_native(cwd.as_bytes()),
-            );
-            let CommandLine {
-                paths,
-                project,
-                compiler_options,
-                errors,
-            } = command_line;
-            // `tscCompilation`: they are reported, and nothing is compiled.
-            for (code, file_name) in &errors {
-                let mut line = Vec::new();
-                let message = bun_sema::messages::message(*code).map_or("", |message| message.1);
-                bun_sema::messages::format(&mut line, message, &[file_name]);
-                output_line!("error TS{code}: {}", text(&line));
-            }
-            if !errors.is_empty() {
-                std::process::exit(1);
+            let arguments: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
+            let command_line = bun_sema_driver::parse_command_line(&arguments, cwd.as_bytes());
+            for rejected in &command_line.rejected {
+                // A flag that is no compiler option is one of the tool's own, looked for below.
+                if !matches!(rejected.error, bun_sema_driver::FlagError::Unknown) {
+                    let flag = text(&rejected.flag);
+                    error_line!("{flag} is left out: it has no value that it accepts");
+                }
             }
             let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
             // `--progress`: as `bun check` displays it on a terminal.
@@ -377,14 +286,16 @@ fn main() {
                 split_tolerates: number("--split-tolerates=", 0) as u8,
                 split_publishes_everything: has("--split-publishes-everything"),
                 checkers: number("--checkers=", defaults.checkers),
+                reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
             };
             let request = bun_sema_driver::Request {
-                compiler_options: &compiler_options,
+                compiler_options: &command_line.compiler_options,
                 cwd: cwd.as_bytes(),
-                project: project.as_deref().map(str::as_bytes),
-                build: has("--build"),
-                paths: &paths,
+                project: command_line.project.as_deref(),
+                build: command_line.build,
+                errors: &command_line.errors,
+                paths: &command_line.paths,
                 are_entry_points: false,
                 threads: args
                     .iter()
@@ -658,12 +569,73 @@ fn main() {
                 std::process::exit(i32::from(!report.is_ok()));
             })
         }
+        // each --out=<directory> [--jobs=<n>] [--limit=<seconds>]: for thousands of small programs,
+        // where launching a process costs more than checking. A line of standard input is a
+        // directory and the arguments to run there, separated by tabs. Line `n` runs in a fork of
+        // this process and writes `<n>.out` and `<n>.err`. `<n>.status` has its exit code, or the
+        // signal that ended it.
+        #[cfg(unix)]
+        Some("each") => {
+            let option = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
+            let out = option("--out=").expect("--out=");
+            let jobs: usize = option("--jobs=").map_or(8, |n| n.parse().expect("--jobs="));
+            let limit: u32 = option("--limit=").map_or(60, |n| n.parse().expect("--limit="));
+            let mut running: Vec<(libc::pid_t, usize)> = Vec::new();
+            let wait_for_one = |running: &mut Vec<(libc::pid_t, usize)>| {
+                let mut status = 0;
+                // SAFETY: `status` is a valid place for the result.
+                let pid = unsafe { libc::wait(&raw mut status) };
+                let Some(at) = running.iter().position(|it| it.0 == pid) else {
+                    return;
+                };
+                let (_, number) = running.swap_remove(at);
+                let status = if libc::WIFEXITED(status) {
+                    libc::WEXITSTATUS(status).to_string()
+                } else {
+                    format!("signal {}", libc::WTERMSIG(status))
+                };
+                write_file_to_look_at(&format!("{out}/{number}.status"), status.as_bytes());
+            };
+            // No thread has been started yet, so a fork has everything it needs.
+            for (number, line) in std::io::stdin().lines().map_while(Result::ok).enumerate() {
+                if running.len() == jobs {
+                    wait_for_one(&mut running);
+                }
+                // SAFETY: this is the only thread.
+                let pid = unsafe { libc::fork() };
+                if pid != 0 {
+                    running.push((pid, number));
+                    continue;
+                }
+                let mut fields = bun_core::strings::split(line.as_bytes(), b"\t").map(text);
+                std::env::set_current_dir(fields.next().unwrap()).unwrap();
+                for (fd, extension) in [(1, "out"), (2, "err")] {
+                    let path = format!("{out}/{number}.{extension}");
+                    let path = std::ffi::CString::new(path).unwrap();
+                    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC;
+                    // SAFETY: `path` ends with a zero. The descriptors are open.
+                    unsafe {
+                        let file = libc::open(path.as_ptr(), flags, 0o644 as libc::c_uint);
+                        libc::dup2(file, fd);
+                        libc::close(file);
+                    }
+                }
+                // SAFETY: no handler is installed, so the signal ends a program that hangs.
+                unsafe { libc::alarm(limit) };
+                let arguments: Vec<String> = fields.collect();
+                run(&arguments);
+                std::process::exit(0);
+            }
+            while !running.is_empty() {
+                wait_for_one(&mut running);
+            }
+        }
         Some("baselines") => {
             let rest: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             if !bun_sema_baselines::run_from_command_line(&rest) {
                 std::process::exit(1);
             }
         }
-        _ => error_line!("usage: bun-sema cli | baselines | hir"),
+        _ => error_line!("usage: bun-sema cli | each | baselines | hir"),
     }
 }

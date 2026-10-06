@@ -34,7 +34,7 @@ pub(crate) struct Name {
 }
 
 impl Name {
-    fn missing(at: u32) -> Name {
+    pub(crate) fn missing(at: u32) -> Name {
         Name {
             start: at,
             end: at,
@@ -323,6 +323,7 @@ enum Token {
     Dot,
     DotDotDot,
     Backtick,
+    Hash,
     /// An identifier or a keyword.
     Word,
     /// A character `ScanJSDocToken` does not recognize.
@@ -548,6 +549,11 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
     }
 
+    /// Where the current token starts, which at the end of the comment `TokenStart` is not.
+    fn token_pos(&self) -> usize {
+        self.start.max(self.full_start())
+    }
+
     fn token_len(&self) -> usize {
         self.end - self.start
     }
@@ -625,12 +631,13 @@ impl<'p, 'a> Reader<'p, 'a> {
         let pos = self.end;
         self.is_in_lexer = false;
         self.full_start = pos;
-        self.start = pos;
         self.has_newline_before = false;
+        // At the end `tokenStart` stays that of the token before.
         let Some(&c) = text.get(pos) else {
             self.token = Token::EndOfFile;
             return self.token;
         };
+        self.start = pos;
         let mut end = pos + 1;
         self.token = match c {
             b' ' | b'\t' | 0x0B | 0x0C => {
@@ -655,7 +662,8 @@ impl<'p, 'a> Reader<'p, 'a> {
             b',' => Token::Comma,
             b'.' => Token::Dot,
             b'`' => Token::Backtick,
-            b'(' | b')' | b'>' | b'#' => Token::Other,
+            b'#' => Token::Hash,
+            b'(' | b')' | b'>' => Token::Other,
             b'\\' => match peek_unicode_escape(text, pos) {
                 Some((c, len)) if is_identifier_start(c) => {
                     end = scan_identifier_parts(text, pos + len);
@@ -758,10 +766,33 @@ impl<'p, 'a> Reader<'p, 'a> {
     /// Called before the parser continues from the current token: its lexer scans that token unless
     /// it already has.
     fn enter_lexer(&mut self) {
-        if !self.is_in_lexer {
-            let full_start = self.full_start;
-            self.scan_from(self.start);
-            self.p.lexer.token_full_start = full_start;
+        if self.is_in_lexer {
+            return;
+        }
+        let (token, full_start, end) = (self.token, self.full_start, self.end);
+        let word = (token == Token::Word).then(|| self.token_value());
+        self.scan_from(full_start);
+        self.p.lexer.token_full_start = full_start;
+        // The token stays what `ScanJSDocToken` returned. Its words can contain `-`, and such a word
+        // is no keyword. Its punctuation is one character long.
+        let returned = match token {
+            Token::Word => T::TIdentifier,
+            Token::Dot => T::TDot,
+            Token::LessThan => T::TLessThan,
+            Token::Equals => T::TEquals,
+            Token::Asterisk => T::TAsterisk,
+            _ => return,
+        };
+        if self.is_in_lexer && end != self.end {
+            let lexer = &mut self.p.lexer;
+            lexer.current = end;
+            lexer.step();
+            lexer.start = full_start;
+            lexer.token = returned;
+            if let Some(word) = word {
+                lexer.identifier = word;
+            }
+            (self.token, self.start, self.end) = (token, full_start, end);
         }
     }
 
@@ -847,12 +878,23 @@ impl<'p, 'a> Reader<'p, 'a> {
     }
 
     fn read_type_worker(&mut self) -> ts::TypeId {
-        // `parseTypeReference` at an unrecognized token: the name is missing (1110), and the token
-        // is not consumed.
-        if !self.is_in_lexer && self.token == Token::Unknown {
-            self.error_at_token(1110);
-            self.p.emit_type_ref(StoreStr::EMPTY, self.start as u32);
-            return self.p.last_type();
+        // `parseTypeReference` at a token of `ScanJSDocToken` that starts no type, or at the end:
+        // the name is missing (`createIdentifierWithDiagnostic`), and the token is not consumed.
+        let starts_no_type = matches!(
+            self.token,
+            Token::Unknown | Token::Whitespace | Token::NewLine | Token::Backtick | Token::Hash
+        );
+        if !self.is_in_lexer && (starts_no_type || self.token == Token::EndOfFile) {
+            let at = self.full_start;
+            if starts_no_type {
+                self.error_at_token(1110);
+            } else {
+                self.error(at, 0, 1110);
+            }
+            self.p.emit_type_ref(StoreStr::EMPTY, at as u32);
+            let ty = self.p.last_type();
+            self.p.type_syntax_mut().b.file[ty].end = at as u32;
+            return ty;
         }
         self.enter_lexer();
         self.p.clear_last_type();
@@ -902,7 +944,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             };
         }
         let mut import = Import {
-            clause_start: self.start as u32,
+            clause_start: self.token_pos() as u32,
             ..Import::default()
         };
         // `isIdentifier`, `parseIdentifier`: the token after the tag name is one of
@@ -1400,7 +1442,7 @@ impl<'p, 'a> Reader<'p, 'a> {
     /// `parseJSDocType`
     fn jsdoc_type(&mut self) -> TypeExpr {
         self.set_skips_leading_asterisks(true);
-        let pos = self.start as u32;
+        let pos = self.token_pos() as u32;
         let is_variadic = self.eat(Token::DotDotDot);
         let ty = self.read_type();
         self.set_skips_leading_asterisks(false);
@@ -1408,7 +1450,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         TypeExpr {
             ty,
             pos,
-            end: self.start as u32,
+            end: self.token_pos() as u32,
             is_variadic,
             is_optional,
         }
@@ -1608,7 +1650,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.set_skips_leading_asterisks(true);
         let type_args = self.read_type_arguments();
         self.set_skips_leading_asterisks(false);
-        let end = self.start as u32;
+        let end = self.token_pos() as u32;
         if used_brace {
             self.skip_whitespace();
             self.expect(Token::CloseBrace);

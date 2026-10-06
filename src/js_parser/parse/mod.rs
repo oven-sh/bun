@@ -2826,7 +2826,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             properties: G::PropertyList::from_bump_vec(properties),
             ..Default::default()
         };
-        Ok((keeps.then(|| p.new_expr(object, open_brace_loc)), mode))
+        // `finishNode`, with or without the "}".
+        let end = p.lexer.full_start();
+        let object = keeps.then(|| {
+            let mut object = p.new_expr(object, open_brace_loc);
+            p.note_end(&mut object.loc, end);
+            object
+        });
+        Ok((object, mode))
     }
 
     pub(crate) fn parse_stmts_up_to(

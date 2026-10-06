@@ -56,6 +56,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 | T::TTemplateHead
                 | T::TOpenParen
                 | T::TOpenBracket
+                | T::TDot
                 | T::TQuestionDot => {
                     p.forbid_suffix_after_as_loc = p.lexer.loc();
                     return Ok(Continuation::Done);

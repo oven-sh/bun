@@ -9,8 +9,8 @@ use crate::{Category, Diagnostic, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, relative_normalized};
-use bun_sema::resolve::{get_root_length, is_same_path};
+use bun_paths::resolve_path::dirname;
+use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::util::FxHashMap;
 use std::io::Write;
 
@@ -65,43 +65,7 @@ fn display_path(path: &[u8], style: &Style) -> BString {
 
 /// `ConvertToRelativePath`
 fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
-    get_relative_path_from_directory(from, path, style.is_case_sensitive)
-}
-
-/// `GetRelativePathFromDirectory`
-pub(crate) fn get_relative_path_from_directory(
-    from: &[u8],
-    path: &[u8],
-    is_case_sensitive: bool,
-) -> BString {
-    /// `/`, or `//server`.
-    fn root(path: &[u8]) -> &[u8] {
-        strings::without_trailing_slash(&path[..get_root_length(path)])
-    }
-    // It has another root.
-    if crate::host::is_bundled(path) || !root(path).eq_ignore_ascii_case(root(from)) {
-        return crate::host::to_native(path).into();
-    }
-    if is_case_sensitive || path.starts_with(from) {
-        return relative_normalized::<Posix, true>(from, path).into();
-    }
-    // `GetPathComponentsRelativeTo`: the names that both begin with are compared as the file system
-    // compares them.
-    fn names(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-        strings::split(path, b"/")
-    }
-    let common = (names(path).zip(names(from)))
-        .take_while(|(a, b)| is_same_path(a, b, false))
-        .count();
-    // On Windows a path on another drive has no relative form: `/C:/a`.
-    if cfg!(windows) && common < 2 {
-        return crate::host::to_native(path).into();
-    }
-    let respelled: Vec<&[u8]> = names(from)
-        .take(common)
-        .chain(names(path).skip(common))
-        .collect();
-    relative_normalized::<Posix, true>(from, &respelled.join(&b'/')).into()
+    get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
 }
 
 /// `1234` as `1,234`.
@@ -509,8 +473,8 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 write_github_annotation(out, d, style);
             }
         }
-        for path in take(&mut listed_files, task.listed_files) {
-            out.extend_from_slice(crate::host::to_native(path));
+        for line in take(&mut listed_files, task.listed_files) {
+            out.extend_from_slice(line);
             out.push(b'\n');
         }
     }

@@ -787,7 +787,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if (source == TypeId::EMPTY_OBJECT || self.is_unknown_empty_object(source))
                     && match self.data(target) {
                         TypeData::Anon { .. } => true,
-                        TypeData::Synth(shape) => shape.literal == Literalness::EmptyTypeLiteral,
+                        TypeData::Synth(shape) => Self::shape_has_symbol(shape),
                         _ => false,
                     }
                     && self.is_empty_anonymous_object_type(target)
@@ -1148,6 +1148,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         match (self.intersection_worker(types, false), alias) {
             ((created, true), Some((alias, type_arguments))) => {
+                // `getIntersectionKey`
+                self.get_symbol_id(alias);
                 let aliased = self.with_alias(created, alias, type_arguments);
                 if let Some(flag) = self.types().is_constrained_type_variable(created) {
                     self.types().set_constrained_type_variable(aliased, flag);
@@ -1166,6 +1168,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         if let [only] = types {
             return *only;
+        }
+        // `UnionOfUnionKey`
+        if let (Some((alias, _)), &[a, b]) = (alias, types)
+            && (self.is_union(a) || self.is_union(b))
+        {
+            self.get_symbol_id(alias);
         }
         let created = self.union(types);
         match alias {
@@ -1859,6 +1867,11 @@ impl<'p, 's> Checker<'p, 's> {
             let (_, file, pos) = self.sort_place(t)?;
             Some(self.place_in_program_order(file, pos))
         };
+        // A synthesized type does not always say where its symbol is declared.
+        let has_symbol = |t: TypeId| match self.data(t) {
+            TypeData::Synth(shape) => Self::shape_has_symbol(shape),
+            _ => false,
+        };
         // `compareSymbols` of a symbol and its `cloneTypeAsModuleType` clone falls back to the
         // symbol ids. Here the symbol comes first, then the clones in the order of the imports.
         let originating_import = |t: TypeId| match *self.data(t) {
@@ -1884,12 +1897,15 @@ impl<'p, 's> Checker<'p, 's> {
                 .compare_type_names(a, b)
                 .then_with(|| match are_of_one_symbol {
                     true => Equal,
-                    false => some_first(place(a), place(b)).then_with(|| {
-                        some_first(
-                            self.name_of_symbol_without_declarations(a),
-                            self.name_of_symbol_without_declarations(b),
-                        )
-                    }),
+                    false => some_first(place(a), place(b))
+                        .then_with(|| {
+                            some_first(
+                                self.name_of_symbol_without_declarations(a),
+                                self.name_of_symbol_without_declarations(b),
+                            )
+                        })
+                        // nil comes last.
+                        .then_with(|| has_symbol(b).cmp(&has_symbol(a))),
                 })
                 .then_with(|| originating_import(a).cmp(&originating_import(b)))
                 .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));

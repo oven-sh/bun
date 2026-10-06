@@ -22,9 +22,9 @@ use crate::config::compare_strings_case_insensitive;
 use crate::json::Json;
 use crate::program::source_file_may_be_emitted;
 use crate::resolve::{
-    JsxEmit, contains_path, ensure_path_is_non_module_name, get_root_length,
-    is_declaration_file_name, is_relative, join, known_extension, node_module_path_parts,
-    path_is_relative, remove_file_extension,
+    JsxEmit, contains_path, ensure_path_is_non_module_name, get_relative_path_from_directory,
+    get_root_length, is_declaration_file_name, is_relative, is_rooted_disk_path, join,
+    known_extension, node_module_path_parts, path_is_relative, remove_file_extension,
 };
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -1378,24 +1378,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_implicitly_exported_jsdoc_declaration(file, flags, container) {
             return true;
         }
-        // `IsExternalModuleAugmentation`
         if let Decl::Module(m) = decl
-            && !matches!(hir[m].name, ModuleName::Ident(_))
+            && self.is_external_module_augmentation(file, m)
         {
-            let is_augmentation = match container {
-                Parent::File => hir.has_module_syntax,
-                Parent::Module(around) => {
-                    !matches!(hir[around].name, ModuleName::Ident(_))
-                        && !hir.has_module_syntax
-                        && self
-                            .statement_of(file, Decl::Module(around))
-                            .is_some_and(|s| bound.stmt_parent[s.idx()] == Parent::File)
-                }
-                _ => false,
-            };
-            if is_augmentation {
-                return true;
-            }
+            return true;
         }
         let is_in_ambient_block = matches!(container, Parent::Module(around)
             if hir[around].flags.contains(Flags::AMBIENT) || hir.kind == FileKind::Declaration);
@@ -1828,6 +1814,11 @@ impl<'p, 's> Checker<'p, 's> {
         lookup: TableLookup,
         visited: &mut Vec<(Sym, Table)>,
     ) -> Vec<Sym> {
+        // `symbolTableIDFromMembers` and the like, then `symId`.
+        if let Table::TypeMembers(of) | Table::Exports(of) | Table::ResolvedExports(of) = table {
+            self.get_symbol_id(of);
+        }
+        self.get_symbol_id(symbol);
         if visited.contains(&(symbol, table)) {
             return Vec::new();
         }
@@ -2923,8 +2914,11 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                     let output_file_path = files.declaration_file_path(self.file());
                     let output_file_path = dirname::<Posix>(&output_file_path);
                     // `GetRelativePathToDirectoryOrUrl`
-                    name = relative_normalized::<Posix, true>(output_file_path, &decl_file_name)
-                        .to_vec();
+                    name = get_relative_path_from_directory(
+                        output_file_path,
+                        &decl_file_name,
+                        files.is_case_sensitive,
+                    );
                 }
                 let mode: &[u8] = match mode {
                     ResolutionMode::None => b"",
@@ -5626,7 +5620,7 @@ enum Matching {
 
 /// `PathIsBareSpecifier`
 fn path_is_bare_specifier(path: &[u8]) -> bool {
-    !path.starts_with(b"/") && !path_is_relative(path)
+    get_root_length(path) == 0 && !path_is_relative(path)
 }
 
 /// `ComparePaths` for two normalized file names: neither has a relative path segment.
@@ -6315,8 +6309,11 @@ impl<'p, 's> Checker<'p, 's> {
             allowed_endings,
         );
         if relative_path.is_empty() {
-            let relative =
-                relative_normalized::<Posix, true>(source_directory, module_file_name).to_vec();
+            let relative = get_relative_path_from_directory(
+                source_directory,
+                module_file_name,
+                files.is_case_sensitive,
+            );
             relative_path =
                 self.process_ending(&ensure_path_is_non_module_name(relative), allowed_endings);
         }
@@ -6327,10 +6324,19 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `tryGetModuleNameFromPackageJsonImports` is not ported: no `#name` specifier is generated
         // yet.
-        // A copy: `relative_normalized` returns a slice of a per-thread buffer, which the callee
-        // overwrites.
-        let relative_to_base_url =
-            relative_normalized::<Posix, true>(base_directory, module_file_name).to_vec();
+        // `getRelativePathIfInSameVolume`
+        let relative_to_base_url = get_relative_path_from_directory(
+            base_directory,
+            module_file_name,
+            files.is_case_sensitive,
+        );
+        if is_rooted_disk_path(&relative_to_base_url) {
+            return if paths_only {
+                Vec::new()
+            } else {
+                relative_path
+            };
+        }
         let maybe_non_relative = self.try_get_module_name_from_paths(
             &relative_to_base_url,
             allowed_endings,

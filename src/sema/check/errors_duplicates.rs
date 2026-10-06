@@ -1,18 +1,18 @@
 //! Conflicting declarations of one name: 2300 2451 2528 2567 2649 2699. And declarations that merge
-//! only under conditions: 2323 2433 2434.
+//! only under conditions: 2309 2323 2433 2434.
 //!
 //! In TypeScript 7.0.2 this is spread over `declareSymbolEx` and `declareModuleMember` of
 //! binder.go, which reject a declaration excluded by the symbol already in the table, `mergeSymbol`
-//! of checker.go, which does the same across files, `checkObjectTypeForDuplicateDeclarations` and
-//! `checkTypeParameters`. The declarations the binder rejected are recorded
-//! (`Bound::redeclarations`) and are reported here.
+//! of checker.go, which does the same across files, `checkObjectTypeForDuplicateDeclarations`,
+//! `checkExternalModuleExports` and `checkTypeParameters`. The declarations the binder rejected are
+//! recorded (`Bound::redeclarations`) and are reported here.
 
 use super::explain::NO_LENGTH;
 use super::late_bound::LateBoundConflict;
 use super::*;
 use crate::bind::{
-    ClassOwner, Decl, JsDeclarationKind, MemberOwner, SymbolId, assignment_declaration_kind,
-    flags_of_member,
+    ClassOwner, Decl, JsDeclarationKind, MemberOwner, Parent, SymbolId,
+    assignment_declaration_kind, flags_of_member,
 };
 use smallvec::SmallVec;
 
@@ -487,25 +487,58 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkExternalModuleExports`: 2323. "It is a Syntax Error if the ExportedNames of
-    /// ModuleItemList contains any duplicate entries. (TS Exceptions: namespaces, function
-    /// overloads, enums, and interfaces)". tsgo reports at every declaration, in any file. Here a
-    /// file checks each module it has a declaration of, and keeps only the diagnostics located in
-    /// itself. The diagnostics of a file are collected right after its `checkSourceFile`, so it has
-    /// those that a file no later than itself has caused.
+    /// `checkExternalModuleExports`: 2309, 2323. tsgo reports at every declaration, in any file.
+    /// Here a file checks each module it has a declaration of, and keeps only the diagnostics
+    /// located in itself. The diagnostics of a file are collected right after its
+    /// `checkSourceFile`, so it has those that a file no later than itself has caused.
     fn check_external_module_exports(&mut self, file: FileId) {
-        let (files, bound) = (self.files(), self.bound(file));
+        let (files, hir, bound) = (self.files(), self.hir(file), self.bound(file));
         let own = files.module(file).is_module();
         let own = own.then(|| files.file_symbol(file));
-        let ambient = bound.ambient_modules.iter();
-        let ambient = ambient.map(|module| files.sym(file, module.1));
+        // `IsAmbientModule`
+        let ambient = hir.modules.iter().zip(bound.module_symbol.iter());
+        let ambient = ambient.filter(|(module, symbol)| {
+            !matches!(module.name, ModuleName::Ident(_)) && symbol.is_some()
+        });
+        let ambient = ambient.map(|(_, &symbol)| files.sym(file, symbol));
         let mut modules: SmallVec<[(Sym, bool); 4]> = SmallVec::new();
         for module in own.into_iter().chain(ambient) {
             if !modules.iter().any(|it| it.0 == module) {
                 modules.push((module, self.are_module_exports_checked(module, file)));
             }
         }
-        // The symbols as the table has them, without `getMergedSymbol`.
+        for &(module, is_checked) in &modules {
+            if !is_checked {
+                continue;
+            }
+            let Some(export_equals_symbol) = files.export(module, known::export_equals) else {
+                continue;
+            };
+            if let Some((of, declaration)) = files
+                .declaration_of_alias_symbol(export_equals_symbol)
+                .or_else(|| files.value_declaration(export_equals_symbol))
+                && of == file
+                && (self.has_exported_members_of_kind(module, SymFlags::VALUE)
+                    || self.has_shadowed_namespace(export_equals_symbol))
+                && !self.is_top_level_in_external_module_augmentation(file, declaration)
+                && let Some((start, end)) = self.error_range_of_declaration(file, declaration)
+            {
+                self.error_at((file, start, end), 2309, &[]);
+            }
+            // `getExportsOfModuleWorker` asks `getSymbolFlags` of everything exported next to an
+            // `export =`. That calls `resolveAlias`, which reports.
+            for (name, symbol) in files.each_export(module) {
+                if name != known::export_equals
+                    && files.flags(symbol).contains(SymFlags::ALIAS)
+                    && (files.declaration_of_alias_symbol(symbol)).is_some_and(|it| it.0 == file)
+                {
+                    self.check_target_of_alias_symbol(symbol);
+                }
+            }
+        }
+        // "It is a Syntax Error if the ExportedNames of ModuleItemList contains any duplicate
+        // entries. (TS Exceptions: namespaces, function overloads, enums, and interfaces)". The
+        // symbols as the table has them, without `getMergedSymbol`.
         let exports = modules.iter().flat_map(|&(module, is_checked)| {
             let unmerged = files.unmerged_exports_of_module(module);
             let exports = files.exports_of_module(module).iter();
@@ -571,18 +604,78 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// Whether `checkExternalModuleExports` is called for `module`: by `checkSourceFile`, for a
-    /// file that is a module, or by `checkExportAssignment`, for the module that contains it, no
-    /// later than `file` is checked.
-    pub(super) fn are_module_exports_checked(&self, module: Sym, file: FileId) -> bool {
+    /// `hasExportedMembersOfKind`
+    fn has_exported_members_of_kind(&mut self, module_symbol: Sym, kind: SymFlags) -> bool {
+        let mut exports = self.files().each_export(module_symbol);
+        exports.any(|(name, symbol)| {
+            name != known::export_equals && self.get_symbol_flags(symbol).intersects(kind)
+        })
+    }
+
+    /// `hasShadowedNamespace`
+    fn has_shadowed_namespace(&mut self, symbol: Sym) -> bool {
         let files = self.files();
-        let assigned = [known::export_equals, known::default].into_iter();
-        let assigned = assigned.filter_map(|name| files.export(module, name));
-        std::iter::once(module).chain(assigned).any(|symbol| {
-            files.decls_of(symbol).iter().any(|&(of, decl)| {
-                matches!(decl, Decl::File | Decl::ExportExpr(_))
-                    && self.is_checked_no_later_than(of, file)
-            })
+        let flags = files.flags(symbol);
+        if !flags.contains(SymFlags::NAMESPACE_MODULE | SymFlags::ALIAS) {
+            return false;
+        }
+        let types = SymFlags::TYPE | SymFlags::NAMESPACE;
+        match self.resolve_alias(symbol) {
+            AliasTarget::Symbol(target) => {
+                files.flags(target).intersects(SymFlags::NAMESPACE)
+                    && self.has_exported_members_of_kind(target, types)
+            }
+            _ => false,
+        }
+    }
+
+    /// `isTopLevelInExternalModuleAugmentation`
+    fn is_top_level_in_external_module_augmentation(&self, file: FileId, decl: Decl) -> bool {
+        let statement = self.files().statement_of_declaration(file, decl);
+        statement.is_some_and(|s| match self.bound(file).stmt_parent.get(s.idx()) {
+            Some(&Parent::Module(m)) => self.is_external_module_augmentation(file, m),
+            _ => false,
+        })
+    }
+
+    /// `IsExternalModuleAugmentation`
+    pub(super) fn is_external_module_augmentation(&self, file: FileId, m: ModuleId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_ambient_module = |it: ModuleId| !matches!(hir[it].name, ModuleName::Ident(_));
+        let parent = |it: ModuleId| bound.stmt_parent.get(hir[it].stmt.idx());
+        is_ambient_module(m)
+            && match parent(m) {
+                Some(Parent::File) => hir.has_module_syntax,
+                Some(&Parent::Module(around)) => {
+                    is_ambient_module(around)
+                        && matches!(parent(around), Some(Parent::File))
+                        && !hir.has_module_syntax
+                }
+                _ => false,
+            }
+    }
+
+    /// Whether `checkExternalModuleExports` is called for `module` no later than `file` is
+    /// checked: by `checkSourceFile`, for a file that is a module, or by `checkExportAssignment`,
+    /// for the ambient module whose body has it as a statement.
+    pub(super) fn are_module_exports_checked(&self, module: Sym, file: FileId) -> bool {
+        self.files().decls_of(module).iter().any(|&(of, decl)| {
+            self.is_checked_no_later_than(of, file)
+                && match decl {
+                    Decl::File => true,
+                    Decl::Module(m) => {
+                        let hir = self.hir(of);
+                        // `IsAmbientModule`
+                        !matches!(hir[m].name, ModuleName::Ident(_))
+                            && hir.ids(hir[m].body).any(|s| {
+                                matches!(
+                                    hir[s].kind,
+                                    StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
+                                )
+                            })
+                    }
+                    _ => false,
+                }
         })
     }
 

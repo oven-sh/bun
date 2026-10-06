@@ -1613,6 +1613,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut is_parenthesized = false;
         // `skip_import_type_qualifier` has skipped all the names.
         let mut is_import_type = false;
+        // `skip_jsdoc_prefix_type` has skipped it. "*" is kept as the keyword "any", a name.
+        let mut is_jsdoc_prefix_type = false;
         // `parsePostfixTypeOrHigher`: whether what was skipped last is its operand. The result of
         // an operator ("keyof", "infer", "|", "extends") is not.
         let mut allows_postfix = true;
@@ -2558,6 +2560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 | T::TAsteriskEquals
                         ) {
                             self.skip_jsdoc_prefix_type::<KEEP>(opts)?;
+                            is_jsdoc_prefix_type = true;
                             break;
                         }
                         self.skip_type_reference_to_any_word()?;
@@ -2761,6 +2764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     // `parseEntityName`: a dot only continues a name. After any other type it is
                     // not consumed.
                     if is_import_type
+                        || is_jsdoc_prefix_type
                         || KEEP
                             && self.is_tolerant()
                             && (is_parenthesized || !self.last_type_takes_qualifier())
@@ -4325,15 +4329,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     ) -> Result<(bun_ast::Expr, bool), Error> {
         let (start, is_at_import) = (self.lexer.loc(), self.lexer.token == T::TImport);
         // `parseLeftHandSideExpressionOrHigher`
-        let expression = self.parse_detached(|p| p.parse_expr(Level::New))?;
+        let mut expression = self.parse_detached(|p| p.parse_expr(Level::New))?;
         let has_arguments =
             self.skip_type_arguments_of_heritage_element(is_checked, grammar_error)?;
         // The keyword `import` by itself is a missing expression.
-        if has_arguments
-            && is_at_import
-            && matches!(expression.data, bun_ast::ExprData::EMissing(_))
-        {
-            *grammar_error = Some((self.lexer.range_from(start), 1326));
+        if is_at_import && matches!(expression.data, bun_ast::ExprData::EMissing(_)) {
+            let keyword_end = bun_ast::Loc {
+                start: start.start + b"import".len() as i32,
+            };
+            self.note_end(&mut expression.loc, keyword_end);
+            if has_arguments {
+                *grammar_error = Some((self.lexer.range_from(start), 1326));
+            }
         }
         Ok((expression, has_arguments))
     }

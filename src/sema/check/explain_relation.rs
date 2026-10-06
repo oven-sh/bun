@@ -295,7 +295,11 @@ impl<'p, 's> Checker<'p, 's> {
             self.reduced(target);
         }
         let is_trial = error_node.is_some();
-        let is_related = self.try_is_type_related_to(source, target, relation, is_trial);
+        // What the run with `reportErrors` prints and then discards is numbered too.
+        let is_related = match is_trial && self.hands_out_symbol_ids() {
+            true => Ok(false),
+            false => self.try_is_type_related_to(source, target, relation, is_trial),
+        };
         let (is_related, diagnostic) = match (is_related, error_node) {
             (Ok(true), _) | (_, None) => {
                 self.end_comparison(is_outermost);
@@ -1028,12 +1032,7 @@ impl<'p, 's> Checker<'p, 's> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            // `base_constraint_of` is `None` for the constraint `unknown` too.
-            let constraint = match self.base_constraint_of(target) {
-                None => self.base_constraint_if_any(target, 0),
-                constraint => constraint,
-            };
-            match constraint {
+            match self.base_constraint_of(target) {
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
                     let args = [generalized_source_name, target_name, Arg::Type(constraint)];
                     self.report_error(r, 5075, &args);
@@ -1152,37 +1151,6 @@ impl<'p, 's> Checker<'p, 's> {
             Some(i) => self.report_error(r, 2551, &[args[0], args[1], Arg::Prop(&properties[i])]),
             None => self.report_error(r, 2339, &args),
         }
-    }
-}
-
-// ───────────────────────────── recursive types ─────────────────────────────
-
-impl<'p, 's> Checker<'p, 's> {
-    /// `indexSignaturesRelatedTo` for `source`, the apparent type of `object`. It comes from no
-    /// declaration, so it is not known to have no other properties.
-    pub(super) fn report_index_signature_missing_in_object(
-        &mut self,
-        r: &mut Relater,
-        source: TypeId,
-        target: TypeId,
-    ) -> Ternary {
-        let Some(m) = self.members(target) else {
-            return Ternary::FALSE;
-        };
-        let index = &m.shape().index;
-        // When there is also a string index signature, anything is related to an index signature of
-        // type `any`.
-        let any_takes_all =
-            r.relation != Relation::StrictSubtype && index.iter().any(|i| i.key == TypeId::STRING);
-        let missing = index.iter().find(|i| {
-            let expected = self.instantiate(i.value, m.mapper);
-            !(any_takes_all && self.is_any(expected))
-        });
-        let Some(missing) = missing else {
-            return Ternary::TRUE;
-        };
-        self.report_error(r, 2329, &[Arg::Type(missing.key), Arg::Type(source)]);
-        Ternary::FALSE
     }
 }
 

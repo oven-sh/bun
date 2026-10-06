@@ -2754,9 +2754,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         let before = p.lexer.prev_error_loc;
         let here = p.lexer.range();
+        // Up to `node.End()`: an escape is longer than the character of `word` that it spells.
+        let name_end = bun_core::lexer::scan_identifier_parts(p.lexer.contents, at.to_usize());
         let name = bun_ast::Range {
             loc: at,
-            len: word.len() as i32,
+            len: name_end as i32 - at.start,
         };
         let token = p.lexer.token;
         let mut suggestion = None;

@@ -300,9 +300,9 @@ impl Checker<'_, '_> {
             // `getTypeFromBindingElement`: for the type implied by the whole pattern, the default
             // is checked with the type implied by its own pattern as its contextual type.
             if is_whole_implied && let Some(implied) = self.context_implied_by_pattern(file, pat) {
-                self.contextual.push((file, default, implied));
+                self.push_contextual_type(file, default, Some(implied), false);
                 self.check_literals_expected_by_pattern(file, default);
-                self.contextual.pop();
+                self.pop_contextual_type();
             }
         }
         let strict = self.p.files.options.strict_null_checks;
@@ -416,7 +416,7 @@ impl Checker<'_, '_> {
             };
         }
         // Resolving the parameter also resolves the enclosing call, whose signature `open_contextual_signature` reads.
-        let resolved = self.type_of_param(file, p);
+        let resolved = self.type_of_pat(file, param.pat);
         let func = bound.param_fn[p.idx()];
         if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
             return resolved;
@@ -776,21 +776,15 @@ impl Checker<'_, '_> {
                 continue;
             };
             let constraint = self.instantiate(constraint, mapper);
-            if self.is_assignable(type_arguments[i], constraint) {
-                continue;
-            }
             // A default has no node, and nothing is reported for it.
-            if i < nodes.len() {
+            let error_node = (i < nodes.len()).then(|| {
                 let node: TypeNodeId = hir.id_at(nodes, i);
-                let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
-                self.check_type_assignable_to(
-                    type_arguments[i],
-                    constraint,
-                    Some(error_node),
-                    Some(2344),
-                );
+                (file, hir[node].pos, self.end_of_type_node(file, node))
+            });
+            let argument = type_arguments[i];
+            if !self.check_type_assignable_to(argument, constraint, error_node, Some(2344)) {
+                return;
             }
-            return;
         }
     }
 
@@ -997,6 +991,15 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `GetErrorRangeForNode` for `e`, the result of `getEffectiveCheckNode`: its enclosing
+    /// parentheses are not part of it, except those of a JSDoc type assertion.
+    pub(super) fn place_of_effective_check_node(&self, file: FileId, e: ExprId) -> Place {
+        match self.range_of_jsdoc_type_assertion(file, e) {
+            Some((open, end)) => (file, open, end),
+            None => self.place_of_expr(file, e),
+        }
+    }
+
     /// `checkReturnStatement` for the `return e` at `s` in `container`: 2408, 2409, or the returned
     /// type is not assignable.
     pub(super) fn check_return_statement(
@@ -1187,23 +1190,13 @@ impl Checker<'_, '_> {
         } else {
             ty
         };
-        // `getEffectiveCheckNode`
-        let mut e = e;
-        while let ExprKind::Satisfies { expr, .. } = hir[e].kind {
-            e = expr;
-        }
+        let e = self.effective_check_node(file, e);
         let error_node = if in_return_statement == InReturnStatement::Yes
             && in_conditional_expression == InConditionalExpression::No
         {
             node
-        } else if let Some((open, end)) = self.range_of_jsdoc_type_assertion(file, e) {
-            (file, open, end)
         } else {
-            (
-                file,
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            )
+            self.place_of_effective_check_node(file, e)
         };
         self.check_type_assignable_to_and_optionally_elaborate(
             ty,
@@ -1342,51 +1335,26 @@ impl Checker<'_, '_> {
         source: TypeId,
         target: TypeId,
         head_message: Option<u32>,
-        diagnostic_output: Option<&mut Vec<Reported>>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let hir = self.hir(file);
         if self.is_or_has_generic_conditional(target) {
             return false;
         }
-        // `elaborateDidYouMeanToCallOrConstruct`: the result of calling it is assignable.
-        for construct in [true, false] {
-            let mut would_do = false;
-            for sig in self.signatures(source, construct) {
-                let returned = self.sig_return(sig);
-                if !self.is_any(returned)
-                    && !returned.is_never()
-                    && self.is_assignable(returned, target)
-                {
-                    would_do = true;
-                    break;
-                }
-            }
-            if !would_do {
-                continue;
-            }
-            let at = if is_effective {
-                (
-                    file,
-                    self.error_start_inside_parentheses(file, e),
-                    self.error_end_inside_parentheses(file, e),
-                )
-            } else {
-                (
-                    file,
-                    self.error_start_of(file, e),
-                    self.error_end_of(file, e),
-                )
-            };
-            let mut diags = Vec::new();
-            let output = Some(&mut diags);
-            if !self.check_type_assignable_to_ex(source, target, Some(at), head_message, output)
-                && let Some(mut diagnostic) = diags.pop()
-            {
-                let code = if construct { 6213 } else { 6212 };
-                diagnostic.add_related_info(self.new_diagnostic(at, code, &[]));
-                self.report_diagnostic(diagnostic, diagnostic_output);
-                return true;
-            }
+        let node = if is_effective {
+            self.place_of_effective_check_node(file, e)
+        } else {
+            self.span_of_parenthesized_expr(file, e)
+        };
+        let output = diagnostic_output.as_deref_mut();
+        if self.elaborate_did_you_mean_to_call_or_construct(
+            node,
+            source,
+            target,
+            head_message,
+            output,
+        ) {
+            return true;
         }
         let next = match hir[e].kind {
             // `x as const` is elaborated through its operand. `<const>x` is not.
@@ -1440,6 +1408,45 @@ impl Checker<'_, '_> {
             head_message,
             diagnostic_output,
         )
+    }
+
+    /// `elaborateDidYouMeanToCallOrConstruct`, for `SignatureKindConstruct` and then for
+    /// `SignatureKindCall`: the result of calling `node` is assignable.
+    pub(super) fn elaborate_did_you_mean_to_call_or_construct(
+        &mut self,
+        node: Place,
+        source: TypeId,
+        target: TypeId,
+        head_message: Option<u32>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
+        for construct in [true, false] {
+            let mut would_do = false;
+            for sig in self.signatures(source, construct) {
+                let returned = self.sig_return(sig);
+                if !self.is_any(returned)
+                    && !returned.is_never()
+                    && self.is_assignable(returned, target)
+                {
+                    would_do = true;
+                    break;
+                }
+            }
+            if !would_do {
+                continue;
+            }
+            let mut diags = Vec::new();
+            let output = Some(&mut diags);
+            if !self.check_type_assignable_to_ex(source, target, Some(node), head_message, output)
+                && let Some(mut diagnostic) = diags.pop()
+            {
+                let code = if construct { 6213 } else { 6212 };
+                diagnostic.add_related_info(self.new_diagnostic(node, code, &[]));
+                self.report_diagnostic(diagnostic, diagnostic_output);
+                return true;
+            }
+        }
+        false
     }
 
     /// `elaborateObjectLiteral`
@@ -1518,15 +1525,8 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            let mut check_node = item;
-            while let ExprKind::Satisfies { expr, .. } = hir[check_node].kind {
-                check_node = expr;
-            }
-            let at = (
-                file,
-                self.error_start_inside_parentheses(file, check_node),
-                self.error_end_inside_parentheses(file, check_node),
-            );
+            let check_node = self.effective_check_node(file, item);
+            let at = self.place_of_effective_check_node(file, check_node);
             let output = diagnostic_output.as_deref_mut();
             reported |= self.elaborate_element(
                 source, target, at, check_node, true, name_type, None, output,

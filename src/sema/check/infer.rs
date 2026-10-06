@@ -2367,9 +2367,18 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(last) = params.last() else {
             return LabeledDeclaration::NONE;
         };
+        // `isValidDeclarationForTupleLabel`: `name` is `NONE` for a pattern.
+        let label = |parameter: &SigParam| match parameter.declaration {
+            Some((file, p)) if parameter.name.is_some() => LabeledDeclaration {
+                name: parameter.name,
+                file,
+                pos: self.hir(file)[p].pos,
+            },
+            _ => LabeledDeclaration::NONE,
+        };
         let param_count = params.len() - usize::from(last.rest);
         if pos < param_count {
-            return params[pos].label();
+            return label(&params[pos]);
         }
         if !last.rest {
             return LabeledDeclaration::NONE;
@@ -2378,7 +2387,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Tuple { flags, .. } => flags
                 .get(pos - param_count)
                 .map_or(LabeledDeclaration::NONE, |info| info.labeled_declaration()),
-            _ => last.label(),
+            _ => label(last),
         }
     }
 

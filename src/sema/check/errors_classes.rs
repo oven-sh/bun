@@ -415,16 +415,18 @@ impl<'p> Checker<'p, '_> {
         // `ast.SymbolName`: a private name is compared by its source text.
         let written = self.written_name(name);
         // The name of a symbol-keyed member is compared like any other. In tsgo it is
-        // `\xFE@description@<symbol id>` (`getESSymbolLikeTypeForNode`). `GetSymbolId` numbers
-        // symbols in the order they are first requested, which cannot be reproduced: the id is
-        // assumed to have two digits, the fewest it has in a program with a default library.
+        // `\xFE@description@<symbol id>` (`getESSymbolLikeTypeForNode`). Where no id is handed out
+        // it is assumed to have two digits, the fewest it has in a program with a default library.
         let late_bound = written
             .strip_prefix(crate::atom::SYMBOL_NAME_PREFIX)
-            .map(|described| {
-                let description =
-                    &described[..bun_core::strings::last_index_of_char(described, b'@')
-                        .unwrap_or(described.len())];
-                [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@00"[..]].concat()
+            .map(|described| match self.symbol_name_with_id(name) {
+                std::borrow::Cow::Owned(with_id) => with_id,
+                std::borrow::Cow::Borrowed(_) => {
+                    let description =
+                        &described[..bun_core::strings::last_index_of_char(described, b'@')
+                            .unwrap_or(described.len())];
+                    [crate::atom::SYMBOL_NAME_PREFIX, description, &b"@00"[..]].concat()
+                }
             });
         let text = late_bound.as_deref().unwrap_or(written);
         let ty = self.reduced(ty);

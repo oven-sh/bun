@@ -405,6 +405,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let cycles_before = self.cycles;
         let scope = self.begin_scope();
+        if self.hands_out_symbol_ids() {
+            self.get_symbol_id_of_object_type_alias(ty);
+        }
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         if serial == 0 {

@@ -4,7 +4,7 @@
 //! enclosing type parameters), not its members. The checker resolves the members on demand, once.
 
 use crate::atom::{Atom, Interner};
-use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
+use crate::hir::{ExprId, FnId, ParamId, TypeNodeId, TypeParamId};
 use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
@@ -640,9 +640,9 @@ pub struct Shape<'s> {
     /// For a type created by `getSpreadType`, which creates a new type on every call: its left and
     /// right operands.
     pub spread_of: Option<(TypeId, TypeId)>,
-    /// The number of types the outermost `getSpreadType` had created before this one. `mapType`
-    /// iterates over a union of named unions by its origin, which is not the order of
-    /// `CompareTypes`.
+    /// The number of types `getSpreadType` had created for the same object literal before this
+    /// one. `mapType` iterates over a union of named unions by its origin, which is not the order
+    /// of `CompareTypes`.
     pub spread_rank: u32,
     /// For a type created by `getSignatureInstantiation` with `inferredTypeParameters`
     /// (`ObjectFlagsSingleSignatureType`), which creates a new type on every call: the outer type
@@ -693,6 +693,9 @@ pub enum Literalness {
     /// (`getTypeWithSyntheticDefaultImportType`). Its symbol is a type literal without members, so
     /// `IsEmptyAnonymousObjectType` treats it as `{}`, widened or not.
     SyntheticDefault,
+    /// `emptyObjectType`. It has no symbol. A type that `getRestType` or
+    /// `getWidenedTypeOfObjectLiteral` creates without members is `No`.
+    EmptyObject,
     /// `unknownEmptyObjectType`: the `{}` that `unknown` narrows to when it is neither `null` nor
     /// `undefined`. It has no symbol.
     OfUnknown,
@@ -760,25 +763,16 @@ pub struct SigParam {
     /// minimum argument counts, and the parameter at that position may be the rest parameter of
     /// the other signature: `((...a: number[]) => void) | ((a: string) => void)`.
     pub is_required_rest: bool,
-    /// `symbol.ValueDeclaration`: its file and position. `None`: a parameter that the checker
-    /// synthesizes (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no
-    /// declaration.
-    pub declaration: Option<(FileId, u32)>,
+    /// `symbol.ValueDeclaration`. `None`: a parameter that the checker synthesizes
+    /// (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no declaration.
+    pub declaration: Option<(FileId, ParamId)>,
 }
 
 impl SigParam {
-    /// `getNameableDeclarationAtPosition`: the label of a tuple element created from this
-    /// parameter. `name` is `NONE` for a pattern (`isValidDeclarationForTupleLabel`).
+    /// `ast.IsBindingPattern(symbol.ValueDeclaration.Name())`, or the name is missing.
     #[inline]
-    pub fn label(&self) -> LabeledDeclaration {
-        match self.declaration {
-            Some((file, pos)) if self.name.is_some() => LabeledDeclaration {
-                name: self.name,
-                file,
-                pos,
-            },
-            _ => LabeledDeclaration::NONE,
-        }
+    pub fn is_named_by_pattern(&self) -> bool {
+        self.name.is_none() && self.declaration.is_some()
     }
 }
 
@@ -1649,7 +1643,7 @@ impl TypeId {
 
     /// `false | true`
     pub const BOOLEAN: TypeId = TypeId(WELL_KNOWN.len() as u32);
-    /// `emptyObjectType`: `{}` where no type node says so. It has no symbol.
+    /// `emptyObjectType`, see `Literalness::EmptyObject`
     pub const EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 1);
     /// `unknownEmptyObjectType`, see `Literalness::OfUnknown`
     pub const UNKNOWN_EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 2);
@@ -1742,7 +1736,13 @@ impl<'s> TypeStore<'s> {
         let booleans = List::copy_from_slice_in(&[TypeId::FALSE, TypeId::TRUE], arena);
         assert_eq!(publish(TypeData::Union(booleans)), TypeId::BOOLEAN);
         let synth = |shape| TypeData::Synth(ArenaBox::new_in(shape, arena));
-        assert_eq!(publish(synth(Shape::new_in(arena))), TypeId::EMPTY_OBJECT);
+        assert_eq!(
+            publish(synth(Shape {
+                literal: Literalness::EmptyObject,
+                ..Shape::new_in(arena)
+            })),
+            TypeId::EMPTY_OBJECT
+        );
         assert_eq!(
             publish(synth(Shape {
                 literal: Literalness::OfUnknown,
@@ -2021,6 +2021,7 @@ impl<'p, 's> Types<'p, 's> {
                 let is_plain = matches!(
                     shape.literal,
                     Literalness::No
+                        | Literalness::EmptyObject
                         | Literalness::OfUnknown
                         | Literalness::AutoArray
                         | Literalness::EmptyTypeLiteral
@@ -2864,10 +2865,12 @@ has_no_references!(
     usize,
     ExprId,
     FnId,
+    ParamId,
     TypeNodeId,
     TypeParamId,
     crate::hir::MemberId,
     crate::hir::PropId,
+    crate::node::Node,
     Intrinsic,
     StringMappingKind,
     PropFlags,

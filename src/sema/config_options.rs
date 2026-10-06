@@ -195,7 +195,13 @@ pub fn from_text(name: &[u8], text: &[u8]) -> Option<(&'static [u8], Json)> {
         }
         Kind::String | Kind::FilePath | Kind::OneOf(..) => Json::String(text.to_vec()),
         Kind::Number => Json::Number(std::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()?),
-        // `ParseListTypeOption`: only the items of an enum-valued list are trimmed.
+        // `ParseListTypeOption`: a flag is no list. Only the items of an enum-valued list are
+        // trimmed.
+        Kind::List(Element::String | Element::FilePath | Element::Lib)
+            if text.trim_ascii().starts_with(b"-") =>
+        {
+            Json::Array(Vec::new())
+        }
         Kind::List(element @ (Element::String | Element::FilePath | Element::Lib)) => Json::Array(
             bun_core::strings::split(text.trim_ascii(), b",")
                 .map(|item| {
@@ -294,7 +300,7 @@ pub(crate) fn is_enum(name: &[u8]) -> bool {
 
 /// `CommandLineCompilerOptionsMap.Get(name)`, its name: `name` in whatever letter case. The map has
 /// the command-line-only options too.
-fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
+pub fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     let is_name = |option: &&'static [u8]| option.eq_ignore_ascii_case(name);
     match OPTIONS.get_ascii_case_insensitive(name) {
         Some(option) => Some(option.0),
@@ -302,20 +308,10 @@ fn possible_option(name: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
-/// `getSpellingSuggestion`, as `createUnknownOptionError` called it before TypeScript 7: the option
-/// whose name is closest to `name`.
-fn nearest(name: &[u8]) -> Option<&'static [u8]> {
-    let names = OPTIONS.values().map(|option| option.0);
-    crate::check::regexp_scanner::get_spelling_suggestion(name, names, |name| name, Ord::cmp)
-}
-
 /// Which object of a configuration file the options are in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum In {
-    /// For an unknown option, whether to suggest only a different letter case, as TypeScript 7 does.
-    CompilerOptions {
-        as_typescript_does: bool,
-    },
+    CompilerOptions,
     /// `tsconfigRootOptionsMap`. What it does not have is not an error, but for `excludes`.
     Root,
     TypeAcquisition,
@@ -411,8 +407,7 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
         let value = &file.convert_property_value_to_json(file.initializer(property));
         let name_span = Some(file.name_span(property));
         let value_span = Some(file.span(file.initializer(property)));
-        if matches!(within, In::CompilerOptions { .. }) && COMMAND_LINE_ONLY_OPTIONS.contains(name)
-        {
+        if within == In::CompilerOptions && COMMAND_LINE_ONLY_OPTIONS.contains(name) {
             out.push(Problem {
                 property,
                 index: None,
@@ -439,7 +434,7 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
         }
         let kind = match within {
             In::Root => kind_of_root(name),
-            In::CompilerOptions { .. } => kind_of(name),
+            In::CompilerOptions => kind_of(name),
             In::TypeAcquisition => (TYPE_ACQUISITION_OPTIONS.iter())
                 .find(|option| option.0 == &name[..])
                 .map(|option| option.1),
@@ -452,14 +447,7 @@ pub fn problems(file: &TsConfigSourceFile, written: ExprId, within: In) -> Vec<P
                     let other_case = options.find(|option| option.0.eq_ignore_ascii_case(name));
                     (other_case.map(|option| option.0), 17018, 17010)
                 }
-                In::CompilerOptions { as_typescript_does } => {
-                    let other_case = possible_option(name);
-                    let suggestion = match as_typescript_does {
-                        true => other_case,
-                        false => other_case.or_else(|| nearest(name)),
-                    };
-                    (suggestion, 5025, 5023)
-                }
+                In::CompilerOptions => (possible_option(name), 5025, 5023),
             };
             let (code, args) = match suggestion {
                 Some(suggestion) => (with, vec![name.clone(), suggestion.to_vec()]),

@@ -349,12 +349,7 @@ impl Checker<'_, '_> {
             }
         }
 
-        if is_global
-            && !around.is_ambient
-            && hir
-                .find_modifier(hir[s].modifiers, Flags::AMBIENT)
-                .is_none()
-        {
+        if is_global && !is_ambient {
             self.error_at((cx.file, name_pos, 0), 2670, &[]);
         }
         let context_error = if is_ambient_module { 1234 } else { 1235 };
@@ -441,39 +436,25 @@ impl Checker<'_, '_> {
     }
 
     /// What `mergeModuleAugmentation` reports for the declaration `m`, which augments the module
-    /// named `name`. `Files::merge` has merged it. Errors are reported at the first declaration in
-    /// the file.
+    /// named `name`. `Files::merge` has merged it. Errors are reported at the first declaration of
+    /// its symbol.
     fn modules_merge_augmentation(&mut self, cx: &Cx<'_>, m: ModuleId, name: Atom, around: Around) {
         let (hir, bound, files) = (self.hir(cx.file), self.bound(cx.file), self.files());
-        let text = self.atoms().bytes(name);
-        // `collectModuleReferences`: whether it is one of `ModuleAugmentations` at all.
-        let is_collected = if around.module.is_none() {
-            around.is_ambient || hir[m].flags.contains(Flags::AMBIENT)
-        } else {
-            around.is_ambient && !is_relative(text)
-        };
         let symbol = bound.module_symbol[m.idx()];
-        if !is_collected || symbol.is_none() {
+        if symbol.is_none() || !files.merges_module_augmentation(cx.file, symbol) {
             return;
         }
-        // All declarations with the same quoted name in a file share one symbol here.
-        // `declareModuleSymbol` has one per container.
         let decls = &bound.symbols[symbol.idx()].decls;
-        let parent_of = |part: ModuleId| bound.stmt_parent[hir[part].stmt.idx()];
-        let is_here = |part: ModuleId| parent_of(part) == parent_of(m);
-        let first = decls.iter().find_map(|&d| match d {
-            Decl::Module(part) if is_here(part) => Some(part),
-            _ => None,
-        });
+        let is_first = decls.first() == Some(&Decl::Module(m));
         let start = hir[m].name_pos;
         let report = |c: &mut Self, code: u32, of_each: bool, args: &[Arg<'_>]| {
-            if of_each || first == Some(m) {
+            if of_each || is_first {
                 c.error_at((cx.file, start, 0), code, args);
             }
         };
         // `resolveExternalModuleNameWorker(moduleName, moduleName, moduleNotFoundError, false,
         // true)`. Names in an ambient context are not reported.
-        if first == Some(m) {
+        if is_first {
             let written = SpecifierUse {
                 spec: name,
                 pos: start,
@@ -500,7 +481,7 @@ impl Checker<'_, '_> {
         if files.flags(merged).contains(SymFlags::TRANSIENT) {
             return;
         }
-        let Some(found) = self.modules_module_of_specifier(cx.file, name) else {
+        let Some(found) = files.module_of_specifier(cx.file, name) else {
             return;
         };
         let main = files.module_value(found);
@@ -512,7 +493,7 @@ impl Checker<'_, '_> {
             files.decls(main).iter().any(|&(of, d)| matches!(d, Decl::Enum(e) if files.hir(of)[e].flags.contains(Flags::CONST)))
         };
         let has_values = || {
-            decls.iter().any(|&d| matches!(d, Decl::Module(part) if is_here(part) && bound.module_instance_state[part.idx()] != ModuleInstanceState::NonInstantiated))
+            decls.iter().any(|&d| matches!(d, Decl::Module(part) if bound.module_instance_state[part.idx()] != ModuleInstanceState::NonInstantiated))
         };
         if (is_variable || flags.intersects(SymFlags::ENUM) && is_const_enum()) && has_values() {
             if flags.contains(SymFlags::NAMESPACE_MODULE) {
@@ -526,33 +507,6 @@ impl Checker<'_, '_> {
 
     pub(super) fn modules_is_a_file(&self, module: Sym) -> bool {
         self.files().symbol(module).decls.contains(&Decl::File)
-    }
-
-    /// Whether a script declares the module `sym` at its top level. Those are the modules
-    /// `tryFindAmbientModule` and `patternAmbientModules` contain.
-    pub(super) fn modules_is_declared_by_a_script(&self, sym: Sym) -> bool {
-        let files = self.files();
-        files.decls(sym).iter().any(|&(of, decl)| {
-            let hir = files.hir(of);
-            matches!(decl, Decl::Module(m)
-                if !files.module(of).is_module() && hir.ids(hir.body).any(|s| matches!(hir[s].kind, StmtKind::Module(top) if top == m)))
-        })
-    }
-
-    /// The module `spec` resolves to in `file`: a file or a module declared by a script. A `declare
-    /// module` that `resolveExternalModule` does not see is not a result, and does not shadow a
-    /// file either.
-    fn modules_module_of_specifier(&self, file: FileId, spec: Atom) -> Option<Sym> {
-        let files = self.files();
-        let found = files.module_of_specifier(file, spec)?;
-        if self.modules_is_a_file(found) || self.modules_is_declared_by_a_script(found) {
-            return Some(found);
-        }
-        let target = files.module(file).imported_file(spec)?;
-        files
-            .module(target)
-            .is_module()
-            .then(|| files.file_symbol(target))
     }
 
     // ───────────────────────────── imports and exports ─────────────────────────────
@@ -1327,10 +1281,13 @@ impl Checker<'_, '_> {
             return;
         };
         // `checkExternalModuleExports` asks for the exports of the file, and
-        // `getExportsOfModuleWorker` resolves the module of every `export *` among them.
+        // `getExportsOfModuleWorker` resolves the module of every `export *` among them. With an
+        // `export =` it visits what that resolves to in place of the file.
         let bound = self.bound(cx.file);
         let is_of_file = |it: &(SymbolId, StmtId)| it.0 == bound.file_symbol && it.1 == s;
-        let is_resolved_for_file = alias.is_none() && bound.export_stars.iter().any(is_of_file);
+        let is_resolved_for_file = alias.is_none()
+            && bound.export_stars.iter().any(is_of_file)
+            && (files.export(files.file_symbol(cx.file), known::export_equals)).is_none();
         let context_error = if cx.is_js { 1474 } else { 1233 };
         if self.check_grammar_module_element_context(cx, s, around, context_error) {
             if is_resolved_for_file {
@@ -1341,7 +1298,7 @@ impl Checker<'_, '_> {
         }
         if self.modules_is_in_valid_position(cx, s, spec, true, around) {
             if !self.modules_module_is_missing(cx, s, spec, around)
-                && let Some(module) = self.modules_module_of_specifier(cx.file, spec)
+                && let Some(module) = files.module_of_specifier(cx.file, spec)
             {
                 // `hasExportAssignmentSymbol`
                 if files.export(module, known::export_equals).is_some() {
@@ -1361,8 +1318,8 @@ impl Checker<'_, '_> {
             // `checkModuleExportName` for the name in `export * as name`, unless only 2498 is
             // reported.
             if alias.is_some()
-                && !self
-                    .modules_module_of_specifier(cx.file, spec)
+                && !files
+                    .module_of_specifier(cx.file, spec)
                     .is_some_and(|module| files.export(module, known::export_equals).is_some())
             {
                 self.modules_module_export_name(cx, alias_pos);
@@ -1566,12 +1523,12 @@ impl Checker<'_, '_> {
         self.error_at(node, code, &[]);
     }
 
-    /// The end of the `ImportAttributes` whose attributes are `object`: after the closing brace. 0
-    /// if unknown.
+    /// `node.End()` of the `ImportAttributes` whose attributes are `object`. 0 without a `{`: the
+    /// end of the keyword.
     fn modules_end_of_import_attributes(&self, file: FileId, object: ExprId) -> u32 {
-        let (hir, open) = (self.hir(file), self.hir(file)[object].pos);
-        if hir.text.get(open as usize) == Some(&b'{') {
-            self.end_of_bracket_at(file, open)
+        let hir = self.hir(file);
+        if hir.text.get(hir[object].pos as usize) == Some(&b'{') {
+            hir[object].end
         } else {
             0
         }

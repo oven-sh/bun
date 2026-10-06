@@ -279,6 +279,7 @@ impl<'p, 's> Checker<'p, 's> {
             matches!(
                 q,
                 Query::Pat(..)
+                    | Query::ParameterSymbol(..)
                     | Query::Symbol(_)
                     | Query::Return(..)
                     | Query::ReturnAtFirstLook(..)
@@ -562,6 +563,51 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `pushCachedContextualType`
+    pub(super) fn push_cached_contextual_type(&mut self, file: FileId, node: ExprId) {
+        let t = self.contextual_type(file, node, ContextFlags::empty());
+        self.push_contextual_type(file, node, t, true);
+    }
+
+    /// `pushContextualType`
+    #[inline]
+    pub(super) fn push_contextual_type(
+        &mut self,
+        file: FileId,
+        node: ExprId,
+        t: Option<TypeId>,
+        is_cache: bool,
+    ) {
+        self.contextual.push(ContextualInfo {
+            file,
+            node,
+            t,
+            is_cache,
+        });
+    }
+
+    /// `popContextualType`
+    #[inline]
+    pub(super) fn pop_contextual_type(&mut self) {
+        self.contextual.pop();
+    }
+
+    /// `findContextualNode`. A node that is checked again while it is being checked has several
+    /// entries: the search begins at the one that was pushed first.
+    pub(super) fn find_contextual_node(
+        &self,
+        file: FileId,
+        node: ExprId,
+        include_caches: bool,
+    ) -> Option<ContextualInfo> {
+        let mut infos = self.contextual.iter();
+        infos
+            .find(|info| {
+                info.file == file && info.node == node && (include_caches || !info.is_cache)
+            })
+            .copied()
+    }
+
     /// `getContextualType`
     pub(super) fn contextual_type(
         &mut self,
@@ -574,13 +620,10 @@ impl<'p, 's> Checker<'p, 's> {
         if hir.is_in_with(hir[e].pos) {
             return None;
         }
-        if let Some(&(_, _, ty)) = self
-            .contextual
-            .iter()
-            .rev()
-            .find(|c| c.0 == file && c.1 == e)
-        {
-            return Some(ty);
+        // "Cached contextual types are obtained with no ContextFlags, so we can only consult them
+        // for requests with no ContextFlags."
+        if let Some(info) = self.find_contextual_node(file, e, context_flags.is_empty()) {
+            return info.t;
         }
         let ty = self.contextual_type_from_parent(file, e, context_flags)?;
         if ty == TypeId::UNRESOLVED {
@@ -1401,6 +1444,7 @@ impl<'p, 's> Checker<'p, 's> {
                         | Query::Call(..)
                         | Query::LiteralProp(..)
                         | Query::Pat(..)
+                        | Query::ParameterSymbol(..)
                         | Query::Symbol(_)
                         | Query::Return(..)
                         | Query::ReturnOfSignature(_)

@@ -642,7 +642,11 @@ impl<'p, 's> Checker<'p, 's> {
                 undefined: access_flags.contains(AccessFlags::INCLUDE_UNDEFINED),
             });
             return Some(match alias {
-                Some((alias, type_arguments)) => self.with_alias(deferred, alias, type_arguments),
+                Some((alias, type_arguments)) => {
+                    // `getIndexedAccessKey`
+                    self.get_symbol_id(alias);
+                    self.with_alias(deferred, alias, type_arguments)
+                }
                 None => deferred,
             });
         }
@@ -1227,8 +1231,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
         match (self.leave(q), alias) {
+            // Where it was in progress several times, the outermost is the last to store.
             (Ok(stored), None) => {
-                (self.p.conditionals).insert(&self.task, (file, node, mapper), ty, stored)
+                (self.p.conditionals).rewrite(&self.task, (file, node, mapper), ty, stored);
+                ty
             }
             (Err(open), None) => {
                 self.cache_provisionally(q, u64::from(ty.0), open);
@@ -1584,28 +1590,14 @@ impl<'p, 's> Checker<'p, 's> {
         Ok(((root_file, root, root_mapper), true))
     }
 
-    /// `getConstraintFromConditionalType`, and the base constraint of its result
-    /// (`computeBaseConstraint`).
-    pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> TypeId {
-        let constraint = self.get_constraint_of_conditional_type(this);
-        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
-        // object type.
-        let constraint = self.next_base_constraint(constraint);
-        if self.some_type(constraint, |c, m| c.is_deferred(m)) {
-            TypeId::UNKNOWN
-        } else {
-            constraint
-        }
-    }
-
-    /// `getConstraintOfConditionalType`
-    pub(super) fn get_constraint_of_conditional_type(&mut self, this: TypeId) -> TypeId {
+    /// `computeBaseConstraint` of the conditional type `this`.
+    pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> Option<TypeId> {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
         // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query
         // for lack of capacity on `stack`.
         if self.conditional_constraint_depth >= 100 || self.stack.len() + 20 >= MAX_DEPTH {
             self.bailed_out();
-            return TypeId::UNKNOWN;
+            return None;
         }
         self.conditional_constraint_depth += 1;
         // `getConstraintOfTypeParameter`: a type parameter with a circular constraint has no
@@ -1624,7 +1616,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.constraint_from_conditional(this)
         };
         self.conditional_constraint_depth -= 1;
-        constraint
+        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
+        // object type.
+        let constraint = self.next_base_constraint(constraint)?;
+        (!self.some_type(constraint, |c, m| c.is_deferred(m))).then_some(constraint)
     }
 
     // ───────────────────────────── mapped types ─────────────────────────────
@@ -2219,21 +2214,19 @@ impl<'p, 's> Checker<'p, 's> {
         let template = self.type_from_node(file, mapped.ty);
         let template = self.instantiate(template, with_key);
         // `couldAccessOptionalProperty`: it may be one of the optional properties.
-        let optional = mapped.optional == MappedModifier::Add || {
-            let keys = self.base_constraint(index);
+        let mut optional = mapped.optional == MappedModifier::Add;
+        if !optional && let Some(keys) = self.base_constraint_of(index) {
             let members = self.members(obj)?;
-            let mut could = false;
             for prop in &members.shape().props {
                 if prop.flags.contains(PropFlags::OPTIONAL)
                     && let Some(key) = self.key_type_of_prop(obj, prop)
                     && self.is_assignable(key, keys)
                 {
-                    could = true;
+                    optional = true;
                     break;
                 }
             }
-            could
-        };
+        }
         Some(if optional {
             self.optional_property(template)
         } else {
@@ -2504,6 +2497,28 @@ impl<'p, 's> Checker<'p, 's> {
             origin: Origin::Mapped(file, node),
             mapper: types.mapper_of(&type_arguments),
         })
+    }
+
+    /// `links.syntheticOrigin` of the symbol that `prop` stands for: `modifiersProp` of
+    /// `addMemberForKeyTypeWorker`. `build_mapped_shape` created `prop` for the mapped type `of`.
+    pub(super) fn synthetic_origin(&mut self, of: TypeId, prop: &Prop) -> Option<&'p Prop<'p>> {
+        let of = self.containing_type_of_mapped_prop(of, prop);
+        let (file, node, mapper) = self.mapped_origin(of)?;
+        let param = self.type_param(file, self.mapped_decl(file, node).param);
+        let key_type = self.types().map(prop.mapper, param)?;
+        // `keyType` is the union of the keys that have the name. The first created the symbol.
+        let key = if self.is_union(key_type) {
+            let constraint = self.mapped_constraint(file, node, mapper);
+            let (keys, _) = self.mapped_key_types(file, node, mapper, constraint);
+            let named_alike = self.parts(key_type);
+            keys.iter().copied().find(|key| named_alike.contains(key))?
+        } else {
+            key_type
+        };
+        let name = self.property_name_of_type(key)?;
+        let modifiers_type = self.mapped_modifiers_type(of).unwrap_or(TypeId::UNKNOWN);
+        let (origin, _) = self.get_property_of_type(modifiers_type, name)?;
+        Some(origin)
     }
 
     /// `getTypeOfMappedSymbol`: the type of `prop`, which `build_mapped_shape` created for the

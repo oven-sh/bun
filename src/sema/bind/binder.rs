@@ -2606,11 +2606,16 @@ impl<'f, 's> Binder<'f, 's> {
                 } else if self.f.has_module_syntax && ambient && name.is_some() {
                     self.b.module_augmentations.push(name);
                 }
-                let existing = self
-                    .b
-                    .ambient_modules
-                    .iter()
-                    .find(|a| a.0 == name && a.2 == is_augmentation)
+                // `declareSymbol(GetLocals(container), ..)`: one symbol in each container.
+                let b = &self.b;
+                let container = b.container_scope(self.scope);
+                let is_in_container = |symbol: SymbolId| {
+                    matches!(b.symbols[symbol.idx()].decls.first(), Some(&Decl::Module(first))
+                        if b.container_scope(b.scopes[b.module_scope[first.idx()].idx()].parent)
+                            == container)
+                };
+                let existing = (b.ambient_modules.iter())
+                    .find(|a| a.0 == name && a.2 == is_augmentation && is_in_container(a.1))
                     .map(|a| a.1);
                 match existing {
                     Some(symbol) => {
@@ -3563,12 +3568,19 @@ impl<'f, 's> Binder<'f, 's> {
             if let Some((includes, excludes)) = flags_of_member(member) {
                 let is_static =
                     matches!(owner, MemberOwner::Class(_)) && member.flags.contains(Flags::STATIC);
-                let table = if is_static {
-                    self.get_exports(container)
+                let decl = Decl::Member(m);
+                // `HasDynamicName`: no table is asked for, so `symbol.Members` can stay nil.
+                if self.get_declaration_name(decl) == known::computed {
+                    let symbol = self.bind_anonymous_declaration(decl, includes, known::computed);
+                    self.b.symbols[symbol.idx()].parent = container;
                 } else {
-                    self.get_members(container)
-                };
-                self.declare_symbol(table, container, Decl::Member(m), includes, excludes);
+                    let table = if is_static {
+                        self.get_exports(container)
+                    } else {
+                        self.get_members(container)
+                    };
+                    self.declare_symbol(table, container, decl, includes, excludes);
+                }
             }
             let seen_this = self.seen_this;
             let constructor = if member.kind == MemberKind::Property && !self.is_static(m, owner) {

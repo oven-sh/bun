@@ -11,7 +11,7 @@ use super::errors_operators::{
     check_tagged_template, check_template_spans, check_yield_result,
 };
 use super::errors_statements::is_with_statement;
-use super::task::{Finished, Published};
+use super::task::{Finished, InProgramOrder, Published, UndefinedProperty};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use crate::types::LinkCounts;
@@ -39,8 +39,15 @@ impl<'s> Program<'s> {
     /// caller aborts an invalid task: it discards the task's output and retries its files, which
     /// then read `serial_variances`. The first task to compute the variances of a symbol is valid
     /// with respect to that symbol. Returns whether each task is invalid.
+    ///
+    /// Likewise for `markNodeAssignments`: what it has found about a variable depends on which of
+    /// the functions around the assignments was walked first
+    /// (`has_order_dependent_assignment_marks`). A task is invalid if it walked a function of a
+    /// file it was visiting that is inside or around one that an earlier task of the step walked,
+    /// on demand. Retried, it finds those walks published, with what was evaluated along with them.
     pub fn validate(&self, finished: &[Finished<'s>]) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
+        let mut walked: Vec<(FileId, Node)> = Vec::new();
         (finished.iter())
             .map(|finished| {
                 let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
@@ -48,15 +55,89 @@ impl<'s> Program<'s> {
                         .get(&it.sym)
                         .is_some_and(|first| it.conflicts_with(first))
                 });
-                if is_invalid {
+                if is_invalid || self.has_walked_across_earlier_walk(finished, &walked) {
                     return true;
                 }
                 for it in &finished.order_dependent_variances {
                     serial.entry(it.sym).or_insert(it.variances);
                 }
+                walked.extend(finished.assignments_walked.iter().map(|it| (it.0, it.1)));
                 false
             })
             .collect()
+    }
+
+    /// `earlier`: `Finished::assignments_walked` of the valid tasks before it.
+    fn has_walked_across_earlier_walk(
+        &self,
+        finished: &Finished<'s>,
+        earlier: &[(FileId, Node)],
+    ) -> bool {
+        (finished.assignments_walked.iter()).any(|&(file, node, is_visiting)| {
+            let hir = self.files.hir(file);
+            let is_in =
+                |inner: Node, outer: Node| hir.find_ancestor(inner, |n| n == outer).is_some();
+            is_visiting
+                && (earlier.iter()).any(|&(of, other)| {
+                    of == file && other != node && (is_in(node, other) || is_in(other, node))
+                })
+        })
+    }
+
+    /// Validation after `validate`, which has filled in `is_invalid`, for the fields of the
+    /// original's checker that hold one answer for all files. One checker visits the files in
+    /// program order, so here the serial order is program order.
+    ///
+    /// `undefinedProperties[name]` keeps the flags and the declarations of the first property that
+    /// is normalized under the name. `first_unchecked`: `Files::rank_of_file` of the first file in
+    /// program order that neither a valid task nor one of `finished` has checked, or `u32::MAX`. A
+    /// task that has created a property while it visited a later file `is_too_early`: that file
+    /// could still create another one. So an entry of `serial_undefined_properties` is final, and
+    /// `get_undefined_property` reads it on a cache miss. Of the properties that the other tasks
+    /// have created under one name, that of the first file stays. A task that has created another
+    /// one is invalid if that shows (`UndefinedProperty::is_observed`), or if the task publishes
+    /// the types that have it. What a valid task has published and reported cannot be taken back: a
+    /// file that was retried can create a property before the one that stayed, which stays.
+    pub fn validate_in_program_order(
+        &self,
+        finished: &[Finished<'s>],
+        first_unchecked: u32,
+        is_invalid: &mut [bool],
+    ) -> InProgramOrder {
+        let is_after_unchecked = |it: &UndefinedProperty| it.rank >= first_unchecked;
+        let is_too_early: Vec<bool> = (finished.iter())
+            .map(|task| task.undefined_properties.iter().any(is_after_unchecked))
+            .collect();
+        let mut created: Vec<(usize, &UndefinedProperty<'s>)> = Vec::new();
+        for (index, task) in finished.iter().enumerate() {
+            is_invalid[index] |= is_too_early[index];
+            if !is_too_early[index] {
+                created.extend(task.undefined_properties.iter().map(|it| (index, it)));
+            }
+        }
+        created.sort_by_key(|(_, it)| it.rank);
+        let arena = self.session.arena();
+        let mut serial = self.serial_undefined_properties.lock();
+        for (index, it) in created {
+            let Some((rank, first)) = serial.get_mut(&it.created.name) else {
+                serial.insert(it.created.name, (it.rank, it.created.clone_in(arena)));
+                for file in symbols::declaring_files(&it.created) {
+                    self.trees_kept[file.idx()].store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                continue;
+            };
+            if *first == it.created {
+                *rank = it.rank.min(*rank);
+            } else if it.rank >= *rank && (it.is_observed || finished[index].is_read_later) {
+                is_invalid[index] = true;
+            }
+        }
+        InProgramOrder { is_too_early }
+    }
+
+    /// Whether the HIR of `file`, which `is_leaf`, is not to be freed at the end of its task.
+    pub fn keeps_tree(&self, file: FileId) -> bool {
+        self.trees_kept[file.idx()].load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The first half. Of the types, signatures, mappers and component lists that several tasks
@@ -130,6 +211,27 @@ impl<'s> Checker<'_, 's> {
         self.ran_out_of_stack.replace(false)
     }
 
+    /// After `check_file`: `flowAnalysisDisabled`, with which tsgo goes on to the next file of the
+    /// program.
+    pub fn is_flow_analysis_disabled(&self) -> bool {
+        self.flow_analysis_disabled
+    }
+
+    /// See the field.
+    pub fn is_flow_analysis_disabled_in_shared_file(&self) -> bool {
+        self.flow_analysis_disabled_in_shared_file
+    }
+
+    /// See the field.
+    pub fn is_widening_parameter_resolved_elsewhere(&self) -> bool {
+        self.widening_parameter_resolved_elsewhere
+    }
+
+    /// See the field.
+    pub fn is_re_resolved_call_reported_in_shared_file(&self) -> bool {
+        self.re_resolved_call_reported_in_shared_file
+    }
+
     /// How many entries of `relations` this checker has stored under a generic key whose hash
     /// included a task-local id. Such an entry is bound to its task: after the link the same two
     /// references hash differently. A function of the program.
@@ -171,6 +273,7 @@ impl<'s> Checker<'_, 's> {
         if hir.kind != FileKind::Declaration {
             self.check_unused_renamed_binding_elements(file);
         }
+        self.note_assignments_marked_by_check(file);
         self.reported_unreachable_nodes.clear();
     }
 
@@ -1675,10 +1778,10 @@ impl<'s> Checker<'_, 's> {
             StmtKind::Module(module) => {
                 self.check_function_or_module_block(file, hir[module].body);
                 // `checkGrammarModuleElementContext`
-                if let ModuleName::Ident(name) = hir[module].name
-                    && matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_))
-                {
-                    self.check_collisions_for_declaration_name(file, s, name);
+                if matches!(bound.stmt_parent[s.idx()], Parent::File | Parent::Module(_)) {
+                    if let ModuleName::Ident(name) = hir[module].name {
+                        self.check_collisions_for_declaration_name(file, s, name);
+                    }
                     let options = &self.p.files.options;
                     // `ShouldPreserveConstEnums`
                     let preserves_const_enums =
@@ -1687,7 +1790,7 @@ impl<'s> Checker<'_, 's> {
                         && !hir.is_ambient(hir.node(s))
                         && bound.is_instantiated_module(module, preserves_const_enums)
                     {
-                        self.error(file, hir.name(hir.node(s)), 1294, &[]);
+                        self.error(file, s, 1294, &[]);
                     }
                 }
             }

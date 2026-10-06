@@ -2215,6 +2215,13 @@ impl<'p, 's> Checker<'p, 's> {
                 .0;
         }
         match left {
+            // `getDeclaredTypeOfEnum` assigns `links.declaredType` whatever a nested call has
+            // assigned.
+            Ok(stored) if self.files().flags(sym).intersects(SymFlags::ENUM) => {
+                self.p
+                    .declared_types
+                    .rewrite(&self.task, sym, (ty, false), stored);
+            }
             Ok(stored) => {
                 self.p
                     .declared_types
@@ -2315,6 +2322,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let union = self.union(&members);
         if self.is_union(union) {
+            // `getUnionKey`
+            self.get_symbol_id(sym);
             self.with_alias(union, sym, &[])
         } else {
             union
@@ -2392,20 +2401,60 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.enum_values.get(&self.task, &(file, member)) {
             return known;
         }
-        if !self.enter(Query::Enum(file, member)) {
-            return Evaluated::default();
+        let en = self.bound(file).enum_member_owner[member.idx()];
+        let at = (member.0 - self.hir(file)[en].members.start) as usize;
+        let mut in_progress = self.enum_values_in_progress.iter().rev();
+        if let Some((_, so_far)) = in_progress.find(|it| it.0 == (file, en)) {
+            return so_far.get(at).copied().unwrap_or_default();
         }
-        let value = self.compute_enum_member_value(file, member);
-        if let Ok(stored) = self.leave(Query::Enum(file, member)) {
-            self.p
-                .enum_values
-                .insert(&self.task, (file, member), value, stored);
-        }
-        value
+        let values = self.compute_enum_member_values(file, en);
+        values.get(at).copied().unwrap_or_default()
     }
 
-    /// `computeEnumMemberValue`. `autoValue` and `previous` are computed on demand, not passed in.
-    fn compute_enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Evaluated {
+    /// `computeEnumMemberValues`, where `NodeCheckFlagsEnumValuesComputed` is not set. Returns the
+    /// values of the members. One that depends on a query in progress is not stored, and the next
+    /// request computes it again.
+    fn compute_enum_member_values(&mut self, file: FileId, en: EnumId) -> Vec<Evaluated> {
+        let members = self.hir(file)[en].members;
+        let run = self.enum_values_in_progress.len();
+        self.enum_values_in_progress
+            .push(((file, en), Vec::with_capacity(members.len())));
+        let mut auto_value = Some(0.0);
+        let mut previous = None;
+        for member in members.iter() {
+            let known = self.p.enum_values.get(&self.task, &(file, member));
+            let result = match known {
+                Some(known) => known,
+                None if self.enter(Query::Enum(file, member)) => {
+                    let result = self.compute_enum_member_value(file, member, auto_value, previous);
+                    if let Ok(stored) = self.leave(Query::Enum(file, member)) {
+                        self.p
+                            .enum_values
+                            .insert(&self.task, (file, member), result, stored);
+                    }
+                    result
+                }
+                None => Evaluated::default(),
+            };
+            self.enum_values_in_progress[run].1.push(result);
+            auto_value = match result.value {
+                Some(EnumValue::Number(bits)) => Some(f64::from_bits(bits) + 1.0),
+                _ => None,
+            };
+            previous = Some((member, result));
+        }
+        let finished = self.enum_values_in_progress.pop();
+        finished.map_or_else(Vec::new, |it| it.1)
+    }
+
+    /// `computeEnumMemberValue`. `previous`: with its value.
+    fn compute_enum_member_value(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+        auto_value: Option<f64>,
+        previous: Option<(EnumMemberId, Evaluated)>,
+    ) -> Evaluated {
         let hir = self.hir(file);
         let (name, pos) = (hir[member].name, hir[member].pos);
         let at = (file, pos, self.end_of_name_at(file, pos));
@@ -2429,22 +2478,18 @@ impl<'p, 's> Checker<'p, 's> {
         if is_ambient_enum(hir, en) && !hir[en].flags.contains(Flags::CONST) {
             return Evaluated::default();
         }
-        if hir[en].members.start == member.0 {
-            return Evaluated::number(0.0);
-        }
-        let previous = EnumMemberId(member.0 - 1);
-        let before = self.get_enum_member_value(file, previous);
-        let Some(EnumValue::Number(bits)) = before.value else {
+        let Some(auto_value) = auto_value else {
             self.error_at(at, 1061, &[]);
             return Evaluated::default();
         };
         if self.p.files.options.isolated_modules
+            && let Some((previous, before)) = previous
             && hir[previous].init.is_some()
-            && before.resolved_other_files
+            && (!matches!(before.value, Some(EnumValue::Number(_))) || before.resolved_other_files)
         {
             self.error_at(at, 18056, &[]);
         }
-        Evaluated::number(f64::from_bits(bits) + 1.0)
+        Evaluated::number(auto_value)
     }
 
     /// `computeConstantEnumMemberValue`
@@ -3076,8 +3121,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mode = files.mode_of_import(file, mode);
         let inner_module_symbol = files.module_of_specifier_as(file, spec, mode)?;
-        // `resolveExternalModuleSymbol`
-        let module_symbol = self.resolve_symbol(files.module_value(inner_module_symbol));
+        let module_symbol = self.resolve_external_module_symbol(inner_module_symbol);
         if name.is_empty() {
             let flags = match module_symbol {
                 AliasTarget::Symbol(symbol) => self.get_symbol_flags(symbol),
@@ -3413,7 +3457,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => self.unique_symbol_declaration(file, m, name),
                 };
-                self.intern(TypeData::UniqueSymbol { symbol, name })
+                self.new_unique_es_symbol_type(symbol, name)
             }
             _ => TypeId::SYMBOL,
         }
@@ -3791,7 +3835,11 @@ impl<'p, 's> Checker<'p, 's> {
             let declared = self.declared_type(sym);
             let mapper = self.mapper_from(&params, &args);
             return match alias {
-                Some(alias) => self.instantiate_with_alias(declared, mapper, alias),
+                Some(alias) => {
+                    // `getTypeAliasInstantiationKey`
+                    self.get_symbol_id(alias.0);
+                    self.instantiate_with_alias(declared, mapper, alias)
+                }
                 None => self.instantiate(declared, mapper),
             };
         }
@@ -4258,7 +4306,7 @@ impl<'p, 's> Checker<'p, 's> {
                 optional: optional || is_untyped_in_js && !param.flags.contains(Flags::REST),
                 rest: param.flags.contains(Flags::REST),
                 is_required_rest: false,
-                declaration: Some((file, param.pos)),
+                declaration: Some((file, p)),
             });
         }
         out
@@ -4502,20 +4550,32 @@ impl<'p, 's> Checker<'p, 's> {
             .map_or(0, |i| i + 1)
     }
 
-    /// The parameter type for the argument at `index`, indexing into the rest parameter if `index`
-    /// reaches it.
+    /// `getTypeOfParameter`, and `getTypeOfSymbol` of a rest parameter. `sig_params` has computed
+    /// the type, and has not asked for the type of a symbol that `is_resolved_on_request`.
+    #[inline]
+    pub(super) fn get_type_of_parameter(&mut self, parameter: &SigParam) -> TypeId {
+        if parameter.name.is_none()
+            && let Some((file, p)) = parameter.declaration
+        {
+            self.resolve_parameter_symbol_on_request(file, p);
+        }
+        parameter.ty
+    }
+
+    /// `tryGetTypeAtPosition`: the parameter type for the argument at `index`, indexing into the
+    /// rest parameter if `index` reaches it.
     pub fn param_type_at(&mut self, params: &[SigParam], index: usize) -> Option<TypeId> {
         let last = params.last()?;
         if index < params.len() - usize::from(last.rest) {
-            let p = &params[index];
-            return Some(p.ty);
+            return Some(self.get_type_of_parameter(&params[index]));
         }
         if !last.rest {
             return None;
         }
+        let rest = self.get_type_of_parameter(last);
         let offset = index - (params.len() - 1);
-        // `tryGetTypeAtPosition`: past the end of a tuple of fixed length there is no parameter.
-        if let TypeData::Tuple { flags, .. } = self.data(last.ty)
+        // Past the end of a tuple of fixed length there is no parameter.
+        if let TypeData::Tuple { flags, .. } = self.data(rest)
             && offset >= flags.len()
             && !flags
                 .iter()
@@ -4523,7 +4583,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        Some(self.rest_element_type(last.ty, offset))
+        Some(self.rest_element_type(rest, offset))
     }
 
     /// The type of element `offset` of the array or tuple type a rest parameter is declared with.

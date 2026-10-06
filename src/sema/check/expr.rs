@@ -275,7 +275,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// parameter or not, depending on the check mode and on `hasContextualTypeWithNoGenericTypes`.
     #[inline]
     fn is_rechecked(&mut self, file: FileId, e: ExprId) -> bool {
-        self.is_rechecking() && (self.contextual.is_empty() || self.depends_on_pushed_type(file, e))
+        self.is_rechecking()
+            && (self.contextual.iter().all(|info| info.is_cache)
+                || self.depends_on_pushed_type(file, e))
     }
 
     fn depends_on_pushed_type(&mut self, file: FileId, e: ExprId) -> bool {
@@ -354,7 +356,7 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         }
         if self.is_flow_loop_or_exhaustive_state_in_progress()
-            && let Some(ty) = self.recheck_in_flow_loop(file, e)
+            && let Some(ty) = self.recheck_in_flow_loop(file, e, is_rechecked)
         {
             return ty;
         }
@@ -378,27 +380,21 @@ impl<'p, 's> Checker<'p, 's> {
                 if !entered {
                     return TypeId::UNRESOLVED;
                 }
-                let ty = if is_rechecked {
-                    let outer = self.begin_recheck();
-                    let ty = self.type_of_expr_uncached(file, e);
-                    self.end_recheck(outer);
-                    ty
-                } else {
-                    self.type_of_expr_uncached(file, e)
-                };
+                let ty = self.type_of_entered_expr(file, e, is_rechecked);
                 if afresh
                     && self.inference_contexts.len() != self.context_free_level
                     && !(self.frames.last()).is_some_and(|it| it.is_stored_by_nested_visit)
                 {
                     self.drop_reported();
                 }
+                let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
                 let left = self.leave(Query::Expr(file, e));
                 if let Err(open) = left
                     && !afresh
                 {
                     self.cache_provisionally(Query::Expr(file, e), u64::from(ty.0), open);
                 }
-                (ty, left.ok())
+                (ty, left.ok().filter(|_| is_final))
             }
         };
         if let Some(stored) = stored
@@ -497,7 +493,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// time the flow analysis that led to the loop stops there, with the types collected so far
     /// (`flowLoopStack`, `getTypeAtFlowLoopLabel`). `None` if no loop was pushed since `e` was
     /// entered.
-    fn recheck_in_flow_loop(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+    fn recheck_in_flow_loop(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        is_rechecked: bool,
+    ) -> Option<TypeId> {
         let first = self
             .stack
             .iter()
@@ -514,9 +515,21 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // The loop type is incomplete: nothing computed since the loop was pushed is cached.
         self.taint_from(pushed_at);
-        let ty = self.type_of_expr_uncached(file, e);
+        let ty = self.type_of_entered_expr(file, e, is_rechecked);
         let _ = self.leave(Query::Expr(file, e));
         Some(ty)
+    }
+
+    /// `checkExpressionWorker(e, checkMode)`, after `enter`. `is_rechecked`: the parts of `e` are
+    /// checked under the mode that `e` passes to them, and not cached either.
+    fn type_of_entered_expr(&mut self, file: FileId, e: ExprId, is_rechecked: bool) -> TypeId {
+        if !is_rechecked {
+            return self.type_of_expr_uncached(file, e);
+        }
+        let outer = self.begin_recheck();
+        let ty = self.type_of_expr_uncached(file, e);
+        self.end_recheck(outer);
+        ty
     }
 
     /// If `e` is in a default inside a pattern whose implied initializer type is being computed:
@@ -631,10 +644,11 @@ impl<'p, 's> Checker<'p, 's> {
             // `isValidConstAssertionArgument`: the contextual type is requested for nothing else.
             if self.is_valid_const_assertion_argument(file, top) {
                 highest = top;
-                may_be_expected |= self
-                    .contextual
-                    .iter()
-                    .any(|c| c.0 == file && c.1 == top && self.has_type_variables(c.2));
+                may_be_expected |= self.contextual.iter().any(|info| {
+                    info.file == file
+                        && info.node == top
+                        && info.t.is_some_and(|t| self.has_type_variables(t))
+                });
             }
             top = match self.const_context_parent(file, top) {
                 ControlFlow::Continue(outer) => outer,
@@ -1338,7 +1352,7 @@ impl<'p, 's> Checker<'p, 's> {
         let no_index_signatures = target.written
             && self.is_generic_object_type(receiver)
             && !matches!(self.data(receiver), TypeData::ThisParam(_));
-        let cycles_before = self.cycles;
+        let (cycles_before, work_before) = (self.cycles, self.work);
         // `getPropertyTypeForIndexType`: `isThisPropertyAccessInConstructor` makes the property `autoType`.
         if hir.is_js
             && let Some(name) = self.property_name_of_type(key)
@@ -1356,10 +1370,23 @@ impl<'p, 's> Checker<'p, 's> {
         let found = self.indexed_access_of_element_access(receiver, key, access_flags, (file, e));
         let declared = match found {
             Some(found) => found,
+            // A cycle whose head is this expression or a caller: the members are not all known.
+            None if self.cycles != cycles_before
+                && self.lowest_taint_since(work_before + 1) <= self.frames.len() =>
+            {
+                TypeId::UNRESOLVED
+            }
             // `core.OrElse(c.getIndexedAccessTypeOrUndefined(..), c.errorType)`
-            None if self.cycles == cycles_before => TypeId::ERROR,
-            None => TypeId::UNRESOLVED,
+            None => TypeId::ERROR,
         };
+        // `getPropertyTypeForIndexType`: each member of a union of keys names a property.
+        if self.p.files.options.no_unused_locals && !self.is_generic(key) {
+            for &k in self.parts(key) {
+                if let Some(name) = self.property_name_of_type(k) {
+                    self.mark_property_as_referenced(file, receiver, name, Some(e));
+                }
+            }
+        }
         // `getResolvedSymbolOrNil(node)`: the property `getPropertyTypeForIndexType` found for a
         // key that is a property name, unless it returned nil.
         let prop = match self.property_name_of_type(key).filter(|_| found.is_some()) {
@@ -1456,8 +1483,8 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 match module {
                     Some(module) => {
-                        let value = self.files().module_value(module);
-                        (self.type_of_symbol(value), false)
+                        let value = self.resolve_external_module_symbol(module);
+                        (self.type_of_alias_target(value), false)
                     }
                     None => (TypeId::ANY, false),
                 }
@@ -1578,8 +1605,18 @@ impl<'p, 's> Checker<'p, 's> {
                 let resolved = self.resolved_signature(file, e);
                 self.with_return_type(resolved).ret
             }
-            ExprKind::Array(items) => self.type_of_array_literal(file, e, items),
-            ExprKind::Object(props) => self.type_of_object_literal(file, e, props),
+            ExprKind::Array(items) => {
+                self.push_cached_contextual_type(file, e);
+                let ty = self.type_of_array_literal(file, e, items);
+                self.pop_contextual_type();
+                ty
+            }
+            ExprKind::Object(props) => {
+                self.push_cached_contextual_type(file, e);
+                let ty = self.type_of_object_literal(file, e, props);
+                self.pop_contextual_type();
+                ty
+            }
             ExprKind::Fn(func) => {
                 self.check_node_deferred(file, e);
                 self.check_function_expression_or_object_literal_method(file, e, func)
@@ -1806,7 +1843,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.create_promise_return_type(node, true, TypeId::ANY);
         };
         // The value of `export =`, if the module has one.
-        let mut ty = self.type_of_symbol(files.module_value(module));
+        let value = self.resolve_external_module_symbol(module);
+        let mut ty = self.type_of_alias_target(value);
         if !self.is_any(ty) {
             // `createDefaultPropertyWrapperForModule`
             let default = Prop {
@@ -2030,6 +2068,11 @@ impl<'p, 's> Checker<'p, 's> {
             declared
         };
         let flags = self.files().flags(sym);
+        let declared = if sym.file == file && flags.intersects(SymFlags::VARIABLE) {
+            self.narrow_binding(file, e, sym.id, declared)
+        } else {
+            declared
+        };
         let target = self.target_kind(file, e);
         if target.written {
             let is_variable = flags.intersects(SymFlags::VARIABLE);
@@ -2071,12 +2114,6 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return declared;
         }
-        let is_variable_here = sym.file == file && flags.intersects(SymFlags::VARIABLE);
-        let declared = if is_variable_here {
-            self.narrow_binding(file, e, sym.id, declared)
-        } else {
-            declared
-        };
         let narrowed = self.narrow_reference(file, e, sym, declared);
         // `getBaseTypeOfLiteralType(flowType)`, for the target of an operator that reads it and
         // then assigns it, including `++` and `--`.
@@ -3166,7 +3203,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `checkObjectLiteral`: whether the type of `literal` gets `ObjectFlagsJSLiteral`. It is in a JavaScript file and has no contextual
-    /// type, or is empty and has expando members. A literal with a spread never has it.
+    /// type, or is empty and has expando members. A type that `getSpreadType` creates never has it.
     pub(super) fn is_js_literal(&mut self, file: FileId, literal: ExprId) -> bool {
         // `isJSLiteralType`, `hasExcessProperties`: nothing reads the flag under noImplicitAny.
         if self.p.files.options.no_implicit_any {
@@ -3247,31 +3284,14 @@ impl<'p, 's> Checker<'p, 's> {
             for p in props.iter() {
                 object_flags |= self.look_at_member(file, p, in_destructuring_pattern);
             }
-            let is_written = self.has_read_unfinished_type_since(reads);
-            let scope = self.enclosing_scope_of_expr(file, e);
-            let mapper = self.identity_mapper_with_adopted(file, scope);
-            let is_js_literal = self.is_js_literal(file, e);
-            let kept = self.intern(TypeData::Anon {
-                origin: Origin::ObjectLiteral(file, e, is_js_literal, false, object_flags, true),
-                mapper,
-            });
-            return if self.is_rechecking() {
-                self.recheck_object_literal(file, e, kept)
-            } else if is_written {
-                self.object_literal_in_flow_loop(file, e, kept)
-            } else {
-                // `createObjectLiteralType`: `getObjectLiteralIndexInfo` requests the types of the
-                // members, accessors too, while the literal is checked. The members of `kept` are
-                // resolved when they are read.
-                self.index_infos_of_object_literal(file, props, false);
-                kept
-            };
+            return self.create_object_literal_type(file, e, props, object_flags, reads);
         }
         // With spreads, its members depend on the spread types, so they are resolved eagerly.
         let scope = self.enclosing_scope_of_expr(file, e);
         let literal_mapper = self.identity_mapper_with_adopted(file, scope);
         let is_const = self.is_const_context(file, e);
         let mut result = TypeId::EMPTY_OBJECT;
+        let mut rank = 0;
         let mut pending = Shape::new_in(self.arena);
         // Start of the members that follow the last spread.
         let mut run = props.start;
@@ -3282,7 +3302,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Some(segment) =
                     self.create_object_literal_segment(file, members, &mut pending, is_const)
                 {
-                    result = self.spread_in_literal(result, segment, is_const);
+                    result = self.spread_in_literal(result, segment, is_const, &mut rank);
                 }
                 run = p.0 + 1;
                 let spread = self.type_of_expr(file, prop.value);
@@ -3306,7 +3326,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_error_type(result) {
                     continue;
                 }
-                result = self.spread_in_literal(result, spread, is_const);
+                result = self.spread_in_literal(result, spread, is_const, &mut rank);
                 continue;
             }
             object_flags |= self.look_at_member(file, p, in_destructuring_pattern);
@@ -3337,15 +3357,63 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_error_type(result) {
             return TypeId::ERROR;
         }
+        // No spread has added anything, so no member precedes one.
+        if result == TypeId::EMPTY_OBJECT {
+            return self.create_object_literal_type(file, e, props, object_flags, reads);
+        }
         let members = Span::new(run, props.start + props.len - run);
         if let Some(segment) =
             self.create_object_literal_segment(file, members, &mut pending, is_const)
         {
-            result = self.spread_in_literal(result, segment, is_const);
+            result = self.spread_in_literal(result, segment, is_const, &mut rank);
         }
         let contains_widening_type = object_flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE);
         result = self.with_symbol_of_literal(file, e, result, contains_widening_type);
+        // "remap the raw emptyObjectType fed in at the top into a fresh empty object literal type,
+        // unique to this use site"
+        result = self.map_type(result, |c, t| {
+            if t != TypeId::EMPTY_OBJECT {
+                return t;
+            }
+            let is_js_literal = c.is_js_literal(file, e);
+            let empty = c.synth(Shape {
+                literal: Literalness::Literal,
+                is_js_literal,
+                ..Shape::new_in(c.arena)
+            });
+            c.with_symbol_of_literal(file, e, empty, contains_widening_type)
+        });
         self.with_propagated_non_inferrable_flag(result)
+    }
+
+    /// `createObjectLiteralType` where its result is the type of the literal `e`: the members are
+    /// those of `props` that are no spreads. `reads`: see `has_read_unfinished_type_since`.
+    fn create_object_literal_type(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        props: Span<PropId>,
+        object_flags: ObjectFlags,
+        reads: (u64, u32),
+    ) -> TypeId {
+        let is_written = self.has_read_unfinished_type_since(reads);
+        let scope = self.enclosing_scope_of_expr(file, e);
+        let mapper = self.identity_mapper_with_adopted(file, scope);
+        let is_js_literal = self.is_js_literal(file, e);
+        let kept = self.intern(TypeData::Anon {
+            origin: Origin::ObjectLiteral(file, e, is_js_literal, false, object_flags, true),
+            mapper,
+        });
+        if self.is_rechecking() {
+            self.recheck_object_literal(file, e, kept)
+        } else if is_written {
+            self.object_literal_in_flow_loop(file, e, kept)
+        } else {
+            // `getObjectLiteralIndexInfo` requests the types of the members, accessors too, while
+            // the literal is checked. The members of `kept` are resolved when they are read.
+            self.index_infos_of_object_literal(file, props, false);
+            kept
+        }
     }
 
     /// The member loop of `checkObjectLiteral`, for the member `p`, which is no spread: checks its value, so that a cycle through it
@@ -3846,7 +3914,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             } else {
                 self.look_at_binding_name(file, param.pat);
-                self.type_of_param(file, p);
+                self.type_of_pat(file, param.pat);
             }
             if param.default.is_some() {
                 self.look_at_initializer(file, param.default);
@@ -3943,8 +4011,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getSpreadType`, which in a const context (`readonly`) produces a readonly result.
-    fn spread_in_literal(&mut self, left: TypeId, right: TypeId, readonly: bool) -> TypeId {
-        let spread = self.get_spread_type(left, right, readonly);
+    /// `rank`: see `Shape::spread_rank`.
+    fn spread_in_literal(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+        readonly: bool,
+        rank: &mut u32,
+    ) -> TypeId {
+        let spread = self.get_spread_type(left, right, readonly, rank);
         if !readonly {
             return spread;
         }
@@ -4386,6 +4461,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
         }
         let ty = self.type_of_literal_prop_uncached(file, p);
+        let is_final = !(self.frames.last()).is_some_and(|it| it.has_read_members_in_place);
         let left = self.leave(Query::LiteralProp(file, p));
         if self.left_a_cycle {
             let stored = self.cycle_result();
@@ -4398,6 +4474,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::ANY;
         }
         match left {
+            Ok(_) if !is_final => ty,
             // Of two nested visits of `p` the outer one assigns last, as for an expression.
             Ok(stored) => (self.p.literal_prop_types).rewrite(&self.task, (file, p), ty, stored),
             Err(open) => {

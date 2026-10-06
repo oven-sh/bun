@@ -5,9 +5,6 @@
     // (which turns on declaration-emit checks for every export) does not apply here.
     "composite": false,
     "esModuleInterop": true,
-    // baseUrl needed until resolver fix propagates to system Bun used during build
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     // bun-types comes in through `include` below, by path. A `types` entry is looked up from each
     // `node_modules/@types` going up from here; the isolated install has none at the root, so from a git worktree
     // nested in another checkout it silently resolves to that checkout's copy.

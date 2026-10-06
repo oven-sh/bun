@@ -485,7 +485,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     }
   }
 
-  Writable.$call(this, options);
+  Writable.$call(this as any, options);
 
   const encoding = options.encoding;
   if (encoding) {

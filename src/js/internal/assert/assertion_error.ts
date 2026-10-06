@@ -16,7 +16,7 @@ const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const StringPrototypeRepeat = String.prototype.repeat;
 const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: $StringPrototypeSplit = String.prototype.split;
 
 declare namespace Internal {
   function printSimpleMyersDiff(actual: string, expected: string): string;

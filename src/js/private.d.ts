@@ -8,7 +8,7 @@ declare function $bundleError(...message: any[]): never;
 
 declare module "bun" {
   namespace SQL.__internal {
-    type Define<T, K extends keyof T = never> = T extends any
+    type Define<T extends { adapter?: unknown }, K extends keyof T = never> = T extends any
       ? T & {
           [Key in K | "adapter"]: NonNullable<T[Key]>;
         } & {}
@@ -36,7 +36,6 @@ declare module "bun" {
 
 declare module "bun" {
   function jest(path: string): typeof import("bun:test");
-  var main: string;
   var FFI: any;
   /** This version of fetch is untamperable */
   var fetch: typeof globalThis.fetch;
@@ -204,17 +203,13 @@ interface LoaderModule {
   dependenciesMap: Map<string, LoaderEntry>;
 }
 
-declare interface Error {
-  code?: string;
-}
-
 /** A CommonJS require cache: resolved path -> module. */
 type RequireMap = Map<string, JSCommonJSModule>;
 
 interface JSCommonJSModule {
   /** The require cache the module reads and writes: the global one, or its Bun.ModuleGraph's. */
   readonly $requireMap: RequireMap;
-  $require(id: string, mod: any, args_count: number, args: Array): any;
+  $require(id: string, mod: any, args_count: number, args: any[]): any;
   $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;
@@ -283,12 +278,6 @@ declare function $newRustFunction<T = (...args: any) => any>(
  */
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
-
-declare module "node:stream" {
-  interface ReadableOptions {
-    __proto__?: null;
-  }
-}
 
 declare module "node:net" {
   function _normalizeArgs(options: any[]): [Record<PropertyKey, any>, Function | null];

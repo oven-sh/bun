@@ -103,7 +103,7 @@ export function loadAndResolvePluginsForServe(
         onstart_promises_array,
         i === plugins.length - 1,
         false,
-      ]);
+      ] as Parameters<typeof runSetupFunction>);
     }
     if (onstart_promises_array !== undefined) {
       await Promise.all(onstart_promises_array);
@@ -428,7 +428,7 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           path: inputPath,
           importer,
           namespace: inputNamespace,
-          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
+          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined!,
           kind,
           // pluginData
         });

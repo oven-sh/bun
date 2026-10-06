@@ -10,8 +10,9 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
     useStrictMethodValidation: boolean,
     lenientHttpFlags: number,
     maxHeaderSize: number,
-    onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
-    onConnection?: (socketHandle: any) => undefined,
+    onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => void,
+    onConnection: (socketHandle: any) => void,
+    httpAllowHalfOpen: boolean,
   ) => void;
   setServerAppFlags: (
     server: any,

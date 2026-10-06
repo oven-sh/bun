@@ -22,7 +22,7 @@ const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: $StringPrototypeSplit = String.prototype.split;
 
 // COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE
 const kMaxCopyMode = 7;

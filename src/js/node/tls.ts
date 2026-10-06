@@ -301,7 +301,7 @@ const ObjectAssign = Object.assign;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: $StringPrototypeSplit = String.prototype.split;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSubstring = String.prototype.substring;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
@@ -1692,7 +1692,7 @@ function convertProtocols(protocols) {
   const buff = Buffer.allocUnsafe(
     ArrayPrototypeReduce.$call(
       protocols,
-      (p, c, i) => {
+      (p: any, c, i) => {
         const len = Buffer.byteLength(c);
         if (len > 255) {
           const err = new RangeError(
@@ -1705,7 +1705,7 @@ function convertProtocols(protocols) {
         return p + 1 + len;
       },
       0,
-    ),
+    ) as number,
   );
 
   let offset = 0;

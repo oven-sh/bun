@@ -51,6 +51,8 @@ const kRunChildEnv = "NODE_TEST_CONTEXT";
 const kRunChildEnvValue = "child-v8";
 const kRunEventPrefix = "\0bun:test:run\0";
 
+type ReadableOptions = import("node:stream").ReadableOptions;
+
 // Created lazily on the first run() call so the common test()/describe()
 // path never loads node:stream.
 type TestsStream = InstanceType<ReturnType<typeof getTestsStreamClass>>;
@@ -65,7 +67,7 @@ function getTestsStreamClass() {
     #canPush = true;
 
     constructor() {
-      super({ __proto__: null, objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
+      super({ __proto__: null, objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER } as ReadableOptions);
     }
 
     _read() {

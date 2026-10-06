@@ -58,7 +58,7 @@ declare var $alwaysInline;
  * Overrides **
  */
 
-interface ReadableStream<R = any> extends _ReadableStream<R> {
+interface ReadableStream<R = any> {
   /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
   $bunNativePtr: TODO | undefined;
 }
@@ -97,7 +97,7 @@ declare function $argument<T = any>(index: number): any | undefined;
 /** returns number of arguments */
 declare function $argumentCount(): number;
 /** array.push(item) */
-declare function $arrayPush(array: T[], item: T): void;
+declare function $arrayPush<T>(array: T[], item: T): void;
 
 /**
  * Returns the internal Promise state as a small integer:
@@ -178,12 +178,12 @@ declare function $isArray(obj: any): obj is any[];
 declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
 declare function $isCallable(fn: any): fn is $AnyCallable;
 declare function $isJSArray(obj: unknown): obj is any[];
-declare function $isProxyObject(obj: unknown): obj is Proxy;
+declare function $isProxyObject(obj: unknown): boolean;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
-declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
+declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: unknown): any;
 /**
  * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin
  * @deprecated
@@ -244,7 +244,6 @@ declare function $bunNativePtr(): TODO;
 declare function $cancel(): TODO;
 declare function $close(): TODO;
 declare function $code(): TODO;
-declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
 declare function $decode(): TODO;
@@ -340,14 +339,66 @@ interface InternalFieldObject<T extends any[]> {
   [__internal]: T;
 }
 
-// You can also `@` on any method on a classes to avoid prototype pollution and secret internals
-type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] };
-
-declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
-declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
-declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
-declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
-declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
+// `obj.$method` reads the private copy of a method, which user code cannot replace. Only the ones JavaScriptCore puts
+// on the object exist: search its `runtime/<Class>Prototype.cpp` or `runtime/<Class>Constructor.cpp` for `PrivateName`.
+interface Map<K, V> {
+  $clear: Map<K, V>["clear"];
+  $delete: Map<K, V>["delete"];
+  $entries: Map<K, V>["entries"];
+  $forEach: Map<K, V>["forEach"];
+  $get: Map<K, V>["get"];
+  $has: Map<K, V>["has"];
+  $keys: Map<K, V>["keys"];
+  $set: Map<K, V>["set"];
+  $size: Map<K, V>["size"];
+  $values: Map<K, V>["values"];
+}
+interface Set<T> {
+  $add: Set<T>["add"];
+  $clear: Set<T>["clear"];
+  $delete: Set<T>["delete"];
+  $entries: Set<T>["entries"];
+  $forEach: Set<T>["forEach"];
+  $has: Set<T>["has"];
+  $keys: Set<T>["keys"];
+  $size: Set<T>["size"];
+  $values: Set<T>["values"];
+}
+interface String {
+  $charCodeAt: String["charCodeAt"];
+  $endsWith: String["endsWith"];
+  $substr: String["substr"];
+}
+interface Promise<T> {
+  $then: Promise<T>["then"];
+}
+interface PromiseConstructor {
+  $reject: PromiseConstructor["reject"];
+  $resolve: PromiseConstructor["resolve"];
+}
+interface ObjectConstructor {
+  $create: ObjectConstructor["create"];
+  $defineProperty: ObjectConstructor["defineProperty"];
+  $getOwnPropertyDescriptor: ObjectConstructor["getOwnPropertyDescriptor"];
+  $getOwnPropertyNames: ObjectConstructor["getOwnPropertyNames"];
+  $getOwnPropertySymbols: ObjectConstructor["getOwnPropertySymbols"];
+  $getPrototypeOf: ObjectConstructor["getPrototypeOf"];
+  $hasOwn: ObjectConstructor["hasOwn"];
+  $keys: ObjectConstructor["keys"];
+  $values: ObjectConstructor["values"];
+}
+// `fn.$call(...)` and `fn.$apply(...)` compile to a direct call.
+interface CallableFunction {
+  /** The last overload forwards `arguments`, which has no tuple type to check against the parameters. */
+  $apply: CallableFunction["apply"] & (<T, R>(this: (this: T, ...args: any[]) => R, thisArg: T, args: IArguments) => R);
+  $call: CallableFunction["call"];
+}
+interface NewableFunction {
+  $apply: NewableFunction["apply"] & (<T>(this: new (...args: any[]) => T, thisArg: T, args: IArguments) => void);
+  $call: NewableFunction["call"];
+}
+/** For a captured `String.prototype.split`: `$call` takes its parameters from the last overload, the `[Symbol.split]` one. */
+type $StringPrototypeSplit = (this: string, separator: string | RegExp, limit?: number) => string[];
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
@@ -365,17 +416,6 @@ declare interface AddEventListenerOptions {
   $kResistStopPropagation?: boolean;
 }
 
-// Provided by the C++ Web Streams implementation.
-declare class ReadableByteStreamController {
-  private constructor();
-}
-declare class ReadableStreamBYOBRequest {
-  private constructor();
-}
-declare class ReadableStreamBYOBReader {
-  constructor(stream: ReadableStream);
-}
-
 // Inlining our enum types
 declare const $ImportKindIdToLabel: Array<import("bun").ImportKind>;
 declare const $ImportKindLabelToId: Record<import("bun").ImportKind, number>;
@@ -388,36 +428,17 @@ declare function notImplementedIssue(issueNumber: number, description: string): 
 /** Return a function that throws a not implemented error that points to a github issue */
 declare function notImplementedIssueFn(issueNumber: number, description: string): (...args: any[]) => never;
 
-declare type JSCSourceCodeObject = unique symbol;
+declare const __JSCSourceCodeObject: unique symbol;
+declare type JSCSourceCodeObject = typeof __JSCSourceCodeObject;
 
 declare interface Function {
   path: string;
 }
 
-interface String {
-  $charCodeAt: String["charCodeAt"];
-  // add others as needed
-}
-
-interface Set {
-  $add: Set["add"];
-  $clear: Set["clear"];
-  $delete: Set["delete"];
-  $has: Set["has"];
-}
-
-interface Map {
-  $clear: Map["clear"];
-  $delete: Map["delete"];
-  $has: Map["has"];
-  $set: Map["set"];
-  $get: Map["get"];
-}
-
 declare var $Array: ArrayConstructor;
 declare var $Buffer: {
   byteLength: typeof Buffer.byteLength;
-  new (array: Array): Buffer;
+  new (array: ArrayLike<number>): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
   new (view: ArrayBufferView, byteOffset?: number, length?: number): Buffer;
   new (buffer: Buffer): Buffer;
@@ -587,20 +608,6 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 
 declare function $min(a: number, b: number): number;
 
-interface Map<K, V> {
-  $get: typeof Map.prototype.get;
-  $set: typeof Map.prototype.set;
-}
-
-interface Set<T> {
-  $forEach: Set<T>["forEach"];
-}
-
-interface ObjectConstructor {
-  $defineProperty: typeof Object.defineProperty;
-  $defineProperties: typeof Object.defineProperties;
-}
-
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
 
@@ -615,7 +622,7 @@ declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
 declare function $getByIdDirectPrivate<T = any, K extends string = string>(
   obj: T,
   key: K,
-): K extends keyof T ? T[`$${K}`] : T extends { [P in `$${K}`]: infer V } ? V : never;
+): `$${K}` extends keyof T ? T[`$${K}`] : never;
 
 declare var $Promise: PromiseConstructor;
 

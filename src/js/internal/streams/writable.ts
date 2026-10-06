@@ -79,7 +79,7 @@ function makeBitMapDescriptor(bit) {
     },
   };
 }
-WritableState.prototype = {};
+WritableState.prototype = {} as $AnyObject;
 ObjectDefineProperties(WritableState.prototype, {
   // Object stream flag to indicate whether or not this stream
   // contains buffers or objects.

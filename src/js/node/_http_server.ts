@@ -337,19 +337,19 @@ function Server(options, callback): void {
     // them into plain key/cert/ca so the native TLS config sees PEM material.
     let tlsOptions = options;
     if (options.pfx) {
-      tlsOptions = tlsHelpers.processPfxOptions(options);
+      tlsOptions = tlsHelpers!.processPfxOptions(options);
       this[isTlsSymbol] = true;
     }
 
     let cert = tlsOptions.cert;
     if (cert) {
-      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
+      tlsHelpers!.throwOnInvalidTLSArray("options.cert", cert);
       this[isTlsSymbol] = true;
     }
 
     let key = tlsOptions.key;
     if (key) {
-      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
+      tlsHelpers!.throwOnInvalidTLSArray("options.key", key);
       this[isTlsSymbol] = true;
     }
 
@@ -362,7 +362,7 @@ function Server(options, callback): void {
       ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
     }
     if (ca) {
-      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
+      tlsHelpers!.throwOnInvalidTLSArray("options.ca", ca);
       this[isTlsSymbol] = true;
     }
 
@@ -382,7 +382,7 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
+      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers!;
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.

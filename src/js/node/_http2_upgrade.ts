@@ -178,7 +178,9 @@ function socketError(this: TLSProxySocket, _socket: NativeHandle, err: NodeJS.Er
   if (!ctx.server._requestCert && err?.code === "UNABLE_TO_GET_ISSUER_CERT") {
     return;
   }
-  if (this._secureEstablished && err?.code === "EPROTO") err = require("internal/tls").tlsHandshakeError(err);
+  if (this._secureEstablished && err?.code === "EPROTO" && err.syscall === undefined) {
+    err = require("internal/tls").tlsHandshakeError(err);
+  }
   this.destroy(err);
 }
 

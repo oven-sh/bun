@@ -698,9 +698,11 @@ function onConnectEnd() {
   }
 }
 
-// The native layer hands a fatal TLS error on an established session to `error`, then closes.
+// The native layer hands a fatal TLS error on an established session to `error`, then closes. A failed write has a syscall.
 function establishedTLSError(self, error) {
-  if (self._secureEstablished && error?.code === "EPROTO") return require("internal/tls").tlsHandshakeError(error);
+  if (self._secureEstablished && error?.code === "EPROTO" && error.syscall === undefined) {
+    return require("internal/tls").tlsHandshakeError(error);
+  }
 }
 
 // Node reports a throwing 'data' listener as uncaughtException and keeps reading.

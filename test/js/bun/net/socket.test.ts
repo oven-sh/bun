@@ -6276,3 +6276,68 @@ describe("tls.secureContext with no other tls option", () => {
     }
   });
 });
+
+// The context is served as it is, so its own client certificate policy holds whatever the options next to it say.
+describe.concurrent("Bun.listen() with tls.secureContext and the client certificate", () => {
+  const pem = (name: string) => readFileSync(join(import.meta.dir, "../../node/test/fixtures/keys", name), "utf8");
+  const [key, cert, ca] = [pem("agent1-key.pem"), pem("agent1-cert.pem"), pem("ca1-cert.pem")];
+  const clients = {
+    none: {},
+    untrusted: { key: pem("agent3-key.pem"), cert: pem("agent3-cert.pem") },
+    trusted: { key, cert },
+  };
+  const native = (policy: object) => (createSecureContext({ key, cert, ca, ...policy }) as any).context;
+  const socket = {
+    handshake: (socket: Socket) => void socket.end(socket.getPeerCertificate()?.subject?.CN ?? "no certificate"),
+    data() {},
+    error() {},
+  };
+  const strict = { requestCert: true, rejectUnauthorized: true };
+  const asksOnly = { requestCert: true, rejectUnauthorized: false };
+  const onlyTrusted = { none: "refused", untrusted: "refused", trusted: "agent1" };
+  const everyone = { none: "no certificate", untrusted: "agent3", trusted: "agent1" };
+
+  // What the server saw of the client it served, or "refused".
+  async function outcome(port: number, maxVersion: "TLSv1.2" | "TLSv1.3", identity: object) {
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, maxVersion, ...identity });
+    let received = "";
+    const closed = Promise.withResolvers<void>();
+    client.on("data", chunk => (received += chunk)).on("error", () => {});
+    client.on("close", () => closed.resolve());
+    await closed.promise;
+    return received || "refused";
+  }
+
+  describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s", maxVersion => {
+    it.each([
+      ["neither asks", {}, {}, { none: "no certificate", untrusted: "no certificate", trusted: "no certificate" }],
+      ["only the context asks", strict, {}, onlyTrusted],
+      ["only the context asks, next to another option", strict, { sessionTimeout: 300 }, onlyTrusted],
+      ["both ask", strict, strict, onlyTrusted],
+      ["the options do not relax the context", strict, asksOnly, onlyTrusted],
+      ["the context asks and the options reject", asksOnly, strict, onlyTrusted],
+      ["the context asks and nothing rejects", asksOnly, {}, everyone],
+      ["both ask and nothing rejects", asksOnly, asksOnly, everyone],
+    ])("%s", async (_, contextPolicy, options, expected) => {
+      const tls = { secureContext: native(contextPolicy), ...options };
+      using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket } as any);
+      expect({
+        none: await outcome(listener.port, maxVersion, clients.none),
+        untrusted: await outcome(listener.port, maxVersion, clients.untrusted),
+        trusted: await outcome(listener.port, maxVersion, clients.trusted),
+      }).toEqual(expected);
+    });
+  });
+
+  // Clients would be checked against the context's store, not the `ca` written next to `requestCert`.
+  it.each([
+    ["alone", {}],
+    ["next to a key, a certificate and a ca", { key, cert, ca: pem("ca2-cert.pem") }],
+    ["with rejectUnauthorized: false", { rejectUnauthorized: false }],
+  ])("requestCert %s throws over a context that does not ask", (_, options) => {
+    const tls = { secureContext: native({}), requestCert: true, ...options };
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+});

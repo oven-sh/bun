@@ -4247,20 +4247,19 @@ fn upgrade_reject_policy(
     }
 }
 
-/// A bare server-side `secureContext` carries no parsed config, so the policy
-/// comes from the ctx itself: `us_ssl_ctx_from_options` sets
+/// The policy a server-side `SSL_CTX` was built with: `us_ssl_ctx_from_options` sets
 /// `FAIL_IF_NO_PEER_CERT` iff the context was created with `requestCert` and `rejectUnauthorized`.
-fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_rejects_unauthorized(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     const MODE: c_int =
         boringssl_sys::SSL_VERIFY_PEER | boringssl_sys::SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & MODE == MODE }
 }
 
-fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
+pub(crate) fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
-    // SAFETY: `ctx` is the +1 `SSL_CTX` ref held for this socket; read-only.
+    // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
 }
 

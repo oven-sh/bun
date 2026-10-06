@@ -3115,6 +3115,96 @@ it("never sends the URL fragment in the request-target", async () => {
   expect(targets).toEqual(expected);
 });
 
+it("sends a path that starts with // as written", async () => {
+  // The request-target is `new URL(s).pathname + search`. The empty segments at
+  // the start of the path are part of it: `//dir` is not `/dir`.
+  const requestLines: string[] = [];
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      requestLines.push(data.toString("utf8").split("\r\n")[0]);
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const origin = `http://localhost:${(server.address() as AddressInfo).port}`;
+
+  for (const tail of ["//dir", "///dir", "//", "//dir?x=1", "/.//dir", "/a//b", "/dir//"]) {
+    await (await fetch(origin + tail)).text();
+  }
+
+  const url = new URL(origin + "/a");
+  url.pathname = "//url";
+  await (await fetch(url)).text();
+  await (await fetch(new Request(origin + "//request"))).text();
+  await (await fetch(new Request(origin + "//request"), { method: "POST", body: "b" })).text();
+  await (await fetch({ url: origin + "//object" } as any)).text();
+  using session = new Bun.FetchSession();
+  await (await session.fetch(origin + "//session")).text();
+  // The absolute form, for an HTTP proxy.
+  await (await fetch("http://example.invalid//dir?x=1", { proxy: origin })).text();
+
+  expect(requestLines).toEqual([
+    "GET //dir HTTP/1.1",
+    "GET ///dir HTTP/1.1",
+    "GET // HTTP/1.1",
+    "GET //dir?x=1 HTTP/1.1",
+    "GET //dir HTTP/1.1",
+    "GET /a//b HTTP/1.1",
+    "GET /dir// HTTP/1.1",
+    "GET //url HTTP/1.1",
+    "GET //request HTTP/1.1",
+    "POST //request HTTP/1.1",
+    "GET //object HTTP/1.1",
+    "GET //session HTTP/1.1",
+    "GET http://example.invalid//dir?x=1 HTTP/1.1",
+  ]);
+});
+
+it("follows a redirect to a path that starts with // as written", async () => {
+  const requestLines: string[] = [];
+  let redirect = "";
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      const requestLine = data.toString("utf8").split("\r\n")[0];
+      requestLines.push(requestLine.replace(" HTTP/1.1", ""));
+      socket.end(
+        requestLine.includes("/redirect ")
+          ? `HTTP/1.1 ${redirect}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`
+          : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+      );
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const host = `localhost:${(server.address() as AddressInfo).port}`;
+
+  // [first request, status and Location of its response, the request that follows]
+  const hops = [
+    ["GET /redirect", `302 Found\r\nLocation: http://${host}//dir?x=1`, "GET //dir?x=1"],
+    ["GET /redirect", `302 Found\r\nLocation: //${host}//dir`, "GET //dir"],
+    ["GET /redirect", "302 Found\r\nLocation: /.//dir", "GET //dir"],
+    ["GET //a/redirect", "302 Found\r\nLocation: next", "GET //a/next"],
+    ["POST /redirect", `307 Temporary Redirect\r\nLocation: http://${host}//dir`, "POST //dir"],
+    // Three slashes start an authority, as two do: this is not the path `///localhost:1/dir`.
+    ["GET /redirect", `302 Found\r\nLocation: ///${host}/dir`, "GET /dir"],
+  ];
+  const followed: { requestLines: string[]; url: string }[] = [];
+  for (const [first, response] of hops) {
+    const [method, path] = first.split(" ");
+    redirect = response;
+    requestLines.length = 0;
+    const res = await fetch(`http://${host}${path}`, { method, body: method === "POST" ? "body" : undefined });
+    await res.text();
+    followed.push({ requestLines: [...requestLines], url: res.url });
+  }
+  // `response.url` is the URL of the last request.
+  expect(followed).toEqual(
+    hops.map(([first, , second]) => ({
+      requestLines: [first, second],
+      url: `http://${host}${second.split(" ")[1]}`,
+    })),
+  );
+});
+
 it("combines duplicate response headers per the Fetch spec", async () => {
   // WHATWG Fetch requires repeated header fields to be combined with ", " when
   // read via Headers.get(), except Set-Cookie which is stored as separate

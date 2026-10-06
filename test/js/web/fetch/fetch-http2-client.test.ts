@@ -233,6 +233,26 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test(":path is the path as written when it starts with //", async () => {
+    await withH2Server(
+      (req, res) => res.end(req.url),
+      async url => {
+        await using proc = await spawnFetch(`
+          const paths = [];
+          for (const tail of ["//dir?x=1", "///dir", "//", "/a//b"]) {
+            const res = await fetch(${JSON.stringify(url)} + tail, { tls: { rejectUnauthorized: false } });
+            paths.push(await res.text());
+          }
+          console.log(JSON.stringify(paths));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(["//dir?x=1", "///dir", "//", "/a//b"]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("POST: request body is delivered as DATA frames", async () => {
     await withH2Server(
       (req, res) => {

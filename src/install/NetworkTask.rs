@@ -837,13 +837,26 @@ impl NetworkTask {
         // registries emit `dist.tarball` URLs with the default port spelled
         // out; without normalization those installs lose the `Authorization`
         // header and fail with 401.
+        let mut url_at_root: Option<Box<[u8]>> = None;
         let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
             let tarball = URL::parse(&self.url_buf);
             let registry = scope.url.url();
-            tarball.protocol == registry.protocol
+            let on_registry = tarball.protocol == registry.protocol
                 && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
+                && tarball.get_port_auto() == registry.get_port_auto();
+            // A bun.lock can name a tarball of a root registry as `http://host//name/-/file.tgz`: the package-lock.json migration wrote that while the registry was stored as `http://host//`.
+            if on_registry && registry.pathname == b"/" {
+                let (origin, path) = self.url_buf.split_at(tarball.origin.len());
+                let rest = strings::trim_leading_char(path, b'/');
+                if path.len() - rest.len() > 1 {
+                    url_at_root = Some([origin, &b"/"[..], rest].concat().into_boxed_slice());
+                }
+            }
+            on_registry
         };
+        if let Some(url) = url_at_root {
+            self.url_buf = url;
+        }
 
         self.response_buffer = MutableString::init_empty();
 

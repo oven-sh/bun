@@ -159,7 +159,10 @@ beforeAll(async () => {
         );
       },
     },
-    fetch: () => new Response("not found", { status: 404 }),
+    fetch: req => {
+      const { pathname, search } = new URL(req.url);
+      return new Response("not found", { status: 404, headers: { "x-target": pathname + search } });
+    },
   });
   base = `https://127.0.0.1:${server.port}`;
 
@@ -221,6 +224,15 @@ describe("fetch protocol: http3", () => {
     const res = await fetch(`${base}/json?q=h3`, h3);
     expect(await res.json()).toEqual({ ok: true, q: "h3" });
     expect(res.headers.get("content-type")).toContain("application/json");
+  });
+
+  test(":path is the path as written when it starts with //", async () => {
+    // No route is at `//json`: the request reaches the fallback, which reports its target.
+    const res = await fetch(`${base}//json?q=h3`, h3);
+    expect({ status: res.status, target: res.headers.get("x-target") }).toEqual({
+      status: 404,
+      target: "//json?q=h3",
+    });
   });
 
   test("route params", async () => {

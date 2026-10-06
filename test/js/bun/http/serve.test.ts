@@ -628,6 +628,21 @@ it.each([
   expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
 });
 
+it("server.fetch(path) puts one slash between the origin and a path that starts with several", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname, search } = new URL(req.url);
+      return new Response(pathname + search);
+    },
+  });
+  const targets: string[] = [];
+  for (const path of ["/x", "//x", "///x", "////x", "/x//y", "///x?a=1"]) {
+    targets.push(await (await server.fetch(path)).text());
+  }
+  expect(targets).toEqual(["/x", "/x", "/x", "/x", "/x//y", "/x?a=1"]);
+});
+
 // RFC 9112 9.6: a server that receives a "close" connection option MUST NOT
 // process any further requests on that connection. The parser must stop at the
 // close-flagged request even when a well-formed follow-up sits in the same TCP

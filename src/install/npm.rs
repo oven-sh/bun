@@ -326,7 +326,28 @@ pub mod registry {
         pub fn set_url(&mut self, href: Box<[u8]>) {
             self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
+            let stored = self.url.href();
+            let root = Self::root_with_one_slash(stored);
+            if root.len() != stored.len() {
+                self.url = OwnedURL::from_href(Box::from(root));
+            }
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+        }
+
+        /// `http://host//` is `http://host/`: npm joins a package name on the registry URL without its trailing slashes.
+        fn root_with_one_slash(href: &[u8]) -> &[u8] {
+            let Some(authority) = strings::index_of(href, b"://").map(|i| i + b"://".len()) else {
+                return href;
+            };
+            let Some(path) = strings::index_of_char_usize(&href[authority..], b'/') else {
+                return href;
+            };
+            let root = authority + path + 1;
+            if strings::trim_leading_char(&href[root..], b'/').is_empty() {
+                &href[..root]
+            } else {
+                href
+            }
         }
 
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {

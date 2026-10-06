@@ -859,6 +859,31 @@ it("match() returns null when the path string does not start with '/'", () => {
   expect(router.match("?anything")).toBeNull();
 });
 
+it("match() reads the path of a URL that starts with // as the path with one slash", () => {
+  const { dir } = make(["index.tsx", "posts.tsx", "blog/[slug].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  const match = (input: string | Request) => {
+    const matched = router.match(input);
+    return matched && { name: matched.name, pathname: matched.pathname };
+  };
+
+  expect(
+    ["http://h//posts", "http://h///posts", "http://h//", "http://h//blog/a", "http://h//posts?x=1", "http://h//."].map(
+      match,
+    ),
+  ).toEqual([
+    { name: "/posts", pathname: "/posts" },
+    { name: "/posts", pathname: "/posts" },
+    { name: "/", pathname: "/" },
+    { name: "/blog/[slug]", pathname: "/blog/a" },
+    { name: "/posts", pathname: "/posts?x=1" },
+    { name: "/", pathname: "/." },
+  ]);
+  expect(match(new Request("http://h//posts"))).toEqual({ name: "/posts", pathname: "/posts" });
+  // A path string is matched as given.
+  expect(["//posts", "//."].map(match)).toEqual([{ name: "/posts", pathname: "//posts" }, null]);
+});
+
 it("reload() while Bun.build() resolves the same directory", async () => {
   // The router's route-load loop and Bun.build's entry-point resolution (which
   // runs on the bundler thread) share the process-global directory-entry cache.

@@ -560,7 +560,11 @@ impl FileSystemRouter {
             || strings::has_prefix(path.slice(), b"https://")
             || strings::has_prefix(path.slice(), b"file://")
         {
-            path = Utf8Bytes::Owned(URL::parse(path.slice()).pathname.to_vec());
+            path = Utf8Bytes::Owned(
+                URL::parse(path.slice())
+                    .pathname_with_one_leading_slash()
+                    .to_vec(),
+            );
         }
 
         // URLPath::parse strips byte 0 and the route table is keyed without the

@@ -2289,7 +2289,11 @@ where
             // duping it.
             let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
                 std::borrow::Cow::Owned(
-                    strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
+                    strings::append(
+                        &self.base_url_string_for_joining,
+                        url.pathname_with_one_leading_slash(),
+                    )
+                    .into_vec(),
                 )
             } else {
                 std::borrow::Cow::Borrowed(temp_url_str)

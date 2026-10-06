@@ -499,12 +499,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
+    /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
@@ -516,9 +511,17 @@ impl<'a> URL<'a> {
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
+        if !path.is_empty() {
+            buf.extend_from_slice(path);
+            buf.push(b'/');
+        }
         buf.into_boxed_slice()
+    }
+
+    /// `pathname` with one `/` where it starts with several. For a reader that matches a path: a request target is `pathname` itself.
+    pub fn pathname_with_one_leading_slash(&self) -> &'a [u8] {
+        let leading = self.pathname.len() - strings::trim_leading_char(self.pathname, b'/').len();
+        &self.pathname[leading.saturating_sub(1)..]
     }
 
     /// `href` with `user:password@` cut out of its authority.
@@ -822,13 +825,6 @@ impl<'a> URL<'a> {
 
         if url.pathname.is_empty() {
             url.pathname = b"/";
-        }
-
-        const SLASH_SLASH: u16 = u16::from_le_bytes(*b"//");
-        while url.pathname.len() > 1
-            && u16::from_le_bytes([url.pathname[0], url.pathname[1]]) == SLASH_SLASH
-        {
-            url.pathname = &url.pathname[1..];
         }
 
         url.origin = strings::trim(url.origin, b"/ ?#");
@@ -1844,6 +1840,50 @@ mod tests {
         assert_eq!(url.path, b"/path");
         assert_eq!(url.search, b"?q=1");
         assert_eq!(url.hash, b"#frag?x=2");
+    }
+
+    #[test]
+    fn leading_empty_path_segments_are_kept() {
+        let url = URL::parse(b"http://localhost:3000//dir?x=1#frag");
+        assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
+        assert_eq!(url.origin, ORIGIN);
+        assert_eq!(url.pathname, b"//dir?x=1");
+        assert_eq!(url.search, b"?x=1");
+        assert_eq!(url.pathname_with_one_leading_slash(), b"/dir?x=1");
+
+        let root = URL::parse(b"http://localhost:3000//");
+        assert_eq!(root.pathname, b"//");
+        assert_eq!(root.pathname_with_one_leading_slash(), b"/");
+        assert_eq!(
+            URL::parse(b"http://localhost:3000///t?a=1").pathname,
+            b"///t?a=1"
+        );
+        assert_eq!(URL::parse(b"http://localhost:3000/a//b").pathname, b"/a//b");
+    }
+
+    #[test]
+    fn href_without_auth_ends_in_one_slash() {
+        let href = |url: &[u8]| URL::parse(url).href_without_auth();
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000/"),
+            b"http://localhost:3000/"
+        );
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000"),
+            b"http://localhost:3000/"
+        );
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000//"),
+            b"http://localhost:3000/"
+        );
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000/npm/"),
+            b"http://localhost:3000/npm/"
+        );
+        assert_eq!(
+            &*href(b"http://u:p@localhost:3000/npm"),
+            b"http://localhost:3000/npm/"
+        );
     }
 
     #[test]

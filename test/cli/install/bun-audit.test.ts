@@ -641,7 +641,7 @@ describe("`bun audit`", () => {
     test.each([
       ["audit", "htps://user:hunter2@localhost:PORT/", 'starts with "htps://"'],
       ["audit --json", "htps://localhost:PORT/", 'starts with "htps://"'],
-      ["audit fix", "localhost:PORT/npm/", "has no scheme"],
+      ["audit fix", "localhost:PORT/npm/", "does not start with a scheme"],
     ])("bun %s refuses the default registry %s before any request", async (cmd, url, problem) => {
       const { stdout, stderr, requests, exitCode } = await auditWith(
         `[install]\nregistry = ${registry(url)}\n`,
@@ -656,20 +656,20 @@ describe("`bun audit`", () => {
     });
 
     // A scoped registry that cannot be asked is skipped with a warning, as for every other send error.
-    test.each(["htps://localhost:PORT/", "user:hunter2@localhost:PORT/"])(
-      "a scoped registry %s is skipped, not asked",
-      async url => {
-        const { stdout, stderr, requests, exitCode } = await auditWith(
-          `[install]\nregistry = "http://localhost:PORT/"\n[install.scopes]\nfoo = ${registry(url)}\n`,
-        );
-        expect(stdout).toContain("(checked 1 package, 1 skipped)");
-        expect({ stderr, requests, exitCode }).toEqual({
-          stderr: `warn: the "@foo" registry did not answer the audit request (registry URL must be http:// or https://); skipped @foo/bar\n`,
-          requests: [`POST ${bulk} null`],
-          exitCode: 0,
-        });
-      },
-    );
+    test.each([
+      ["htps://localhost:PORT/", 'starts with "htps://"'],
+      ["user:hunter2@localhost:PORT/", "does not start with a scheme"],
+    ])("a scoped registry %s is skipped, not asked", async (url, problem) => {
+      const { stdout, stderr, requests, exitCode } = await auditWith(
+        `[install]\nregistry = "http://localhost:PORT/"\n[install.scopes]\nfoo = ${registry(url)}\n`,
+      );
+      expect(stdout).toContain("(checked 1 package, 1 skipped)");
+      expect({ stderr, requests, exitCode }).toEqual({
+        stderr: `warn: a registry whose URL ${problem} did not answer the audit request (registry URL must be http:// or https://); skipped @foo/bar\n`,
+        requests: [`POST ${bulk} null`],
+        exitCode: 0,
+      });
+    });
   });
 
   doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {

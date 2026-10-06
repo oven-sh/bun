@@ -420,7 +420,7 @@ describe.concurrent("bun info", () => {
       `error: Registry URL must be http:// or https://\nnote: the URL for ${registry} ${problem}\n`;
     const theDefault = "the default registry";
     const corp = 'the "@corp" registry';
-    const noScheme = "has no scheme";
+    const noScheme = "does not start with a scheme";
     const startsWith = (scheme: string) => `starts with "${scheme}://"`;
 
     // [name, setup, the registry the error names, what it says about the URL]
@@ -478,7 +478,12 @@ describe.concurrent("bun info", () => {
         startsWith("htps"),
       ],
       // The request URL is `https:/left`: no scheme, host `https`. A proxy would receive it as plain HTTP.
-      ["https:// with no host, behind a proxy", { files: () => bunfig("https://"), env: proxy }, theDefault, noScheme],
+      [
+        "https:// with no host, behind a proxy",
+        { files: () => bunfig("https://"), env: proxy },
+        theDefault,
+        "has no host",
+      ],
       // A variable that is not set stays `$NAME` in the URL. A proxy would receive the request as plain HTTP.
       [
         "url from an unset variable, behind a proxy",

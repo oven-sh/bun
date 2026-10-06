@@ -948,10 +948,10 @@ async function whoamiWith(bunfig: (port: number) => string, cmd = ["pm", "whoami
 const whoamiRefused = (problem: string) =>
   `error: Registry URL must be http:// or https://\nnote: the URL for the default registry ${problem}\n`;
 
-test.each([
+test.concurrent.each([
   ["pm whoami", "htps://user:hunter2@localhost:PORT/", 'starts with "htps://"'],
   ["whoami", "htps://localhost:PORT/", 'starts with "htps://"'],
-  ["pm whoami", "localhost:PORT/npm/", "has no scheme"],
+  ["pm whoami", "localhost:PORT/npm/", "does not start with a scheme"],
 ])("bun %s refuses the registry url %s before any request", async (cmd, url, problem) => {
   const { stdout, stderr, requests, exitCode } = await whoamiWith(
     port => `[install]\nregistry = { url = "${url.replace("PORT", String(port))}", token = "secret-token" }\n`,
@@ -965,7 +965,7 @@ test.each([
   });
 });
 
-test("bun pm whoami still answers when it sends no refused request", async () => {
+test.concurrent("bun pm whoami still answers when it sends no refused request", async () => {
   const [typo, upperCase, localUser] = await Promise.all([
     whoamiWith(port => `[install]\nregistry = { url = "htps://localhost:${port}/", token = "secret-token" }\n`),
     whoamiWith(port => `[install]\nregistry = { url = "HTTP://localhost:${port}/", token = "secret-token" }\n`),

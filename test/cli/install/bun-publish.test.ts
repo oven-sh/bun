@@ -980,7 +980,7 @@ describe.concurrent("credentials in the registry url", () => {
           env: { BUN_CONFIG_TOKEN: token },
         },
         theDefault,
-        "has no scheme",
+        "does not start with a scheme",
         true,
       ],
       // `--tolerate-republish` asks the registry first, also with `--dry-run`.

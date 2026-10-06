@@ -519,7 +519,7 @@ diffme@1.0.0 → diffme@2.0.0
         "@corp/diffme",
         "[install.scopes]\ncorp = ",
         "localhost:PORT/npm/",
-        'the "@corp" registry has no scheme',
+        'the "@corp" registry does not start with a scheme',
       ],
     ])("the %s is refused before any request", async (_, pkg, section, url, problem) => {
       const { stdout, stderr, requests, exitCode } = await diffWith({

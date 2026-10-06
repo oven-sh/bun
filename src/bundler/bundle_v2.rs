@@ -5628,24 +5628,6 @@ pub mod bv2_impl {
             // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
-            // The disk writer does not write these: the metafiles and, for `compile`, the sourcemaps.
-            let is_compile = self.transpiler.options.compile_mode.is_executable();
-            options::check_output_paths(
-                self.transpiler.log_mut(),
-                [
-                    self.linker.options.metafile_json_path,
-                    self.linker.options.metafile_markdown_path,
-                ]
-                .into_iter()
-                .chain(
-                    output_files
-                        .iter()
-                        .filter(|file| {
-                            is_compile && file.output_kind == options::OutputKind::Sourcemap
-                        })
-                        .map(|file| bun_paths::basename(&file.dest_path)),
-                ),
-            )?;
             if !self.linker.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(

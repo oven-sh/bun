@@ -38,24 +38,6 @@ pub(crate) fn write_output_files_to_disk(
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 
-    // Checked before the first mkdir, so a build that fails here leaves nothing on disk.
-    options::check_output_paths(
-        c.log_disjoint(),
-        [
-            root_path,
-            c.options.metafile_json_path,
-            c.options.metafile_markdown_path,
-        ]
-        .into_iter()
-        .chain(chunks.iter().map(|chunk| &*chunk.final_rel_path))
-        .chain(
-            c.parse_graph()
-                .additional_output_files
-                .iter()
-                .map(|file| &*file.dest_path),
-        ),
-    )?;
-
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {

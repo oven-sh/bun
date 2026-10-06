@@ -1114,7 +1114,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
         if let Some(compile) = &config.compile {
             let executable = executable_path(config, compile);
-            options::check_output_paths(transpiler.log_mut(), [&executable[..]])?;
             transpiler.options.compile_entry_point_name =
                 Box::from(executable_entry_point_name(&executable));
         }

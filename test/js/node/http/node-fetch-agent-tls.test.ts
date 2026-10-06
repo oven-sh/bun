@@ -221,6 +221,22 @@ describe("node-fetch applies the TLS options of the agent", () => {
     assert.strictEqual(await outcome(tls12.port, { ...trust, ciphers: aes256 }), `TLSv1.2 ${aes256}`);
   });
 
+  test("secureProtocol", async () => {
+    await using server = await serveNegotiated();
+    const trust = { ca, servername };
+    assert.match(await outcome(server.port, { ...trust, secureProtocol: "TLSv1_2_method" }), /^TLSv1\.2 /);
+    assert.match(await outcome(server.port, { ...trust, secureProtocol: "TLS_method" }), /^TLSv1\.3 /);
+    // There is no such method.
+    assert.strictEqual(
+      await outcome(server.port, { ...trust, secureProtocol: "TLSv1_3_method" }),
+      "ERR_TLS_INVALID_PROTOCOL_METHOD",
+    );
+    assert.strictEqual(
+      await outcome(server.port, { ...trust, secureProtocol: "TLSv1_2_method", minVersion: "TLSv1.3" }),
+      "ERR_TLS_PROTOCOL_VERSION_CONFLICT",
+    );
+  });
+
   test("an agent that is a function of the request URL", async () => {
     await using server = await serve();
     const agent = new https.Agent({ ca, servername });

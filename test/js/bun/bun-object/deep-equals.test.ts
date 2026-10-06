@@ -186,10 +186,18 @@ describe("Set and Map entries without an identical counterpart", () => {
     ["Set: equal duplicate counts", set({ a: 1 }, { a: 1 }, { a: 2 }), set({ a: 2 }, { a: 1 }, { a: 1 }), true],
     ["Set: one member differs", set({ a: 1 }, { a: 2 }), set({ a: 1 }, { a: 3 }), false],
     ["Set: a primitive only one side holds", set(1, { a: 1 }), set(2, { a: 1 }), false],
+    ["Set: an object on one side, primitives only on the other", set({ a: 1 }, 1), set(1, 2), false],
+    ["Set: a member both sides hold, after an equal one", set({ a: 2 }, shared), set({ a: 2 }, shared), true],
     ["Map: one value differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 1 }, "z"]), false],
     ["Map: one key differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 2 }, "y"]), false],
     ["Map: a key both sides hold, different values", map([shared, 1]), map([shared, 2]), false],
     ["Map: a primitive key only one side holds", map(["p", 1], [{ k: 1 }, 1]), map(["q", 1], [{ k: 1 }, 1]), false],
+    [
+      "Map: a primitive key that holds different values, after an equal key",
+      map([{ k: 1 }, 1], [1, { a: 1 }]),
+      map([{ k: 1 }, 1], [1, { a: 2 }]),
+      false,
+    ],
     ["Map: undefined values", map(["a", undefined], ["b", 1]), map(["b", 1], ["a", undefined]), true],
     [
       "Map: an undefined value under a key only one side holds",
@@ -206,7 +214,7 @@ describe("Set and Map entries without an identical counterpart", () => {
     ["Map: undefined against a value under the same key", map(["a", undefined]), map(["a", 1]), false],
   ];
 
-  // A Map entry matches on its key and its value together. node's strict entry points do not have these rows yet: they need node's one-to-one pairing.
+  // A Map entry matches on its key and its value together.
   const keyAndValueCases: [string, unknown, unknown, boolean][] = [
     [
       "Map: equal keys, values in the other order",
@@ -229,6 +237,12 @@ describe("Set and Map entries without an identical counterpart", () => {
       true,
     ],
     [
+      "Map: a key both sides hold after an equal key, its value under that key",
+      map([{ a: 1 }, 2], [shared, 1]),
+      map([{ a: 1 }, 1], [shared, 2]),
+      true,
+    ],
+    [
       "Map: object and primitive keys, other order",
       map(["p", 0], [{ k: 1 }, 1], [{ k: 1 }, 2]),
       map([{ k: 1 }, 2], ["p", 0], [{ k: 1 }, 1]),
@@ -243,7 +257,7 @@ describe("Set and Map entries without an identical counterpart", () => {
     });
   });
 
-  describe.each(Object.entries({ ...jestRule, ...legacy }))("%s", (_, check) => {
+  describe.each(Object.entries(everyEntryPoint))("%s", (_, check) => {
     it.each(keyAndValueCases)("%s", (_, a, b, equal) => {
       check(a, b, equal);
       check(b, a, equal);
@@ -275,6 +289,13 @@ describe("Set and Map entries without an identical counterpart", () => {
       true,
       true,
     ],
+    [
+      "Map: a key both sides hold with different values, after an equal entry",
+      map([{ a: 1 }, 1], [shared, 1]),
+      map([{ a: 1 }, 1], [shared, 2]),
+      true,
+      false,
+    ],
   ];
 
   describe.each(Object.entries(jestRule))("%s", (_, check) => {
@@ -282,6 +303,151 @@ describe("Set and Map entries without an identical counterpart", () => {
       check(a, b, forward);
       check(b, a, backward);
     });
+  });
+
+  // node's strict entry points pair every such entry with a right entry of its own (setObjectEquiv / mapObjectEquiv in lib/internal/util/comparisons.js).
+  describe.each(Object.entries(nodeStrict))("%s", (_, check) => {
+    it.each(unequalCounts)("%s", (_, a, b) => {
+      check(a, b, false);
+      check(b, a, false);
+    });
+  });
+
+  // node probes the first and then the last open entry, so the same order and the reversed order cost about one comparison per entry.
+  it.each(Object.entries(nodeStrict))("%s: reads each entry a bounded number of times", (_, check) => {
+    const over: string[] = [];
+    let reads = 0;
+    const entry = (id: number) => ({
+      get id() {
+        reads++;
+        return id;
+      },
+    });
+    const kinds = {
+      Set: (ids: number[]) => new Set(ids.map(entry)),
+      Map: (ids: number[]) => new Map(ids.map(id => [entry(id), id])),
+    };
+    for (const [kind, make] of Object.entries(kinds)) {
+      for (const n of [64, 128]) {
+        const ids = Array.from({ length: n }, (_, i) => i);
+        for (const [order, rightIds] of [
+          ["same order", ids],
+          ["reversed", ids.toReversed()],
+        ] as const) {
+          const a = make(ids);
+          const b = make(rightIds);
+          reads = 0;
+          check(a, b, true);
+          if (reads > 8 * n) over.push(`${kind}, ${order}, n=${n}: ${reads} reads`);
+        }
+      }
+    }
+    expect(over).toEqual([]);
+  });
+
+  // The pairing works on a copy of the right entries, as in node.
+  describe("a getter that changes one side during the comparison", () => {
+    function emptiedMidway() {
+      const right = new Set<unknown>();
+      const emptiesRight = {
+        get id() {
+          right.clear();
+          Bun.gc(true);
+          return 0;
+        },
+      };
+      const left = set(emptiesRight, { id: 1 }, { id: 2 });
+      for (const id of [0, 1, 2]) right.add({ id });
+      return [left, right];
+    }
+    function grownMidway() {
+      const right = new Set<unknown>();
+      let grown = false;
+      const growsRight = {
+        get id() {
+          if (!grown) right.add({ id: 3 });
+          grown = true;
+          return 0;
+        },
+      };
+      const left = set(growsRight, { id: 1 }, { id: 2 });
+      for (const id of [0, 1, 2]) right.add({ id });
+      return [left, right];
+    }
+    // The getter runs in the left walk, before the right entries are copied. Then fewer entries are left to pair with.
+    function keyRemovedInLeftWalk() {
+      const right = new Map<unknown, unknown>();
+      const removesKey = {
+        get v() {
+          right.delete(key);
+          return 1;
+        },
+      };
+      const key = { k: 2 };
+      const left = map([{ k: 1 }, 1], ["held", removesKey], [key, 2]);
+      right.set({ k: 1 }, 1).set("held", { v: 1 }).set(key, 2);
+      return [left, right];
+    }
+    // Here the right Map gains a key, so the two sides no longer have the same size.
+    function keyAddedInLeftWalk() {
+      const right = new Map<unknown, unknown>();
+      const addsKey = {
+        get v() {
+          right.set("added", 1);
+          return 1;
+        },
+      };
+      const left = map([{ k: 1 }, 1], ["held", addsKey], [{ k: 2 }, 2]);
+      right.set({ k: 1 }, 1).set("held", { v: 1 }).set({ k: 2 }, 2);
+      return [left, right];
+    }
+    // Here a key that is not an object gives way to one that is. The sizes stay equal, but the right Map has more entries to pair than the left Map.
+    function keySwappedInLeftWalk() {
+      const right = new Map<unknown, unknown>();
+      let swapped = false;
+      const swapsKey = {
+        get v() {
+          if (!swapped) right.delete("p");
+          if (!swapped) right.set({ k: 9 }, 9);
+          swapped = true;
+          return 1;
+        },
+      };
+      const left = map([{ k: 1 }, 1], ["p", 0], ["held", swapsKey], [{ k: 2 }, 2]);
+      right.set({ k: 1 }, 1).set("p", 0).set("held", { v: 1 }).set({ k: 2 }, 2);
+      return [left, right];
+    }
+    // The left Set loses a member during the pairing, so a right member stays without a partner.
+    function leftMemberRemovedMidway() {
+      const left = new Set<unknown>();
+      const later = { id: 1 };
+      const removesLater = {
+        get id() {
+          left.delete(later);
+          return 0;
+        },
+      };
+      left.add(removesLater).add(later);
+      return [left, set({ id: 0 }, { id: 1 })];
+    }
+
+    it.each(Object.entries(nodeStrict))("%s", (_, check) => {
+      check(...emptiedMidway(), true);
+      check(...grownMidway(), true);
+      check(...keyRemovedInLeftWalk(), false);
+      check(...keyAddedInLeftWalk(), false);
+      check(...keySwappedInLeftWalk(), false);
+      check(...leftMemberRemovedMidway(), false);
+    });
+  });
+
+  // To node, a function equals only itself.
+  it.each(Object.entries(nodeStrict))("%s: callable entries pair only by identity", (_, check) => {
+    const callable = () => new Proxy(function () {}, {});
+    const shared = callable();
+    check(set(callable(), { a: 1 }, { a: 2 }), set(callable(), { a: 2 }, { a: 1 }), false);
+    check(set(shared, { a: 1 }, { a: 2 }), set(shared, { a: 2 }, { a: 1 }), true);
+    check(map([callable(), 1], [{ a: 1 }, 2]), map([callable(), 1], [{ a: 1 }, 2]), false);
   });
 
   // {} equals both other members, which do not equal each other. Pairing members one-to-one would make the answer depend on the order.

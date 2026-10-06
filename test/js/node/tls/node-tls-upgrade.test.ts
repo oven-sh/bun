@@ -206,3 +206,86 @@ test.each([
     server.close();
   }
 });
+
+// server.close() leaves live connections open, and a failed assertion must not leave one behind.
+function closeAll(server: net.Server, sockets: net.Socket[]) {
+  for (const socket of sockets) socket.destroy();
+  server.close();
+}
+
+// The wrap takes the fd over one tick after the constructor, the tick the wrapped socket's end() shuts it down in.
+test.each<[string, (raw: net.Socket, tlsSocket: tls.TLSSocket) => void]>([
+  ["end()", raw => raw.end()],
+  ["destroySoon()", raw => raw.destroySoon()],
+  [
+    "end() before the TLSSocket's end()",
+    (raw, tlsSocket) => {
+      raw.end();
+      tlsSocket.end();
+    },
+  ],
+])(
+  "the wrapped socket's %s in the tick of new tls.TLSSocket(socket, { isServer: true }) sends the FIN",
+  async (_, endWrapped) => {
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(raw => {
+      raw.on("error", () => {});
+      const tlsSocket = new tls.TLSSocket(raw, { isServer: true, ...certs });
+      tlsSocket.on("error", () => {});
+      sockets.push(raw, tlsSocket);
+      endWrapped(raw, tlsSocket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = tls.connect({
+        port: (server.address() as net.AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+      });
+      sockets.push(client);
+      const events: string[] = [];
+      const { promise, resolve } = Promise.withResolvers<string[]>();
+      // Reached only when the FIN never arrives: the handshake completes and the connection stays open.
+      client.on("secureConnect", () => {
+        events.push("secureConnect");
+        client.destroy();
+      });
+      client.on("end", () => events.push("end"));
+      client.on("error", err => events.push(`error ${(err as NodeJS.ErrnoException).code}`));
+      client.on("close", () => resolve(events));
+      expect(await promise).toEqual(["end", "error ECONNRESET"]);
+    } finally {
+      closeAll(server, sockets);
+    }
+  },
+);
+
+// The takeover lands between end() and the shutdown that end() deferred.
+test.each(["connected", "connecting"])(
+  "end() on a %s socket before tls.connect({ socket }) in the same tick sends the FIN",
+  async state => {
+    const sockets: net.Socket[] = [];
+    const { promise, resolve } = Promise.withResolvers<string>();
+    // Reached only when the FIN never arrives.
+    const server = tls.createServer(certs, () => resolve("secureConnection"));
+    server.on("connection", socket => {
+      socket.on("error", () => {});
+      sockets.push(socket);
+    });
+    server.on("tlsClientError", err => resolve(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+      raw.on("error", () => {});
+      sockets.push(raw);
+      if (state === "connected") await once(raw, "connect");
+      raw.end();
+      const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+      tlsSocket.on("error", () => {});
+      sockets.push(tlsSocket);
+      expect(await promise).toBe("tlsClientError ECONNRESET");
+    } finally {
+      closeAll(server, sockets);
+    }
+  },
+);

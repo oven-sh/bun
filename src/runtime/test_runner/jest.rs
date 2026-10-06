@@ -281,7 +281,7 @@ pub(crate) struct GetOrPutFileResult {
 }
 
 pub(crate) struct File {
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'static>,
 }
 
 pub(crate) type FileList = MultiArrayList<File>;
@@ -289,7 +289,7 @@ pub(crate) type FileId = u32;
 
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
-        source: bun_ast::Source,
+        source: bun_ast::Source<'static>,
     }
 }
 // Keyed by the interned `&'static [u8]` path from `FilenameStore`, so no

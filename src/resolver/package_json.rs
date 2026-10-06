@@ -60,12 +60,11 @@ type DependencyHashMap =
 
 pub struct PackageJSON {
     pub name: Box<[u8]>,
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'static>,
     /// Owns the file bytes that `source.contents` (and the
-    /// `&'static [u8]` map values below) borrow. Replaces the prior
-    /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
+    /// `&'static [u8]` map values below) borrow.
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
-    /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
+    /// (`source` is a `Source<'static>`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
     pub(crate) source_contents: Box<[u8]>,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
@@ -438,11 +437,7 @@ impl PackageJSON {
             ));
         }
 
-        // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
-        // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
-        // source directly from the interned path.
-        //
-        // `bun_ast::Source::contents` is `&'static [u8]`, so `json_source`
+        // `PackageJSON.source` is a `Source<'static>`, so `json_source`
         // re-borrows `entry_contents` (lifetime-erased) instead of owning it.
         //
         // SAFETY: `entry_contents: Box<[u8]>` is the unique owner of these bytes.
@@ -1024,7 +1019,7 @@ impl ExportsMap {
 }
 
 pub(crate) struct Visitor<'a> {
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) log: &'a mut bun_ast::Log,
 }
 

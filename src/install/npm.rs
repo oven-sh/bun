@@ -2021,10 +2021,6 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
-        // `IntoStr`; the Source only lives for the duration of this function,
-        // so pass the caller's buffers through directly without manufacturing
-        // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // `initialize_mini_store` deliberately keeps the allocator pushed
@@ -2034,9 +2030,8 @@ impl PackageManifest {
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
-                *log = cloned_log;
+                // It identifies a source by address, and `json_buffer` is the caller's.
+                log.line_column_tracker = None;
                 return Ok(None);
             }
         };

@@ -157,7 +157,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub(crate) source: &'a Source,
+        pub(crate) source: &'a Source<'a>,
         pub(crate) src: &'a [u8],
         pub out: Expr,
         pub(crate) env: &'a DotEnvLoader,
@@ -191,7 +191,7 @@ mod draft {
     }
 
     impl<'a> Parser<'a> {
-        pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
+        pub fn init(source: &'a Source<'a>, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
@@ -1175,7 +1175,7 @@ mod draft {
 
     pub(crate) struct ScopeIterator<'a> {
         pub(crate) config: &'a E::Object,
-        pub(crate) source: &'a Source,
+        pub(crate) source: &'a Source<'a>,
         pub(crate) log: &'a mut Log,
 
         pub(crate) prop_idx: usize,

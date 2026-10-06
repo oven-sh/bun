@@ -83,7 +83,7 @@ pub use css::targets::Features;
 
 #[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
-    pub import_records: &'a [ImportRecord],
+    pub import_records: &'a [ImportRecord<'a>],
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
@@ -93,7 +93,7 @@ pub struct ImportInfo<'a> {
 impl<'a> ImportInfo<'a> {
     /// Only safe to use when outside the bundler. As in, the import records
     /// were not resolved to source indices. This will out-of-bounds otherwise.
-    pub fn init_outside_of_bundler(records: &'a [ImportRecord]) -> ImportInfo<'a> {
+    pub fn init_outside_of_bundler(records: &'a [ImportRecord<'a>]) -> ImportInfo<'a> {
         ImportInfo {
             import_records: records,
             ast_urls_for_css: &[],
@@ -316,7 +316,7 @@ impl<'a> Printer<'a> {
     }
 
     #[inline]
-    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord]> {
+    pub(crate) fn get_import_records(&mut self) -> PrintResult<&'a [ImportRecord<'a>]> {
         if let Some(info) = &self.import_info {
             return Ok(info.import_records);
         }
@@ -324,7 +324,10 @@ impl<'a> Printer<'a> {
     }
 
     #[inline]
-    pub(crate) fn import_record(&mut self, import_record_idx: u32) -> PrintResult<&ImportRecord> {
+    pub(crate) fn import_record(
+        &mut self,
+        import_record_idx: u32,
+    ) -> PrintResult<&'a ImportRecord<'a>> {
         if let Some(info) = &self.import_info {
             return Ok(&info.import_records[import_record_idx as usize]);
         }

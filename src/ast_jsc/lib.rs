@@ -26,7 +26,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
                     .to_owned_slice(),
             ),
             location: Some(Location {
-                file: Cow::Owned(file),
+                file: file.into_boxed_slice(),
                 line: 0,
                 column: 0,
                 ..Default::default()

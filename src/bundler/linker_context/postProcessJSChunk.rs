@@ -1291,8 +1291,8 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
     // SAFETY: `import_records` is a `Vec` pointing into the bundler arena,
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
-    // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
-    let import_records: &'a [ImportRecord] =
+    // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord<'a>]`.
+    let import_records: &'a [ImportRecord<'a>] =
         unsafe { bun_ptr::detach_lifetime(ast_view.import_records.as_slice()) };
 
     CompileResult::Javascript {

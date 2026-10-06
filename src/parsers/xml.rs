@@ -79,7 +79,7 @@ impl XML {
     /// into `E::ObjectJSON` / `E::ArrayJSON` rows whose tape (and every string
     /// that does not borrow the source) lives in `bump`.
     pub fn parse<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         log: &mut Log,
         bump: &'a Bump,
         options: Options,
@@ -92,7 +92,7 @@ impl XML {
     /// the strings in the result are UTF-16 as well. `source` is only what
     /// diagnostics are attributed to and what the length limit is checked on.
     pub fn parse_utf16<'a>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         units: &'a [u16],
         log: &mut Log,
         bump: &'a Bump,
@@ -103,7 +103,7 @@ impl XML {
     }
 
     fn parse_units<'a, U: Unit>(
-        source: &'a Source,
+        source: &'a Source<'a>,
         contents: &'a [U],
         log: &mut Log,
         bump: &'a Bump,
@@ -789,7 +789,7 @@ struct Scanner<'a, 'log, U: Unit> {
     tag_degraded: bool,
 
     bump: &'a Bump,
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &'log mut Log,
 }
 
@@ -3121,7 +3121,7 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
 
 impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn new(
-        source: &'a Source,
+        source: &'a Source<'a>,
         contents: &'a [U],
         log: &'log mut Log,
         bump: &'a Bump,

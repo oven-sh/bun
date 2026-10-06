@@ -51,7 +51,7 @@ impl Default for RuntimeTranspilerCache {
 // edge here; the jsc impl casts it back.
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
-        fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
+        fn get(source: &Source<'_>, parser_options: NonNull<()>, used_jsx: bool) -> bool;
         fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
         fn is_disabled() -> bool;
     }

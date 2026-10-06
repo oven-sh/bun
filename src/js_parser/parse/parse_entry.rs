@@ -101,7 +101,7 @@ pub struct Parser<'a> {
     /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
     /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
     pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
     /// `log.errors` before the priming `lexer.next()` in `init`.
@@ -366,7 +366,7 @@ impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
         log: &mut bun_ast::Log,
-        source: &'a bun_ast::Source,
+        source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
@@ -468,7 +468,7 @@ impl<'a> Parser<'a> {
     /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
-    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult) -> Result<(), Error> {
+    pub fn scan_imports(&mut self, scan_pass: &'a mut ScanPassResult<'a>) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
@@ -479,7 +479,7 @@ impl<'a> Parser<'a> {
     #[cold]
     fn _scan_imports<const TS: bool>(
         &mut self,
-        scan_pass: &'a mut ScanPassResult,
+        scan_pass: &'a mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
         // `Lexer` owns `Vec`s and `Options` owns
@@ -823,11 +823,12 @@ fn lower_one_date_time_literal<'a>(
 
 impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
-        // `Source.path` is `Path<'static>`, so
-        // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
-        let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
-            self.source.path.text,
-        ));
+        // SAFETY: a local, so it drops in reverse order of declaration.
+        let _action_guard = unsafe {
+            bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
+                self.source.path.text,
+            ))
+        };
 
         // `parse()` consumes `self` by value, so we
         // destructure here and hand the owned `lexer`/`options` straight to
@@ -953,8 +954,10 @@ impl<'a> Parser<'a> {
         }
 
         // A second guard dropped at end of `_parse` restores the previous action.
-        let _visit_action_guard =
-            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
+        // SAFETY: a local, so it drops in reverse order of declaration.
+        let _visit_action_guard = unsafe {
+            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text))
+        };
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;

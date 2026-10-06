@@ -26,7 +26,7 @@ use crate::chunk::{Content, CssImportOrderKind};
 // materializing aliased Rust references.
 pub(crate) struct PrepareCssAstTask {
     pub(crate) task: ThreadPoolLib::CountedTask,
-    pub(crate) chunk: *mut Chunk,
+    pub(crate) chunk: *mut Chunk<'static>,
     pub(crate) linker: *mut LinkerContext<'static>,
 }
 
@@ -78,7 +78,7 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
     prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
 }
 
-fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
+fn prepare_css_asts_for_chunk_impl<'a>(c: &LinkerContext, chunk: &mut Chunk<'a>, bump: &'a Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
@@ -199,7 +199,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 source_map_urls: Default::default(),
                                 rules: {
                                     let mut import_rule = ImportRule {
-                                        url: p.pretty,
+                                        // SAFETY: `bun_css` types its arena slices `'static`; this
+                                        // sheet is printed below and abandoned.
+                                        url: unsafe { bun_ptr::detach_lifetime(p.pretty) },
                                         import_record_idx: entry.condition_import_records.len()
                                             as u32,
                                         loc: Location::dummy(),
@@ -270,14 +272,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
-                            // copy it into the worker bump (freed
-                            // at bundle teardown via arena reset). SAFETY: arena outlives
-                            // the chunk, so the `'bump → 'static` launder is sound — same
-                            // contract as every other CSS slice in this file.
-                            let encoded: &'static [u8] =
-                                bun_ast::StoreStr::new(bump.alloc_slice_copy(&encoded)).slice();
-                            *p = Path::init(encoded);
+                            *p = Path::init(bump.alloc_slice_copy(&encoded));
                         }
                     }
 
@@ -304,7 +299,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     css_chunk.asts[i] = BundlerStyleSheet {
                         rules: {
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
-                                p.pretty,
+                                // SAFETY: `bun_css` types its arena slices `'static`; this
+                                // sheet is stored in the chunk that holds `p`.
+                                unsafe { bun_ptr::detach_lifetime(p.pretty) },
                                 entry.condition_import_records.len() as u32,
                             );
                             // SAFETY: shallow struct copy. The duplicate lives in an

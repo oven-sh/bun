@@ -35,5 +35,5 @@ pub use WatchItemKind as Kind;
 pub use watcher_impl::{
     AnyResolveWatcher, ChangedFilePath, Event, FdOwnership, HashType, MAX_COUNT, Op, PackageJSON,
     REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS, WatchEvent, WatchItemColumns, WatchItemKind,
-    WatchList, Watcher, WatcherContext,
+    WatchList, WatchPath, Watcher, WatcherContext,
 };

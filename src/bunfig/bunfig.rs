@@ -141,7 +141,7 @@ fn num_to_u32(n: f64) -> u32 {
 
 struct Parser<'a> {
     json: Expr,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     log: &'a mut bun_ast::Log,
     // Holding both a `TransformOptions` pointer (= `&ctx.args`) and `ctx`
     // would be an overlapping borrow, so `bunfig` writes route through

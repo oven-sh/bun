@@ -86,11 +86,11 @@ pub struct NoOpRenamer<'a> {
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
     pub(crate) symbols: symbol::Map,
-    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) source: &'a bun_ast::Source<'a>,
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
+    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 

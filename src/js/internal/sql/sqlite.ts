@@ -42,10 +42,7 @@ interface SQLParsedInfo {
   command: SQLCommand;
   /** Leading keyword of the statement, upper-cased; used for the result's `command` label. */
   firstToken: string;
-  /**
-   * Number of `;`-separated chunks that hold more than whitespace and comments.
-   * An upper bound: a `CREATE TRIGGER` body counts each of its statements.
-   */
+  /** Chunks between top-level `;` that hold content. A trigger body counts each inner statement. */
   statements: number;
 }
 
@@ -216,8 +213,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
 
     const { sql, values, mode, command, statements } = this;
     try {
-      // A statement with result columns returns rows; preparing does not execute it.
-      // Whitespace or comment-only input prepares to nothing; db.run() reports that as before.
+      // Preparing does not execute. Input with no statement skips it and lets db.run() report that.
       const stmt = statements > 0 ? db.prepare(sql) : undefined;
 
       if (stmt && stmt.native.columnsCount > 0) {

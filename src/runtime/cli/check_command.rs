@@ -415,7 +415,7 @@ struct Entries<'a> {
 fn run(
     cwd: &[u8],
     project: Option<&[u8]>,
-    paths: Paths,
+    paths: &Paths,
     compiler_options: &[CompilerOption],
     threads: usize,
     provided: Provided,
@@ -461,7 +461,7 @@ fn run(
 fn run_quietly(
     cwd: &[u8],
     project: Option<&[u8]>,
-    paths: Paths,
+    paths: &Paths,
     compiler_options: &[CompilerOption],
     threads: usize,
     progress: Option<&Progress>,
@@ -491,12 +491,12 @@ fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
 fn request<'a>(
     cwd: &'a [u8],
     project: Option<&'a [u8]>,
-    paths: Paths<'a>,
+    paths: &Paths<'a>,
     compiler_options: &'a [CompilerOption],
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
-    let (entries, are_entry_points) = match paths {
+    let (entries, are_entry_points) = match *paths {
         Paths::Arguments(paths) => {
             let paths = Entries {
                 paths,
@@ -622,7 +622,7 @@ impl CheckCommand {
         let report = run(
             &cwd,
             options.project.as_deref(),
-            match options.build {
+            &match options.build {
                 true => Paths::Build,
                 false => Paths::Arguments(&options.paths),
             },
@@ -735,7 +735,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
     };
-    check_and_report(Paths::EntryPoints(entries), provided)
+    check_and_report(&Paths::EntryPoints(entries), provided)
 }
 
 fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
@@ -849,8 +849,8 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     });
     let then = |report| report;
     let report = match shows_progress {
-        true => run(cwd, tsconfig, paths, &[], 0, provided, then),
-        false => run_quietly(cwd, tsconfig, paths, &[], 0, None, provided, then),
+        true => run(cwd, tsconfig, &paths, &[], 0, provided, then),
+        false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
     for reported in &report.diagnostics {
         let kind = match reported.category {
@@ -1004,7 +1004,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_report(Paths::EntryPoints(Entries::default()), Provided::default())
+    check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default())
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.
@@ -1016,7 +1016,7 @@ fn tsconfig_override() -> Option<&'static [u8]> {
 }
 
 /// Returns whether there are no errors.
-fn check_and_report(paths: Paths, provided: Provided) -> bool {
+fn check_and_report(paths: &Paths, provided: Provided) -> bool {
     let cwd = working_directory();
     let then = |report| report;
     let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);

@@ -2390,6 +2390,7 @@ fn shell_get_path<'a>(
 /// `bun_sys::fstatat(dir, path_)`.
 // consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`) and the `ls` builtin
 pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    reject_empty_path(path_.as_bytes(), bun_sys::Tag::stat)?;
     #[cfg(windows)]
     {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -2404,6 +2405,7 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
 
 /// `shell_statat` without following a final symlink.
 pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    reject_empty_path(path_.as_bytes(), bun_sys::Tag::lstat)?;
     #[cfg(windows)]
     {
         let mut buf = bun_paths::path_buffer_pool::get();

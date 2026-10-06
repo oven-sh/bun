@@ -346,9 +346,13 @@ fn on_handshake(
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
     let _guard = ProxyTunnel::ref_guard(proxy_nn);
-    this.state.response_stage = HTTPStage::ProxyHeaders;
-    this.state.request_stage = HTTPStage::ProxyHeaders;
-    this.state.request_sent_len = 0;
+    // Not the first report: a renegotiation, with the request already on its way.
+    let first_report = this.state.request_stage == HTTPStage::ProxyHandshake;
+    if first_report {
+        this.state.response_stage = HTTPStage::ProxyHeaders;
+        this.state.request_stage = HTTPStage::ProxyHeaders;
+        this.state.request_sent_len = 0;
+    }
     let handshake_error = HTTPCertError::from_verify_error(ssl_error);
     if handshake_success {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake success");
@@ -360,6 +364,9 @@ fn on_handshake(
             // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
             // fresh `&mut *ctx` does not alias us.
             ProxyTunnel::close_from_callback(proxy_nn, err);
+            return;
+        }
+        if !first_report {
             return;
         }
         if this.wants_server_identity_check() {

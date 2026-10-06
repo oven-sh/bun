@@ -873,7 +873,6 @@ pub(crate) mod call_frame {
     /// Cursor over a `&[JSValue]`.
     pub(crate) struct ArgumentsSlice<'a> {
         remaining: &'a [JSValue],
-        _vm: *const c_void,
     }
     impl<'a> ArgumentsSlice<'a> {
         /// Generic over the VM handle so it accepts both the local
@@ -881,10 +880,7 @@ pub(crate) mod call_frame {
         /// which returns a raw `*mut VirtualMachineRef`). The VM is not
         /// dereferenced, so it's accepted by-value and dropped.
         pub(crate) fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
-            Self {
-                remaining: slice,
-                _vm: core::ptr::null(),
-            }
+            Self { remaining: slice }
         }
         /// Return the head **and** advance.
         #[inline]

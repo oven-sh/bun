@@ -646,6 +646,8 @@ function onClientHandshake(self, socket, success, verifyError) {
     }
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1697-L1698
     self.secureConnecting = false;
+    // pauseOnConnect stopped the handle as the handshake completed, whatever resume() did before that.
+    if (!self.isPaused()) self.read(0);
     self.emit(kSecureConnectDone);
     self.emit("secureConnect", verifyError);
     const pendingSession = self[kpendingSession];
@@ -2565,7 +2567,7 @@ Socket.prototype.resume = function resume() {
 // Only a connected onread socket stops reading here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause() {
   const handle = this._handle;
-  if (handle && this[kOnreadBuffer] !== undefined && !this.connecting && !this.destroyed) {
+  if (handle && this[kOnreadBuffer] !== undefined && !this.connecting && !this.secureConnecting && !this.destroyed) {
     readStop(this, handle);
   }
   return Duplex.prototype.pause.$call(this);

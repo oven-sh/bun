@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isLinux, isWindows, tempDir } from "harness";
 import { readdirSync, readlinkSync, realpathSync } from "node:fs";
-import { chmod, link, mkdir, readFile, rename, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readFile, readlink, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
@@ -241,6 +241,47 @@ describe.skipIf(isWindows)("file watch", () => {
 
     await rename(dep + ".away", dep);
     expect(await nextEval(out)).toBe("EVAL g=2 shared=V0");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+
+  // What the kubelet does to a ConfigMap or Secret volume. `config.json` is a
+  // link to `..data/config.json` and `..data` is a link to a directory. An
+  // update renames a new `..data` link over the old one and removes the old
+  // directory. The watched name never changes and no file is written in place.
+  test.concurrent("--watch reloads a file behind a symlink that is swapped", async () => {
+    await using dir = tempDir("watch-symlink-swap", {
+      "app.cjs": `console.log("EVAL v" + require("./cfg/config.json").v);\n`,
+      "cfg/..1/config.json": `{"v":1}`,
+    });
+    const cfg = join(String(dir), "cfg");
+    await symlink("..1", join(cfg, "..data"), "dir");
+    await symlink("..data/config.json", join(cfg, "config.json"));
+    async function update(v: number) {
+      await mkdir(join(cfg, `..${v}`));
+      await writeFile(join(cfg, `..${v}`, "config.json"), `{"v":${v}}`);
+      const old = await readlink(join(cfg, "..data"));
+      await symlink(`..${v}`, join(cfg, "..data_next"), "dir");
+      await rename(join(cfg, "..data_next"), join(cfg, "..data"));
+      await rm(join(cfg, old), { recursive: true });
+    }
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "app.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const out = forEachLine(proc.stdout);
+
+    expect(await nextEval(out)).toBe("EVAL v1");
+
+    await update(2);
+    expect(await nextEval(out)).toBe("EVAL v2");
+
+    await update(3);
+    while ((await nextEval(out)) !== "EVAL v3");
 
     proc.kill("SIGKILL");
     await proc.exited;

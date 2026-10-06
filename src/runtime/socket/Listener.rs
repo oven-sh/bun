@@ -137,6 +137,53 @@ impl Listener {
     }
 }
 
+/// The `SSL_CTX` of the native `SecureContext` node:tls passes as `tls.secureContext`.
+fn prebuilt_ssl_ctx(
+    global: &JSGlobalObject,
+    opts: JSValue,
+) -> JsResult<Option<boring_sys::OwnedSslCtx>> {
+    let Some(tls_js) = opts.get_truthy(global, "tls")? else {
+        return Ok(None);
+    };
+    if !tls_js.is_object() {
+        return Ok(None);
+    }
+    let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
+        return Ok(None);
+    };
+    Ok(sc_js
+        .as_class_ref::<SecureContext>()
+        .map(|sc| sc.ctx.clone()))
+}
+
+/// Tears down the half-built `Listener` of `listen()`, unless `disarm()` runs first.
+struct HalfBuiltListener(Option<*mut Listener>);
+
+impl HalfBuiltListener {
+    fn disarm(mut self) -> *mut Listener {
+        self.0.take().expect("guard already disarmed")
+    }
+}
+
+impl Drop for HalfBuiltListener {
+    fn drop(&mut self) {
+        let Some(this) = self.0.take() else { return };
+        // SAFETY: this is still the sole owner on the error path; the
+        // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
+        let this_ref = unsafe { &*this };
+        this_ref.secure_ctx.set(None);
+        // protos: Box drops automatically when Listener is dropped below
+        bun_core::asan::unregister_root_region(
+            this_ref.group.as_ptr().cast::<c_void>(),
+            size_of::<uws::SocketGroup>(),
+        );
+        // SAFETY: group was init'd above; not concurrently walked.
+        unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
+        // SAFETY: reclaim the Box we leaked via into_raw
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum UnixOrHost {
     Unix(Box<[u8]>),
@@ -212,6 +259,11 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
+        let prebuilt_ctx = if ssl_enabled {
+            prebuilt_ssl_ctx(cx.global(), opts)?
+        } else {
+            None
+        };
 
         #[cfg(windows)]
         if port.is_none() {
@@ -407,25 +459,11 @@ impl Listener {
             this_ref.group.as_ptr().cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
-        // Cleanup guard: on any early return below, tear down the half-built Listener.
-        // Disarmed via `into_inner` once ownership transfers to the JS wrapper.
-        let cleanup = scopeguard::guard(this, |this| {
-            // SAFETY: this is still the sole owner on the error path; the
-            // fields below are `Cell`/`JsCell`, so a shared borrow suffices.
-            let this_ref = unsafe { &*this };
-            this_ref.secure_ctx.set(None);
-            // protos: Box drops automatically when Listener is dropped below
-            bun_core::asan::unregister_root_region(
-                this_ref.group.as_ptr().cast::<c_void>(),
-                size_of::<uws::SocketGroup>(),
-            );
-            // SAFETY: group was init'd above; not concurrently walked.
-            unsafe { uws::SocketGroup::destroy(this_ref.group.as_ptr()) };
-            // SAFETY: reclaim the Box we leaked via into_raw
-            drop(unsafe { bun_core::heap::take(this) });
-        });
+        let cleanup = HalfBuiltListener(Some(this));
 
-        if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
+        if prebuilt_ctx.is_some() {
+            this_ref.secure_ctx.set(prebuilt_ctx);
+        } else if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
             let mut create_err = uws::create_bun_socket_error_t::none;
             let ctx_opts = ssl_cfg.as_usockets();
             match ctx_opts.create_ssl_context_with_digest(&ctx_opts.digest(), &mut create_err) {
@@ -588,7 +626,7 @@ impl Listener {
             }
         }
 
-        let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
+        let this = cleanup.disarm(); // ownership transfers to JS wrapper
         // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
@@ -800,27 +838,12 @@ impl Listener {
     /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
     pub(crate) fn set_secure_context(
         this: &Self,
-        global: &JSGlobalObject,
-        tls: JSValue,
-    ) -> JsResult<JSValue> {
+        secure_context: &SecureContext,
+    ) -> JSValue {
         if !this.ssl {
-            return Ok(JSValue::UNDEFINED);
+            return JSValue::UNDEFINED;
         }
-        // SAFETY: per-thread VM; valid for program lifetime.
-        let vm = VirtualMachine::get().as_mut();
-        let Some(ssl_config) = SSLConfig::from_js(vm, global, tls, true)? else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let mut create_err = uws::create_bun_socket_error_t::none;
-        let Some(ctx) = ssl_config.as_usockets().create_ssl_context(&mut create_err) else {
-            return Err(
-                global.throw_value(crate::socket::uws_jsc::create_bun_socket_error_to_js(
-                    create_err, global,
-                )),
-            );
-        };
-
-        // `from_js` runs getters on `tls`, so the listener is read only now.
+        let ctx = secure_context.ctx.clone();
         match this.listener.get() {
             ListenerType::Uws(ls) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
@@ -834,7 +857,7 @@ impl Listener {
             }
             ListenerType::None => {}
         }
-        Ok(JSValue::UNDEFINED)
+        JSValue::UNDEFINED
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1167,24 +1190,11 @@ impl Listener {
         // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
         // named-pipe path can adopt it. node:tls passes the native SecureContext as
         // `tls.secureContext` so we share its already-built SSL_CTX.
-        let mut owned_ssl_ctx: Option<boring_sys::OwnedSslCtx> = None;
-        if ssl_enabled {
-            let native_sc: Option<&SecureContext> = 'blk: {
-                let Some(tls_js) = opts.get_truthy(cx.global(), "tls")? else {
-                    break 'blk None;
-                };
-                if !tls_js.is_object() {
-                    break 'blk None;
-                }
-                let Some(sc_js) = tls_js.get_truthy(cx.global(), "secureContext")? else {
-                    break 'blk None;
-                };
-                sc_js.as_class_ref::<SecureContext>()
-            };
-            if let Some(sc) = native_sc {
-                owned_ssl_ctx = Some(sc.ctx.clone());
-            }
-        }
+        let mut owned_ssl_ctx = if ssl_enabled {
+            prebuilt_ssl_ctx(cx.global(), opts)?
+        } else {
+            None
+        };
 
         #[cfg(windows)]
         let mut connection = connection;
@@ -1745,7 +1755,7 @@ pub(crate) fn js_set_secure_context(
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let [listener, tls] = frame.arguments_as_array::<2>();
+    let [listener, secure_context] = frame.arguments_as_array::<2>();
     if frame.arguments_count() < 2 {
         return Err(global.throw_not_enough_arguments(
             "setSecureContext",
@@ -1754,9 +1764,12 @@ pub(crate) fn js_set_secure_context(
         ));
     }
     // A cluster worker's `_handle` is no `Listener`: JS wraps its connections.
-    match listener.as_class_ref::<Listener>() {
-        Some(this) => Listener::set_secure_context(this, global, tls),
-        None => Ok(JSValue::UNDEFINED),
+    match (
+        listener.as_class_ref::<Listener>(),
+        secure_context.as_class_ref::<SecureContext>(),
+    ) {
+        (Some(this), Some(sc)) => Ok(Listener::set_secure_context(this, sc)),
+        _ => Ok(JSValue::UNDEFINED),
     }
 }
 

@@ -6,7 +6,7 @@
 #   two-key : name and version
 #   full    : about 975 bytes: 5 scripts, 3 dependencies and 2 devDependencies on sibling workspaces, 9 more fields
 #   escaped : 19 scripts of 19 lengths, each with an escaped quote
-# Flows: `install` from a clean tree, and `update -r` over the lockfile and node_modules that the install left.
+# Flows: `install` from a clean tree, and `update -r` over the lockfile and node_modules of an install by that binary.
 # Linux only: GNU time reports the peak RSS (KB), the minor faults and the user+system CPU (ms) of the one process.
 # Each row is the median of RUNS runs. The runs of the binaries are interleaved.
 set -u
@@ -78,11 +78,9 @@ for kind in $KINDS; do
       for i in "${!BINARIES[@]}"; do : > "$WORK/rows.$i"; done
       for run in $(seq 1 "$RUNS"); do
         for i in "${!BINARIES[@]}"; do
-          if [ "$flow" = install ]; then
-            rm -rf "$dir/node_modules" "$dir/bun.lock"
-          else
-            [ -f "$dir/bun.lock" ] || (cd "$dir" && "${BINARIES[$i]}" install > /dev/null 2>&1)
-          fi
+          rm -rf "$dir/node_modules" "$dir/bun.lock"
+          # `update -r` starts from the lockfile and node_modules of an install by the same binary.
+          [ "$flow" = install ] || (cd "$dir" && "${BINARIES[$i]}" install > /dev/null 2>&1)
           measure "${BINARIES[$i]}" "$dir" "$flow" >> "$WORK/rows.$i"
         done
       done

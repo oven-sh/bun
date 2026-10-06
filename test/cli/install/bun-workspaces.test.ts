@@ -2888,6 +2888,8 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
 
 // The npm lockfile migration reads each workspace package.json through the cache of the package manager.
 test.concurrent("the package.json cache keeps no mimalloc heap for each file", async () => {
+  await acquireSlot();
+  using _slot = { [Symbol.dispose]: releaseSlot };
   const files: Record<string, string> = {};
   for (const workspaces of [1, 5, 50]) {
     const packages: Record<string, object> = { "": { name: "root", workspaces: ["packages/*"] } };
@@ -2940,6 +2942,8 @@ test.concurrent("the package.json cache keeps no mimalloc heap for each file", a
 // With a mimalloc heap for each cached package.json, each size class of escaped string costs one 64 KiB page
 // for each workspace. In a shared heap the two repos, which hold the same bytes, cost the same.
 test.concurrent("install does not keep a mimalloc heap for each workspace package.json", async () => {
+  await acquireSlot();
+  using _slot = { [Symbol.dispose]: releaseSlot };
   const lengths: number[] = [];
   for (let length = 8; length <= 1024; length += Math.max(8, length >> 2)) lengths.push(length);
   const mean = Math.ceil(lengths.reduce((sum, length) => sum + length) / lengths.length);

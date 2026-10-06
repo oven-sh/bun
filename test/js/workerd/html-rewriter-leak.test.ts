@@ -1703,8 +1703,12 @@ test.concurrent.skipIf(!isASAN).each([
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "abandon.js", input],
-      // A debug build takes longer to symbolize a report than the test may run.
-      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+      // symbolize=0: a debug build takes longer to symbolize a report than the test may run.
+      // detect_leaks=0: the leak suppressions match by symbol, and this test is about the use-after-free only.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

@@ -298,6 +298,14 @@ function installedPath(dir: string, linker: Linker, name: string, version: strin
     : join(dir, "node_modules", ".bun", `${name}@${version}`, "node_modules", name, "package.json");
 }
 
+// The isolated linker names the store entry of a patched package after the hash of its patch.
+function patchedPath(dir: string, linker: Linker, name: string, version: string) {
+  if (linker === "hoisted") return installedPath(dir, linker, name, version);
+  const store = join(dir, "node_modules", ".bun");
+  const [entry] = [...new Bun.Glob(`${name}@${version}_patch_hash=*`).scanSync({ cwd: store, onlyFiles: false })];
+  return join(store, entry, "node_modules", name, "package.json");
+}
+
 describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
   // Also pins that the optional-peer-bound no-deps is installed even though only the pruned workspace needed it (pnpm#6264).
   test.concurrent(
@@ -539,7 +547,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     expect(stderr).not.toContain("patchedDependencies");
     expect(await lockText(packageDir)).toBe(full);
-    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
+    const aDep = patchedPath(packageDir, linker, "a-dep", "1.0.1");
     expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
     expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
     expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
@@ -553,7 +561,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
   test.concurrent("patchedDependencies removed after bun.lock was written still passes --frozen-lockfile", async () => {
     const { fullDir, full } = await fullInstall(linker, patchedMonorepo);
     expect(full).toContain(patchedLockLine);
-    expect(await exists(join(dirname(installedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();
+    expect(await exists(join(dirname(patchedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
     await writeTree(packageDir, monorepo, survivors);
     await write(join(packageDir, "bun.lock"), full);

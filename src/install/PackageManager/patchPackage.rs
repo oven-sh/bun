@@ -26,6 +26,8 @@ use crate::{
     initialize_store, invalid_package_id,
 };
 
+use crate::patch_install::PatchStamp;
+
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
@@ -447,6 +449,45 @@ pub fn do_patch_commit(
                     ) {
                         bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
                     }
+                }
+            }
+        }
+
+        // A patched copy names its patch in one of its files (`PatchStamp`).
+        // The hash is not part of the package, so it stays out of the diff.
+        let mut stamp_path_buf = bun_paths::path_buffer_pool::get();
+        let stamp_path: &ZStr = resolve_path::join_z_buf::<platform::Auto>(
+            &mut stamp_path_buf[..],
+            &[new_folder, PatchStamp::file(pkg.resolution.tag).as_bytes()],
+        );
+        let stamped: Option<Vec<u8>> = 'stamped: {
+            let Ok(contents) = sys::File::read_from(Fd::cwd(), stamp_path.as_bytes()) else {
+                break 'stamped None;
+            };
+            let Some(unstamped) = PatchStamp::unstamped(pkg.resolution.tag, &contents) else {
+                break 'stamped None;
+            };
+            // A new file: an installed file can share its inode with the cache.
+            let _ = sys::unlink(stamp_path);
+            if let Err(e) = sys::File::write_file(Fd::cwd(), stamp_path, &unstamped) {
+                bun_core::warn!(
+                    "failed removing the patch hash from {}, this may cause issues: {}",
+                    bstr::BStr::new(stamp_path.as_bytes()),
+                    e
+                );
+                let _ = sys::File::write_file(Fd::cwd(), stamp_path, &contents);
+                break 'stamped None;
+            }
+            break 'stamped Some(contents);
+        };
+        scopeguard::defer! {
+            if let Some(contents) = &stamped {
+                if let Err(e) = sys::File::write_file(Fd::cwd(), stamp_path, contents) {
+                    bun_core::warn!(
+                        "failed restoring the patch hash in {}, this may cause issues: {}",
+                        bstr::BStr::new(stamp_path.as_bytes()),
+                        e
+                    );
                 }
             }
         }

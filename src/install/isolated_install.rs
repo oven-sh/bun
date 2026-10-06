@@ -1033,11 +1033,41 @@ pub(crate) fn build_store(
             break 'hoisted false;
         };
 
+        let new_entry_patch_hash: u64 = 'patch_hash: {
+            let pkg_res = &pkg_resolutions[pkg_id as usize];
+            if lockfile.patched_dependencies.count() == 0
+                || !matches!(
+                    pkg_res.tag,
+                    ResolutionTag::Npm
+                        | ResolutionTag::Git
+                        | ResolutionTag::Github
+                        | ResolutionTag::LocalTarball
+                        | ResolutionTag::RemoteTarball
+                )
+            {
+                break 'patch_hash 0;
+            }
+            res_fmt_buf.clear();
+            write!(
+                &mut res_fmt_buf,
+                "{}@{}",
+                BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix)
+            )
+            .expect("Vec<u8> write is infallible");
+            lockfile
+                .patched_dependencies
+                .get(&semver::semver_string::Builder::string_hash(&res_fmt_buf))
+                .and_then(|patch| patch.patchfile_hash())
+                .unwrap_or(0)
+        };
+
         let new_entry = StoreEntry {
             node_id: entry.node_id,
             dependencies: new_entry_dependencies,
             parents: new_entry_parents,
             peer_hash: new_entry_peer_hash,
+            patch_hash: new_entry_patch_hash,
             hoisted,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
@@ -1172,6 +1202,7 @@ pub(crate) fn install_isolated_packages(
                 entry_hash: entry_hashes,
                 node_id: entry_node_ids,
                 dependencies: entry_dependencies,
+                patch_hash: entry_patch_hashes,
                 ..
             } = entries.split_mut();
 
@@ -1237,34 +1268,8 @@ pub(crate) fn install_isolated_packages(
                                 // mutate (or may mutate) their install directory, so a
                                 // shared global copy would either diverge from the
                                 // patch or be mutated underneath other projects.
-                                if lockfile.patched_dependencies.count() > 0 {
-                                    let mut name_version_buf = bun_paths::path_buffer_pool::get();
-                                    let mut cursor =
-                                        std::io::Cursor::new(&mut name_version_buf.0[..]);
-                                    let name_version: &[u8] = match write!(
-                                        &mut cursor,
-                                        "{}@{}",
-                                        BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
-                                        pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix),
-                                    ) {
-                                        Ok(()) => {
-                                            let n = cursor.position() as usize;
-                                            &name_version_buf.0[..n]
-                                        }
-                                        Err(_) => {
-                                            // Overflow is implausible (PathBuffer ≫
-                                            // any name+version), but if it ever fired
-                                            // the safe answer is "not eligible" rather
-                                            // than letting a possibly-patched package
-                                            // slip into the shared store.
-                                            break 'eligible false;
-                                        }
-                                    };
-                                    if lockfile.patched_dependencies.contains(
-                                        &semver::semver_string::Builder::string_hash(name_version),
-                                    ) {
-                                        break 'eligible false;
-                                    }
+                                if entry_patch_hashes[entry_idx] != 0 {
+                                    break 'eligible false;
                                 }
                                 // Intentionally *not* gated on `do.run_scripts`
                                 // (a later install without `--ignore-scripts`
@@ -2237,29 +2242,15 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
+                            // The patch hash is part of this path, so the entry of a
+                            // patched package is never the entry of the published one.
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            // Capture the length instead of a `ResetScope` so
-                            // `store_path` stays unborrowed.
-                            let scope_for_patch_tag_path = store_path.len();
                             if pkg_res_tag == ResolutionTag::Npm {
                                 // if it's from npm, it should always have a package.json.
                                 // in other cases, probably yes but i'm less confident.
                                 store_path.append(b"package.json").assume_ok();
                             }
-                            let exists = sys::exists_z(store_path.slice_z());
-
-                            break 'needs_install match &patch_info {
-                                installer::PatchInfo::None => !exists,
-                                // checked above
-                                installer::PatchInfo::Remove(_) => unreachable!(),
-                                installer::PatchInfo::Patch(patch) => {
-                                    let mut hash_buf: install::BuntagHashBuf = Default::default();
-                                    let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
-                                    store_path.set_length(scope_for_patch_tag_path);
-                                    store_path.append(&*hash).assume_ok();
-                                    !sys::exists_z(store_path.slice_z())
-                                }
-                            };
+                            break 'needs_install !sys::exists_z(store_path.slice_z());
                         }
                         // An entry that lost global-store eligibility since the
                         // previous install (newly patched, newly trusted, a dep

@@ -19,6 +19,7 @@ use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::patch_install::{PatchStamp, PatchTask};
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -1051,8 +1052,9 @@ impl<'a> HoistedTree<'a> {
                 return Installed::Mismatch;
             }
             ResolutionTag::Git | ResolutionTag::Github => {
-                sys::File::read_from(package.fd(), b".bun-tag")
-                    .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
+                sys::File::read_from(package.fd(), b".bun-tag").is_ok_and(|tag| {
+                    PatchStamp::bun_tag_resolved(&tag) == res.repository().resolved.slice(buf)
+                })
             }
             ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)
@@ -1744,11 +1746,34 @@ fn push_store_entry_names(
     }
 }
 
+/// The store path of a patched package ends in the hash of its patch. An
+/// install calculates the hashes while it resolves.
+fn calc_patch_hashes(manager: &mut PackageManager) {
+    let project_dir = crate::bun_fs::FileSystem::instance().top_level_dir();
+    for key in manager.lockfile.patched_dependencies.keys().to_vec() {
+        let Some(patch) = manager.lockfile.patched_dependencies.get(&key) else {
+            continue;
+        };
+        let patchfile_path = manager.lockfile.str(&patch.path).to_vec();
+        let mut log = bun_ast::Log::init();
+        let Some(hash) = PatchTask::hash_patch_file(project_dir, &patchfile_path, &mut log) else {
+            if manager.options.log_level != LogLevel::Silent {
+                print_log_errors(&log);
+            }
+            Global::exit(1);
+        };
+        if let Some(patch) = manager.lockfile.patched_dependencies.get_mut(&key) {
+            patch.set_patchfile_hash(Some(hash));
+        }
+    }
+}
+
 // Peer hashes differ between a full install and one narrowed by `--production`/`--omit`; entries laid out by either stay.
 fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
     if manager.lockfile.packages.len() == 0 {
         return Vec::new();
     }
+    calc_patch_hashes(manager);
     let own = install_features(manager);
     let full = full_install_features(own);
     let mut names: Vec<Box<[u8]>> = Vec::new();

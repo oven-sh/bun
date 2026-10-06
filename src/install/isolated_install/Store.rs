@@ -286,6 +286,11 @@ pub mod entry {
 
         pub peer_hash: PeerHash,
 
+        /// Contents hash of the patch that `patchedDependencies` names for this
+        /// package; 0 when it names none. Part of the store path, so a patched
+        /// entry and the published one are never the same directory.
+        pub patch_hash: u64,
+
         /// Content hash of (package + sorted resolved dependency global-store keys),
         /// used to key the global virtual store at `<cache>/links/<storepath>-<entry_hash>/`.
         /// Two projects that resolve the same package to the same dependency closure
@@ -315,6 +320,7 @@ pub mod entry {
             step: core::sync::atomic::AtomicU32,
             hoisted: bool,
             peer_hash: PeerHash,
+            patch_hash: u64,
             entry_hash: u64,
             scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
         }
@@ -437,11 +443,16 @@ pub mod entry {
         }
     }
 
+    /// `name@version[+peerhash][_patch_hash=hash]`
     pub struct StorePathFormatter<'a> {
         pub(crate) entry_id: Id,
         pub(crate) store: &'a Store,
         pub lockfile: &'a Lockfile,
+        pub(crate) patched: bool,
     }
+
+    /// Before the patch hash in a store path. `bun pm licenses` matches on it.
+    pub const PATCH_HASH_SUFFIX: &str = "_patch_hash=";
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -468,6 +479,11 @@ pub mod entry {
                 write!(f, "+{:016x}", peer_hash.cast())?;
             }
 
+            let patch_hash = entries.items_patch_hash()[self.entry_id.get() as usize];
+            if self.patched && patch_hash != 0 {
+                write!(f, "{PATCH_HASH_SUFFIX}{patch_hash:x}")?;
+            }
+
             Ok(())
         }
     }
@@ -481,6 +497,22 @@ pub mod entry {
             entry_id,
             store,
             lockfile,
+            patched: true,
+        }
+    }
+
+    /// The store path of the same package with no patch. Earlier versions of
+    /// bun put the patched package there.
+    pub(crate) fn fmt_unpatched_store_path<'a>(
+        entry_id: Id,
+        store: &'a Store,
+        lockfile: &'a Lockfile,
+    ) -> StorePathFormatter<'a> {
+        StorePathFormatter {
+            entry_id,
+            store,
+            lockfile,
+            patched: false,
         }
     }
 

@@ -1226,6 +1226,12 @@ impl Task {
                             Which::Final,
                         );
                         let _ = Fd::cwd().delete_tree(previous.slice());
+
+                        if installer.store.entries.items_patch_hash()[self.entry_id.get() as usize]
+                            != 0
+                        {
+                            installer.remove_entry_patched_in_place(self.entry_id);
+                        }
                     }
 
                     if uses_global_store {
@@ -2537,6 +2543,52 @@ impl<'a> Installer<'a> {
         }
     }
 
+    /// Removes the entry that an earlier version of bun patched in place. That
+    /// entry sits at the store path of the unpatched package, so it would pass
+    /// for the published one when the patch goes away. Its package holds a
+    /// `.bun-tag-<hash>` file.
+    fn remove_entry_patched_in_place(&self, entry_id: StoreEntryId) {
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
+
+        let mut entry = AutoPath::init_top_level_dir();
+        entry
+            .append_fmt(format_args!(
+                "{}/{}",
+                NODE_MODULES_BUN,
+                store::entry::fmt_unpatched_store_path(entry_id, self.store, self.lockfile()),
+            ))
+            .assume_ok();
+        // A link into the global store: that entry was never patched, and a
+        // delete through the link would empty it for every project.
+        if !is_real_directory(entry.slice_z()) {
+            return;
+        }
+
+        let entry_len = entry.len();
+        entry.append(b"node_modules").assume_ok();
+        entry.append(pkg_name.slice(string_buf)).assume_ok();
+        let Ok(package_dir) = sys::open_dir_for_iteration(Fd::cwd(), entry.slice()) else {
+            return;
+        };
+        let mut patched_in_place = false;
+        let mut names = sys::iterate_dir(package_dir);
+        while let Ok(Some(file)) = names.next() {
+            if file.name.slice_u8().starts_with(b".bun-tag-") {
+                patched_in_place = true;
+                break;
+            }
+        }
+        package_dir.close();
+
+        if patched_in_place {
+            entry.set_length(entry_len);
+            let _ = Fd::cwd().delete_tree(entry.slice());
+        }
+    }
+
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
     /// points at the global virtual-store entry). Relative to top-level dir.
     pub(crate) fn append_local_store_entry_path(
@@ -2815,6 +2867,18 @@ impl<'a> Installer<'a> {
             ResolutionTag::Symlink => None,
             _ => Some(pkg_names[pkg_id as usize].slice(string_buf)),
         }
+    }
+}
+
+fn is_real_directory(path: &ZStr) -> bool {
+    #[cfg(windows)]
+    {
+        sys::get_file_attributes(path)
+            .is_some_and(|attributes| attributes.is_directory && !attributes.is_reparse_point)
+    }
+    #[cfg(not(windows))]
+    {
+        sys::lstat(path).is_ok_and(|stat| sys::posix::s_isdir(stat.st_mode as u32))
     }
 }
 

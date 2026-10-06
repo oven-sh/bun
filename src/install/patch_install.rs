@@ -134,6 +134,107 @@ pub struct InstallContext {
     pub(crate) path: Vec<u8>,
 }
 
+type ResolutionTag = crate::resolution::Tag;
+
+/// Hashed ahead of the patch file. A patched cache folder is named by the
+/// patch hash, so a folder that a version without [`PatchStamp`] wrote is
+/// never taken for one of this version.
+const PATCHED_FOLDER_LAYOUT: &[u8] = b"bun patched folder 2\0";
+
+/// Where a patched copy of a package names its patch: in the file that the
+/// hoisted linker's up-to-date check (`PackageInstall::verify`) reads for
+/// every package, so a copy is never taken for another build of the same
+/// version. For a git or github package that file is `.bun-tag` and the hash
+/// is its second line. For every other package it is `package.json` and the
+/// hash is its first key.
+pub(crate) struct PatchStamp;
+
+impl PatchStamp {
+    pub(crate) fn file(tag: ResolutionTag) -> &'static ZStr {
+        match tag {
+            ResolutionTag::Git | ResolutionTag::Github => bun_core::zstr!(".bun-tag"),
+            _ => bun_core::zstr!("package.json"),
+        }
+    }
+
+    pub(crate) fn hex(buf: &mut [u8; 16], patch_hash: u64) -> &[u8] {
+        bun_core::fmt::u64_hex_var_lower(buf, patch_hash)
+    }
+
+    /// The resolved commit: `.bun-tag` without the patch hash.
+    pub(crate) fn bun_tag_resolved(bun_tag: &[u8]) -> &[u8] {
+        match strings::index_of_char_usize(bun_tag, b'\n') {
+            Some(end) => &bun_tag[..end],
+            None => bun_tag,
+        }
+    }
+
+    /// Whether `bun_tag` is the `.bun-tag` of `resolved` with `patch_hash` applied.
+    pub(crate) fn bun_tag_matches(
+        bun_tag: &[u8],
+        resolved: &[u8],
+        patch_hash: Option<u64>,
+    ) -> bool {
+        let Some(patch_hash) = patch_hash else {
+            return strings::eql_long(resolved, bun_tag, true);
+        };
+        let mut buf = [0u8; 16];
+        let hex = Self::hex(&mut buf, patch_hash);
+        bun_tag.len() == resolved.len() + 1 + hex.len()
+            && bun_tag.starts_with(resolved)
+            && bun_tag[resolved.len()] == b'\n'
+            && bun_tag.ends_with(hex)
+    }
+
+    /// `contents` of [`Self::file`] with `patch_hash` in it. `None` when there
+    /// is no place for it: a `package.json` that is not an object, which the
+    /// up-to-date check rejects for every build.
+    fn stamped(tag: ResolutionTag, contents: &[u8], patch_hash: u64) -> Option<Vec<u8>> {
+        let mut buf = [0u8; 16];
+        let hex = Self::hex(&mut buf, patch_hash);
+        match tag {
+            ResolutionTag::Git | ResolutionTag::Github => {
+                let resolved = Self::bun_tag_resolved(contents);
+                let mut out = Vec::with_capacity(resolved.len() + 1 + hex.len());
+                out.extend_from_slice(resolved);
+                out.push(b'\n');
+                out.extend_from_slice(hex);
+                Some(out)
+            }
+            _ => crate::bun_json::PackageJSONVersionChecker::with_patch_hash(contents, hex),
+        }
+    }
+
+    /// `contents` of [`Self::file`] as the unpatched package has it. `None`
+    /// when `contents` holds no patch hash.
+    pub(crate) fn unstamped(tag: ResolutionTag, contents: &[u8]) -> Option<Vec<u8>> {
+        match tag {
+            ResolutionTag::Git | ResolutionTag::Github => {
+                let resolved = Self::bun_tag_resolved(contents);
+                (resolved.len() != contents.len()).then(|| resolved.to_vec())
+            }
+            _ => crate::bun_json::PackageJSONVersionChecker::without_patch_hash(contents),
+        }
+    }
+
+    /// Records `patch_hash` in the patched copy at `package_dir`.
+    fn write(package_dir: Fd, tag: ResolutionTag, patch_hash: u64) -> sys::Result<()> {
+        let file = Self::file(tag);
+        let contents = match sys::File::read_from(package_dir, file.as_bytes()) {
+            sys::Result::Ok(contents) => contents,
+            // Without this file the up-to-date check installs the package every time.
+            sys::Result::Err(e) if e.get_errno() == sys::Errno::ENOENT => {
+                return sys::Result::Ok(());
+            }
+            sys::Result::Err(e) => return sys::Result::Err(e),
+        };
+        match Self::stamped(tag, &contents, patch_hash) {
+            Some(stamped) => sys::File::write_file(package_dir, file, &stamped),
+            None => sys::Result::Ok(()),
+        }
+    }
+}
+
 impl PatchTask {
     /// # Safety
     /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
@@ -379,7 +480,7 @@ impl PatchTask {
     // 1. Parse patch file
     // 2. Create temp dir to do all the modifications
     // 3. Copy un-patched pkg into temp dir
-    // 4. Apply patches to pkg in temp dir
+    // 4. Apply patches to pkg in temp dir, record the patch hash in it (`PatchStamp`)
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
     pub(crate) fn apply(&mut self) -> Result<(), bun_alloc::AllocError> {
@@ -540,6 +641,16 @@ impl PatchTask {
                 );
                 return Ok(());
             }
+            if let Err(e) = PatchStamp::write(patch_pkg_dir, resolution_tag, patch.patch_hash) {
+                log.add_error_fmt_opts(
+                    format_args!(
+                        "failed to record the patch hash: {}",
+                        e.with_path(PatchStamp::file(resolution_tag).as_bytes())
+                    ),
+                    Default::default(),
+                );
+                return Ok(());
+            }
 
             // 5. Add bun tag
             let bun_tag_prefix = bun_hash_tag;
@@ -603,39 +714,37 @@ impl PatchTask {
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
             unreachable!()
         };
-        let log = &mut calc_hash.logger;
+        Self::hash_patch_file(
+            self.project_dir,
+            &calc_hash.patchfile_path,
+            &mut calc_hash.logger,
+        )
+    }
 
-        let dir = self.project_dir;
-        let patchfile_path = &calc_hash.patchfile_path;
-
+    /// The hash that names the patched build of a package: of the patch file at
+    /// `patchfile_path` (relative to `project_dir`) and `PATCHED_FOLDER_LAYOUT`.
+    pub(crate) fn hash_patch_file(
+        project_dir: &[u8],
+        patchfile_path: &[u8],
+        log: &mut Log,
+    ) -> Option<u64> {
         let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
         // parse the patch file
         let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
-            &[dir, patchfile_path],
+            &[project_dir, patchfile_path],
         );
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
-                    // Not `self.manager()` — `&mut self.callback` is live.
-                    // BACKREF — read-only lockfile access on the worker thread.
-                    let manager = self.manager.get();
                     bun_ast::add_error_pretty!(
                         log,
                         None,
                         Loc::EMPTY,
                         "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
-                        BStr::new(&calc_hash.patchfile_path),
-                        BStr::new(
-                            manager
-                                .lockfile
-                                .patched_dependencies
-                                .get(&calc_hash.name_and_version_hash)
-                                .unwrap()
-                                .path
-                                .slice(&manager.lockfile.buffers.string_bytes)
-                        ),
+                        BStr::new(patchfile_path),
+                        BStr::new(patchfile_path),
                     );
                     return None;
                 }
@@ -675,6 +784,7 @@ impl PatchTask {
         };
 
         let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
+        hasher.update(PATCHED_FOLDER_LAYOUT);
 
         const CHUNK_SIZE: usize = 64 * 1024;
         let mut chunk = vec![0u8; CHUNK_SIZE];

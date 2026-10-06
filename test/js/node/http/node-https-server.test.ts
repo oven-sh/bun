@@ -220,6 +220,13 @@ describe("https.createServer forwards every TLS server option", () => {
     expect(await negotiated(false)).toBe(aes128);
   });
 
+  test("takes a key as [{ pem, passphrase }]", async () => {
+    const pem = readFileSync(join(import.meta.dirname, "fixtures", "cert.encrypted.key"), "utf8");
+    const cert = readFileSync(join(import.meta.dirname, "fixtures", "cert.pem"), "utf8");
+    await using server = https.createServer({ key: [{ pem, passphrase: "testpassword" }], cert });
+    expect(await handshake(await listen(server), {})).toStartWith("TLS_");
+  });
+
   test("sends sessionTimeout as the ticket lifetime", async () => {
     await using server = https.createServer({ ...validCert, sessionTimeout: 1234 });
     const client = tls.connect({ port: await listen(server), host: "127.0.0.1", rejectUnauthorized: false, maxVersion: "TLSv1.2" }); // prettier-ignore

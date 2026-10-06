@@ -336,9 +336,21 @@ fn handle_path(
             .throw());
     }
     // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
-    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
+        bun_paths::AutoAbsPathChecked::init_top_level_dir()
+    } else {
+        bun_paths::AutoAbsPathChecked::init()
+    };
+    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `join` does, which also knows `C:foo` and `\foo`.
+    let pinned = if cfg!(windows) {
+        path.join(&[name])
+    } else {
+        path.append(name)
+    };
+    // `append` drops a trailing slash, with which no file opens.
     if name.is_empty()
-        || path.join(&[name]).is_err()
+        || (cfg!(not(windows)) && name.ends_with(b"/"))
+        || pinned.is_err()
         || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
     {
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));

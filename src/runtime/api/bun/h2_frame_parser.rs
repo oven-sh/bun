@@ -2525,8 +2525,18 @@ impl H2FrameParser {
         let offset = self.write_buffer_offset.replace(0);
         let mut pending = self.write_buffer.take();
         let _ = pending.write(bytes);
-        let total = pending.len() - offset;
         let result: i32 = socket.write_maybe_corked(&pending[offset..]);
+        self.restore_unwritten_pending(pending, offset, bytes.len(), result)
+    }
+
+    fn restore_unwritten_pending(
+        &self,
+        pending: Vec<u8>,
+        offset: usize,
+        appended: usize,
+        result: i32,
+    ) -> (usize, usize) {
+        let total = pending.len() - offset;
         let written: usize = if result < 0 {
             if Self::is_transport_fatal_write_result(result) {
                 self.note_transport_write_fatal();
@@ -2544,7 +2554,7 @@ impl H2FrameParser {
                 .with_mut(|wb| wb.write(&reentrant[reentrant_offset..]));
             self.global()
                 .vm()
-                .deprecated_report_extra_memory(bytes.len().min(total - written));
+                .deprecated_report_extra_memory(appended.min(total - written));
         }
         (written, total)
     }

@@ -2617,6 +2617,13 @@ restart:
           return s;
         }
 
+        /* SSL_read's name for a close_notify in place of a handshake message: https://github.com/oven-sh/bun/issues/44517 */
+        if (s->ssl_handshake_state == HANDSHAKE_PENDING &&
+            ERR_peek_error() == ERR_PACK(ERR_LIB_SSL, SSL_R_SSL_HANDSHAKE_FAILURE)) {
+          ERR_clear_error();
+          ssl_trigger_handshake_econnreset(s);
+          if (ssl_gone(s)) return NULL;
+        }
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }

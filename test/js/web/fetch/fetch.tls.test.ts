@@ -1751,3 +1751,17 @@ describe.concurrent("fetch-tls", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("a server that ends the TLS handshake with close_notify and stays connected fails the request as a disconnect", async () => {
+  await using server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00])));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+  const outcome = await fetch(`https://127.0.0.1:${port}/`, { keepalive: false, proxy: false }).then(
+    response => `status ${response.status}`,
+    e => e.code,
+  );
+  expect(outcome).toBe("ECONNRESET");
+});

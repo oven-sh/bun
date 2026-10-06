@@ -426,14 +426,15 @@ fn on_handshake(
             // SAFETY: the live SSL handle of the tunnel's wrapper; the chain is borrowed.
             !unsafe { bun_boringssl_sys::SSL_get_peer_cert_chain(ssl.as_ptr()) }.is_null()
         });
-        if this.flags.reject_unauthorized && peer_sent_certificate && handshake_error.error_no > 0 {
-            let err = crate::get_cert_error_from_no(handshake_error.error_no);
-            // SAFETY: `this` dead (NLL); reenter via raw ptr.
-            ProxyTunnel::close_from_callback(proxy_nn, err);
-            return;
-        }
+        let err = if handshake_error.error_no <= 0
+            || (this.flags.reject_unauthorized && peer_sent_certificate)
+        {
+            crate::handshake_failure(handshake_error.error_no)
+        } else {
+            crate::Error::TLSHandshakeFailed
+        };
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
-        ProxyTunnel::close_from_callback(proxy_nn, crate::Error::TLSHandshakeFailed);
+        ProxyTunnel::close_from_callback(proxy_nn, err);
         return;
     }
 }

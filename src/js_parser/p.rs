@@ -1611,13 +1611,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.new_expr(E::Null {}, arg.loc);
         }
 
-        // A `+` of string literals folds to a rope.
-        let mut str_ = arg.data.e_string().expect("infallible: variant checked");
-        str_.resolve_rope_if_needed(self.arena);
         let import_record_index = self.add_import_record(
             ImportKind::RequireResolve,
             arg.loc,
-            str_.string(self.arena).expect("unreachable"),
+            arg.data
+                .e_string()
+                .expect("infallible: variant checked")
+                .string(self.arena)
+                .expect("unreachable"),
         );
         self.import_records.items_mut()[import_record_index as usize]
             .flags

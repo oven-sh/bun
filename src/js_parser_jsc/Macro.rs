@@ -815,31 +815,22 @@ impl<'a> Run<'a> {
             T::String => {
                 let bun_str = value.to_bun_string(self.global)?;
 
-                // Stored the way the lexer stores a string literal: ASCII as 8-bit, which is
-                // the only form that `+` and template folding join, anything else as UTF-16.
-                // JS-sourced WTF strings are never UTF-8-tagged, so two arms suffice. The
-                // slices are copied into the `MacroContext` bump arena (`E::EString` erases
-                // the lifetime, per the parser's `Str` convention).
-                let string = if bun_str.is_utf16() {
-                    let units = bun_str.utf16();
-                    if strings::first_non_ascii16(units).is_none() {
-                        let ascii = self.bump.alloc_slice_fill_default::<u8>(units.len());
-                        strings::copy_u16_into_u8(ascii, units);
-                        E::EString::init(ascii)
-                    } else {
-                        E::EString::init_utf16(self.bump.alloc_slice_copy(units))
-                    }
+                // encode into utf16 so the printer escapes the string correctly
+                // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF
+                // strings are never UTF-8-tagged, so two arms suffice.
+                let utf16_bytes: Vec<u16> = if bun_str.is_utf16() {
+                    bun_str.utf16().to_vec()
                 } else {
-                    let latin1 = bun_str.latin1();
-                    if strings::is_all_ascii(latin1) {
-                        E::EString::init(self.bump.alloc_slice_copy(latin1))
-                    } else {
-                        let units = self.bump.alloc_slice_fill_default::<u16>(latin1.len());
-                        strings::copy_u8_into_u16(units, latin1);
-                        E::EString::init_utf16(units)
-                    }
+                    bun_str.latin1().iter().map(|&b| b as u16).collect()
                 };
-                return Ok(Expr::init(string, self.caller.loc));
+                // `E::EString::init_utf16` lifetime-erases the slice
+                // (arena-owned per the parser's `Str` convention). Copy into
+                // the `MacroContext` bump arena.
+                let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
+                return Ok(Expr::init(
+                    E::EString::init_utf16(arena_slice),
+                    self.caller.loc,
+                ));
             }
             T::Promise => {
                 if let Some(cached) = self.visited.get(&value) {

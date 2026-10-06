@@ -27,6 +27,7 @@ use bun_ast::{
     Stmt, StmtData, Symbol,
 };
 use bun_collections::VecExt;
+use bun_core::strings;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
@@ -650,26 +651,76 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Self::ALLOW_MACROS && self.macro_.refs.count() > 0
     }
 
-    /// In a file that imports a macro. `inlinable`: the value may stand in for the binding
-    /// everywhere, so it goes to `const_values`. `for_macro_args`: a macro call's arguments
-    /// may name the binding, so it goes to `macro_.consts`.
+    fn inlining_outside_macro_args(&self) -> bool {
+        if self.macro_.in_args {
+            self.macro_.inlining_outside_args
+        } else {
+            self.options.features.inlining
+        }
+    }
+
+    /// The value that a macro call's arguments get for a `const`, if its initializer is a
+    /// literal or a macro result that is not an object or an array. A joined string is
+    /// stored as one piece.
+    fn macro_argument_value(&mut self, value: Expr) -> Option<Expr> {
+        match value.data {
+            ExprData::ENumber(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+            | ExprData::EInlinedEnum(_) => Some(value),
+            ExprData::EString(string) => match string.flattened(self.arena) {
+                E::Flattened::Borrowed(_) => Some(value),
+                E::Flattened::Owned(flat) => Some(self.new_expr(flat, value.loc)),
+            },
+            _ => None,
+        }
+    }
+
+    /// A macro that returns a string gives a UTF-16 string, which a template or a `+` does
+    /// not join. While the arguments of a macro call are visited, an ASCII one is joined
+    /// through an 8-bit copy.
+    pub(crate) fn macro_string_for_join(&mut self, expr: Expr) -> Expr {
+        if let ExprData::EString(string) = expr.data {
+            if string.is_utf16 && strings::first_non_ascii16(string.slice16()).is_none() {
+                let units = string.slice16();
+                let ascii = self.arena.alloc_slice_fill_default::<u8>(units.len());
+                strings::copy_u16_into_u8(ascii, units);
+                return self.new_expr(E::EString::init(ascii), expr.loc);
+            }
+        }
+        expr
+    }
+
+    /// In a file that imports a macro. `inlinable`: the inliner may put the value at every
+    /// use, which is today's rule for `const_values`.
     fn put_const_value_for_macros(
         &mut self,
         r#ref: Ref,
         value: Expr,
         inlinable: bool,
-        for_macro_args: bool,
+        is_const: bool,
     ) {
-        // The two tables stand in each other's place here. Only a function-valued
-        // argument holds a declaration, and that argument cannot be converted.
-        if self.macro_.in_args {
-            return;
-        }
+        let mirror = inlinable && self.inlining_outside_macro_args();
+        let for_macro_args = if mirror {
+            // The arguments of a macro call see what the inliner puts in ordinary code.
+            Some(value)
+        } else if is_const {
+            self.macro_argument_value(value)
+        } else {
+            None
+        };
+        let (inliner, macro_args) = if self.macro_.in_args {
+            (&mut self.macro_.consts, &mut self.const_values)
+        } else {
+            (&mut self.const_values, &mut self.macro_.consts)
+        };
         if inlinable {
-            self.const_values.put(r#ref, value).expect("oom");
+            inliner.put(r#ref, value).expect("oom");
         }
-        if for_macro_args {
-            self.macro_.consts.put(r#ref, value).expect("oom");
+        if let Some(value) = for_macro_args {
+            macro_args.put(r#ref, value).expect("oom");
         }
     }
 
@@ -683,23 +734,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         could_be_macro: bool,
     ) {
         let Some(value) = value else { return };
-        if !value.can_be_const_value() {
-            return;
-        }
-        // Only a `const` in the leading declaration run of its scope, or a macro result, is
-        // safe to inline everywhere. A macro call's arguments may name any `const`. A `let`
-        // or `var` that holds a macro result is inlined when inlining is on, so the
-        // arguments see it then too.
-        let inlinable = could_be_macro || !self.vis_scope().is_after_const_local_prefix;
-        let for_macro_args = was_const || self.options.features.inlining;
-        self.put_const_value_for_macros(r#ref, value, inlinable, for_macro_args);
+        // Only a `const` in the leading declaration run of its scope is safe to inline
+        // everywhere. A macro result is inlined for any kind of binding.
+        let inlinable = (could_be_macro || !self.vis_scope().is_after_const_local_prefix)
+            && value.can_be_const_value();
+        self.put_const_value_for_macros(r#ref, value, inlinable, was_const);
     }
 
-    /// Under inlining a macro result is recorded for every kind of binding, and a macro
-    /// call's arguments keep seeing it. Otherwise only a `const` is recorded, for them alone.
-    fn record_macro_result(&mut self, r#ref: Ref, value: Expr, is_const: bool) {
-        let inlining = self.options.features.inlining;
-        self.put_const_value_for_macros(r#ref, value, inlining, is_const || inlining);
+    /// A binding that a destructuring takes from a macro result. Bun inlines it only when
+    /// inlining is on.
+    fn record_macro_result(&mut self, r#ref: Ref, value: Expr, is_const: bool, has_default: bool) {
+        // The binding takes its default, not this value.
+        if has_default && matches!(value.data, ExprData::EUndefined(_)) {
+            return;
+        }
+        let inlinable = self.inlining_outside_macro_args();
+        self.put_const_value_for_macros(r#ref, value, inlinable, is_const);
     }
 
     pub(crate) fn visit_binding_and_expr_for_macro(
@@ -707,6 +757,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         binding: Binding,
         expr: Expr,
         is_const: bool,
+        has_default: bool,
     ) {
         match binding.data {
             BData::BObject(bound_object) => {
@@ -728,12 +779,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 property.value,
                                                 query.expr,
                                                 is_const,
+                                                property.default_value.is_some(),
                                             );
                                         }
                                         _ => {
                                             if let BData::BIdentifier(id) = property.value.data {
                                                 self.record_macro_result(
-                                                    id.r#ref, query.expr, is_const,
+                                                    id.r#ref,
+                                                    query.expr,
+                                                    is_const,
+                                                    property.default_value.is_some(),
                                                 );
                                             }
                                         }
@@ -770,12 +825,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 item.binding,
                                 *child_expr,
                                 is_const,
+                                item.default_value.is_some(),
                             );
                         }
                     }
                 }
             }
-            BData::BIdentifier(id) => self.record_macro_result(id.r#ref, expr, is_const),
+            BData::BIdentifier(id) => {
+                self.record_macro_result(id.r#ref, expr, is_const, has_default)
+            }
             BData::BMissing(_) => {}
         }
     }
@@ -823,7 +881,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(decl.binding, value, was_const);
+                        self.visit_binding_and_expr_for_macro(
+                            decl.binding,
+                            value,
+                            was_const,
+                            false,
+                        );
                     }
                 }
             }

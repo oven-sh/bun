@@ -64,8 +64,7 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-/// Version 35: `require.resolve()` reads all of a specifier that is a `+` of string literals.
-const EXPECTED_VERSION: u32 = 35;
+const EXPECTED_VERSION: u32 = 34;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

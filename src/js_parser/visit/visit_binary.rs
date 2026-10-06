@@ -419,6 +419,10 @@ impl BinaryExpressionVisitor {
             }
             Op::Code::BinAdd => {
                 if p.should_fold_typescript_constant_expressions {
+                    if p.macro_.in_args {
+                        e_.left = p.macro_string_for_join(e_.left);
+                        e_.right = p.macro_string_for_join(e_.right);
+                    }
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(E::Number::new(vals[0] + vals[1]), v.loc);

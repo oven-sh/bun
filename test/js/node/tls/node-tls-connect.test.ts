@@ -396,17 +396,17 @@ for (const { name, connect } of tests) {
           {
             name: "TLS_AES_128_GCM_SHA256",
             standardName: "TLS_AES_128_GCM_SHA256",
-            version: "TLSv1/SSLv3",
+            version: "TLSv1.3",
           },
           {
             name: "TLS_AES_256_GCM_SHA384",
             standardName: "TLS_AES_256_GCM_SHA384",
-            version: "TLSv1/SSLv3",
+            version: "TLSv1.3",
           },
           {
             name: "TLS_CHACHA20_POLY1305_SHA256",
             standardName: "TLS_CHACHA20_POLY1305_SHA256",
-            version: "TLSv1/SSLv3",
+            version: "TLSv1.3",
           },
         ];
         const socket = (await new Promise((resolve, reject) => {
@@ -4092,6 +4092,90 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
         "new TLSSocket(socket, { session })": true,
         "tls.connect({ port }), then setSession()": true,
       });
+    });
+  });
+});
+
+describe("negotiated parameters", () => {
+  const agent1 = {
+    key: readFileSync(join(import.meta.dirname, "fixtures", "agent1-key.pem")),
+    cert: readFileSync(join(import.meta.dirname, "fixtures", "agent1-cert.pem")),
+  };
+  const ecClientCert = {
+    key: readFileSync(join(import.meta.dirname, "fixtures", "ec10-key.pem")),
+    cert: readFileSync(join(import.meta.dirname, "fixtures", "ec10-cert.pem")),
+  };
+
+  async function listen(options: tls.TlsOptions) {
+    const accepted: TLSSocket[] = [];
+    const server = tls.createServer({ ...agent1, ...options }, socket => {
+      accepted.push(socket);
+      socket.on("error", () => {});
+      socket.write("x");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { accepted, port: (server.address() as AddressInfo).port, [Symbol.dispose]: () => void server.close() };
+  }
+
+  /** Resolves once the handshake has finished and, unless one was offered, a session has arrived. */
+  async function connectTo(port: number, engine: "fd" | "Duplex", options: tls.ConnectionOptions) {
+    let transport: tls.ConnectionOptions = { port, host: "127.0.0.1" };
+    if (engine === "Duplex") {
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      transport = { socket: new SocketProxy(raw) };
+    }
+    const client = tlsConnect({ ...transport, rejectUnauthorized: false, ...options });
+    const events = [once(client, "secureConnect")];
+    if (!options.session) events.push(once(client, "session"));
+    const [, session] = await Promise.all(events);
+    return { client, session: session?.[0] as Buffer, [Symbol.dispose]: () => void client.destroy() };
+  }
+
+  it.each([
+    ["TLSv1.3", "TLSv1.3", undefined],
+    ["TLSv1.2", "TLSv1.2", "ECDHE-RSA-AES128-GCM-SHA256"],
+    ["TLSv1.0", "TLSv1.2", "ECDHE-RSA-AES128-SHA"],
+    ["SSLv3", "TLSv1.2", "AES128-SHA"],
+  ] as const)("getCipher().version is %s", async (version, maxVersion, ciphers) => {
+    using server = await listen({ maxVersion, ciphers });
+    for (const engine of ["fd", "Duplex"] as const) {
+      using connection = await connectTo(server.port, engine, { ciphers });
+      expect(connection.client.getProtocol()).toBe(maxVersion);
+      if (ciphers) expect(connection.client.getCipher().name).toBe(ciphers);
+      expect(connection.client.getCipher().version).toBe(version);
+      expect(server.accepted.at(-1)!.getCipher()).toEqual(connection.client.getCipher());
+    }
+  });
+
+  const none = { type: undefined, name: undefined, size: undefined };
+  const x25519 = { type: "ECDH", name: "X25519", size: 253 };
+  const p256 = { type: "ECDH", name: "prime256v1", size: 256 };
+  const p384 = { type: "ECDH", name: "secp384r1", size: 384 };
+
+  // The client holds an EC certificate: its long-term key is not the ephemeral key.
+  describe.each(["fd", "Duplex"] as const)("getEphemeralKeyInfo() over a %s", engine => {
+    it.each([
+      ["TLSv1.2", { ecdhCurve: "X25519" }, x25519, none],
+      ["TLSv1.2", { ecdhCurve: "prime256v1" }, p256, none],
+      ["TLSv1.2", { ecdhCurve: "secp384r1" }, p384, none],
+      ["TLSv1.2", { ciphers: "AES128-SHA" }, none, none],
+      ["TLSv1.3", { ecdhCurve: "X25519" }, x25519, x25519],
+      ["TLSv1.3", { ecdhCurve: "secp384r1" }, p384, p384],
+      // X25519MLKEM768: not a key type Node maps.
+      ["TLSv1.3", {}, none, none],
+    ] as const)("%s %j", async (maxVersion, options, full, resumed) => {
+      using server = await listen({ maxVersion, ...options });
+      const clientOptions = { ...ecClientCert, ciphers: (options as tls.TlsOptions).ciphers };
+      using first = await connectTo(server.port, engine, clientOptions);
+      expect(first.client.getProtocol()).toBe(maxVersion);
+      expect(first.client.isSessionReused()).toBe(false);
+      expect(first.client.getEphemeralKeyInfo()).toStrictEqual(full);
+      expect(server.accepted[0].getEphemeralKeyInfo()).toBeNull();
+
+      using second = await connectTo(server.port, engine, { ...clientOptions, session: first.session });
+      expect(second.client.isSessionReused()).toBe(true);
+      expect(second.client.getEphemeralKeyInfo()).toStrictEqual(resumed);
     });
   });
 });

@@ -143,6 +143,10 @@ private:
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+            /* Opened already: this reports the failure of the established session, and usockets closes behind it. */
+            if (httpResponseData->filteredOpen) {
+                return;
+            }
             /* The app-level flag reflects the default entry; a per-serverName
              * entry adds its own client-certificate policy for its name. */
             bool rejectUnauthorized = httpContextData->flags.rejectUnauthorized ||

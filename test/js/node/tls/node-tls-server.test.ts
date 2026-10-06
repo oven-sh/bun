@@ -3609,8 +3609,7 @@ describe("key/cert arrays", () => {
           readFileSync(join(import.meta.dir, "../test/fixtures/keys/ec.pfx")),
         ],
       },
-      // Bun does not send the extra certificates of a PKCS#12 archive as the chain; Node v26.3.0 serves "agent1/2".
-      each("agent2/1", process.versions.bun ? "agent1/1" : "agent1/2"),
+      each("agent2/1", "agent1/2"),
     ],
   ] as const)("every identity is served to the clients that can use it: %s", async (_, options, expected) => {
     using server = await listen(createServer(options as tls.TlsOptions, socket => socket.on("error", () => {})));
@@ -3725,6 +3724,99 @@ describe("key/cert arrays", () => {
     } finally {
       client.destroy();
     }
+  });
+
+  describe("intermediates", () => {
+    const certificates = (name: string) =>
+      read(name).match(/-----BEGIN CERTIFICATE-----[^]*?-----END CERTIFICATE-----\n/g)!;
+    const [rsaLeaf, ca4] = certificates("agent10-cert.pem");
+    const [ecLeaf, ca6] = certificates("ec10-cert.pem");
+    const key = [read("agent10-key.pem"), ec.key];
+    const roots = [read("ca2-cert.pem"), read("ca5-cert.pem")];
+    const pfx = ["agent10.pfx", "ec10.pfx"].map(name => ({
+      buf: readFileSync(join(import.meta.dir, "../test/fixtures/keys", name)),
+      passphrase: "sample",
+    }));
+
+    /** The chain the server sent, then what a client that trusts only the roots makes of it. */
+    async function chain(port: number, options: tls.ConnectionOptions) {
+      const results: string[] = [];
+      for (const ca of [undefined, roots]) {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const checkServerIdentity = () => undefined;
+        const base = { port, host: "127.0.0.1", rejectUnauthorized: false, checkServerIdentity };
+        const socket = connect({ ...base, ...options, ca }, () => {
+          let c = socket.getPeerCertificate(true);
+          const names = [c.subject.CN];
+          // agent10.pfx also holds ca1, which issued nothing here: it is sent, and only Bun lists it as an issuer.
+          for (
+            ;
+            c.issuerCertificate?.subject.CN === c.issuer.CN && c.issuerCertificate !== c;
+            c = c.issuerCertificate
+          ) {
+            names.push(c.issuer.CN);
+          }
+          resolve(ca ? String(socket.authorizationError ?? "authorized") : names.join(" < "));
+          socket.destroy();
+        });
+        socket.on("error", e => resolve((e as NodeJS.ErrnoException).code!));
+        results.push(await promise);
+      }
+      return results.join(": ");
+    }
+
+    const leafOnly = "agent10.example.com: UNABLE_TO_VERIFY_LEAF_SIGNATURE";
+    it.each([
+      ["in `ca`", { key, cert: [rsaLeaf, ecLeaf], ca: [ca4, ca6] }, "ca6: authorized", "ca4: authorized"],
+      [
+        "in `ca`, up to the root",
+        { key, cert: [rsaLeaf, ecLeaf], ca: [ca4, ca6, ...roots] },
+        "ca6 < ca5: authorized",
+        "ca4 < ca2: authorized",
+      ],
+      [
+        "already in `cert`",
+        { key, cert: [rsaLeaf + ca4, ecLeaf + ca6], ca: [ca4, ca6, ...roots] },
+        "ca6: authorized",
+        "ca4: authorized",
+      ],
+      ["in a pfx array", { pfx }, "ca6: authorized", "ca4: authorized"],
+      [
+        "in a pfx next to key and cert",
+        { key: [ec.key], cert: [ecLeaf + ca6], pfx: pfx[0].buf, passphrase: "sample" },
+        "ca6: authorized",
+        "ca4: authorized",
+      ],
+      [
+        "in the pfx array of a secureContext",
+        { secureContext: tls.createSecureContext({ pfx }) },
+        "ca6: authorized",
+        "ca4: authorized",
+      ],
+      ["nowhere", { key, cert: [rsaLeaf, ecLeaf] }, undefined, undefined],
+    ] as const)("%s", async (_, options, ecdsa, rsa) => {
+      using server = await listen(
+        "secureContext" in options
+          ? net.createServer(
+              raw => void new TLSSocket(raw, { isServer: true, ...options }).on("error", () => raw.destroy()),
+            )
+          : createServer(options as tls.TlsOptions, socket => socket.on("error", () => {})),
+      );
+      expect({
+        "TLS 1.2, ECDSA only": await chain(server.port, {
+          maxVersion: "TLSv1.2",
+          ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256",
+        }),
+        "TLS 1.2, RSA only": await chain(server.port, {
+          maxVersion: "TLSv1.2",
+          ciphers: "ECDHE-RSA-AES128-GCM-SHA256",
+        }),
+        "TLS 1.3": await chain(server.port, {}),
+        "TLS 1.3, RSA only": await chain(server.port, { sigalgs: "rsa_pss_rsae_sha256" }),
+      }).toEqual(
+        each(ecdsa ? `agent10.example.com < ${ecdsa}` : leafOnly, rsa ? `agent10.example.com < ${rsa}` : leafOnly),
+      );
+    });
   });
 });
 

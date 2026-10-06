@@ -1348,8 +1348,7 @@ function Server(options, secureConnectionListener): void {
         ecdhCurve: this.ecdhCurve ?? DEFAULT_ECDH_CURVE,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
-        // A server that requests no client certificate has none to reject.
-        rejectUnauthorized: requestCert ? this._rejectUnauthorized : false,
+        rejectUnauthorized: this._rejectUnauthorized,
         requestCert,
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,

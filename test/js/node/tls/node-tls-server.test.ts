@@ -1597,8 +1597,6 @@ describe("setSecureContext() on a listening server", () => {
   });
 
   it("keeps accepting certificate-less clients when the server never set requestCert", async () => {
-    // listen() clamps rejectUnauthorized off for such a server. A rebuild that
-    // skipped the clamp would demand a client certificate because `ca` is set.
     const server: Server = createServer({ ...agent1, ca: ca1 });
     const clientErrors: unknown[] = [];
     server.on("tlsClientError", err => clientErrors.push(err));
@@ -2408,9 +2406,9 @@ describe("tls.Server secure-context options", () => {
   });
 
   it("accepts a cert-less client on a STARTTLS-wrapped connection when the server has `ca` but no requestCert", async () => {
-    // A shared SecureContext built with `ca` carries FAIL_IF_NO_PEER_CERT on
-    // its SSL_CTX; Node's TLSWrap::SetVerifyMode overrides it per socket to
-    // SSL_VERIFY_NONE for !requestCert, so an ordinary client still connects:
+    // The verify mode of a wrapped server socket comes from its own
+    // requestCert, as in Node's TLSWrap::SetVerifyMode, and a server `ca`
+    // never asks for a certificate by itself, so an ordinary client connects:
     // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1225-L1234
     const tlsServer = createServer({ key: agent6Key, cert: agent6CertChain, ca: [ca3Cert, ca1Cert] });
     const judged = Promise.withResolvers<{ secure: boolean }>();
@@ -2998,6 +2996,34 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
       client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
       client.on("error", () => {});
       expect(await outcome.promise).toBe("accepted");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("https.Server treats a truthy-but-not-true requestCert like false as well", async () => {
+    const server = https.createServer({ ...COMMON_CERT, requestCert: 1 as unknown as boolean }, (req, res) => {
+      res.end("served");
+    });
+    let client: TLSSocket | undefined;
+    try {
+      const port = await listen(server as unknown as Server);
+      const outcome = Promise.withResolvers<string>();
+      client = connect({
+        port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        key: COMMON_CERT.key,
+        cert: COMMON_CERT.cert,
+      });
+      client.on("secureConnect", () => client!.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+      let response = "";
+      client.on("data", chunk => (response += chunk));
+      client.on("error", err => outcome.resolve((err as Error & { code?: string }).code ?? err.message));
+      client.on("close", () => outcome.resolve(response.split("\r\n").at(-1) || "closed without a response"));
+      // The server does not trust this self-signed certificate: it would refuse it if it had asked.
+      expect(await outcome.promise).toBe("served");
     } finally {
       client?.destroy();
       server.close();

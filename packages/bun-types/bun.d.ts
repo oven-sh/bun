@@ -4781,12 +4781,16 @@ declare module "bun" {
 
     /**
      * If set to `false`, any certificate is accepted.
-     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * For a server, the default is `true`. `$NODE_TLS_REJECT_UNAUTHORIZED` does not change it.
+     * For a client, the default is the `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
      */
     rejectUnauthorized?: boolean;
 
     /**
-     * If set to `true`, the server requests a client certificate.
+     * If set to `true`, the server requests a client certificate, and refuses
+     * a client without a valid one unless `rejectUnauthorized` is `false`.
+     * This option alone decides it: `ca` does not request a certificate.
      *
      * Default is `false`.
      */
@@ -4796,6 +4800,9 @@ declare module "bun" {
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
+     *
+     * On a server these verify client certificates, which it requests only
+     * with `requestCert: true`.
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**

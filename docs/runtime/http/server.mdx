@@ -753,6 +753,12 @@ interface TLSOptions {
   /** Private key passphrase */
   passphrase?: string;
 
+  /** Refuse a peer whose certificate does not verify (default: true) */
+  rejectUnauthorized?: boolean;
+
+  /** Ask clients for a certificate (default: false) */
+  requestCert?: boolean;
+
   /** OpenSSL options flags */
   secureOptions?: number;
 

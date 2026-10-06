@@ -81,6 +81,83 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
+  // An error from the generator with one of these codes reaches the consumer like any other error,
+  // whether the generator throws it or a native call in the generator does. The upload throws once
+  // its request is at the server, so the server sees an aborted body and not a complete one. text()
+  // and read() keep nothing alive: one that never settles shows up as a missing outcome.
+  test.each([
+    ["ERR_INVALID_STATE", "const locked = new ReadableStream(); locked.getReader(); await locked.cancel();"],
+    ["ERR_INVALID_THIS", "ReadableStream.prototype.tee.call({});"],
+  ])("an %s error from the generator rejects the body", async (code, nativeThrow) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `async function* coded(gate) {
+          yield "first;";
+          await gate;
+          throw Object.assign(new TypeError("coded"), { code: "${code}" });
+        }
+        async function* native(gate) {
+          yield "first;";
+          await gate;
+          ${nativeThrow}
+        }
+        async function drain(reader) {
+          while (!(await reader.read()).done);
+          return "drained";
+        }
+        const outcomes = {};
+        const record = (name, promise) =>
+          promise.then(v => (outcomes[name] = "resolved " + v), e => (outcomes[name] = "rejected " + e.code));
+        const atServer = { coded: Promise.withResolvers(), native: Promise.withResolvers() };
+        const requestBodies = [];
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const name = new URL(req.url).pathname.slice(1);
+            atServer[name].resolve();
+            const body = req.text().then(text => "complete, " + text.length + " bytes", () => "aborted");
+            requestBodies.push(body.then(v => (outcomes[name + " request body"] = v)));
+            await body;
+            return new Response("done");
+          },
+        });
+        const uploads = [];
+        for (const gen of [coded, native]) {
+          record(gen.name + " text()", new Response(gen()).text());
+          record(gen.name + " read()", drain(new Response(gen()).body.getReader()));
+          const body = gen(atServer[gen.name].promise);
+          uploads.push(
+            record(gen.name + " upload", fetch(server.url + gen.name, { method: "POST", body }).then(r => r.text())),
+          );
+        }
+        Promise.all(uploads)
+          .then(() => Promise.all(requestBodies))
+          .then(() => server.stop(true));
+        process.once("beforeExit", () => {
+          for (const name of Object.keys(outcomes).sort()) console.log(name + ": " + outcomes[name]);
+        });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split(/\r?\n/)).toEqual([
+      `coded read(): rejected ${code}`,
+      "coded request body: aborted",
+      `coded text(): rejected ${code}`,
+      `coded upload: rejected ${code}`,
+      `native read(): rejected ${code}`,
+      "native request body: aborted",
+      `native text(): rejected ${code}`,
+      `native upload: rejected ${code}`,
+    ]);
+    expect(stderr).not.toContain(code);
+    expect(exitCode).toBe(0);
+  });
+
   test("an iterator returning thenables (non-native promises) streams", async () => {
     let n = 0;
     const iterator = {
@@ -114,10 +191,17 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("async generator function throws an error but continues to send the headers", async () => {
+  // The generator fails before producing any chunk. The status and headers
+  // were already committed to uWS, so the server closes the connection without
+  // a complete response instead of sending them with an empty body and a clean
+  // chunked terminator.
+  test("async generator function throws an error before its first chunk closes the connection", async () => {
+    let outcome: string | undefined;
     const onMessage = mock(async url => {
-      const response = await fetch(url);
-      expect(response.headers.get("X-Hey")).toBe("123");
+      outcome = await fetch(url).then(
+        response => `resolved ${response.status}`,
+        (err: any) => `rejected ${err.code}`,
+      );
       subprocess?.kill();
     });
 
@@ -132,6 +216,7 @@ describe.concurrent("Streaming body via", () => {
 
     let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
     expect(exitCode).toBeInteger();
+    expect(outcome).toBe("rejected ECONNRESET");
     expect(stderr).toContain("error: Oops");
     expect(onMessage).toHaveBeenCalledTimes(1);
   });

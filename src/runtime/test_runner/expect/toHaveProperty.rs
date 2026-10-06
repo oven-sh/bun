@@ -102,12 +102,7 @@ pub(crate) fn to_have_property(
             Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", false);
         if !received_property.is_empty() {
             // deep equal case
-            let diff_format = DiffFormatter {
-                received: Some(received_property),
-                expected: Some(expected_property_value),
-                global_this: Some(global),
-                ..Default::default()
-            };
+            let diff_format = DiffFormatter::new(global, received_property, expected_property_value, false)?;
 
             return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }

@@ -152,7 +152,8 @@ void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
 /* Non-zero once the peer has sent RESET_STREAM for the half we read from,
  * with its error code in *code. The stream then closes without
- * on_stream_data ever reporting fin. */
+ * on_stream_data ever reporting fin. Read from lsquic, so it answers only
+ * while the stream is live, up to and including on_stream_close. */
 int us_quic_stream_peer_reset(us_quic_stream_t *s, uint64_t *code);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 

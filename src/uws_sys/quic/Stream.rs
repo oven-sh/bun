@@ -13,7 +13,7 @@ bun_opaque::opaque_ffi! {
 
 /// HTTP/3 error codes (RFC 9114 §8.1) carried by `RESET_STREAM`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u64)]
+#[repr(u16)]
 pub enum H3ErrorCode {
     InternalError = 0x102,
     /// The server did no application processing; the request can be re-sent.

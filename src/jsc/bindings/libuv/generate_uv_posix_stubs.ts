@@ -390,9 +390,3 @@ await Bun.write(plugin_path_, test_plugin_contents);
 if (Bun.which("clang-format")) {
   await Bun.$`clang-format -i ${plugin_path_}`.quiet();
 }
-
-// for (const symbol of symbols) {
-// await generate("uv_if_indextoiid");
-// }
-
-// console.log("DONE");

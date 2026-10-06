@@ -17,7 +17,6 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::npm::{self, PackageManifest};
 use bun_install::{PackageManager, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
-use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
@@ -704,12 +703,12 @@ fn fetch_registry_tree(
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
 
-    let mut url_buf = PathBuffer::uninit();
+    let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
     );
-    let mut path_buf = PathBuffer::uninit();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     let manifest_url = buf_print(
         path_buf.0.as_mut_slice(),
         format_args!(
@@ -842,11 +841,6 @@ struct BumpAppender<'a>(&'a Bump);
 impl bun_core::strings::Appender for BumpAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         Ok(self.0.alloc_slice_copy(s))
-    }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        let out = self.0.alloc_slice_copy(s);
-        out.make_ascii_lowercase();
-        Ok(out)
     }
 }
 

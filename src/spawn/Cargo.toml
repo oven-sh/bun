@@ -27,4 +27,3 @@ bun_ptr.workspace = true
 bun_spawn_sys.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
-bun_which.workspace = true

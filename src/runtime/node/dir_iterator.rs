@@ -9,13 +9,15 @@
 use core::mem::offset_of;
 
 use bun_core::RawSlice;
-use bun_sys::{self as sys, Fd, Tag};
+#[cfg(not(target_os = "macos"))]
+use bun_sys::Tag;
+use bun_sys::{self as sys, Fd};
 
 // `Entry.Kind` is `bun_core::FileKind`, re-exported here as
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
 use bun_sys::EntryKind;
 
-pub struct IteratorResult {
+pub(crate) struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
     /// (streaming-iterator contract — invalidated on next `next()` call).
     /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
@@ -35,13 +37,13 @@ impl IteratorResult {
         unsafe { bun_core::ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
-pub type Result = sys::Result<Option<IteratorResult>>;
+pub(crate) type Result = sys::Result<Option<IteratorResult>>;
 
 /// The `u16` twin of `IteratorResult.name` (`RawSlice<u16>` + `slice_assume_z()`),
 /// kept separate so callers avoid an `if (Environment.isWindows) ...` split.
 // Lifetime: borrows the iterator's internal `name_data` buffer; invalidated on next().
 #[cfg(windows)]
-pub struct IteratorResultWName {
+pub(crate) struct IteratorResultWName {
     // `RawSlice` invariant: the iterator's `name_data` outlives this result
     // (streaming-iterator contract — invalidated on next `next()` call).
     // len excludes trailing NUL; storage has NUL at [len].
@@ -55,7 +57,7 @@ impl IteratorResultWName {
 }
 
 #[cfg(windows)]
-pub struct IteratorResultW {
+pub(crate) struct IteratorResultW {
     pub name: IteratorResultWName,
     pub(crate) kind: EntryKind,
 }
@@ -72,7 +74,7 @@ pub(crate) type ResultW = sys::Result<Option<IteratorResultW>>;
 #[cfg(windows)]
 pub(crate) use platform::SelectImpl as WrappedSelect;
 #[cfg(not(windows))]
-pub trait WrappedSelect<const B: bool> {}
+pub(crate) trait WrappedSelect<const B: bool> {}
 #[cfg(not(windows))]
 impl<const B: bool> WrappedSelect<B> for () {}
 
@@ -109,18 +111,6 @@ mod platform {
         }
 
         fn next_darwin(&mut self) -> Result {
-            unsafe extern "C" {
-                // Private libsystem symbol (`__getdirentries64`).
-                // SAFETY precondition: `buf` must be writable for `nbytes` and
-                // `basep` must point to a valid i64 — raw-pointer contract,
-                // cannot be `safe fn`.
-                fn __getdirentries64(
-                    fd: libc::c_int,
-                    buf: *mut u8,
-                    nbytes: usize,
-                    basep: *mut i64,
-                ) -> isize;
-            }
             'start_over: loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -130,39 +120,31 @@ mod platform {
                     // getdirentries64() writes to the last 4 bytes of the
                     // buffer to indicate EOF. If that value is not zero, we
                     // have reached the end of the directory and we can skip
-                    // the extra syscall.
+                    // the extra syscall. The wrapper zeroes those bytes
+                    // before each attempt.
                     // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(8192 >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
-                    // Always zero the bytes where the flag will be written
-                    // so we don't confuse garbage with EOF.
                     let len = self.buf.0.len();
-                    self.buf.0[len - 4..len].copy_from_slice(&[0, 0, 0, 0]);
 
-                    // SAFETY: FFI call into libc __getdirentries64; buf is 8192 bytes
-                    let rc = unsafe {
-                        __getdirentries64(
-                            self.dir.native(),
+                    // SAFETY: buf is 8192 writable bytes; seek is a valid *mut i64.
+                    let n = unsafe {
+                        sys::getdirentries64(
+                            self.dir,
                             self.buf.0.as_mut_ptr(),
-                            self.buf.0.len(),
+                            len,
                             &raw mut self.seek,
                         )
-                    };
+                    }?;
 
-                    if rc < 1 {
-                        if rc == 0 {
-                            self.received_eof = true;
-                            return Ok(None);
-                        }
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                    if n == 0 {
+                        self.received_eof = true;
+                        return Ok(None);
                     }
 
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).expect("int cast");
+                    self.end_index = n;
                     let eof_flag = u32::from_ne_bytes(
                         self.buf.0[len - 4..len]
                             .try_into()
@@ -438,7 +420,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
+        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -447,10 +429,9 @@ mod platform {
 
     /// Helper to select `name_data` element type (`[u16; 257]` or `[u8; 513]`)
     /// and result type from the const-bool generic.
-    pub trait WindowsOsPath {
+    pub(crate) trait WindowsOsPath {
         type NameData: Sized;
         type Entry;
-        const IS_U16: bool;
         /// Max u16 codeunits that fit in `name_data` (reserving one for the
         /// trailing NUL on the u16 path, or accounting for UTF-16→UTF-8
         /// expansion on the u8 path).
@@ -464,12 +445,11 @@ mod platform {
             kind: EntryKind,
         ) -> Self::Entry;
     }
-    pub struct OsPathFalse;
-    pub struct OsPathTrue;
+    pub(crate) struct OsPathFalse;
+    pub(crate) struct OsPathTrue;
     impl WindowsOsPath for OsPathFalse {
         type NameData = [u8; 513];
         type Entry = IteratorResult;
-        const IS_U16: bool = false;
         #[inline]
         fn max_name_u16() -> usize {
             (513 - 1) / 2
@@ -490,7 +470,6 @@ mod platform {
     impl WindowsOsPath for OsPathTrue {
         type NameData = [u16; 257];
         type Entry = IteratorResultW;
-        const IS_U16: bool = true;
         #[inline]
         fn max_name_u16() -> usize {
             257 - 1
@@ -513,7 +492,7 @@ mod platform {
     }
     // Map the const bool to the marker type.
     pub(super) type Select<const B: bool> = <() as SelectImpl<B>>::T;
-    pub trait SelectImpl<const B: bool> {
+    pub(crate) trait SelectImpl<const B: bool> {
         type T: WindowsOsPath;
     }
     impl SelectImpl<false> for () {
@@ -633,13 +612,7 @@ mod platform {
 
                     if rc != w::NTSTATUS::SUCCESS {
                         sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
-                        let errno = w::Win32Error::from_nt_status(rc)
-                            .to_system_errno()
-                            .unwrap_or(SystemErrno::EUNKNOWN);
-                        return Err(sys::Error::from_code(
-                            errno.to_e(),
-                            Tag::NtQueryDirectoryFile,
-                        ));
+                        return Err(sys::Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
 
                     if io.Information == 0 {
@@ -752,7 +725,7 @@ pub(crate) use platform::NewIterator;
 // per-value to avoid inherent associated types.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NewWrappedIterator<const IS_U16: bool>
+pub(crate) struct NewWrappedIterator<const IS_U16: bool>
 where
     (): WrappedSelect<IS_U16>,
 {
@@ -836,7 +809,7 @@ where
     }
 }
 
-pub type WrappedIterator = NewWrappedIterator<false>;
+pub(crate) type WrappedIterator = NewWrappedIterator<false>;
 #[cfg(windows)]
 pub(crate) type WrappedIteratorW = NewWrappedIterator<true>;
 

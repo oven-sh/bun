@@ -6,6 +6,7 @@ use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
     api::server_config::SSLConfig,
 };
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_uws as uws;
 
 pub(crate) trait SslModeArg: Copy + PartialEq {
@@ -33,22 +34,6 @@ macro_rules! impl_ssl_mode_arg {
 impl_ssl_mode_arg!(bun_sql::mysql::ssl_mode::SSLMode);
 impl_ssl_mode_arg!(bun_sql::postgres::SSLMode);
 
-type GuardState = (Option<*mut uws::SslCtx>, SSLConfig);
-pub(crate) type TlsGuard = scopeguard::ScopeGuard<GuardState, fn(GuardState)>;
-
-/// Errdefer over `(secure, tls_config)`: frees the cached `SSL_CTX*`
-/// reference and drops the config unless disarmed via
-/// `ScopeGuard::into_inner` once ownership transfers into the connection.
-pub(crate) fn guard_tls(secure: Option<*mut uws::SslCtx>, tls_config: SSLConfig) -> TlsGuard {
-    fn free((secure, _tls_config): GuardState) {
-        if let Some(s) = secure {
-            // SAFETY: `secure` holds one `ssl_ctx_cache` reference owned by the caller.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
-        }
-    }
-    scopeguard::guard((secure, tls_config), free as fn(GuardState))
-}
-
 pub(crate) struct ConnectionCtorArgs<M> {
     pub hostname_str: bun_core::String,
     pub port: i32,
@@ -57,9 +42,8 @@ pub(crate) struct ConnectionCtorArgs<M> {
     pub database_str: bun_core::String,
     pub ssl_mode: M,
     pub tls_config: SSLConfig,
-    /// `SSL_CTX*` holding one reference the caller must release on every
-    /// early exit (via [`guard_tls`]) until it transfers into the connection.
-    pub secure: Option<*mut uws::SslCtx>,
+    /// Moves into the connection.
+    pub secure: Option<OwnedSslCtx>,
 }
 
 impl<M: SslModeArg> ConnectionCtorArgs<M> {
@@ -84,7 +68,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
 
         let tls_object = arguments[6];
         let mut tls_config = SSLConfig::default();
-        let mut secure: Option<*mut uws::SslCtx> = None;
+        let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != modes[0] {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
                 SSLConfig::default()

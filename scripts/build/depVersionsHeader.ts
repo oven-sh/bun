@@ -102,7 +102,7 @@ export function generateDepVersionsHeader(cfg: Config): string {
     "#endif",
     "",
     "// C string constants for easy access",
-    ...versions.map(([name, val]) => `static const char* const BUN_VERSION_${name} = "${val}";`),
+    ...versions.map(([name, val]) => `static constexpr const char* BUN_VERSION_${name} = "${val}";`),
     "",
     "#ifdef __cplusplus",
     "}",

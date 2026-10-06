@@ -23,7 +23,7 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
         // store with the default allocator. The leaked extra `ref_()` below
         // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
         // the (otherwise UB) free of a static slice is unreachable.
-        let contents = file.contents.as_bytes();
+        let contents = file.utf8_contents();
         // SAFETY: `contents` is `'static` and never freed (see above);
         // the const-cast is sound because Blob consumers only read via
         // `shared_view()`.

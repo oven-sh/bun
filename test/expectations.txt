@@ -5,7 +5,7 @@
 # An entry does ONE thing: it removes the file from the run on every platform
 # the modifier matches. The runner parses the expectation kind (FAIL / SKIP /
 # CRASH / FLAKY / LEAK / TIMEOUT) but never reads it — see getRelevantTests in
-# scripts/runner.node.mjs. They are all the same thing, and there is no
+# scripts/runner.node.ts. They are all the same thing, and there is no
 # "run it and expect failure" mode.
 #
 # So: quarantining ONE broken case here silently deletes the whole file's

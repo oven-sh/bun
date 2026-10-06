@@ -68,7 +68,14 @@
           {
             "group": "Core Runtime",
             "icon": "cog",
-            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
+            "pages": [
+              "/runtime/index",
+              "/runtime/watch-mode",
+              "/runtime/debugger",
+              "/runtime/repl",
+              "/runtime/bunfig",
+              "/runtime/code-generation-from-strings"
+            ]
           },
           {
             "group": "File & Module System",
@@ -124,7 +131,7 @@
           {
             "group": "Concurrency",
             "icon": "split",
-            "pages": ["/runtime/workers"]
+            "pages": ["/runtime/workers", "/runtime/module-graph"]
           },
           {
             "group": "Process & System",

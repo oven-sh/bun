@@ -62,6 +62,20 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+  // A chunk with non-ASCII text is embedded as UTF-16; reading it back as a file must still give the UTF-8 text.
+  itBundled("compile/NonAsciiChunkReadsBackAsUTF8", {
+    compile: true,
+    banner: "// ✓ résumé",
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync, statSync } from "node:fs";
+        const text = readFileSync(Bun.main, "utf8");
+        const viaBlob = await Bun.file(Bun.main).text();
+        console.log(text.includes("// ✓ résumé"), viaBlob === text, statSync(Bun.main).size === Buffer.byteLength(text));
+      `,
+    },
+    run: { stdout: "true true true" },
+  });
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -69,7 +83,7 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
+        if (require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "") === "${Bun.version.replaceAll("-debug", "")}") {
           process.exitCode = 0;
         }
       `,
@@ -387,6 +401,26 @@ describe("bundler", () => {
       },
     });
   }
+  // Two entry points that import() each other: the executable runs the first one.
+  itBundled("compile/EntryPointsImportEachOther", {
+    compile: true,
+    files: {
+      "/main.ts": /* js */ `
+        import("./plugin.ts").then(plugin => console.log("main loaded", plugin.name));
+      `,
+      "/plugin.ts": /* js */ `
+        export const name = "plugin";
+        export const loadMain = () => import("./main.ts");
+      `,
+    },
+    entryPointsRaw: ["./main.ts", "./plugin.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "main loaded plugin",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,
@@ -422,6 +456,185 @@ describe("bundler", () => {
     entryPointsRaw: ["./entry.ts", "./worker.ts"],
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  // Every way of naming an embedded worker entry point resolves against the executable, not the cwd: a relative
+  // specifier with the source extension, with the embedded `.js` extension, or with none, a `file:` URL made from
+  // import.meta.url with either extension, and an absolute path in the platform's own syntax.
+  itBundled("compile/WorkerSpecifierForms", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        import { join } from "path";
+        rmSync("./wjs.js", { force: true });
+        rmSync("./wts.ts", { force: true });
+        rmSync("./wmjs.mjs", { force: true });
+        process.chdir(tmpdir());
+        const specs = [
+          "./wjs.js", "./wjs", "./wts.ts", "./wts", "./wmjs.mjs",
+          new URL("./wjs.js", import.meta.url), new URL("./wts.ts", import.meta.url), new URL("./wmjs.mjs", import.meta.url),
+          new URL("./wts.ts", import.meta.url).href,
+          join(import.meta.dir, "wmjs.mjs"),
+        ];
+        for (const spec of specs) {
+          const w = new Worker(spec);
+          const msg = await new Promise(resolve => {
+            w.onmessage = e => resolve(e.data);
+            w.onerror = e => resolve("error: " + e.message);
+          });
+          w.terminate();
+          console.log(msg);
+        }
+      `,
+      "/wjs.js": `postMessage("wjs");`,
+      "/wts.ts": `postMessage("wts" as string);`,
+      "/wmjs.mjs": `postMessage("wmjs");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./wjs.js", "./wts.ts", "./wmjs.mjs"],
+    outfile: "dist/out",
+    run: { stdout: "wjs\nwjs\nwts\nwts\nwmjs\nwjs\nwts\nwmjs\nwts\nwmjs\n", file: "dist/out", setCwd: true },
+  });
+  // The same resolution for import()/require() at run time (specifiers the bundler could not see), relative to the
+  // embedded importer: by source extension, by embedded name, without extension, and by file: URL.
+  itBundled("compile/DynamicImportEmbeddedEntryPoint", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        process.chdir(tmpdir());
+        const specs = ["./mod.ts", "./mod.js", "./mod", new URL("./mod.ts", import.meta.url).href];
+        for (const spec of specs) console.log((await import(spec)).default, require(spec).default);
+        await import("./nope.ts").catch(e => console.log(e.constructor.name));
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts"],
+    outfile: "dist/out",
+    run: { stdout: "mod mod\nmod mod\nmod mod\nmod mod\nResolveMessage\n", file: "dist/out", setCwd: true },
+  });
+  // Nested embedded entry points, from the entry and from inside the subdirectory (`../`), by every spelling.
+  itBundled("compile/EmbeddedResolveNested", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./sub", { recursive: true, force: true });
+        rmSync("./top.ts", { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x; // keeps the bundler from resolving the specifier at build time
+        for (const spec of ["./sub/inner.ts", "./sub/inner", "./sub/inner.js"]) console.log((await import(s(spec))).default);
+        const w = new Worker("./sub/worker.ts");
+        console.log(await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = e => r("error: " + e.message); }));
+        w.terminate();
+        // sub/inner.js (the embedded module, not a copy bundled into this one) resolves its sibling and its parent
+        console.log((await import(s("./sub/inner.ts"))).fromInside());
+      `,
+      "/top.ts": `export default "top" as string;`,
+      "/sub/inner.ts": /* js */ `
+        export default "inner" as string;
+        export function fromInside() {
+          const s = (x: string) => x;
+          return [require(s("../top.ts")).default, require(s("../top")).default, require(s("./sibling.ts")).default].join(",");
+        }
+      `,
+      "/sub/sibling.ts": `export default "sibling" as string;`,
+      "/sub/worker.ts": /* js */ `
+        const s = (x: string) => x;
+        postMessage([(await import(s("./sibling.ts"))).default, (await import(s("../top"))).default].join(","));
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./top.ts", "./sub/inner.ts", "./sub/sibling.ts", "./sub/worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "inner\ninner\ninner\nsibling,top\ntop,top,sibling\n", file: "dist/out", setCwd: true },
+  });
+  // What resolves where: an embedded module wins over a file of the same name in the cwd; a relative specifier that
+  // is not embedded still resolves against the cwd; the resolved name of an embedded module is the graph's own.
+  itBundled("compile/EmbeddedResolvePrecedence", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const s = (x: string) => x;
+        console.log(require(s("./both.js")).default);
+        console.log(require(s("./disk-only.js")).default);
+        const w1 = new Worker("./both.js");
+        console.log(await new Promise(r => { w1.onmessage = e => r(e.data); w1.onerror = e => r("error: " + e.message); }));
+        w1.terminate();
+        const w2 = new Worker("./disk-only-worker.js");
+        console.log(await new Promise(r => { w2.onmessage = e => r(e.data); w2.onerror = e => r("error: " + e.message); }));
+        w2.terminate();
+        const root = process.platform === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
+        console.log(require.resolve(s("./both.ts")) === root + "both.js", Bun.resolveSync("./both", import.meta.dir) === root + "both.js");
+        console.log(import.meta.path.replaceAll("\\\\", "/") === root + "out");
+      `,
+      "/both.js": `export default "both:embedded"; if (!Bun.isMainThread) postMessage("both:embedded worker");`,
+    },
+    runtimeFiles: {
+      "/both.js": `export default "both:disk"; if (!Bun.isMainThread) postMessage("both:disk worker");`,
+      "/disk-only.js": `export default "disk-only";`,
+      "/disk-only-worker.js": `postMessage("disk-only worker");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./both.js"],
+    outfile: "dist/out",
+    run: {
+      stdout: "both:embedded\ndisk-only\nboth:embedded worker\ndisk-only worker\ntrue true\ntrue\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+  // Spellings that must not map to an embedded module, and inputs that must fail cleanly rather than crash.
+  itBundled("compile/EmbeddedResolveMisses", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        rmSync("./UP.TS", { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x;
+        const outcome = async (spec: string) => {
+          try {
+            return (await import(spec)).default;
+          } catch (e: any) {
+            return e?.constructor?.name ?? String(e);
+          }
+        };
+        console.log(await outcome(s("./mod.ts")));          // maps to mod.js
+        console.log(await outcome(s("./UP.ts")), await outcome(s("./up.TS"))); // the extension is case-insensitive, the name is not
+        console.log(await outcome(s("./mod.css")));         // not a source extension: no mapping
+        console.log(await outcome(s("./mod.js/")));         // trailing slash
+        console.log(await outcome(s("../mod.ts")));         // escapes the embedded root
+        console.log(await outcome(s("./" + Buffer.alloc(70000, "a").toString() + ".ts"))); // longer than any path buffer
+        console.log(await outcome(s(".\\\\mod.ts")));      // a relative specifier on Windows only
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+      "/UP.TS": `export default "UP" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts", "./UP.TS"],
+    outfile: "dist/out",
+    run: {
+      stdout: [
+        "mod",
+        "UP ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        isWindows ? "mod" : "ResolveMessage",
+        "",
+      ].join("\n"),
+      file: "dist/out",
+      setCwd: true,
+    },
   });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
@@ -654,12 +867,12 @@ describe("bundler", () => {
       stdout:
         process.platform !== "win32"
           ? `file:///$bunfs/root/out /$bunfs/root/out`
-          : `file:///B:/~BUN/root/out B:\\~BUN\\root\\out`,
+          : // pathToFileURL percent-encodes '~' (matches Node.js)
+            `file:///B:/%7EBUN/root/out B:\\~BUN\\root\\out`,
       setCwd: true,
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO
     compile: true,
     files: {
       "/entry.ts": `
@@ -993,14 +1206,14 @@ describe("bundler", () => {
       if (embedded.length !== 1 || !embedded[0].startsWith("asset-")) throw new Error("embeddedFiles: " + embedded);
       if ((await Bun.file(asset).text()) !== "abcd") throw new Error("asset: " + asset);
 
-      // The embedded bytes are the string body itself.
+      // Reading the embedded module as a file gives its text as UTF-8, whichever width the body is stored in.
       const encoded = {
-        "ascii.txt": Buffer.from(expected.ascii, "latin1"),
-        "latin1.txt": Buffer.from(expected.latin1, "utf16le"),
-        "wide.txt": Buffer.from(expected.wide, "utf16le"),
+        "ascii.txt": Buffer.from(expected.ascii),
+        "latin1.txt": Buffer.from(expected.latin1),
+        "wide.txt": Buffer.from(expected.wide),
         "empty.txt": Buffer.alloc(0),
-        "invalid.txt": Buffer.from(expected.invalid, "utf16le"),
-        "doc.md": Buffer.from(expected.doc, "utf16le"),
+        "invalid.txt": Buffer.from(expected.invalid),
+        "doc.md": Buffer.from(expected.doc),
       };
       const embeddedNames = readdirSync(root);
       for (const [name, bytes] of Object.entries(encoded)) {
@@ -1352,71 +1565,98 @@ const server = serve({
   }, 30_000);
 });
 
+const MH_MAGIC_64 = 0xfeedfacf;
+const CPU_TYPE_X86_64 = 0x01000007;
+const MH_EXECUTE = 2;
+const LC_SEGMENT_64 = 0x19;
+const LC_SYMTAB = 0x2;
+
+// Minimal Mach-O "base executable" for --compile-executable-path: a __BUN segment with one
+// __bun section followed by a 0x100-byte __LINKEDIT segment, plus an optional LC_SYMTAB whose
+// symbol table starts at __LINKEDIT and whose string table sits 0x80 bytes in.
+// `bunFileOff`/`bunFileSize` are where the load commands claim the __BUN data lives;
+// `fileSize` is how many bytes the template actually contains.
+function machoTemplate({
+  bunFileOff = 0x4000,
+  bunFileSize = 0x4000,
+  fileSize = 0x8100,
+  linkeditFileOff = bunFileOff + bunFileSize,
+  symtab = false,
+}: {
+  bunFileOff?: number;
+  bunFileSize?: number;
+  fileSize?: number;
+  linkeditFileOff?: number;
+  symtab?: boolean;
+} = {}): Buffer {
+  const segCmdSize = 72; // sizeof(segment_command_64)
+  const sectSize = 80; // sizeof(section_64)
+  const symtabCmdSize = 24; // sizeof(symtab_command)
+  const sizeofcmds = segCmdSize + sectSize + segCmdSize + (symtab ? symtabCmdSize : 0);
+  const buf = Buffer.alloc(fileSize);
+  const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
+
+  // mach_header_64
+  buf.writeUInt32LE(MH_MAGIC_64, 0);
+  buf.writeInt32LE(CPU_TYPE_X86_64, 4);
+  buf.writeInt32LE(3, 8); // cpusubtype
+  buf.writeUInt32LE(MH_EXECUTE, 12);
+  buf.writeUInt32LE(symtab ? 3 : 2, 16); // ncmds
+  buf.writeUInt32LE(sizeofcmds, 20);
+
+  // LC_SEGMENT_64 __BUN with one section
+  let o = 32;
+  buf.writeUInt32LE(LC_SEGMENT_64, o);
+  buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
+  writeName(o + 8, "__BUN");
+  buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
+  buf.writeInt32LE(7, o + 56); // maxprot
+  buf.writeInt32LE(3, o + 60); // initprot
+  buf.writeUInt32LE(1, o + 64); // nsects
+
+  // section_64 __bun
+  o += segCmdSize;
+  writeName(o, "__bun");
+  writeName(o + 16, "__BUN");
+  buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
+  buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
+  buf.writeUInt32LE(bunFileOff, o + 48); // offset
+  buf.writeUInt32LE(14, o + 52); // align = 2^14
+
+  // LC_SEGMENT_64 __LINKEDIT
+  o += sectSize;
+  buf.writeUInt32LE(LC_SEGMENT_64, o);
+  buf.writeUInt32LE(segCmdSize, o + 4);
+  writeName(o + 8, "__LINKEDIT");
+  buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
+  buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
+  buf.writeBigUInt64LE(BigInt(linkeditFileOff), o + 40); // fileoff
+  buf.writeBigUInt64LE(0x100n, o + 48); // filesize
+  buf.writeInt32LE(1, o + 56); // maxprot
+  buf.writeInt32LE(1, o + 60); // initprot
+
+  if (symtab) {
+    // LC_SYMTAB
+    o += segCmdSize;
+    buf.writeUInt32LE(LC_SYMTAB, o);
+    buf.writeUInt32LE(symtabCmdSize, o + 4);
+    buf.writeUInt32LE(linkeditFileOff, o + 8); // symoff
+    buf.writeUInt32LE(0, o + 12); // nsyms
+    buf.writeUInt32LE(linkeditFileOff + 0x80, o + 16); // stroff
+    buf.writeUInt32LE(0x80, o + 20); // strsize
+  }
+
+  return buf;
+}
+
 test("compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds", async () => {
   // `bun build --compile --target=bun-darwin-*` patches the application bundle into the
   // __BUN,__bun section of the base executable named by --compile-executable-path. The
   // segment/section offsets in that file's load commands must be validated against the
   // actual file size before they are used as memmove destinations.
-  const MH_MAGIC_64 = 0xfeedfacf;
-  const CPU_TYPE_X86_64 = 0x01000007;
-  const MH_EXECUTE = 2;
-  const LC_SEGMENT_64 = 0x19;
-
-  // Minimal Mach-O "base executable": a __BUN segment with one __bun section followed by a
-  // __LINKEDIT segment. `bunFileOff`/`bunFileSize` are where the load commands claim the
-  // __BUN data lives; `fileSize` is how many bytes the template actually contains.
-  function machoTemplate(bunFileOff: number, bunFileSize = 0x4000, fileSize = 0x8100): Buffer {
-    const segCmdSize = 72; // sizeof(segment_command_64)
-    const sectSize = 80; // sizeof(section_64)
-    const sizeofcmds = segCmdSize + sectSize + segCmdSize;
-    const buf = Buffer.alloc(fileSize);
-    const writeName = (off: number, name: string) => buf.write(name, off, 16, "latin1");
-
-    // mach_header_64
-    buf.writeUInt32LE(MH_MAGIC_64, 0);
-    buf.writeInt32LE(CPU_TYPE_X86_64, 4);
-    buf.writeInt32LE(3, 8); // cpusubtype
-    buf.writeUInt32LE(MH_EXECUTE, 12);
-    buf.writeUInt32LE(2, 16); // ncmds
-    buf.writeUInt32LE(sizeofcmds, 20);
-
-    // LC_SEGMENT_64 __BUN with one section
-    let o = 32;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize + sectSize, o + 4); // cmdsize
-    writeName(o + 8, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff), o + 40); // fileoff
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 48); // filesize
-    buf.writeInt32LE(7, o + 56); // maxprot
-    buf.writeInt32LE(3, o + 60); // initprot
-    buf.writeUInt32LE(1, o + 64); // nsects
-
-    // section_64 __bun
-    o += segCmdSize;
-    writeName(o, "__bun");
-    writeName(o + 16, "__BUN");
-    buf.writeBigUInt64LE(0x1_0000_4000n, o + 32); // addr
-    buf.writeBigUInt64LE(BigInt(bunFileSize), o + 40); // size
-    buf.writeUInt32LE(bunFileOff, o + 48); // offset
-    buf.writeUInt32LE(14, o + 52); // align = 2^14
-
-    // LC_SEGMENT_64 __LINKEDIT
-    o += sectSize;
-    buf.writeUInt32LE(LC_SEGMENT_64, o);
-    buf.writeUInt32LE(segCmdSize, o + 4);
-    writeName(o + 8, "__LINKEDIT");
-    buf.writeBigUInt64LE(0x1_0001_0000n, o + 24); // vmaddr
-    buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
-    buf.writeBigUInt64LE(BigInt(bunFileOff + bunFileSize), o + 40); // fileoff (right after __BUN)
-    buf.writeBigUInt64LE(0x100n, o + 48); // filesize
-    buf.writeInt32LE(1, o + 56); // maxprot
-    buf.writeInt32LE(1, o + 60); // initprot
-
-    return buf;
-  }
-
   using dir = tempDir("compile-macho-template-bounds", {
     "entry.js": `console.log("compiled-from-template");`,
   });
@@ -1424,13 +1664,13 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 
   for (const [name, bytes, wantErr] of [
     // __BUN fileoff points 1 GiB past the end of the 33 KB file.
-    ["fileoff-past-eof", machoTemplate(0x40000000), "OffsetOutOfRange"],
+    ["fileoff-past-eof", machoTemplate({ bunFileOff: 0x40000000 }), "OffsetOutOfRange"],
     // __BUN filesize (32 KB) exceeds the 256-byte file: the bounds check must reject this
     // before the growth `reserve()` (which would otherwise see a negative size_diff).
-    ["filesize-past-eof", machoTemplate(0, 0x8000, 256), "OffsetOutOfRange"],
+    ["filesize-past-eof", machoTemplate({ bunFileOff: 0, bunFileSize: 0x8000, fileSize: 256 }), "OffsetOutOfRange"],
     // __BUN filesize (32 KB) is in-bounds but larger than the 16 KB aligned bundle slot;
     // write_section only grows, so a template that would require shrinking is rejected.
-    ["filesize-needs-shrink", machoTemplate(0x4000, 0x8000, 0xc100), "InvalidObject"],
+    ["filesize-needs-shrink", machoTemplate({ bunFileSize: 0x8000, fileSize: 0xc100 }), "InvalidObject"],
   ] as const) {
     const badTemplate = join(cwd, `template-${name}`);
     await Bun.write(badTemplate, bytes);
@@ -1463,7 +1703,7 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 
   // The same template with in-bounds offsets is still accepted.
   const goodTemplate = join(cwd, "template-good");
-  await Bun.write(goodTemplate, machoTemplate(0x4000));
+  await Bun.write(goodTemplate, machoTemplate());
   const outGood = join(cwd, "out-good");
   {
     await using proc = Bun.spawn({
@@ -1491,6 +1731,90 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(exitCode).toBe(0);
   }
 }, 60_000);
+
+test("compile --compile-executable-path rejects a Mach-O template whose __LINKEDIT offsets would pass 4 GiB once the bundle is embedded", async () => {
+  // Mach-O load commands (LC_SYMTAB, LC_CODE_SIGNATURE, ...) store file offsets as u32.
+  // Embedding the bundle grows __BUN and moves every __LINKEDIT offset forward by the same
+  // amount, so a bundle of about 4 GiB pushes them past u32::MAX. Building such a bundle
+  // is too slow for a test, so this template places __LINKEDIT and the LC_SYMTAB offsets
+  // just below 4 GiB: a 32 KB bundle is then enough to move them over the edge.
+
+  // Returns the __LINKEDIT fileoff and the LC_SYMTAB offsets of a Mach-O file.
+  function readLinkeditOffsets(buf: Buffer) {
+    const ncmds = buf.readUInt32LE(16);
+    let linkeditFileOff = -1;
+    let symoff = -1;
+    let stroff = -1;
+    let o = 32;
+    for (let i = 0; i < ncmds; i++) {
+      const cmd = buf.readUInt32LE(o);
+      const cmdsize = buf.readUInt32LE(o + 4);
+      if (cmd === LC_SEGMENT_64 && buf.toString("latin1", o + 8, o + 18) === "__LINKEDIT") {
+        linkeditFileOff = Number(buf.readBigUInt64LE(o + 40));
+      } else if (cmd === LC_SYMTAB) {
+        symoff = buf.readUInt32LE(o + 8);
+        stroff = buf.readUInt32LE(o + 16);
+      }
+      o += cmdsize;
+    }
+    return { linkeditFileOff, symoff, stroff };
+  }
+
+  // 32 KB of source does not fit the template's 16 KB __BUN slot, so __LINKEDIT has to move.
+  using dir = tempDir("compile-macho-template-4gib", {
+    "entry.js": `console.log("${Buffer.alloc(32 * 1024, "a").toString()}");`,
+  });
+  const cwd = String(dir);
+
+  const build = async (name: string, template: Buffer) => {
+    const templatePath = join(cwd, `template-${name}`);
+    await Bun.write(templatePath, template);
+    const outfile = join(cwd, `out-${name}`);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-x64",
+        "--compile-executable-path",
+        templatePath,
+        join(cwd, "entry.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, outfile };
+  };
+
+  // __LINKEDIT starts 4 KiB below 4 GiB, so any growth of __BUN (16 KiB steps) overflows its offsets.
+  {
+    const { stderr, exitCode, outfile } = await build(
+      "too-large",
+      machoTemplate({ linkeditFileOff: 0xffff_f000, symtab: true }),
+    );
+    expect(stderr).toContain("executable would exceed 4 GiB");
+    expect(stderr).toContain("failed to write compiled executable");
+    expect(await Bun.file(outfile).exists()).toBe(false);
+    expect(exitCode).toBe(1);
+  }
+
+  // The same template with __LINKEDIT right after __BUN builds, and its offsets move together.
+  {
+    const { stderr, exitCode, outfile } = await build("in-range", machoTemplate({ symtab: true }));
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const out = Buffer.from(await Bun.file(outfile).arrayBuffer());
+    const { linkeditFileOff, symoff, stroff } = readLinkeditOffsets(out);
+    expect(linkeditFileOff).toBeGreaterThan(0x8000);
+    expect({ symoff, stroff }).toEqual({ symoff: linkeditFileOff, stroff: linkeditFileOff + 0x80 });
+  }
+});
 
 test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
   // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target
@@ -1565,3 +1889,37 @@ test("compile --compile-executable-path rejects a template shorter than the exec
     expect(exitCode).toBe(1);
   }
 }, 60_000);
+
+// The startup path used to release weak refs, drop every unlinked code block and run a synchronous full collection right
+// after a standalone executable's entry module finished evaluating, i.e. before its first turn of the event loop.
+test("a standalone executable does not run a synchronous full GC after loading its entry point", async () => {
+  using dir = tempDir("compile-no-postload-gc", {
+    "app.js": `setTimeout(() => console.log("done"), 1);`,
+  });
+  const cwd = String(dir);
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).not.toContain("error");
+  expect(buildExit).toBe(0);
+  await using proc = Bun.spawn({
+    cmd: [join(cwd, isWindows ? "app.exe" : "app")],
+    // BUN_DESTRUCT_VM_ON_EXIT would add an exit-time full collection to the log.
+    env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_DESTRUCT_VM_ON_EXIT: undefined },
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done\n");
+  // Heap::notifyIsSafeToCollect logs this at VM creation whenever logGC is on, collection or not, so it proves the
+  // option reached the compiled binary without depending on any GC happening.
+  expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
+  expect(stderr).not.toContain("FullCollection");
+  expect(exitCode).toBe(0);
+});

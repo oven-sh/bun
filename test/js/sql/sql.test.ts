@@ -133,9 +133,9 @@ if (isDockerEnabled()) {
         const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
         expect(x).toBe(value);
       }
-      // zero specifically
+      // zero specifically: it keeps the scale like every other value
       const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
-      expect(x).toBe("0");
+      expect(x).toBe("0.00000000000000000000");
     });
 
     describe("Array helpers", () => {
@@ -755,6 +755,9 @@ if (isDockerEnabled()) {
               expect(column).toBe(value);
               value++;
             }
+            // sizes past JSFinalObject::maxInlineCapacity take SQLClient.cpp's
+            // null-structure fallback; the row must still be spreadable.
+            expect({ ...result[0] }).toEqual(result[0]);
           });
         }
       }
@@ -11533,7 +11536,7 @@ CREATE TABLE ${table_name} (
           { area: "D", price: "NaN" },
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
-        expect(results[0].price).toEqual("0");
+        expect(results[0].price).toEqual("0.0000");
         expect(results[1].price).toEqual("0.0001");
         expect(results[2].price).toEqual("0.0010");
         expect(results[3].price).toEqual("0.0100");
@@ -11562,7 +11565,7 @@ CREATE TABLE ${table_name} (
         expect(results[23].price).toEqual("999999.9999");
 
         // negative numbers
-        expect(results[24].price).toEqual("0");
+        expect(results[24].price).toEqual("0.0000");
         expect(results[25].price).toEqual("-0.0001");
         expect(results[26].price).toEqual("-0.0010");
         expect(results[27].price).toEqual("-0.0100");
@@ -11637,7 +11640,7 @@ CREATE TABLE ${table_name} (
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
         results.forEach(row => {
-          expect(row.price).toBe("0");
+          expect(row.price).toBe("0.0000");
         });
       });
 

@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { heapStats } from "bun:jsc";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
@@ -942,25 +942,15 @@ describe("ServerWebSocket", () => {
           },
         },
       });
-      // Stays alive until the end, so it is part of both measurements.
       const payload = new Uint8Array(2 * 1024 * 1024);
-      let before = 0;
       const client = new WebSocket(`ws://${server.hostname}:${server.port}`);
       client.onerror = () => reject(new Error("client error"));
-      client.onopen = () => {
-        // Both sockets exist at this point, so only the transfer separates the two measurements.
-        Bun.gc(true);
-        before = heapStats().extraMemorySize;
-        client.send(payload);
-      };
+      client.onopen = () => client.send(payload);
       try {
         const blob = await promise;
-        Bun.gc(true);
-        const reported = heapStats().extraMemorySize - before;
         expect(blob.size).toBe(payload.byteLength);
-        // Without the report this is close to 0. Memory that earlier tests release in the
-        // meantime lowers the number a little, so half the payload is the bound.
-        expect(reported).toBeGreaterThanOrEqual(payload.byteLength / 2);
+        // The size the Blob's visitChildren reports; close to 0 when the bytes are not reported.
+        expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThanOrEqual(payload.byteLength);
       } finally {
         client.close();
       }
@@ -1718,6 +1708,83 @@ it.concurrent("server.upgrade() from the error() handler after fetch() threw com
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("opened:error\necho:hi\nclosed 1000\n");
   expect(exitCode).toBe(0);
+});
+
+// A handler that calls server.upgrade() before it returns leaves the server no
+// response to send, so the server does not subscribe to the handler's promise.
+// A rejection of that promise must stay unhandled and reach
+// process.on("unhandledRejection"), whether it has settled when the handler
+// returns or not. The server subscribes to the promise of a handler that
+// upgrades after an await, so that case is not covered here.
+describe.concurrent("a handler that calls server.upgrade() before it returns", () => {
+  async function runChild(handlers: string) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", e => console.log("unhandledRejection:", e.message));
+         const server = Bun.serve({
+           port: 0,
+           ${handlers}
+           websocket: {
+             open(ws) { ws.send("hi"); },
+             message() {},
+           },
+         });
+         const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+         ws.onerror = () => { console.log("ws error"); process.exit(1); };
+         ws.onmessage = e => { console.log("ws got:", e.data); ws.close(); };
+         ws.onclose = () => server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A then() or catch() promise is rejected by a reaction job. It is a
+  // separate case: JSC does not set its first-resolving-function flag.
+  it.each([
+    [
+      "fetch() is async and throws after an await",
+      `async fetch(req, srv) { srv.upgrade(req); await 0; throw new Error("E"); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns Promise.reject()",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that throws",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.resolve().then(() => { throw new Error("E"); }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a catch() promise that rethrows",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).catch(e => { throw e; }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that passes a rejection through",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).then(x => x); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "error() upgrades and returns Promise.reject()",
+      `fetch(req) { throw Object.assign(new Error("boom"), { req }); },
+       error(err) { server.upgrade(err.req); return Promise.reject(new Error("E")); },`,
+    ],
+  ])("reports a rejection to unhandledRejection when %s", async (_, handlers) => {
+    const { stdout, stderr, exitCode } = await runChild(handlers);
+    expect({ stdoutLines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      stdoutLines: ["unhandledRejection: E", "ws got: hi"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {

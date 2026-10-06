@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -17,14 +17,6 @@ export default [
     proto: {
       run: {
         fn: "runFromJS",
-        length: 0,
-      },
-      isRunning: {
-        fn: "isRunning",
-        length: 0,
-      },
-      started: {
-        fn: "getStarted",
         length: 0,
       },
     },

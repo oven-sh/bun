@@ -139,6 +139,11 @@ impl ImportKind {
         matches!(self, Self::Require | Self::RequireResolve)
     }
 
+    #[inline]
+    pub fn is_entry_point(self) -> bool {
+        matches!(self, Self::EntryPointRun | Self::EntryPointBuild)
+    }
+
     pub fn is_from_css(self) -> bool {
         self == Self::AtConditional
             || self == Self::At
@@ -631,14 +636,14 @@ pub struct Location {
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
     //
-    // `file` / `line_text` are `Cow` (not `Str`) because
+    // `file` / `namespace` / `line_text` are `Cow` (not `Str`) because
     // `Location::clone()` must deep-dupe them so a
     // `BuildMessage`/`ResolveMessage` that outlives the
-    // `Source.contents` it borrowed from doesn't read poisoned memory. The
+    // `Source` it borrowed from doesn't read poisoned memory. The
     // borrowed arm covers the common case where the slice points into
-    // arena-owned source text.
+    // the bundle's arena.
     pub file: Cow<'static, [u8]>,
-    pub namespace: Str,
+    pub namespace: Cow<'static, [u8]>,
     /// Text on the line, avoiding the need to refetch the source code
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
@@ -657,9 +662,9 @@ pub struct Location {
     pub column: i32,
 }
 
-// NOT `#[derive(Clone)]`. `file` / `line_text` are
+// NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// into a `Source` (see `init_or_null`, `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
 // could outlive the source buffer and read poisoned memory. Instead,
@@ -668,7 +673,7 @@ impl Clone for Location {
     fn clone(&self) -> Self {
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -682,7 +687,7 @@ impl Default for Location {
     fn default() -> Self {
         Location {
             file: Cow::Borrowed(b""),
-            namespace: b"file",
+            namespace: Cow::Borrowed(b"file"),
             line_text: None,
             length: 0,
             offset: 0,
@@ -705,7 +710,7 @@ impl Location {
 
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace);
+        builder.count(self.namespace.as_ref().into_str());
         if let Some(text) = &self.line_text {
             builder.count(text.as_ref().into_str());
         }
@@ -727,7 +732,7 @@ impl Location {
         // single-buffer packing.
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -748,7 +753,7 @@ impl Location {
     ) -> Location {
         Location {
             file: Cow::Borrowed(file),
-            namespace,
+            namespace: Cow::Borrowed(namespace),
             line,
             column,
             length: length as usize,
@@ -781,7 +786,7 @@ impl Location {
             if r.is_empty() {
                 return Some(Location {
                     file: Cow::Borrowed(source.path.text),
-                    namespace: source.path.namespace,
+                    namespace: Cow::Borrowed(source.path.namespace),
                     line: -1,
                     column: -1,
                     length: 0,
@@ -816,7 +821,7 @@ impl Location {
 
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
-                namespace: source.path.namespace,
+                namespace: Cow::Borrowed(source.path.namespace),
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -2231,32 +2236,25 @@ pub struct AddErrorOptions<'a> {
 /// `AddErrorOptions`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
-/// Call-site helper: rewrites `<red>..<r>` markup
-/// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
-/// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
-/// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
+/// `alloc_print!(fmt, args..)` — markup-aware form of [`alloc_print`]: rewrites
+/// `<red>..<r>` markup in the *literal* format string via `bun_core::pretty_fmt!`
+/// (compile-time), then formats into an owned buffer. Message text with markup
+/// must go through this; a raw `format_args!` passed to the function form
+/// below keeps the tags verbatim.
 ///
-/// Callers that build messages with markup must use this (or `alloc_print!`) so
-/// the tags are converted/stripped; passing a raw `format_args!` through the
-/// function form below leaves the markup verbatim.
-#[macro_export]
-macro_rules! pretty_format_args {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
-            .load(::core::sync::atomic::Ordering::Relaxed)
-        {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
-        } else {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
-        }
-    }};
-}
-
-/// `alloc_print!(fmt, args..)` — owned-buffer form of `pretty_format_args!`.
+/// Each branch holds the whole call: a `format_args!` in block-tail position
+/// is dropped with the block (E0716), so it cannot be handed out of an
+/// `if`/`else`. Only one branch executes, so each `$arg` evaluates once.
 #[macro_export]
 macro_rules! alloc_print {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::alloc_print($crate::pretty_format_args!($fmt $(, $arg)*))
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*))
+        } else {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*))
+        }
     };
 }
 
@@ -2315,8 +2313,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
-    // conversion must go through `pretty_format_args!` / `alloc_print!` above
-    // (which do the rewrite at the macro call site). The function form here
+    // conversion must go through `alloc_print!` above (which does the rewrite
+    // at the macro call site). The function form here
     // renders `args` verbatim: do NOT run a runtime markup pass over the
     // rendered bytes, or user-supplied argument values containing `<`
     // (`<stdin>`, `Array<string>`, JSX/HTML snippets) get mangled.

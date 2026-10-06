@@ -393,12 +393,7 @@ impl UpdateInteractiveCommand {
                 let version_with_prefix =
                     preserve_version_prefix(original_version, &update.target_version)?;
 
-                // Update the version using hash map put
-                // `Expr::init` would put the `E.String` *node*
-                // in the Store, which `install_with_manager` resets via
-                // `initialize_store()` before re-reading this cached `root`.
-                // The node and the string bytes go to the CLI arena, which
-                // lives as long as the cached AST.
+                // Not `Expr::init`: install resets the Store before it reads this cached `root` again.
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
                 let new_expr = Expr::allocate(
                     crate::cli::cli_arena(),

@@ -2886,10 +2886,8 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
 });
 
-// Each cached workspace package.json owned a mimalloc heap. A heap opens a 64 KiB page for
-// each size class it allocates, and a string with an escape is decoded into a block of its
-// own. The two repos hold the same bytes: the scripts have 19 lengths in one and one length
-// in the other. In a shared heap they cost the same.
+// With a mimalloc heap for each cached package.json, each size class of escaped string costs one 64 KiB page
+// for each workspace. In a shared heap the two repos, which hold the same bytes, cost the same.
 test.concurrent("install does not keep a mimalloc heap for each workspace package.json", async () => {
   const lengths: number[] = [];
   for (let length = 8; length <= 1024; length += Math.max(8, length >> 2)) lengths.push(length);
@@ -2908,8 +2906,7 @@ test.concurrent("install does not keep a mimalloc heap for each workspace packag
   }
   using dir = tempDir("workspace-package-json-heaps", files);
 
-  // On Linux a child's maxRSS is never below the peak RSS of the process that spawned it,
-  // so the installs are children of this small script and not of the test runner.
+  // A child's maxRSS on Linux is never below the peak RSS of its parent, so this small script spawns the installs.
   const measure = `
     const [root] = process.argv.slice(1);
     async function installPeakRSS(repo) {

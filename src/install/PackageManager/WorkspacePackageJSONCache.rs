@@ -19,9 +19,7 @@ use crate::bun_json as json;
 use crate::initialize_store;
 
 pub struct MapEntry {
-    /// The nodes and the escape-decoded strings are in the process heap and are
-    /// never freed, like the `AstVec` buffers inside them: a mimalloc heap for
-    /// each entry costs 30 KB or more. A node spliced in later must live as long.
+    /// Nodes are in the process heap and never freed: a mimalloc heap per entry costs 30 KB or more.
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,

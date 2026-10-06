@@ -1,6 +1,6 @@
 import { canonicalizeIP } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
-import { X509Certificate } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getCACertificates, rootCertificates } from "tls";
@@ -81,5 +81,23 @@ describe("NodeTLS.cpp", () => {
       expect(cert.ca).toBe(true);
       expect(cert.issuer).toBe(cert.subject);
     }
+  });
+
+  // root_certs.der is binary, so a diff cannot be reviewed; certdata.txt (Mozilla's list) can.
+  test("every bundled root is a certificate certdata.txt trusts for server auth", () => {
+    const lines = readFileSync(join(import.meta.dir, "../../../../packages/bun-usockets/certdata.txt"), "latin1").split(
+      "\n",
+    );
+    const trusted: string[] = [];
+    let sha1 = "";
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i] === "CKA_CERT_SHA1_HASH MULTILINE_OCTAL") {
+        sha1 = "";
+        while (lines[++i] !== "END")
+          for (const octal of lines[i].split("\\").slice(1)) sha1 += parseInt(octal, 8).toString(16).padStart(2, "0");
+      } else if (lines[i] === "CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR") trusted.push(sha1);
+    }
+    const bundled = rootCertificates.map(pem => createHash("sha1").update(new X509Certificate(pem).raw).digest("hex"));
+    expect(bundled.toSorted()).toEqual(trusted.toSorted());
   });
 });

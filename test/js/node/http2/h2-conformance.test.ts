@@ -2337,6 +2337,290 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
   });
 });
 
+// nghttp2 (nghttp2_session_on_goaway_received) refuses a GOAWAY whose last-stream-id is above the
+// id of the GOAWAY before it: the sender must not raise it. Every test below passes on node
+// v26.3.0 as well.
+describe("received GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
+  const goaway = (lastStreamId: number, code: number = ErrorCode.NO_ERROR) => {
+    const payload = Buffer.alloc(8);
+    payload.writeUInt32BE(lastStreamId, 0);
+    payload.writeUInt32BE(code, 4);
+    return encodeFrame(FrameType.GOAWAY, 0, 0, payload);
+  };
+  const ping = encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+
+  /**
+   * Sends each element of `reads` to `session` in one write, so that it arrives in one read, and
+   * a PING behind the last one. A session that accepted every frame answers the PING. A session
+   * that refused a frame closes the connection and reads nothing behind that frame.
+   */
+  async function deliver(
+    session: http2.Http2Session,
+    peer: { socket: net.Socket | null; frames: Frame[] },
+    reads: Buffer[][],
+  ) {
+    const socket = peer.socket!;
+    const goaways: number[][] = [];
+    let error: string | undefined;
+    let sessionOpen = true;
+    let socketOpen = true;
+    let wake = () => {};
+    const change = () => new Promise<void>(resolve => (wake = resolve));
+    session.on("goaway", (code, lastStreamID) => {
+      goaways.push([code, lastStreamID]);
+      wake();
+    });
+    session.on("error", (e: NodeJS.ErrnoException) => (error = e.code));
+    session.on("close", () => {
+      sessionOpen = false;
+      wake();
+    });
+    socket.on("data", () => wake());
+    socket.on("close", () => {
+      socketOpen = false;
+      wake();
+    });
+
+    let sent = 0;
+    for (const [i, frames] of reads.entries()) {
+      const last = i === reads.length - 1;
+      socket.write(Buffer.concat(last ? [...frames, ping] : frames));
+      sent += frames.length;
+      // The next read starts after the session emitted 'goaway' for each frame of this one.
+      while (!last && sessionOpen && goaways.length < sent) await change();
+    }
+    const pingAcked = () => peer.frames.some(isPingAck);
+    // A closed socket means that `peer` read everything that the session wrote.
+    while (!pingAcked() && (sessionOpen || socketOpen)) await change();
+    const { goawayCode, goawayLastStreamID } = session as any;
+    return { pingAcked: pingAcked(), goaways, error, goawayCode, goawayLastStreamID };
+  }
+
+  /** A client with `requests` requests open, on streams 1, 3 and so on. */
+  const clientWith =
+    (requests: number) =>
+    async (...reads: Buffer[][]) => {
+      const raw = await RawH2Server.listen();
+      const session = http2.connect(`http://127.0.0.1:${raw.port}`);
+      try {
+        for (let i = 0; i < requests; i++) {
+          session.request({ ":path": "/" }, { endStream: false }).on("error", () => {});
+        }
+        // The client writes its SETTINGS first and the request HEADERS behind it.
+        await raw.waitFor(f =>
+          requests === 0
+            ? f.type === FrameType.SETTINGS
+            : f.type === FrameType.HEADERS && f.streamId === 2 * requests - 1,
+        );
+        raw.sendFrame(FrameType.SETTINGS, 0, 0);
+        raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+        return await deliver(session, raw, reads);
+      } finally {
+        session.destroy();
+        raw.close();
+      }
+    };
+
+  /** A server with `requests` requests open. It gives no response, so a GOAWAY does not end the session. */
+  const serverWith =
+    (requests: number) =>
+    async (...reads: Buffer[][]) => {
+      const { promise: session, resolve: onSession } = Promise.withResolvers<http2.ServerHttp2Session>();
+      const h2server = http2.createServer();
+      h2server.on("session", onSession);
+      h2server.on("stream", stream => stream.on("error", () => {}));
+      h2server.listen(0);
+      await once(h2server, "listening");
+      const c = await RawH2.connect((h2server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+        c.sendSettingsAck();
+        for (let i = 0; i < requests; i++) {
+          c.sendFrame(FrameType.HEADERS, 0x4, 2 * i + 1, requestHeaderBlock("POST"));
+        }
+        return await deliver(await session, c, reads);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    };
+
+  // The session keeps GOAWAY(first) and ends with a connection error on the GOAWAY that raises it.
+  const refused = (first: number) => ({
+    pingAcked: false,
+    goaways: [[ErrorCode.NO_ERROR, first]],
+    error: "ERR_HTTP2_ERROR",
+    goawayCode: ErrorCode.NO_ERROR,
+    goawayLastStreamID: first,
+  });
+
+  // The last-stream-id names a stream that the receiver of the GOAWAY can open: an odd id for a
+  // client, an even id for a server. A graceful shutdown starts with the highest id. A client
+  // sends 0 when the server pushed nothing.
+  const busy = [
+    { session: "client", receives: clientWith(2), first: 1, raised: 3, lowering: [0x7fffffff, 3, 3, 1] },
+    { session: "server", receives: serverWith(1), first: 2, raised: 4, lowering: [0x7ffffffe, 2, 2, 0] },
+    {
+      session: "server that accepted id 0",
+      receives: serverWith(1),
+      first: 0,
+      raised: 2,
+      lowering: [0x7ffffffe, 0, 0, 0],
+    },
+  ];
+  for (const { session, receives, first, raised, lowering } of busy) {
+    test(`a ${session} refuses a GOAWAY that raises the last-stream-id`, async () => {
+      expect(await receives([goaway(first), goaway(raised)])).toEqual(refused(first));
+    });
+
+    test(`a ${session} refuses it in a later read`, async () => {
+      expect(await receives([goaway(first)], [goaway(raised)])).toEqual(refused(first));
+    });
+
+    test(`a ${session} refuses it before it uses the error code of the frame`, async () => {
+      expect(await receives([goaway(first), goaway(raised, ErrorCode.ENHANCE_YOUR_CALM)])).toEqual(refused(first));
+    });
+
+    test(`a ${session} refuses a raise after a lowered id`, async () => {
+      expect(await receives([goaway(raised + 2), goaway(first), goaway(raised)])).toEqual({
+        ...refused(first),
+        goaways: [raised + 2, first].map(id => [ErrorCode.NO_ERROR, id]),
+      });
+    });
+
+    test(`a ${session} accepts a GOAWAY that keeps or lowers the last-stream-id`, async () => {
+      const [a, b, c, d] = lowering.map(id => goaway(id));
+      expect(await receives([a, b], [c, d])).toEqual({
+        pingAcked: true,
+        goaways: lowering.map(id => [ErrorCode.NO_ERROR, id]),
+        error: undefined,
+        goawayCode: ErrorCode.NO_ERROR,
+        goawayLastStreamID: lowering.at(-1),
+      });
+    });
+  }
+
+  // The first GOAWAY leaves these sessions with no open stream. Node destroys such a session, so
+  // it reads the next GOAWAY only when both are in one read.
+  const idle = [
+    { session: "client whose requests GOAWAY(0) ended", receives: clientWith(2), first: 0, raised: 1 },
+    { session: "client with no request", receives: clientWith(0), first: 1, raised: 3 },
+    { session: "server with no request", receives: serverWith(0), first: 0, raised: 2 },
+  ];
+  for (const { session, receives, first, raised } of idle) {
+    test(`a ${session} refuses a GOAWAY that raises the last-stream-id`, async () => {
+      expect(await receives([goaway(first), goaway(raised)])).toEqual(refused(first));
+    });
+
+    test(`a ${session} refuses it before it uses the error code of the frame`, async () => {
+      expect(await receives([goaway(first), goaway(raised, ErrorCode.ENHANCE_YOUR_CALM)])).toEqual(refused(first));
+    });
+  }
+});
+
+// A server's GOAWAY frames reach a client of the same runtime. A server that raised the id here
+// would make that client end the session with a connection error. Every test below passes on
+// node v26.3.0 as well.
+describe("GOAWAY last-stream-id from a server to a client (RFC 9113 §6.8)", () => {
+  type Step = (session: http2.Http2Session) => void;
+  const goaway: Step = session => session.goaway();
+  const close: Step = session => session.close();
+  const cancel: Step = session => session.destroy(http2.constants.NGHTTP2_CANCEL);
+  const notice: Step = session => session.goaway(ErrorCode.NO_ERROR, 0x7fffffff);
+
+  /**
+   * The client opens streams 1 and 3 in one tick. `first` runs in the 'stream' handler of stream
+   * 1, so the first GOAWAY names 1 while stream 3 is on the wire. `second` runs in a later tick,
+   * when the client's own GOAWAY reaches the server. Without `second` the application does nothing
+   * more: the session answers the client's GOAWAY by itself. Stream 1 gets its response after that.
+   */
+  async function shutdown(first: Step, second?: Step) {
+    const server = http2.createServer();
+    const streams: http2.ServerHttp2Stream[] = [];
+    const respond = () => {
+      for (const stream of streams) {
+        if (stream.destroyed || stream.closed) continue;
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      }
+    };
+    server.on("session", session => {
+      session.on("error", () => {});
+      session.once("goaway", () => {
+        second?.(session);
+        setImmediate(respond);
+      });
+    });
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      streams.push(stream);
+      if (stream.id === 1) first(stream.session!);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const lastStreamIDs = new Set<number>();
+      let sessionError: string | undefined;
+      client.on("goaway", (_code, lastStreamID) => lastStreamIDs.add(lastStreamID));
+      client.on("error", (e: NodeJS.ErrnoException) => (sessionError = e.code));
+      // Not once(client, "close"): that promise rejects when the session emits 'error'.
+      const closed = new Promise<void>(resolve => client.on("close", () => resolve()));
+      const outcomes = ["/a", "/b"].map(path => {
+        const req = client.request({ ":path": path });
+        let status: number | undefined;
+        let body = "";
+        let error: string | undefined;
+        req.on("response", headers => (status = headers[":status"]));
+        req.on("data", chunk => (body += chunk));
+        req.on("error", (e: NodeJS.ErrnoException) => (error = e.code));
+        return new Promise<string>(resolve => req.on("close", () => resolve(error ?? `${status} ${body}`)));
+      });
+      const [stream1] = await Promise.all(outcomes);
+      await closed;
+      return { lastStreamIDs: [...lastStreamIDs].sort((a, b) => a - b), stream1, sessionError };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  const served = { lastStreamIDs: [1], stream1: "200 ok", sessionError: undefined };
+  // The client reports the code of the server's GOAWAY, not a protocol error.
+  const cancelled = {
+    lastStreamIDs: [1],
+    stream1: "ERR_HTTP2_SESSION_ERROR",
+    sessionError: "ERR_HTTP2_SESSION_ERROR",
+  };
+
+  test("goaway(): the answer of the session to the client's GOAWAY keeps the id", async () => {
+    expect(await shutdown(goaway)).toEqual(served);
+  });
+
+  test("goaway(), then close()", async () => {
+    expect(await shutdown(goaway, close)).toEqual(served);
+  });
+
+  test("goaway(), then goaway()", async () => {
+    expect(await shutdown(goaway, goaway)).toEqual(served);
+  });
+
+  test("goaway(), then destroy(NGHTTP2_CANCEL)", async () => {
+    expect(await shutdown(goaway, cancel)).toEqual(cancelled);
+  });
+
+  test("close(), then destroy(NGHTTP2_CANCEL)", async () => {
+    expect(await shutdown(close, cancel)).toEqual(cancelled);
+  });
+
+  test("goaway(NGHTTP2_NO_ERROR, 2 ** 31 - 1), then close() lowers the id", async () => {
+    expect(await shutdown(notice, close)).toEqual({ ...served, lastStreamIDs: [3, 0x7fffffff] });
+  });
+});
+
 // A DATA frame that cannot be written right away (the peer's flow-control window is used up, the
 // socket has backpressure, or another stream on the session already has frames waiting) is put on
 // the session's outbound queue and written later, when a WINDOW_UPDATE or a writable socket drains

@@ -1213,11 +1213,60 @@ for (const [failure, peer] of [
   for (const rejectUnauthorized of [true, false]) {
     test(`over a Duplex: ${failure} is an error, not a secureConnect, with rejectUnauthorized: ${rejectUnauthorized}`, async () => {
       const events = await failedHandshakeOverDuplex(rejectUnauthorized, peer);
-      assert.match(events[0], /^error /, events.join(", "));
-      assert.deepStrictEqual(
-        events.filter(event => !event.startsWith("error ")),
-        ["close"],
-      );
+      assert.match(events[0], /^error ERR_SSL_/, events.join(", "));
+      assert.deepStrictEqual(events.slice(1), ["close"]);
     });
   }
 }
+
+// A TLS 1.2 server with a trusted certificate that requires a client certificate. The client has none, so the server's
+// alert arrives after the client verified the chain.
+async function serverThatRequiresClientCert(otherEnd) {
+  const server = tls.createServer({ key, cert, ca: clientCA, requestCert: true, maxVersion: "TLSv1.2" });
+  server.on("tlsClientError", () => {});
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const upstream = net.connect(server.address().port, "127.0.0.1");
+  upstream.on("error", () => {});
+  otherEnd.pipe(upstream).pipe(otherEnd);
+  return () => {
+    upstream.destroy();
+    server.close();
+  };
+}
+
+for (const rejectUnauthorized of [true, false]) {
+  test(`over a Duplex: an alert behind a verified chain is reported by its name, with rejectUnauthorized: ${rejectUnauthorized}`, async () => {
+    const events = await failedHandshakeOverDuplex(rejectUnauthorized, serverThatRequiresClientCert);
+    assert.match(events[0], /^error ERR_SSL_.*ALERT_HANDSHAKE_FAILURE$/, events.join(", "));
+    assert.deepStrictEqual(events.slice(1), ["close"]);
+  });
+}
+
+const ALERT = 0x15;
+const FATAL = 2;
+
+test("over a Duplex: a client that refuses the server's key proof sends its fatal alert", async () => {
+  const sent = [];
+  await failedHandshakeOverDuplex(true, async otherEnd => {
+    eachRecord(otherEnd, record => sent.push([record[0], record[5]]));
+    return trustedChainWithBadKeyProof(otherEnd);
+  });
+  assert.deepStrictEqual(sent, [
+    [HANDSHAKE, 1],
+    [ALERT, FATAL],
+  ]);
+});
+
+test("over a Duplex: a server that shares no cipher with the client sends its fatal alert", async () => {
+  const [transport, otherEnd] = duplexPair();
+  const server = new tls.TLSSocket(transport, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ key, cert }),
+  });
+  const serverFailed = new Promise(resolve => server.once("error", resolve));
+  const client = tls.connect({ socket: otherEnd, maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" });
+  const clientFailed = new Promise(resolve => client.once("error", resolve));
+  assert.strictEqual((await serverFailed).code, "ERR_SSL_NO_SHARED_CIPHER");
+  assert.match((await clientFailed).code, /^ERR_SSL_.*ALERT_HANDSHAKE_FAILURE$/);
+  server.destroy();
+});

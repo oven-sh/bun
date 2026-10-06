@@ -330,8 +330,10 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
-  /* A graceful TLS shutdown arrived while batched ciphertext was still
-   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
+  /* Sealed ciphertext of this socket waits for the kernel (openssl.c us_ssl_spill_t). */
+  unsigned char ssl_spilled : 1;
+  /* A graceful TLS shutdown arrived while ciphertext was still
+   * spilled (see ssl_emit); the shutdown re-runs once the
    * spill drains so those records are not cut off by our FIN/close_notify. */
   unsigned char ssl_shutdown_after_spill : 1;
   /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the

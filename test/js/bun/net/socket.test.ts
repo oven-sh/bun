@@ -1539,6 +1539,144 @@ it("TLS mid-read boundary dispatch: writing to another TLS socket from data() do
   }
 }, 60_000);
 
+// write() reports how many bytes it took, and the caller may send anything next: the peer must get
+// exactly the reported bytes, then the next write. While one TLS socket holds the unsent rest of a
+// batch, the other TLS sockets of the loop send record by record, which is the path under test.
+describe("TLS write() that ends short while another TLS socket is stalled", () => {
+  const STEP = 1024 * 1024;
+  const FIRST = 0x61;
+  const OTHER = 0x62;
+  type Next = "end" | "shutdown" | { bytes: Buffer; fragment?: "while unsent" | "once sent" };
+  type Pair = { stalled: boolean };
+
+  // Writes `step` until a write is short. Returns the sum write() reported.
+  function fill(socket: Socket<Pair>, step: Buffer) {
+    let total = 0;
+    for (let wrote = step.length; wrote === step.length && total < 64 * STEP; ) {
+      wrote = socket.write(step);
+      total += Math.max(wrote, 0);
+    }
+    return total;
+  }
+
+  async function shortWriteThen(next: Next, { accepted = false, maxVersion = 0 } = {}) {
+    const step = Buffer.alloc(STEP, FIRST);
+    const stalledStep = Buffer.alloc(STEP, 0x7a);
+    const stalledFilled = Promise.withResolvers<void>();
+    const written = Promise.withResolvers<Socket<Pair>>();
+    const reportedArrived = Promise.withResolvers<void>();
+    const peerClosed = Promise.withResolvers<void>();
+    const received = { length: 0, otherStartsAt: -1, firstEndsAt: -1 };
+    const sockets: Socket<Pair>[] = [];
+    let reported = -1;
+    let sent = -1;
+
+    const sendRest = (socket: Socket<Pair>, bytes: Buffer) => {
+      while (sent < bytes.length) {
+        const wrote = socket.write(bytes.subarray(sent));
+        if (wrote <= 0) return;
+        sent += wrote;
+      }
+      socket.end();
+    };
+    const writer = {
+      handshake(socket: Socket<Pair>) {
+        if (socket.data.stalled) {
+          fill(socket, stalledStep);
+          return stalledFilled.resolve();
+        }
+        reported = fill(socket, step);
+        if (next === "end") socket.end();
+        else if (next === "shutdown") socket.shutdown();
+        else if (next.fragment === "while unsent") socket.setMaxSendFragment(512);
+        written.resolve(socket);
+      },
+      drain(socket: Socket<Pair>) {
+        if (socket.data.stalled) fill(socket, stalledStep);
+        else if (typeof next === "object" && sent !== -1) sendRest(socket, next.bytes);
+      },
+    };
+    const reader = {
+      data(socket: Socket<Pair>, chunk: Buffer) {
+        if (socket.data.stalled) return socket.pause();
+        const otherStart = chunk.indexOf(OTHER);
+        if (otherStart !== -1 && received.otherStartsAt === -1) received.otherStartsAt = received.length + otherStart;
+        const firstEnd = chunk.lastIndexOf(FIRST);
+        if (firstEnd !== -1) received.firstEndsAt = received.length + firstEnd;
+        received.length += chunk.length;
+        if (received.length >= reported) reportedArrived.resolve();
+      },
+      close(socket: Socket<Pair>) {
+        if (!socket.data.stalled) peerClosed.resolve();
+      },
+    };
+    const side = (handlers: typeof writer | typeof reader) => ({
+      data() {},
+      error() {},
+      ...handlers,
+      open(socket: Socket<Pair>) {
+        // The first connection is the stalled pair.
+        socket.data ??= { stalled: sockets.length < 2 };
+        sockets.push(socket);
+      },
+    });
+    using server = Bun.listen<Pair>({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { ...tls, maxVersion },
+      socket: side(accepted ? writer : reader),
+    });
+    const connect = () =>
+      Bun.connect<Pair>({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: tls.cert },
+        socket: side(accepted ? reader : writer),
+      });
+    try {
+      await connect();
+      await stalledFilled.promise;
+      await connect();
+      const socket = await written.promise;
+      if (typeof next === "object") {
+        // Every reported byte has arrived, so the socket is idle again and takes a write.
+        await reportedArrived.promise;
+        if (next.fragment === "once sent") socket.setMaxSendFragment(512);
+        sent = socket.write(next.bytes);
+        expect(sent).toBeGreaterThan(0);
+        sendRest(socket, next.bytes);
+      }
+      await peerClosed.promise;
+      return { reported, received };
+    } finally {
+      for (const socket of sockets) socket.terminate();
+    }
+  }
+
+  it.each([
+    ["other data arrives byte for byte", 256 * 1024, {}],
+    ["other data arrives byte for byte (accepted socket, TLS 1.2)", 256 * 1024, { accepted: true, maxVersion: 0x0303 }],
+    ["less than one TLS record is sent", 100, {}],
+  ])("a later write of %s", async (_, length, options) => {
+    const { reported, received } = await shortWriteThen({ bytes: Buffer.alloc(length, OTHER) }, options);
+    expect(received).toEqual({ length: reported + length, otherStartsAt: reported, firstEndsAt: reported - 1 });
+  });
+
+  it.each(["while unsent", "once sent"] as const)(
+    "the stream continues after setMaxSendFragment() %s",
+    async fragment => {
+      const length = 64 * 1024;
+      const { reported, received } = await shortWriteThen({ bytes: Buffer.alloc(length, FIRST), fragment });
+      expect(received).toEqual({ length: reported + length, otherStartsAt: -1, firstEndsAt: reported + length - 1 });
+    },
+  );
+
+  it.each(["end", "shutdown"] as const)("%s() in the same tick sends every reported byte first", async next => {
+    const { reported, received } = await shortWriteThen(next);
+    expect(received).toEqual({ length: reported, otherStartsAt: -1, firstEndsAt: reported - 1 });
+  });
+});
+
 describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
   // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /
   // SNICallback go through. Both run from inside the read that is processing

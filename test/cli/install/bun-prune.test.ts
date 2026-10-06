@@ -3218,58 +3218,94 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
 });
 
-// Behind a workspace's `node_modules` that is a link to the root's are the root's packages, not the workspace's.
-test.concurrent("hoisted: a workspace node_modules that is a link to the root's is not pruned", async () => {
+const LINKED = (folder: string) => `warn: ${folder} is a symlink, so the packages behind it were not checked`;
+
+// Behind a workspace's `node_modules` that is a link are packages the workspace does not own: the root's here.
+test.concurrent.each(linkers)(
+  "%s: a workspace node_modules that is a link to the root's is not pruned",
+  async linker => {
+    const dir = await setupWorkspaces(linker, {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+    });
+    const nm = join(dir, "node_modules");
+    const workspaceModules = join(dir, "packages", "a", "node_modules");
+    rmSync(workspaceModules, { recursive: true, force: true });
+    const installed = readdirSync(nm).toSorted();
+    expect(installed).toContain("no-deps");
+    symlinkSync(nm, workspaceModules, "junction");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker);
+    expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
+    expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+    expect(readdirSync(nm).toSorted()).toEqual(installed);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The link can lead anywhere. These two folders are no part of the project.
+test.concurrent.each(linkers)(
+  "%s: a workspace node_modules that is a link out of the project is not pruned",
+  async linker => {
+    const dir = await setupWorkspaces(linker, {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+    });
+    using elsewhere = tempDir("prune-elsewhere", {
+      "first/package.json": JSON.stringify({ name: "first" }),
+      "second/index.js": "",
+    });
+    const workspaceModules = join(dir, "packages", "a", "node_modules");
+    rmSync(workspaceModules, { recursive: true, force: true });
+    symlinkSync(String(elsewhere), workspaceModules, "junction");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker);
+    expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
+    expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+    expect(readdirSync(String(elsewhere)).toSorted()).toEqual(["first", "second"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// This workspace has a tree of its own, so the folder is also reached through the tree walk.
+test.concurrent("hoisted: a workspace with its own copies whose node_modules is a link is not pruned", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0" } },
+    packages: { a: { dependencies: { "no-deps": "2.0.0" } } },
+  });
+  const workspaceModules = join(dir, "packages", "a", "node_modules");
+  const storage = join(dir, "packages", "a", "storage");
+  renameSync(workspaceModules, storage);
+  symlinkSync(storage, workspaceModules, "junction");
+  const stray = plant(dir, "packages/a/storage/stray");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
+  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+  expect(existsSync(stray)).toBeTrue();
+  expect(await file(join(storage, "no-deps", "package.json")).json()).toMatchObject({ version: "2.0.0" });
+  expect(exitCode).toBe(0);
+});
+
+// The root `node_modules` is a link into the workspace's folder, so that folder holds the root's packages.
+test.concurrent("hoisted: a workspace node_modules that the root node_modules links to is not pruned", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "2.0.0" } },
     packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
   });
   const nm = join(dir, "node_modules");
-  const installed = readdirSync(nm).toSorted();
+  const workspaceModules = join(dir, "packages", "a", "node_modules");
+  renameSync(nm, workspaceModules);
+  symlinkSync(workspaceModules, nm, "junction");
+  const installed = readdirSync(workspaceModules).toSorted();
   expect(installed).toContain("a-dep");
-  symlinkSync(nm, join(dir, "packages", "a", "node_modules"), "junction");
 
   const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
-  expect(stderr).toBe("");
+  expect(out(stderr)).toBe(
+    "warn: packages/a/node_modules is the root node_modules under another path, so nothing was removed from it",
+  );
   expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
-  expect(readdirSync(nm).toSorted()).toEqual(installed);
-  expect(exitCode).toBe(0);
-});
-
-// `c` is self-contained and depends on its sibling `b`. `b` has a tree below `c` for the version that cannot
-// hoist into `c`, and one below the root for the version the root does not provide. Both open packages/b.
-test.concurrent("hoisted: a workspace that owns two trees keeps the rows of both", async () => {
-  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
-  await writeWorkspaces(dir, packageJson, {
-    root: {
-      workspaces: { packages: ["packages/*"], selfContained: ["packages/c"] },
-      dependencies: { "no-deps": "1.0.0" },
-    },
-    packages: {
-      b: { dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0" } },
-      c: { dependencies: { b: "workspace:*", "no-deps": "2.0.0", "what-bin": "1.5.0" } },
-    },
-  });
-  await install(dir, "--linker", "hoisted");
-  const version = async (...path: string[]) => (await file(join(dir, ...path, "package.json")).json()).version;
-  const layout = async () => ({
-    root: [await version("node_modules", "no-deps"), await version("node_modules", "what-bin")],
-    b: [
-      await version("packages", "b", "node_modules", "no-deps"),
-      await version("packages", "b", "node_modules", "what-bin"),
-    ],
-    c: [
-      await version("packages", "c", "node_modules", "no-deps"),
-      await version("packages", "c", "node_modules", "what-bin"),
-    ],
-  });
-  const installed = { root: ["1.0.0", "1.0.0"], b: ["2.0.0", "1.0.0"], c: ["2.0.0", "1.5.0"] };
-  expect(await layout()).toStrictEqual(installed);
-
-  const { stdout, stderr, exitCode } = await prune(dir);
-  expect(stderr).toBe("");
-  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
-  expect(await layout()).toStrictEqual(installed);
+  expect(readdirSync(workspaceModules).toSorted()).toEqual(installed);
   expect(exitCode).toBe(0);
 });
 

@@ -1055,6 +1055,25 @@ end:
   return ret;
 }
 
+/* BoringSSL's ssl_auto_chain_if_needed, which at handshake time completes the legacy slot but no credential. */
+static int us_ssl_ctx_auto_chain(SSL_CTX *ctx) {
+  if (sk_CRYPTO_BUFFER_num(SSL_CTX_get0_chain(ctx)) != 1) return 1;
+  X509_STORE_CTX *walk = X509_STORE_CTX_new();
+  if (walk == NULL || !X509_STORE_CTX_init(walk, SSL_CTX_get_cert_store(ctx), SSL_CTX_get0_certificate(ctx), NULL)) {
+    X509_STORE_CTX_free(walk);
+    return 0;
+  }
+  X509_verify_cert(walk);
+  ERR_clear_error();
+  STACK_OF(X509) *chain = X509_STORE_CTX_get1_chain(walk);
+  X509_STORE_CTX_free(walk);
+  if (chain == NULL) return 0;
+  X509_free(sk_X509_shift(chain));
+  int ok = SSL_CTX_set1_chain(ctx, chain);
+  sk_X509_pop_free(chain, X509_free);
+  return ok;
+}
+
 static SSL_CREDENTIAL *us_ssl_ctx_copy_legacy_identity(SSL_CTX *ctx) {
   const STACK_OF(CRYPTO_BUFFER) *chain = SSL_CTX_get0_chain(ctx);
   size_t count = sk_CRYPTO_BUFFER_num(chain);
@@ -1101,7 +1120,7 @@ static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsi
       if (ok) ERR_clear_error();
     }
     if (ok && has_key) {
-      ok = (identity[type] = us_ssl_ctx_copy_legacy_identity(ctx)) != NULL;
+      ok = us_ssl_ctx_auto_chain(ctx) && (identity[type] = us_ssl_ctx_copy_legacy_identity(ctx)) != NULL;
     } else if (ok && mismatched) {
       OPENSSL_PUT_ERROR(X509, X509_R_KEY_VALUES_MISMATCH);
       ok = 0;
@@ -1289,13 +1308,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * (see passphrase_cb), matching Node's key-decryption error shape. */
   SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
 
-  if (!options.cert_file_name && !options.key_file_name && options.cert && options.key &&
-      (options.cert_count > 1 || options.key_count > 1)) {
-    if (!us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key, options.key_count)) {
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
-    }
-  } else {
+  int several_identities = !options.cert_file_name && !options.key_file_name && options.cert && options.key &&
+                           (options.cert_count > 1 || options.key_count > 1);
+  if (!several_identities) {
     if (options.cert_file_name) {
       if (SSL_CTX_use_certificate_chain_file(ssl_context, options.cert_file_name) != 1) {
         ssl_ctx_build_fail(ssl_context);
@@ -1324,10 +1339,6 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       }
     }
   }
-  /* passwd_cb is only consulted by SSL_CTX_use_PrivateKey* above; the secret
-   * is dead now. Dropping it here means SSL_CTX_free() is sufficient cleanup
-   * everywhere downstream — no special "owner" path. */
-  ssl_ctx_drop_passphrase(ssl_context);
 
   if (options.ca_file_name) {
     /* An explicit CA replaces the default trust store (Node.js semantics):
@@ -1375,6 +1386,17 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * so set_cert_store owns exactly one reference per context. */
     SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
   }
+
+  /* After the store is filled: it completes their chains. */
+  if (several_identities &&
+      !us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key, options.key_count)) {
+    ssl_ctx_build_fail(ssl_context);
+    return NULL;
+  }
+  /* passwd_cb is only consulted by SSL_CTX_use_PrivateKey* above; the secret
+   * is dead now. Dropping it here means SSL_CTX_free() is sufficient cleanup
+   * everywhere downstream — no special "owner" path. */
+  ssl_ctx_drop_passphrase(ssl_context);
 
   /* The callback is set at SSL_VERIFY_NONE too: lsquic's SNI switch calls SSL_set_verify(ssl, mode, NULL), which keeps it. */
   SSL_CTX_set_verify(ssl_context,
@@ -1530,8 +1552,8 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
     return 0;
   }
   /* A CA added after the context was built (pfx extras, addCACert) lands in
-   * the store the handshake-time auto-chain walks, so a leaf-only cert picks
-   * the intermediate up with no eager re-walk. */
+   * the store the handshake-time auto-chain walks, so a lone leaf-only cert
+   * picks the intermediate up with no eager re-walk. */
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 

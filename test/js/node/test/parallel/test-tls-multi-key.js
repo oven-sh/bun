@@ -101,7 +101,7 @@ test({
 
 // Key and cert with mixed algorithms, and cert chains with intermediate CAs,
 // using PFX for EC.
-testPfxChain({
+test({
   key: [
     fixtures.readKey('agent10-key.pem'),
   ],
@@ -120,7 +120,7 @@ testPfxChain({
 
 // Key and cert with mixed algorithms, and cert chains with intermediate CAs,
 // using PFX for RSA.
-testPfxChain({
+test({
   key: [
     fixtures.readKey('ec10-key.pem'),
   ],
@@ -136,11 +136,6 @@ testPfxChain({
     fixtures.readKey('ca5-cert.pem'),
   ] },
 });
-
-// Bun trusts the extra certificates of a PKCS#12 archive but does not send them as the chain.
-function testPfxChain(options) {
-  if (!process.versions.bun) test(options);
-}
 
 function test(options) {
   const rsaCN = options.rsaCN || 'agent1';

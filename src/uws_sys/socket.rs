@@ -277,6 +277,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// False while a wrapped stream has not completed a write that `write` counted.
+    pub fn transport_idle(&self) -> bool {
+        match self.socket {
+            InternalSocket::UpgradedDuplex(d) => duplex(d).transport_idle(),
+            _ => true,
+        }
+    }
+
     pub fn is_established(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_established(),

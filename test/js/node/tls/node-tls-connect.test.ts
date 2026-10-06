@@ -221,8 +221,167 @@ it("should be able to grab the JSStreamSocket constructor", () => {
   //@ts-ignore
   expect(socket._handle._parentWrap.constructor).toBeFunction();
 });
+// A TLS record that fails after the handshake is a fatal protocol error. Node
+// reports it as the socket's ERR_SSL_<REASON> 'error' and keeps the socket, so
+// a clean 'end' follows when the connection goes away. The cases that use
+// these helpers put a TCP proxy between the two TLS peers and inject a record
+// that cannot authenticate once both handshakes are done. Every assertion also
+// holds on Node.js; only the alert's code name depends on the SSL library.
+
+// application_data, legacy version TLS 1.2, 32 bytes of ciphertext that cannot
+// authenticate: the receiver fails the AEAD open and alerts bad_record_mac.
+const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+// BoringSSL and OpenSSL 3 name the bad_record_mac alert differently.
+const ALERT_BAD_RECORD_MAC = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
+  ? "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC"
+  : "ERR_SSL_SSL/TLS_ALERT_BAD_RECORD_MAC";
+
+type FaultedPeers = {
+  client: TLSSocket;
+  server: TLSSocket;
+  toClient: net.Socket;
+  toServer: net.Socket;
+  // Append `bytes` to the next chunk the proxy forwards from the server.
+  appendToNextServerChunk(bytes: Buffer): void;
+};
+
+async function withFaultProxy<T>(
+  engines: { connect: typeof tlsConnect; serverOverDuplex?: boolean },
+  body: (peers: FaultedPeers) => Promise<T>,
+): Promise<T> {
+  const sockets: (net.Socket | undefined)[] = [];
+  const servers: net.Server[] = [];
+  try {
+    const server = tls.createServer(COMMON_CERT_);
+    servers.push(server);
+    const accepted = once(server, "secureConnection") as Promise<[TLSSocket]>;
+    let upstream: net.Server = server;
+    if (engines.serverOverDuplex) {
+      // This server never listens. A TCP server hands it each connection as a generic Duplex.
+      upstream = net.createServer(raw => {
+        sockets.push(raw);
+        server.emit("connection", new SocketProxy(raw));
+      });
+      servers.push(upstream);
+    }
+    await once(upstream.listen(0, "127.0.0.1"), "listening");
+
+    let toClient: net.Socket | undefined;
+    let toServer: net.Socket | undefined;
+    let appendOnce: Buffer | undefined;
+    const proxy = net.createServer(c => {
+      toClient = c;
+      toServer = net.connect((upstream.address() as AddressInfo).port, "127.0.0.1");
+      sockets.push(c, toServer);
+      c.on("data", chunk => toServer!.write(chunk));
+      toServer.on("data", chunk => {
+        if (appendOnce) {
+          chunk = Buffer.concat([chunk, appendOnce]);
+          appendOnce = undefined;
+        }
+        c.write(chunk);
+      });
+      // However one side goes away, the other side gets a clean FIN.
+      c.on("close", () => toServer!.end());
+      toServer.on("close", () => c.end());
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+    });
+    servers.push(proxy);
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+    const client = engines.connect({
+      host: "127.0.0.1",
+      port: (proxy.address() as AddressInfo).port,
+      servername: "localhost",
+      rejectUnauthorized: false,
+    });
+    sockets.push(client);
+    await once(client, "secureConnect");
+    const [accepted_] = await accepted;
+    sockets.push(accepted_);
+    return await body({
+      client,
+      server: accepted_,
+      toClient: toClient!,
+      toServer: toServer!,
+      appendToNextServerChunk: bytes => (appendOnce = bytes),
+    });
+  } finally {
+    for (const socket of sockets) socket?.destroy();
+    for (const server of servers) server.close();
+  }
+}
+
+// The 'error', 'end' and 'close' events of `socket`, in order, up to the first
+// 'end' or 'close'. Node keeps `socket` open after the error, so `peer` ends
+// then: its FIN is what ends `socket` there.
+function faultEvents(socket: TLSSocket, peer: TLSSocket) {
+  const events: string[] = [];
+  let library: string | undefined;
+  const { promise: settled, resolve } = Promise.withResolvers<void>();
+  socket.on("error", (err: NodeJS.ErrnoException & { library?: string }) => {
+    events.push(`error ${err.code}`);
+    library = err.library;
+    peer.end();
+  });
+  socket.on("end", () => {
+    events.push("end");
+    resolve();
+  });
+  socket.on("close", hadError => {
+    events.push(`close ${hadError}`);
+    resolve();
+  });
+  socket.resume();
+  peer.on("error", () => {});
+  peer.resume();
+  return settled.then(() => ({ events: [...events], library }));
+}
+
 for (const { name, connect } of tests) {
   describe(name, () => {
+    it("a record that fails to decrypt after the handshake is the socket's ERR_SSL_* error", async () => {
+      const result = await withFaultProxy({ connect }, ({ client, server, toClient }) => {
+        const events = faultEvents(client, server);
+        toClient.write(BAD_RECORD);
+        return events;
+      });
+      expect(result).toEqual({
+        events: ["error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", "end"],
+        library: "SSL routines",
+      });
+    });
+
+    it("a paused reader keeps the data that came before the record that fails to decrypt", async () => {
+      const received = await withFaultProxy({ connect }, async ({ client, server, appendToNextServerChunk }) => {
+        client.pause();
+        const failed = once(client, "error");
+        appendToNextServerChunk(BAD_RECORD);
+        server.write("before");
+        server.on("error", () => {});
+        await failed;
+        // Node keeps the socket open after the error: the peer's FIN is what ends it there.
+        server.end();
+        return await new Response(stream.Readable.toWeb(client) as ReadableStream).text();
+      });
+      expect(received).toBe("before");
+    });
+
+    it("the peer's fatal alert after the handshake is the socket's ERR_SSL_* error", async () => {
+      // The bad record goes to the server, whose SSL_read fails and sends a
+      // bad_record_mac alert back. The client's SSL_read fails on that alert.
+      const result = await withFaultProxy({ connect }, ({ client, server, toServer }) => {
+        const events = faultEvents(client, server);
+        toServer.write(BAD_RECORD);
+        return events;
+      });
+      expect(result).toEqual({
+        events: [`error ${ALERT_BAD_RECORD_MAC}`, "end"],
+        library: "SSL routines",
+      });
+    });
+
     itNetwork("should work with alpnProtocols", done => {
       try {
         let socket: TLSSocket | null = connect({
@@ -694,6 +853,52 @@ it("setSession() after the handshake started is ignored on every node:tls door",
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual(expected);
   expect(exitCode).toBe(0);
+});
+
+describe("a fatal post-handshake SSL error over a Duplex", () => {
+  it("is still reported when a 'data' listener writes back", async () => {
+    // Good data and the bad record arrive in one chunk. The engine delivers
+    // the data first, the listener's write hits the now-fatal SSL, and the
+    // read's error must still be the one that surfaces.
+    const result = await withFaultProxy({ connect: duplexProxy }, async peers => {
+      const { client, server, appendToNextServerChunk } = peers;
+      const events = faultEvents(client, server);
+      client.on("data", () => client.write("back"));
+      server.write("first");
+      await once(client, "data");
+      appendToNextServerChunk(BAD_RECORD);
+      server.write("second");
+      return events;
+    });
+    // What follows the error depends on what the runtime does with the write.
+    expect({ first: result.events[0], library: result.library }).toEqual({
+      first: "error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      library: "SSL routines",
+    });
+  });
+
+  it("sends its own fatal alert to the peer", async () => {
+    const code = await withFaultProxy({ connect: duplexProxy }, async ({ client, server, toClient }) => {
+      client.on("error", () => {});
+      const alerted = once(server, "error");
+      toClient.write(BAD_RECORD);
+      return (await alerted)[0].code;
+    });
+    expect(code).toBe(ALERT_BAD_RECORD_MAC);
+  });
+
+  it("is reported on a server socket", async () => {
+    const result = await withFaultProxy({ connect: tlsConnect, serverOverDuplex: true }, peers => {
+      const { client, server, toServer } = peers;
+      const events = faultEvents(server, client);
+      toServer.write(BAD_RECORD);
+      return events;
+    });
+    expect(result).toEqual({
+      events: ["error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", "end"],
+      library: "SSL routines",
+    });
+  });
 });
 
 it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", async () => {

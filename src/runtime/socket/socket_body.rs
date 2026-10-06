@@ -1808,6 +1808,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
             return Ok(());
         }
+        let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
         if this.socket.get().is_detached() {
@@ -1927,9 +1928,17 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
+        // A TLS error on the established session. With no `error` handler it stays silent: the peer chose it.
+        let is_error = !first_report && success == 0;
+        if is_error {
+            callback = handlers.on_error();
+        }
+
         // Use open callback when handshake is not provided
         if callback.is_empty() {
-            callback = handlers.on_open();
+            if first_report {
+                callback = handlers.on_open();
+            }
             if callback.is_empty() {
                 if reject_unauthorized {
                     this.reject_unauthorized_connection();
@@ -1952,7 +1961,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let result: JSValue;
         // open callback only have 1 parameters and its the socket
         // you should use getAuthorizationError and authorized getter to get those values in this case
-        if is_open {
+        if is_error {
+            // `call_error_handler` below takes it.
+            result = super::uws_jsc::verify_error_to_js(&ssl_error, &global);
+        } else if is_open {
             result = match callback.call(&global, this_value, &[this_value]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),

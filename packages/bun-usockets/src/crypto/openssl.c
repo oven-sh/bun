@@ -1912,24 +1912,32 @@ static struct us_bun_verify_error_t ssl_failed_handshake_verify_error(struct us_
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
 
+/* The oldest entry, like node (crypto_tls.cc#L860), but the SSL library's first: BoringSSL queues the cipher's BAD_DECRYPT ahead of node's name for a bad record. */
+int us_ssl_take_error_reason(char *reason, size_t length) {
+  uint32_t picked = ERR_peek_error();
+  for (uint32_t queued; (queued = ERR_get_error()) != 0;) {
+    if (ERR_GET_LIB(queued) == ERR_LIB_SSL) {
+      picked = queued;
+      break;
+    }
+  }
+  ERR_clear_error();
+  if (!picked) return 0;
+  ERR_error_string_n(picked, reason, length);
+  return 1;
+}
+
 /* Park the fatal OpenSSL reason behind a failed SSL_* call where the
  * handshake-failure dispatch can find it, then drain the queue and mark the
- * socket fatal. Only parks while the handshake is unfinished: that dispatch is
+ * socket fatal. Only parks while the first handshake is unfinished: that dispatch is
  * the sole consumer, so a later reason would linger and be misreported as some
  * other socket's handshake failure. */
 static void ssl_park_fatal_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
-  if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    /* The OLDEST queued entry is the root cause and is what node reports
-     * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860);
-     * later entries wrap it or belong to another socket on this thread. */
-    unsigned long ssl_queue_err = ERR_peek_error();
-    if (ssl_queue_err != 0) {
-      ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
-                         sizeof(loop_ssl_data->ssl_last_fatal_error));
-      loop_ssl_data->ssl_last_fatal_error_owner = s;
-    }
+  if (loop_ssl_data && s->ssl_handshake_state == HANDSHAKE_PENDING &&
+      us_ssl_take_error_reason(loop_ssl_data->ssl_last_fatal_error, sizeof(loop_ssl_data->ssl_last_fatal_error))) {
+    loop_ssl_data->ssl_last_fatal_error_owner = s;
   }
   ERR_clear_error();
   s->ssl_fatal_error = 1;
@@ -2037,7 +2045,6 @@ static int ssl_renegotiate(struct us_socket_t *s) {
   uint32_t limit, window;
   us_reneg_policy(s_ssl(s), &limit, &window);
   struct us_ssl_rare_t *st = us_ssl_rare_ensure(s_ssl(s));
-  s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
   /* Wall-clock time can step backwards (NTP, manual adjustment); the
    * unsigned subtraction below would underflow and reset the window every
    * time. Only treat the window as elapsed when time has moved forward. */
@@ -2048,15 +2055,11 @@ static int ssl_renegotiate(struct us_socket_t *s) {
     st->reneg_window_start_ms = now_ms;
     st->reneg_count = 0;
   }
-  if (st->reneg_count >= limit) {
-    ssl_trigger_handshake(s, 0);
-    return 0;
-  }
+  /* Over the limit BoringSSL refuses, so every refusal queues the same SSL_R_NO_RENEGOTIATION. */
+  if (st->reneg_count >= limit) SSL_set_renegotiate_mode(s_ssl(s), ssl_renegotiate_never);
   st->reneg_count++;
-  if (!SSL_renegotiate(s_ssl(s))) {
-    ssl_trigger_handshake(s, 0);
-    return 0;
-  }
+  if (!SSL_renegotiate(s_ssl(s))) return 0;
+  s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
   return 1;
 }
 
@@ -2162,11 +2165,6 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     /* Surface ECONNRESET-style handshake failure exactly once so callers
      * (fetch, sockets) don't each have to check on_close themselves. */
     ssl_trigger_handshake_econnreset(s);
-    if (ssl_gone(s)) return s;
-  } else if (s->ssl_handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
-    /* The session was established: only a protocol failure of the renegotiation is reported. */
-    s->ssl_handshake_state = HANDSHAKE_COMPLETED;
-    ssl_dispatch_parked_reason(s);
     if (ssl_gone(s)) return s;
   }
 
@@ -2473,9 +2471,7 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   return s;
 }
 
-/* Reports a handshake that SSL_read finished, with the flight it sealed still
- * held: what the owner writes from the callback leaves in the same segment.
- * The read cursor of the shared BIO survives that JS. NULL once `s` is gone. */
+/* The flight that SSL_read sealed stays held across the report, so what the owner writes there leaves with it. NULL once `s` is gone. */
 static struct us_socket_t *ssl_report_finished_handshake(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data,
                                                          int retry_parked_write) {
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED || !SSL_is_init_finished(s_ssl(s))) return s;
@@ -2495,6 +2491,30 @@ static struct us_socket_t *ssl_report_finished_handshake(struct us_socket_t *s, 
   loop_ssl_data->ssl_socket = s;
   ssl_flush_write_batch(loop_ssl_data, s);
   return s;
+}
+
+/* What came before the failure goes first, like node's ClearOut. Whatever the owner does with the report, the connection closes here. */
+static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data,
+                                                        int read) {
+  /* Taken now: the JS below can change the thread's queue. */
+  char reason[US_SSL_FATAL_ERROR_REASON_MAX];
+  int has_reason = us_ssl_take_error_reason(reason, sizeof(reason));
+  s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
+  if (!s) return NULL;
+  s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  ssl_flush_pending_events(s);
+  if (ssl_gone(s)) return NULL;
+  if (read) {
+    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+    if (!s || ssl_gone(s)) return NULL;
+  }
+  s->ssl_fatal_error = 1;
+  if (has_reason) {
+    us_dispatch_handshake(s, 0, (struct us_bun_verify_error_t){.error = -71, .code = "EPROTO", .reason = reason});
+    if (ssl_gone(s)) return NULL;
+  }
+  ssl_close(s, 0, NULL);
+  return NULL;
 }
 
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
@@ -2598,8 +2618,9 @@ restart:
           s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
           if (!s) return NULL;
           if (ssl_renegotiate(s)) continue;
-          if (ssl_gone(s)) return NULL;
-          err = SSL_ERROR_SSL;
+          /* After our own close_notify or FIN the request has no answer: that is the end of our close. */
+          if (us_internal_ssl_is_shut_down(s)) ERR_clear_error();
+          return ssl_fail_established_session(s, loop_ssl_data, read);
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           /* The close_notify can share a read with the peer's Finished: the owner hears of the handshake before the close below. */
           s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
@@ -2646,9 +2667,11 @@ restart:
           return s;
         }
 
+        if (s->ssl_handshake_state != HANDSHAKE_PENDING || SSL_is_init_finished(s_ssl(s))) {
+          return ssl_fail_established_session(s, loop_ssl_data, read);
+        }
         /* SSL_read's name for a close_notify in place of a handshake message: https://github.com/oven-sh/bun/issues/44517 */
-        if (s->ssl_handshake_state == HANDSHAKE_PENDING &&
-            ERR_peek_error() == ERR_PACK(ERR_LIB_SSL, SSL_R_SSL_HANDSHAKE_FAILURE)) {
+        if (ERR_peek_error() == ERR_PACK(ERR_LIB_SSL, SSL_R_SSL_HANDSHAKE_FAILURE)) {
           ERR_clear_error();
           ssl_trigger_handshake_econnreset(s);
           if (ssl_gone(s)) return NULL;

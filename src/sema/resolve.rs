@@ -110,6 +110,9 @@ pub trait Host: Sync {
     /// editor (`LanguageKindToScriptKind`), and loads it under `allowNonTsExtensions`. `None`:
     /// `GetScriptKindFromFileName`.
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind>;
+    /// `extraFileExtensions`: the extensions, each with its `.`, of which the host knows the
+    /// language, besides those that TypeScript knows. `include` finds the files that have them.
+    fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
@@ -342,9 +345,19 @@ impl ScriptKind {
             _ => return None,
         })
     }
+
+    /// Whether a file called `path` is another language than its name says. JavaScript can have
+    /// JSX in it whatever it is called (`GetLanguageVariant`).
+    pub fn differs_from_name(self, path: &[u8]) -> bool {
+        ScriptKind::from_file_name(path).is_none_or(|by_name| {
+            by_name != self && !(by_name.is_javascript() && self.is_javascript())
+        })
+    }
 }
 
-/// `is_javascript`, unless the host knows better than the name.
+/// The LANGUAGE of a file: `is_javascript`, unless the host knows better than the name. What goes
+/// by the NAME of a file asks `is_javascript`: which files `include` finds, and which files are
+/// tried for `./a.js`.
 pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
     let by_name = || is_javascript(path);
     (host.script_kind(path)).map_or_else(by_name, ScriptKind::is_javascript)
@@ -1365,6 +1378,20 @@ pub(crate) fn supported_extensions(options: &Options) -> &'static [&'static [&'s
             &[b".mts", b".d.mts"],
         ]
     }
+}
+
+/// What `GetSupportedExtensions` adds for `extraFileExtensions`. TypeScript source is here what
+/// `ScriptKindDeferred` is there: a language that only the host can tell.
+pub(crate) fn extra_supported_extensions<'h>(
+    host: &'h dyn Host,
+    options: &Options,
+) -> impl Iterator<Item = &'h [u8]> {
+    let builtins = supported_extensions(options);
+    let allow_js = options.allow_js;
+    (host.extra_file_extensions().iter())
+        .filter(move |it| allow_js || !it.1.is_javascript())
+        .map(|it| &it.0[..])
+        .filter(move |it| !builtins.iter().any(|group| group.contains(it)))
 }
 
 /// `FileExtensionIsOneOf`
@@ -2502,8 +2529,12 @@ impl<'h> Resolver<'h> {
                     return None;
                 }
             }
-            // By that very name it is a source file.
-            if self.host.script_kind(path).is_some() && self.is_file(path) {
+            // By that very name it is a source file. For a name that TypeScript knows, `a.ts` and
+            // `a.d.ts` come before `a.js`, whatever language that is.
+            if ScriptKind::from_file_name(path).is_none()
+                && self.host.script_kind(path).is_some()
+                && self.is_file(path)
+            {
                 return Some(path.to_vec());
             }
             if let Some(found) = self.file(path, look) {

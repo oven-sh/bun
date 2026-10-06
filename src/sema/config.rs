@@ -5,8 +5,8 @@
 use crate::config_options::{Declaration, In, converted, is_file_path};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
-    Host, Options, ancestors, contains_path, is_same_path, join, known_extension,
-    remove_file_extension, supported_extensions, to_file_name_lower_case, to_path,
+    Host, Options, ancestors, contains_path, extra_supported_extensions, is_same_path, join,
+    known_extension, remove_file_extension, supported_extensions, to_file_name_lower_case, to_path,
 };
 use crate::session::Session;
 use crate::verify::{Place, Problem};
@@ -821,6 +821,7 @@ fn file_names_from_specs(
     }
     if !include.is_empty() {
         let mut extensions: Vec<&[u8]> = supported.iter().flat_map(|g| g.iter().copied()).collect();
+        extensions.extend(extra_supported_extensions(host, options));
         if options.resolve_json_module {
             extensions.push(b".json");
         }

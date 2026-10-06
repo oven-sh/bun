@@ -1,7 +1,7 @@
 // What `--check` checks does not depend on the kind of project that the entry point is in, on how Bun gets to the entry
 // point, or on the command: every kind of project, with every kind of entry point, with and without a type error.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
@@ -16,11 +16,14 @@ const env = {
 };
 
 const options = { strict: true, types: [], lib: ["esnext"], module: "preserve", moduleResolution: "bundler" };
+// `paths`: an option that the defaults lack, so that it shows whose options a file is checked with.
 const config = (more: object = {}, others: object = {}) =>
-  JSON.stringify({ compilerOptions: { ...options, ...more }, ...others });
+  JSON.stringify({ compilerOptions: { ...options, paths: { "@/*": ["./*"] }, ...more }, ...others });
 
-// `app`: where the entry point is, and where `bun` is started. `tsconfig`: `--tsconfig-override`.
-type Kind = { name: string; app: string; tsconfig?: string; files: Record<string, string> };
+// `app`: where the entry point is, and where `bun` is started. `tsconfig`: `--tsconfig-override`. `isSolution`: the
+// nearest tsconfig.json has no files and no options of its own, so what `include` of the projects that it references does
+// not find is checked with the defaults.
+type Kind = { name: string; app: string; tsconfig?: string; isSolution?: boolean; files: Record<string, string> };
 const kinds: Kind[] = [
   { name: "a tsconfig.json", app: ".", files: { "tsconfig.json": config({ noEmit: true }) } },
   {
@@ -41,6 +44,16 @@ const kinds: Kind[] = [
       "app/tsconfig.json": config({ composite: true, outDir: "dist" }),
     },
   },
+  {
+    // As `bun create vite` lays it out.
+    name: "beside a solution",
+    app: ".",
+    isSolution: true,
+    files: {
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] }),
+      "tsconfig.app.json": config({ noEmit: true }),
+    },
+  },
   { name: "no tsconfig.json", app: ".", files: {} },
   {
     name: "--tsconfig-override",
@@ -55,138 +68,235 @@ const run = `declare var console: { log(...args: unknown[]): void };\nconsole.lo
 const value = (isCorrect: boolean) => (isCorrect ? "1" : `"1"`);
 const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
 const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;
-const server = `/// <reference path="./html.d.ts" />\nimport page from "./index.html";\n${run}export { page };\n`;
-const serving = [
-  ["--check", "server.ts"],
-  ["check", "server.ts"],
-  ["build", "--check", "--target=bun", "server.ts"],
-];
+const server = (seen: string) =>
+  `/// <reference path="./html.d.ts" />\n${seen}import page from "./index.html";\n${run}export { page };\n`;
 
-// `wrong`: the file with the type error. `commands`: the first word is the command, or a flag of `bun`.
+type Command = "bun --check" | "bun check" | "bun build --check" | "bun build --no-bundle --check" | "Bun.build";
+const everyCommand: Command[] = [
+  "bun --check",
+  "bun check",
+  "bun build --check",
+  "bun build --no-bundle --check",
+  "Bun.build",
+];
+// `bun check` has no `--loader`.
+const withLoader = everyCommand.filter(command => command !== "bun check");
+
+// `wrong`: the file with the type error. `seen`: only resolves with `paths`, and is not there when the program runs.
+// `isIncluded`: `include` finds the entry point, by its name or by `--loader`.
 type Entry = {
   name: string;
   wrong: string;
-  stdin?: (isCorrect: boolean) => string;
-  files: (isCorrect: boolean) => Record<string, string>;
-  commands: (isCorrect: boolean) => string[][];
+  isIncluded: boolean;
+  loader?: [extension: string, loader: string];
+  target?: "bun";
+  commands: Command[];
+  main: (isCorrect: boolean, seen: string) => string[];
+  stdin?: (isCorrect: boolean, seen: string) => string;
+  files: (isCorrect: boolean, seen: string) => Record<string, string>;
 };
 const entries: Entry[] = [
   {
+    name: "a TypeScript file",
+    wrong: "imported.ts",
+    isIncluded: true,
+    commands: everyCommand,
+    main: () => ["main.ts"],
+    files: (isCorrect, seen) => ({
+      "main.ts": `${seen}import { n } from "./imported";\nexport const m: number = n;\n${run}`,
+      "imported.ts": `export const n: number = ${value(isCorrect)};\n`,
+    }),
+  },
+  {
     name: "a file without an extension",
     wrong: "cli",
-    files: isCorrect => ({ "cli": `#!/usr/bin/env bun\nexport const n: number = ${value(isCorrect)};\n${run}` }),
-    commands: () => [["--check", "cli"]],
+    isIncluded: false,
+    commands: ["bun --check"],
+    main: () => ["cli"],
+    files: (isCorrect, seen) => ({
+      "cli": `#!/usr/bin/env bun\n${seen}export const n: number = ${value(isCorrect)};\n${run}`,
+    }),
   },
   {
     name: "-e",
     wrong: "[eval]",
+    isIncluded: false,
+    commands: ["bun --check"],
+    main: (isCorrect, seen) => ["-e", `${seen}export const n: number = ${value(isCorrect)};\n${run}`],
     files: () => ({}),
-    commands: isCorrect => [["--check", "-e", `export const n: number = ${value(isCorrect)};\n${run}`]],
   },
   {
     name: "stdin",
     wrong: "[stdin]",
-    stdin: isCorrect => `export const n: number = ${value(isCorrect)};\n${run}`,
+    isIncluded: false,
+    commands: ["bun --check"],
+    main: () => ["-"],
+    stdin: (isCorrect, seen) => `${seen}export const n: number = ${value(isCorrect)};\n${run}`,
     files: () => ({}),
-    commands: () => [["--check", "-"]],
   },
   {
     name: "--loader for an extension that says nothing",
     wrong: "imported.script",
-    files: isCorrect => ({
-      "main.script": `import { n } from "./imported.script";\nexport const m: number = n;\n${run}`,
+    isIncluded: true,
+    loader: [".script", "ts"],
+    commands: withLoader,
+    main: () => ["main.script"],
+    files: (isCorrect, seen) => ({
+      "main.script": `${seen}import { n } from "./imported.script";\nexport const m: number = n;\n${run}`,
       "imported.script": `export const n: number = ${value(isCorrect)};\n`,
     }),
-    commands: () => [
-      ["--check", "--loader", ".script:ts", "main.script"],
-      ["build", "--check", "--loader", ".script:ts", "main.script"],
-    ],
   },
   {
     name: "--loader for an extension that says something else",
     wrong: "imported.js",
-    files: isCorrect => ({
-      "main.js": `import { n } from "./imported.js";\nexport const m: number = n;\n${run}`,
+    isIncluded: true,
+    loader: [".js", "ts"],
+    commands: withLoader,
+    main: () => ["main.js"],
+    files: (isCorrect, seen) => ({
+      "main.js": `${seen}import { n } from "./imported.js";\nexport const m: number = n;\n${run}`,
       "imported.js": `export const n: number = ${value(isCorrect)};\n`,
     }),
-    commands: () => [
-      ["--check", "--loader", ".js:ts", "main.js"],
-      ["build", "--check", "--loader", ".js:ts", "main.js"],
-    ],
+  },
+  // What is only imported for its types is not in a bundle.
+  ...[".script", ".js"].map(
+    (extension): Entry => ({
+      name: `--loader ${extension}:ts, a file that is only imported for its types`,
+      wrong: `types${extension}`,
+      isIncluded: true,
+      loader: [extension, "ts"],
+      commands: withLoader,
+      main: () => [`main${extension}`],
+      files: (isCorrect, seen) => ({
+        [`main${extension}`]: `${seen}import type { N } from "./types${extension}";\nexport const m: N = 1;\n${run}`,
+        [`types${extension}`]: `export type N = number;\nexport const n: N = ${value(isCorrect)};\n`,
+      }),
+    }),
+  ),
+  {
+    // Without `allowJs`.
+    name: "a JavaScript file with its declaration file",
+    wrong: "main.ts",
+    isIncluded: true,
+    commands: everyCommand,
+    main: () => ["main.ts"],
+    files: (isCorrect, seen) => ({
+      "main.ts": `${seen}import { f } from "./legacy.js";\nexport const n: number = f();\n${run}`,
+      "legacy.js": `export function f() {\n  return 1;\n}\n`,
+      "legacy.d.ts": `export declare function f(): ${isCorrect ? "number" : "string"};\n`,
+    }),
   },
   {
     name: "a page with a TypeScript file",
     wrong: "client.ts",
-    files: isCorrect => ({
+    isIncluded: true,
+    target: "bun",
+    commands: everyCommand,
+    main: () => ["server.ts"],
+    files: (isCorrect, seen) => ({
       "html.d.ts": html,
       "index.html": page("./client.ts"),
-      "client.ts": `export const n: number = ${value(isCorrect)};\n`,
-      "server.ts": server,
+      "client.ts": `${seen}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(seen),
     }),
-    commands: () => serving,
   },
   {
     // Without `allowJs`.
     name: "a page with a JavaScript file",
     wrong: "typed.ts",
-    files: isCorrect => ({
+    isIncluded: true,
+    target: "bun",
+    commands: everyCommand,
+    main: () => ["server.ts"],
+    files: (isCorrect, seen) => ({
       "html.d.ts": html,
       "index.html": page("./client.js"),
       "client.js": `import "./typed";\n`,
-      "typed.ts": `export const n: number = ${value(isCorrect)};\n`,
-      "server.ts": server,
+      "typed.ts": `${seen}export const n: number = ${value(isCorrect)};\n`,
+      "server.ts": server(seen),
     }),
-    commands: () => serving,
   },
 ];
 
-const cases = kinds.flatMap(kind => entries.map(entry => [`${kind.name}: ${entry.name}`, kind, entry] as const));
-
-test.concurrent.each(cases)("%s", async (_, kind, entry) => {
-  for (const isCorrect of [true, false]) {
-    const inApp = Object.entries(entry.files(isCorrect)).map(([name, text]) => [join(kind.app, name), text]);
-    // So that there is an `app`.
-    using dir = tempDir("bun-check", {
-      ...kind.files,
-      ...Object.fromEntries(inApp),
-      [join(kind.app, "empty.txt")]: "",
-    });
-    const results = entry.commands(isCorrect).map(async ([first, ...rest]) => {
-      const tsconfig = kind.tsconfig ? [first === "check" ? "--project" : "--tsconfig-override", kind.tsconfig] : [];
-      const cmd =
-        first === "check"
-          ? ["check", ...tsconfig, ...rest]
-          : first === "build"
-            ? ["build", ...tsconfig, ...rest, "--outdir", "out"]
-            : [...tsconfig, first, ...rest];
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), ...cmd],
-        cwd: join(String(dir), kind.app),
-        env,
-        stdin: entry.stdin ? new Blob([entry.stdin(isCorrect)]) : "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const printed = stdout + stderr;
-      return {
-        cmd: cmd.join(" "),
-        codes: [...new Set(printed.match(/\bTS\d+/g))],
-        namesTheFile: printed.includes(entry.wrong),
-        ran: stdout.includes("it ran"),
-        exitCode,
+function argumentsOf(command: Command, kind: Kind, entry: Entry, main: string[]) {
+  const tsconfig = kind.tsconfig ? ["--tsconfig-override", kind.tsconfig] : [];
+  const loader = entry.loader ? ["--loader", entry.loader.join(":")] : [];
+  const target = entry.target ? [`--target=${entry.target}`] : [];
+  switch (command) {
+    case "bun --check":
+      return [...tsconfig, "--check", ...loader, ...main];
+    case "bun check":
+      return ["check", ...(kind.tsconfig ? ["--project", kind.tsconfig] : []), ...main];
+    case "bun build --check":
+      return ["build", ...tsconfig, "--check", ...loader, ...target, ...main, "--outdir", "out"];
+    case "bun build --no-bundle --check":
+      return ["build", ...tsconfig, "--no-bundle", "--check", ...loader, ...target, ...main];
+    case "Bun.build": {
+      const build = {
+        entrypoints: main,
+        outdir: "out",
+        check: true,
+        throw: false,
+        tsconfig: kind.tsconfig,
+        target: entry.target,
+        loader: entry.loader && Object.fromEntries([entry.loader]),
       };
-    });
-    expect(await Promise.all(results)).toEqual(
-      (await Promise.all(results)).map(({ cmd }) => ({
-        cmd,
-        codes: isCorrect ? [] : ["TS2322"],
-        namesTheFile: !isCorrect,
-        ran: isCorrect && !/^(check|build) /.test(cmd),
-        exitCode: isCorrect ? 0 : 1,
-      })),
-    );
+      return [
+        "-e",
+        `const { success, logs } = await Bun.build(${JSON.stringify(build)});
+        for (const log of logs) console.error(log.position?.file, log.message);
+        process.exit(success ? 0 : 1);`,
+      ];
+    }
   }
+}
+
+// Each takes a process. A debug build runs a sample of them.
+const every = isDebug || isASAN ? 3 : 1;
+const cases = kinds
+  .flatMap(kind =>
+    entries.flatMap(entry =>
+      entry.commands.flatMap(command =>
+        [true, false].map(isCorrect => {
+          const name = `${kind.name}: ${entry.name}: ${command}, ${isCorrect ? "no error" : "an error"}`;
+          return [name, kind, entry, command, isCorrect] as const;
+        }),
+      ),
+    ),
+  )
+  .filter((_, index) => index % every === 0);
+
+test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => {
+  const hasPaths = Object.keys(kind.files).length > 0 && (entry.isIncluded || !kind.isSolution);
+  const seen = hasPaths ? `import type { Seen } from "@/seen";\nexport type Used = Seen;\n` : "";
+  const inApp = Object.entries(entry.files(isCorrect, seen)).map(([name, text]) => [join(kind.app, name), text]);
+  using dir = tempDir("bun-check", {
+    ...kind.files,
+    ...Object.fromEntries(inApp),
+    [join(kind.app, "seen.ts")]: `export type Seen = number;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, seen))],
+    cwd: join(String(dir), kind.app),
+    env,
+    stdin: entry.stdin ? new Blob([entry.stdin(isCorrect, seen)]) : "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // `--no-bundle` prints the program.
+  const printed = command === "bun build --no-bundle --check" ? stderr : stdout + stderr;
+  expect({
+    codes: [...new Set(printed.match(/\bTS\d+/g))],
+    namesTheFile: printed.includes(entry.wrong),
+    ran: command === "bun --check" && stdout.includes("it ran"),
+    exitCode,
+  }).toEqual({
+    codes: isCorrect ? [] : ["TS2322"],
+    namesTheFile: !isCorrect,
+    ran: isCorrect && command === "bun --check",
+    exitCode: isCorrect ? 0 : 1,
+  });
 });
 
 test("Bun.build: the check has the conditions and the loaders of the build, not those of the process", async () => {

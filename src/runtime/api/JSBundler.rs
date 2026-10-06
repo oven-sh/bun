@@ -131,6 +131,8 @@ pub(crate) mod js_bundler {
         pub(crate) allow_unresolved: Option<StringSet>,
         pub(crate) source_map: options::SourceMapOption,
         pub(crate) public_path: OwnedString,
+        /// `tsconfig`: `--tsconfig-override`. Absolute.
+        pub(crate) tsconfig_override: OwnedString,
         pub(crate) conditions: StringSet,
         pub(crate) packages: options::PackagesOption,
         pub(crate) format: options::Format,
@@ -204,6 +206,7 @@ pub(crate) mod js_bundler {
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
+                tsconfig_override: OwnedString::default(),
                 conditions: StringSet::default(),
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
@@ -1125,6 +1128,15 @@ pub(crate) mod js_bundler {
 
             if let Some(slice) = config.get_optional_slice(global_this, b"publicPath")? {
                 this.public_path.append_slice_exact(slice.slice())?;
+                drop(slice);
+            }
+
+            if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                use bun_paths::{platform::Auto, resolve_path::join_abs_string_spill};
+                let cwd = bun_resolver::fs::FileSystem::instance().top_level_dir;
+                let mut spill = Vec::new();
+                let path = join_abs_string_spill::<Auto>(cwd, &mut spill, &[slice.slice()]);
+                this.tsconfig_override.append_slice_exact(path)?;
                 drop(slice);
             }
 

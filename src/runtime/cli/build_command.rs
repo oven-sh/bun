@@ -154,15 +154,15 @@ impl BuildCommand {
         if ctx.bundler_options.check && ctx.bundler_options.transform_only {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
-            if !crate::cli::check_command::check_for_build_command(
-                bun_resolver::fs::FileSystem::instance().top_level_dir,
-                ctx.args.tsconfig_override.as_deref(),
-                &ctx.args.conditions,
-                &mut (entry_points.map(|path| &**path))
-                    .filter(|path| crate::cli::check_command::has_types(path)),
-                &mut core::iter::empty(),
-                log_ref,
-            ) {
+            let checked = options::TypeChecked {
+                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
+                tsconfig: ctx.args.tsconfig_override.as_deref(),
+                conditions: &ctx.args.conditions,
+                loaders: &this_transpiler.options.loaders,
+                entry_points: &mut entry_points.map(|path| &**path),
+                sources: &mut core::iter::empty(),
+            };
+            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;

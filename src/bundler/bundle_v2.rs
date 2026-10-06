@@ -2564,14 +2564,15 @@ pub mod bv2_impl {
                             && bun_sys::exists(source.path.text))
                 })
                 .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
-            if type_check(
-                self.transpiler.fs().top_level_dir,
-                self.transpiler.options.tsconfig_override.as_deref(),
-                &self.transpiler.options.custom_conditions,
-                &mut entry_points,
-                &mut sources,
-                self.transpiler.log_mut(),
-            ) {
+            let checked = options::TypeChecked {
+                cwd: self.transpiler.fs().top_level_dir,
+                tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
+                conditions: &self.transpiler.options.custom_conditions,
+                loaders: &self.transpiler.options.loaders,
+                entry_points: &mut entry_points,
+                sources: &mut sources,
+            };
+            if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());
             }
             Err(crate::Error::BuildFailed)

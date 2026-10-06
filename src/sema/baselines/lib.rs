@@ -371,6 +371,9 @@ impl Host for Virtual {
     fn script_kind(&self, _path: &[u8]) -> Option<bun_sema::resolve::ScriptKind> {
         None
     }
+    fn extra_file_extensions(&self) -> &[(Vec<u8>, bun_sema::resolve::ScriptKind)] {
+        &[]
+    }
     fn scripts_of_page(&self, _page: &[u8]) -> Vec<Vec<u8>> {
         Vec::new()
     }

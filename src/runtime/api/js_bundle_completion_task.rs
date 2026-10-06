@@ -1276,6 +1276,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             drop: config.drop.keys().to_vec(),
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
+            tsconfig_override: (!config.tsconfig_override.list.is_empty())
+                .then(|| Box::from(config.tsconfig_override.list.as_slice())),
             ..Default::default()
         };
 

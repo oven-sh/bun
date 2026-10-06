@@ -791,6 +791,9 @@ impl Host for Disk {
         let scripts = self.scripts_of_page.as_ref().map(|of| of(page));
         scripts.unwrap_or_default()
     }
+    fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
+        &self.script_kinds_by_extension
+    }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
         if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() {
             return None;

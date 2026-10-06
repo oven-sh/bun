@@ -26,7 +26,8 @@ use bun_sema::program::{FileId, Files};
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
     Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
-    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
+    is_javascript, is_javascript_file, is_relative, is_same_path, join,
+    output_declaration_file_name, to_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -441,8 +442,8 @@ pub struct Request<'a> {
     pub are_entry_points: bool,
     /// `Host::script_kind` of those of `paths` whose names do not tell what they are run as.
     pub script_kinds: &'a [(Vec<u8>, ScriptKind)],
-    /// `--loader .js:ts`: `Host::script_kind` of the files of the project with an extension, which
-    /// starts with the `.`.
+    /// `--loader .js:ts`: `Host::extra_file_extensions`, which is also `Host::script_kind` of the
+    /// files of the project that have them.
     pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
@@ -1094,8 +1095,8 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         explicit.clone().or_else(nearest)
     };
     let mut projects = Projects {
-        counts_javascript: request.are_entry_points
-            && paths.iter().any(|it| is_javascript_file(disk, it)),
+        // By its name, as `include` finds it.
+        counts_javascript: request.are_entry_points && paths.iter().any(|it| is_javascript(it)),
         ..Default::default()
     };
     if paths.is_empty() {
@@ -1565,6 +1566,9 @@ impl Host for WithOutputs<'_> {
     }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
         self.disk.script_kind(path)
+    }
+    fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
+        self.disk.extra_file_extensions()
     }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)

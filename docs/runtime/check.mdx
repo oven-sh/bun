@@ -387,6 +387,8 @@ note: TS6500: The expected type comes from property 'age' which is declared here
 
 Pass `check: true` to [`Bun.build`](/bundler). A type error fails the build like any other build error. Each one is a `BuildMessage` whose message starts with the TypeScript error code.
 
+The check uses the `tsconfig`, `conditions`, and `loader` options of the build.
+
 ```ts build.ts icon="/icons/typescript.svg"
 const result = await Bun.build({
   entrypoints: ["./src/index.ts"],

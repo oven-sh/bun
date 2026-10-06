@@ -4,6 +4,7 @@
 
 use bstr::BStr;
 
+use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
@@ -708,7 +709,12 @@ impl<'a> EntryPoint<'a> {
 pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
     use bun_core::strings::without_utf8_bom;
     let cwd = working_directory();
-    let Some((paths, script_kinds)) = what_to_check(&cwd, entry_points) else {
+    // `--loader`, `--conditions`
+    let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
+    let loaders = args.and_then(|args| args.loaders.as_ref());
+    let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
+    let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
+    let Some((paths, script_kinds)) = what_to_check(&cwd, entry_points, &by_extension) else {
         return true;
     };
     let mut in_memory =
@@ -718,16 +724,6 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         before_read,
         ..Default::default()
     };
-    // `--loader`, `--conditions`
-    let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
-    let loaders = args.and_then(|args| args.loaders.as_ref());
-    let by_extension: Vec<(Vec<u8>, ScriptKind)> = (loaders.into_iter())
-        .flat_map(|it| it.extensions.iter().zip(&it.loaders))
-        .filter_map(|(extension, &loader)| {
-            let loader = <bun_ast::Loader as bun_options_types::LoaderExt>::from_api(loader);
-            Some((extension.to_vec(), script_kind_of(loader)?))
-        })
-        .collect();
     let entries = Entries {
         paths: &paths,
         script_kinds: &script_kinds,
@@ -746,6 +742,22 @@ fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
         Loader::Tsx => ScriptKind::Tsx,
         _ => return None,
     })
+}
+
+/// `Request::script_kinds_by_extension`: the extensions that `loaders`, which has those that Bun
+/// knows too, loads as another language than TypeScript takes them for.
+fn script_kinds_by_extension(loaders: &bun_ast::LoaderHashTable) -> Vec<(Vec<u8>, ScriptKind)> {
+    (loaders.iter())
+        .filter_map(|(extension, &loader)| Some((extension, script_kind_of(loader)?)))
+        .filter(|(extension, script_kind)| script_kind.differs_from_name(extension))
+        .map(|(extension, script_kind)| (extension.to_vec(), script_kind))
+        .collect()
+}
+
+/// `has_types`, or `by_extension` says so.
+fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
+    let extension = bun_paths::extension(path);
+    has_types(path) || by_extension.iter().any(|it| it.0 == extension)
 }
 
 /// `before_read` of `check_before` under `--watch`. The file watcher of `vm` knows a file before the
@@ -776,48 +788,32 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 }
 
 /// `BundleOptions::type_check` for `bun build --check`.
-pub(crate) fn check_for_build_command(
-    cwd: &[u8],
-    tsconfig: Option<&[u8]>,
-    conditions: &[Box<[u8]>],
-    entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8], bun_ast::Loader)>,
-    log: &mut bun_ast::Log,
-) -> bool {
-    check_for_build(cwd, tsconfig, conditions, entry_points, sources, log, true)
+pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+    check_for_build(checked, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
-pub(crate) fn check_for_bun_build(
-    cwd: &[u8],
-    tsconfig: Option<&[u8]>,
-    conditions: &[Box<[u8]>],
-    entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8], bun_ast::Loader)>,
-    log: &mut bun_ast::Log,
-) -> bool {
-    check_for_build(cwd, tsconfig, conditions, entry_points, sources, log, false)
+pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+    check_for_build(checked, log, false)
 }
 
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
 /// build reports like its own. It runs on the thread of the bundler.
-fn check_for_build(
-    cwd: &[u8],
-    tsconfig: Option<&[u8]>,
-    conditions: &[Box<[u8]>],
-    entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8], bun_ast::Loader)>,
-    log: &mut bun_ast::Log,
-    shows_progress: bool,
-) -> bool {
+fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+    let TypeChecked {
+        cwd,
+        tsconfig,
+        conditions,
+        loaders,
+        entry_points,
+        sources,
+    } = checked;
+    let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
     let mut sources = sources.map(|(path, text, loader)| {
-        let script_kind = script_kind_of(loader);
-        if script_kind.is_some()
-            && script_kind != ScriptKind::from_file_name(path)
-            && !bun_core::strings::contains(path, bun_paths::NODE_MODULES_NEEDLE)
-        {
+        let script_kind = script_kind_of(loader).filter(|it| it.differs_from_name(path));
+        if !bun_core::strings::contains(path, bun_paths::NODE_MODULES_NEEDLE) {
             script_kinds.extend(script_kind.map(|it| (path.to_vec(), it)));
         }
         (path, text)
@@ -827,7 +823,9 @@ fn check_for_build(
         ..Default::default()
     };
     // Not `App.svelte`, which a plugin turns into TypeScript.
-    let is_source = |path: &&[u8]| has_types(path) || script_kinds.iter().any(|it| it.0 == **path);
+    let is_source = |path: &&[u8]| {
+        has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
+    };
     let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
         .map(<[u8]>::to_vec)
         .collect();
@@ -838,8 +836,8 @@ fn check_for_build(
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
         script_kinds: &script_kinds,
+        script_kinds_by_extension: &by_extension,
         conditions,
-        ..Default::default()
     });
     let then = |report| report;
     let report = match shows_progress {
@@ -916,7 +914,9 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
 fn what_to_check(
     cwd: &[u8],
     entry_points: &[EntryPoint],
+    by_extension: &[(Vec<u8>, ScriptKind)],
 ) -> Option<(Vec<Vec<u8>>, Vec<(Vec<u8>, ScriptKind)>)> {
+    let has_types = |path: &[u8]| has_types_with(by_extension, path);
     let (mut paths, mut script_kinds) = (Vec::new(), Vec::new());
     for entry_point in entry_points {
         let path = entry_point.path;
@@ -931,7 +931,7 @@ fn what_to_check(
                 continue;
             };
             paths.push(path.to_vec());
-            if Some(script_kind) != ScriptKind::from_file_name(path) {
+            if script_kind.differs_from_name(path) {
                 script_kinds.push((path.to_vec(), script_kind));
             }
         } else if has_types(path) {

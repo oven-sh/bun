@@ -1193,21 +1193,26 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// `BundleOptions::type_check`. `entry_points` yields the path of each JavaScript or TypeScript
-/// file that an entry point resolved to, or that a page which is an entry point imports. `sources`
-/// yields the path, the text and the loader of each JavaScript, TypeScript and JSON file of the
-/// bundle, which the type checker takes instead of reading the file again. `tsconfig`:
-/// `tsconfig_override`, which the resolver reads in place of every other. `conditions`:
-/// `custom_conditions`. Errors are added to `log`, or reported in another way. Returns whether the
-/// build goes on.
-pub type TypeCheck = fn(
-    cwd: &[u8],
-    tsconfig: Option<&[u8]>,
-    conditions: &[Box<[u8]>],
-    entry_points: &mut dyn Iterator<Item = &[u8]>,
-    sources: &mut dyn Iterator<Item = (&[u8], &[u8], Loader)>,
-    log: &mut bun_ast::Log,
-) -> bool;
+/// What `BundleOptions::type_check` checks.
+pub struct TypeChecked<'a, 'i> {
+    pub cwd: &'a [u8],
+    /// `tsconfig_override`, which the resolver reads in place of every other.
+    pub tsconfig: Option<&'a [u8]>,
+    /// `custom_conditions`
+    pub conditions: &'a [Box<[u8]>],
+    /// `loaders`. A file that only has types is not in the bundle, so not among `sources`.
+    pub loaders: &'a LoaderHashTable,
+    /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
+    /// page imports.
+    pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
+    /// bundle, which the type checker takes instead of reading the file again.
+    pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+}
+
+/// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
+/// whether the build goes on.
+pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {

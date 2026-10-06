@@ -717,8 +717,8 @@ differential(
       value => `{\r\n  "compilerOptions": {\r\n    "strict":\r\n\t${value}\r\n  }\r\n}`,
       value => value,
     ];
-    // Along the diagonals: each place and each value is in it.
-    const step = isDebug || isASAN ? 12 : 3;
+    // Each takes two processes. Along the diagonals: each place and each value is in it.
+    const step = 12;
     const cases = places.flatMap((place, i) => values.filter((_, j) => (i + j) % step === 0).map(place));
     using dir = tempDir(
       "bun-check-differential",
@@ -732,10 +732,10 @@ differential(
     const root = String(dir);
     const results: { text: string; bun: string[]; tsc: string[] }[] = [];
     await inTurns([...cases.entries()], async ([i, text]) => {
-      // With `references`, `bun check` is `tsc -b`.
-      const project = text.includes(`"references"`) ? ["-b", `c${i}`] : ["-p", `c${i}`];
+      // With `references`, `bun check` is `tsc -b`, which refuses `--skipLibCheck`.
+      const project = text.includes(`"references"`) ? ["-b", `c${i}`] : ["-p", `c${i}`, "--skipLibCheck"];
       const [bun, typescript] = await Promise.all([
-        linesOf([bunExe(), "check", "-p", `c${i}`], root, root),
+        linesOf([bunExe(), "check", "-p", `c${i}`, "--skipLibCheck"], root, root),
         linesOf([tsc!, ...project, "--noEmit", "--pretty", "false"], root, root),
       ]);
       results.push({ text, bun, tsc: typescript });

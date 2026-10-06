@@ -26,9 +26,9 @@ pub struct Store {
     /// Accessed from multiple threads
     pub(crate) entries: entry::List,
     pub(crate) nodes: node::List,
-    /// For each workspace package, the node that owns its dependencies. The entry of that node
-    /// is linked into the workspace's node_modules. Every other entry of the package is a link
-    /// to the workspace directory.
+    /// For each workspace package in the store, the node that owns its dependencies: a child of
+    /// the root node. The installer links the entry of that node into the workspace's
+    /// node_modules. Every other entry of the package is a link to the workspace directory.
     pub(crate) workspace_owners: HashMap<PackageID, node::Id>,
 }
 

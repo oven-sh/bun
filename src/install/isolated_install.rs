@@ -43,7 +43,9 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{
+    EdgeFilter, filter_dependency_or_workspace, is_filtered_dependency_or_workspace,
+};
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
@@ -365,18 +367,40 @@ pub(crate) fn build_store(
     let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::default();
 
     // A workspace has one directory and one node_modules, so one node owns its
-    // dependencies: the node of root's edge to the workspace. Every other node of
-    // the workspace is a link to the directory, whichever tag its edge has (a
-    // `workspace:` reference, a peer bound by name, a range the resolver linked).
-    // The value is `INVALID` while the owner is queued.
+    // dependencies: a child of the root node that root does not link. Every other
+    // node of the workspace is a link to the directory, whichever tag its edge has
+    // (a `workspace:` reference, a peer bound by name, a range the resolver linked).
+    // The value is `INVALID` while the owner waits in `pending_owners`.
     let mut workspace_owners: HashMap<PackageID, store::node::Id> = HashMap::default();
+
+    // Owners to walk, first in first out: root's `workspaces` edges, then the owner
+    // of each workspace that a reference reaches and root did not queue (`--filter`
+    // did not select it, or root has no `workspaces` edge to it). The walk takes
+    // them before root's own dependencies, where an install of everything has them.
+    let mut pending_owners: LinearFifo<QueuedNode, DynamicBuffer<QueuedNode>> =
+        LinearFifo::<QueuedNode, DynamicBuffer<QueuedNode>>::init();
 
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
     // First pass: create full dependency tree with resolved peers
-    'next_node: while let Some(entry) = node_queue.pop() {
+    'next_node: loop {
+        // An owner is walked between two children of the root node, so every node
+        // created before it has its whole subtree.
+        let next_owner = if node_queue
+            .last()
+            .is_none_or(|next| next.parent_id == store::node::Id::ROOT)
+        {
+            pending_owners.read_item()
+        } else {
+            None
+        };
+        let owns_workspace = next_owner.is_some();
+        let Some(entry) = next_owner.or_else(|| node_queue.pop()) else {
+            break;
+        };
+
         'check_cycle: {
             // check for cycles
             let mut nodes_slice = nodes.slice();
@@ -412,10 +436,10 @@ pub(crate) fn build_store(
 
                     // ensure the dependency name is the same before skipping the cycle. if they aren't
                     // we lose dependency name information for the symlinks
-                    if curr_dep.name_hash == entry_dep.name_hash &&
-                        // also ensure workspace self deps are not skipped.
-                        // implicit workspace dep != explicit workspace dep
-                        curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
+                    if curr_dep.name_hash == entry_dep.name_hash
+                        // A reference to a workspace from below its owner is a link to
+                        // the workspace, like every other reference. It is not the owner.
+                        && workspace_owners.get(&entry.pkg_id) != Some(&curr_id)
                     {
                         node_nodes[entry.parent_id.get() as usize].push(curr_id);
                         continue 'next_node;
@@ -433,47 +457,35 @@ pub(crate) fn build_store(
         // of these packages should only be pulled in once, but we might need to create more than
         // one entry if there's multiple dependencies on the workspace or root package.
         let mut skip_dependencies = entry.pkg_id == 0 && entry.dep_id != invalid_dependency_id;
-        let mut owns_workspace = false;
 
         if entry.dep_id != invalid_dependency_id {
             let entry_dep = &dependencies[entry.dep_id as usize];
 
-            if pkg_resolutions[entry.pkg_id as usize].tag == ResolutionTag::Workspace {
-                if entry_dep.behavior.is_workspace() {
-                    owns_workspace = true;
-                } else if !workspace_owners.contains_key(&entry.pkg_id) {
-                    // Root does not queue this workspace (--filter, `bun install <pkgs>`),
-                    // and something it installs depends on it.
+            if owns_workspace {
+                workspace_owners.put(entry.pkg_id, node_id)?;
+            } else if pkg_resolutions[entry.pkg_id as usize].tag == ResolutionTag::Workspace {
+                skip_dependencies = true;
+
+                let owner = workspace_owners.get_or_put(entry.pkg_id)?;
+                if !owner.found_existing {
+                    // Root did not queue this workspace. Its owner is a child of the root
+                    // node all the same: it has the place and the peers that an install
+                    // of everything gives it, not those of the package that reached it.
+                    *owner.value_ptr = store::node::Id::INVALID;
                     let root_deps = pkg_dependency_slices[0];
                     let root_edge = (root_deps.begin()..root_deps.end()).find(|&dep_id| {
                         dependencies[dep_id as usize].behavior.is_workspace()
                             && resolutions[dep_id as usize] == entry.pkg_id
                     });
-                    match root_edge {
-                        // Root's edge owns the dependencies here too: the workspace keeps
-                        // its own place in the tree, not the place of its first dependent.
-                        // Last in the queue: every node its subtree can dedupe to is final
-                        // by then.
-                        Some(dep_id) => {
-                            workspace_owners.put(entry.pkg_id, store::node::Id::INVALID)?;
-                            node_queue.insert(
-                                0,
-                                QueuedNode {
-                                    parent_id: store::node::Id::ROOT,
-                                    dep_id,
-                                    pkg_id: entry.pkg_id,
-                                },
-                            );
-                        }
-                        // A `workspace:<path>` outside root's `workspaces`: the first
-                        // node to reach it owns its dependencies.
-                        None => owns_workspace = true,
-                    }
+                    pending_owners.write_item(QueuedNode {
+                        parent_id: store::node::Id::ROOT,
+                        // Root has no `workspaces` edge to a `workspace:<path>` outside
+                        // `workspaces`, or to a workspace that its own dependency of the
+                        // same name replaced. The owner then has the edge that reached it.
+                        dep_id: root_edge.unwrap_or(entry.dep_id),
+                        pkg_id: entry.pkg_id,
+                    })?;
                 }
-                if owns_workspace {
-                    workspace_owners.put(entry.pkg_id, node_id)?;
-                }
-                skip_dependencies = !owns_workspace;
             }
 
             'dont_dedupe: {
@@ -682,7 +694,10 @@ pub(crate) fn build_store(
             }
 
             for &dep_id in &dep_ids_sort_buf {
-                if is_filtered_dependency_or_workspace(
+                let pkg_id = resolutions[dep_id as usize];
+                let dep = &dependencies[dep_id as usize];
+
+                match filter_dependency_or_workspace(
                     dep_id,
                     entry.pkg_id,
                     workspace_filters,
@@ -691,11 +706,19 @@ pub(crate) fn build_store(
                     lockfile,
                     resolutions,
                 ) {
-                    continue;
+                    EdgeFilter::Install => {}
+                    EdgeFilter::Skip => continue,
+                    // Root's edge is not installed, and a peer below root still binds to
+                    // it. The store then has the names of an install of everything, which
+                    // are the names `bun prune` keeps.
+                    EdgeFilter::NotSelected => {
+                        if !dep.behavior.is_peer() {
+                            node_dependencies[node_id.get() as usize]
+                                .push(store::node::DependencyIds { dep_id, pkg_id });
+                        }
+                        continue;
+                    }
                 }
-
-                let pkg_id = resolutions[dep_id as usize];
-                let dep = &dependencies[dep_id as usize];
 
                 // TODO: handle duplicate dependencies. should be similar logic
                 // like we have for dev dependencies in `hoistDependency`
@@ -719,11 +742,22 @@ pub(crate) fn build_store(
         }
 
         if node_id == store::node::Id::ROOT {
-            for queued in &node_queue[queue_mark..] {
+            // Root's `workspaces` edges are the owners of the workspaces that root queues.
+            let mut kept = queue_mark;
+            for index in queue_mark..node_queue.len() {
+                let queued = node_queue[index];
                 if dependencies[queued.dep_id as usize].behavior.is_workspace() {
-                    workspace_owners.put(queued.pkg_id, store::node::Id::INVALID)?;
+                    let owner = workspace_owners.get_or_put(queued.pkg_id)?;
+                    if !owner.found_existing {
+                        *owner.value_ptr = store::node::Id::INVALID;
+                        pending_owners.write_item(queued)?;
+                        continue;
+                    }
                 }
+                node_queue[kept] = queued;
+                kept += 1;
             }
+            node_queue.truncate(kept);
         }
 
         for &peer_dep_id in &peer_dep_ids {
@@ -873,6 +907,16 @@ pub(crate) fn build_store(
         );
     }
 
+    if Environment::CI_ASSERT {
+        let node_parent_ids = nodes.items_parent_id();
+        for &owner in workspace_owners.values() {
+            assert!(
+                owner != store::node::Id::INVALID
+                    && node_parent_ids[owner.get() as usize] == store::node::Id::ROOT
+            );
+        }
+    }
+
     let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::default();
 
     let mut res_fmt_buf: Vec<u8> = Vec::new();
@@ -901,18 +945,20 @@ pub(crate) fn build_store(
     'next_entry: while let Some(entry) = entry_queue.read_item() {
         let pkg_id = node_pkg_ids[entry.node_id.get() as usize];
 
+        // `Some` for a workspace: the node that owns its dependencies.
+        let workspace_owner = if pkg_resolutions[pkg_id as usize].tag == ResolutionTag::Workspace {
+            workspace_owners.get(&pkg_id).copied()
+        } else {
+            None
+        };
+        let is_workspace_owner = workspace_owner == Some(entry.node_id);
+
         let dedupe_entry = dedupe.get_or_put(pkg_id)?;
         if !dedupe_entry.found_existing {
             *dedupe_entry.value_ptr = Vec::new();
         } else {
             let curr_peers = &node_peers[entry.node_id.get() as usize];
             let curr_dep_id = node_dep_ids[entry.node_id.get() as usize];
-            let workspace_owner =
-                if pkg_resolutions[pkg_id as usize].tag == ResolutionTag::Workspace {
-                    workspace_owners.get(&pkg_id).copied()
-                } else {
-                    None
-                };
 
             for info in dedupe_entry.value_ptr.iter() {
                 if info.dep_id == invalid_dependency_id || curr_dep_id == invalid_dependency_id {
@@ -923,7 +969,7 @@ pub(crate) fn build_store(
                 // The owner's entry gets the workspace's dependencies. A link's entry gets none.
                 if let Some(owner) = workspace_owner {
                     let info_node_id = store_entries.items_node_id()[info.entry_id.get() as usize];
-                    if (info_node_id == owner) != (entry.node_id == owner) {
+                    if (info_node_id == owner) != is_workspace_owner {
                         continue;
                     }
                 }
@@ -946,12 +992,6 @@ pub(crate) fn build_store(
 
                     let parents = &mut entry_parents[info.entry_id.get() as usize];
 
-                    if curr_dep_id != invalid_dependency_id
-                        && dependencies[curr_dep_id as usize].behavior.is_workspace()
-                    {
-                        parents.push(entry.entry_parent_id);
-                        continue 'next_entry;
-                    }
                     let ctx = store::entry::DependenciesOrderedArraySetCtx {
                         string_buf,
                         dependencies,
@@ -1010,9 +1050,15 @@ pub(crate) fn build_store(
                 break 'hoisted false;
             }
 
-            let dep_name = dependencies[new_entry_dep_id as usize]
-                .name
-                .slice(string_buf);
+            let new_entry_dep = &dependencies[new_entry_dep_id as usize];
+
+            // The owner of a workspace that root does not list has the edge of a
+            // reference. The entry of the reference claims that name.
+            if is_workspace_owner && !new_entry_dep.behavior.is_workspace() {
+                break 'hoisted false;
+            }
+
+            let dep_name = new_entry_dep.name.slice(string_buf);
 
             let Some(hoist_pattern) = &manager.options.hoist_pattern else {
                 let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
@@ -1044,12 +1090,9 @@ pub(crate) fn build_store(
 
         if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {
             'skip_adding_dependency: {
-                if new_entry_dep_id != invalid_dependency_id
-                    && dependencies[new_entry_dep_id as usize]
-                        .behavior
-                        .is_workspace()
-                {
-                    // skip implicit workspace dependencies on the root.
+                if is_workspace_owner {
+                    // Root does not depend on the owner of a workspace. It depends on a
+                    // workspace only through a reference, which has an entry of its own.
                     break 'skip_adding_dependency;
                 }
 
@@ -1988,9 +2031,6 @@ pub(crate) fn install_isolated_packages(
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
-
-        let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
-        seen_entry_ids.reserve(store.entries.len());
 
         // `installer::Task` carries `result: Result` (Drop via `TaskError`
         // payloads) and a non-nullable fn-ptr in `thread_pool::Task`, so

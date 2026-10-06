@@ -537,6 +537,18 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
+/// What an install does with an edge.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EdgeFilter {
+    Install,
+    /// Left out whatever `--filter` selects: not resolved, disabled for this os or cpu, a
+    /// dependency group this install does not place, or a workspace a pruned checkout lacks.
+    Skip,
+    /// An edge of the root package that only `--filter` leaves out: a dependency of root when
+    /// root is not selected, or the `workspaces` edge of a workspace that is not selected.
+    NotSelected,
+}
+
 // `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
 // `Builder.lockfile` safety contract), so callers must thread `resolutions`
 // explicitly to avoid an aliasing read through the shared `&Lockfile`.
@@ -549,13 +561,33 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
 ) -> bool {
+    filter_dependency_or_workspace(
+        dep_id,
+        parent_pkg_id,
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+    ) != EdgeFilter::Install
+}
+
+pub(crate) fn filter_dependency_or_workspace(
+    dep_id: DependencyID,
+    parent_pkg_id: PackageID,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+) -> EdgeFilter {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
         let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
         if dep.behavior.is_optional_peer() {
-            return false;
+            return EdgeFilter::Install;
         }
-        return true;
+        return EdgeFilter::Skip;
     }
 
     let pkgs = lockfile.packages.slice();
@@ -587,7 +619,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
                 );
             }
         }
-        return true;
+        return EdgeFilter::Skip;
     }
 
     let dep_features = if parent_res.tag.is_local_package() {
@@ -597,22 +629,30 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     };
 
     if !dep.behavior.is_placed(dep_features) {
-        return true;
+        return EdgeFilter::Skip;
     }
 
     if parent_pkg_id != 0 {
-        return false;
+        return EdgeFilter::Install;
     }
 
     if !dep.behavior.is_workspace() {
-        return !install_root_dependencies;
+        return if install_root_dependencies {
+            EdgeFilter::Install
+        } else {
+            EdgeFilter::NotSelected
+        };
     }
 
     if manager.summary.pruned_workspaces.contains(&dep.name_hash) {
-        return true;
+        return EdgeFilter::Skip;
     }
 
-    !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
+    if WorkspaceFilter::is_selected(workspace_filters, pkg_id) {
+        EdgeFilter::Install
+    } else {
+        EdgeFilter::NotSelected
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

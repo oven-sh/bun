@@ -544,9 +544,12 @@ impl<'a> Installer<'a> {
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
-            let dep = &self.lockfile().buffers.dependencies[dep_id as usize];
-
-            if dep.behavior.is_workspace() {
+            // The owner entry of a workspace links the workspace's dependencies in place,
+            // and every other entry of a workspace is a link. None is an installed package.
+            let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
+            if self.lockfile().packages.items_resolution()[pkg_id as usize].tag
+                == ResolutionTag::Workspace
+            {
                 break 'state (node_id, CompleteState::Skipped);
             }
 

@@ -1154,9 +1154,116 @@ describe("https.createServer forwards every TLS server option", () => {
     });
   });
 
-  const ecdhHandshake = async (port: number, ecdhCurve: string) => {
+  it("forwards allowPartialTrustChain so an intermediate in `ca` is a valid trust anchor", async () => {
+    // agent6-cert.pem is the agent6 leaf followed by ca3, the intermediate that signed it. The ca1 root is not loaded.
+    const agent6Key = read("agent6-key.pem");
+    const agent6CertChain = read("agent6-cert.pem");
+    const [agent6Leaf, ca3Cert] = agent6CertChain.split(/(?=-----BEGIN CERTIFICATE-----)/);
+    const verdict = async (allowPartialTrustChain: unknown) => {
+      const seen = Promise.withResolvers<Verdict>();
+      await using server = https.createServer(
+        {
+          key: agent6Key,
+          cert: agent6CertChain,
+          ca: [ca3Cert],
+          requestCert: true,
+          rejectUnauthorized: false,
+          allowPartialTrustChain,
+        } as https.ServerOptions,
+        (req, res) => {
+          const socket = req.socket as TLSSocket;
+          seen.resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+          res.end("ok");
+        },
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      const req = https.request({
+        host: "127.0.0.1",
+        port,
+        key: agent6Key,
+        cert: agent6Leaf,
+        rejectUnauthorized: false,
+      });
+      req.on("error", seen.reject);
+      req.on("response", res => res.resume());
+      req.end();
+      return await seen.promise;
+    };
+
+    expect({
+      without: await verdict(undefined),
+      withFlag: await verdict(true),
+      withTruthy: await verdict(1),
+    }).toEqual({
+      without: { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+      withFlag: { authorized: true, authorizationError: null },
+      withTruthy: { authorized: true, authorizationError: null },
+    });
+  });
+
+  it("applies sessionTimeout to the TLS 1.2 tickets it issues", async () => {
+    // The 'session' event carries BoringSSL's serialized SSL_SESSION (vendor/boringssl/ssl/ssl_asn1.cc):
+    //   SSLSession ::= SEQUENCE { ..., ticketLifetimeHint [9] INTEGER OPTIONAL, ... }
+    // For a TLS 1.2 session that field is the lifetime the server put in its NewSessionTicket.
+    function ticketLifetimeHint(der: Uint8Array) {
+      let pos = 0;
+      const readHeader = () => {
+        const tag = der[pos++];
+        let length = der[pos++];
+        if (length & 0x80) {
+          const lengthBytes = length & 0x7f;
+          length = 0;
+          for (let i = 0; i < lengthBytes; i++) length = length * 256 + der[pos++];
+        }
+        return { tag, end: pos + length };
+      };
+      const sequence = readHeader();
+      expect(sequence.tag).toBe(0x30);
+      while (pos < sequence.end) {
+        const element = readHeader();
+        if (element.tag === 0xa9) {
+          const integer = readHeader();
+          expect(integer.tag).toBe(0x02);
+          let value = 0;
+          for (; pos < integer.end; pos++) value = value * 256 + der[pos];
+          return value;
+        }
+        pos = element.end;
+      }
+      return undefined;
+    }
+
+    const issuedHint = async (sessionTimeout: number | null) => {
+      await using server = https.createServer({ ...COMMON_CERT, sessionTimeout } as https.ServerOptions, (_req, res) =>
+        res.end("ok"),
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      const startedAt = Date.now();
+      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, maxVersion: "TLSv1.2" });
+      try {
+        const [session] = await once(client, "session");
+        // The server counts the lifetime from the start of the handshake, so each second
+        // boundary the handshake crosses takes one second off the hint.
+        const skew = Math.ceil((Date.now() - startedAt) / 1000) + 1;
+        expect(client.getProtocol()).toBe("TLSv1.2");
+        return { hint: ticketLifetimeHint(session), skew };
+      } finally {
+        client.destroy();
+      }
+    };
+
+    const configured = await issuedHint(1234);
+    expect(configured.hint).toBeWithin(1234 - configured.skew, 1234 + 1);
+    // Node treats null like an omitted option, so BoringSSL's default of two hours applies.
+    const unset = await issuedHint(null);
+    expect(unset.hint).toBeWithin(7200 - unset.skew, 7200 + 1);
+  });
+
+  const handshakeOutcome = async (port: number, options: tls.ConnectionOptions = {}) => {
     const outcome = Promise.withResolvers<string>();
-    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ecdhCurve });
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...options });
     client.once("secureConnect", () => {
       client.destroy();
       outcome.resolve("ok");
@@ -1177,11 +1284,29 @@ describe("https.createServer forwards every TLS server option", () => {
     const { port } = server.address() as AddressInfo;
 
     expect({
-      x25519Only: await ecdhHandshake(port, "X25519"),
-      p384Only: await ecdhHandshake(port, "P-384"),
+      x25519Only: await handshakeOutcome(port, { ecdhCurve: "X25519" }),
+      p384Only: await handshakeOutcome(port, { ecdhCurve: "P-384" }),
     }).toEqual({
       x25519Only: "handshake_failure",
       p384Only: "ok",
+    });
+  });
+
+  it("restricts the signature algorithms to sigalgs", async () => {
+    // COMMON_CERT holds an RSA key, so the server cannot sign when its list has only an ECDSA scheme.
+    const outcome = async (sigalgs: string) => {
+      await using server = https.createServer({ ...COMMON_CERT, sigalgs }, (_req, res) => res.end("ok"));
+      server.on("tlsClientError", () => {});
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      return await handshakeOutcome((server.address() as AddressInfo).port);
+    };
+
+    expect({
+      rsaPss: await outcome("rsa_pss_rsae_sha256"),
+      ecdsaOnly: await outcome("ecdsa_secp256r1_sha256"),
+    }).toEqual({
+      rsaPss: "ok",
+      ecdsaOnly: "handshake_failure",
     });
   });
 
@@ -1195,8 +1320,8 @@ describe("https.createServer forwards every TLS server option", () => {
       const { port } = server.address() as AddressInfo;
 
       expect({
-        x25519Only: await ecdhHandshake(port, "X25519"),
-        p384Only: await ecdhHandshake(port, "P-384"),
+        x25519Only: await handshakeOutcome(port, { ecdhCurve: "X25519" }),
+        p384Only: await handshakeOutcome(port, { ecdhCurve: "P-384" }),
       }).toEqual({
         x25519Only: "handshake_failure",
         p384Only: "ok",
@@ -1206,12 +1331,12 @@ describe("https.createServer forwards every TLS server option", () => {
     }
   });
 
-  it("honors the server cipher order unless honorCipherOrder is false", async () => {
+  it("honors the server cipher order unless honorCipherOrder is given and falsy", async () => {
     const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
     const aes128 = "ECDHE-RSA-AES128-GCM-SHA256";
-    const negotiated = async (honorCipherOrder: boolean | undefined) => {
+    const negotiated = async (options: object) => {
       await using server = https.createServer(
-        { ...COMMON_CERT, ciphers: `${aes256}:${aes128}`, honorCipherOrder },
+        { ...COMMON_CERT, ciphers: `${aes256}:${aes128}`, ...options } as https.ServerOptions,
         (_req, res) => res.end("ok"),
       );
       await once(server.listen(0, "127.0.0.1"), "listening");
@@ -1228,11 +1353,16 @@ describe("https.createServer forwards every TLS server option", () => {
       client.destroy();
       return name;
     };
+    // Node: an omitted honorCipherOrder means true, any other value counts by truthiness.
     expect({
-      default: await negotiated(undefined),
-      honored: await negotiated(true),
-      clientOrder: await negotiated(false),
-    }).toEqual({ default: aes256, honored: aes256, clientOrder: aes128 });
+      default: await negotiated({}),
+      true: await negotiated({ honorCipherOrder: true }),
+      false: await negotiated({ honorCipherOrder: false }),
+      null: await negotiated({ honorCipherOrder: null }),
+      zero: await negotiated({ honorCipherOrder: 0 }),
+      // Bit 31, as in OpenSSL's SSL_OP_ALL. The server must still listen and still add its own flag.
+      withBit31: await negotiated({ secureOptions: 0x80000850 }),
+    }).toEqual({ default: aes256, true: aes256, false: aes128, null: aes128, zero: aes128, withBit31: aes256 });
   });
 
   it("validates the secure context options like tls.createServer", () => {

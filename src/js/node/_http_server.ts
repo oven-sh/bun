@@ -396,8 +396,12 @@ function Server(options, callback): void {
       } = tlsHelpers;
       // The same checks tls.createServer runs.
       validateSecureContextOptions(options);
-      // Node's tls.Server defaults honorCipherOrder to true.
-      if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;
+      // Node's tls.Server: honorCipherOrder defaults to true, any other value counts by truthiness.
+      const honorCipherOrder = options.honorCipherOrder;
+      if (honorCipherOrder === undefined || honorCipherOrder) {
+        // `|` gives an int32 and the native config takes a u32.
+        secureOptions = (secureOptions | SSL_OP_CIPHER_SERVER_PREFERENCE) >>> 0;
+      }
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.

@@ -2362,6 +2362,53 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
   });
 });
 
+it("verifies against the CAs of its context when the TLS socket rides on a Duplex", async () => {
+  const fixtures = join(import.meta.dir, "fixtures");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  const server = tls.createServer(
+    {
+      key: readFileSync(join(fixtures, "agent1-key.pem"), "utf8"),
+      cert: readFileSync(join(fixtures, "agent1-cert.pem"), "utf8"),
+    },
+    socket => socket.end("hi"),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  async function outcome(connectOptions: tls.ConnectionOptions): Promise<string> {
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    await once(raw, "connect");
+    const client = tls.connect({ socket: new SocketProxy(raw), servername: "agent1", ...connectOptions });
+    const { promise, resolve } = Promise.withResolvers<string>();
+    client.on("secureConnect", () => resolve(`authorized=${client.authorized}`));
+    client.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    client.on("close", () => resolve("closed"));
+    try {
+      return await promise;
+    } finally {
+      client.destroy();
+      raw.destroy();
+    }
+  }
+
+  try {
+    const extended = tls.createSecureContext();
+    extended.context.addCACert(ca1);
+    expect({
+      ca: await outcome({ ca: ca1 }),
+      secureContext: await outcome({ secureContext: tls.createSecureContext({ ca: ca1 }) }),
+      addCACert: await outcome({ secureContext: extended }),
+      none: await outcome({}),
+    }).toEqual({
+      ca: "authorized=true",
+      secureContext: "authorized=true",
+      addCACert: "authorized=true",
+      none: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,

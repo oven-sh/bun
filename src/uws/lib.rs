@@ -162,16 +162,15 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL,
-            SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
-            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
-            SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-            SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error,
-            SSL_get_rbio, SSL_get_shutdown, SSL_get_verify_result, SSL_get_wbio,
-            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
-            SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
-            SSL_set_session_id_context, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
-            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
+            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
+            SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER,
+            SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown,
+            SSL_get_verify_result, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending,
+            SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
+            SSL_set_renegotiate_mode, SSL_set_session_id_context, SSL_set_verify, SSL_shutdown,
+            SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -476,32 +475,7 @@ pub mod ssl_wrapper {
                     boring_sys::SSL_set_connect_state(ssl.as_ptr());
                     // A client keeps no session id context (see `us_internal_ssl_attach`).
                     boring_sys::SSL_set_session_id_context(ssl.as_ptr(), core::ptr::null(), 0);
-                    // Mirror `us_internal_ssl_attach`: a SecureContext is
-                    // mode-neutral, so a `tls.connect()` without
-                    // `ca`/`requestCert` hands us a CTX with VERIFY_NONE and
-                    // no trust store. Clients must always run verification so
-                    // `verify_error` is real for the JS-side
-                    // `rejectUnauthorized` decision; load the shared system
-                    // roots per-SSL so a server using the same CTX never sees
-                    // CertificateRequest. (Pre-redesign this happened by
-                    // accident: net.ts forced `requestCert: true` after
-                    // `[buntls]` and `SSLConfig.fromJS` rebuilt the CTX with
-                    // roots from that.)
-                    if boring_sys::SSL_CTX_get_verify_mode(ctx.as_ptr())
-                        == boring_sys::SSL_VERIFY_NONE
-                    {
-                        boring_sys::SSL_set_verify(
-                            ssl.as_ptr(),
-                            boring_sys::SSL_VERIFY_PEER,
-                            Some(always_continue_verify),
-                        );
-                        if let Some(roots) = NonNull::new(us_get_shared_default_ca_store()) {
-                            let _ = boring_sys::SSL_set0_verify_cert_store(
-                                ssl.as_ptr(),
-                                roots.as_ptr(),
-                            );
-                        }
-                    }
+                    us_internal_ssl_client_verify_defaults(ssl.as_ptr(), ctx.as_ptr());
                 } else {
                     // Set the renegotiation mode to never so that we can't
                     // renegotiate on the server side (security reasons).
@@ -597,20 +571,7 @@ pub mod ssl_wrapper {
             Self::init_with_ctx(ssl_ctx, is_client, handlers)
         }
 
-        /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
-        ///
-        /// `us_ssl_ctx_from_options` turns on `SSL_VERIFY_PEER |
-        /// SSL_VERIFY_FAIL_IF_NO_PEER_CERT` whenever the options carry a `ca`,
-        /// because for a server that flag is what decides whether a
-        /// CertificateRequest is sent. Node instead keys that off `requestCert`
-        /// alone, so a server given `ca` but no `requestCert` must not ask for
-        /// a client certificate. The real-fd upgrade path already corrects
-        /// this per-SSL; without the same correction a duplex-wrapped server
-        /// rejects every cert-less client with UNABLE_TO_GET_ISSUER_CERT.
-        ///
-        /// No-op for clients: their verify mode is set in `init_with_ctx` so
-        /// `verify_error` is populated for the JS `rejectUnauthorized`
-        /// decision.
+        /// As in `us_socket_adopt_tls`, a server's own `requestCert` / `rejectUnauthorized` replace the mode of the shared `SSL_CTX`. No-op for clients.
         pub fn set_server_verify(&self, request_cert: bool, reject_unauthorized: bool) {
             if self.flags.is_client() {
                 return;
@@ -1507,11 +1468,11 @@ pub mod ssl_wrapper {
     }
 
     unsafe extern "C" {
-        /// Process-wide bundled root store from `root_certs.cpp` — built once and
-        /// up_ref'd per consumer so the ~150-cert load happens once total, not per
-        /// CTX. Returns null if root loading fails (treated as "no roots").
-        // safe: no args; idempotent lazy init reading a process global — no preconditions.
-        safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
+        /// openssl.c: the client half of `us_internal_ssl_attach`. `ssl` was made from `ctx`.
+        fn us_internal_ssl_client_verify_defaults(
+            ssl: *mut boring_sys::SSL,
+            ctx: *mut boring_sys::SSL_CTX,
+        );
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;

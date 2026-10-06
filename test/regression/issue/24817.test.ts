@@ -13,11 +13,9 @@ test("static routes should handle unicode correctly", async () => {
     },
   });
 
-  const baseUrl = server.url.href;
-
   // Test basic unicode character
   {
-    const staticResp = await fetch(`${baseUrl}/static`);
+    const staticResp = await fetch(new URL("/static", server.url));
 
     const staticText = await staticResp.text();
     expect(staticText).toBe("▲");
@@ -26,7 +24,7 @@ test("static routes should handle unicode correctly", async () => {
 
   // A static route and a dynamic one must describe the same body the same way.
   {
-    const dynamicResp = await fetch(`${baseUrl}/dynamic`);
+    const dynamicResp = await fetch(new URL("/dynamic", server.url));
 
     expect(await dynamicResp.text()).toBe("▲");
     expect(dynamicResp.headers.get("content-type")).toBe("text/plain;charset=utf-8");
@@ -34,7 +32,7 @@ test("static routes should handle unicode correctly", async () => {
 
   // Test Japanese characters
   {
-    const resp = await fetch(`${baseUrl}/unicode-string`);
+    const resp = await fetch(new URL("/unicode-string", server.url));
     const text = await resp.text();
 
     expect(text).toBe("こんにちは世界");
@@ -43,7 +41,7 @@ test("static routes should handle unicode correctly", async () => {
 
   // Test emoji
   {
-    const resp = await fetch(`${baseUrl}/emoji`);
+    const resp = await fetch(new URL("/emoji", server.url));
     const text = await resp.text();
 
     expect(text).toBe("🎉🚀✨");
@@ -59,9 +57,7 @@ test("static routes with explicit content-type should not override", async () =>
     },
   });
 
-  const baseUrl = server.url.href;
-
-  const resp = await fetch(`${baseUrl}/custom`);
+  const resp = await fetch(new URL("/custom", server.url));
   const text = await resp.text();
 
   expect(text).toBe("▲");

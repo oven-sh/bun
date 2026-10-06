@@ -1259,9 +1259,9 @@ test("you can have HTML imports apply to only specific methods outside of the de
   expect(response3.status).toBe(200);
   expect(await response3.text()).toBe("PATCH!");
 
-  expect(await (await fetch(server.url + "/boop")).text()).toEqual(htmlText);
-  expect(await (await fetch(server.url + "/boop", { method: "POST" })).text()).toEqual(htmlText);
-  expect(await (await fetch(server.url + "/boop", { method: "PATCH" })).text()).toBe(htmlText);
+  expect(await (await fetch(new URL("/boop", server.url))).text()).toEqual(htmlText);
+  expect(await (await fetch(new URL("/boop", server.url), { method: "POST" })).text()).toEqual(htmlText);
+  expect(await (await fetch(new URL("/boop", server.url), { method: "PATCH" })).text()).toBe(htmlText);
 });
 
 for (let development of [true, false, { hmr: false }]) {

@@ -17,7 +17,7 @@ describe.concurrent("Streaming body via", () => {
       },
     });
 
-    const res = await fetch(`${server.url}/`);
+    const res = await fetch(server.url);
     const chunks = [];
     for await (const chunk of res.body) {
       chunks.push(chunk);
@@ -242,7 +242,7 @@ describe.concurrent("Streaming body via", () => {
       },
     });
     try {
-      const res = await fetch(`${server.url}/`, { signal: aborter.signal });
+      const res = await fetch(server.url, { signal: aborter.signal });
     } catch (e) {
       expect(e).toBeInstanceOf(DOMException);
       expect(e.name).toBe("AbortError");
@@ -269,7 +269,7 @@ describe.concurrent("Streaming body via", () => {
       },
     });
 
-    const res = await fetch(`${server.url}/`);
+    const res = await fetch(server.url);
     const chunks = [];
     for await (const chunk of res.body) {
       chunks.push(chunk);

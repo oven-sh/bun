@@ -11,14 +11,14 @@ using server = Bun.serve({
   },
 });
 
-await fetch(`${server.url}/`, {
+await fetch(server.url, {
   headers: {
     "Huge": Buffer.alloc(Math.max(http.maxHeaderSize, 256) - 256, "abc").toString(),
   },
 });
 
 try {
-  const response = await fetch(`${server.url}/`, {
+  const response = await fetch(server.url, {
     headers: {
       "Huge": Buffer.alloc(http.maxHeaderSize + 1024, "abc").toString(),
     },

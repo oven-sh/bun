@@ -1919,7 +1919,7 @@ function getDefaultCiphers() {
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tlsExports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1969,7 +1969,10 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
-} as any as typeof import("node:tls") & {
+};
+Object.defineProperty(tlsExports, "rootCertificates", { configurable: false });
+
+export default tlsExports as any as typeof import("node:tls") & {
   SecureContext: typeof SecureContext;
   convertALPNProtocols: typeof convertALPNProtocols;
 };

@@ -7,6 +7,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import http2 from "node:http2";
 import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
@@ -720,6 +721,145 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
     } finally {
       server.close();
     }
+  });
+});
+
+// Node negotiates ALPN per connection, whichever SecureContext SNI selected.
+// https://github.com/oven-sh/bun/issues/17932
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a SecureContext (%s)", version => {
+  const defaults = { key: agent2Key, cert: agent2Cert };
+  const selected = { key: agent1Key, cert: agent1Cert };
+  type SNICb = (err: Error | null, ctx?: unknown) => void;
+  const sync = (_: string, cb: SNICb) => cb(null, tls.createSecureContext(selected));
+  const deferred = (_: string, cb: SNICb) => void setImmediate(cb, null, tls.createSecureContext(selected));
+
+  // How the connection comes by its context. Each returns the port to dial.
+  type Start = (alpn: object, onSecure: (socket: tls.TLSSocket) => void, stack: DisposableStack) => Promise<number>;
+  const listening = async (server: net.Server, stack: DisposableStack) => {
+    stack.defer(() => void server.close());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return (server.address() as AddressInfo).port;
+  };
+  const accepted =
+    (options: object, setup?: (server: tls.Server) => void): Start =>
+    (alpn, onSecure, stack) => {
+      const server = tls.createServer({ ...defaults, ...options, ...alpn }, onSecure);
+      server.on("tlsClientError", () => {});
+      setup?.(server);
+      return listening(server, stack);
+    };
+  const addContext = (server: tls.Server) => server.addContext("alpn.sni.test", selected);
+  const paths: [string, Start][] = [
+    ["a synchronous SNICallback", accepted({ SNICallback: sync })],
+    ["an asynchronous SNICallback", accepted({ SNICallback: deferred })],
+    ["addContext()", accepted({}, addContext)],
+    // Bun only: in Node a user SNICallback replaces the addContext() entries.
+    [
+      "addContext() behind an SNICallback that selects nothing",
+      accepted({ SNICallback: (_: string, cb: SNICb) => void setImmediate(cb, null, null) }, addContext),
+    ],
+    [
+      "addContext() on an injected socket",
+      (alpn, onSecure, stack) => {
+        const server = tls.createServer({ ...defaults, ...alpn }, onSecure);
+        server.on("tlsClientError", () => {});
+        addContext(server);
+        return listening(
+          net.createServer(raw => server.emit("connection", raw)),
+          stack,
+        );
+      },
+    ],
+    [
+      "the SNICallback of a server-side TLSSocket",
+      (alpn, onSecure, stack) =>
+        listening(
+          net.createServer(raw => {
+            const socket = new tls.TLSSocket(raw, {
+              isServer: true,
+              secureContext: tls.createSecureContext(defaults),
+              SNICallback: sync,
+              ...alpn,
+            });
+            socket.on("error", () => {});
+            socket.on("secure", () => onSecure(socket));
+          }),
+          stack,
+        ),
+    ],
+  ];
+
+  function dial(port: number, ALPNProtocols: string[]) {
+    return tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "alpn.sni.test",
+      ALPNProtocols,
+      rejectUnauthorized: false,
+      minVersion: version,
+      maxVersion: version,
+    });
+  }
+
+  describe.each(paths)("by %s", (_, start) => {
+    it("negotiates from ALPNProtocols", async () => {
+      using stack = new DisposableStack();
+      const serverSide = Promise.withResolvers<unknown>();
+      const port = await start({ ALPNProtocols: ["h2", "http/1.1"] }, s => serverSide.resolve(s.alpnProtocol), stack);
+      const client = dial(port, ["http/1.1", "h2"]);
+      stack.defer(() => void client.destroy());
+      await once(client, "secureConnect");
+      expect({
+        cn: client.getPeerCertificate().subject.CN,
+        client: client.alpnProtocol,
+        server: await serverSide.promise,
+      }).toEqual({ cn: "agent1", client: "h2", server: "h2" });
+    });
+
+    it("runs ALPNCallback", async () => {
+      using stack = new DisposableStack();
+      const seen: unknown[] = [];
+      const ALPNCallback = (offer: unknown) => (seen.push(offer), "h2");
+      const client = dial(await start({ ALPNCallback }, s => s.end(), stack), ["http/1.1", "h2"]);
+      stack.defer(() => void client.destroy());
+      await once(client, "secureConnect");
+      expect({ cn: client.getPeerCertificate().subject.CN, client: client.alpnProtocol, seen }).toEqual({
+        cn: "agent1",
+        client: "h2",
+        seen: [{ servername: "alpn.sni.test", protocols: ["http/1.1", "h2"] }],
+      });
+    });
+
+    // RFC 7301 section 3.2
+    it("refuses a client that offers none of ALPNProtocols", async () => {
+      using stack = new DisposableStack();
+      const client = dial(await start({ ALPNProtocols: ["h2"] }, s => s.end(), stack), ["spdy/3"]);
+      stack.defer(() => void client.destroy());
+      const outcome = Promise.withResolvers<unknown>();
+      client.on("error", err => outcome.resolve((err as NodeJS.ErrnoException).code));
+      client.on("secureConnect", () => outcome.resolve(`connected, alpnProtocol=${client.alpnProtocol}`));
+      expect(await outcome.promise).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+    });
+  });
+
+  it("http2.createSecureServer() with an SNICallback speaks h2", async () => {
+    using stack = new DisposableStack();
+    const server = http2.createSecureServer({ ...defaults, SNICallback: sync }, (_, res) => res.end("over h2"));
+    const port = await listening(server, stack);
+    const session = http2.connect(`https://127.0.0.1:${port}`, {
+      servername: "alpn.sni.test",
+      rejectUnauthorized: false,
+      minVersion: version,
+      maxVersion: version,
+    });
+    stack.defer(() => session.destroy());
+    const failed = once(session, "error").then(([err]) => Promise.reject(err));
+    const request = session.request({ ":path": "/" }).setEncoding("utf8");
+    let body = "";
+    request.on("data", chunk => (body += chunk));
+    await Promise.race([once(request, "end"), failed]);
+    expect(body).toBe("over h2");
   });
 });
 

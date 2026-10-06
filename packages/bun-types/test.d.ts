@@ -239,11 +239,11 @@ declare module "bun:test" {
     /**
      * Skips this group of tests.
      */
-    skip: ((label: DescribeLabel) => void) & Describe<T>;
+    skip: ((label: string | number) => void) & Describe<T>;
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
-    todo: ((label: DescribeLabel) => void) & Describe<T>;
+    todo: ((label: string | number) => void) & Describe<T>;
     /**
      * Marks this group of tests to be executed concurrently.
      */

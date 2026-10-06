@@ -473,3 +473,13 @@ expectType<Parameters<typeof test.skip>>(["label", () => {}, 1000]);
 expectType<Parameters<typeof test.todo>>(["label", () => {}]);
 expectType<Parameters<typeof describe.skip>>(["label", () => {}]);
 expectType<Parameters<typeof describe.todo>>(["label", () => {}]);
+// On its own, a function is the body of the group and not its label, so a class throws
+describe.skip(123);
+describe.skip(() => {});
+// @ts-expect-error
+describe.skip(class Foo {});
+// @ts-expect-error
+describe.todo(class Foo {});
+// @ts-expect-error
+describe.skip({ name: "label" });
+describe.skip(class Foo {}, () => {});

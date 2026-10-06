@@ -281,3 +281,63 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
   });
 });
+
+test.each(["Bun.serve", "Bun.listen"] as const)("%s serves every identity of key/cert arrays", async api => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, "../../node/tls/fixtures", name), "utf8");
+  const identities = {
+    key: [read("agent1-key.pem"), read("ec10-key.pem")],
+    cert: [read("agent1-cert.pem"), read("ec10-cert.pem")],
+  };
+  using server =
+    api === "Bun.serve"
+      ? Bun.serve({ port: 0, hostname: "127.0.0.1", tls: identities, fetch: () => new Response("ok") })
+      : Bun.listen({ port: 0, hostname: "127.0.0.1", tls: identities, socket: { data() {} } });
+
+  function served(options: tls.ConnectionOptions) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false, ...options }, () => {
+      resolve(socket.getPeerCertificate().subject.CN);
+      socket.destroy();
+    });
+    socket.on("error", e => resolve((e as NodeJS.ErrnoException).code!));
+    return promise;
+  }
+  expect({
+    "TLS 1.2, ECDSA only": await served({ maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" }),
+    "TLS 1.2, RSA only": await served({ maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" }),
+    "TLS 1.3": await served({}),
+    "TLS 1.3, RSA only": await served({ sigalgs: "rsa_pss_rsae_sha256" }),
+  }).toEqual({
+    "TLS 1.2, ECDSA only": "agent10.example.com",
+    "TLS 1.2, RSA only": "agent1",
+    "TLS 1.3": "agent10.example.com",
+    "TLS 1.3, RSA only": "agent1",
+  });
+});
+
+test.each(["Bun.serve", "Bun.listen"] as const)(
+  "%s serves the last of two key/cert pairs of one key type",
+  async api => {
+    const read = (name: string) => readFileSync(join(import.meta.dir, "../../node/tls/fixtures", name), "utf8");
+    for (const key of [
+      [read("agent1-key.pem"), read("agent2-key.pem")],
+      [read("agent2-key.pem"), read("agent1-key.pem")],
+    ]) {
+      const identities = { key, cert: [read("agent1-cert.pem"), read("agent2-cert.pem")] };
+      using server =
+        api === "Bun.serve"
+          ? Bun.serve({ port: 0, hostname: "127.0.0.1", tls: identities, fetch: () => new Response("ok") })
+          : Bun.listen({ port: 0, hostname: "127.0.0.1", tls: identities, socket: { data() {} } });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const socket = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false }, () =>
+        resolve(socket.getPeerCertificate().subject.CN),
+      );
+      socket.on("error", reject);
+      try {
+        expect(await promise).toBe("agent2");
+      } finally {
+        socket.destroy();
+      }
+    }
+  },
+);

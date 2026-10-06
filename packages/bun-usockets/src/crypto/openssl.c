@@ -1070,6 +1070,65 @@ end:
   return ret;
 }
 
+static SSL_CREDENTIAL *us_ssl_ctx_copy_legacy_identity(SSL_CTX *ctx) {
+  const STACK_OF(CRYPTO_BUFFER) *chain = SSL_CTX_get0_chain(ctx);
+  size_t count = sk_CRYPTO_BUFFER_num(chain);
+  CRYPTO_BUFFER **certs = us_calloc(count, sizeof(*certs));
+  if (certs == NULL) return NULL;
+  for (size_t i = 0; i < count; i++) certs[i] = sk_CRYPTO_BUFFER_value(chain, i);
+  SSL_CREDENTIAL *identity = SSL_CREDENTIAL_new_x509();
+  if (identity != NULL && (!SSL_CREDENTIAL_set1_cert_chain(identity, certs, count) ||
+                           !SSL_CREDENTIAL_set1_private_key(identity, SSL_CTX_get0_privatekey(ctx)))) {
+    SSL_CREDENTIAL_free(identity);
+    identity = NULL;
+  }
+  us_free(certs);
+  return identity;
+}
+
+/* One identity per key type, as in OpenSSL: the last certificate of a type wins, with whichever key fits it. */
+static int us_ssl_ctx_use_identities(SSL_CTX *ctx, const char *const *cert, unsigned int cert_count,
+                                     const char *const *key, unsigned int key_count) {
+  /* In OpenSSL's order of preference: BoringSSL serves the first usable credential. */
+  enum { TYPE_ECDSA, TYPE_EDDSA, TYPE_RSA, KEY_TYPES };
+  const char *leaf[KEY_TYPES] = {NULL};
+  SSL_CREDENTIAL *identity[KEY_TYPES] = {NULL};
+  int ok = 1;
+  for (unsigned int i = 0; i < cert_count; i++) {
+    if (us_ssl_ctx_use_certificate_chain(ctx, cert[i]) != 1) return 0;
+    int id = EVP_PKEY_id(X509_get0_pubkey(SSL_CTX_get0_certificate(ctx)));
+    leaf[id == EVP_PKEY_EC ? TYPE_ECDSA : id == EVP_PKEY_ED25519 ? TYPE_EDDSA : TYPE_RSA] = cert[i];
+  }
+  /* Least preferred first: the legacy slot, which getCertificate() reads, is left holding the most preferred. */
+  for (int type = KEY_TYPES; ok && type-- > 0;) {
+    if (leaf[type] == NULL) continue;
+    ok = us_ssl_ctx_use_certificate_chain(ctx, leaf[type]) == 1;
+    int has_key = 0, mismatched = 0;
+    for (unsigned int i = 0; ok && i < key_count; i++) {
+      if (us_ssl_ctx_use_privatekey_content(ctx, key[i], SSL_FILETYPE_PEM) == 1) {
+        has_key = 1;
+        continue;
+      }
+      uint32_t err = ERR_peek_last_error();
+      int reason = ERR_GET_LIB(err) == ERR_LIB_X509 ? ERR_GET_REASON(err) : 0;
+      mismatched |= reason == X509_R_KEY_VALUES_MISMATCH;
+      ok = reason == X509_R_KEY_TYPE_MISMATCH || reason == X509_R_KEY_VALUES_MISMATCH;
+      if (ok) ERR_clear_error();
+    }
+    if (ok && has_key) {
+      ok = (identity[type] = us_ssl_ctx_copy_legacy_identity(ctx)) != NULL;
+    } else if (ok && mismatched) {
+      OPENSSL_PUT_ERROR(X509, X509_R_KEY_VALUES_MISMATCH);
+      ok = 0;
+    }
+  }
+  for (int type = 0; type < KEY_TYPES; type++) {
+    if (ok && identity[type] != NULL) ok = SSL_CTX_add1_credential(ctx, identity[type]);
+    SSL_CREDENTIAL_free(identity[type]);
+  }
+  return ok;
+}
+
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   /* Always continue; the user inspects via us_socket_verify_error after
    * on_handshake. Returning 1 defers the decision to JS without aborting
@@ -1207,24 +1266,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * (see passphrase_cb), matching Node's key-decryption error shape. */
   SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
 
-  /* Multiple identities (e.g. an RSA and an EC pair, the way Node accepts
-   * arrays of key/cert or several pfx entries) must be loaded pair-wise:
-   * loading every certificate first and then every key makes BoringSSL check
-   * each key against the last certificate loaded and fail with
-   * KEY_TYPE_MISMATCH on a mixed configuration. With pair-wise loading the
-   * later identity replaces the earlier one in the legacy slot, which is the
-   * documented BoringSSL behaviour the adapted tests expect. */
-  int interleave_identities = !options.cert_file_name && !options.key_file_name &&
-                              options.cert && options.key &&
-                              options.cert_count == options.key_count &&
-                              options.cert_count > 1;
-  if (interleave_identities) {
-    for (unsigned int i = 0; i < options.cert_count; i++) {
-      if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1 ||
-          us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i], SSL_FILETYPE_PEM) != 1) {
-        ssl_ctx_build_fail(ssl_context);
-        return NULL;
-      }
+  if (!options.cert_file_name && !options.key_file_name && options.cert && options.key &&
+      (options.cert_count > 1 || options.key_count > 1)) {
+    if (!us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key, options.key_count)) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
     }
   } else {
     if (options.cert_file_name) {

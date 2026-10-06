@@ -1157,11 +1157,28 @@ enum {
   US_IDENTITY_UNCHECKED = 2,
 };
 
+/* A self-issued leaf that may not sign certificates is its own anchor when the store holds that very certificate (#44365). */
+int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
+  X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
+  uint32_t flags = X509_get_extension_flags(leaf);
+  if ((flags & EXFLAG_SI) && !(flags & EXFLAG_SS) && X509_check_purpose(leaf, purpose, 0) == 1) {
+    STACK_OF(X509) *same_subject = X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf));
+    for (size_t i = 0; i < sk_X509_num(same_subject); i++) {
+      if (X509_cmp(sk_X509_value(same_subject, i), leaf) == 0) {
+        X509_VERIFY_PARAM_set_flags(X509_STORE_CTX_get0_param(ctx), X509_V_FLAG_PARTIAL_CHAIN);
+        break;
+      }
+    }
+    sk_X509_pop_free(same_subject, X509_free);
+  }
+  return X509_verify_cert(ctx);
+}
+
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */
 static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
-  int ok = X509_verify_cert(ctx);
   SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+  int ok = us_x509_verify_cert(ctx, ssl && SSL_is_server(ssl) ? X509_PURPOSE_SSL_CLIENT : X509_PURPOSE_SSL_SERVER);
   if (!ssl) return ok;
   void *wrapper = us_ssl_wrapper(ssl);
   struct us_socket_t *s = wrapper ? NULL : us_ssl_socket(ssl);

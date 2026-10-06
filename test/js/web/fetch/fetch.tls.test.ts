@@ -729,6 +729,24 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/44365
+  it("trusts a self-issued certificate without keyCertSign only when `ca` holds that very certificate", async () => {
+    const pem = (name: string) =>
+      readFileSync(join(import.meta.dir, "../../node/tls/fixtures/pinned-leaf", name), "utf8");
+    const attempt = (port: number, ca: string) =>
+      fetch(`https://localhost:${port}`, { keepalive: false, tls: { ca } }).then(
+        res => res.text(),
+        error => error.code,
+      );
+    await createServer({ key: pem("dev-key.pem"), cert: pem("dev-cert.pem") }, async port => {
+      expect(await attempt(port, pem("dev-cert.pem"))).toBe("Hello World");
+      expect(await attempt(port, pem("other-key-cert.pem"))).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    });
+    await createServer({ key: pem("expired-key.pem"), cert: pem("expired-cert.pem") }, async port => {
+      expect(await attempt(port, pem("expired-cert.pem"))).toBe("CERT_HAS_EXPIRED");
+    });
+  });
+
   it("fetch with invalid tls should throw", async () => {
     await createServer(CERT_EXPIRED, async port => {
       await Promise.all(

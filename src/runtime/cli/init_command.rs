@@ -393,64 +393,24 @@ impl InitCommand {
         }
 
         let _ = Fs::FileSystem::init(None)?;
+
+        // The React writer never loads package.json. It skips one that exists.
+        if template.is_react() {
+            template.write_files_and_run_bun_dev()?;
+            return Ok(());
+        }
+
         let pathname =
             Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
         let destination_dir = Fd::cwd();
 
         let mut fields = PackageJSONFields::default();
 
-        let mut package_json_file: Option<bun_sys::File> =
-            bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
-        let mut package_json_contents: MutableString = MutableString::init_empty();
+        // Outlives the probe: the parsed object borrows strings from it.
+        let mut package_json_contents: MutableString;
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building.
         let bump = bun_alloc::Arena::new();
-        'read_package_json: {
-            if let Some(pkg) = package_json_file.as_ref() {
-                let size: u64 = 'brk: {
-                    #[cfg(windows)]
-                    {
-                        let Ok(end) = pkg.get_end_pos() else {
-                            break 'read_package_json;
-                        };
-                        if end == 0 {
-                            break 'read_package_json;
-                        }
-                        break 'brk end as u64;
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        let Ok(stat) = pkg.stat() else {
-                            break 'read_package_json;
-                        };
-                        if bun_core::kind_from_mode(stat.st_mode as _) != bun_sys::FileKind::File
-                            || stat.st_size == 0
-                        {
-                            break 'read_package_json;
-                        }
-                        break 'brk stat.st_size as u64;
-                    }
-                };
-
-                package_json_contents =
-                    MutableString::init(usize::try_from(size).expect("int cast"))?;
-                package_json_contents
-                    .list
-                    .resize(usize::try_from(size).expect("int cast"), 0);
-
-                #[cfg(windows)]
-                let prev_file_pos = pkg.get_pos()?;
-                if pkg
-                    .pread_all(package_json_contents.list.as_mut_slice(), 0)
-                    .is_err()
-                {
-                    package_json_file = None;
-                    break 'read_package_json;
-                }
-                #[cfg(windows)]
-                pkg.seek_to(prev_file_pos)?;
-            }
-        }
 
         fields.name = 'brk: {
             if let Ok(name) = Self::normalize_package_name(if !pathname.filename.is_empty() {
@@ -464,48 +424,89 @@ impl InitCommand {
             }
             b"project".to_vec()
         };
-        let mut did_load_package_json = false;
-        if !package_json_contents.list.is_empty() {
-            'process_package_json: {
-                let source = bun_ast::Source::init_path_string(
-                    b"package.json",
-                    package_json_contents.list.as_slice(),
-                );
-                let mut log = bun_ast::Log::init();
-                let package_json_expr: bun_ast::Expr =
-                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => e,
-                        Err(_) => {
-                            package_json_file = None;
-                            break 'process_package_json;
-                        }
-                    };
-
-                if !package_json_expr.data.is_e_object() {
-                    package_json_file = None;
-                    break 'process_package_json;
+        let existing_package_json = 'probe: {
+            let pkg = match bun_sys::File::openat(
+                destination_dir,
+                b"package.json",
+                bun_sys::O::RDWR,
+                0,
+            ) {
+                Ok(file) => file,
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                    break 'probe ExistingPackageJson::Absent;
                 }
-
-                fields.object = package_json_expr.data.e_object();
-
-                if let Some(name) = package_json_expr.get(b"name") {
-                    if let Some(str) = name.as_utf8_string_literal() {
-                        fields.name = str.to_vec();
-                    }
-                }
-
-                if let Some(name) = package_json_expr
-                    .get(b"module")
-                    .or_else(|| package_json_expr.get(b"main"))
-                {
-                    if let Some(str_) = name.as_utf8_string_literal() {
-                        fields.entry_point = str_.to_vec();
-                    }
-                }
-
-                did_load_package_json = true;
+                Err(err) => exit_unusable_package_json(UnusablePackageJson::Open(err)),
+            };
+            let stat = match pkg.stat() {
+                Ok(stat) => stat,
+                Err(err) => exit_unusable_package_json(UnusablePackageJson::Stat(err)),
+            };
+            if bun_core::kind_from_mode(stat.st_mode as _) != bun_sys::FileKind::File {
+                exit_unusable_package_json(UnusablePackageJson::NotRegularFile);
             }
-        }
+            if stat.st_size == 0 {
+                break 'probe ExistingPackageJson::Empty(pkg);
+            }
+
+            let size = usize::try_from(stat.st_size).expect("int cast");
+            package_json_contents = MutableString::init(size)?;
+            package_json_contents.list.resize(size, 0);
+
+            #[cfg(windows)]
+            let prev_file_pos = match pkg.get_pos() {
+                Ok(pos) => pos,
+                Err(err) => exit_unusable_package_json(UnusablePackageJson::Read(err)),
+            };
+            let read = match pkg.pread_all(package_json_contents.list.as_mut_slice(), 0) {
+                Ok(read) => read,
+                Err(err) => exit_unusable_package_json(UnusablePackageJson::Read(err)),
+            };
+            #[cfg(windows)]
+            if let Err(err) = pkg.seek_to(prev_file_pos) {
+                exit_unusable_package_json(UnusablePackageJson::Read(err));
+            }
+            package_json_contents.list.truncate(read);
+            if read == 0 {
+                break 'probe ExistingPackageJson::Empty(pkg);
+            }
+
+            let source = bun_ast::Source::init_path_string(
+                b"package.json",
+                package_json_contents.list.as_slice(),
+            );
+            let mut log = bun_ast::Log::init();
+            let package_json_expr: bun_ast::Expr =
+                match json::parse_package_json_utf8(&source, &mut log, &bump) {
+                    Ok(e) => e,
+                    Err(err) => exit_unusable_package_json(UnusablePackageJson::Parse(
+                        err,
+                        package_json_contents.list.as_slice(),
+                    )),
+                };
+
+            if !package_json_expr.data.is_e_object() {
+                exit_unusable_package_json(UnusablePackageJson::RootNotObject);
+            }
+
+            fields.object = package_json_expr.data.e_object();
+
+            if let Some(name) = package_json_expr.get(b"name") {
+                if let Some(str) = name.as_utf8_string_literal() {
+                    fields.name = str.to_vec();
+                }
+            }
+
+            if let Some(name) = package_json_expr
+                .get(b"module")
+                .or_else(|| package_json_expr.get(b"main"))
+            {
+                if let Some(str_) = name.as_utf8_string_literal() {
+                    fields.entry_point = str_.to_vec();
+                }
+            }
+
+            ExistingPackageJson::Loaded(pkg)
+        };
 
         if fields.entry_point.is_empty() && !minimal {
             'infer: {
@@ -560,14 +561,14 @@ impl InitCommand {
             }
         }
 
-        if !did_load_package_json {
+        if !matches!(existing_package_json, ExistingPackageJson::Loaded(_)) {
             fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 .data
                 .e_object();
         }
 
         if !auto_yes {
-            if !did_load_package_json {
+            if !matches!(existing_package_json, ExistingPackageJson::Loaded(_)) {
                 bun_core::pretty!("\n");
 
                 let selected = Self::radio::<ProjectTemplateChoice>(b"Select a project template")?;
@@ -781,17 +782,50 @@ impl InitCommand {
             template.write_to_package_json(&mut fields, &bump)?;
         }
 
-        'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
-                None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+        let wrote_package_json = 'write_package_json: {
+            let created: bun_sys::File;
+            let (fd, truncate_to_written): (Fd, bool) = match &existing_package_json {
+                ExistingPackageJson::Loaded(file) => (file.handle(), true),
+                ExistingPackageJson::Empty(file) => {
+                    exit_unless_empty_regular_file(file);
+                    (file.handle(), true)
+                }
+                ExistingPackageJson::Absent => {
+                    match bun_sys::File::openat(
+                        Fd::cwd(),
+                        b"package.json",
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::EXCL
+                            | bun_sys::O::CLOEXEC,
+                        0o666,
+                    ) {
+                        Ok(file) => {
+                            created = file;
+                            (created.handle(), false)
+                        }
+                        // A dangling symlink, or a file created since the probe.
+                        Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
+                            match bun_sys::File::openat(
+                                Fd::cwd(),
+                                b"package.json",
+                                bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::CLOEXEC,
+                                0o666,
+                            ) {
+                                Ok(file) => {
+                                    exit_unless_empty_regular_file(&file);
+                                    created = file;
+                                    (created.handle(), true)
+                                }
+                                Err(err) => {
+                                    exit_unusable_package_json(UnusablePackageJson::Open(err))
+                                }
+                            }
+                        }
+                        Err(err) => exit_unusable_package_json(UnusablePackageJson::Create(err)),
+                    }
                 }
             };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -814,8 +848,7 @@ impl InitCommand {
                     "package.json failed to write due to error {}",
                     err.name(),
                 );
-                package_json_file = None;
-                break 'write_package_json;
+                break 'write_package_json false;
             }
             let written = package_json_writer.ctx.get_written();
             if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
@@ -823,20 +856,21 @@ impl InitCommand {
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
                 );
-                package_json_file = None;
-                break 'write_package_json;
+                break 'write_package_json false;
             }
-            if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
-            {
-                bun_core::pretty_errorln!(
-                    "package.json failed to write due to error {}",
-                    bstr::BStr::new(err.name()),
-                );
-                package_json_file = None;
-                break 'write_package_json;
+            if truncate_to_written {
+                if let Err(err) =
+                    bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+                {
+                    bun_core::pretty_errorln!(
+                        "package.json failed to write due to error {}",
+                        bstr::BStr::new(err.name()),
+                    );
+                    break 'write_package_json false;
+                }
             }
-        }
+            true
+        };
 
         if steps.write_gitignore {
             let _ = Assets::create(b".gitignore", Assets::GITIGNORE, &[]);
@@ -849,7 +883,9 @@ impl InitCommand {
                     Template::create_agent_rule();
                 }
 
-                if package_json_file.is_some() && !did_load_package_json {
+                if wrote_package_json
+                    && matches!(existing_package_json, ExistingPackageJson::Empty(_))
+                {
                     bun_core::prettyln!(" + <r><d>package.json<r>");
                     Output::flush();
                 }
@@ -910,7 +946,9 @@ impl InitCommand {
                     // suppressed
                 }
 
-                if !fields.entry_point.is_empty() && !did_load_package_json {
+                if !fields.entry_point.is_empty()
+                    && !matches!(existing_package_json, ExistingPackageJson::Loaded(_))
+                {
                     bun_core::pretty!("\nTo get started, run:\n\n    ");
 
                     if strings::index_of_any(&fields.entry_point, b" \"'").is_some() {
@@ -1901,6 +1939,101 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
+
+/// A package.json that exists but was not loaded has no variant: `bun init` exits instead.
+enum ExistingPackageJson {
+    /// The open failed with ENOENT.
+    Absent,
+    /// A regular file with no content, filled in through this handle.
+    Empty(bun_sys::File),
+    /// Read through this handle and parsed to an object.
+    Loaded(bun_sys::File),
+}
+
+/// Why `bun init` cannot use the package.json in the destination directory.
+enum UnusablePackageJson<'a> {
+    Open(bun_sys::Error),
+    Stat(bun_sys::Error),
+    NotRegularFile,
+    Read(bun_sys::Error),
+    /// With the bytes of the file, for the code frame.
+    Parse(bun_parsers::Error, &'a [u8]),
+    RootNotObject,
+    /// Absent or empty at the probe. At the write it has content, or it was replaced.
+    Changed,
+    Create(bun_sys::Error),
+}
+
+/// Absolute path of the destination directory's package.json.
+fn package_json_path(buf: &mut bun_paths::PathBuffer) -> &[u8] {
+    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        Fs::FileSystem::get().top_level_dir,
+        &mut buf[..],
+        &[b"package.json"],
+    )
+}
+
+#[cold]
+#[inline(never)]
+fn exit_unusable_package_json(cause: UnusablePackageJson<'_>) -> ! {
+    let mut path_buf = path_buffer_pool::get();
+    let path_bytes = package_json_path(&mut path_buf);
+    let path = bstr::BStr::new(path_bytes);
+    match cause {
+        UnusablePackageJson::Open(err)
+            if matches!(err.get_errno(), bun_sys::E::EACCES | bun_sys::E::EPERM) =>
+        {
+            Output::err(
+                err.name(),
+                "Permission denied while opening \"{s}\"",
+                &[&path],
+            );
+            bun_core::note!("package.json must be readable and writable for bun init to update it");
+        }
+        UnusablePackageJson::Open(err) => Output::err(&err, "could not open \"{s}\"", &[&path]),
+        UnusablePackageJson::Stat(err) => Output::err(&err, "could not stat \"{s}\"", &[&path]),
+        UnusablePackageJson::NotRegularFile => {
+            Output::err_generic("\"{s}\" is not a regular file", &[&path]);
+        }
+        UnusablePackageJson::Read(err) => Output::err(&err, "could not read \"{s}\"", &[&path]),
+        UnusablePackageJson::Parse(err, contents) => {
+            // Parsed again so that the code frame names the absolute path.
+            let source = bun_ast::Source::init_path_string(path_bytes, contents);
+            let mut log = bun_ast::Log::init();
+            let _ = json::parse_package_json_utf8(&source, &mut log, &bun_alloc::Arena::new());
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Output::err(err, "failed to parse \"{s}\"", &[&path]);
+            bun_core::note!("fix or remove this file, then run 'bun init' again");
+        }
+        UnusablePackageJson::RootNotObject => {
+            Output::err_generic("package.json root must be an object in \"{s}\"", &[&path]);
+            bun_core::note!("fix or remove this file, then run 'bun init' again");
+        }
+        UnusablePackageJson::Changed => {
+            Output::err_generic(
+                "\"{s}\" appeared or changed while bun init was running",
+                &[&path],
+            );
+            bun_core::note!("run 'bun init' again");
+        }
+        UnusablePackageJson::Create(err) => {
+            Output::err(&err, "could not create \"{s}\"", &[&path]);
+        }
+    }
+    Global::exit(1);
+}
+
+fn exit_unless_empty_regular_file(file: &bun_sys::File) {
+    match file.stat() {
+        // No link left: the path was replaced, as an editor that saves by rename does.
+        Ok(stat)
+            if bun_core::kind_from_mode(stat.st_mode as _) == bun_sys::FileKind::File
+                && stat.st_size == 0
+                && stat.st_nlink != 0 => {}
+        Ok(_) => exit_unusable_package_json(UnusablePackageJson::Changed),
+        Err(err) => exit_unusable_package_json(UnusablePackageJson::Stat(err)),
+    }
+}
 
 #[inline]
 fn exists(path: &[u8]) -> bool {

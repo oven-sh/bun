@@ -1579,7 +1579,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            let env_proxy_is_tls = !proxy_direct
+                && vm
+                    .env_loader()
+                    .get_http_proxy_for(&url)
+                    .is_some_and(|env_proxy| env_proxy.is_https());
+            if proxy.is_none()
+                && !env_proxy_is_tls
+                && compress.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,

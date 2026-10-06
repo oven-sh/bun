@@ -423,11 +423,82 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
-// Node's wrap 'error' -> _emitTLSError. Not for a net.Socket: a listener there makes its close synthesize ECONNRESET.
+// Node's wrap 'error' -> _emitTLSError. Not for a connected net.Socket: a listener there makes its close synthesize ECONNRESET.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
-function forwardUpgradedError(self, connection) {
-  if (!(connection instanceof Socket)) connection.on("error", err => self._emitTLSError(err));
+function forwardUpgradedError(self, connection: SocketInstance) {
+  const isSocket = connection instanceof Socket;
+  if (isSocket && connection._handle && !connection.connecting) return;
+  const onError = err => {
+    if (!self.destroyed) self._emitTLSError(err);
+  };
+  connection.on("error", onError);
+  if (isSocket) connection.once("connect", connection.removeListener.bind(connection, "error", onError));
+}
+// Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+function linkUpgraded(self, connection: SocketInstance) {
+  const isSocket = connection instanceof Socket;
+  self[kupgraded] = connection;
+  self._parent = isSocket ? connection : null;
+  destroyWhenUpgradedCloses(self, connection);
+  forwardUpgradedError(self, connection);
+}
+function attachTLSEngine(self, connection, options) {
+  const [handle, events] = upgradeDuplexToTLS(connection, options);
+  connection.on("data", events[0]);
+  connection.on("end", events[1]);
+  connection.on("drain", events[2]);
+  connection.on("close", events[3]);
+  self._handle = handle;
+}
+function adoptTLSPair(self, connection, pair) {
+  if (!pair) throw new Error("Invalid socket");
+  const raw = (connection._handle = pair[0]);
+  raw[kAdoptedTLSRaw] = self;
+  self.once("end", self[kCloseRawConnection]);
+  raw.connecting = false;
+  self._handle = pair[1];
+}
+function attachClientTLS(self, connection, tls, upgradeDuplex) {
+  const handle = connection._handle;
+  if (self.destroyed || (!upgradeDuplex && !handle)) return;
+  const options = { data: { self, req: { oncomplete: afterConnect } }, tls, socket: self[khandlers], isServer: false };
+  try {
+    if (upgradeDuplex || isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
+      attachTLSEngine(self, connection, options);
+    } else {
+      adoptTLSPair(self, connection, upgradeTLSDeferred(handle, options));
+    }
+  } catch (error) {
+    self.destroy(error);
+  }
+}
+function adoptServerTLS(self, connection, options) {
+  if (self.destroyed) return;
+  const handle = connection._handle;
+  if (connection.destroyed || connection[kclosed] || !handle) {
+    self.destroy();
+    return;
+  }
+  try {
+    // A user 'connection' listener that ran after the wrap may have queued plain writes, which must flush first.
+    if (hasUnflushedWrites(connection)) {
+      attachTLSEngine(self, connection, options);
+    } else {
+      // What was read off the fd before the wrap sits in the connection's readable buffer.
+      options.initialData = connection.read() || undefined;
+      adoptTLSPair(self, connection, handle.upgradeTLS(options));
+    }
+  } catch (error) {
+    self.destroy(error);
+    return;
+  }
+  self.emit(kUpgradeAttached);
+}
+// What TLSWrap.prototype.close destroys. The raw twin of an adopted fd closes with that fd instead (closeWithTLSSocket).
+function unadoptedTransport(self): SocketInstance | undefined {
+  const upgraded = self[kupgraded];
+  if (upgraded && !upgraded.destroyed && upgraded._handle?.[kAdoptedTLSRaw] !== self) return upgraded;
 }
 // The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
 function closeWithTLSSocket(self, raw) {
@@ -2218,112 +2289,17 @@ Socket.prototype.connect = function connect(...args) {
         this.connecting = false;
       }
       if (connectListener != null) this.once("secureConnect", connectListener);
-      try {
-        // reset the underlying writable object when establishing a new connection
-        // this is a function on `Duplex`, originally defined on `Writable`
-        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
-        // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
-        this._undestroy();
-        const socket = connection._handle;
-        if (!upgradeDuplex && socket) {
-          // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-          upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
-        }
-        if (upgradeDuplex) {
-          this[kupgraded] = connection;
-          const [result, events] = upgradeDuplexToTLS(connection, {
-            data: { self: this, req: { oncomplete: afterConnect } },
-            tls,
-            socket: this[khandlers],
-          });
-          destroyWhenUpgradedCloses(this, connection);
-          connection.on("data", events[0]);
-          connection.on("end", events[1]);
-          connection.on("drain", events[2]);
-          connection.on("close", events[3]);
-          forwardUpgradedError(this, connection);
-          this._handle = result;
-        } else {
-          // upgradeTLS requires an established socket; a socket that is still
-          // connecting (e.g. tls.connect({ socket: net.connect(port) })) must be
-          // upgraded once it emits 'connect'.
-          if (socket && !connection.connecting) {
-            this[kupgraded] = connection;
-            const result = upgradeTLSDeferred(socket, {
-              data: { self: this, req: { oncomplete: afterConnect } },
-              tls,
-              socket: this[khandlers],
-              isServer: false,
-            });
-            if (result) {
-              const [raw, tls] = result;
-              // replace socket
-              connection._handle = raw;
-              raw[kAdoptedTLSRaw] = this;
-              destroyWhenUpgradedCloses(this, connection);
-              this.once("end", this[kCloseRawConnection]);
-              raw.connecting = false;
-              this._handle = tls;
-            } else {
-              this._handle = null;
-              throw new Error("Invalid socket");
-            }
-          } else {
-            // wait to be connected
-            connection.once("connect", () => {
-              // The TLS socket may have been destroyed before the underlying
-              // socket connected (e.g. tls.connect({ socket }).destroy()); don't
-              // start a handshake on a dead socket.
-              if (this.destroyed) {
-                connection.destroy();
-                return;
-              }
-              const socket = connection._handle;
-              if (!upgradeDuplex && socket) {
-                // if is named pipe socket we can upgrade it using the same wrapper than we use for duplex
-                upgradeDuplex = isNamedPipeSocket(socket) || hasUnflushedWrites(connection);
-              }
-              if (upgradeDuplex) {
-                this[kupgraded] = connection;
-                const [result, events] = upgradeDuplexToTLS(connection, {
-                  data: { self: this, req: { oncomplete: afterConnect } },
-                  tls,
-                  socket: this[khandlers],
-                });
-                destroyWhenUpgradedCloses(this, connection);
-                connection.on("data", events[0]);
-                connection.on("end", events[1]);
-                connection.on("drain", events[2]);
-                connection.on("close", events[3]);
-                forwardUpgradedError(this, connection);
-                this._handle = result;
-              } else {
-                this[kupgraded] = connection;
-                const result = upgradeTLSDeferred(socket, {
-                  data: { self: this, req: { oncomplete: afterConnect } },
-                  tls,
-                  socket: this[khandlers],
-                  isServer: false,
-                });
-                if (result) {
-                  const [raw, tls] = result;
-                  // replace socket
-                  connection._handle = raw;
-                  raw[kAdoptedTLSRaw] = this;
-                  destroyWhenUpgradedCloses(this, connection);
-                  this.once("end", this[kCloseRawConnection]);
-                  raw.connecting = false;
-                  this._handle = tls;
-                } else {
-                  this._handle = null;
-                  throw new Error("Invalid socket");
-                }
-              }
-            });
-          }
-        }
-      } catch (error) {
-        process.nextTick(emitErrorAndCloseNextTick, this, error);
+      // reset the underlying writable object when establishing a new connection
+      // this is a function on `Duplex`, originally defined on `Writable`
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+      this._undestroy();
+      linkUpgraded(this, connection);
+      // upgradeTLS() takes an established socket.
+      if (upgradeDuplex || (connection._handle && !connection.connecting)) {
+        attachClientTLS(this, connection, tls, upgradeDuplex);
+      } else {
+        connection.once("connect", attachClientTLS.bind(null, this, connection, tls, false));
       }
       return this;
     }
@@ -2387,14 +2363,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down a wrapped generic duplex with this socket: the native handle's
-  // close only flushes close_notify and lets the wrapper drain; without an
-  // explicit destroy here a late RST on the underlying transport can surface
-  // as an unhandled error after this socket is gone.
   const upgraded = this[kupgraded];
-  if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
-    upgraded.destroy?.();
-  }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping
   // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
@@ -2434,6 +2403,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // ECONNRESET. `close()` does a fast shutdown (clean close) which only
       // happens to surface as RST on some platforms; `terminate()` arms
       // SO_LINGER{1,0} for a real reset on all platforms.
+      unadoptedTransport(this)?.destroy();
       const err = this._handle.terminate();
       setImmediate(() => {
         $debug("emit close");
@@ -2465,7 +2435,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
-    process.nextTick(emitCloseNT, this, err ? true : false);
+    const transport = unadoptedTransport(this);
+    transport?.destroy();
+    if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
+    else process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
   const server = this._server;
@@ -2590,83 +2563,18 @@ Socket.prototype.pause = function pause() {
 // ServerHandlers — the shared accepted-socket handler table, with per-socket
 // state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
 Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
+  linkUpgraded(this, connection);
+  const options = { data: this, tls, socket: serverHandlersFor(this), isServer: true };
   const socket = connection._handle;
-  if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
-    // No adoptable fd (generic Duplex / not yet connected), TLS over TLS (the
-    // fd belongs to the outer SSL layer), or pending plain writes that must
-    // flush first: run the TLS engine over the stream itself.
-    const [result, events] = upgradeDuplexToTLS(connection, {
-      data: this,
-      tls,
-      socket: serverHandlersFor(this),
-      isServer: true,
-    });
-    destroyWhenUpgradedCloses(this, connection);
-    connection.on("data", events[0]);
-    connection.on("end", events[1]);
-    connection.on("drain", events[2]);
-    connection.on("close", events[3]);
-    forwardUpgradedError(this, connection);
-    this[kupgraded] = connection;
-    this._handle = result;
-    return;
+  if (!socket || connection.encrypted || isNamedPipeSocket(socket) || hasUnflushedWrites(connection)) {
+    // No adoptable fd (generic Duplex, named pipe, never dialed), TLS over TLS (the fd belongs to the
+    // outer SSL layer), or pending plain writes that must flush first.
+    attachTLSEngine(this, connection, options);
+  } else if (connection.connecting) {
+    connection.once("connect", process.nextTick.bind(null, adoptServerTLS, this, connection, options));
+  } else {
+    process.nextTick(adoptServerTLS, this, connection, options);
   }
-  this[kupgraded] = connection;
-  process.nextTick(() => {
-    if (this.destroyed || connection.destroyed) {
-      this.destroy();
-      return;
-    }
-    const handle = connection._handle;
-    if (!handle) {
-      this.destroy();
-      return;
-    }
-    // Writes may have been queued between the wrap and this tick (a user
-    // 'connection' listener runs after the server's): those bytes must flush
-    // before any TLS output, so fall back to the stream-level engine.
-    if (hasUnflushedWrites(connection)) {
-      const [result, events] = upgradeDuplexToTLS(connection, {
-        data: this,
-        tls,
-        socket: serverHandlersFor(this),
-        isServer: true,
-      });
-      destroyWhenUpgradedCloses(this, connection);
-      connection.on("data", events[0]);
-      connection.on("end", events[1]);
-      connection.on("drain", events[2]);
-      connection.on("close", events[3]);
-      forwardUpgradedError(this, connection);
-      this._handle = result;
-      this.emit(kUpgradeAttached);
-      return;
-    }
-    // Bytes that already arrived before the wrap were pulled off the fd into
-    // the connection's readable buffer; hand them to the TLS engine so the
-    // handshake doesn't stall.
-    const pending = connection.read();
-    const result = handle.upgradeTLS({
-      data: this,
-      tls,
-      socket: serverHandlersFor(this),
-      isServer: true,
-      initialData: pending || undefined,
-    });
-    if (!result) {
-      this._handle = null;
-      this.destroy(new Error("Invalid socket"));
-      return;
-    }
-    const [raw, tlsHandle] = result;
-    connection._handle = raw;
-    raw[kAdoptedTLSRaw] = this;
-    destroyWhenUpgradedCloses(this, connection);
-    this.once("end", this[kCloseRawConnection]);
-    raw.connecting = false;
-    this._handle = tlsHandle;
-    this.emit(kUpgradeAttached);
-  });
 };
 
 // Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.
@@ -4206,11 +4114,6 @@ function emitErrorNextTick(self, error) {
   self.emit("error", error);
 }
 
-function emitErrorAndCloseNextTick(self, error) {
-  self.emit("error", error);
-  self.emit("close", true);
-}
-
 function emitListeningNextTick(self) {
   // (Or the Bun.ModuleGraph whose script listened has been disposed: its listener was closed with it.)
   if (!self._handle || isStoppedModuleGraphRunning()) return;
@@ -4489,6 +4392,8 @@ function onSocketHandleClosed() {}
 
 function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending);
+  // Ahead of the setImmediate below: the transport's 'close' precedes this socket's.
+  unadoptedTransport(self)?.destroy();
   handle.close(onSocketHandleClosed);
   setImmediate(() => {
     $debug("emit close", isCleanupPending);

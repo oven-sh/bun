@@ -4174,6 +4174,7 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
   const script = `
     import tls from "node:tls";
     import { once } from "node:events";
+    import { Worker } from "node:worker_threads";
     const cert = ${JSON.stringify({ key: cert1.key, cert: cert1.cert })};
     const AES128 = "ECDHE-RSA-AES128-GCM-SHA256", AES256 = "ECDHE-RSA-AES256-GCM-SHA384";
 
@@ -4194,11 +4195,13 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
       "fetch, tls: {}": () => fetch(url, { keepalive: false, tls: {} }),
       "fetch, rejectUnauthorized": () => fetch(url, { keepalive: false, tls: { rejectUnauthorized: false } }),
       "fetch, ca": () => fetch(url, { keepalive: false, tls: { ca: cert.cert } }),
+      "WebSocket": () => void new WebSocket(url.replace("https", "wss")),
       "WebSocket, rejectUnauthorized": () => void new WebSocket(url.replace("https", "wss"), { tls: { rejectUnauthorized: false } }),
+      "RedisClient, tls: true": () => new Bun.RedisClient("rediss://localhost:" + port, { tls: true, autoReconnect: false }).connect(),
       "Bun.connect, tls: true": () => Bun.connect({ hostname: "localhost", port, tls: true, socket: { data() {}, error() {} } }),
     };
     const results = {};
-    for (const list of [undefined, AES256, "TLS_AES_128_GCM_SHA256"]) {
+    for (const list of [undefined, AES256, AES128, "TLS_AES_128_GCM_SHA256"]) {
       if (list) tls.DEFAULT_CIPHERS = list;
       for (const [name, connect] of Object.entries(clients)) {
         seen = Promise.withResolvers();
@@ -4206,6 +4209,10 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
         (results[name] ??= []).push(await seen.promise);
       }
     }
+    // The list is the thread's, as in Node.js.
+    seen = Promise.withResolvers();
+    new Worker("new WebSocket(" + JSON.stringify(url.replace("https", "wss")) + ")", { eval: true });
+    results.worker = await seen.promise;
     console.log(JSON.stringify(results));
     process.exit(0);
   `;
@@ -4217,17 +4224,32 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // Nothing assigned, a TLS 1.2 suite, TLS 1.3 suites only (which this TLS 1.2 server cannot serve).
-  const row = ["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "ERR_SSL_UNSUPPORTED_PROTOCOL"];
+  const AES128 = "ECDHE-RSA-AES128-GCM-SHA256";
+  // Nothing assigned, a TLS 1.2 suite, another, TLS 1.3 suites only (which this TLS 1.2 server cannot serve).
+  const row = [AES128, "ECDHE-RSA-AES256-GCM-SHA384", AES128, "ERR_SSL_UNSUPPORTED_PROTOCOL"];
   expect(JSON.parse(stdout)).toEqual({
     "fetch": row,
     "fetch, tls: {}": row,
     "fetch, rejectUnauthorized": row,
     "fetch, ca": row,
+    "WebSocket": row,
     "WebSocket, rejectUnauthorized": row,
+    "RedisClient, tls: true": row,
     "Bun.connect, tls: true": row,
+    worker: AES128,
   });
   expect(exitCode).toBe(0);
+});
+
+// Node.js v26.3.0 throws the same from the first context built after the assignment.
+it("tls.DEFAULT_CIPHERS refuses a list that selects no cipher", () => {
+  const before = tls.DEFAULT_CIPHERS;
+  for (const list of ["!aNULL", "ALL:!ALL", "@STRENGTH"]) {
+    expect(() => {
+      tls.DEFAULT_CIPHERS = list;
+    }).toThrow(expect.objectContaining({ code: "ERR_SSL_NO_CIPHER_MATCH" }));
+  }
+  expect(tls.DEFAULT_CIPHERS).toBe(before);
 });
 
 // https://github.com/oven-sh/bun/issues/33954

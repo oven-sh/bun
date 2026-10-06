@@ -573,3 +573,74 @@ test("fetch takes a context of its own per tls.DEFAULT_CIPHERS, and none while n
   expect(JSON.parse(stdout)).toEqual([0, 0, 1, 0, 1, 0]);
   expect(exitCode).toBe(0);
 });
+
+test("the default client context follows tls.DEFAULT_CIPHERS, and the one it replaces is released", async () => {
+  using dir = tempDir("ssl-ctx-default-client", { "ca.pem": tlsCerts.cert });
+  const script = `
+    import tls from "node:tls";
+    import { once } from "node:events";
+    import { sslCtxLiveCount } from "bun:internal-for-testing";
+    using server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tlsCerts)},
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no")),
+      websocket: { message: (ws, message) => void ws.send(message) },
+    });
+    async function open() {
+      const ws = new WebSocket("wss://localhost:" + server.port + "/");
+      await once(ws, "open");
+      return ws;
+    }
+    async function close(ws) {
+      ws.close();
+      await once(ws, "close");
+    }
+    function assign(list) {
+      tls.DEFAULT_CIPHERS = list;
+      Bun.gc(true); // the context the setter validates the list with
+    }
+    const deltas = {};
+    async function step(name, expected, run) {
+      const before = sslCtxLiveCount();
+      await run();
+      // A closed socket is freed a few turns of the loop after its 'close' event.
+      for (let i = 0; i < 1000 && sslCtxLiveCount() - before !== expected; i++) await new Promise(setImmediate);
+      deltas[name] = sslCtxLiveCount() - before;
+    }
+    let kept;
+    await step("first connection", 1, async () => void (kept = await open()));
+    await step("second connection", 0, async () => close(await open()));
+    await step("assignment while a connection is open", 0, () => assign("ECDHE-RSA-AES256-GCM-SHA384"));
+    await step("that connection still works", 0, async () => {
+      kept.send("ping");
+      if ((await once(kept, "message"))[0].data !== "ping") throw new Error("no echo");
+    });
+    await step("connection after the assignment", 1, async () => close(await open()));
+    await step("another one", 0, async () => close(await open()));
+    await step("the first connection closes", -1, () => close(kept));
+    await step("reassignment", -1, () => assign("ECDHE-RSA-AES128-GCM-SHA256"));
+    await step("connection after the reassignment", 1, async () => close(await open()));
+    console.log(JSON.stringify(deltas));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "first connection": 1,
+    "second connection": 0,
+    "assignment while a connection is open": 0,
+    "that connection still works": 0,
+    "connection after the assignment": 1,
+    "another one": 0,
+    "the first connection closes": -1,
+    "reassignment": -1,
+    "connection after the reassignment": 1,
+  });
+  expect(exitCode).toBe(0);
+});

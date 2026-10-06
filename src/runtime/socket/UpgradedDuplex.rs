@@ -17,6 +17,7 @@ use core::ffi::{CStr, c_uint, c_void};
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
+use bun_sys::SystemErrno;
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;
@@ -28,7 +29,7 @@ bun_output::declare_scope!(UpgradedDuplex, visible);
 pub(crate) struct UpgradedDuplex {
     pub wrapper: JsCell<Option<WrapperType>>,
     /// The owning `JSTLSSocket` wrapper. Its `values:` slots root `origin` and
-    /// the four listener thunks; the `JSValue` fields below are read-side
+    /// the four native thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
     pub js_wrapper: JSValue,
     pub origin: Cell<JSValue>, // any duplex
@@ -42,8 +43,11 @@ pub(crate) struct UpgradedDuplex {
     pub handlers: Handlers,
     pub on_data_callback: Cell<JSValue>,
     pub on_end_callback: Cell<JSValue>,
-    pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
+    /// The `cb` of every `origin.write(chunk, cb)` and `origin.end(null, cb)`.
+    pub on_write_done_callback: Cell<JSValue>,
+    /// Those calls whose `cb` has not run.
+    pub in_flight: Cell<u32>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
@@ -112,7 +116,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
 /// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
-/// root). All four `get_js_handlers` slots follow the identical
+/// root). All four slots follow the identical
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
 /// `setFunctionData(self)` → store pattern.
 #[inline]
@@ -306,24 +310,36 @@ impl UpgradedDuplex {
             }
         };
 
-        if let Some(data) = data {
-            let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
+        let chunk = match data {
+            Some(data) => match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
                     (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
                     return;
                 }
-            };
-            buffer.ensure_still_alive();
+            },
+            None => JSValue::NULL,
+        };
+        chunk.ensure_still_alive();
+        let done = lazy_js_handler(
+            &self.on_write_done_callback,
+            self.js_wrapper,
+            js_TLSSocket::duplex_on_write_done_set_cached,
+            &global,
+            __jsc_host_on_write_done,
+            std::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+        );
 
-            if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
-            }
-        } else {
-            if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
-            }
+        self.in_flight.set(self.in_flight.get() + 1);
+        if let Err(err) = write_or_end.call(&global, duplex, &[chunk, done]) {
+            (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
         }
+    }
+
+    /// The wrapped stream has completed every write it was handed.
+    #[uws_callback(export = "UpgradedDuplex__transport_idle", no_catch)]
+    pub(crate) fn transport_idle(&self) -> bool {
+        self.in_flight.get() == 0
     }
 
     /// Not the 'end' event, which a paused transport holds back. No public property tells.
@@ -457,8 +473,9 @@ impl UpgradedDuplex {
             ssl_error: JsCell::new(CertError::default()),
             on_data_callback: Cell::new(JSValue::ZERO),
             on_end_callback: Cell::new(JSValue::ZERO),
-            on_writable_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
+            on_write_done_callback: Cell::new(JSValue::ZERO),
+            in_flight: Cell::new(0),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::UpgradedDuplex,
             )),
@@ -470,7 +487,7 @@ impl UpgradedDuplex {
     }
 
     pub(crate) fn get_js_handlers(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let array = JSValue::create_empty_array(global, 4)?;
+        let array = JSValue::create_empty_array(global, 3)?;
         array.ensure_still_alive();
 
         let this_ptr = std::ptr::from_ref(self).cast_mut().cast::<c_void>();
@@ -502,18 +519,6 @@ impl UpgradedDuplex {
         array.put_index(
             global,
             2,
-            lazy_js_handler(
-                &self.on_writable_callback,
-                js_wrapper,
-                js_TLSSocket::duplex_on_writable_set_cached,
-                global,
-                __jsc_host_on_writable,
-                this_ptr,
-            ),
-        )?;
-        array.put_index(
-            global,
-            3,
             lazy_js_handler(
                 &self.on_close_callback,
                 js_wrapper,
@@ -732,8 +737,8 @@ impl UpgradedDuplex {
         for cb in [
             &self.on_data_callback,
             &self.on_end_callback,
-            &self.on_writable_callback,
             &self.on_close_callback,
+            &self.on_write_done_callback,
         ] {
             let value = cb.get();
             if !value.is_empty() {
@@ -741,6 +746,7 @@ impl UpgradedDuplex {
                 cb.set(JSValue::ZERO);
             }
         }
+        self.in_flight.set(0);
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_close.set(false);
@@ -755,7 +761,7 @@ impl Drop for UpgradedDuplex {
 }
 
 // SAFETY (all four host fns): the function data is the `*mut UpgradedDuplex`
-// installed by `get_js_handlers`; `teardown` clears it before the storage is
+// installed by `lazy_js_handler`; `teardown` clears it before the storage is
 // freed, so a non-null data pointer is live for the call.
 
 #[bun_jsc::host_fn]
@@ -809,22 +815,59 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
+/// Node's `done(err)` of `doWrite`. It calls itself on the next tick, with the errno for `finishWrite`.
 #[bun_jsc::host_fn]
-fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    bun_output::scoped_log!(UpgradedDuplex, "onWritable");
+fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");
 
     let function = frame.callee();
+    let [arg] = frame.arguments_as_array::<1>();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
-        // flush pending data
-        this.flush();
-        // call onWritable (will flush on demand)
-        (this.handlers.on_writable)(this.handlers.ctx);
+        if arg.is_number() {
+            let errno = arg.to_int32();
+            if errno != 0 {
+                let err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::write);
+                let mut err = <bun_sys::Error as bun_jsc::SysErrorJsc>::to_system_error(&err);
+                // Node's errnoException(errCode, 'write').
+                err.message = bun_core::String::create_format(format_args!("write {}", err.code));
+                (this.handlers.on_error)(this.handlers.ctx, err.to_error_instance(global));
+            } else if this.in_flight.get() == 0 {
+                (this.handlers.on_writable)(this.handlers.ctx);
+            }
+            return Ok(JSValue::UNDEFINED);
+        }
+        let in_flight = this.in_flight.get().saturating_sub(1);
+        this.in_flight.set(in_flight);
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L157-L159
+        if !arg.is_undefined_or_null() && !this.is_shutdown() {
+            let errno = JSValue::js_number_from_int32(write_errno(global, arg)? as i32);
+            JSValue::call_next_tick_1(function, global, errno)?;
+        } else if in_flight == 0 {
+            JSValue::call_next_tick_1(function, global, JSValue::js_number_from_int32(0))?;
+        }
     }
 
     Ok(JSValue::UNDEFINED)
+}
+
+/// ``uv[`UV_${err.code}`] || uv.UV_EPIPE``
+fn write_errno(global: &JSGlobalObject, err: JSValue) -> JsResult<SystemErrno> {
+    let code = if err.is_object() {
+        err.get(global, "code")?.filter(|code| code.is_string())
+    } else {
+        None
+    };
+    let Some(code) = code else {
+        return Ok(SystemErrno::EPIPE);
+    };
+    Ok(core::str::from_utf8(&code.to_utf8(global)?)
+        .ok()
+        .and_then(|code| code.parse().ok())
+        .filter(|&errno| errno != SystemErrno::SUCCESS)
+        .unwrap_or(SystemErrno::EPIPE))
 }
 
 #[bun_jsc::host_fn]

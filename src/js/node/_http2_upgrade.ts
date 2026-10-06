@@ -10,7 +10,7 @@ interface NativeHandle {
 }
 
 type UpgradeEventListener = (...args: any[]) => void;
-type UpgradeEvents = [UpgradeEventListener, UpgradeEventListener, UpgradeEventListener, UpgradeEventListener];
+type UpgradeEvents = [UpgradeEventListener, UpgradeEventListener, UpgradeEventListener];
 
 interface UpgradeContextType {
   connectionListener: (...args: any[]) => any;
@@ -265,8 +265,7 @@ function onTlsClose(this: TLSProxySocket) {
   if (!ev) return;
   raw.removeListener("data", ev[0]);
   raw.removeListener("end", ev[1]);
-  raw.removeListener("drain", ev[2]);
-  raw.removeListener("close", ev[3]);
+  raw.removeListener("close", ev[2]);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +340,7 @@ function upgradeRawSocketToH2(
   try {
     // upgradeDuplexToTLS wraps rawSocket with a TLS layer in server mode (isServer: true).
     // The native side will:
-    //   1. Read encrypted data from rawSocket via events[0..3]
+    //   1. Read encrypted data from rawSocket via events[0..2]
     //   2. Decrypt it through the TLS engine (with ALPN negotiation for "h2")
     //   3. Call our socket callbacks below with the decrypted plaintext
     //
@@ -385,12 +384,10 @@ function upgradeRawSocketToH2(
   tlsSocket._ctx.events = events;
 
   // Wire up the raw TCP socket to feed encrypted data into the TLS layer.
-  // events[0..3] are native event handlers returned by upgradeDuplexToTLS that
-  // the native TLS engine expects to receive data/end/drain/close through.
+  // events[0..2] are the native TLS engine's listeners for data, end and close.
   rawSocket.on("data", events[0]);
   rawSocket.on("end", events[1]);
-  rawSocket.on("drain", events[2]);
-  rawSocket.on("close", events[3]);
+  rawSocket.on("close", events[2]);
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

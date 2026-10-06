@@ -2089,23 +2089,22 @@ struct NodeUnorderedLeftovers {
     }
 
     // Copies the right entries that can still take a partner. `unsettledKeys` are the Map keys both sides hold with unequal values: node pairs those entries like any other.
-    bool collectCandidates(MarkedArgumentBuffer& candidates, Bun::PendingEntries<size_t>::Queue& open, const WTF::HashSet<JSCell*>& unsettledKeys) const
+    void collectCandidates(MarkedArgumentBuffer& candidates, Bun::PendingEntries<size_t>::Queue& open, const WTF::HashSet<JSCell*>& unsettledKeys) const
     {
         JSCell* rightIterator = iterate(right);
         JSValue key, value;
         while (next(rightIterator, key, value)) {
-            // A right entry of this kind that `left` lacks leaves a left entry without a partner, which ends the comparison.
+            // The two sides have the same size. So a right entry of this kind that `left` lacks leaves a left entry without a partner, which ends the comparison.
             if (!isTypeofObject(key))
                 continue;
             bool held = holds(left, key);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, );
             // node queues the keys both sides hold too (L882-L891). A key settled by identity stays out here, so it never compares with itself.
             if (held && !unsettledKeys.contains(key.asCell()))
                 continue;
             open.append(candidates.size());
             append(candidates, key, value);
         }
-        return true;
     }
 
     // Every leftover claims a right entry of its own: front guess, back guess, then a scan from the back (L671-L722, L822-L876). The shortcut for Sets of fewer than three members (compareSmallSets, L724-L740) is not ported.
@@ -2116,9 +2115,9 @@ struct NodeUnorderedLeftovers {
         WTF::HashSet<JSCell*> unsettledKeys;
         if (!isMap) {
             // A Set has no value to disagree on, so the members claim while the left walk proceeds, as in node.
-            bool collected = collectCandidates(candidates, open, unsettledKeys);
+            collectCandidates(candidates, open, unsettledKeys);
             RETURN_IF_EXCEPTION(scope, false);
-            if (!collected || open.isEmpty())
+            if (open.isEmpty())
                 return false;
             Bun::PendingEntries<size_t> pending(WTF::move(open));
             for (bool more = true; more;) {
@@ -2133,6 +2132,7 @@ struct NodeUnorderedLeftovers {
                 more = nextLeftover(key, value, keyHeld);
                 RETURN_IF_EXCEPTION(scope, false);
             }
+            // Equal sizes leave no candidate open here, unless a getter took a member out of `left` during the walk.
             return !pending.openCount();
         }
 
@@ -2147,9 +2147,12 @@ struct NodeUnorderedLeftovers {
             more = nextLeftover(key, value, keyHeld);
             RETURN_IF_EXCEPTION(scope, false);
         }
-        bool collected = collectCandidates(candidates, open, unsettledKeys);
+        collectCandidates(candidates, open, unsettledKeys);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!collected || open.size() * width() != leftovers.size())
+        // A getter in the left walk can resize either Map, and collectCandidates relies on equal sizes.
+        if (uncheckedDowncast<JSMap>(left)->size() != uncheckedDowncast<JSMap>(right)->size())
+            return false;
+        if (open.size() * width() != leftovers.size())
             return false;
 
         Bun::PendingEntries<size_t> pending(WTF::move(open));

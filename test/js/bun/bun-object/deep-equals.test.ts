@@ -186,6 +186,8 @@ describe("Set and Map entries without an identical counterpart", () => {
     ["Set: equal duplicate counts", set({ a: 1 }, { a: 1 }, { a: 2 }), set({ a: 2 }, { a: 1 }, { a: 1 }), true],
     ["Set: one member differs", set({ a: 1 }, { a: 2 }), set({ a: 1 }, { a: 3 }), false],
     ["Set: a primitive only one side holds", set(1, { a: 1 }), set(2, { a: 1 }), false],
+    ["Set: an object on one side, primitives only on the other", set({ a: 1 }, 1), set(1, 2), false],
+    ["Set: a member both sides hold, after an equal one", set({ a: 2 }, shared), set({ a: 2 }, shared), true],
     ["Map: one value differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 1 }, "z"]), false],
     ["Map: one key differs", map([{ k: 1 }, "x"], [{ k: 1 }, "y"]), map([{ k: 1 }, "x"], [{ k: 2 }, "y"]), false],
     ["Map: a key both sides hold, different values", map([shared, 1]), map([shared, 2]), false],
@@ -226,6 +228,12 @@ describe("Set and Map entries without an identical counterpart", () => {
       "Map: a key both sides hold, its value under an equal key",
       map([shared, 1], [{ a: 1 }, 2]),
       map([shared, 2], [{ a: 1 }, 1]),
+      true,
+    ],
+    [
+      "Map: a key both sides hold after an equal key, its value under that key",
+      map([{ a: 1 }, 2], [shared, 1]),
+      map([{ a: 1 }, 1], [shared, 2]),
       true,
     ],
     [
@@ -274,6 +282,13 @@ describe("Set and Map entries without an identical counterpart", () => {
       map([{ k: 1 }, 1], [{ k: 1 }, 2], [{ k: 1 }, 2]),
       true,
       true,
+    ],
+    [
+      "Map: a key both sides hold with different values, after an equal entry",
+      map([{ a: 1 }, 1], [shared, 1]),
+      map([{ a: 1 }, 1], [shared, 2]),
+      true,
+      false,
     ],
   ];
 
@@ -325,7 +340,7 @@ describe("Set and Map entries without an identical counterpart", () => {
   });
 
   // The pairing works on a copy of the right entries, as in node.
-  describe("a getter that changes the right side during the pairing", () => {
+  describe("a getter that changes one side during the comparison", () => {
     function emptiedMidway() {
       const right = new Set<unknown>();
       const emptiesRight = {
@@ -367,11 +382,56 @@ describe("Set and Map entries without an identical counterpart", () => {
       right.set({ k: 1 }, 1).set("held", { v: 1 }).set(key, 2);
       return [left, right];
     }
+    // Here the right Map gains a key, so the two sides no longer have the same size.
+    function keyAddedInLeftWalk() {
+      const right = new Map<unknown, unknown>();
+      const addsKey = {
+        get v() {
+          right.set("added", 1);
+          return 1;
+        },
+      };
+      const left = map([{ k: 1 }, 1], ["held", addsKey], [{ k: 2 }, 2]);
+      right.set({ k: 1 }, 1).set("held", { v: 1 }).set({ k: 2 }, 2);
+      return [left, right];
+    }
+    // Here a key that is not an object gives way to one that is. The sizes stay equal, but the right Map has more entries to pair than the left Map.
+    function keySwappedInLeftWalk() {
+      const right = new Map<unknown, unknown>();
+      let swapped = false;
+      const swapsKey = {
+        get v() {
+          if (!swapped) right.delete("p");
+          if (!swapped) right.set({ k: 9 }, 9);
+          swapped = true;
+          return 1;
+        },
+      };
+      const left = map([{ k: 1 }, 1], ["p", 0], ["held", swapsKey], [{ k: 2 }, 2]);
+      right.set({ k: 1 }, 1).set("p", 0).set("held", { v: 1 }).set({ k: 2 }, 2);
+      return [left, right];
+    }
+    // The left Set loses a member during the pairing, so a right member stays without a partner.
+    function leftMemberRemovedMidway() {
+      const left = new Set<unknown>();
+      const later = { id: 1 };
+      const removesLater = {
+        get id() {
+          left.delete(later);
+          return 0;
+        },
+      };
+      left.add(removesLater).add(later);
+      return [left, set({ id: 0 }, { id: 1 })];
+    }
 
     it.each(Object.entries(nodeStrict))("%s", (_, check) => {
       check(...emptiedMidway(), true);
       check(...grownMidway(), true);
       check(...keyRemovedInLeftWalk(), false);
+      check(...keyAddedInLeftWalk(), false);
+      check(...keySwappedInLeftWalk(), false);
+      check(...leftMemberRemovedMidway(), false);
     });
   });
 

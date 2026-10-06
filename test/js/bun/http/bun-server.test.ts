@@ -2837,10 +2837,10 @@ test.concurrent("should be able to redirect when using empty streams #15320", as
 });
 
 test("HEAD request for a Response with an S3 file body reports the object size and the server keeps serving", async () => {
-  // Answering a HEAD request whose Response body is an S3-backed Blob resolves
-  // the object size with an async S3 stat before writing headers. Run the
-  // server in a subprocess so a crash on that completion path shows up as a
-  // non-zero exit code instead of taking down the test runner.
+  // `new Response(s3file)` answers a HEAD request with a 302 to a presigned
+  // URL. fetch() follows it, and the fake origin reports the size. Run the
+  // server in a subprocess so a crash on that path shows up as a non-zero
+  // exit code instead of taking down the test runner.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

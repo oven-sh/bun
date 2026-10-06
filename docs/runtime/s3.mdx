@@ -294,6 +294,24 @@ Response (0 KB) {
 }
 ```
 
+When `Bun.serve()` sends this response, from a handler or from a static route, it signs the URL for that request. A `HEAD` request gets a URL that is signed for `HEAD`. Every other request gets a URL that is signed for `GET`.
+
+```ts server.ts icon="/icons/typescript.svg"
+import { s3, serve } from "bun";
+
+serve({
+  routes: {
+    // A static route: each request gets its own presigned URL
+    "/report.pdf": new Response(s3.file("report.pdf")),
+
+    // A handler
+    "/files/:name": req => new Response(s3.file(req.params.name)),
+  },
+});
+```
+
+The `location` header that your code reads from the `Response` is a URL that is signed for `GET`. A URL that a `HEAD` request received works for `HEAD` requests only.
+
 ---
 
 ## Support for S3-Compatible Services

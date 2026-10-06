@@ -883,6 +883,9 @@ impl AnyRoute {
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(file_route)));
         }
+        if let Some(s3_route) = super::S3RedirectRoute::from_js(global, argument)? {
+            return Ok(Some(AnyRoute::S3Redirect(s3_route)));
+        }
         match StaticRoute::from_js(global, argument)? {
             Some(s) => Ok(Some(AnyRoute::Static(s))),
             None => Ok(None),

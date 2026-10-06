@@ -79,6 +79,10 @@ pub(crate) use static_route::StaticRoute;
 pub(crate) mod file_route;
 pub(crate) use file_route::FileRoute;
 
+#[path = "S3RedirectRoute.rs"]
+pub(crate) mod s3_redirect_route;
+pub(crate) use s3_redirect_route::S3RedirectRoute;
+
 #[path = "DirectoryRoute.rs"]
 pub(crate) mod directory_route;
 pub(crate) use directory_route::DirectoryRoute;
@@ -169,6 +173,8 @@ pub(crate) enum AnyRoute {
     Static(bun_ptr::RefPtr<StaticRoute>),
     /// Serve a file from disk
     File(bun_ptr::RefPtr<FileRoute>),
+    /// Redirect to a presigned URL, `"/download": new Response(s3file)`
+    S3Redirect(bun_ptr::RefPtr<S3RedirectRoute>),
     /// Serve a directory tree — `"/static/*": { dir: "./public" }`
     Directory(bun_ptr::RefPtr<DirectoryRoute>),
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
@@ -182,6 +188,7 @@ impl AnyRoute {
         match self {
             AnyRoute::Static(r) => r.memory_cost(),
             AnyRoute::File(r) => r.memory_cost(),
+            AnyRoute::S3Redirect(r) => r.memory_cost(),
             AnyRoute::Directory(r) => r.memory_cost(),
             AnyRoute::Html(r) => r.memory_cost(),
             AnyRoute::FrameworkRouter => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
@@ -2562,6 +2569,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         );
                     });
                 }
+                AnyRoute::S3Redirect(r) => {
+                    server_config::apply_static_route::<SSL, S3RedirectRoute>(
+                        any_server,
+                        app,
+                        r.this_ptr(),
+                        &entry.path,
+                        entry.method,
+                        path_has_user_head_route,
+                    );
+                    for_each_mux_app!(self, |mux| {
+                        server_config::apply_static_route_mux::<S3RedirectRoute, _>(
+                            any_server,
+                            mux,
+                            r.this_ptr(),
+                            &entry.path,
+                            entry.method,
+                            path_has_user_head_route,
+                        );
+                    });
+                }
                 AnyRoute::Directory(r) => {
                     server_config::apply_static_route::<SSL, DirectoryRoute>(
                         any_server,
@@ -4261,7 +4288,7 @@ pub(crate) mod http_server_agent {
                 path: BunString::from_bytes(&entry.path),
                 r#type: match &entry.route {
                     AnyRoute::Html(_) => RouteType::Html,
-                    AnyRoute::Static(_) => RouteType::Static,
+                    AnyRoute::Static(_) | AnyRoute::S3Redirect(_) => RouteType::Static,
                     _ => RouteType::Default,
                 },
                 file_path: match &entry.route {

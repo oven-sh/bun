@@ -460,6 +460,18 @@ impl StaticRouteLike for super::FileRoute {
     }
 }
 
+impl StaticRouteLike for super::S3RedirectRoute {
+    fn set_server(&self, server: AnyServer) {
+        self.set_server(Some(server));
+    }
+    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(this, req, resp)
+    }
+    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(this, req, resp)
+    }
+}
+
 impl StaticRouteLike for super::DirectoryRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));

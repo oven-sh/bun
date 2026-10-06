@@ -4,7 +4,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer } from "s3-server";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -2167,5 +2167,301 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+describe.concurrent("new Response(S3File) on a Bun.serve route", () => {
+  const body = "0123456789";
+
+  // An origin in this process, so that a test reads what it answered and sets its clock.
+  async function startOrigin() {
+    let now: number | undefined;
+    const origin = serve({ buckets: ["redirect"], clock: () => new Date(now ?? Date.now()) });
+    const client = new S3Client(origin.clientOptions("redirect"));
+    await client.write("object.txt", body);
+    origin.requests.length = 0;
+    return {
+      client,
+      response: () => new Response(client.file("object.txt")),
+      /** The requests that the origin answered since the last call. */
+      answered: () => origin.requests.splice(0).map(record => `${record.method} ${record.status}`),
+      setClock: (time: number) => {
+        now = time;
+      },
+      [Symbol.asyncDispose]: () => origin.stop(),
+    };
+  }
+  type Origin = Awaited<ReturnType<typeof startOrigin>>;
+
+  async function follow(url: string | URL, method: string) {
+    const response = await fetch(url, { method });
+    return { status: response.status, body: await response.text() };
+  }
+
+  async function redirectOf(url: string | URL, method: string) {
+    const response = await fetch(url, { method, redirect: "manual" });
+    return { status: response.status, location: response.headers.get("location") };
+  }
+
+  async function expectGetAndHeadToReachTheObject(origin: Origin, url: string | URL) {
+    expect(await follow(url, "GET")).toEqual({ status: 200, body });
+    expect(await follow(url, "HEAD")).toEqual({ status: 200, body: "" });
+    expect(origin.answered()).toEqual(["GET 200", "HEAD 200"]);
+  }
+
+  const nextTask = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  describe("a followed GET and a followed HEAD reach the object", () => {
+    const handlers: [string, (make: () => Response) => object][] = [
+      ["from a handler", make => ({ fetch: () => make() })],
+      ["from a handler that returns a fulfilled promise", make => ({ fetch: () => Promise.resolve(make()) })],
+      [
+        "from a handler that returns a pending promise",
+        make => ({
+          fetch: async () => {
+            await nextTask();
+            return make();
+          },
+        }),
+      ],
+      ["from a route function", make => ({ routes: { "/": () => make() } })],
+      ["from a GET route function", make => ({ routes: { "/": { GET: () => make() } } })],
+      ["from a HEAD route function", make => ({ routes: { "/": { GET: () => make(), HEAD: () => make() } } })],
+      [
+        "from error() after a throw",
+        make => ({
+          fetch() {
+            throw new Error("answered by error()");
+          },
+          error: () => make(),
+        }),
+      ],
+      [
+        "from error() after a rejection",
+        make => ({
+          fetch: async () => {
+            await nextTask();
+            throw new Error("answered by error()");
+          },
+          error: () => make(),
+        }),
+      ],
+      ["as new Response(null, response)", make => ({ fetch: () => new Response(null, make()) })],
+      ["as response.clone()", make => ({ fetch: () => make().clone() })],
+      ["as HTMLRewriter.transform(response)", make => ({ fetch: () => new HTMLRewriter().transform(make()) })],
+    ];
+    it.each(handlers)("%s", async (_, options) => {
+      await using origin = await startOrigin();
+      using server = Bun.serve({ port: 0, ...options(origin.response) } as any);
+      await expectGetAndHeadToReachTheObject(origin, server.url);
+    });
+
+    const statics: [string, (response: Response) => object][] = [
+      ["from a static route", response => ({ routes: { "/": response } })],
+      [
+        "from a static route for each method",
+        response => ({ routes: { "/": { GET: response, HEAD: response, PUT: response } } }),
+      ],
+      ["from one Response on two static routes", response => ({ routes: { "/other": response, "/": response } })],
+      ["from the static option", response => ({ static: { "/": response }, fetch: () => new Response("no route") })],
+    ];
+    it.each(statics)("%s", async (_, options) => {
+      await using origin = await startOrigin();
+      using server = Bun.serve({ port: 0, ...options(origin.response()) } as any);
+      await expectGetAndHeadToReachTheObject(origin, server.url);
+    });
+
+    it("from a static route that server.reload() added", async () => {
+      await using origin = await startOrigin();
+      using server = Bun.serve({ port: 0, routes: { "/": new Response("before the reload") } });
+      server.reload({ routes: { "/": origin.response() } });
+      await expectGetAndHeadToReachTheObject(origin, server.url);
+    });
+  });
+
+  describe("the URL is signed for HEAD only when the request is HEAD", () => {
+    it.each(["a handler", "a static route"])("%s", async kind => {
+      await using origin = await startOrigin();
+      using server = Bun.serve({
+        port: 0,
+        ...(kind === "a handler" ? { fetch: () => origin.response() } : { routes: { "/": origin.response() } }),
+      });
+
+      const accepted: Record<string, string[]> = {};
+      for (const method of ["GET", "HEAD", "POST", "PUT", "DELETE"]) {
+        const { status, location } = await redirectOf(server.url, method);
+        expect(status).toBe(302);
+        accepted[method] = [];
+        for (const replay of ["GET", "HEAD", "PUT", "DELETE"]) {
+          const response = await fetch(location!, { method: replay, body: replay === "PUT" ? "overwritten" : undefined });
+          await response.arrayBuffer();
+          if (response.ok) accepted[method].push(replay);
+        }
+      }
+      expect(accepted).toEqual({ GET: ["GET"], HEAD: ["HEAD"], POST: ["GET"], PUT: ["GET"], DELETE: ["GET"] });
+      expect(await origin.client.file("object.txt").text()).toBe(body);
+    });
+  });
+
+  it("a Location that the code replaced or deleted is sent as it is", async () => {
+    await using origin = await startOrigin();
+    const replaced = () => {
+      const response = origin.response();
+      response.headers.set("location", "https://example.com/elsewhere");
+      return response;
+    };
+    const deleted = () => {
+      const response = origin.response();
+      response.headers.delete("location");
+      return response;
+    };
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/handler/replaced": () => replaced(),
+        "/handler/deleted": () => deleted(),
+        "/static/replaced": replaced(),
+        "/static/deleted": deleted(),
+      },
+    });
+
+    const sent: Record<string, string | null> = {};
+    for (const path of ["/handler/replaced", "/handler/deleted", "/static/replaced", "/static/deleted"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const { status, location } = await redirectOf(new URL(path, server.url), method);
+        expect(status).toBe(302);
+        sent[`${method} ${path}`] = location;
+      }
+    }
+    expect(sent).toEqual({
+      "GET /handler/replaced": "https://example.com/elsewhere",
+      "HEAD /handler/replaced": "https://example.com/elsewhere",
+      "GET /handler/deleted": null,
+      "HEAD /handler/deleted": null,
+      "GET /static/replaced": "https://example.com/elsewhere",
+      "HEAD /static/replaced": "https://example.com/elsewhere",
+      "GET /static/deleted": null,
+      "HEAD /static/deleted": null,
+    });
+  });
+
+  it("a header that the code added is sent with the signed Location", async () => {
+    await using origin = await startOrigin();
+    const withHeader = () => {
+      const response = origin.response();
+      response.headers.set("x-added", "kept");
+      return response;
+    };
+    using server = Bun.serve({ port: 0, routes: { "/handler": () => withHeader(), "/static": withHeader() } });
+
+    for (const path of ["/handler", "/static"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const response = await fetch(new URL(path, server.url), { method, redirect: "manual" });
+        expect({ status: response.status, added: response.headers.get("x-added") }).toEqual({
+          status: 302,
+          added: "kept",
+        });
+        expect((await fetch(response.headers.get("location")!, { method })).status).toBe(200);
+      }
+    }
+  });
+
+  it("the Response that the code sees is a 302 with a GET URL", async () => {
+    await using origin = await startOrigin();
+    const response = origin.response();
+    expect({ status: response.status, redirected: response.redirected, body: response.body }).toEqual({
+      status: 302,
+      redirected: true,
+      body: null,
+    });
+    expect(await follow(response.headers.get("location")!, "GET")).toEqual({ status: 200, body });
+    expect(() => new Response(origin.client.file("object.txt"), { status: 200 })).toThrow(
+      "new Response(s3File) do not support ResponseInit options",
+    );
+    expect(() => new Response(new S3Client({ bucket: "redirect" }).file("object.txt"))).toThrow(
+      expect.objectContaining({ code: "ERR_S3_MISSING_CREDENTIALS" }),
+    );
+  });
+
+  describe("a Response that is older than its signature", () => {
+    // A signature has a resolution of one second. This returns in a later second than the one of
+    // `response`, with the clock of the origin 1 ms after the end of that signature.
+    async function expireSignatureOf(response: Response, origin: Origin) {
+      const date = new URL(response.headers.get("location")!).searchParams.get("X-Amz-Date")!;
+      const [, year, month, day, hour, minute, second] = date
+        .match(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/)!
+        .map(Number);
+      const signedAt = Date.UTC(year, month - 1, day, hour, minute, second);
+      while (Date.now() < signedAt + 1000) await Bun.sleep(10);
+      origin.setClock(signedAt + 15 * 60 * 1000 + 1);
+    }
+
+    it("from a handler that clones one Response", async () => {
+      await using origin = await startOrigin();
+      const response = origin.response();
+      using server = Bun.serve({ port: 0, fetch: () => response.clone() });
+      await expireSignatureOf(response, origin);
+      await expectGetAndHeadToReachTheObject(origin, server.url);
+    });
+
+    it("from a static route", async () => {
+      await using origin = await startOrigin();
+      const response = origin.response();
+      using server = Bun.serve({ port: 0, routes: { "/": response } });
+      await expireSignatureOf(response, origin);
+      await expectGetAndHeadToReachTheObject(origin, server.url);
+    });
+  });
+
+  describe("a HEAD signature that cannot be made", () => {
+    // The signer writes the text it signs into a buffer of a fixed size. With the longest access
+    // key id for which the GET text fits, the HEAD text is one byte too long.
+    function responseThatSignsForGetOnly() {
+      const client = (length: number) =>
+        new S3Client({
+          accessKeyId: Buffer.alloc(length, "A").toString(),
+          secretAccessKey: "secret",
+          bucket: "bucket",
+          endpoint: "http://127.0.0.1:1",
+        });
+      let fits = 1;
+      let tooLong = 8192;
+      while (tooLong - fits > 1) {
+        const middle = (fits + tooLong) >> 1;
+        try {
+          new Response(client(middle).file("key"));
+          fits = middle;
+        } catch {
+          tooLong = middle;
+        }
+      }
+      expect(() => client(fits).presign("key", { method: "HEAD", expiresIn: 15 * 60 })).toThrow(
+        expect.objectContaining({ code: "ERR_S3_INVALID_SIGNATURE" }),
+      );
+      return () => new Response(client(fits).file("key"));
+    }
+
+    it("goes to error() from a handler", async () => {
+      const make = responseThatSignsForGetOnly();
+      const codes: unknown[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => make(),
+        error(error: any) {
+          codes.push(error.code);
+          return new Response("no signature", { status: 500 });
+        },
+      });
+      expect((await redirectOf(server.url, "GET")).status).toBe(302);
+      expect(await redirectOf(server.url, "HEAD")).toEqual({ status: 500, location: null });
+      expect(codes).toEqual(["ERR_S3_INVALID_SIGNATURE"]);
+    });
+
+    it("throws from Bun.serve() for a static route", () => {
+      const make = responseThatSignsForGetOnly();
+      expect(() => Bun.serve({ port: 0, routes: { "/": make() } }).stop(true)).toThrow(
+        expect.objectContaining({ code: "ERR_S3_INVALID_SIGNATURE" }),
+      );
+    });
   });
 });

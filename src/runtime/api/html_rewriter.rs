@@ -1154,6 +1154,7 @@ impl RewriterPipe {
 
         // https://github.com/oven-sh/bun/issues/3334
         result_ref.set_init_headers(original.clone_init_headers(cx.global())?);
+        result_ref.copy_s3_redirect_from(original);
 
         let response_js_value = result_ref.to_js(&this.global);
 

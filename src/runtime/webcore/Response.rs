@@ -405,6 +405,65 @@ impl Response {
     }
 
     #[inline]
+    pub(crate) fn has_s3_redirect(&self) -> bool {
+        self.init.get().s3_redirect.is_some()
+    }
+
+    /// The redirect state and the headers, while `Location` is still the URL Bun wrote there.
+    fn owned_s3_redirect(&self) -> Option<(&mut S3Redirect, &mut FetchHeaders)> {
+        let init = self.init_mut();
+        let state = init.s3_redirect.as_deref_mut()?;
+        let headers = init.headers.as_deref_mut()?;
+        let location = headers.fast_get(HTTPHeaderName::Location)?;
+        if location.is_16bit() || location.slice() != &*state.location {
+            return None;
+        }
+        Some((state, headers))
+    }
+
+    pub(crate) fn s3_redirect_store(&self) -> Option<RefPtr<super::blob::Store>> {
+        self.owned_s3_redirect()
+            .map(|(state, _)| state.store.clone())
+    }
+
+    /// Signs `Location` again when it was signed for the other of GET and HEAD, or in another second.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn refresh_s3_redirect(
+        &self,
+        request_method: Method,
+        global: &JSGlobalObject,
+    ) -> Result<(), JSValue> {
+        let Some((state, headers)) = self.owned_s3_redirect() else {
+            return Ok(());
+        };
+        let for_head = request_method == Method::HEAD;
+        let now = bun_core::time::timestamp();
+        if for_head == state.signed_for_head && now == state.signed_at {
+            return Ok(());
+        }
+        let mut result =
+            super::blob::store::presign_redirect(state.store.data.as_s3(), request_method)
+                .map_err(|err| crate::webcore::s3::client::get_js_sign_error(err.into(), global))?;
+        headers
+            .put(
+                HTTPHeaderName::Location,
+                &BunString::ascii(&result.url),
+                global,
+            )
+            .map_err(|err| global.take_exception(err))?;
+        state.location = mem::take(&mut result.url);
+        state.signed_at = now;
+        state.signed_for_head = for_head;
+        Ok(())
+    }
+
+    /// For a copy that moves `init` field by field. `Init::clone` carries the state for every other copy.
+    pub(crate) fn copy_s3_redirect_from(&self, original: &Response) {
+        self.init_mut().s3_redirect = original.init.get().s3_redirect.clone();
+    }
+
+    #[inline]
     pub(crate) fn get_method(&self) -> Method {
         self.init.get().method
     }
@@ -1070,24 +1129,11 @@ impl Response {
                         ..Default::default()
                     };
 
-                    let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
-                    let credentials = s3.get_credentials();
-
-                    let result = match credentials.sign_request::<false>(
-                        &bun_s3_signing::SignOptions {
-                            path: s3.path(),
-                            method: Method::GET,
-                            content_hash: None,
-                            content_md5: None,
-                            search_params: None,
-                            content_disposition: None,
-                            content_type: None,
-                            content_encoding: None,
-                            acl: None,
-                            storage_class: None,
-                            request_payer: false,
-                        },
-                        Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+                    let store = blob.store.get().as_ref().unwrap();
+                    let signed_at = bun_core::time::timestamp();
+                    let mut result = match super::blob::store::presign_redirect(
+                        store.data.as_s3(),
+                        Method::GET,
                     ) {
                         Ok(r) => r,
                         Err(sign_err) => {
@@ -1105,6 +1151,12 @@ impl Response {
                         &BunString::ascii(&result.url),
                         global_this,
                     )?;
+                    response.init_mut().s3_redirect = Some(Box::new(S3Redirect {
+                        store: store.clone(),
+                        location: mem::take(&mut result.url),
+                        signed_at,
+                        signed_for_head: false,
+                    }));
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
                 }
             }
@@ -1187,6 +1239,17 @@ pub(crate) struct Init {
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
+    /// Set by `new Response(s3file)`: Bun.serve signs that redirect again for each request.
+    pub(crate) s3_redirect: Option<Box<S3Redirect>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct S3Redirect {
+    store: RefPtr<super::blob::Store>,
+    /// The `Location` value Bun wrote. Any other value is the user's and is sent as it is.
+    location: Box<[u8]>,
+    signed_at: i64,
+    signed_for_head: bool,
 }
 
 impl Default for Init {
@@ -1196,6 +1259,7 @@ impl Default for Init {
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
+            s3_redirect: None,
         }
     }
 }
@@ -1214,6 +1278,7 @@ impl Init {
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
+            s3_redirect: self.s3_redirect.clone(),
         })
     }
 

@@ -1,5 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, it, jest } from "bun:test";
+import { execFile } from "child_process";
 import { once } from "events";
 import { readFileSync, writeFileSync } from "fs";
 import {
@@ -19,6 +20,7 @@ import net from "net";
 import { join } from "path";
 import stream from "stream";
 import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls";
+import { promisify } from "util";
 
 import type { AddressInfo } from "net";
 import { Duplex } from "node:stream";
@@ -6454,6 +6456,87 @@ describe("a write on a TLS socket over a Duplex completes when the Duplex has co
       expect((await transportFailed)[0].message).toBe("boom");
     });
   });
+
+  // A process of its own: a value that is taken for something else than "it failed" must not take the test run down.
+  const writeCallbackValues = /* js */ `
+    const tls = require("tls"), util = require("util"), { Duplex } = require("stream"), { once } = require("events");
+    const values = [-1, 5, 1e9, "x", {}, Object.assign(new Error("boom"), { code: "ECONNRESET" }), 0, "", null];
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    const shape = err => err && [err.name, err.message, err.code, util.getSystemErrorName(err.errno), err.syscall].join(" | ");
+    async function run(value) {
+      let stalled = false, held, chunk;
+      class Side extends Duplex {
+        _read() {}
+        _write(data, encoding, callback) {
+          if (stalled && this === clientSide) return void ([held, chunk] = [callback, data]);
+          this.peer.push(data);
+          callback();
+        }
+        _final(callback) {
+          this.peer.push(null);
+          callback();
+        }
+      }
+      const clientSide = new Side(), serverSide = new Side();
+      clientSide.peer = serverSide;
+      serverSide.peer = clientSide;
+      // Not through stream.Writable, which hands a falsy value on as null.
+      if (process.argv.at(-1) === "write()") {
+        clientSide.write = (data, encoding, callback) => (clientSide._write(data, null, callback ?? encoding), true);
+      }
+      clientSide.on("error", () => {});
+      const server = new tls.TLSSocket(serverSide, { isServer: true, key: process.env.TLS_KEY, cert: process.env.TLS_CERT });
+      const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+      server.on("error", () => {});
+      let received = "";
+      server.on("data", data => (received += data));
+      const ended = once(server, "end");
+      const log = [];
+      // Node's tls.connect() also forwards the error of the Duplex.
+      client.on("error", err => err?.syscall && log.push("'error': " + shape(err)));
+      const closed = new Promise(resolve => client.on("close", resolve));
+      await once(client, "secureConnect");
+      await turn();
+      stalled = true;
+      const written = new Promise(resolve => client.write("a", resolve));
+      await turn();
+      await turn();
+      stalled = false;
+      if (!value) serverSide.push(chunk);
+      held(value);
+      const err = await written;
+      log.unshift("write callback: " + shape(err));
+      if (err) await closed;
+      else {
+        log.push("end callback: " + ((await new Promise(resolve => client.end("b", resolve))) ?? null));
+        await ended;
+        log.push("received " + received);
+      }
+      await turn();
+      client.destroy();
+      server.destroy();
+      return log.join(", ");
+    }
+    (async () => {
+      for (const value of values) console.log(await run(value));
+    })();
+  `;
+  it.each(["_write()", "write()"])(
+    "what the %s of the Duplex passes to the write callback only says whether the write failed",
+    async form => {
+      const { stdout } = await promisify(execFile)(bunExe(), ["-e", writeCallbackValues, form], {
+        env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+      });
+      const failed = (code: string) =>
+        `write callback: Error | write ${code} | ${code} | ${code} | write, 'error': Error | write ${code} | ${code} | ${code} | write`;
+      const completed = "write callback: null, end callback: null, received ab";
+      expect(stdout.trim().split("\n")).toEqual([
+        ...Array(5).fill(failed("EPIPE")),
+        failed("ECONNRESET"),
+        ...Array(3).fill(completed),
+      ]);
+    },
+  );
 
   describe.each(["client", "server"] as const)("a %s write in flight", side => {
     it.each(["destroy()", "destroy(err)", "the destroy() of the Duplex"])(

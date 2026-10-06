@@ -76,8 +76,10 @@ slow_path:
 
     while (cursor < end) {
         if (*cursor == '%') {
+            // A '%' without two hex digits after it is not an escape. Keep it and
+            // continue with the next byte, the same as URLSearchParams does.
             if (cursor + 2 >= end) {
-                result.append(replacementChar);
+                result.append('%');
                 cursor++;
                 continue;
             }
@@ -86,8 +88,8 @@ slow_path:
             uint8_t lowNibble = hexToInt(cursor[2]);
 
             if (highNibble > 15 || lowNibble > 15) {
-                result.append(replacementChar);
-                cursor += (cursor + 2 < end) ? 3 : 1;
+                result.append('%');
+                cursor++;
                 continue;
             }
 

@@ -320,7 +320,8 @@ function Server(options, callback): void {
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
-  this[tlsSymbol] = null;
+  // Called again on an https.Server, it stays one: Node's http.Server does not touch the state of tls.Server.
+  if (this[tlsSymbol] === undefined) this[tlsSymbol] = null;
   this.noDelay = true;
   if (typeof options === "function") {
     callback = options;
@@ -407,8 +408,6 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
-    } else {
-      this[tlsSymbol] = null;
     }
   }
 

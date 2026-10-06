@@ -7186,13 +7186,32 @@ it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async ()
   }
 });
 
-it("http.Server can be called again on an https.Server, without TLS options", () => {
-  const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert });
-  http.Server.call(server, { keepAliveTimeout: 1234 });
-  expect(server.keepAliveTimeout).toBe(1234);
+async function speaks(server: Server) {
+  await once(server.listen(0), "listening");
+  const { port } = server.address() as AddressInfo;
+  const get = (url: string) =>
+    fetch(url, { tls: { rejectUnauthorized: false } }).then(
+      response => response.text(),
+      () => "failed",
+    );
+  try {
+    return { http: await get(`http://localhost:${port}/`), https: await get(`https://localhost:${port}/`) };
+  } finally {
+    server.close();
+  }
+}
+
+it.each([
+  ["no options", []],
+  ["options that have nothing to do with TLS", [{ keepAliveTimeout: 1234 }]],
+])("an https.Server is still one after http.Server is called on it again with %s", async (_, args) => {
+  const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, (req, res) => res.end("hello"));
+  http.Server.call(server, ...args);
+  expect(await speaks(server)).toEqual({ http: "failed", https: "hello" });
 });
 
-it("createServer() does not read _pfxExtraCACerts from the caller's options", () => {
-  const server = createServer({ _pfxExtraCACerts: ["not a certificate"] } as http.ServerOptions);
-  expect(server).toBeInstanceOf(http.Server);
+it("createServer() does not read _pfxExtraCACerts from the caller's options", async () => {
+  const options = { _pfxExtraCACerts: [tlsCert.cert] } as http.ServerOptions;
+  const server = createServer(options, (req, res) => res.end("hello"));
+  expect(await speaks(server)).toEqual({ http: "hello", https: "failed" });
 });

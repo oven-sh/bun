@@ -473,10 +473,11 @@ declare module "bun" {
        * Cancels the query.
        *
        * MySQL and MariaDB: a query that Bun has not sent to the server rejects
-       * with `ERR_MYSQL_QUERY_CANCELLED`, and Bun never sends it. That is a
-       * query that waits behind another query on the same connection. A query
-       * that the server already received is not stopped: it finishes and
-       * resolves as usual.
+       * with `ERR_MYSQL_QUERY_CANCELLED`, and Bun never sends it. Bun has not
+       * sent a query when another query runs on the same connection, or when
+       * the server is still preparing the statement for the first query with
+       * that text on the connection. A query that Bun already sent is not
+       * stopped: it finishes and resolves as usual.
        */
       cancel(): Query<T>;
 

@@ -1574,6 +1574,62 @@ differential("the errors of the projects of a build", async () => {
   expect(different).toEqual({});
 });
 
+// A referenced project emits its own sources. Every other file that a project imports is a file of that project.
+differential("what a project with references imports, and whether it may", async () => {
+  // What `src/a.ts` imports.
+  const imported = {
+    "a source of the referenced project": `import "../lib/l";`,
+    "a file that nothing lists": `import "../other/o";`,
+    "a file that only the referenced project imports": `import "../lib/inner/i";`,
+    "a JSON file": `import j from "../data.json"; j;`,
+    "all of them": `import "../lib/l"; import "../other/o"; import "../lib/inner/i"; import j from "../data.json"; j;`,
+  };
+  const options = [
+    { composite: true },
+    { composite: true, rootDir: "src" },
+    { rootDir: "src", outDir: "out" },
+    { outDir: "out" },
+    { composite: true, outDir: "out", resolveJsonModule: false },
+  ];
+  const references = [[], ["./lib"], ["./lib", "./unrelated"]];
+  const combinations = [...product(Object.keys(imported) as (keyof typeof imported)[], options, references)];
+  const base = { strict: true, lib: ["es2020"], types: [], module: "esnext", moduleResolution: "bundler" };
+  const files: Record<string, string> = {};
+  combinations.forEach(([what, compilerOptions, referenced], index) => {
+    files[`${index}/tsconfig.json`] = JSON.stringify({
+      compilerOptions: { ...base, resolveJsonModule: true, ...compilerOptions },
+      include: ["src"],
+      references: referenced.map(path => ({ path })),
+    });
+    files[`${index}/src/a.ts`] = `${imported[what]}\nexport const checked: number = "";\n`;
+    files[`${index}/other/o.ts`] = `export const o = 1;\n`;
+    files[`${index}/data.json`] = `{ "a": 1 }\n`;
+    files[`${index}/lib/tsconfig.json`] = JSON.stringify({
+      compilerOptions: { ...base, composite: true },
+      files: ["l.ts"],
+    });
+    files[`${index}/lib/l.ts`] = `export const l = 1;\n`;
+    files[`${index}/lib/inner/i.ts`] = `export const i = 1;\n`;
+    files[`${index}/unrelated/tsconfig.json`] = JSON.stringify({ compilerOptions: { ...base, composite: true } });
+    files[`${index}/unrelated/u.ts`] = `export const u = 1;\n`;
+  });
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  const different: Record<string, object> = {};
+  await inTurns(
+    [...combinations.keys()].filter(index => index % everyProject === 0),
+    async index => {
+      const cwd = join(root, String(index));
+      // In this order: `tsc -b` writes files.
+      const ours = await linesOf([bunExe(), "check"], cwd, root);
+      const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
+      expect(theirs.length).toBeGreaterThan(0);
+      if (!Bun.deepEquals(theirs, ours)) different[JSON.stringify(combinations[index])] = { theirs, ours };
+    },
+  );
+  expect(different).toEqual({});
+});
+
 // What is relative is relative to the file that it is written in.
 differential("paths in a configuration file that is extended", async () => {
   const paths = [

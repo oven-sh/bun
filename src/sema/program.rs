@@ -2764,8 +2764,6 @@ impl Included<'_, '_> {
             .map(|(module, &is_root)| {
                 source_file_may_be_emitted(options, module, is_case_sensitive)
                     && is_wrong(module, is_root)
-                    // `GetProjectReferenceFromSource`: which files belong to a referenced project is not known here.
-                    && (is_root || !options.has_project_references)
             })
             .collect();
         if !is_reported.contains(&true) {
@@ -2926,6 +2924,10 @@ fn implied_format_reason(
 fn source_file_may_be_emitted(options: &Options, module: &Module, is_case_sensitive: bool) -> bool {
     if module.is_lib || module.hir.kind == FileKind::Declaration || module.is_from_external_library
     {
+        return false;
+    }
+    // The referenced project emits its own sources.
+    if options.is_source_of_referenced_project(module.file_name()) {
         return false;
     }
     // `GetCommonSourceDirectory`, if `rootDir` or the configuration file determines it.

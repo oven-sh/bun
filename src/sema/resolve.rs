@@ -295,6 +295,11 @@ impl Options {
         Some(sources[index].2.as_slice()).filter(|output| !output.is_empty())
     }
 
+    /// `GetProjectReferenceFromSource(path) != nil`
+    pub fn is_source_of_referenced_project(&self, path: &[u8]) -> bool {
+        (self.find_by_path(&self.referenced_sources, |it| &it.0, path)).is_some()
+    }
+
     /// The index of the file with this name in a table that is sorted by `tspath.Path`.
     fn find_by_path<T>(&self, table: &[T], path: fn(&T) -> &Vec<u8>, name: &[u8]) -> Option<usize> {
         let find = |name: &[u8]| table.binary_search_by(|it| path(it)[..].cmp(name)).ok();
@@ -494,8 +499,6 @@ pub struct Options {
     pub writes_declaration_files: bool,
     /// `ConfigFilePath`. Empty if there is none.
     pub config_path: Vec<u8>,
-    /// The configuration file has `references`.
-    pub has_project_references: bool,
     /// The first so many root files are those of the project. The others are added to it by name.
     /// They, and what only they bring in, are not its sources: nothing is emitted for them, so
     /// `rootDir` and `composite` have no say about them. `None`: all are its own.

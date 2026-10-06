@@ -190,7 +190,8 @@ pub(crate) fn select_packages(
             bun_sys::Fd::invalid(),
             None,
             IncludeScripts::IncludeScripts,
-        ) else {
+        )
+        .filter(|pkg| pkg.has_bun_metadata()) else {
             bun_core::warn!(
                 "Failed to read {}, skipping this workspace package\n",
                 bun_core::fmt::quote(&*package_json_path),

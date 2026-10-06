@@ -2121,6 +2121,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,
             store_root_fd: false,
+            defer_package_errors: false,
         },
     ) {
         if matches!(err, crate::Error::Alloc(_)) {

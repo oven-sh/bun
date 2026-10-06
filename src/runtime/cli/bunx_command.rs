@@ -752,6 +752,7 @@ impl BunxCommand {
             ConfigureEnvOptions {
                 log_errors: true,
                 store_root_fd: true,
+                defer_package_errors: false,
             },
         )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully

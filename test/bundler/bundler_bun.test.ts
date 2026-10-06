@@ -338,29 +338,32 @@ error: Hello World`,
     ],
   });
   // `bun build --compile --bytecode` is the documented production command.
+  // `--compile --format=cjs` embeds the same chunk as source.
   // https://github.com/oven-sh/bun/issues/21097
-  itBundled("bun/ImportMetaCompileBytecode", {
-    compile: true,
-    bytecode: true,
-    files: {
-      "/entry.ts": /* js */ `
-        import { basename, dirname } from "node:path";
-        const slashes = (s) => s.replaceAll("\\\\", "/");
-        console.log(
-          slashes(import.meta.path) === slashes(Bun.main),
-          slashes(import.meta.dir) === slashes(dirname(Bun.main)),
-          import.meta.file === basename(Bun.main),
-          import.meta.url === Bun.pathToFileURL(Bun.main).href,
-          import.meta.env.IMPORT_META_PROBE,
-          slashes(import.meta.dir),
-        );
-      `,
-    },
-    run: {
-      stdout: /^true true true true from-env (\/\$bunfs|[A-Z]:\/~BUN)\/root$/,
-      ...expectBytecodeCacheHit,
-    },
-  });
+  for (const bytecode of [true, false]) {
+    itBundled(`bun/ImportMetaCompile${bytecode ? "Bytecode" : "FormatCjs"}`, {
+      compile: true,
+      ...(bytecode ? { bytecode } : { format: "cjs" as const }),
+      files: {
+        "/entry.ts": /* js */ `
+          import { basename, dirname } from "node:path";
+          const slashes = (s) => s.replaceAll("\\\\", "/");
+          console.log(
+            slashes(import.meta.path) === slashes(Bun.main),
+            slashes(import.meta.dir) === slashes(dirname(Bun.main)),
+            import.meta.file === basename(Bun.main),
+            import.meta.url === Bun.pathToFileURL(Bun.main).href,
+            import.meta.env.IMPORT_META_PROBE,
+            slashes(import.meta.dir),
+          );
+        `,
+      },
+      run: {
+        stdout: /^true true true true from-env (\/\$bunfs|[A-Z]:\/~BUN)\/root$/,
+        ...(bytecode ? expectBytecodeCacheHit : { env: importMetaEnv }),
+      },
+    });
+  }
   // The executable must start the worker that was compiled in. With the source
   // path in import.meta.url it ran whatever was at that path when it started.
   itBundled("bun/ImportMetaCompileBytecodeWorker", {

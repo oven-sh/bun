@@ -1694,6 +1694,9 @@ pub(crate) mod command {
                 RunCommand::completions::<{ Filter::AllPlusBunJs }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"j" {
             completions = RunCommand::completions::<{ Filter::BunJs }>(ctx, None, REJECT_LIST)?;
+        } else if filter[0] == b"e" {
+            completions =
+                RunCommand::completions::<{ Filter::RunnableExtensions }>(ctx, None, REJECT_LIST)?;
         } else if filter[0] == b"z" {
             completions = RunCommand::completions::<{ Filter::ScriptAndDescriptions }>(
                 ctx,

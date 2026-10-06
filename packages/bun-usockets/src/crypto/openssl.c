@@ -2512,7 +2512,9 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   return NULL;
 }
 
-struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
+struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *data, int length) {
+  /* The parameter is _Nonnull in release builds, and the helpers below return NULL for a socket that is gone. */
+  struct us_socket_t *s = socket;
   /* See ssl_update_handshake: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */

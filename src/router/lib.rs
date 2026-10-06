@@ -1585,13 +1585,29 @@ mod tests {
                     value: b"value",
                 }],
             ),
-            // a lone byte after the last `]` is not part of the pattern
+            // text after a `]` is outside the documented syntax: current behavior, not a contract
             (
                 b"[teamSlug]s",
                 b"value",
                 &[Entry {
                     name: b"teamSlug",
                     value: b"value",
+                }],
+            ),
+            (
+                b"[id].d",
+                b"123/d",
+                &[Entry {
+                    name: b"id",
+                    value: b"123",
+                }],
+            ),
+            (
+                b"[id].test",
+                b"123/test",
+                &[Entry {
+                    name: b"id",
+                    value: b"123",
                 }],
             ),
             (
@@ -1855,7 +1871,8 @@ mod tests {
                 bstr::BStr::new(route),
             );
         }
-        for route in [b"[x]" as &[u8], b"[x]/a", b"a/[x]", b"a"] {
+        // In `[x][` the `[` is the byte after `]`, which the tokenizer steps over.
+        for route in [b"[x]" as &[u8], b"[x]/a", b"a/[x]", b"a", b"[x]["] {
             assert!(
                 Pattern::validate(route, &mut log).is_some(),
                 "validate should accept {:?}",

@@ -607,12 +607,19 @@ it.concurrent("matches a single-character static segment after a dynamic segment
   }
 });
 
-it.concurrent("a route filename with one character after `]` matches like the bare param", () => {
-  using dir = tempDir("fsr-bracket-suffix", { "[id]s.tsx": "export default 1;" });
+// Text after a `]` is outside the documented syntax. This records what the router does today. It is not a contract.
+it.concurrent.each([
+  { file: "[id]s.tsx", route: "/[id]s", matches: { "/123": { id: "123" }, "/123/s": null } },
+  { file: "[id].d.ts", route: "/[id].d", matches: { "/123/d": { id: "123" }, "/123": null } },
+  { file: "[id].test.tsx", route: "/[id].test", matches: { "/123/test": { id: "123" }, "/123": null } },
+  { file: "[x][.tsx", route: "/[x][", matches: { "/123": { x: "123" }, "/123/[": null } },
+])("$file has text after `]`: it loads, and these are its current matches", ({ file, route, matches }) => {
+  using dir = tempDir("fsr-bracket-suffix", { [file]: "export default 1;" });
   const router = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" });
 
-  expect(router.match("/123")).toMatchObject({ name: "/[id]s", params: { id: "123" } });
-  expect(router.match("/123/s")).toBeNull();
+  expect(Object.keys(router.routes)).toEqual([route]);
+  const current = Object.fromEntries(Object.keys(matches).map(url => [url, router.match(url)?.params ?? null]));
+  expect(current).toEqual(matches);
 });
 
 it("dir should be validated", async () => {
@@ -799,7 +806,7 @@ it("throws a clean error for invalid route filenames (no use-after-free)", async
 });
 
 it.concurrent.each(["foo[.tsx", "[id]/foo[.tsx", "[id]/foo/[.tsx"])(
-  "rejects the route filename %j, which ends in an unclosed bracket",
+  "rejects the route filename %j: an unclosed `[` after text or a slash",
   file => {
     using dir = tempDir("fsr-trailing-bracket", { [file]: "export default 1;" });
     expect(() => new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs" })).toThrow("Invalid dynamic route");

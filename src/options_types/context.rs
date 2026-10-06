@@ -211,6 +211,8 @@ pub struct BundlerOptions {
     pub bytecode: bool,
     pub bytecode_depth: u32,
     pub optimize_bytecode: bool,
+    /// `--bytecode-order`: payload order files, most important first.
+    pub bytecode_order: Vec<Box<[u8]>>,
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
@@ -274,6 +276,7 @@ impl Default for BundlerOptions {
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
+            bytecode_order: Vec::new(),
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,
@@ -347,7 +350,6 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 }
 
 pub struct DebugOptions {
-    pub dump_environment_variables: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
@@ -374,7 +376,6 @@ impl Default for DebugOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            dump_environment_variables: false,
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,

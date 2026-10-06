@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -69,6 +69,70 @@ describe("Bun.build", () => {
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+  });
+
+  // Bytecode is counted among the outputs before it is generated. JSC rejects this regular expression, which the
+  // bundler passes through, so the chunk ends up without bytecode: every other output must still be there.
+  describe.each(["in memory", "outdir"])("a chunk whose bytecode cannot be generated (%s)", form => {
+    const files = {
+      "package.json": `{}`,
+      "logo.png": "PNGDATA",
+      "data.bin": "BINDATA",
+    };
+    const unparseable = String.raw`/\p{NotAProperty}/u`;
+
+    test("keeps the other outputs", async () => {
+      using dir = tempDir("bun-build-api-bytecode-failed", {
+        ...files,
+        "index.js": `
+          const logo = require("./logo.png");
+          const data = require("./data.bin");
+          console.log(typeof logo, typeof data);
+          exports.bad = s => ${unparseable}.test(s);
+        `,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "index.js")],
+        ...(form === "outdir" ? { outdir: join(String(dir), "out") } : {}),
+        target: "bun",
+        format: "cjs",
+        bytecode: true,
+        loader: { ".bin": "file" },
+      });
+      const outputs = await Promise.all(
+        build.outputs.map(async output => ({
+          kind: output?.kind,
+          text: output?.kind === "asset" ? await output.text() : "",
+        })),
+      );
+      expect(outputs.sort((a, b) => (a.kind + a.text).localeCompare(b.kind + b.text))).toEqual([
+        { kind: "asset", text: "BINDATA" },
+        { kind: "asset", text: "PNGDATA" },
+        { kind: "entry-point", text: "" },
+      ]);
+    });
+  });
+
+  // Bytecode is for JavaScript chunks: the CSS chunk of a JavaScript entry point is not one, and is not counted as one.
+  test("bytecode is not generated for the CSS chunk of an entry point", async () => {
+    using dir = tempDir("bun-build-api-bytecode-css", {
+      "logo.png": "PNGDATA",
+      "empty.css": "/* nothing */\n",
+      "index.js": `
+        import "./empty.css";
+        const logo = require("./logo.png");
+        console.log(typeof logo);
+      `,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.js")],
+      outdir: join(String(dir), "out"),
+      target: "bun",
+      format: "cjs",
+      bytecode: true,
+    });
+    expect(build.outputs.map(output => output?.kind).sort()).toEqual(["asset", "asset", "bytecode", "entry-point"]);
+    expect(readdirSync(join(String(dir), "out")).filter(file => file.endsWith(".jsc"))).toEqual(["index.js.jsc"]);
   });
 
   const nestedSource = `

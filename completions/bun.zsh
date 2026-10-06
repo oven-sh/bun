@@ -514,9 +514,7 @@ _bun_run_completion() {
         '-i[Automatically install dependencies and use global cache in bun'"'"'s runtime, equivalent to --install=fallback'] \
         '--prefer-offline[Skip staleness checks for packages in bun'"'"'s JavaScript runtime and resolve from disk]' \
         '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
-        '--silent[Don'"'"'t repeat the command for bun run]' \
-        '--dump-environment-variables[Dump environment variables from .env and process as JSON and quit. Useful for debugging]' \
-        '--dump-limits[Dump system limits. Userful for debugging]' &&
+        '--silent[Don'"'"'t repeat the command for bun run]' &&
         ret=0
 
     case $state in

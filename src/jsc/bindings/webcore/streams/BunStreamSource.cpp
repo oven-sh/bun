@@ -679,8 +679,9 @@ static void directStreamOnClose(JSC::VM& vm, JSGlobalObject* globalObject, WebCo
         }
     }
     if (closePromise) {
+        // Only the sink's owner sees this promise, and it can close the sink before it subscribes: never an unhandled rejection.
         if (reason.toBoolean(globalObject))
-            rejectPromise(globalObject, closePromise, reason);
+            closePromise->rejectAsHandled(vm, reason);
         else
             resolvePromise(globalObject, closePromise, jsUndefined());
         RETURN_IF_EXCEPTION(scope, );
@@ -755,13 +756,10 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     JSValue maybePromise = call(globalObject, pull, getCallData(pull), source->thisValue(), pullArgs);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Resolving without close()/end() ends the sink controller first; a sync return waits for close()/end().
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {
-        auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), result, sinkController);
-        return result;
-    }
-    // A sync pull() that called close(error): the owner hears it the way it hears an async one.
+    // The owner hears the controller close, not pull() return: a pull() reaction only closes a controller that an async pull() left open.
+    if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise))
+        pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), jsUndefined(), sinkController);
+    // pull() already called close(error).
     if (JSValue failed = sinkController->m_failReason.get()) {
         auto* rejected = promiseRejectedWith(globalObject, failed);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1354,37 +1352,50 @@ extern "C" void Bun__NativeStreamSourceAdapter__onClose(JSGlobalObject* globalOb
     Bun::WebStreams::queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceHandleClosedMicrotask(), jsUndefined(), JSValue::decode(adapter));
 }
 
+// A pull() reaction that closes the controller settles the owner's promise in place of that close: with what end() throws, or pull()'s own reason. Null: it closed earlier.
+static JSPromise* takeClosePromise(WebCore::JSReadableSinkControllerBase* sinkController)
+{
+    auto* closePromise = sinkController->m_closePromise.get();
+    sinkController->m_closePromise.clear();
+    return closePromise;
+}
+
 // [reaction-convention] pull() runs once for a native sink: its promise resolving without close()/end() ends the sink (a no-op once detached).
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectStreamPullFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto& vm = getVM(globalObject);
     auto* sinkController = uncheckedDowncast<WebCore::JSReadableSinkControllerBase>(callFrame->argument(1));
-    // pull() called close(error) before resolving: the owner's promise rejects with that error.
-    if (JSValue failed = sinkController->m_failReason.get()) {
-        throwException(globalObject, scope, failed);
-        return {};
-    }
-    sinkController->end(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
+    auto* closePromise = takeClosePromise(sinkController);
+    JSC::EnsureStillAliveScope keepAlive(closePromise);
+    return enterStreams(globalObject, [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        sinkController->end(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+        if (closePromise)
+            resolvePromise(globalObject, closePromise, jsUndefined()); }, [&](JSValue error) {
+        if (closePromise)
+            closePromise->rejectAsHandled(vm, error); });
 }
 
 // ... and its promise rejecting is close(reason): the source failed, so fail the sink from this side (no cancel()) and pass the rejection on to the sink's owner.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadDirectStreamPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto& vm = getVM(globalObject);
     JSValue reason = callFrame->argument(0);
     auto* sinkController = uncheckedDowncast<WebCore::JSReadableSinkControllerBase>(callFrame->argument(1));
-    if (!sinkController->wrapped()) {
-        // close(error) already failed the sink: the owner hears that error. A clean close()/end() or a peer abort already settled it: nothing left to fail.
-        if (JSValue failed = sinkController->m_failReason.get())
-            throwException(globalObject, scope, failed);
-        return scope.exception() ? EncodedJSValue() : JSValue::encode(jsUndefined());
-    }
-    sinkController->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue(createError(globalObject, "pull() rejected"_s)));
-    RETURN_IF_EXCEPTION(scope, {});
-    throwException(globalObject, scope, reason);
-    return {};
+    // close()/end(), close(error) or a peer abort closed it first and the owner heard that: nothing left to fail.
+    if (!sinkController->wrapped())
+        return JSValue::encode(jsUndefined());
+    auto* closePromise = takeClosePromise(sinkController);
+    JSC::EnsureStillAliveScope keepAlive(closePromise);
+    return enterStreams(globalObject, [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        sinkController->close(globalObject, reason.toBoolean(globalObject) ? reason : JSValue(createError(globalObject, "pull() rejected"_s)));
+        RETURN_IF_EXCEPTION(scope, );
+        if (closePromise)
+            closePromise->rejectAsHandled(vm, reason); }, [&](JSValue error) {
+        if (closePromise)
+            closePromise->rejectAsHandled(vm, error); });
 }
 
 } // namespace WebCore

@@ -1490,6 +1490,87 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The HEADERS of the first response on a connection wait for the QPACK encoder
+  // stream, and lsquic takes no DATA until they are out. A small streamed body is
+  // therefore written, and the response ended, from the stream's writable
+  // callback. The same tick closes the finished stream, before the promise
+  // reaction of the body stream can run: the close has to end the request.
+  // Each case has its own server, so its request is the first on a connection.
+  describe("a streamed response body ends its request when the stream closes", () => {
+    const bodies: Record<string, () => Bun.BodyInit> = {
+      "ReadableStream": () =>
+        new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new TextEncoder().encode("streamed"));
+            controller.close();
+          },
+        }),
+      "direct ReadableStream": () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            controller.write("streamed");
+            await controller.end();
+          },
+        }),
+      "async generator": () =>
+        (async function* () {
+          yield "streamed";
+        })(),
+    };
+
+    const requests: Record<string, RequestInit> = {
+      "GET": {},
+      "POST with a request body the handler never reads": { method: "POST", body: "request-content" },
+    };
+
+    describe.each(Object.keys(bodies))("%s", kind => {
+      test.each(Object.keys(requests))("%s", async request => {
+        await using server = Bun.serve({
+          port: 0,
+          tls,
+          http3: true,
+          http1: false,
+          fetch: () => new Response(bodies[kind]()),
+        });
+
+        const text = await fetchH3(server.port, "/", requests[request]).then(res => res.text());
+        expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
+        // A request that never ends keeps a graceful stop pending.
+        await server.stop();
+      });
+    });
+
+    // The request hears the controller close, so it does not wait for a
+    // pull() that never settles. The end comes from a later microtask: an end
+    // inside the first pull() leaves the response already finished when the
+    // stream is attached, which takes a different path.
+    test("a direct stream whose pull() never settles after it ended the response", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                controller.write("streamed");
+                await Promise.resolve();
+                controller.end();
+                await new Promise<never>(() => {});
+              },
+            }),
+          ),
+      });
+
+      const text = await fetchH3(server.port, "/").then(res => res.text());
+      expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
+      await server.stop();
+    });
+  });
+
   // C: req.signal fires when the client resets the H3 stream mid-request.
   test("req.signal aborts on client RST", async () => {
     const script = `
@@ -1695,6 +1776,54 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
+  // QPACK delivers a field value as a length-prefixed string, so SP / HTAB at
+  // the ends arrive as part of the value. RFC 9110 section 5.5: a field value
+  // has no leading or trailing whitespace, and the HTTP/1 listener strips it.
+  test("strips leading and trailing whitespace from a field value, like the HTTP/1 listener", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return Response.json({
+          "x-ws": req.headers.get("x-ws"),
+          "x-only-ws": req.headers.get("x-only-ws"),
+          "x-inner": req.headers.get("x-inner"),
+          host: req.headers.get("host"),
+          url: req.url,
+        });
+      },
+    });
+
+    const fields = {
+      "x-ws": " \tv\t ",
+      "x-only-ws": " \t ",
+      "x-inner": "a \t b",
+    };
+    const expected = {
+      "x-ws": "v",
+      "x-only-ws": "",
+      "x-inner": "a \t b",
+      host: "localhost",
+      url: "https://localhost/",
+    };
+    const results = {
+      authority: await h3Exchange(server.port, { ...requestHeaders("/", fields), ":authority": " \tlocalhost \t" }),
+      literalHost: await h3Exchange(server.port, {
+        ":method": "GET",
+        ":path": "/",
+        ":scheme": "https",
+        host: " \tlocalhost \t",
+        ...fields,
+      }),
+    };
+
+    expect(results).toEqual({
+      authority: "200 " + JSON.stringify(expected),
+      literalHost: "200 " + JSON.stringify(expected),
+    });
+  });
+
   test("request.url falls back to the :path when :authority is not a valid host", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -1759,6 +1888,79 @@ describe("Bun.serve HTTP/3 request validation", () => {
     const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
 
     expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
+});
+
+// RFC 9110 section 10.1.1: a client that sent Expect: 100-continue can hold the
+// request content until it has the 100. The handler answers only when it has
+// all of the content, so the client ends the request only if the 100 arrived
+// on its own. The client waits for the event, with no timer: a server that
+// keeps the 100 until the final response makes the test time out.
+describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of the final response", () => {
+  async function exchange(server: { port: number }, { handshakeFirst }: { handshakeFirst: boolean }) {
+    // A session or a stream that ends before a response fails the test with
+    // its reason. Once a response is in, these rejections do nothing.
+    const firstResponse = Promise.withResolvers<void>();
+    const endedEarly = (what: string) => () => firstResponse.reject(new Error(`${what} closed before a response`));
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror: firstResponse.reject,
+    });
+    client.closed.then(endedEarly("the session"), firstResponse.reject);
+    if (handshakeFirst) await client.opened;
+
+    const seen: string[] = [];
+    const stream = await client.createBidirectionalStream({
+      oninfo(received: Record<string, string>) {
+        seen.push("info " + received[":status"]);
+        firstResponse.resolve();
+      },
+      onheaders(received: Record<string, string>) {
+        seen.push("headers " + received[":status"]);
+        firstResponse.resolve();
+      },
+    });
+    stream.closed.then(endedEarly("the stream"), firstResponse.reject);
+    const writer = stream.writer;
+    stream.sendHeaders(requestHeaders("/", { ":method": "POST", expect: "100-continue" }));
+    await firstResponse.promise;
+    seen.push("client sends the content");
+    writer.writeSync(new TextEncoder().encode("request-content"));
+    writer.endSync();
+
+    let body = "";
+    for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+    if (!client.destroyed) client.close().catch(() => {});
+    return [...seen, "body " + body];
+  }
+
+  const expected = ["info 100", "client sends the content", "headers 200", "body content:request-content"];
+  const serve = () =>
+    Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: async req => new Response("content:" + (await req.text())),
+    });
+
+  test("on a connection that completed its handshake", async () => {
+    await using server = serve();
+    expect(await exchange(server, { handshakeFirst: true })).toEqual(expected);
+  });
+
+  // The request leaves with the client's handshake. The server then still has
+  // the first byte of its QPACK encoder stream to send, and lsquic holds the 100
+  // header block back until that byte is out.
+  test("on the first request of a connection, sent with the handshake", async () => {
+    await using server = serve();
+    expect(await exchange(server, { handshakeFirst: false })).toEqual(expected);
   });
 });
 

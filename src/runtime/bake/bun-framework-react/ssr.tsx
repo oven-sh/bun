@@ -32,16 +32,19 @@ const createFromNodeStreamOptions: Manifest = {
 // References:
 // - https://github.com/vercel/next.js/blob/15.0.2/packages/next/src/server/app-render/use-flight-response.tsx
 // - https://github.com/devongovett/rsc-html-stream
+/** Bun's ReadableStream. This project loads the DOM lib, whose ReadableStream has no `bytes()`. */
+type BunReadableStream = ReadableStream & { bytes(): Promise<Uint8Array<ArrayBuffer>> };
+
 export function renderToHtml(
   rscPayload: Readable,
   bootstrapModules: readonly string[],
   signal: MiniAbortSignal,
-): ReadableStream {
+): BunReadableStream {
   // Bun supports a special type of readable stream type called "direct",
   // which provides a raw handle to the controller. We can bypass all of
   // the Web Streams API (slow) and use the controller directly.
   let stream: RscInjectionStream | null = null;
-  let abort: () => void;
+  let abort: (reason?: unknown) => void;
   return new ReadableStream({
     type: "direct",
     pull(controller) {
@@ -92,7 +95,7 @@ export function renderToHtml(
       }
       abort?.(err);
     },
-  } as Bun.DirectUnderlyingSource as any);
+  } as Bun.DirectUnderlyingSource as any) as BunReadableStream;
 }
 
 // Static builds can not stream suspense boundaries as they finish, but instead
@@ -154,7 +157,7 @@ class RscInjectionStream extends EventEmitter {
 
     const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = x => (controller.close(), resolve(x));
+    this.finalize = () => (controller.close(), resolve());
     this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
@@ -297,7 +300,7 @@ class StaticRscInjectionStream extends EventEmitter {
     let string = startScriptTag;
     writeManyFlightScriptData(this.rscPayloadChunks, new TextDecoder("utf-8"), { write: str => (string += str) });
     this.chunks.push(string + closingBodyTag);
-    this.finalize(new Blob(this.chunks, { type: "text/html" }));
+    this.finalize(new Blob(this.chunks as BlobPart[], { type: "text/html" }));
   }
 
   flush() {

@@ -102,7 +102,7 @@ describe("proxy RSTs client", () => {
             signal: AbortSignal.timeout(HANG_GUARD_MS),
           }),
         );
-        expect(code).toMatch(/ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|SocketError|EPIPE/);
+        expect(code).toMatch(/ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|EPROTO|SocketError|EPIPE/);
       },
     );
   }
@@ -145,7 +145,7 @@ describe("proxy RSTs client during upload", () => {
             signal: AbortSignal.timeout(HANG_GUARD_MS),
           }),
         );
-        expect(code).toMatch(/ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|SocketError|EPIPE/);
+        expect(code).toMatch(/ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|EPROTO|SocketError|EPIPE/);
       },
     );
   }
@@ -180,14 +180,14 @@ describe("proxy kills upstream", () => {
         outcome = errcode(e);
       }
       // At "upstream-connected", the upstream's close happens before the
-      // tunnel is up; the proxy relays the 502 envelope it writes on
-      // upstream error, which the client surfaces as a 502 response.
-      // After the tunnel is up the close is relayed and the inner TLS
-      // fails. Either is acceptable; a hang is not.
+      // tunnel is up; the proxy answers the CONNECT with the 502 envelope it
+      // writes on upstream error, which the client rejects as
+      // ERR_PROXY_TUNNEL. After the tunnel is up the close is relayed and the
+      // inner TLS fails. Either is acceptable; a hang is not.
       expect(outcome).not.toBe("TimeoutError");
       expect(outcome).not.toBe("AbortError");
       expect(outcome).toMatch(
-        /^resolved:502$|ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|SocketError|EPIPE|ERR_TLS/,
+        /^ERR_PROXY_TUNNEL$|ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused|EPROTO|SocketError|EPIPE|ERR_TLS/,
       );
     });
   }

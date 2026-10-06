@@ -159,7 +159,6 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
             },
             session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
             expires_in_ms: expires_in,
-            encoding,
             algorithm,
         },
         &mut token_buffer,

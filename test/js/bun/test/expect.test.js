@@ -210,12 +210,15 @@ describe("expect()", () => {
       ).resolves.toThrow(TypeError);
     });
 
+    // Jest and vitest call the Proxy. bun does not call it: the Proxy itself is the thrown value.
     test("a fulfilled Proxy of a function that throws still counts as thrown", async () => {
       const proxy = new Proxy(() => {
         throw new TypeError("hello world");
       }, {});
       await expect(Promise.resolve(proxy)).resolves.toThrow();
-      await failure(() => expect(Promise.resolve(proxy)).resolves.not.toThrow());
+      expect(await failure(() => expect(Promise.resolve(proxy)).resolves.not.toThrow())).toContain(
+        isBun ? "Thrown value" : "hello world",
+      );
     });
 
     // Vitest does not count a fulfilled value as thrown.
@@ -230,7 +233,7 @@ describe("expect()", () => {
     ])("%s still counts as thrown, as in Jest", async (_name, value) => {
       await expect(Promise.resolve(value)).resolves.toThrow("hello world");
       await expect(Promise.resolve(value)).resolves.not.toThrow("goodbye");
-      await failure(() => expect(Promise.resolve(value)).resolves.not.toThrow());
+      expect(await failure(() => expect(Promise.resolve(value)).resolves.not.toThrow())).toContain("hello world");
     });
 
     // Jest's isError() does not accept it: the tag is not "Error", and `instanceof` uses the Error of this realm.
@@ -276,7 +279,7 @@ describe("expect()", () => {
     // Jest needs an Error here too. Vitest does not, and this is not changed.
     test_skipIf(isJest)("a rejection reason still counts as thrown under .rejects", async () => {
       await expect(Promise.reject("hello world")).rejects.toThrow("hello world");
-      await failure(() => expect(Promise.reject("hello world")).rejects.not.toThrow());
+      expect(await failure(() => expect(Promise.reject("hello world")).rejects.not.toThrow())).toContain("hello world");
     });
   });
 

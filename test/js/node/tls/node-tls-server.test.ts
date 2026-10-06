@@ -4002,3 +4002,29 @@ it.each([
     }
   },
 );
+
+describe("a tls.Server nothing refers to any more is collected", () => {
+  it.each([
+    ["never listened", async (_: Server) => {}],
+    [
+      "listened and closed",
+      async (server: Server) => {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        server.close();
+        await once(server, "close");
+      },
+    ],
+  ])("%s", async (_, use) => {
+    const ref = await (async () => {
+      const server: Server = createServer(COMMON_CERT);
+      server.addContext("a.example", COMMON_CERT);
+      await use(server);
+      return new WeakRef(server);
+    })();
+    // A WeakRef keeps its target until the job that created it ends.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    Bun.gc(true);
+    expect(ref.deref()).toBeUndefined();
+  });
+});

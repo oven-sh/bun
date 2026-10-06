@@ -1889,6 +1889,7 @@ describe("a workspace's dependencies have one owner", () => {
     const layout = () =>
       Promise.all([
         readdirSorted(bunDir),
+        readdirSorted(join(packageDir, "node_modules")),
         readlink(join(packageDir, "vendor", "no-deps", "node_modules", "peer-a-dep-star")),
         file(join(bunDir, "peer-a-dep-star@1.0.0+fe523e66214b73d9", "node_modules", "a-dep", "package.json")).json(),
         readlink(join(packageDir, "app1", "node_modules", "no-deps")),
@@ -1913,6 +1914,8 @@ describe("a workspace's dependencies have one owner", () => {
         "peer-a-dep-star@1.0.0+fe523e66214b73d9",
         "peer-deps@1.0.0+e42a105089d73570",
       ],
+      // Root links what it declares. It does not declare the folder.
+      [".bun", "a-dep"],
       join(
         "..",
         "..",
@@ -1982,6 +1985,39 @@ describe("a workspace's dependencies have one owner", () => {
       expect(out).toContain("3 packages installed");
     },
   );
+
+  test.concurrent("the owner of a `workspace:` path outside `workspaces` takes no dependency name", async () => {
+    // app names the folder `zz`, and root has a registry package under that name.
+    // The folder's owner is a child of the root and comes before root's own
+    // dependencies, with app's edge. Nothing depends on the owner, so the name
+    // stays free: root's package is the `zz` that the hidden hoist links.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-path-name",
+          workspaces: ["app"],
+          dependencies: { "zz": "npm:no-deps@1.0.0" },
+        }),
+        "vendor/a-dep/package.json": JSON.stringify({ name: "a-dep", version: "2.0.0" }),
+        "app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "zz": "workspace:../vendor/a-dep" },
+        }),
+      },
+    });
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules", ".bun", "node_modules")),
+        readdirSorted(join(packageDir, "node_modules")),
+        readlink(join(packageDir, "app", "node_modules", "zz")),
+      ]),
+    ).toEqual([["no-deps"], [".bun", "zz"], join("..", "..", "vendor", "a-dep")]);
+    expect(out).toContain("1 package installed");
+  });
 
   test.concurrent(
     "a workspace that root's dependency of the same name replaces has one owner, below the root",

@@ -1147,7 +1147,6 @@ impl RewriterPipe {
             .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
 
         result_ref.set_init(
-            original.get_method(),
             original.get_init_status_code(),
             original.get_init_status_text().clone(),
         );

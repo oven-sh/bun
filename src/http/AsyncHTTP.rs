@@ -14,7 +14,7 @@ use bun_picohttp as picohttp;
 use crate::headers::{self, Headers};
 use crate::{
     FetchRedirect, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel, InternalState, Method,
-    Signals, ThreadlocalAsyncHTTP,
+    MethodRef, Signals, ThreadlocalAsyncHTTP,
 };
 use crate::{HTTPClientResult, HTTPClientResultCallback};
 
@@ -31,7 +31,7 @@ pub struct AsyncHTTP<'a> {
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
     pub request_body: HTTPRequestBody<'a>,
-    pub(crate) method: Method,
+    pub(crate) method: MethodRef,
     pub url: URL<'a>,
     // Backref to the JS-thread `real` AsyncHTTP this HTTP-thread copy mirrors.
     // Cleared in finalize. Same `'a` — the copy never outlives the original.
@@ -146,7 +146,7 @@ pub fn basic_authorization(url: &URL<'_>) -> Option<Vec<u8>> {
 /// `HTTPClient` has no `Default` (it has a `Drop` impl with side-effects), so
 /// this is the single place that enumerates the field set.
 fn make_client<'a>(
-    method: Method,
+    method: MethodRef,
     url: URL<'a>,
     header_entries: headers::EntryList,
     header_buf: &'a [u8],
@@ -285,7 +285,7 @@ impl<'a> AsyncHTTP<'a> {
     /// The method the request was made with. A redirect only ever rewrites the
     /// HTTP thread's copy (`client.method`), and only to GET.
     #[inline]
-    pub fn method(&self) -> Method {
+    pub fn method(&self) -> MethodRef {
         self.method
     }
 
@@ -404,8 +404,10 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<'a> AsyncHTTP<'a> {
+    /// `method` is a verb, or a [`MethodRef`] whose token is in `headers_buf`.
+    #[inline]
     pub fn init(
-        method: Method,
+        method: impl Into<MethodRef>,
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
@@ -414,6 +416,35 @@ impl<'a> AsyncHTTP<'a> {
         redirect_type: FetchRedirect,
         options: Options<'a>,
     ) -> AsyncHTTP<'a> {
+        Self::init_with_method(
+            method.into(),
+            url,
+            headers,
+            headers_buf,
+            request_body,
+            callback,
+            redirect_type,
+            options,
+        )
+    }
+
+    fn init_with_method(
+        method: MethodRef,
+        url: URL<'a>,
+        headers: headers::EntryList,
+        headers_buf: &'a [u8],
+        request_body: &'a [u8],
+        callback: HTTPClientResultCallback,
+        redirect_type: FetchRedirect,
+        options: Options<'a>,
+    ) -> AsyncHTTP<'a> {
+        // The HTTP thread writes a token to the request line from `headers_buf`
+        // with no further check, so a pointer that is not for this buffer stops here.
+        assert!(
+            method.is_in(headers_buf),
+            "the request method is not a token in the request header buffer"
+        );
+
         let async_http_id = if options
             .signals
             .as_ref()

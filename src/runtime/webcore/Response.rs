@@ -322,9 +322,8 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn set_init(&self, method: Method, status_code: u16, status_text: BunString) {
+    pub(crate) fn set_init(&self, status_code: u16, status_text: BunString) {
         self.init.with_mut(|init| {
-            init.method = method;
             init.status_code = status_code;
             init.status_text = status_text;
         });
@@ -402,11 +401,6 @@ impl Response {
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take())
-    }
-
-    #[inline]
-    pub(crate) fn get_method(&self) -> Method {
-        self.init.get().method
     }
 
     pub(crate) fn estimated_size(this: &Response) -> usize {
@@ -1186,7 +1180,6 @@ pub(crate) struct Init {
     pub(crate) headers: Option<HeadersRef>,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
-    pub method: Method,
 }
 
 impl Default for Init {
@@ -1195,7 +1188,6 @@ impl Default for Init {
             headers: None,
             status_code: 0,
             status_text: BunString::EMPTY,
-            method: Method::GET,
         }
     }
 }
@@ -1213,7 +1205,6 @@ impl Init {
             headers,
             status_code: self.status_code,
             status_text: self.status_text.clone(),
-            method: self.method,
         })
     }
 
@@ -1249,7 +1240,6 @@ impl Init {
                     result.headers = headers.clone_this(global_this)?;
                 }
 
-                result.method = req.method;
                 return Ok(Some(result));
             }
 
@@ -1298,14 +1288,6 @@ impl Init {
             response_init.fast_get_truthy(global_this, BuiltinName::statusText)?
         {
             result.status_text = status_text.to_bun_string(global_this)?;
-        }
-
-        if let Some(method_value) =
-            response_init.fast_get_truthy(global_this, BuiltinName::method)?
-        {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
-                result.method = method;
-            }
         }
 
         Ok(Some(result))

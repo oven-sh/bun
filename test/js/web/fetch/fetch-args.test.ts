@@ -1,7 +1,13 @@
 import { TCPSocketListener } from "bun";
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
+import nodeFetch from "node-fetch";
+import { once } from "node:events";
+import http2 from "node:http2";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { serve as serveS3 } from "s3-server";
+import { request as undiciRequest } from "undici";
 
 let server;
 let requestCount = 0;
@@ -219,6 +225,17 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
       "s3: ReadableStream body with a non-upload method",
       `fetch("s3://bucket/key", { method: "DELETE", body: new ReadableStream() })`,
       "Only POST and PUT do support body when using S3",
+    ],
+    [
+      // The endpoint refuses connections: nothing may be signed and sent for this method.
+      "s3: a method that S3 does not sign",
+      `fetch("s3://bucket/key", { method: "BREW", s3: { accessKeyId: "a", secretAccessKey: "b", endpoint: "http://127.0.0.1:1" } })`,
+      "Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
+    ],
+    [
+      "a method that is not a token",
+      `fetch("http://127.0.0.1:1/", { method: "GET POST" })`,
+      '"GET POST" is not a valid HTTP method.',
     ],
   ];
 
@@ -439,4 +456,420 @@ describe("does not send a request when", () => {
       expect(requestCount).toBe(prevCount);
     });
   }
+});
+
+// https://fetch.spec.whatwg.org/#methods: a method is any RFC 9110 token.
+// The server is a raw socket, because Bun.serve does not take a method outside its own table.
+describe("fetch() method", () => {
+  function listen() {
+    const requests: { line: string; contentLength?: string; transferEncoding?: string; body: string }[] = [];
+    let sockets = 0;
+    const listener = Bun.listen<{ received: string; done: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          sockets++;
+          socket.data = { received: "", done: false };
+        },
+        data(socket, chunk) {
+          const state = socket.data;
+          if (state.done) return;
+          state.received += chunk.toString("latin1");
+          const headEnd = state.received.indexOf("\r\n\r\n");
+          if (headEnd === -1) return;
+          const [line, ...headers] = state.received.slice(0, headEnd).split("\r\n");
+          const header = (name: string) =>
+            headers
+              .find(h => h.toLowerCase().startsWith(name + ":"))
+              ?.slice(name.length + 1)
+              .trim();
+          const contentLength = header("content-length");
+          const transferEncoding = header("transfer-encoding");
+          const body = state.received.slice(headEnd + 4);
+          if (transferEncoding ? !body.endsWith("0\r\n\r\n") : body.length < Number(contentLength ?? 0)) return;
+          state.done = true;
+          requests.push({ line, contentLength, transferEncoding, body });
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        },
+      },
+    });
+    return {
+      url: `http://127.0.0.1:${listener.port}/`,
+      requests,
+      get sockets() {
+        return sockets;
+      },
+      [Symbol.dispose]() {
+        listener.stop(true);
+      },
+    };
+  }
+  const requestLines = (server: ReturnType<typeof listen>) => server.requests.map(request => request.line);
+
+  type Send = (url: string, method: any) => Promise<Response>;
+  const native: [name: string, send: Send][] = [
+    ["fetch(url, { method })", (url, method) => fetch(url, { method })],
+    ["fetch(new Request(url, { method }))", (url, method) => fetch(new Request(url, { method }))],
+    ["fetch({ url, method })", (url, method) => fetch({ url, method } as any)],
+    [
+      "fetch(new Request(url, { method: 'DELETE' }), { method })",
+      (url, method) => fetch(new Request(url, { method: "DELETE" }), { method }),
+    ],
+    ["Bun.fetch(url, { method })", (url, method) => Bun.fetch(url, { method })],
+    [
+      "new Bun.FetchSession().fetch(url, { method })",
+      async (url, method) => {
+        using session = new Bun.FetchSession();
+        return await session.fetch(url, { method });
+      },
+    ],
+  ];
+  // The npm package puts every method in upper case. Only spellings that it
+  // and this replacement send alike go through it here.
+  const viaNodeFetch: [name: string, send: Send] = [
+    "node-fetch",
+    (url, method) => nodeFetch(url, { method }) as unknown as Promise<Response>,
+  ];
+
+  // https://fetch.spec.whatwg.org/#concept-method-normalize: these six, in any case.
+  const normalized: [method: unknown, onTheWire: string][] = [
+    ["Delete", "DELETE"],
+    ["gEt", "GET"],
+    ["hEaD", "HEAD"],
+    ["oPtIoNs", "OPTIONS"],
+    ["pOsT", "POST"],
+    ["Put", "PUT"],
+  ];
+  const upperCaseTokens: [method: unknown, onTheWire: string][] = [
+    ["BREW", "BREW"],
+    ["LIST", "LIST"],
+  ];
+  // Every other token goes out as written. A value that is not a string is converted to one.
+  const asWritten: [method: unknown, onTheWire: string][] = [
+    ["PatCh", "PatCh"],
+    ["Propfind", "Propfind"],
+    ["M-search", "M-search"],
+    ["!#$%&'*+-.^_`|~09AZaz", "!#$%&'*+-.^_`|~09AZaz"],
+    [false, "false"],
+    [0, "0"],
+    [123, "123"],
+  ];
+
+  describe.each([
+    ...native.map(entry => [...entry, [...normalized, ...upperCaseTokens, ...asWritten]] as const),
+    [...viaNodeFetch, [...normalized, ...upperCaseTokens]] as const,
+  ])("%s", (_, send, sent) => {
+    test("sends the method it is given", async () => {
+      using server = listen();
+      for (const [method] of sent) {
+        await (await send(server.url, method)).arrayBuffer();
+      }
+      expect(requestLines(server)).toEqual(sent.map(([, onTheWire]) => `${onTheWire} / HTTP/1.1`));
+    });
+
+    test("rejects a method that is not a token or that Fetch forbids, and sends nothing", async () => {
+      using server = listen();
+      const rejected: [method: unknown, message: string][] = [
+        ["GET POST", `"GET POST" is not a valid HTTP method.`],
+        [" GET", `" GET" is not a valid HTTP method.`],
+        ["GET ", `"GET " is not a valid HTTP method.`],
+        ["GET\r\nX-Injected: 1", `"GET\\r\\nX-Injected: 1" is not a valid HTTP method.`],
+        ["G\0T", `"G\\u0000T" is not a valid HTTP method.`],
+        ["caf\u00e9", `"caf\u00e9" is not a valid HTTP method.`],
+        ["(GET)", `"(GET)" is not a valid HTTP method.`],
+        [[], `"" is not a valid HTTP method.`],
+        [{}, `"[object Object]" is not a valid HTTP method.`],
+        // https://fetch.spec.whatwg.org/#forbidden-method
+        ["TRACK", `"TRACK" HTTP method is unsupported.`],
+        ["track", `"track" HTTP method is unsupported.`],
+        ["Trace", `"Trace" HTTP method is unsupported.`],
+        ["Connect", `"Connect" HTTP method is unsupported.`],
+      ];
+      const errors: unknown[] = [];
+      for (const [method] of rejected) {
+        // `new Request()` throws and `fetch()` rejects.
+        errors.push(
+          await (async () => send(server.url, method))().then(
+            () => "no error",
+            e => ({ name: e.name, code: e.code, message: e.message }),
+          ),
+        );
+      }
+      expect(errors).toEqual(
+        rejected.map(([, message]) => ({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE", message })),
+      );
+      // The server saw none of them: the one request after them is its first socket.
+      await (await fetch(server.url)).arrayBuffer();
+      expect({ sockets: server.sockets, requests: requestLines(server) }).toEqual({
+        sockets: 1,
+        requests: ["GET / HTTP/1.1"],
+      });
+    });
+  });
+
+  test("undici.request() sends a token", async () => {
+    using server = listen();
+    const { statusCode, body } = await undiciRequest(server.url, { method: "BREW" });
+    await body.text();
+    expect({ statusCode, requests: requestLines(server) }).toEqual({ statusCode: 200, requests: ["BREW / HTTP/1.1"] });
+  });
+
+  test("a Request keeps its token for every fetch()", async () => {
+    using server = listen();
+    const request = new Request(server.url, { method: "BREW" });
+    for (const send of [
+      () => fetch(request),
+      () => fetch(request),
+      () => fetch(request.clone()),
+      () => fetch(new Request(request)),
+      () => fetch(request, {}),
+      () => fetch(request, { method: "" }),
+      () => fetch(request, { method: "Put" }),
+      () => fetch(request, { method: "PatCh" }),
+    ]) {
+      await (await send()).arrayBuffer();
+    }
+    expect(requestLines(server)).toEqual([
+      "BREW / HTTP/1.1",
+      "BREW / HTTP/1.1",
+      "BREW / HTTP/1.1",
+      "BREW / HTTP/1.1",
+      "BREW / HTTP/1.1",
+      "BREW / HTTP/1.1",
+      "PUT / HTTP/1.1",
+      "PatCh / HTTP/1.1",
+    ]);
+  });
+
+  test("a token carries a body, and declares no length when it has none", async () => {
+    using server = listen();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("coffee"));
+        controller.close();
+      },
+    });
+    for (const init of [
+      { method: "BREW" },
+      { method: "BREW", body: "coffee" },
+      { method: "BREW", body: stream },
+      // A verb of the table that takes a body still declares an empty one.
+      { method: "POST" },
+    ]) {
+      await (await fetch(server.url, init)).arrayBuffer();
+    }
+    expect(server.requests).toEqual([
+      { line: "BREW / HTTP/1.1", contentLength: undefined, transferEncoding: undefined, body: "" },
+      { line: "BREW / HTTP/1.1", contentLength: "6", transferEncoding: undefined, body: "coffee" },
+      {
+        line: "BREW / HTTP/1.1",
+        contentLength: undefined,
+        transferEncoding: "chunked",
+        body: "6\r\ncoffee\r\n0\r\n\r\n",
+      },
+      { line: "POST / HTTP/1.1", contentLength: "0", transferEncoding: undefined, body: "" },
+    ]);
+  });
+
+  test("a token is sent on a reused connection and is not sent again after a reset", async () => {
+    // Answers on one connection, and closes it unanswered for /reset.
+    const lines: string[][] = [];
+    using listener = Bun.listen<{ received: string; lines: string[] }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { received: "", lines: [] };
+          lines.push(socket.data.lines);
+        },
+        data(socket, chunk) {
+          const state = socket.data;
+          state.received += chunk.toString("latin1");
+          for (;;) {
+            const headEnd = state.received.indexOf("\r\n\r\n");
+            if (headEnd === -1) return;
+            const head = state.received.slice(0, headEnd).split("\r\n");
+            const length = Number(head.find(h => h.toLowerCase().startsWith("content-length:"))?.split(":")[1] ?? 0);
+            if (state.received.length < headEnd + 4 + length) return;
+            state.received = state.received.slice(headEnd + 4 + length);
+            state.lines.push(head[0]);
+            if (head[0].includes(" /reset ")) return socket.terminate();
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+          }
+        },
+      },
+    });
+    const url = `http://127.0.0.1:${listener.port}`;
+    const results: string[] = [];
+    for (const [path, init] of [
+      ["/1", { method: "BREW" }],
+      ["/2", { method: "BREW", body: "coffee" }],
+      ["/3", {}],
+      ["/reset", { method: "BREW" }],
+    ] as const) {
+      results.push(
+        await fetch(url + path, init).then(
+          res => res.text(),
+          e => e.code,
+        ),
+      );
+    }
+    expect({ results, lines }).toEqual({
+      results: ["ok", "ok", "ok", "ECONNRESET"],
+      lines: [["BREW /1 HTTP/1.1", "BREW /2 HTTP/1.1", "GET /3 HTTP/1.1", "BREW /reset HTTP/1.1"]],
+    });
+  });
+
+  test("a token goes to an HTTP proxy", async () => {
+    using proxy = listen();
+    // The proxy answers, so the host of the URL is never resolved.
+    await (await fetch("http://method.test/path", { method: "BREW", proxy: proxy.url })).arrayBuffer();
+    expect(requestLines(proxy)).toEqual(["BREW http://method.test/path HTTP/1.1"]);
+  });
+
+  test("a token is the :method pseudo-header over HTTP/2", async () => {
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false }, (req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => res.end(JSON.stringify({ method: req.headers[":method"], body })));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      // The session closes its connection with the test, so the server can close.
+      using session = new Bun.FetchSession();
+      const url = `https://127.0.0.1:${(server.address() as { port: number }).port}/`;
+      const seen: unknown[] = [];
+      for (const init of [{ method: "BREW" }, { method: "PatCh", body: "the payload" }, { method: "Put" }]) {
+        const response = await session.fetch(url, { ...init, protocol: "http2", tls: { rejectUnauthorized: false } });
+        seen.push(await response.json());
+      }
+      expect(seen).toEqual([
+        { method: "BREW", body: "" },
+        { method: "PatCh", body: "the payload" },
+        { method: "PUT", body: "" },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // S3 signs DELETE, GET, HEAD and PUT, and a POST is a PUT. Each row starts with an
+  // object that holds "original" and ends with what the object holds after the call.
+  test("an s3: URL takes its verbs in any case and refuses every other method", async () => {
+    await using server = serveS3({ buckets: ["buntest"] });
+    const s3 = server.clientOptions();
+    const client = new Bun.S3Client(server.clientOptions("buntest"));
+    const stream = () =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("streamed"));
+          controller.close();
+        },
+      });
+    const invalidMethod = {
+      code: "ERR_S3_INVALID_METHOD",
+      message: "Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
+    };
+    const rows: [method: string, body: BodyInit | undefined, expected: object][] = [
+      ["Delete", undefined, { status: 204, text: "", after: null }],
+      ["hEaD", undefined, { status: 200, text: "", after: "original" }],
+      ["Put", "new", { status: 200, text: "", after: "new" }],
+      ["POST", "new", { status: 200, text: "", after: "new" }],
+      ["pOsT", "new", { status: 200, text: "", after: "new" }],
+      ["pOsT", stream(), { status: 200, text: "", after: "streamed" }],
+      ["PatCh", undefined, { ...invalidMethod, after: "original" }],
+      ["BREW", "new", { ...invalidMethod, after: "original" }],
+      [
+        "BREW",
+        stream(),
+        { code: undefined, message: "Only POST and PUT do support body when using S3", after: "original" },
+      ],
+    ];
+    const seen: object[] = [];
+    for (const [index, [method, body]] of rows.entries()) {
+      const key = `key-${index}`;
+      await client.write(key, "original");
+      const outcome = await fetch(`s3://buntest/${key}`, { method, body, s3 }).then(
+        async response => ({ status: response.status, text: await response.text() }),
+        e => ({ code: e.code, message: e.message }),
+      );
+      const file = client.file(key);
+      seen.push({ ...outcome, after: (await file.exists()) ? await file.text() : null });
+    }
+    expect(seen).toEqual(rows.map(([, , expected]) => expected));
+  });
+
+  // These schemes answer without a request. The method is still checked.
+  test.each([
+    // https://fetch.spec.whatwg.org/#scheme-fetch: a data: URL answers every method.
+    ["data:", () => "data:text/plain,hi", "BREW"],
+    // Fetch answers a blob: URL for GET only, so only GET is asserted to answer for these two.
+    ["file:", () => pathToFileURL(join(import.meta.dir, "fixture.html")).href, "GET"],
+    ["blob:", () => URL.createObjectURL(new Blob(["hi"])), "GET"],
+  ])("a %s URL rejects a method that is not a token", async (_, makeUrl, answered) => {
+    const url = makeUrl();
+    const response = await fetch(url, { method: answered });
+    expect(response.status).toBe(200);
+    await response.arrayBuffer();
+    const error = await fetch(url, { method: "GET POST" }).then(
+      () => "no error",
+      e => ({ name: e.name, code: e.code, message: e.message }),
+    );
+    expect(error).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `"GET POST" is not a valid HTTP method.`,
+    });
+  });
+
+  test("undefined, null and the empty string name no method", async () => {
+    using server = listen();
+    for (const method of [undefined, null, ""]) {
+      await (await fetch(server.url, { method } as any)).arrayBuffer();
+    }
+    expect(requestLines(server)).toEqual(["GET / HTTP/1.1", "GET / HTTP/1.1", "GET / HTTP/1.1"]);
+  });
+
+  test("a method of the table keeps its treatment", async () => {
+    using server = listen();
+    // All-lower spellings go out in upper case, and CONNECT and TRACE are sent.
+    for (const method of ["patch", "propfind", "m-search", "CONNECT", "connect", "TRACE", "trace"]) {
+      await (await fetch(server.url, { method })).arrayBuffer();
+    }
+    expect(requestLines(server)).toEqual([
+      "PATCH / HTTP/1.1",
+      "PROPFIND / HTTP/1.1",
+      "M-SEARCH / HTTP/1.1",
+      "CONNECT / HTTP/1.1",
+      "CONNECT / HTTP/1.1",
+      "TRACE / HTTP/1.1",
+      "TRACE / HTTP/1.1",
+    ]);
+  });
+
+  // Bun.serve answers a method of its table only (#6556). It can refuse the
+  // other two, but it must not run the handler with a method that was not sent.
+  test("a Bun.serve handler does not see GET for another method over HTTP/1.1", async () => {
+    const seen: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        seen.push(request.method);
+        return new Response(request.method);
+      },
+    });
+    const methods = ["PATCH", "PURGE", "PatCh", "custom"];
+    for (const method of methods) {
+      await fetch(server.url, { method }).then(
+        res => res.arrayBuffer(),
+        () => {},
+      );
+    }
+    expect({
+      inTheTable: seen.slice(0, 2),
+      notSent: seen.filter(method => !methods.includes(method)),
+    }).toEqual({ inTheTable: ["PATCH", "PURGE"], notSent: [] });
+  });
 });

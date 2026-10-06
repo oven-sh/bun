@@ -21,11 +21,11 @@ use bun_core::{String as BunString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
-use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::method_jsc::{self, MethodJsc as _};
 use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
-use bun_http_types::Method::Method;
+use bun_http_types::Method::{Method, OwnedMethod};
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
@@ -96,10 +96,10 @@ pub(crate) struct Request {
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
-    pub method: Method,
-    pub(crate) flags: Flags,
+    pub method: OwnedMethod,
     pub(crate) request_context: AnyRequestContext,
     pub(crate) weak_ptr_data: WeakPtrData,
+    pub(crate) flags: Flags,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
 }
@@ -119,6 +119,11 @@ pub(crate) struct Flags {
 }
 
 bun_core::assert_ffi_layout!(Flags, 4, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3);
+
+// `Bun.serve` allocates one `Request` per request. mimalloc serves 97 to 112
+// bytes from one block size, and `flags` sits in the padding after
+// `weak_ptr_data` so that `Request` stays inside it.
+bun_core::assert_ffi_layout!(Request, 112, 8; method @ 64, flags @ 100);
 
 impl Default for Flags {
     fn default() -> Self {
@@ -418,7 +423,7 @@ impl Request {
         url: BunString,
         headers: Option<HeadersRef>,
         body: BodyHiveHandle,
-        method: Method,
+        method: OwnedMethod,
     ) -> Request {
         Request {
             url: JsCell::new(url),
@@ -560,7 +565,7 @@ impl Request {
             )?;
 
             // Wire-form token (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
-            writer.write_str(self.method.as_str())?;
+            write!(writer, "{}", self.method)?;
             writer.write_str("\"")?;
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
@@ -701,7 +706,16 @@ impl Request {
     }
 
     pub(crate) fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.method.to_js(global_this)
+        match &self.method {
+            OwnedMethod::Known(method) => method.to_js(global_this),
+            OwnedMethod::Token(token) => Self::method_token_to_js(token, global_this),
+        }
+    }
+
+    #[cold]
+    fn method_token_to_js(token: &[u8], global_this: &JSGlobalObject) -> JSValue {
+        // A token is ASCII.
+        bun_core::EncodedSlice::latin1(token).to_js(global_this)
     }
 
     pub(crate) fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
@@ -993,7 +1007,7 @@ impl Request {
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
-            method: Method::GET,
+            method: Method::GET.into(),
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -1105,7 +1119,7 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Method) {
-                        req.method = request.method;
+                        req.method = request.method.clone();
                         fields.insert(Fields::Method);
                     }
 
@@ -1154,11 +1168,6 @@ impl Request {
                 if let Some(response) = value.as_direct::<Response>() {
                     // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
                     let response = unsafe { &mut *response };
-                    if !fields.contains(Fields::Method) {
-                        req.method = response.get_method();
-                        fields.insert(Fields::Method);
-                    }
-
                     if !fields.contains(Fields::Headers) {
                         if let Some(headers) = response.get_init_headers_mut() {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
@@ -1329,7 +1338,13 @@ impl Request {
                                 });
                         if method_check {
                             if !fields.contains(Fields::Method) {
-                                req.method = response_init.method;
+                                req.method = match method_jsc::request_method_from_init(
+                                    cx.global(),
+                                    value,
+                                ) {
+                                    Ok(method) => method.unwrap_or(OwnedMethod::Known(Method::GET)),
+                                    Err(e) => bail!(Err(e)),
+                                };
                                 fields.insert(Fields::Method);
                             }
                         }
@@ -1484,6 +1499,8 @@ impl Request {
         } else {
             self.url.get().clone()
         };
+        let method = self.method.clone();
+        debug_assert!(req.method.known().is_some());
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
         // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
@@ -1492,7 +1509,8 @@ impl Request {
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
         // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // sentinel; `method` is still the verb both callers seed, which owns
+        // nothing; remaining incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {
@@ -1504,7 +1522,7 @@ impl Request {
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
-                    method: self.method,
+                    method,
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
                     weak_ptr_data: WeakPtrData::EMPTY,
@@ -1536,7 +1554,7 @@ impl Request {
                 BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
             }),
             js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
+            method: Method::GET.into(),
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -1562,7 +1580,7 @@ impl Request {
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
-            method,
+            method: method.into(),
             flags: Flags {
                 https,
                 ..Flags::default()

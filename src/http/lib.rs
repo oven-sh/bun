@@ -85,7 +85,7 @@ pub type HttpClient<'a> = HTTPClient<'a>;
 pub type AsyncHttp<'a> = AsyncHTTP<'a>;
 pub type ThreadlocalAsyncHttp<'a> = ThreadlocalAsyncHTTP<'a>;
 pub use bun_http_types::FetchRedirect::FetchRedirect;
-pub use bun_http_types::Method::Method;
+pub use bun_http_types::Method::{Method, MethodRef};
 pub use bun_picohttp as picohttp;
 
 #[repr(u8)]
@@ -750,7 +750,7 @@ impl ProxySettings {
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
 // lifetime-erased `HTTPClient<'static>` form via [`HTTPClient::as_erased_ptr`].
 pub struct HTTPClient<'a> {
-    pub(crate) method: Method,
+    pub(crate) method: MethodRef,
     pub header_entries: headers::EntryList,
     pub(crate) header_buf: &'a [u8],
     pub(crate) url: URL<'a>,
@@ -2566,7 +2566,9 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        if body_len > 0 || self.method.has_request_body() {
+        // A verb that takes a body declares its length even when that is 0. A
+        // method outside the table says nothing about a body it does not have.
+        if body_len > 0 || self.method.known().is_some_and(Method::has_request_body) {
             if self.flags.is_streaming_request_body {
                 // `StreamFraming`, decided by the producer. An upgrade tunnels the bytes unframed.
                 let framing = match &self.state.original_request_body {
@@ -2612,12 +2614,14 @@ impl<'a> HTTPClient<'a> {
         }
 
         // SAFETY: every borrowed slice points into storage that outlives the
-        // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
+        // returned `Request` — the method is `'static` (`Method::as_str()`) or
+        // borrows `self.header_buf` (lives for the client); `url.pathname`
         // borrows `self.url` (lives for the client); `request_headers_buf` is
         // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
         // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
-            method: self.method.as_str().as_bytes(),
+            // SAFETY: a token borrows `self.header_buf`, which outlives the returned `Request`.
+            method: unsafe { bun_ptr::detach_lifetime(self.method.bytes(self.header_buf)) },
             // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
             path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
             minor_version: 1,
@@ -5269,7 +5273,7 @@ impl<'a> HTTPClient<'a> {
                         && self.method != Method::HEAD)
                 {
                     // - Set request's method to `GET` and request's body to null.
-                    self.method = Method::GET;
+                    self.method = Method::GET.into();
 
                     // https://github.com/oven-sh/bun/issues/6053
                     if self.header_entries.len() > 0 {

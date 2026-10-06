@@ -600,6 +600,7 @@ function translatePeerCertificate(c) {
 const ksecureContext = Symbol("ksecureContext");
 const kcheckServerIdentity = Symbol("kcheckServerIdentity");
 const ksession = Symbol("ksession");
+const kservername = Symbol("kservername");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 const kcontexts = Symbol("kcontexts");
 
@@ -614,6 +615,7 @@ function TLSSocket(socket?, options?) {
   this.ALPNProtocols = undefined;
   this[kcheckServerIdentity] = undefined;
   this[ksession] = undefined;
+  this[kservername] = undefined;
   this.alpnProtocol = null;
   this._secureEstablished = false;
   this._rejectUnauthorized = false;
@@ -946,7 +948,7 @@ TLSSocket.prototype.setServername = function setServername(name) {
   if (this.isServer) {
     throw $ERR_TLS_SNI_FROM_SERVER();
   }
-  // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
+  this[kservername] = name;
   this.servername = name;
   this._handle?.setServername?.(name);
 };
@@ -1025,7 +1027,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
   // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
   // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
   // falling back to the connection host.
-  let servername = this.servername || ctx?.servername;
+  let servername = this.servername || this[kservername] || ctx?.servername;
   if (servername === undefined) {
     servername = host && !net.isIP(host) ? host : "";
   }

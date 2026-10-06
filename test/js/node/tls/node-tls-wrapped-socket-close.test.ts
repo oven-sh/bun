@@ -951,6 +951,27 @@ describe("an error of the wrapped socket is reported on the TLS socket", () => {
   }
 });
 
+test("a FIN during the handshake of a TLS socket that is already wrapped is one 'error' on the TLS socket above it", async () => {
+  const server = net.createServer({ allowHalfOpen: true }, peer => {
+    peer.on("error", () => {}).once("data", () => peer.end());
+  });
+  const outer = tls.connect({ port: await listen(server), host: "127.0.0.1", rejectUnauthorized: false });
+  // Bun also fails the inner ClientHello that is parked on it, as ERR_SOCKET_CLOSED. Node reports nothing here.
+  outer.on("error", () => {});
+  try {
+    const inner = tls.connect({ socket: outer, rejectUnauthorized: false });
+    let errors = 0;
+    inner.on("secureConnect", () => assert.fail("secureConnect")).on("error", () => errors++);
+    await new Promise(resolve => inner.on("close", resolve));
+    // Past any error that is still queued.
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(errors, 1);
+  } finally {
+    outer.destroy();
+    server.close();
+  }
+});
+
 // The shape of https-proxy-agent. node:http reads the socket's _hadError to decide whether it still owes 'socket hang up'.
 for (const when of ["during the handshake", "with the request in flight"]) {
   test(`an https request over tls.connect({ socket }) hangs up when the wrapped socket is destroyed ${when}`, async () => {

@@ -443,7 +443,7 @@ function destroyWhenUpgradedCloses(self, connection) {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
 function onUpgradedError(self, err) {
-  if (self.destroyed) return;
+  if (self.destroyed || self._hadError) return;
   // The close that follows is no second error.
   self._hadError = true;
   self._emitTLSError(err);

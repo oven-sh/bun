@@ -878,7 +878,37 @@ it.each([
   ["pending", `new Promise(() => {})`],
   ["rejected and handled", `Promise.reject(new Error("not the entry point's"))`],
 ])("does not take a promise of the program's, %s, for that of the entry point", async (_, promise) => {
-  using dir = tempDir("hot-entry-promise-reused", { "main.js": `console.log("first load");` });
+  // writeFileSync() writes over the file and then resizes it. Those are two watcher events, so
+  // one save can reload twice, and until the resize a shorter file still ends in the longer one
+  // it replaces. The three saves differ in one digit, so every read gets one of them whole, and
+  // the second load does its work once.
+  const source = (load: 1 | 2 | 3) => `
+    const load = ${load};
+    if (load === 1) {
+      console.log("first load");
+    } else if (load === 3) {
+      console.log("third load");
+      process.exit(0);
+    } else if (!globalThis.kept) {
+      globalThis.kept = [];
+      // What is left on the stack can keep it alive, and differs with where a collection starts from.
+      require("fs").readFile(__filename, () => {
+        Bun.gc(true);
+        setImmediate(() => {
+          Bun.gc(true);
+          require("crypto").randomBytes(8, () => {
+            Bun.gc(true);
+            // catch() makes a promise of its own, and that of a rejected one is fulfilled. These
+            // are all made before the first of those, so that the cell goes to one of these.
+            for (let i = 0; i < 20000; i++) kept.push(${promise});
+            for (const promise of kept) promise.catch(() => {});
+            console.log("collected");
+          });
+        });
+      });
+    }
+  `;
+  using dir = tempDir("hot-entry-promise-reused", { "main.js": source(1) });
   await using runner = spawn({
     cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
     env: bunEnv,
@@ -897,30 +927,9 @@ it.each([
     }
   };
   await line("first load");
-  // What is left on the stack can keep it alive, and differs with where a collection starts from.
-  writeFileSync(
-    join(String(dir), "main.js"),
-    `
-      globalThis.kept = [];
-      require("fs").readFile(__filename, () => {
-        Bun.gc(true);
-        setImmediate(() => {
-          Bun.gc(true);
-          require("crypto").randomBytes(8, () => {
-            Bun.gc(true);
-            for (let i = 0; i < 20000; i++) {
-              const promise = ${promise};
-              promise.catch(() => {});
-              kept.push(promise);
-            }
-            console.log("collected");
-          });
-        });
-      });
-    `,
-  );
+  writeFileSync(join(String(dir), "main.js"), source(2));
   await line("collected");
-  writeFileSync(join(String(dir), "main.js"), `console.log("third load"); process.exit(0);`);
+  writeFileSync(join(String(dir), "main.js"), source(3));
   await line("third load");
   const stderr = (await runner.stderr.text()).split("\n").filter(line => line && !line.startsWith("DEBUG: "));
   expect({ stdout: stdout.split("\n"), stderr }).toEqual({

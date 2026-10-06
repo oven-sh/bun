@@ -913,7 +913,10 @@ pub mod ssl_wrapper {
         /// transport's own writable event, then writes what `write_data` left.
         /// Gives the transport what it refused. Returns how much it still has not taken.
         pub fn sink_writable(&self) -> usize {
-            self.sink.set(Sink::Ready);
+            // A transport that was only busy took all it was given: nothing waits here for it.
+            if self.sink.replace(Sink::Ready) == Sink::Busy {
+                return self.unsent_len();
+            }
             self.flush()
         }
 
@@ -1459,31 +1462,36 @@ pub mod ssl_wrapper {
             if self.ssl.get().is_none() || self.sink.get() == Sink::Refused {
                 return;
             }
-            let mut pending = self.ciphertext.outgoing.take();
-            let head = self.ciphertext.head.take();
+            let head = self.ciphertext.head.get();
+            let mut pending = {
+                let mut outgoing = self.ciphertext.outgoing.borrow_mut();
+                if outgoing.len() == head {
+                    return;
+                }
+                core::mem::take(&mut *outgoing)
+            };
+            self.ciphertext.head.set(0);
             let has_write = self.ciphertext.has_write.take();
             let unsent = pending.len() - head;
-            if unsent > 0 {
-                match self.trigger_wanna_write_callback(&pending[head..]) {
-                    Taken::Bytes(taken) if taken < unsent => {
-                        // The transport is full. What it left stays ahead of what was queued since.
-                        let mut outgoing = self.ciphertext.outgoing.borrow_mut();
-                        let queued_since = &outgoing[self.ciphertext.head.get()..];
-                        pending.try_reserve(queued_since.len()).unwrap_or_oom();
-                        pending.extend_from_slice(queued_since);
-                        *outgoing = pending;
-                        self.ciphertext.head.set(head + taken);
-                        if has_write {
-                            self.ciphertext.has_write.set(true);
-                        }
-                        self.sink.set(Sink::Refused);
-                        return;
+            match self.trigger_wanna_write_callback(&pending[head..]) {
+                Taken::Bytes(taken) if taken < unsent => {
+                    // The transport is full. What it left stays ahead of what was queued since.
+                    let mut outgoing = self.ciphertext.outgoing.borrow_mut();
+                    let queued_since = &outgoing[self.ciphertext.head.get()..];
+                    pending.try_reserve(queued_since.len()).unwrap_or_oom();
+                    pending.extend_from_slice(queued_since);
+                    *outgoing = pending;
+                    self.ciphertext.head.set(head + taken);
+                    if has_write {
+                        self.ciphertext.has_write.set(true);
                     }
-                    Taken::All { more: false } if has_write => self.sink.set(Sink::Busy),
-                    Taken::Bytes(_) | Taken::All { .. } => {}
+                    self.sink.set(Sink::Refused);
+                    return;
                 }
-                pending.clear();
+                Taken::All { more: false } if has_write => self.sink.set(Sink::Busy),
+                Taken::Bytes(_) | Taken::All { .. } => {}
             }
+            pending.clear();
             let mut outgoing = self.ciphertext.outgoing.borrow_mut();
             if outgoing.capacity() == 0 && pending.capacity() <= QUEUE_RETAIN_LIMIT {
                 *outgoing = pending;

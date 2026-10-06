@@ -2175,7 +2175,7 @@ function parseOptions(
 
   // The native constructor rejects any other `tls`.
   if (sslMode !== SSLMode.disable && (tls === undefined || tls === true || $isObject(tls))) {
-    tlsObject.serverName ||= hostname;
+    tlsObject.serverName ||= tlsObject.servername || hostname;
     tls = tlsObject;
   }
 

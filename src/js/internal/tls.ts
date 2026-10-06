@@ -388,6 +388,38 @@ function nodeClientTlsToNative(options) {
   return tls && unsealPfxForNative(tls);
 }
 
+/**
+ * Build the Error for a handshake that failed before completing. A fatal SSL
+ * protocol error (wrong version number, bad record, ...) carries the OpenSSL
+ * error string in `verifyError.reason`; everything else is the peer
+ * disconnecting mid-handshake, which Node reports as ECONNRESET.
+ */
+function tlsHandshakeError(verifyError) {
+  const verifyErrorCode = verifyError ? verifyError.code : undefined;
+  if (verifyErrorCode && verifyErrorCode !== "ECONNRESET") {
+    const reason = verifyError.reason || verifyError.message || "TLS handshake failed";
+    const err = new Error(reason) as Error & {
+      code?: string;
+      library?: string;
+      function?: string;
+      reason?: string;
+    };
+    // "error:0a00042e:SSL routines:OPENSSL_internal:TLSV1_ALERT_PROTOCOL_VERSION". ERR_SSL_<REASON> whatever the library:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L876-L891
+    const match = /^error:[0-9a-f]+:([^:]*):([^:]*):(.+)$/.exec(reason);
+    if (match) {
+      err.library = match[1];
+      err.function = match[2];
+      err.reason = match[3];
+      err.code = `ERR_SSL_${match[3]}`;
+    } else {
+      err.code = verifyErrorCode;
+    }
+    return err;
+  }
+  return new (require("internal/shared").ConnResetException)("socket hang up");
+}
+
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
   nodeClientTlsToNative,
@@ -395,6 +427,7 @@ export {
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,
+  tlsHandshakeError,
   tlsStringToProtocolVersion,
   unsealPfxForNative,
   validateSecureContextOptions,

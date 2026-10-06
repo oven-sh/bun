@@ -1,0 +1,232 @@
+// npm `ws` gives every option of the constructor to https.request(), so TLS options are top-level options or options
+// of the agent. Every test here also passes on Node.js with the ws package, but for the rows marked Bun only.
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir, tls as serverIdentity } from "harness";
+import { HttpsProxyAgent } from "https-proxy-agent";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import https from "node:https";
+import net, { type AddressInfo } from "node:net";
+import { join } from "node:path";
+import type { TLSSocket } from "node:tls";
+import WebSocket, { WebSocketServer } from "ws";
+
+const isBun = !!process.versions.bun;
+const read = (name: string) => readFileSync(join(import.meta.dirname, "../../node/test/fixtures/keys", name));
+// The server's certificate is self-signed for localhost. ca1 signs agent1, the client, and nothing else here.
+const ca = serverIdentity.cert;
+const ca1 = read("ca1-cert.pem");
+// agent1's key and certificate, with ca1.
+const pfx = read("agent1.pfx");
+
+/** Tells each client whether it presented a certificate that ca1 signed. */
+async function serve(options?: https.ServerOptions) {
+  const server = https.createServer({ ...serverIdentity, ca: ca1, requestCert: true, rejectUnauthorized: false, ...options }); // prettier-ignore
+  server.on("tlsClientError", () => {});
+  const wss = new WebSocketServer({ server });
+  wss.on("connection", (ws, req) => ws.send(`authorized=${(req.socket as TLSSocket).authorized}`));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  return {
+    url: `wss://localhost:${(server.address() as AddressInfo).port}`,
+    [Symbol.dispose]() {
+      for (const client of wss.clients) client.terminate();
+      server.close();
+    },
+  };
+}
+
+/** The server's message, or "refused". */
+function dial(url: string, options: object) {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const ws = new WebSocket(url, options);
+  ws.on("message", data => {
+    resolve(String(data));
+    ws.terminate();
+  });
+  ws.on("error", () => resolve("refused"));
+  return promise;
+}
+
+const anonymous = "authorized=false";
+const identified = "authorized=true";
+
+describe.concurrent("ws TLS options", () => {
+  test("top-level ca and rejectUnauthorized", async () => {
+    using server = await serve();
+    expect({
+      none: await dial(server.url, {}),
+      ca: await dial(server.url, { ca }),
+      otherCa: await dial(server.url, { ca: ca1 }),
+      emptyCa: await dial(server.url, { ca: "" }),
+      unverified: await dial(server.url, { rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] }),
+    }).toEqual({ none: "refused", ca: anonymous, otherCa: "refused", emptyCa: "refused", unverified: anonymous });
+  });
+
+  test("only an own rejectUnauthorized: false disables verification", async () => {
+    using server = await serve();
+    expect(await dial(server.url, { rejectUnauthorized: false })).toBe(anonymous);
+    for (const rejectUnauthorized of [0, null, "false", "", undefined, true]) {
+      expect(await dial(server.url, { rejectUnauthorized })).toBe("refused");
+      expect(await dial(server.url, { agent: new https.Agent({ rejectUnauthorized } as any) })).toBe("refused");
+    }
+    expect(await dial(server.url, Object.create({ rejectUnauthorized: false }))).toBe("refused");
+    // Bun only: Node's Agent reads its own inherited `options`.
+    const inherited = Object.create(new https.Agent({ rejectUnauthorized: false }));
+    if (isBun) expect(await dial(server.url, { agent: inherited })).toBe("refused");
+  });
+
+  test("the options of the agent win over the top-level options", async () => {
+    using server = await serve();
+    const agent = (options: object) => new https.Agent(options);
+    expect({
+      agentOff: await dial(server.url, { agent: agent({ rejectUnauthorized: false }), rejectUnauthorized: true }),
+      agentOn: await dial(server.url, { agent: agent({ rejectUnauthorized: true }), rejectUnauthorized: false }),
+      agentUndefined: await dial(server.url, { agent: agent({ rejectUnauthorized: undefined }), rejectUnauthorized: false }), // prettier-ignore
+      agentSilent: await dial(server.url, { agent: agent({}), rejectUnauthorized: false }),
+      agentCa: await dial(server.url, { agent: agent({ ca }), ca: ca1 }),
+      agentOtherCa: await dial(server.url, { agent: agent({ ca: ca1 }), ca }),
+      merged: await dial(server.url, { agent: agent({ ca }), cert: read("agent1-cert.pem"), key: read("agent1-key.pem") }), // prettier-ignore
+    }).toEqual({
+      agentOff: anonymous,
+      agentOn: "refused",
+      agentUndefined: "refused",
+      agentSilent: anonymous,
+      agentCa: anonymous,
+      agentOtherCa: "refused",
+      merged: identified,
+    });
+  });
+
+  test("the client identity, in every form", async () => {
+    using server = await serve();
+    const cert = read("agent1-cert.pem");
+    const key = read("agent1-key.pem");
+    expect({
+      pem: await dial(server.url, { ca, cert, key }),
+      pemObject: await dial(server.url, { ca, cert, key: [{ pem: key }] }),
+      pfx: await dial(server.url, { ca, pfx, passphrase: "sample" }),
+      pfxObject: await dial(server.url, { ca, pfx: [{ buf: pfx, passphrase: "sample" }] }),
+      agentPfx: await dial(server.url, { agent: new https.Agent({ ca, pfx, passphrase: "sample" }) }),
+      // Bun only.
+      tlsPfx: isBun ? await dial(server.url, { tls: { ca, pfx, passphrase: "sample" } }) : identified,
+    }).toEqual({
+      pem: identified,
+      pemObject: identified,
+      pfx: identified,
+      pfxObject: identified,
+      agentPfx: identified,
+      tlsPfx: identified,
+    });
+  });
+
+  test("minVersion and maxVersion", async () => {
+    using tls12 = await serve({ maxVersion: "TLSv1.2" });
+    using tls13 = await serve({ minVersion: "TLSv1.3" });
+    expect({
+      min13to12: await dial(tls12.url, { ca, minVersion: "TLSv1.3" }),
+      max12to12: await dial(tls12.url, { ca, maxVersion: "TLSv1.2" }),
+      max12to13: await dial(tls13.url, { ca, maxVersion: "TLSv1.2" }),
+      min13to13: await dial(tls13.url, { ca, minVersion: "TLSv1.3" }),
+    }).toEqual({ min13to12: "refused", max12to12: anonymous, max12to13: "refused", min13to13: anonymous });
+  });
+
+  test("an option that tls.connect() rejects throws", () => {
+    const url = "wss://localhost:1";
+    // BoringSSL and OpenSSL word it differently.
+    expect(() => new WebSocket(url, { agent: new https.Agent({ pfx, passphrase: "wrong" }) })).toThrow(/mac verif/i);
+    expect(() => new WebSocket(url, { agent: new https.Agent({ minVersion: "TLSv9" as any }) })).toThrow(
+      expect.objectContaining({ code: "ERR_TLS_INVALID_PROTOCOL_VERSION" }),
+    );
+  });
+
+  test("top-level options reach the target through an HttpsProxyAgent", async () => {
+    using server = await serve();
+    const connects: string[] = [];
+    const proxy = net.createServer(client => {
+      client.on("error", () => {});
+      client.once("data", head => {
+        const target = head.toString("latin1").split(" ")[1];
+        connects.push(target);
+        const upstream = net.connect(Number(target.split(":")[1]), "127.0.0.1", () => {
+          client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          client.pipe(upstream).pipe(client);
+        });
+        upstream.on("error", () => client.destroy());
+      });
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+    try {
+      const agent = new HttpsProxyAgent(`http://127.0.0.1:${(proxy.address() as AddressInfo).port}`);
+      expect(await dial(server.url, { agent, ca, pfx, passphrase: "sample" })).toBe(identified);
+      expect(connects).toEqual([server.url.slice("wss://".length)]);
+    } finally {
+      proxy.close();
+    }
+  });
+
+  test.skipIf(!isBun)("an explicit tls option replaces the agent's and the top-level options", async () => {
+    using server = await serve();
+    const off = { rejectUnauthorized: false };
+    expect(await dial(server.url, { ...off })).toBe(anonymous);
+    expect(await dial(server.url, { ...off, agent: new https.Agent(off), tls: { ca: ca1 } })).toBe("refused");
+    expect(await dial(server.url, { ca: ca1, agent: new https.Agent({ ca: ca1 }), tls: { ca } })).toBe(anonymous);
+  });
+});
+
+describe.concurrent("ws with a pfx that bundles a CA", () => {
+  // agent1's key and certificate, with the server's certificate as the CA. From the repository root:
+  //   bun -e 'await Bun.write("/tmp/server.pem", (await import("./test/harness.ts")).tls.cert)'
+  //   openssl pkcs12 -export -passout pass:sample -certfile /tmp/server.pem \
+  //     -inkey test/js/node/test/fixtures/keys/agent1-key.pem -in test/js/node/test/fixtures/keys/agent1-cert.pem \
+  //     -out test/js/first_party/ws/fixtures/agent1-with-server-ca.pfx
+  const pfxWithServerCa = readFileSync(join(import.meta.dirname, "fixtures/agent1-with-server-ca.pfx"));
+
+  test("adds the CA to the ca option", async () => {
+    using server = await serve();
+    expect(await dial(server.url, { ca: ca1, pfx: pfxWithServerCa, passphrase: "sample" })).toBe(identified);
+    expect(await dial(server.url, { ca: [ca1], pfx: [{ buf: pfxWithServerCa, passphrase: "sample" }] })).toBe(identified); // prettier-ignore
+    // Node adds it to the default store too. The native `ca` can only replace that store, so Bun leaves it out.
+    if (isBun) expect(await dial(server.url, { pfx: pfxWithServerCa, passphrase: "sample" })).toBe("refused");
+  });
+
+  // `openssl x509 -subject_hash` of the server's certificate.
+  const hashedName = "c62891c1.0";
+  test.each([
+    ["NODE_EXTRA_CA_CERTS", "server.pem", true],
+    // Node reads these two with --use-openssl-ca only.
+    ["SSL_CERT_FILE", "server.pem", isBun],
+    ["SSL_CERT_DIR", "hashed", isBun],
+  ] as const)("keeps trusting %s", async (name, path, applies) => {
+    if (!applies) return;
+    using server = await serve();
+    using dir = tempDir("ws-pfx-default-store", { "server.pem": ca, [`hashed/${hashedName}`]: ca });
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `
+        const WebSocket = require("ws");
+        const ws = new WebSocket(process.env.TEST_URL, { pfx: require("fs").readFileSync(process.env.TEST_PFX), passphrase: "sample" });
+        ws.on("message", data => { console.log(String(data)); ws.terminate(); });
+        ws.on("error", err => console.log("refused", err.message));
+        `,
+      ],
+      {
+        cwd: import.meta.dirname,
+        env: {
+          ...bunEnv,
+          TEST_URL: server.url,
+          TEST_PFX: join(import.meta.dirname, "../../node/test/fixtures/keys/agent1.pfx"),
+          [name]: join(String(dir), path),
+        },
+        stdio: ["ignore", "pipe", "inherit"],
+      },
+    );
+    let stdout = "";
+    child.stdout.on("data", chunk => (stdout += chunk));
+    const [exitCode] = await once(child, "exit");
+    expect(stdout.trim()).toBe(identified);
+    expect(exitCode).toBe(0);
+  });
+});

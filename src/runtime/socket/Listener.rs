@@ -740,14 +740,12 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
             );
         }
-        // NUL-terminate for the C `const char*` parameter. Interior NULs are
-        // tolerated — the C SNI tree just truncates at the first one. Build the
-        // `&CStr` via `from_ptr` to allow that instead of asserting via
-        // `ZStr::as_cstr()`. `server_name_z` must outlive the
-        // add_server_name call below.
+        // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
+        if bun_core::strings::contains_char(server_name_bytes, 0) {
+            return Ok(JSValue::UNDEFINED);
+        }
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
-        // SAFETY: `server_name_z` is NUL-terminated and lives to end of scope.
-        let server_name = unsafe { core::ffi::CStr::from_ptr(server_name_z.as_ptr()) };
+        let server_name = server_name_z.as_zstr().as_cstr();
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(JSValue::UNDEFINED);

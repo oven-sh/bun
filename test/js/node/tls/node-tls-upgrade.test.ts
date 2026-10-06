@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { once } from "events";
 import { tls as certs } from "harness";
 import net from "net";
+import { Duplex } from "stream";
 import tls from "tls";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
@@ -145,6 +146,63 @@ test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrap
     tlsSocket!.destroy();
     await closed;
   } finally {
+    server.close();
+  }
+});
+
+function duplexOver(raw: net.Socket) {
+  const duplex = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      raw.write(chunk, encoding, callback);
+    },
+    final(callback) {
+      raw.end(callback);
+    },
+  });
+  raw.on("data", chunk => duplex.push(chunk));
+  raw.on("end", () => duplex.push(null));
+  return duplex;
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L596
+test.each([
+  ["tls.connect({ socket: connected })", true, (socket: net.Socket, o: object) => tls.connect({ socket, ...o })],
+  ["tls.connect({ socket: connecting })", false, (socket: net.Socket, o: object) => tls.connect({ socket, ...o })],
+  [
+    "tls.connect({ socket: Duplex })",
+    true,
+    (raw: net.Socket, o: object) => tls.connect({ socket: duplexOver(raw), ...o }),
+  ],
+  [
+    "new tls.TLSSocket(socket)",
+    true,
+    (raw: net.Socket, o: object) => {
+      const socket = new tls.TLSSocket(raw, o);
+      // @ts-expect-error node starts the handshake of a constructor wrap here
+      socket._start();
+      return socket;
+    },
+  ],
+] as const)("%s ignores onread and emits 'data' (#42419)", async (_name, waitForConnect, wrap) => {
+  const server = tls.createServer(certs, socket => {
+    socket.on("error", () => {});
+    socket.end("hello");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const raw = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+  try {
+    if (waitForConnect) await once(raw, "connect");
+    const log: string[] = [];
+    const tlsSocket = wrap(raw, {
+      rejectUnauthorized: false,
+      onread: { buffer: Buffer.alloc(16), callback: (n: number) => log.push(`onread ${n}`) },
+    });
+    tlsSocket.on("data", data => log.push(`data ${data.length}`));
+    await once(tlsSocket, "end");
+    expect(log).toEqual(["data 5"]);
+  } finally {
+    raw.destroy();
     server.close();
   }
 });

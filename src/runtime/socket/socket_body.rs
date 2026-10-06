@@ -2508,7 +2508,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(
             match this.write_or_end::<false>(global, args.mut_(), false) {
                 WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
+                // The errno of a fatal send (< -1) is for node:net; this API documents -1.
+                WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote.max(-1)),
             },
         )
     }
@@ -2668,8 +2669,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
-        // route it through the SSL-encrypting us_socket_write, and its fatal
-        // signal is never set for TLS sockets anyway.
+        // route it through the SSL-encrypting us_socket_write.
         if flags.contains(Flags::BYPASS_TLS) {
             let res = self.do_socket_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -3167,8 +3167,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the initial write does: once the peer is gone the kernel rejects
             // every retry (EPIPE/ECONNRESET), and treating that as would-block
             // kept this buffer parked forever (the FIN-terminated-response hang).
-            // BYPASS_TLS twins keep the raw write path; TLS errors propagate
-            // through the SSL layer.
+            // BYPASS_TLS twins keep the raw write path.
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
                 self.do_socket_write(self.buffered_data_for_node_net.get().slice())
             } else {
@@ -3313,7 +3312,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = this.internal_flush();
                 }
-                JSValue::js_number(wrote as f64)
+                JSValue::js_number_from_int32(wrote.max(-1))
             }
         };
         Ok(result)
@@ -5210,11 +5209,13 @@ pub(crate) mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eq_ascii(b"ssl_write") {
+                fi::SSL_WRITE
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, ssl_write"
                 )));
             };
 

@@ -267,6 +267,8 @@ int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int count);
+/* Platform error code of the write that just returned if it killed the connection, else 0. */
+int us_internal_ssl_fatal_write_error(us_socket_r s);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
@@ -278,6 +280,9 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
+/* us_socket_raw_write that stores us_internal_classify_failed_send's answer for a failed send(). */
+int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *fatal_send_error);
+void us_internal_rearm_writable(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 

@@ -1651,6 +1651,33 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
+  it("reads a response that the server sent before it reset the upload", async () => {
+    const server = tls.createServer(validTls, socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        // destroy() with the body unread sends an RST, which fails the client's next send().
+        socket.pause();
+        socket.write("HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 3\r\n\r\nbig", () =>
+          socket.destroy(),
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const body = Buffer.alloc(16 * 1024 * 1024, "x");
+      for (let i = 0; i < 5; i++) {
+        const response = await fetch(`https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`, {
+          method: "POST",
+          body,
+          tls: { rejectUnauthorized: false },
+        });
+        expect({ status: response.status, text: await response.text() }).toEqual({ status: 413, text: "big" });
+      }
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch should ignore NODE_EXTRA_CA_CERTS if it's contains invalid cert", async () => {
     using server = Bun.serve({
       port: 0,

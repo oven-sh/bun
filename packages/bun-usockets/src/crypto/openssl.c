@@ -111,6 +111,9 @@ struct loop_ssl_data {
   unsigned int ssl_spill_len;
   unsigned int ssl_spill_off;
 
+  /* Why ssl_raw_write ended a write side inside the running us_internal_ssl_writev or spill drain. */
+  int ssl_send_error;
+
   /* us_socket_sni_resolve's answer; us_select_cert_cb takes it in the same re-drive. */
   SSL_CTX *ssl_sni_resolved_ctx;
 };
@@ -516,6 +519,19 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
+/* A send() that no retry can save loses sealed records: nothing may follow them, but what the peer sent is still read. */
+static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s, const char *data, int length) {
+  int send_error = 0;
+  int written = us_internal_socket_raw_write(s, data, length, &send_error);
+  if (send_error) {
+    loop_ssl_data->ssl_send_error = send_error;
+    us_internal_socket_raw_shutdown(s);
+    /* No write may close under its caller: us_internal_ssl_on_writable does. */
+    us_internal_rearm_writable(s);
+  }
+  return written;
+}
+
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
@@ -579,7 +595,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     BIO_clear_retry_flags(bio);
     return length;
   }
-  int written = us_socket_raw_write(loop_ssl_data->ssl_socket, data, length);
+  int written = ssl_raw_write(loop_ssl_data, loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
   if (!written) {
@@ -611,8 +627,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   }
   loop_ssl_data->ssl_write_batch_len = 0;
   loop_ssl_data->ssl_write_batch_owner = NULL;
-  int written = us_socket_raw_write(s, loop_ssl_data->ssl_write_batch, (int)len);
-  if (written < 0) written = 0;
+  int written = ssl_raw_write(loop_ssl_data, s, loop_ssl_data->ssl_write_batch, (int)len);
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
     if (!us_internal_socket_can_raw_write(s)) {
@@ -656,20 +671,24 @@ static void ssl_release_batch(struct us_loop_t *loop, struct us_socket_t *s) {
   }
 }
 
-/* Try to drain the spill slot for `s`. Returns 1 when clear (or not ours),
- * 0 while ciphertext is still pending for this socket. */
+static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
+  if (loop_ssl_data->ssl_spill_owner != s) return;
+  us_free(loop_ssl_data->ssl_spill);
+  loop_ssl_data->ssl_spill = NULL;
+  loop_ssl_data->ssl_spill_len = 0;
+  loop_ssl_data->ssl_spill_off = 0;
+  loop_ssl_data->ssl_spill_owner = NULL;
+}
+
+/* Try to drain the spill slot for `s`. Returns 1 when clear (not ours, sent, or
+ * dropped with the write side), 0 while ciphertext is still pending for this socket. */
 static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   if (loop_ssl_data->ssl_spill_owner != s) return 1;
   unsigned int pending = loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
-  int written = us_socket_raw_write(s, loop_ssl_data->ssl_spill + loop_ssl_data->ssl_spill_off, (int)pending);
-  if (written < 0) written = 0;
-  loop_ssl_data->ssl_spill_off += (unsigned int)written;
-  if (loop_ssl_data->ssl_spill_off == loop_ssl_data->ssl_spill_len) {
-    us_free(loop_ssl_data->ssl_spill);
-    loop_ssl_data->ssl_spill = NULL;
-    loop_ssl_data->ssl_spill_len = 0;
-    loop_ssl_data->ssl_spill_off = 0;
-    loop_ssl_data->ssl_spill_owner = NULL;
+  loop_ssl_data->ssl_spill_off += (unsigned int)ssl_raw_write(
+      loop_ssl_data, s, loop_ssl_data->ssl_spill + loop_ssl_data->ssl_spill_off, (int)pending);
+  if (loop_ssl_data->ssl_spill_off == loop_ssl_data->ssl_spill_len || !us_internal_socket_can_raw_write(s)) {
+    ssl_discard_spill(loop_ssl_data, s);
     return 1;
   }
   return 0;
@@ -678,18 +697,11 @@ static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket
 /* Release the spill slot when its owner dies (close path). */
 static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
-    /* Hard close with ciphertext still spilled: give the kernel one last
-     * chance to take it (it usually can - the spill is bounded small). */
-    ssl_drain_spill(loop_ssl_data, s);
-  }
-  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
-    us_free(loop_ssl_data->ssl_spill);
-    loop_ssl_data->ssl_spill = NULL;
-    loop_ssl_data->ssl_spill_len = 0;
-    loop_ssl_data->ssl_spill_off = 0;
-    loop_ssl_data->ssl_spill_owner = NULL;
-  }
+  if (!loop_ssl_data) return;
+  /* Hard close with ciphertext still spilled: give the kernel one last
+   * chance to take it (it usually can - the spill is bounded small). */
+  ssl_drain_spill(loop_ssl_data, s);
+  ssl_discard_spill(loop_ssl_data, s);
 }
 
 void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t *old_s,
@@ -2333,6 +2345,8 @@ static struct us_socket_t *ssl_deliver_eof(struct us_socket_t *s) {
   return us_dispatch_end(s);
 }
 
+static struct us_socket_t *ssl_on_writable(struct us_socket_t *s);
+
 /* Retry a JS write parked on WANT_READ (written before the handshake
  * finished). No-op while this socket's spill is undrained: the flag is kept
  * so the retry happens after on_writable drains it. */
@@ -2341,7 +2355,7 @@ static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
   if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) return s;
   s->ssl_write_wants_read = 0;
-  return us_internal_ssl_on_writable(s);
+  return ssl_on_writable(s);
 }
 
 struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
@@ -2391,14 +2405,34 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
   return s;
 }
 
+/* A fatal socket neither sends nor receives, and no write may close under its caller: the writable event does. */
+static struct us_socket_t *ssl_close_if_fatal(struct us_socket_t *s) {
+  if (!s || ssl_gone(s) || !s->ssl_fatal_error) return s;
+  return ssl_close(s, 0, NULL);
+}
+
+/* The read side delivers what the peer sent before it closes, unless the owner already let go. */
+static struct us_socket_t *ssl_close_after_rejected_send(struct us_socket_t *s, int send_error) {
+  if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
+  return us_internal_socket_close_raw(s, send_error > 2 ? send_error : LIBUS_ECONNRESET, NULL);
+}
+
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
-  ssl_set_loop_data(s);
+  /* Past its FIN a socket polls for writable only when ssl_raw_write asked for this event. */
+  if (!us_internal_socket_can_raw_write(s)) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
+  return ssl_on_writable(s);
+}
+
+static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data = ssl_set_loop_data(s);
+  s = ssl_close_if_fatal(s);
+  if (!s || ssl_gone(s)) return s;
   {
-    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     /* Ciphertext from a partial batch flush goes out before anything else;
      * while it is pending nothing new may be written for this socket. */
-    unsigned int spill_off_before = loop_ssl_data ? loop_ssl_data->ssl_spill_off : 0;
-    if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+    unsigned int spill_off_before = loop_ssl_data->ssl_spill_off;
+    loop_ssl_data->ssl_send_error = 0;
+    if (!ssl_drain_spill(loop_ssl_data, s)) {
       /* A writable event that moves zero spill bytes after the peer's
        * readable side has already ended means the peer is gone (send()
        * hit EPIPE/ECONNRESET, folded to 0 by us_socket_raw_write) and
@@ -2416,10 +2450,11 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
           us_socket_stalled_write_means_peer_gone(s)) {
         ssl_release_spill(s->group->loop, s);
         s->ssl_fatal_error = 1;
-        return us_dispatch_writable(s);
+        return ssl_close_if_fatal(us_dispatch_writable(s));
       }
       return s;
     }
+    if (loop_ssl_data->ssl_send_error) return ssl_close_after_rejected_send(s, loop_ssl_data->ssl_send_error);
     if (s->ssl_shutdown_after_spill) {
       s->ssl_shutdown_after_spill = 0;
       us_internal_ssl_shutdown(s);
@@ -2441,7 +2476,8 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     s = us_internal_ssl_on_data(s, "", 0);
     if (!s || ssl_gone(s)) return s;
   }
-  if (ssl_gone(s) || s->ssl_fatal_error) return s;
+  s = ssl_close_if_fatal(s);
+  if (!s || ssl_gone(s)) return s;
   /* uWS HTTP sockets keep the pre-existing SENT_SHUTDOWN suppression: their
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
@@ -2450,7 +2486,8 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s->ssl_write_parked = 0;
-    s = us_dispatch_writable(s);
+    /* loop.c drops the writable interest of a shut-down socket after this dispatch. */
+    s = ssl_close_if_fatal(us_dispatch_writable(s));
   }
   return s;
 }
@@ -2801,7 +2838,8 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
   /* Earlier batched records of ours must reach the wire before anything new:
    * SSL already counts them as written. While they cannot be delivered, the
    * caller buffers plaintext (return 0), bounding the in-flight ciphertext. */
-  if (!ssl_drain_spill(loop_ssl_data, s)) {
+  loop_ssl_data->ssl_send_error = 0;
+  if (!ssl_drain_spill(loop_ssl_data, s) || !us_internal_socket_can_raw_write(s)) {
     return 0;
   }
 
@@ -2830,6 +2868,16 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
     }
     size_t part_left = iov->iov_len - part_offset;
     int chunk = part_left > 16384 ? 16384 : (int)part_left;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SSL_WRITE, us_poll_fd(&s->p), injected, unused)) {
+      ERR_clear_error();
+      ERR_put_error(ERR_LIB_SSL, 0, ERR_R_INTERNAL_ERROR, __FILE__, __LINE__);
+      last_ssl_written = -1;
+      break;
+    }
+#endif
     /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
     s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), (const char *)iov->iov_base + part_offset, chunk);
@@ -2846,9 +2894,9 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
     part_offset += (size_t)last_ssl_written;
-    /* A batching allocation failure marks the socket fatal from inside the BIO;
-     * stop sealing records for a connection that is being torn down. */
-    if (s->ssl_fatal_error) break;
+    /* A batching allocation failure marks the socket fatal from inside the BIO, a
+     * rejected send() ends the write side: stop sealing records that cannot leave. */
+    if (s->ssl_fatal_error || !us_internal_socket_can_raw_write(s)) break;
     if (batching && loop_ssl_data->ssl_write_batch_len >= 131072) {
       if (!ssl_flush_write_batch(loop_ssl_data, s)) break; /* wire blocked: stop consuming */
       if (s->ssl_fatal_error) break;
@@ -2858,9 +2906,8 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
   if (batching) {
     ssl_flush_write_batch(loop_ssl_data, s);
   }
-  if (s->ssl_fatal_error) return 0;
-  if (total > 0) return total;
-  if (last_ssl_written <= 0) {
+  if (!us_internal_socket_can_raw_write(s)) return 0;
+  if (!s->ssl_fatal_error && last_ssl_written <= 0) {
     int err = SSL_get_error(s_ssl(s), last_ssl_written);
     if (err == SSL_ERROR_WANT_READ) {
       s->ssl_write_wants_read = 1;
@@ -2874,7 +2921,24 @@ int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, 
       ssl_park_fatal_reason(s);
     }
   }
+  if (!s->ssl_fatal_error) return total;
+  s->flags.last_write_failed = 1;
+  us_internal_rearm_writable(s);
   return 0;
+}
+
+int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
+  /* Before the handshake is reported, its dispatch carries the failure. */
+  if (!s->ssl || s->ssl_handshake_state != HANDSHAKE_COMPLETED) return 0;
+  if (!us_internal_socket_can_raw_write(s)) {
+    return ((struct loop_ssl_data *)s->group->loop->data.ssl_data)->ssl_send_error;
+  }
+  if (!s->ssl_fatal_error) return 0;
+#ifdef _WIN32
+  return -UV_EPROTO;
+#else
+  return EPROTO;
+#endif
 }
 
 void us_internal_ssl_shutdown(struct us_socket_t *s) {

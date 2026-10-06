@@ -14666,6 +14666,52 @@ describe.concurrent("--check", () => {
     expect(sameFlag.stderr).toBe(command.stderr);
   });
 
+  test("`bun run --check` without a script or a file is `bun check`", async () => {
+    const files = { "a.ts": `export const a: number = "1";\n`, "src/empty.txt": "" };
+    using scripted = project({
+      ...files,
+      "package.json": JSON.stringify({ scripts: { check: "echo the script ran", run: "echo the script ran" } }),
+    });
+    using unscripted = project({ ...files, "package.json": JSON.stringify({ scripts: { lint: "echo no" } }) });
+    using bare = project(files);
+    const spellings = [
+      ["run", "--check"],
+      ["--check", "run"],
+      ["run", "--check", "--"],
+      ["run", "--silent", "--check"],
+      ["run", "--check", "--if-present"],
+      ["run", "--check", "--no-install"],
+    ];
+    const error = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const dirs = [scripted, unscripted, bare].map(String);
+    const command = await run(String(bare), ["check"]);
+    const results = await Promise.all(dirs.flatMap(dir => spellings.map(spelling => run(dir, spelling))));
+    expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(
+      results.map(() => [error, command.stderr, 1]),
+    );
+    const [below, elsewhere] = await Promise.all([
+      run(join(String(scripted), "src"), ["run", "--check"]),
+      run(String(bare), ["run", "--cwd", String(scripted), "--check"]),
+    ]);
+    expect([below, elsewhere].map(it => [it.stdout, it.exitCode])).toEqual([
+      [`../${error}`, 1],
+      [error, 1],
+    ]);
+
+    // Without the flag it lists the scripts, as before. With a name, the project is checked and the script is not run.
+    const [list, named] = await Promise.all([
+      run(String(unscripted), ["run"]),
+      run(String(unscripted), ["run", "--check", "lint"]),
+    ]);
+    expect([list.stdout.includes("Usage: bun run"), list.stdout.includes("TS2322"), list.exitCode]).toEqual([
+      true,
+      false,
+      0,
+    ]);
+    // The output of a script is its own, so the errors are not in it.
+    expect([named.stdout, named.stderr.includes(error), named.exitCode]).toEqual(["", true, 1]);
+  });
+
   // Runs `bun` until the test ends. `until` does `first`, once, and waits for a condition on what `bun` has printed. A
   // file that is written again and again would start the check again and again.
   // `printed` is called at once with all that it has printed.

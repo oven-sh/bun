@@ -1459,19 +1459,18 @@ pub(crate) mod command {
         // REPL (via process._eval). `-i -p` is not yet threaded through the
         // bootstrap (Node prints AND enters the REPL), so `-p` currently
         // bypasses the REPL. RunCommand's positionals carry a leading "run".
-        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print {
-            let no_target = match tag {
-                Tag::AutoCommand => ctx.positionals.is_empty(),
-                Tag::RunCommand => match ctx.positionals.as_slice() {
-                    [] => true,
-                    [r] => r.as_ref() == b"run",
-                    _ => false,
-                },
+        let no_target = match tag {
+            Tag::AutoCommand => ctx.positionals.is_empty(),
+            Tag::RunCommand => match ctx.positionals.as_slice() {
+                [] => true,
+                [r] => r.as_ref() == b"run",
                 _ => false,
-            };
-            if no_target {
-                return run_command::RunCommand::exec_node_repl(ctx);
-            }
+            },
+            _ => false,
+        };
+        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print && no_target
+        {
+            return run_command::RunCommand::exec_node_repl(ctx);
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
@@ -1483,6 +1482,11 @@ pub(crate) mod command {
             if extension == b".lockb" {
                 return bun_lockb(ctx);
             }
+        }
+
+        // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
+        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+            super::check_command::CheckCommand::exec_without_arguments();
         }
 
         if !ctx.positionals.is_empty() {
@@ -1498,11 +1502,6 @@ pub(crate) mod command {
                 Global::exit(1);
             }
             return Ok(());
-        }
-
-        // `bun --check` is `bun check`, also where that is a script.
-        if tag == Tag::AutoCommand && ctx.runtime_options.check {
-            super::check_command::CheckCommand::exec_without_arguments();
         }
 
         if tag == Tag::AutoCommand {

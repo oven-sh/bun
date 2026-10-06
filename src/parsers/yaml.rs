@@ -3138,13 +3138,18 @@ impl MappingProps {
             self.merge_indexed += 1;
         }
 
-        'next_merge_prop: for merge_prop in merge_props.iter().rev() {
+        let pre_merge_len = self.list.len();
+        'next_merge_prop: for merge_prop in merge_props {
             let merge_key = merge_prop.key.as_ref().unwrap();
             let merge_hash = yaml_merge_key_expr_hash(merge_key);
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
-                for existing_idx in candidates.iter() {
-                    let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
-                    if yaml_merge_key_expr_eql(existing_key, merge_key) {
+                for &existing_idx in candidates.iter() {
+                    let existing = &mut self.list[existing_idx as usize];
+                    if yaml_merge_key_expr_eql(existing.key.as_ref().unwrap(), merge_key) {
+                        // Repeated in this source (`<<` plus an override): the later value wins.
+                        if existing_idx as usize >= pre_merge_len {
+                            existing.value = merge_prop.value;
+                        }
                         continue 'next_merge_prop;
                     }
                 }

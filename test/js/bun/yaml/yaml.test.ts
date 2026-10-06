@@ -3,6 +3,18 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
+/** Runs `index.ts` in `dir`, then builds it with `bun build` and runs the bundle. */
+async function importedAndBundled(dir: string) {
+  const run = async (...args: string[]) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd: dir, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const imported = await run("index.ts");
+  const { stderr, exitCode } = await run("build", "index.ts", "--target=bun", "--outfile=out.js");
+  return { imported, build: { stderr, exitCode }, bundled: await run("out.js") };
+}
+
 describe("Bun.YAML", () => {
   describe("parse", () => {
     // Test various input types
@@ -2156,7 +2168,7 @@ folded: >
           expect(() => YAML.parse("a: 1\nb:\n\tc: 2")).toThrow(/line\s*\d|:\d+:\d+/);
         });
 
-        test.todo("`<<:` merge preserves source property order", () => {
+        test("`<<:` merge preserves source property order", () => {
           const r: any = YAML.parse("x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x");
           expect(Object.keys(r.y)).toEqual(["a", "b", "c"]);
         });
@@ -2711,6 +2723,74 @@ config:
           config: {
             foo: 3,
           },
+        });
+      });
+
+      describe("merged keys keep their source order", () => {
+        // JSON.stringify keeps key order, so each row pins order and values.
+        const x = "x: &x {a: 1, b: 2, c: 3}\n";
+        const abc = '{"a":1,"b":2,"c":3}';
+        test.each([
+          ["flow source", x + "y:\n  <<: *x", `{"x":${abc},"y":${abc}}`],
+          ["block source", "x: &x\n  a: 1\n  b: 2\n  c: 3\ny:\n  <<: *x", `{"x":${abc},"y":${abc}}`],
+          [
+            "own keys around the merge",
+            x + "y:\n  p: 0\n  <<: *x\n  q: 0",
+            `{"x":${abc},"y":{"p":0,"a":1,"b":2,"c":3,"q":0}}`,
+          ],
+          ["own key before the merge wins", x + "y:\n  b: 0\n  <<: *x", `{"x":${abc},"y":{"b":0,"a":1,"c":3}}`],
+          ["own key after the merge wins", x + "y:\n  <<: *x\n  b: 0", `{"x":${abc},"y":{"a":1,"b":0,"c":3}}`],
+          [
+            "earlier source of a merge list wins",
+            "a: &a {x: 1, y: 2}\nb: &b {y: 20, z: 30}\nm:\n  <<: [*a, *b]",
+            '{"a":{"x":1,"y":2},"b":{"y":20,"z":30},"m":{"x":1,"y":2,"z":30}}',
+          ],
+          [
+            "inline mapping in a merge list",
+            x + "y:\n  <<: [*x, {d: 4, a: 9}]\n  e: 5",
+            `{"x":${abc},"y":{"a":1,"b":2,"c":3,"d":4,"e":5}}`,
+          ],
+          ["same anchor twice", x + "y:\n  <<: [*x, *x]", `{"x":${abc},"y":${abc}}`],
+          ["two merge keys", "<<: {x: 1, y: 2}\nfoo: bar\n<<: {z: 3, t: 4}", '{"x":1,"y":2,"foo":"bar","z":3,"t":4}'],
+          ["merge of a merged mapping", x + "y: &y\n  <<: *x\nz:\n  <<: *y", `{"x":${abc},"y":${abc},"z":${abc}}`],
+          [
+            "merge of a mapping that overrides a merged key",
+            x + "mid: &m\n  <<: *x\n  a: 9\nleaf:\n  <<: *m",
+            `{"x":${abc},"mid":{"a":9,"b":2,"c":3},"leaf":{"a":9,"b":2,"c":3}}`,
+          ],
+          [
+            "a key repeated in the source keeps its first place and last value",
+            "x: &x {a: 1, b: 2, a: 3, c: 4}\ny:\n  <<: *x",
+            '{"x":{"a":3,"b":2,"c":4},"y":{"a":3,"b":2,"c":4}}',
+          ],
+          [
+            "keys that are not strings",
+            "x: &x {true: 1, ~: 2, 1.5: 3}\ny:\n  <<: *x",
+            '{"x":{"true":1,"null":2,"1.5":3},"y":{"true":1,"null":2,"1.5":3}}',
+          ],
+        ])("%s", (_, input, expected) => {
+          expect(JSON.stringify(YAML.parse(input))).toBe(expected);
+        });
+
+        test("keys that collide as property names merge like their source", () => {
+          const doc: any = YAML.parse('x: &x {1: a, "1": b}\ny:\n  <<: *x');
+          expect(doc).toEqual({ x: { 1: "b" }, y: { 1: "b" } });
+        });
+
+        test("a .yaml module keeps the order through import and bun build", async () => {
+          using dir = tempDir("yaml-merge-order-module", {
+            "doc.yaml": x + "y:\n  p: 0\n  <<: *x\n  q: 0\n",
+            "index.ts": `
+              import doc from "./doc.yaml";
+              console.log(JSON.stringify(doc));
+            `,
+          });
+          const stdout = `{"x":${abc},"y":{"p":0,"a":1,"b":2,"c":3,"q":0}}\n`;
+          expect(await importedAndBundled(String(dir))).toEqual({
+            imported: { stdout, stderr: "", exitCode: 0 },
+            build: { stderr: "", exitCode: 0 },
+            bundled: { stdout, stderr: "", exitCode: 0 },
+          });
         });
       });
     });

@@ -194,6 +194,9 @@ pub struct BundleOptions {
     pub preserve_symlinks: bool,
     pub rewrite_jest_for_tests: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
+    /// The file at `tsconfig_override`, once `Resolver::tsconfig_override` has read it.
+    /// `Some(None)`: it cannot be read.
+    pub tsconfig_override_json: Option<Option<std::sync::Arc<crate::tsconfig_json::TSConfigJSON>>>,
     pub production: bool,
     pub force_node_env: ForceNodeEnv,
     // Bundler-only fields read via `c.resolver.opts` in

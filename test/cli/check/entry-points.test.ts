@@ -239,6 +239,7 @@ function argumentsOf(command: Command, kind: Kind, entry: Entry, main: string[])
         throw: false,
         target: entry.target,
         loader: entry.loader && Object.fromEntries([entry.loader]),
+        tsconfig: kind.tsconfig,
       };
       return [
         "-e",
@@ -255,15 +256,12 @@ const every = isDebug || isASAN ? 3 : 1;
 const cases = kinds
   .flatMap(kind =>
     entries.flatMap(entry =>
-      entry.commands
-        // `Bun.build` has no `--tsconfig-override`.
-        .filter(command => !(kind.tsconfig && command === "Bun.build"))
-        .flatMap(command =>
-          [true, false].map(isCorrect => {
-            const name = `${kind.name}: ${entry.name}: ${command}, ${isCorrect ? "no error" : "an error"}`;
-            return [name, kind, entry, command, isCorrect] as const;
-          }),
-        ),
+      entry.commands.flatMap(command =>
+        [true, false].map(isCorrect => {
+          const name = `${kind.name}: ${entry.name}: ${command}, ${isCorrect ? "no error" : "an error"}`;
+          return [name, kind, entry, command, isCorrect] as const;
+        }),
+      ),
     ),
   )
   .filter((_, index) => index % every === 0);

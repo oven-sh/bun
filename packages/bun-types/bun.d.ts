@@ -3511,8 +3511,9 @@ declare module "bun" {
      * written, and each error is a {@link BuildMessage} whose message starts
      * with TypeScript's error code.
      *
-     * The compiler options come from the `tsconfig.json` of the project. The
-     * check also uses the `conditions` and the `loader` of the build.
+     * The compiler options come from the `tsconfig.json` of the project, or
+     * from the file that `tsconfig` names. The check also uses the `conditions`
+     * and the `loader` of the build.
      *
      * @default false
      *
@@ -3541,7 +3542,9 @@ declare module "bun" {
     throw?: boolean;
 
     /**
-     * Custom tsconfig.json file path to use for path resolution.
+     * Custom tsconfig.json file path. This build reads it in place of every
+     * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
+     * settings, and for `check`.
      * Equivalent to `--tsconfig-override` in the CLI.
      * @example
      * ```ts

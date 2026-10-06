@@ -1276,6 +1276,18 @@ impl CompletionStruct for JSBundleCompletionTask {
             drop: config.drop.keys().to_vec(),
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
+            // Relative to where the entry points are relative to, as for `--tsconfig-override`.
+            tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
+                let cwd = match config.dir.list.is_empty() {
+                    true => bun_resolver::fs::FileSystem::instance().top_level_dir,
+                    false => config.dir.list.as_slice(),
+                };
+                let path = config.tsconfig_override.list.as_slice();
+                let mut spill = Vec::new();
+                Box::from(bun_paths::resolve_path::join_abs_string_spill::<
+                    bun_paths::platform::Auto,
+                >(cwd, &mut spill, &[path]))
+            }),
             ..Default::default()
         };
 

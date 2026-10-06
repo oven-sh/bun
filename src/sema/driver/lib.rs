@@ -514,6 +514,9 @@ pub struct Diagnostic {
     /// Related information: `'x' is declared here.` These entries have no related information of
     /// their own.
     pub related: Vec<Diagnostic>,
+    /// Which project of a build has reported it, in build order. A file that two of them include
+    /// is a file of each, as it is a `SourceFile` of each program.
+    pub project: u32,
 }
 
 /// A step of a `Plan`, as it ran.
@@ -668,6 +671,7 @@ fn global(code: u32, args: &[impl AsRef<[u8]>]) -> Diagnostic {
         source: Vec::new(),
         source_line: 0,
         related: Vec::new(),
+        project: 0,
     }
 }
 
@@ -1073,7 +1077,7 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
             ..*request
         };
         report.merge(check_paths(disk, &of_pages));
-        sort_and_deduplicate(&mut report.diagnostics);
+        sort_as_one_project(&mut report.diagnostics);
     }
 }
 
@@ -1262,7 +1266,9 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
-    sort_and_deduplicate(&mut report.diagnostics);
+    if !is_one {
+        sort_as_one_project(&mut report.diagnostics);
+    }
     report
 }
 
@@ -1393,8 +1399,10 @@ struct Graph<'h> {
     circularity_stack: Vec<Vec<u8>>,
     /// `errors`: TS6202. If there is one, nothing is built.
     errors: Vec<Diagnostic>,
-    /// `upToDateStatusTypeConfigFileNotFound`, which a task reports when it runs.
-    not_found: Vec<Diagnostic>,
+    /// `upToDateStatusTypeConfigFileNotFound`, which a task reports when it runs: with the number of
+    /// `projects` before it in the order. Such a task is `completed` too, so there is one for a file.
+    not_found: Vec<(usize, Diagnostic)>,
+    paths_not_found: FxHashSet<Vec<u8>>,
 }
 
 impl Graph<'_> {
@@ -1444,7 +1452,11 @@ impl Graph<'_> {
                     Some(referenced) => {
                         references.push(self.setup_build_task(referenced, in_circular_context));
                     }
-                    None => self.not_found.push(global(6053, &[path])),
+                    None if self.paths_not_found.insert(key(&path)) => {
+                        let before = self.projects.len();
+                        self.not_found.push((before, global(6053, &[path])));
+                    }
+                    None => {}
                 },
             }
         }
@@ -1653,6 +1665,7 @@ fn check_with_references(
         circularity_stack: Vec::new(),
         errors: Vec::new(),
         not_found: Vec::new(),
+        paths_not_found: FxHashSet::default(),
     };
     graph.create_build_tasks(&root);
     graph.setup_build_task(root, false);
@@ -1660,7 +1673,7 @@ fn check_with_references(
         projects,
         index_of,
         mut errors,
-        mut not_found,
+        not_found,
         ..
     } = graph;
     // `buildOrClean`: "Circularity errors prevent any project from being built".
@@ -1669,7 +1682,6 @@ fn check_with_references(
         report.load_time = started.elapsed();
         return report;
     }
-    report.diagnostics.append(&mut not_found);
     let resolved = |path: &[u8]| {
         let path = to_path(path, is_case_sensitive);
         Some(&projects[(*index_of.get(&*path)?)?].project)
@@ -1951,15 +1963,32 @@ fn check_with_references(
         }
         build_what_is_ready();
     });
-    for mut checked in reports {
-        if let Some(checked) = checked.get_mut().take() {
+    // `BuildTask.report`: project by project, in build order. What two projects say about a file
+    // that both include is there twice.
+    let mut not_found = not_found.into_iter().peekable();
+    for (index, mut checked) in reports.into_iter().enumerate() {
+        while let Some((_, d)) = not_found.next_if(|it| it.0 <= index) {
+            report.diagnostics.push(d);
+        }
+        if let Some(mut checked) = checked.get_mut().take() {
+            for d in &mut checked.diagnostics {
+                d.project = index as u32;
+            }
             report.merge(checked);
             report.projects_checked += 1;
         }
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
-    sort_and_deduplicate(&mut report.diagnostics);
     report
+}
+
+/// For what `tsc` has no command for: files that are named, or found in a page, and that are
+/// checked in projects that have nothing to do with each other.
+fn sort_as_one_project(diagnostics: &mut Vec<Diagnostic>) {
+    for d in diagnostics.iter_mut() {
+        d.project = 0;
+    }
+    sort_and_deduplicate(diagnostics);
 }
 
 /// `SortAndDeduplicateDiagnostics`, with `CompareDiagnostics`.

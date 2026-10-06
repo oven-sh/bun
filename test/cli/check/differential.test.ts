@@ -1085,8 +1085,7 @@ async function linesOf(cmd: string[], cwd: string, root: string) {
   return stdout
     .split(/\r?\n/)
     .filter(line => line.trim())
-    .map(line => line.replace(prefix, ""))
-    .sort();
+    .map(line => line.replace(prefix, ""));
 }
 
 /** `run` for each of `items`, a few at a time. */
@@ -1293,6 +1292,65 @@ differential("what is not JSON in a configuration file", async () => {
     results.push({ text, bun, tsc: typescript });
   });
   expect(results.filter(it => !Bun.deepEquals(it.bun, it.tsc))).toEqual([]);
+});
+
+// `tsc -b` reports project by project, in build order. A file that two projects include is a file of each.
+differential("the errors of the projects of a build", async () => {
+  const orders = [
+    ["a", "b", "c"],
+    ["a", "c", "b"],
+    ["b", "a", "c"],
+    ["b", "c", "a"],
+    ["c", "a", "b"],
+    ["c", "b", "a"],
+    // Not all of them are named at the top.
+    ["c"],
+    ["b", "a"],
+    // There is no such project. It has a place in the order all the same.
+    ["b", "nowhere", "a", "c"],
+  ];
+  const referencing: Record<string, string[]>[] = [
+    {},
+    { a: ["b"] },
+    { b: ["a"] },
+    { a: ["c"], b: ["c"] },
+    { a: ["b"], b: ["c"] },
+    { c: ["b", "a"] },
+    // It is reported once.
+    { a: ["nowhere"], c: ["b", "nowhere"] },
+  ];
+  // Which of them name a type library that is not there: an error without a file.
+  const withoutTypes = [[], ["a", "c"], ["a", "b", "c"]];
+  const combinations = [...product(orders, referencing, withoutTypes)].filter((_, i) => i % everyConfiguration === 0);
+  const files: Record<string, string> = {};
+  combinations.forEach(([order, references, missing], index) => {
+    files[`${index}/tsconfig.json`] = JSON.stringify({ files: [], references: order.map(it => ({ path: `./${it}` })) });
+    files[`${index}/shared/s.ts`] = `export const s: number = "";\n`;
+    files[`${index}/shared/z.ts`] = `export const z: number = "";\nexport const y: string = 1;\n`;
+    for (const name of ["a", "b", "c"]) {
+      files[`${index}/${name}/tsconfig.json`] = JSON.stringify({
+        compilerOptions: {
+          ...{ composite: true, emitDeclarationOnly: true, outDir: "out", rootDir: "..", strict: true },
+          ...{ lib: ["es2020"], skipLibCheck: true, types: missing.includes(name) ? ["missing"] : [] },
+        },
+        include: ["*.ts", "../shared/*.ts"],
+        references: (references[name] ?? []).map(it => ({ path: `../${it}` })),
+      });
+      files[`${index}/${name}/${name}.ts`] = `export const ${name}: number = "";\n`;
+    }
+  });
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  const different: Record<string, object> = {};
+  await inTurns([...combinations.keys()], async index => {
+    const cwd = join(root, String(index));
+    // In this order: `tsc -b` writes files.
+    const ours = await linesOf([bunExe(), "check"], cwd, root);
+    const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
+    expect(theirs.length).toBeGreaterThan(0);
+    if (!Bun.deepEquals(theirs, ours)) different[JSON.stringify(combinations[index])] = { theirs, ours };
+  });
+  expect(different).toEqual({});
 });
 
 // What is relative is relative to the file that it is written in.

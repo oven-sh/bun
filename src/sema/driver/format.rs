@@ -209,17 +209,18 @@ fn write_occurrences(
     duplicates: &[&Diagnostic],
     style: &Style,
 ) {
-    // Diagnostics are sorted by path, so each file's are adjacent.
-    let mut by_file: Vec<(&Diagnostic, usize)> = vec![(first, 1)];
-    for &d in duplicates {
-        match by_file.last_mut() {
-            Some((of, count)) if of.path == d.path => *count += 1,
-            _ => by_file.push((d, 1)),
-        }
-    }
+    let all = std::iter::once(first).chain(duplicates.iter().copied());
+    let mut by_file = count_by_file(all.filter(|d| !d.path.is_empty()));
     let times = with_commas(duplicates.len() + 1);
     pretty!(out, style.color, "    <b><yellow>{} times<r>", times);
-    if let [_] = by_file[..] {
+    // Every project of a build without the types that it names.
+    if by_file.is_empty() {
+        out.push(b'\n');
+        return;
+    }
+    if let [_] = by_file[..]
+        && !first.path.is_empty()
+    {
         let mut lines: Vec<u32> = duplicates
             .iter()
             .map(|d| d.line)
@@ -263,6 +264,25 @@ fn write_occurrences(
             width
         );
     }
+}
+
+/// `getErrorSummary`: the first diagnostic of each file and how many it has, by file name. A file
+/// that two projects of a build include is a file of each.
+fn count_by_file<'a>(
+    diagnostics: impl Iterator<Item = &'a Diagnostic>,
+) -> Vec<(&'a Diagnostic, usize)> {
+    let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
+    let mut by_file: Vec<(&Diagnostic, usize)> = Vec::new();
+    for d in diagnostics {
+        let at = *index.entry((d.project, &d.path[..])).or_insert_with(|| {
+            by_file.push((d, 0));
+            by_file.len() - 1
+        });
+        by_file[at].1 += 1;
+    }
+    // The sort is stable: the projects stay in build order.
+    by_file.sort_by(|a, b| a.0.path.cmp(&b.0.path));
+    by_file
 }
 
 /// Line numbers listed for a group whose duplicates are all in one file.
@@ -372,6 +392,9 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         }
         let _ = writeln!(out, ">{}</related>", note.text.as_bstr());
     }
+    let duplicates: Vec<&Diagnostic> = (duplicates.iter().copied())
+        .filter(|other| !other.path.is_empty())
+        .collect();
     if !duplicates.is_empty() {
         out.extend_from_slice(b"<also>");
         for (i, other) in duplicates.iter().take(MAX_AGENT_LOCATIONS).enumerate() {
@@ -647,17 +670,9 @@ pub(crate) fn is_about_bun_types(d: &Diagnostic) -> bool {
 
 /// Warnings, notes, the error count, then a per-file error count for every file.
 pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
-    // Diagnostics are sorted by path, so each file's errors are adjacent.
-    let mut by_file: Vec<(&Diagnostic, usize)> = Vec::new();
-    for d in &report.diagnostics {
-        if d.category != Category::Error || d.path.is_empty() {
-            continue;
-        }
-        match by_file.last_mut() {
-            Some((first, count)) if first.path == d.path => *count += 1,
-            _ => by_file.push((d, 1)),
-        }
-    }
+    let in_files =
+        (report.diagnostics.iter()).filter(|d| d.category == Category::Error && !d.path.is_empty());
+    let mut by_file = count_by_file(in_files);
     let files_with_errors = by_file.len();
     for path in &report.incomplete {
         pretty!(

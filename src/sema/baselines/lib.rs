@@ -1287,6 +1287,7 @@ fn errors_of_both_programs(pre: Report, mut post: Report) -> Report {
         source: Vec::new(),
         source_line: 0,
         related: Vec::new(),
+        project: 0,
     };
     let (longer, mut shorter) = match before > after {
         true => (pre.diagnostics, post.diagnostics),

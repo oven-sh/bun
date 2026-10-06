@@ -834,7 +834,7 @@ describe.concurrent("bun check", () => {
       expect(stdout + stderr).not.toContain("more files");
     });
 
-    test("an error that two projects report is printed once", async () => {
+    test("an error that two projects report is printed for each, in build order, as by tsc -b", async () => {
       const compilerOptions = {
         ...JSON.parse(tsconfig).compilerOptions,
         ...{ composite: true, noEmit: false, emitDeclarationOnly: true, outDir: "out", rootDir: ".." },
@@ -846,7 +846,7 @@ describe.concurrent("bun check", () => {
           include: ["*.ts", "../shared/*.ts"],
         });
         return {
-          "tsconfig.json": `{ "files": [], "references": [{ "path": "./one" }, { "path": "./two" }] }`,
+          "tsconfig.json": `{ "files": [], "references": [{ "path": "./two" }, { "path": "./one" }] }`,
           "shared/s.ts": wrong,
           "one/tsconfig.json": config,
           "one/a.ts": wrong,
@@ -856,17 +856,32 @@ describe.concurrent("bun check", () => {
       };
       using inAFile = project(files([]));
       using withoutAFile = project(files(["missing"]));
-      const [located, global] = await Promise.all([check(inAFile), check(withoutAFile)]);
+      const [located, global, named] = await Promise.all([
+        check(inAFile),
+        check(withoutAFile),
+        check(inAFile, ["shared"]),
+      ]);
       expect(located.stdout.split("\n").map(line => line.split("(")[0])).toEqual([
-        "one/a.ts",
         "shared/s.ts",
         "two/a.ts",
+        "one/a.ts",
+        "shared/s.ts",
       ]);
-      expect(located.stderr).toContain("Found 3 errors in 3 files");
+      // `tsc -b --pretty`: "Found 4 errors in 4 files.", and the files by name.
+      expect(located.stderr).toContain("Found 4 errors in 4 files");
+      expect(located.stderr.split("\n").filter(line => /^ +\d+ {2}/.test(line))).toEqual([
+        "  1  one/a.ts:1",
+        "  1  shared/s.ts:1",
+        "  1  shared/s.ts:1",
+        "  1  two/a.ts:1",
+      ]);
       expect(global.stdout.split("\n").filter(line => line.includes("error TS"))).toEqual([
         "error TS2688: Cannot find type definition file for 'missing'.",
+        "error TS2688: Cannot find type definition file for 'missing'.",
       ]);
-      expect(global.stderr).toContain("Found 1 error,");
+      expect(global.stderr).toContain("Found 2 errors,");
+      // A directory that is named has what `bun check` says about its files.
+      expect(named.stdout.split("\n").map(line => line.split("(")[0])).toEqual(["shared/s.ts", "shared/s.ts"]);
     });
 
     test("an error without a file has no place", async () => {
@@ -883,6 +898,33 @@ describe.concurrent("bun check", () => {
       expect(forAgents[0]).toBe(`<error code="TS2688">`);
       // Nothing like `:0`.
       expect([...inATerminal, ...forAgents].filter(line => /(^|[\s>]):\d/.test(line))).toEqual([]);
+
+      // Two projects say the same, so each kind is there twice.
+      const config = JSON.stringify({
+        compilerOptions: {
+          ...compilerOptions,
+          types: types.slice(0, 30),
+          composite: true,
+          noEmit: false,
+          outDir: "out",
+        },
+      });
+      using build = project({
+        "tsconfig.json": `{ "files": [], "references": [{ "path": "./one" }, { "path": "./two" }] }`,
+        ...{ "one/tsconfig.json": config, "one/a.ts": "", "two/tsconfig.json": config, "two/a.ts": "" },
+      });
+      const ofBuild = await Promise.all([check(build, ["--pretty"]), check(build, [], { AGENT: "1" })]);
+      const [twiceInATerminal, twiceForAgents] = ofBuild.map(it => it.stdout.split("\n"));
+      expect(twiceInATerminal.filter(line => line.includes(" times")).slice(0, 2)).toEqual([
+        "    2 times",
+        "    2 times",
+      ]);
+      expect(twiceInATerminal.filter(line => /^ +2 {2}TS2688 /.test(line))[0]).toBe(
+        "  2  TS2688  Cannot find type definition file for 'missing2'.",
+      );
+      expect(twiceForAgents[0]).toBe(`<error code="TS2688" times="2">`);
+      expect(twiceForAgents.filter(line => line.includes("<also>"))).toEqual([]);
+      expect([...twiceInATerminal, ...twiceForAgents].filter(line => /(^|[\s>]):\d/.test(line))).toEqual([]);
     });
 
     test("50 errors are not grouped", async () => {
@@ -1781,9 +1823,9 @@ export const n: string = new Box().grow();
       symlinkSync(join(String(dir), "packages/lib"), join(modules, "lib"), "junction");
       const { stdout } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "packages/app/src/index.ts(1,24): error TS2307: Cannot find module 'lib' or its corresponding type declarations.
-        packages/app/src/index.ts(2,23): error TS6305: Output file '<dir>/packages/lib/dist/index.d.ts' has not been built from source file '<dir>/packages/lib/src/index.ts'.
-        packages/lib/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'."
+        "packages/lib/src/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        packages/app/src/index.ts(1,24): error TS2307: Cannot find module 'lib' or its corresponding type declarations.
+        packages/app/src/index.ts(2,23): error TS6305: Output file '<dir>/packages/lib/dist/index.d.ts' has not been built from source file '<dir>/packages/lib/src/index.ts'."
       `);
     });
 

@@ -616,7 +616,6 @@ These differences are intentional:
 - **A misspelled compiler option gets a suggestion.** For `"strct": true`, `bun check` reports `TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?`. `tsc` reports `TS5023: Unknown compiler option 'strct'.`
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
 - **A note tells you when dependencies are missing.** If an import fails because a package in `package.json` is not installed, `bun check` adds a line that names the `package.json` and says how to run `bun install` for it.
-- **An error that several projects report is printed once.** With [project references](#monorepos), `tsc -b` prints an error in a file that two projects include once for each project.
 - **A note tells you when type checking did not run.** If a syntax error or an invalid option stops the check, `bun check` adds a line that says [how many files it did not check](#stopped-before-type-checking).
 - **Language service plugins do not load.** `bun check` ignores the `plugins` compiler option.
 - **Some informational options have no effect.** `listFiles`, `listFilesOnly`, and `traceResolution` work. Others, such as `explainFiles`, do nothing.

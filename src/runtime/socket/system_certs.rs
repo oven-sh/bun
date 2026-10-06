@@ -16,6 +16,8 @@ use bun_boringssl_sys as boringssl;
 use bun_core::{ZBox, ZStr, env_var, strings};
 use bun_sys::O;
 
+use super::cert_files;
+
 #[cfg(not(target_os = "android"))]
 const WELL_KNOWN_BUNDLES: &[&[u8]] = &[
     b"/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Gentoo/Arch/NixOS
@@ -127,7 +129,6 @@ impl Loader {
             .is_none()
     }
 
-    /// No file-type check, as in Node, so `SSL_CERT_FILE` may name a pipe.
     fn load_file(&mut self, path: &ZStr) {
         let Ok(file) = bun_sys::File::open(path, O::RDONLY | O::CLOEXEC, 0) else {
             return;
@@ -204,13 +205,19 @@ extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_C
         buf: Vec::new(),
     };
 
-    match env_var::SSL_CERT_FILE::get() {
-        Some(b"") => {}
-        Some(path) => loader.load_file(ZBox::from_bytes(path).as_zstr()),
-        None => {
-            // SAFETY: BoringSSL returns a static NUL-terminated string.
-            loader.load_file(unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_file()) });
-            for path in WELL_KNOWN_BUNDLES {
+    // The default store reads this file too, so `cert_files` reads it for both.
+    // SAFETY: BoringSSL returns a static NUL-terminated string.
+    let default_file = unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_file()) };
+    cert_files::read_openssl_default_cert_file(default_file, |pem, stat| {
+        if let Some(stat) = stat {
+            loader.first_visit(stat);
+        }
+        loader.load_pem(pem);
+    });
+    if env_var::SSL_CERT_FILE::get().is_none() {
+        for path in WELL_KNOWN_BUNDLES {
+            // `default_file` is in this list, and a FIFO there cannot be opened a second time.
+            if *path != default_file.as_bytes() {
                 loader.load_file(ZBox::from_bytes(path).as_zstr());
             }
         }

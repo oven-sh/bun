@@ -631,6 +631,15 @@ describe("HTTP/2 upgrade — failed handshake", () => {
       { event: "tlsClientError", code: "ECONNRESET", message: "socket hang up" },
     );
   });
+
+  test("a client that ends the handshake with close_notify and stays connected is reported", async () => {
+    const { event, code } = await handshakeOutcome(client =>
+      client.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00])),
+    );
+    // BoringSSL reads the alert as the peer's close. OpenSSL refuses an alert ahead of the ClientHello.
+    const expected = process.features.openssl_is_boringssl ? "ECONNRESET" : "ERR_SSL_UNEXPECTED_MESSAGE";
+    assert.deepStrictEqual({ event, code }, { event: "tlsClientError", code: expected });
+  });
 });
 
 if (typeof Bun !== "undefined") {

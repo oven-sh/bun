@@ -553,7 +553,7 @@ enum create_bun_socket_error_t {
  *
  * Mode-neutral: the same SSL_CTX may back client connects and server accepts
  * (Node's createSecureContext semantics). CTX-level verify mode is derived
- * purely from options.{ca,request_cert,reject_unauthorized}; the per-socket
+ * purely from options.{request_cert,reject_unauthorized}; the per-socket
  * client override happens in us_internal_ssl_attach so a server using this
  * SSL_CTX never sends CertificateRequest unless options asked it to. Reneg
  * limits attach as SSL_CTX ex_data. */
@@ -573,6 +573,8 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+/* The client half of us_internal_ssl_attach, for an SSL that no us_socket_t drives. */
+void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* 1 when the verify step of this handshake asked the owner for the server's name. */
 int us_ssl_identity_checked(struct ssl_st *ssl);
 /* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */

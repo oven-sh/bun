@@ -97,7 +97,28 @@ impl FallbackHandler {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant((val, prefix)));
                     } else if let Some(index) = *$self_field {
-                        dest[index] = Property::$Variant((val, prefix));
+                        // Overwrite only what the new declaration covers. Otherwise
+                        // `filter: x; -webkit-filter: y` would erase the unprefixed
+                        // `filter: x` that browsers without `-webkit-filter` read.
+                        let kept = match &dest[index] {
+                            Property::$Variant((old, old_prefix))
+                                if !prefix.contains(*old_prefix) =>
+                            {
+                                if old.eql(&val) {
+                                    Some(old_prefix.union(prefix))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => Some(prefix),
+                        };
+                        match kept {
+                            Some(prefix) => dest[index] = Property::$Variant((val, prefix)),
+                            None => {
+                                *$self_field = Some(dest.len());
+                                dest.push(Property::$Variant((val, prefix)));
+                            }
+                        }
                     }
 
                     return true;

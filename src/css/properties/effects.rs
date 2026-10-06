@@ -285,6 +285,7 @@ impl FilterList {
             filters.append(filter);
         }
 
+        // An empty list is not a valid value (it would print as `filter: ;`).
         if filters.is_empty() {
             return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
         }
@@ -378,8 +379,23 @@ impl FilterList {
         res
     }
 
-    pub(crate) fn is_compatible(&self, _browsers: &css::targets::Browsers) -> bool {
-        true
+    /// Whether every color and length in the list is supported by `browsers`. When it
+    /// isn't, `FallbackHandler` keeps an earlier `filter` declaration as the fallback
+    /// instead of overwriting it, the same as for `color` and `text-shadow`.
+    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+        let FilterList::Filters(filters) = self else {
+            return true;
+        };
+        filters.slice().iter().all(|filter| match filter {
+            Filter::Blur(len) => len.is_compatible(browsers),
+            Filter::DropShadow(shadow) => {
+                shadow.color.is_compatible(browsers)
+                    && shadow.x_offset.is_compatible(browsers)
+                    && shadow.y_offset.is_compatible(browsers)
+                    && shadow.blur.is_compatible(browsers)
+            }
+            _ => true,
+        })
     }
 }
 

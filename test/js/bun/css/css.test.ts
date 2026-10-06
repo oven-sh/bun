@@ -2044,6 +2044,39 @@ describe("css tests", () => {
       `,
       { chrome: Some(90 << 16) },
     );
+
+    // An unsupported color keeps the earlier declaration as its fallback, as for `color`.
+    prefix_test(
+      ".foo { filter: blur(1px); filter: drop-shadow(0 0 2px oklch(25% .05 30)) }",
+      `.foo {
+          filter: blur(1px);
+          filter: drop-shadow(0 0 2px oklch(25% .05 30));
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // A later prefixed value must not erase the unprefixed declaration.
+    prefix_test(
+      ".foo { filter: blur(1px); -webkit-filter: blur(2px) }",
+      `.foo {
+          -webkit-filter: blur(1px);
+          filter: blur(1px);
+          -webkit-filter: blur(2px);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: blur(1px); -webkit-filter: blur(1px) }",
+      `.foo {
+          -webkit-filter: blur(1px);
+          filter: blur(1px);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
   });
 
   describe("margin", () => {

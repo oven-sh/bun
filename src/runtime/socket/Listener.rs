@@ -161,6 +161,20 @@ fn prebuilt_ssl_ctx(
             sc_js,
         ));
     };
+    // The context is served as it is: its trust store would not be the `ca` written next to `requestCert`.
+    if is_server
+        && config.ssl.as_ref().is_some_and(|ssl| ssl.request_cert != 0)
+        && !crate::socket::server_ctx_requests_cert(Some(sc.ctx.as_ptr()))
+    {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "TLSOptions.requestCert needs a secureContext that was created with requestCert"
+                ),
+            )
+            .throw());
+    }
     if config.ssl.is_none() {
         config.ssl = Some(crate::socket::tls_true_defaults(vm, is_server));
     }
@@ -655,7 +669,12 @@ impl Listener {
     // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
     fn accepted_socket_flags(&self) -> SocketFlags {
         let mut flags = SocketFlags::empty();
-        flags.set(SocketFlags::REJECT_UNAUTHORIZED, self.reject_unauthorized);
+        // Also what the context in use was built with: `tls.secureContext` need not come with the options again.
+        let ctx = self.secure_ctx.get().as_ref().map(|ctx| ctx.as_ptr());
+        flags.set(
+            SocketFlags::REJECT_UNAUTHORIZED,
+            self.reject_unauthorized || crate::socket::server_ctx_rejects_unauthorized(ctx),
+        );
         flags.set(SocketFlags::PAUSE_ON_CONNECT, self.pause_on_connect);
         flags
     }

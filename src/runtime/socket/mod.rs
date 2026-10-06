@@ -91,6 +91,7 @@ pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;
 pub(crate) use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
+    server_ctx_rejects_unauthorized, server_ctx_requests_cert,
 };
 
 #[cfg(windows)]

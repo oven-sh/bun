@@ -1490,7 +1490,7 @@ where
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
     pub fn handle_timeout(this: ThisPtr<Self>, socket: Socket<SSL>) {
         if this.state.get() == State::Done {
-            super::close_at_close_timeout(socket);
+            socket.close_now();
             return;
         }
         Self::terminate(this, ErrorCode::Timeout);

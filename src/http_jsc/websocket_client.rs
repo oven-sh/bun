@@ -71,16 +71,6 @@ fn close_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
-/// Closes with a FIN: a reset would drop what the kernel still has to send behind a clean close event.
-fn close_at_close_timeout<const SSL: bool>(socket: Socket<SSL>) {
-    socket.shutdown();
-    socket.close(uws::CloseKind::FastShutdown);
-    // uSockets defers this close once behind unsent TLS ciphertext.
-    if !socket.is_closed() {
-        socket.set_timeout(close_timeout_seconds());
-    }
-}
-
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocket<const SSL: bool> {
     pub(crate) ref_count: Cell<u32>,
@@ -1247,7 +1237,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn handle_timeout(&self, socket: Socket<SSL>) {
         if self.cpp_websocket().is_none() {
-            close_at_close_timeout(socket);
+            socket.close_now();
             return;
         }
         self.terminate(ErrorCode::Timeout);

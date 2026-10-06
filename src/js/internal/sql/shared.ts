@@ -2168,8 +2168,9 @@ function parseOptions(
   }
 
   // `tls` is read before its alias; a mode the alias names still counts.
-  if (options.tls && typeof options.ssl === "string") {
-    const aliasMode = normalizeSSLMode(options.ssl);
+  const alias = options.ssl;
+  if (options.tls && typeof alias === "string") {
+    const aliasMode = normalizeSSLMode(alias);
     if (aliasMode > sslMode) sslMode = aliasMode;
   }
 

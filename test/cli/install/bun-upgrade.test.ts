@@ -323,6 +323,42 @@ describe.concurrent(() => {
     expect(err).toEndWith(unpackFailure);
     expect(exitCode).toBe(1);
   });
+
+  it("GITHUB_API_DOMAIN with a trailing slash still requests /repos/..., not //repos/...", async () => {
+    const paths: string[] = [];
+    using server = Bun.serve({
+      tls,
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        paths.push(pathname);
+        if (pathname !== "/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest") {
+          return new Response("not found", { status: 404 });
+        }
+        return Response.json({ tag_name: "bun-v9.9.9", assets: [] });
+      },
+    });
+    using stagingRoot = tempDir("bun-upgrade-domain-slash", {});
+    await using proc = spawn({
+      cmd: [standInExe, "upgrade", "--stable"],
+      cwd: standInDir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}/`,
+        BUN_TMPDIR: String(stagingRoot),
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+    });
+
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(paths).toEqual(["/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest"]);
+    expect(err).toContain("Bun v9.9.9 is out, but not for this platform");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it.concurrent(

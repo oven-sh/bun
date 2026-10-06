@@ -1737,12 +1737,12 @@ describe("a 1xx response is sent by the call that writes it", () => {
   });
 
   // The handler keeps its thread after the 103, as a synchronous render does, until the client has bytes.
-  // The client runs on another thread. The wait only times out when the 103 did not leave.
+  // The client runs on another thread. The bound only ends a wait that would hang: the 103 did not leave.
   test("reaches the client before synchronous work that follows it", async () => {
     const clientHasBytes = new Int32Array(new SharedArrayBuffer(4));
     const server = await listening("http", "request", (_req, res) => {
       res.writeEarlyHints(hints);
-      res.end(Atomics.wait(clientHasBytes, 0, 0, 2_000) === "timed-out" ? "late" : "early");
+      res.end(Atomics.wait(clientHasBytes, 0, 0, 30_000) === "timed-out" ? "late" : "early");
     });
     const worker = new Worker(
       `

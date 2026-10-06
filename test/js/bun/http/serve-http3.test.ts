@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { connect, QuicEndpoint } from "node:quic";
@@ -2026,5 +2026,122 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       fetch: expectedOrder,
       route: expectedOrder,
     });
+  });
+});
+
+describe("Bun.serve HTTP/3 SNI", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const pem = (name: string) => readFileSync(join(tlsFixtures, name), "utf8");
+  // Each agent certificate has its own CN, which tells the entries apart.
+  const identity = (agent: string) => ({ key: pem(`${agent}-key.pem`), cert: pem(`${agent}-cert.pem`) });
+
+  // fetch() lowercases the URL host. node:quic sends `servername` as written
+  // and exposes the certificate the server picked.
+  async function servedCN(port: number, servername: string): Promise<string> {
+    const session = await connect({ address: "127.0.0.1", port }, { alpn: "h3", servername, verifyPeer: "manual" });
+    try {
+      await session.opened;
+      const cert = session.peerCertificate;
+      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+      return x509.subject.match(/CN=([^\s,]+)/)![1];
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("a later entry with the same serverName replaces the earlier one", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "admin.example.com", ...identity("agent2") },
+        { serverName: "admin.example.com.", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served = {
+      admin: await servedCN(server.port, "admin.example.com"),
+      dottedAdmin: await servedCN(server.port, "admin.example.com."),
+      other: await servedCN(server.port, "other.example.com"),
+    };
+    // The TCP listener selects the same entry for these names.
+    expect(served).toEqual({ admin: "agent3", dottedAdmin: "agent3", other: "agent1" });
+  });
+
+  test("serverName entries match regardless of case and a wildcard covers one label", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "Agent2.Example", ...identity("agent2") },
+        { serverName: "*.wild.example", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served: Record<string, string> = {};
+    for (const servername of [
+      "Agent2.Example",
+      "agent2.example",
+      "AGENT2.EXAMPLE",
+      "a.wild.example",
+      "A.WILD.EXAMPLE",
+      "a.b.wild.example",
+      "wild.example",
+      "other.example",
+    ]) {
+      served[servername] = await servedCN(server.port, servername);
+    }
+    // The same names select the same entries on the TCP listener.
+    expect(served).toEqual({
+      "Agent2.Example": "agent2",
+      "agent2.example": "agent2",
+      "AGENT2.EXAMPLE": "agent2",
+      "a.wild.example": "agent3",
+      "A.WILD.EXAMPLE": "agent3",
+      "a.b.wild.example": "agent1",
+      "wild.example": "agent1",
+      "other.example": "agent1",
+    });
+  });
+
+  // The client picks the SNI, so a spelling that misses the entry would skip its policy.
+  test("a strict entry is enforced for every spelling of its name", async () => {
+    const strict = { ...identity("agent3"), ca: pem("ca1-cert.pem"), requestCert: true, rejectUnauthorized: true };
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent2"),
+        { serverName: "Admin.Example.com", ...strict },
+        { serverName: "*.gated.example", ...strict },
+      ],
+      http3: true,
+      fetch: () => new Response("served"),
+    });
+    const client = (agent: string) => ({
+      keys: [createPrivateKey(pem(`${agent}-key.pem`))],
+      certs: [readFileSync(join(tlsFixtures, `${agent}-cert.pem`))],
+    });
+    const spellings = [
+      "admin.example.com",
+      "ADMIN.EXAMPLE.COM",
+      "aDmIn.eXaMpLe.CoM.",
+      "a.gated.example",
+      "A.GATED.EXAMPLE",
+      "a.Gated.Example.",
+    ];
+    const exchange = (servername: string, options = {}) =>
+      h3Exchange(server.port, requestHeaders("/"), { servername, ...options });
+    const outcomes = await Promise.all(
+      spellings.map(async name => [
+        name,
+        await exchange(name),
+        await exchange(name, client("agent3")), // issued by ca2
+        await exchange(name, client("agent1")), // issued by ca1
+      ]),
+    );
+    expect(outcomes).toEqual(spellings.map(name => [name, "closed", "closed", "200 served"]));
+    expect(await exchange("other.example")).toBe("200 served");
   });
 });

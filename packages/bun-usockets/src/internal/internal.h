@@ -155,6 +155,11 @@ extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+/* crypto/sni_tree.cpp: the one place server names are compared. */
+void *sni_new();
+void sni_free(void *sni, void (*cb)(void *));
+void *sni_add(void *sni, const char *hostname, void *user);
+void *sni_find(void *sni, const char *hostname);
 #ifdef __cplusplus
 }
 #endif

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 // Coverage for the WebKit dbdca7545d sync. Each case pins an observable difference between
 // the old and the new JavaScriptCore. The sources that depend on how JavaScriptCore parses
-// are compiled with `new Function`, so that Bun's transpiler leaves them alone.
+// are compiled with `new Function` or an indirect eval, so that Bun's transpiler leaves them alone.
 
 describe.concurrent("WebKit dbdca7545d upgrade", () => {
   test("the call in `(a?.b)(x)` is outside the optional chain (63b7d629dd1)", () => {
@@ -39,8 +39,8 @@ describe.concurrent("WebKit dbdca7545d upgrade", () => {
   });
 
   test("a catch parameter named `await` is a SyntaxError where `await` is not an identifier (edb17fbf37d)", () => {
-    expect(() => new Function("return async function () { try {} catch (await) {} };")).toThrow(SyntaxError);
-    expect(() => new Function("return async function () { try {} catch (aw\\u0061it) {} };")).toThrow(SyntaxError);
+    expect(() => (0, eval)("(async function () { try {} catch (await) {} })")).toThrow(SyntaxError);
+    expect(() => (0, eval)("(async function () { try {} catch (aw\\u0061it) {} })")).toThrow(SyntaxError);
     // In a plain function `await` is an ordinary identifier.
     expect(new Function("try { throw 1; } catch (await) { return await; }")()).toBe(1);
   });

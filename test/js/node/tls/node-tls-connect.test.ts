@@ -6793,94 +6793,11 @@ describe("a write on a TLS socket over a Duplex completes when the Duplex has co
     }
   });
 
-  it("an http2 session gives a Duplex that has a write in flight nothing more", async () => {
-    const pair = makePair("client");
-    // Windows of 2^30, so that only the Duplex holds the client back.
-    const server = http2.createSecureServer({ ...COMMON_CERT_, settings: { initialWindowSize: 2 ** 30 } });
-    server.on("sessionError", () => {});
-    server.on("session", session => session.setLocalWindowSize(2 ** 30));
-    const uploaded = Promise.withResolvers<number>();
-    server.on("stream", stream => {
-      let received = 0;
-      stream.respond({ ":status": 200 });
-      stream.write("ready");
-      stream.on("data", chunk => (received += chunk.length));
-      stream.on("end", () => {
-        uploaded.resolve(received);
-        stream.end();
-      });
-      stream.on("error", () => {});
-    });
-    server.emit("connection", pair.serverSide);
-    const client = tls.connect({ socket: pair.clientSide, ALPNProtocols: ["h2"], rejectUnauthorized: false });
-    const session = http2.connect("https://localhost", { createConnection: () => client });
-    try {
-      session.on("error", () => {});
-      const request = session.request({ ":method": "POST", ":path": "/" });
-      request.on("error", () => {});
-      // The server's windows arrived ahead of this.
-      await once(request, "data");
-      await turn();
-      pair.stall();
-      const chunk = Buffer.alloc(64 * 1024, "a");
-      const count = 256;
-      for (let i = 0; i < count; i++) request.write(chunk);
-      request.end();
-      // Whatever the session gives the Duplex, it gives it in these turns.
-      for (let i = 0; i < 10; i++) await turn();
-      // The write that the Duplex holds, and those behind it that it has not seen.
-      const handed = pair.clientSide.writableLength;
-      pair.release();
-      expect({ handed: handed <= 2 * chunk.length ? "one write" : handed, received: await uploaded.promise }).toEqual({
-        handed: "one write",
-        received: count * chunk.length,
-      });
-    } finally {
-      session.destroy();
-      client.destroy();
-      pair.serverSide.destroy();
-    }
-  });
-
-  describe.each(["client", "server"] as const)("a %s write in flight when the peer closes its side", side => {
-    it("completes, and so does the write behind it, before the socket closes", async () => {
-      const pair = makePair(side);
-      using sockets = await connectPair(pair, side);
-      const { writer, reader } = sockets;
-      const log: string[] = [];
-      writer.on("error", err => log.push(`'error': ${err.message}`));
-      reader.on("error", err => log.push(`peer 'error': ${err.message}`));
-      const closed = closeOf(writer);
-      const transport = pair[`${side}Side`];
-
-      pair.stall();
-      writer.write("x", err => log.push(`write callback: ${err?.message}`));
-      writer.write("y", err => log.push(`queued write callback: ${err?.message}`));
-      await turn();
-      // The peer's close_notify, then its end of the Duplex. A socket that closes at the close_notify destroys the Duplex.
-      const transportEnded = once(transport, "end");
-      reader.end();
-      await Promise.race([transportEnded, closed]);
-      await turn();
-      expect({ held: pair.held.length, log }).toEqual({ held: 1, log: [] });
-      pair.release();
-
-      await closed;
-      expect({ received: sockets.received, log }).toEqual({
-        received: "xy",
-        log: ["write callback: undefined", "queued write callback: undefined"],
-      });
-    });
-  });
-
   // Not a stream.Writable's write(): that one never runs the callback, or emits 'drain', before it returns.
-  // Nor does it return false and then never emit 'drain'.
   class SyncSide extends Duplex {
     peer!: SyncSide;
     writes = 0;
-    constructor(
-      readonly inWrite: "callback" | "drain and callback" | "callback, returns false and never emits 'drain'",
-    ) {
+    constructor(readonly inWrite: "callback" | "drain and callback") {
       super();
     }
     _read() {}
@@ -6889,14 +6806,14 @@ describe("a write on a TLS socket over a Duplex completes when the Duplex has co
       if (this.inWrite === "drain and callback") this.emit("drain");
       this.peer.push(chunk);
       (typeof encoding === "function" ? encoding : (callback as WriteCallback | undefined))?.();
-      return !this.inWrite.includes("returns false");
+      return true;
     }
     _final(callback: () => void) {
       this.peer.push(null);
       callback();
     }
   }
-  it.each(["callback", "drain and callback", "callback, returns false and never emits 'drain'"] as const)(
+  it.each(["callback", "drain and callback"] as const)(
     "a Duplex whose write() runs the %s before it returns gets each byte once",
     async inWrite => {
       const payload = Buffer.alloc(256 * 1024);

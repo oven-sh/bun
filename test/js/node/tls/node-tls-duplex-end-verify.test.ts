@@ -2,6 +2,7 @@
 // Runs under node:test, so the same file runs on node (`node --test`) and on bun (`bun test`).
 import assert from "node:assert";
 import fs from "node:fs";
+import http2 from "node:http2";
 import net from "node:net";
 import { Duplex, duplexPair } from "node:stream";
 import { test } from "node:test";
@@ -1501,3 +1502,180 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
     });
   }
 }
+
+// Two in-memory Duplexes, one per side of a connection. From `stall()` on, the side named by `stalls` keeps each chunk
+// and its write callback, as a transport does that has not completed the write. `release()` completes them in order.
+function stallingPair(stalls) {
+  const held = [];
+  let stalled = false;
+  const makeSide = name =>
+    new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (stalled && name === stalls) return void held.push([chunk, callback]);
+        sides[name === "client" ? "server" : "client"].push(chunk);
+        callback();
+      },
+      final(callback) {
+        sides[name === "client" ? "server" : "client"].push(null);
+        callback();
+      },
+    });
+  const sides = { client: makeSide("client"), server: makeSide("server") };
+  return {
+    sides,
+    held,
+    stall: () => void (stalled = true),
+    release() {
+      stalled = false;
+      for (const [chunk, callback] of held.splice(0)) {
+        sides[stalls === "client" ? "server" : "client"].push(chunk);
+        callback();
+      }
+    },
+  };
+}
+const turn = () => new Promise(resolve => setImmediate(resolve));
+
+// The peer's close_notify does not end the session while the transport still has a write. Node completes that write
+// and the ones queued behind it.
+for (const side of ["client", "server"]) {
+  test(`over a Duplex: a ${side} write in flight and the write behind it complete when the peer closes its side first`, async () => {
+    const pair = stallingPair(side);
+    const server = new tls.TLSSocket(pair.sides.server, {
+      isServer: true,
+      secureContext: tls.createSecureContext({ key, cert }),
+    });
+    const client = tls.connect({ socket: pair.sides.client, rejectUnauthorized: false });
+    const [writer, reader] = side === "server" ? [server, client] : [client, server];
+    const log = [];
+    let received = "";
+    const bothReceived = Promise.withResolvers();
+    const bothWritten = Promise.withResolvers();
+    reader.on("data", chunk => {
+      received += chunk;
+      if (received.length === 2) bothReceived.resolve();
+    });
+    writer.on("error", err => log.push(`'error': ${err.message}`));
+    reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+    const closed = new Promise(resolve => writer.once("close", resolve));
+    try {
+      await Promise.all([
+        new Promise(secured => client.once("secureConnect", secured)),
+        new Promise(secured => server.once("secure", secured)),
+      ]);
+      // The session tickets of TLS 1.3 have left the server.
+      await turn();
+      pair.stall();
+      writer.write("x", err => log.push(`write callback: ${err?.message}`));
+      writer.write("y", err => {
+        log.push(`queued write callback: ${err?.message}`);
+        bothWritten.resolve();
+      });
+      await turn();
+      // The peer's close_notify, then its end of the Duplex. A socket that closes at the close_notify destroys the Duplex.
+      const transportEnded = new Promise(resolve => pair.sides[side].once("end", resolve));
+      reader.end();
+      await Promise.race([transportEnded, closed]);
+      await turn();
+      assert.deepStrictEqual({ held: pair.held.length, log }, { held: 1, log: [] });
+      pair.release();
+
+      await Promise.all([bothWritten.promise, bothReceived.promise]);
+      assert.deepStrictEqual(
+        { received, log },
+        { received: "xy", log: ["write callback: undefined", "queued write callback: undefined"] },
+      );
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+}
+
+test("over a Duplex: an http2 session gives a transport that has a write in flight nothing more", async () => {
+  const pair = stallingPair("client");
+  // Windows of 2^30, so that only the transport holds the client back.
+  const server = http2.createSecureServer({ key, cert, settings: { initialWindowSize: 2 ** 30 } });
+  server.on("sessionError", () => {});
+  server.on("session", session => session.setLocalWindowSize(2 ** 30));
+  const uploaded = Promise.withResolvers();
+  server.on("stream", stream => {
+    let received = 0;
+    stream.respond({ ":status": 200 });
+    stream.write("ready");
+    stream.on("data", chunk => (received += chunk.length));
+    stream.on("end", () => {
+      uploaded.resolve(received);
+      stream.end();
+    });
+    stream.on("error", () => {});
+  });
+  server.emit("connection", pair.sides.server);
+  const client = tls.connect({ socket: pair.sides.client, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+  const session = http2.connect("https://localhost", { createConnection: () => client });
+  try {
+    session.on("error", () => {});
+    const request = session.request({ ":method": "POST", ":path": "/" });
+    request.on("error", () => {});
+    // The server's windows arrived ahead of this.
+    await new Promise(answered => request.once("data", answered));
+    await turn();
+    pair.stall();
+    const chunk = Buffer.alloc(64 * 1024, "a");
+    const count = 256;
+    for (let i = 0; i < count; i++) request.write(chunk);
+    request.end();
+    // Whatever the session gives the transport, it gives it in these turns.
+    for (let i = 0; i < 10; i++) await turn();
+    // The write that the transport holds, and those behind it that it has not seen.
+    const handed = pair.sides.client.writableLength;
+    pair.release();
+    assert.deepStrictEqual(
+      { handed: handed <= 2 * chunk.length ? "one write" : handed, received: await uploaded.promise },
+      { handed: "one write", received: count * chunk.length },
+    );
+  } finally {
+    session.destroy();
+    client.destroy();
+    pair.sides.server.destroy();
+  }
+});
+
+test("over a Duplex: writes complete when the transport's write() returns false and never emits 'drain'", async () => {
+  // Not a stream.Writable's write(): this one runs the callback before it returns, and asks for a 'drain' it never emits.
+  class Side extends Duplex {
+    _read() {}
+    write(chunk, encoding, callback) {
+      this.peer.push(chunk);
+      (typeof encoding === "function" ? encoding : callback)?.();
+      return false;
+    }
+    _final(callback) {
+      this.peer.push(null);
+      callback();
+    }
+  }
+  const [clientSide, serverSide] = [new Side(), new Side()];
+  clientSide.peer = serverSide;
+  serverSide.peer = clientSide;
+  const server = new tls.TLSSocket(serverSide, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ key, cert }),
+  });
+  const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+  try {
+    const { promise: ended, resolve, reject } = Promise.withResolvers();
+    server.on("error", reject);
+    client.on("error", reject);
+    let received = "";
+    server.on("data", chunk => (received += chunk));
+    server.on("end", resolve);
+    client.write("x", () => client.write("y", () => client.end()));
+    await ended;
+    assert.strictEqual(received, "xy");
+  } finally {
+    client.destroy();
+    server.destroy();
+  }
+});

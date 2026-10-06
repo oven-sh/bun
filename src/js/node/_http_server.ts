@@ -403,12 +403,13 @@ function Server(options, callback): void {
       if (options.honorCipherOrder !== false) secureOptions |= tlsHelpers.SSL_OP_CIPHER_SERVER_PREFERENCE;
       // secureProtocol, or else minVersion/maxVersion, as the integer range the native layer applies; 0 keeps its defaults.
       let minVersion, maxVersion;
+      const ciphers = options.ciphers ? tlsHelpers.stripTls13CipherNames(options.ciphers) : undefined;
       const range = secureProtocolToVersionRange(secureProtocol);
       if (range) {
         minVersion = range[0];
         maxVersion = range[1];
       } else {
-        minVersion = tlsStringToProtocolVersion(minVersionOption);
+        minVersion = tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : minVersionOption);
         maxVersion = tlsStringToProtocolVersion(maxVersionOption);
       }
       this[tlsSymbol] = normalizeServerTls({
@@ -424,7 +425,7 @@ function Server(options, callback): void {
         secureOptions,
         minVersion,
         maxVersion,
-        ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
+        ciphers: ciphers?.cipherList || undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });

@@ -1457,20 +1457,21 @@ pub mod ssl_wrapper {
             self.ssl.get().is_some() && !self.flags.closed_notified()
         }
 
-        /// This frame owns what it hands out: a write made from inside `write` queues behind it.
+        /// Gives the transport the ciphertext it has not taken.
+        #[inline]
         fn handle_writing(&self) {
+            if self.unsent_len() > 0 {
+                self.offer_outgoing();
+            }
+        }
+
+        /// This frame owns what it hands out: a write made from inside `write` queues behind it.
+        fn offer_outgoing(&self) {
             if self.ssl.get().is_none() || self.sink.get() == Sink::Refused {
                 return;
             }
-            let head = self.ciphertext.head.get();
-            let mut pending = {
-                let mut outgoing = self.ciphertext.outgoing.borrow_mut();
-                if outgoing.len() == head {
-                    return;
-                }
-                core::mem::take(&mut *outgoing)
-            };
-            self.ciphertext.head.set(0);
+            let mut pending = self.ciphertext.outgoing.take();
+            let head = self.ciphertext.head.take();
             let has_write = self.ciphertext.has_write.take();
             let unsent = pending.len() - head;
             match self.trigger_wanna_write_callback(&pending[head..]) {

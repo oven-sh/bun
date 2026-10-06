@@ -72,7 +72,7 @@ img.resize(800, 600, { filter: "mitchell" });
 
 With `fit: "cover"`, `position` picks the part of the image to keep: `"center"` (the default), `"top"`, `"right top"`, `"right"`, `"right bottom"`, `"bottom"`, `"left bottom"`, `"left"` or `"left top"`. `resize()` throws if you pass `position` with any other `fit`.
 
-With `withoutEnlargement`, cover never scales the image up. It only crops, so a 500×200 image resized to 400×400 becomes 400×200.
+With `withoutEnlargement`, cover never scales the image up. An image at least as large as the box on both sides is still scaled down and cropped as usual. An image smaller than the box on either side keeps its size and is only cropped where it overflows the box, so a 500×200 image resized to 400×400 becomes 400×200.
 
 `filter` selects the resampling kernel. The default `"lanczos3"` is the right choice for photographs.
 

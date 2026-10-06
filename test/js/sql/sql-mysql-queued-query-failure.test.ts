@@ -42,11 +42,19 @@ const oversizedText = () => Buffer.alloc(0xffffff, "-").toString();
 const counts = (rows: unknown) =>
   Array.isArray(rows) ? Object.fromEntries(rows.map(row => [row.Variable_name, Number(row.Value)])) : rows;
 
-// What changed between two reads of the session status.
-const delta = (before: Record<string, number>, after: unknown) =>
-  after && typeof after === "object"
-    ? Object.fromEntries(Object.entries(after as Record<string, number>).map(([name, n]) => [name, n - before[name]]))
-    : after;
+// The COM_STMT_* commands that the client sent between two reads of the session
+// status. MySQL 8.4 also counts a prepare of its own in Com_stmt_prepare, and
+// shows it in Com_stmt_reprepare. MariaDB 11.8 does not.
+function sent(before: Record<string, number>, after: unknown) {
+  if (!after || typeof after !== "object") return after;
+  const change = (name: string) => (after as Record<string, number>)[name] - before[name];
+  return {
+    prepare: change("Com_stmt_prepare") - change("Com_stmt_reprepare"),
+    execute: change("Com_stmt_execute"),
+    close: change("Com_stmt_close"),
+    reset: change("Com_stmt_reset"),
+  };
+}
 
 // Starts `queries` in one tick, in order, and closes the connection. close()
 // waits until every query has settled, for five seconds at most, and then
@@ -89,7 +97,6 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
         "SHOW SESSION STATUS WHERE Variable_name IN ('Com_stmt_prepare', 'Com_stmt_execute', 'Com_stmt_reprepare', 'Com_stmt_close', 'Com_stmt_reset')",
       )
       .simple();
-  const unchanged = { Com_stmt_reprepare: 0, Com_stmt_close: 0, Com_stmt_reset: 0 };
 
   test.each(failures)("%s rejects the query and the queries behind it run in order", async (_, parameter, rejected) => {
     const { sql, marker, commands, before } = await connect();
@@ -334,12 +341,12 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     second.cancel();
 
     const [one, two, next, after] = await settle(sql, [first, second, marker(1), statementCommands(sql)]);
-    expect({ one, two, next, commands: delta(before, counts(after)), order }).toEqual({
+    expect({ one, two, next, commands: sent(before, counts(after)), order }).toEqual({
       one: [{ value: 1 }],
       two: cancelled,
       next: [{ marker: 1 }],
       // One prepare, and an execute for the first query and for the marker.
-      commands: { Com_stmt_prepare: 1, Com_stmt_execute: 2, ...unchanged },
+      commands: { prepare: 1, execute: 2, close: 0, reset: 0 },
       order: ["cancelled", "first"],
     });
   });
@@ -359,12 +366,12 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
 
     // The second `value` query shares the statement that the first one prepared.
     const [outcome, next, again, after] = await settle(sql, [query, behind, value(2), statementCommands(sql)]);
-    expect({ outcome, next, again, commands: delta(before, counts(after)), order }).toEqual({
+    expect({ outcome, next, again, commands: sent(before, counts(after)), order }).toEqual({
       outcome: cancelled,
       next: [{ marker: 1 }],
       again: [{ value: 2 }],
       // One prepare, and an execute for the marker and for the second query.
-      commands: { Com_stmt_prepare: 1, Com_stmt_execute: 2, ...unchanged },
+      commands: { prepare: 1, execute: 2, close: 0, reset: 0 },
       order: ["cancelled", "behind"],
     });
   });
@@ -376,11 +383,11 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     const value = (n: number) => sql`SELECT ${n} AS value`;
 
     const [one, two, next, after] = await settle(sql, [value(1), value(2), marker(1), statementCommands(sql)]);
-    expect({ one, two, next, commands: delta(before, counts(after)) }).toEqual({
+    expect({ one, two, next, commands: sent(before, counts(after)) }).toEqual({
       one: [{ value: 1 }],
       two: [{ value: 2 }],
       next: [{ marker: 1 }],
-      commands: { Com_stmt_prepare: 1, Com_stmt_execute: 3, ...unchanged },
+      commands: { prepare: 1, execute: 3, close: 0, reset: 0 },
     });
   });
 

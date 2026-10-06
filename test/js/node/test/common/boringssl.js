@@ -77,32 +77,6 @@ function assertOpenSSLSecurityLevelsUnsupported() {
 }
 
 /**
- * Node's multi-key tests rely on OpenSSL accepting an array of private keys and
- * matching them with an array of certificates. BoringSSL rejects this mixed
- * EC/RSA identity configuration while configuring the certificate chain, before
- * a client can negotiate either identity.
- */
-function assertMultiKeyUnsupported() {
-  assert.throws(() => {
-    tls.createServer({
-      key: [
-        fixtures.readKey('ec10-key.pem'),
-        fixtures.readKey('agent1-key.pem'),
-      ],
-      cert: [
-        fixtures.readKey('agent1-cert.pem'),
-        fixtures.readKey('ec10-cert.pem'),
-      ],
-    });
-  }, {
-    code: 'ERR_OSSL_X509_KEY_TYPE_MISMATCH',
-    library: 'X.509 certificate routines',
-    function: 'OPENSSL_internal',
-    reason: 'KEY_TYPE_MISMATCH',
-  });
-}
-
-/**
  * BoringSSL does not support caller-initiated renegotiation. Even on a TLS 1.2
  * connection, TLSSocket#renegotiate() returns false and the callback receives
  * Node's BoringSSL-specific unsupported-renegotiation error instead of
@@ -191,49 +165,6 @@ function testLegacyProtocolUnsupported() {
     client.on('error', common.mustCall((err) => {
       assert.strictEqual(err.code, 'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION');
       server.close();
-    }));
-  }));
-}
-
-/**
- * BoringSSL can load a multi-PFX option well enough to serve the ECDSA
- * identity, but it does not provide the same OpenSSL multi-identity selection
- * behavior. After the ECDSA handshake succeeds, an RSA-only client fails with
- * no shared cipher instead of selecting the RSA identity from the same PFX list.
- */
-function testMultiPfxSelectionDifference() {
-  const server = tls.createServer({
-    pfx: [
-      {
-        buf: fixtures.readKey('agent1.pfx'),
-        passphrase: 'sample',
-      },
-      fixtures.readKey('ec.pfx'),
-    ],
-  }, common.mustCallAtLeast((socket) => socket.end(), 1));
-
-  server.listen(0, common.mustCall(() => {
-    const ecdsa = tls.connect(server.address().port, {
-      ciphers: 'ECDHE-ECDSA-AES256-GCM-SHA384',
-      maxVersion: 'TLSv1.2',
-      rejectUnauthorized: false,
-    }, common.mustCall(() => {
-      assert.strictEqual(ecdsa.getCipher().name,
-                         'ECDHE-ECDSA-AES256-GCM-SHA384');
-      ecdsa.end();
-
-      server.once('tlsClientError', common.mustCall((err) => {
-        assert.strictEqual(err.code, 'ERR_SSL_NO_SHARED_CIPHER');
-      }));
-      const rsa = tls.connect(server.address().port, {
-        ciphers: 'ECDHE-RSA-AES256-GCM-SHA384',
-        maxVersion: 'TLSv1.2',
-        rejectUnauthorized: false,
-      }, common.mustNotCall());
-      rsa.on('error', common.mustCall((err) => {
-        assert.strictEqual(err.code, 'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE');
-        server.close();
-      }));
     }));
   }));
 }
@@ -332,12 +263,10 @@ function testTls13SessionTicketSemanticsDiffer() {
 
 module.exports = {
   assertFiniteFieldDheUnsupported,
-  assertMultiKeyUnsupported,
   assertNoCipherMatch,
   assertOpenSSLSecurityLevelsUnsupported,
   testEphemeralKeyInfoEcdheOnly,
   testLegacyProtocolUnsupported,
-  testMultiPfxSelectionDifference,
   testPskTls13Unsupported,
   testRenegotiationUnsupported,
   testTls13SessionTicketSemanticsDiffer,

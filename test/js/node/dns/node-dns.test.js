@@ -1321,8 +1321,9 @@ describe("pending cache", () => {
          setImmediate(() => {
            for (let i = 0; i < 3; i++) Bun.dns.resolveMx("mx.pending.test");
            Bun.dns.resolveTxt("txt.pending.test");
-           Atomics.wait(state, 0, 0); // until both replies have left the server
-           process.reallyExit(0); // in a worker: asks for the termination and returns
+           // Until both replies have left the server. A reply that never leaves ends the worker with 2.
+           const gate = Atomics.wait(state, 0, 0, 30_000);
+           process.reallyExit(gate === "timed-out" ? 2 : 0); // in a worker: asks for the termination and returns
          });`,
         { eval: true, workerData: { port, state } },
       );

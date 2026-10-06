@@ -194,9 +194,31 @@ async function secondConnection() {
   };
 }
 
+// A TLS connection of this process whose peer never reads, with more written than the kernel takes.
+export async function stalledConnection() {
+  const server = tls.createServer({ key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem") }, socket => {
+    socket.on("error", () => {});
+    socket.pause();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = tls.connect({ host: "127.0.0.1", port: server.address().port, rejectUnauthorized: false });
+  socket.on("error", () => {});
+  await once(socket, "secureConnect");
+  socket.write(Buffer.alloc(32 * 1024 * 1024));
+  return {
+    close() {
+      socket.destroy();
+      server.close();
+    },
+  };
+}
+
 const helloRequestMode = "a HelloRequest behind the server's Finished";
+const besideStalled = " beside a stalled TLS socket";
 
 export async function report(mode, version) {
+  const stalled = mode.endsWith(besideStalled) ? await stalledConnection() : null;
+  if (stalled) mode = mode.slice(0, -besideStalled.length);
   const second =
     mode === "checkServerIdentity function that writes to another TLS socket" ? await secondConnection() : null;
   // agent1 is signed by ca1 and names only "agent1".
@@ -432,6 +454,7 @@ export async function report(mode, version) {
 
   const [saw] = await Promise.all([serverSaw.promise, closed]);
   second?.close();
+  stalled?.close();
   relay.close();
   server.close();
   return { client, server: saw, ...wire(Buffer.concat(fromClient)) };

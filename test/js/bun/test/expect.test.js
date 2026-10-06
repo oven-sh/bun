@@ -141,6 +141,143 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  // https://github.com/oven-sh/bun/issues/9687
+  describe("resolves.toThrow() and a fulfilled value", () => {
+    // What the runner reports when nothing was thrown.
+    const didNotThrow = isVitest
+      ? "expected promise to throw an error, but it didn't"
+      : "Received function did not throw";
+
+    /** Resolves to the message of the failure that `assertion` must produce. */
+    const failure = async (/** @type {() => unknown} */ assertion) => {
+      try {
+        await assertion();
+      } catch (e) {
+        return /** @type {string} */ (ANY(e).message);
+      }
+      throw new Error("expected the assertion to fail, but it passed");
+    };
+
+    test("an async function that returns nothing did not throw", async () => {
+      async function nop() {}
+      await expect(nop()).resolves.not.toThrow();
+    });
+
+    const expectedForms = [undefined, "hello world", /hello/, Error, { message: "hello world" }, expect.anything()];
+
+    test.each([
+      ["undefined", undefined],
+      ["null", null],
+      ["a number", 1],
+      ["a string", "hello world"],
+      ["an object with a message", { message: "hello world" }],
+    ])("%s is not thrown", async (_name, value) => {
+      for (const expected of expectedForms) {
+        await expect(Promise.resolve(value)).resolves.not.toThrow(expected);
+        expect(await failure(() => expect(Promise.resolve(value)).resolves.toThrow(expected))).toContain(didNotThrow);
+      }
+    });
+
+    test_skipIf(!isBun)("the failure shows the fulfilled value", async () => {
+      const message = await failure(() => expect(Promise.resolve(1)).resolves.toThrow());
+      expect(Bun.stripANSI(message)).toBe(
+        "expect(received).toThrow()\n\nReceived function did not throw\nReceived value: 1\n",
+      );
+    });
+
+    // Jest has no toThrowError(), no .not.resolves and no second argument to expect().
+    test_skipIf(isJest)("toThrowError(), .not.resolves and a custom message follow the same rule", async () => {
+      await expect(Promise.resolve(1)).resolves.not.toThrowError();
+      await expect(Promise.resolve(1)).not.resolves.toThrow();
+      await expect(Promise.resolve(1), "custom message").resolves.not.toThrow();
+      expect(await failure(() => expect(Promise.resolve(1)).resolves.toThrowError())).toContain(didNotThrow);
+    });
+
+    // The snapshot matchers have their own rule in Jest. Vitest records the fulfilled value.
+    test_skipIf(isVitest)("the snapshot matchers still take a fulfilled value as the error", async () => {
+      await expect(Promise.resolve({})).resolves.toThrowErrorMatchingInlineSnapshot(`undefined`);
+      await expect(Promise.resolve(new Error("hello"))).resolves.toThrowErrorMatchingInlineSnapshot(`"hello"`);
+    });
+
+    test("a fulfilled function is still called", async () => {
+      await expect(Promise.resolve(() => 1)).resolves.not.toThrow();
+      await expect(
+        Promise.resolve(() => {
+          throw new TypeError("hello world");
+        }),
+      ).resolves.toThrow(TypeError);
+    });
+
+    test("a fulfilled Proxy of a function that throws still counts as thrown", async () => {
+      const proxy = new Proxy(() => {
+        throw new TypeError("hello world");
+      }, {});
+      await expect(Promise.resolve(proxy)).resolves.toThrow();
+      await failure(() => expect(Promise.resolve(proxy)).resolves.not.toThrow());
+    });
+
+    // Vitest does not count a fulfilled value as thrown.
+    test_skipIf(isVitest).each([
+      ["an Error", new TypeError("hello world")],
+      ["a DOMException", new DOMException("hello world")],
+      ["an object tagged Error", { [Symbol.toStringTag]: "Error", message: "hello world" }],
+      ["an object tagged Exception", { [Symbol.toStringTag]: "Exception", message: "hello world" }],
+      ["an object tagged DOMException", { [Symbol.toStringTag]: "DOMException", message: "hello world" }],
+      ["an object that inherits from Error.prototype", { __proto__: Error.prototype, message: "hello world" }],
+      ["a Proxy of an Error", new Proxy(new Error("hello world"), {})],
+    ])("%s still counts as thrown, as in Jest", async (_name, value) => {
+      await expect(Promise.resolve(value)).resolves.toThrow("hello world");
+      await expect(Promise.resolve(value)).resolves.not.toThrow("goodbye");
+      await failure(() => expect(Promise.resolve(value)).resolves.not.toThrow());
+    });
+
+    // Jest's isError() does not accept it: the tag is not "Error", and `instanceof` uses the Error of this realm.
+    test_skipIf(!isBun)("an Error of another realm with its own toStringTag still counts as thrown", async () => {
+      const value = require("node:vm").runInNewContext(
+        `new (class extends Error { get [Symbol.toStringTag]() { return "Tagged"; } })("hello world")`,
+      );
+      await expect(Promise.resolve(value)).resolves.toThrow("hello world");
+    });
+
+    test.each([
+      ["the number 42", 42],
+      ["a String object", new String("Error")],
+      ['"TypeError"', "TypeError"],
+      ['"AggregateError"', "AggregateError"],
+      ['"error"', "error"],
+    ])("an object whose Symbol.toStringTag is %s is not thrown", async (_name, tag) => {
+      const value = { [Symbol.toStringTag]: tag, message: "hello world" };
+      await expect(Promise.resolve(value)).resolves.not.toThrow();
+      expect(await failure(() => expect(Promise.resolve(value)).resolves.toThrow())).toContain(didNotThrow);
+    });
+
+    // Jest and bun read the tag and the prototype of a fulfilled object. Vitest does not.
+    test_skipIf(isVitest)("an error from user code that runs for the check is reported", async () => {
+      const tagged = {
+        get [Symbol.toStringTag]() {
+          throw new RangeError("from the getter");
+        },
+      };
+      expect(await failure(() => expect(Promise.resolve(tagged)).resolves.not.toThrow())).toBe("from the getter");
+
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new RangeError("from the trap");
+          },
+        },
+      );
+      expect(await failure(() => expect(Promise.resolve(proxy)).resolves.not.toThrow())).toBe("from the trap");
+    });
+
+    // Jest needs an Error here too. Vitest does not, and this is not changed.
+    test_skipIf(isJest)("a rejection reason still counts as thrown under .rejects", async () => {
+      await expect(Promise.reject("hello world")).rejects.toThrow("hello world");
+      await failure(() => expect(Promise.reject("hello world")).rejects.not.toThrow());
+    });
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

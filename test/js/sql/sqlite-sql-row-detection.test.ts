@@ -302,10 +302,44 @@ INSERT INTO t (id, name) SELECT id + 20, name FROM t WHERE id <= 2`;
     await using sql = new SQL("sqlite://:memory:");
 
     // These never succeeded pre-PR either; db.run() rejects them with a clear
-    // message. The probe prepare must not leak a confusing "finalized" error.
-    for (const q of ["   ", "-- noop", "/* placeholder */", "-- a\n-- b\n"]) {
+    // message, and the lexer must not hand them to the probe prepare.
+    for (const q of ["   ", "-- noop", "/* placeholder */", "-- a\n-- b\n", ";", " ; /* x */ ;"]) {
       await expect(Promise.resolve(sql.unsafe(q))).rejects.toThrow("Query contained no valid SQL statement");
     }
+  });
+
+  test("single-statement writes report changes whether or not a semicolon or comment follows", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`;
+
+    const results = {
+      bare: await sql.unsafe(`INSERT INTO t (v) VALUES ('a')`),
+      semicolon: await sql.unsafe(`INSERT INTO t (v) VALUES ('b');`),
+      trailingComment: await sql.unsafe(`INSERT INTO t (v) VALUES ('c'); -- done\n/* end */`),
+      bound: await sql`INSERT INTO t (v) VALUES (${"d"});`,
+      trigger: await sql.unsafe(
+        `CREATE TRIGGER trg AFTER INSERT ON t BEGIN UPDATE t SET v = v || '!' WHERE id = new.id; END;`,
+      ),
+    };
+    expect(
+      Object.fromEntries(
+        Object.entries(results).map(([k, r]) => [k, { count: r.count, lastInsertRowid: r.lastInsertRowid }]),
+      ),
+    ).toEqual({
+      bare: { count: 1, lastInsertRowid: 1 },
+      semicolon: { count: 1, lastInsertRowid: 2 },
+      trailingComment: { count: 1, lastInsertRowid: 3 },
+      bound: { count: 1, lastInsertRowid: 4 },
+      trigger: { count: 0, lastInsertRowid: 4 },
+    });
+
+    // The trigger fires on the next insert; its UPDATE counts toward the changes.
+    const withTrigger = await sql`INSERT INTO t (v) VALUES (${"e"})`;
+    expect({ count: withTrigger.count, lastInsertRowid: withTrigger.lastInsertRowid }).toEqual({
+      count: 2,
+      lastInsertRowid: 5,
+    });
+    expect((await sql`SELECT v FROM t ORDER BY id`).map(r => r.v)).toEqual(["a", "b", "c", "d", "e!"]);
   });
 
   test("a SELECT that SQLite refuses to compile rejects instead of resolving empty", async () => {

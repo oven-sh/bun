@@ -42,6 +42,15 @@ interface SQLParsedInfo {
   command: SQLCommand;
   /** Leading keyword of the statement, upper-cased; used for the result's `command` label. */
   firstToken: string;
+  /**
+   * Number of `;`-separated chunks that hold more than whitespace and comments.
+   * An upper bound: a `CREATE TRIGGER` body counts each of its statements.
+   */
+  statements: number;
+}
+
+function isSQLWhitespace(char: string): boolean {
+  return char === " " || char === "\n" || char === "\t" || char === "\r" || char === "\f" || char === "\v";
 }
 
 function isSQLWordChar(code: number): boolean {
@@ -77,6 +86,8 @@ function parseSQLQuery(query: string): SQLParsedInfo {
 
   let command = SQLCommand.none;
   let firstToken = "";
+  let statements = 0;
+  let inStatement = false;
 
   let i = 0;
   while (i < len) {
@@ -94,6 +105,20 @@ function parseSQLQuery(query: string): SQLParsedInfo {
       while (i < len && !(text[i] === "*" && text[i + 1] === "/")) i++;
       i += 2;
       continue;
+    }
+    if (isSQLWhitespace(char)) {
+      i++;
+      continue;
+    }
+    if (char === ";") {
+      inStatement = false;
+      i++;
+      continue;
+    }
+    // everything below is statement content
+    if (!inStatement) {
+      inStatement = true;
+      statements++;
     }
     // string literal: '...' with '' as an escaped quote
     if (char === "'") {
@@ -153,11 +178,11 @@ function parseSQLQuery(query: string): SQLParsedInfo {
       continue;
     }
 
-    // whitespace, punctuation and operators
+    // punctuation and operators
     i++;
   }
 
-  return { command, firstToken };
+  return { command, firstToken, statements };
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -167,11 +192,14 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private readonly values: unknown[] | Record<string, unknown>;
   /** The result's `command` label: the statement's leading keyword. */
   private readonly command: string;
+  private readonly statements: number;
 
   public constructor(sql: string, values: unknown[] | Record<string, unknown>) {
     this.sql = sql;
     this.values = values;
-    this.command = parseSQLQuery(sql).firstToken;
+    const parsed = parseSQLQuery(sql);
+    this.command = parsed.firstToken;
+    this.statements = parsed.statements;
   }
 
   setMode(mode: SQLQueryResultMode) {
@@ -186,16 +214,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       });
     }
 
-    const { sql, values, mode, command } = this;
+    const { sql, values, mode, command, statements } = this;
     try {
       // A statement with result columns returns rows; preparing does not execute it.
-      let stmt: BunSQLiteModule.Statement | undefined;
-      try {
-        stmt = db.prepare(sql);
-      } catch (err) {
-        if (isSQLiteError(err)) throw err;
-        // Otherwise the SQL compiled to no statement (empty or comment-only); db.run() reports that.
-      }
+      // Whitespace or comment-only input prepares to nothing; db.run() reports that as before.
+      const stmt = statements > 0 ? db.prepare(sql) : undefined;
 
       if (stmt && stmt.native.columnsCount > 0) {
         let result: unknown[] | undefined;
@@ -219,9 +242,18 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
 
         query.resolve(sqlResult);
       } else {
-        // db.run() executes every statement in a multi-statement string.
-        stmt?.finalize();
-        const changes = db.run.$call(db, sql, values);
+        let changes: BunSQLiteModule.Changes;
+        if (stmt && statements === 1) {
+          try {
+            changes = stmt.run.$call(stmt, values);
+          } finally {
+            stmt.finalize();
+          }
+        } else {
+          // db.run() executes every statement in a multi-statement string.
+          stmt?.finalize();
+          changes = db.run.$call(db, sql, values);
+        }
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = command;

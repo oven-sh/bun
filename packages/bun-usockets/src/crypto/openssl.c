@@ -2158,10 +2158,15 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   ssl_update_handshake(s, 1);
   if (ssl_gone(s)) return s;
 
-  if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+  if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
     /* Surface ECONNRESET-style handshake failure exactly once so callers
      * (fetch, sockets) don't each have to check on_close themselves. */
     ssl_trigger_handshake_econnreset(s);
+    if (ssl_gone(s)) return s;
+  } else if (s->ssl_handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
+    /* The session was established: only a protocol failure of the renegotiation is reported. */
+    s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+    ssl_dispatch_parked_reason(s);
     if (ssl_gone(s)) return s;
   }
 
@@ -2460,11 +2465,35 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
    * direction. */
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
-  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+  if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s->ssl_write_parked = 0;
     /* loop.c drops the writable interest of a shut-down socket after this dispatch. */
     s = ssl_close_if_fatal(us_dispatch_writable(s));
   }
+  return s;
+}
+
+/* Reports a handshake that SSL_read finished, with the flight it sealed still
+ * held: what the owner writes from the callback leaves in the same segment.
+ * The read cursor of the shared BIO survives that JS. NULL once `s` is gone. */
+static struct us_socket_t *ssl_report_finished_handshake(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data,
+                                                         int retry_parked_write) {
+  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED || !SSL_is_init_finished(s_ssl(s))) return s;
+  char *saved_input = loop_ssl_data->ssl_read_input;
+  unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+  unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+  ssl_trigger_handshake(s, 1);
+  if (ssl_gone(s)) return NULL;
+  /* node:https queues its request before the handshake. */
+  if (retry_parked_write && s->ssl_write_parked) {
+    s = ssl_retry_parked_write(s);
+    if (!s || ssl_gone(s)) return NULL;
+  }
+  loop_ssl_data->ssl_read_input = saved_input;
+  loop_ssl_data->ssl_read_input_length = saved_length;
+  loop_ssl_data->ssl_read_input_offset = saved_offset;
+  loop_ssl_data->ssl_socket = s;
+  ssl_flush_write_batch(loop_ssl_data, s);
   return s;
 }
 
@@ -2565,10 +2594,16 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          /* The HelloRequest can share a read with the server's Finished. */
+          s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
+          if (!s) return NULL;
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
+          /* The close_notify can share a read with the peer's Finished: the owner hears of the handshake before the close below. */
+          s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
+          if (!s) return NULL;
           /* Remote close_notify. A NewSessionTicket that rode in ahead of the
            * close_notify was parked by the new-session callback; deliver it
            * first (wire order - the ticket preceded these bytes, and Node's
@@ -2600,13 +2635,7 @@ restart:
                * finishes immediately). With SENT_SHUTDOWN both directions are
                * closed and nothing is left to hold open: fall through so the
                * deferred graceful close (code 0, no FIN sent) completes here
-               * instead of waiting for a FIN that may never come. A flight
-               * held by this read's handshake batching must not be parked
-               * past this return. */
-              if (loop_ssl_data->ssl_write_batch_len &&
-                  loop_ssl_data->ssl_write_batch_owner == s) {
-                ssl_flush_write_batch(loop_ssl_data, s);
-              }
+               * instead of waiting for a FIN that may never come. */
               return s;
             }
           }
@@ -2643,27 +2672,9 @@ restart:
          * deferring to the on_writable tail-call lets the low-prio queue
          * (SSL_in_init throttles to 5/tick) reorder the server's
          * secureConnection event past the client's close under fan-out
-         * loads. The save/restore below makes this safe even if the JS
-         * callback writes; with read==0 the buffer is empty anyway. */
-        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
-          ssl_trigger_handshake(s, 1);
-          if (ssl_gone(s)) return NULL;
-          /* A write parked before the handshake (node:https queues its request
-           * that way) is retried with the flight still held, so both leave in
-           * one segment, like a write from the callback. */
-          if (s->ssl_write_parked) {
-            s = ssl_retry_parked_write(s);
-            if (!s || ssl_gone(s)) return NULL;
-          }
-          loop_ssl_data->ssl_socket = s;
-          /* The callback and the retry ran with the flight held: a write they
-           * issued already flushed flight + data together; send whatever is
-           * still held. */
-          if (loop_ssl_data->ssl_write_batch_len &&
-              loop_ssl_data->ssl_write_batch_owner == s) {
-            ssl_flush_write_batch(loop_ssl_data, s);
-          }
-        }
+         * loads. */
+        s = ssl_report_finished_handshake(s, loop_ssl_data, 1);
+        if (!s) return NULL;
         if (!read) break;
 
         /* Deliver any parked session/keylog payloads BEFORE the data: the
@@ -2681,31 +2692,14 @@ restart:
         if (!s || ssl_gone(s)) return NULL;
         break;
       }
-    } else if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+    } else {
       /* SSL_read returned application data with the handshake having
        * finished inside it. Fire on_handshake before delivering data so the
-       * caller can inspect ALPN and re-tag the socket. The save/restore lets
-       * the JS callback write() without clobbering the BIO buffer that may
-       * still hold ciphertext for the next SSL_read. (PR #25946 gated this to
-       * clients because the server-side fire reordered node:http2/grpc-js
-       * session setup; the save/restore here is what was missing — those
-       * suites are re-verified below.) */
-      char *saved_input = loop_ssl_data->ssl_read_input;
-      unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
-      unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
-      ssl_trigger_handshake(s, 1);
-      if (ssl_gone(s)) return NULL;
-      loop_ssl_data->ssl_read_input = saved_input;
-      loop_ssl_data->ssl_read_input_length = saved_length;
-      loop_ssl_data->ssl_read_input_offset = saved_offset;
-      loop_ssl_data->ssl_socket = s;
-      /* Send what the callback's own write did not already flush of the held
-       * flight. No parked-write retry here: its writable dispatch would run
-       * before the data this read decrypted reaches the caller. */
-      if (loop_ssl_data->ssl_write_batch_len &&
-          loop_ssl_data->ssl_write_batch_owner == s) {
-        ssl_flush_write_batch(loop_ssl_data, s);
-      }
+       * caller can inspect ALPN and re-tag the socket. No parked-write retry:
+       * its writable dispatch would run before the data this read decrypted
+       * reaches the caller. */
+      s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
+      if (!s) return NULL;
     }
 
     read += just_read;

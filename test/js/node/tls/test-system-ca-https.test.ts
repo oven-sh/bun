@@ -37,7 +37,7 @@ describe("system CA with HTTPS", () => {
   networkTest("HTTPS request with system CA", async () => {
     const skipReason = skipIfNoSystemCerts();
     if (skipReason) {
-      (test.skip as any)(skipReason);
+      test.skip(skipReason);
       return;
     }
 

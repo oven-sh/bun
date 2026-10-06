@@ -16,6 +16,5 @@ Bun.YAML.parse(new ArrayBuffer(1));
 Bun.YAML.parse(new SharedArrayBuffer(1));
 Bun.YAML.parse(new DataView(new ArrayBuffer(1)));
 Bun.YAML.parse(new Blob(["a: 1"]));
-Bun.YAML.parse(Bun.file("a.yaml"));
 // @ts-expect-error
 Bun.YAML.parse(1);

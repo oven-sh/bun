@@ -49,7 +49,10 @@
     "regression/issue/14477/*-mismatch.tsx", // deliberately-mismatched JSX, the test asserts the parse error
     "integration/bun-types/fixture", // declares globals, bun-types.test.ts checks it with its own tsconfig.json
     // Apps with their own package.json and tsconfig.json. Their dependencies are installed by the test.
-    "integration/expo-app",
+    "integration/expo-app/app",
+    "integration/expo-app/components",
+    "integration/expo-app/constants",
+    "integration/expo-app/hooks",
     "integration/next-pages/src",
     "integration/next-pages/tailwind.config.ts",
     "integration/vite-build/the-test-app",

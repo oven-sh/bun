@@ -150,12 +150,12 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
     prototype: ReadableStream;
-    new (
-      underlyingSource: import("node:stream/web").UnderlyingByteSource,
-      strategy?: { highWaterMark?: number },
-    ): ReadableStream<Uint8Array<ArrayBuffer>>;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R extends Uint8Array = Uint8Array<ArrayBuffer>>(
+      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+      strategy?: { highWaterMark?: number },
+    ): ReadableStream<R>;
   }
 >;
 

@@ -465,3 +465,6 @@ test.each(readonlyRows)("test.each", (...args) => {
 describe.each(readonlyRows)("describe.each", (...args) => {
   expectType<string[]>(args);
 });
+
+test.skip("only a label");
+describe.skip("only a label");

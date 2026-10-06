@@ -239,7 +239,7 @@ declare module "bun:test" {
     /**
      * Skips this group of tests.
      */
-    skip: Describe<T>;
+    skip: Describe<T> & ((label: DescribeLabel) => void);
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
@@ -521,7 +521,7 @@ declare module "bun:test" {
     /**
      * Skips this test.
      */
-    skip: Test<T>;
+    skip: Test<T> & ((label: string) => void);
     /**
      * Marks this test as to be written or to be fixed.
      *

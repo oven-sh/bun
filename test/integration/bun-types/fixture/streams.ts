@@ -99,3 +99,5 @@ new ReadableStream({
   },
 });
 expectType(new ReadableStream({ type: "bytes" })).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+expectType(new ReadableStream<Uint8Array>({ type: "bytes" })).is<ReadableStream<Uint8Array>>();
+expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();

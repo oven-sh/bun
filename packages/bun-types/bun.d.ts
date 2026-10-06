@@ -1081,7 +1081,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The TOML document to parse, as a string or UTF-8 bytes
+     * @param input The TOML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript object
      * @throws {SyntaxError} If the input is not valid TOML
      */
@@ -1497,7 +1498,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The YAML document to parse, as a string or UTF-8 bytes
+     * @param input The YAML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example

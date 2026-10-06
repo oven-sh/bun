@@ -5182,3 +5182,46 @@ describe("a TLS engine over a wrapped stream that fails before it starts", () =>
     }
   });
 });
+
+// Node starts the handshake of a bare TLSSocket in _start() and reports it with 'secure' alone.
+describe("a setServername() made before TLSSocket#connect() is the SNI of the handshake", () => {
+  const NAME = "set.before.connect";
+
+  async function names(options: (port: number) => net.TcpSocketConnectOpts) {
+    const seen = Promise.withResolvers<string | false | undefined>();
+    await using server = tls.createServer(COMMON_CERT_, socket => {
+      seen.resolve(socket.servername);
+      socket.end();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // @ts-expect-error @types/node requires a socket
+    const socket: TLSSocket = new TLSSocket(undefined, { rejectUnauthorized: false });
+    try {
+      socket.setServername(NAME);
+      socket.connect(options(portOf(server)), function (this: TLSSocket) {
+        // @ts-expect-error not in @types/node
+        this._start();
+      });
+      await once(socket, "secure");
+      return { client: socket.servername, server: await seen.promise };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  it("on a host and port connect", async () => {
+    expect(await names(port => ({ port, host: "127.0.0.1" }))).toEqual({ client: NAME, server: NAME });
+  });
+
+  it("on an autoSelectFamily connect, instead of a name derived from the host", async () => {
+    const lookup = ((_host, _options, callback) =>
+      callback(null, [
+        { address: "127.0.0.1", family: 4 },
+        { address: "::1", family: 6 },
+      ])) as net.LookupFunction;
+    expect(await names(port => ({ port, host: "derived.from.host", autoSelectFamily: true, lookup }))).toEqual({
+      client: NAME,
+      server: NAME,
+    });
+  });
+});

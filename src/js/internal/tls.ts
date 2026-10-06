@@ -286,6 +286,8 @@ function processPfxOptions(options) {
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
   const pfxCAs: string[] = [];
   const entries = Array.isArray(out.pfx) ? out.pfx : [out.pfx];
+  // CAs added after the context is built complete the chain of a lone identity only; several carry theirs, as in Node.
+  const several = entries.length + Math.max(keys.length, certs.length) > 1;
   for (const entry of entries) {
     let buf = entry;
     let passphrase = out.passphrase;
@@ -297,13 +299,13 @@ function processPfxOptions(options) {
       }
     }
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
+    const parsedCA = parsed.ca;
     keys.push(parsed.key);
-    certs.push(parsed.cert);
+    certs.push(several && parsedCA ? parsed.cert + parsedCA : parsed.cert);
     // A CA bundled inside the PKCS#12 EXTENDS the trust set (Node loads it
     // via addCACert on top of the default roots); folding it into the `ca`
     // option would instead REPLACE the trust store and break verification
     // against the default/NODE_EXTRA_CA_CERTS roots for pfx-only clients.
-    const parsedCA = parsed.ca;
     if (parsedCA) pfxCAs.push(parsedCA);
   }
   out.key = keys.length === 1 ? keys[0] : keys;

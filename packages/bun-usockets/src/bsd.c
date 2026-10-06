@@ -1173,6 +1173,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 ) {
 
     if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1189,6 +1190,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *error = LIBUS_ERR;
             return LIBUS_SOCKET_ERROR;
         }
     }
@@ -1379,6 +1381,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
+                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1396,6 +1399,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
         if (a->ai_family == AF_INET) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
+                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1557,17 +1561,16 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
     if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512, error)) {
-        #if defined(_WIN32)
-          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
-        #endif
         bsd_close_socket(listenFd);
         #if defined(_WIN32)
-            if (shouldSimulateENOENT) {
-                SetLastError(ERROR_PATH_NOT_FOUND);
+            /* bind() answers WSAENETDOWN when the directory of the path does not exist. */
+            if (*error == WSAENETDOWN) {
+                *error = ERROR_PATH_NOT_FOUND;
             }
         #endif
         return LIBUS_SOCKET_ERROR;
@@ -1582,9 +1585,13 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
         /* The path could not be expressed as a sockaddr_un (the basename
-         * exceeds sun_path even with the dirfd workaround); surface the errno
-         * so the caller can report something better than a codeless failure. */
-        if (error && errno) *error = errno;
+         * exceeds sun_path even with the dirfd workaround). That helper
+         * reports through SetLastError on Windows and errno elsewhere. */
+#if defined(_WIN32)
+        *error = (int) GetLastError();
+#else
+        *error = errno;
+#endif
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1592,7 +1599,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
-            errno = ENAMETOOLONG;
+            *error = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }
@@ -1602,10 +1609,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {
-        int saved_errno = errno;
         __pthread_fchdir(-1);
         close(dirfd_workaround_for_unix_path_len);
-        errno = saved_errno;
     }
 #elif defined(__linux__)
     if (dirfd_workaround_for_unix_path_len != -1) {

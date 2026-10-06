@@ -727,30 +727,41 @@ private:
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
+    /* Called once, before listen() returns, with the listen socket and 0, or
+     * with nullptr and the code of the call that failed: errno, or a WSA /
+     * Win32 code on Windows. That code is 0 when the host did not resolve,
+     * because then no call failed. */
+    using ListenHandler = MoveOnlyFunction<void(us_listen_socket_t *, int)>;
+
     /* Host, port, options, callback */
-    TemplatedApp &&listen(const std::string &host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
+    TemplatedApp &&listen(const std::string &host, int port, int options, ListenHandler &&handler) {
         if (host.empty()) {
             return listen(port, options, std::move(handler));
         }
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host.c_str(), port, options)) : nullptr);
+        int error = 0;
+        us_listen_socket_t *ls = httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host.c_str(), port, options, &error)) : nullptr;
+        handler(ls, ls ? 0 : error);
         return std::move(*this);
     }
 
     /* Port, callback */
-    TemplatedApp &&listen(int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, 0)) : nullptr);
-        return std::move(*this);
+    TemplatedApp &&listen(int port, ListenHandler &&handler) {
+        return listen(port, 0, std::move(handler));
     }
 
     /* Port, options, callback */
-    TemplatedApp &&listen(int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, options)) : nullptr);
+    TemplatedApp &&listen(int port, int options, ListenHandler &&handler) {
+        int error = 0;
+        us_listen_socket_t *ls = httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, options, &error)) : nullptr;
+        handler(ls, ls ? 0 : error);
         return std::move(*this);
     }
 
     /* options, callback, path to unix domain socket */
-    TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
-        handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);
+    TemplatedApp &&listen(int options, ListenHandler &&handler, std::string_view path) {
+        int error = 0;
+        us_listen_socket_t *ls = httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options, &error)) : nullptr;
+        handler(ls, ls ? 0 : error);
         return std::move(*this);
     }
 

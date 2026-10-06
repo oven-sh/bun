@@ -1,9 +1,11 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { getSystemErrorName } from "node:util";
 
 const networks = Object.values(networkInterfaces()).flat() as NetworkInterfaceInfo[];
 const hasIPv4 = networks.some(({ family }) => family === "IPv4");
@@ -263,4 +265,90 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
   expect({ address: out.address, port: out.port }).toEqual({ address: null, port: 0 });
   expect(out.url).not.toContain("65535");
   expect(out.url).not.toContain(":-1");
+});
+
+// A failed listen throws the error of the call that failed. `errno` is the
+// negative libuv number that util.getSystemErrorName() takes, as in node.
+describe("Bun.serve() reports why the listen failed", () => {
+  function listenError(options: { hostname: string; port: number }) {
+    try {
+      serve({ ...options, fetch: () => new Response() }).stop(true);
+    } catch (e: any) {
+      const { code, syscall, errno, message } = e;
+      return { code, syscall, errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno, message };
+    }
+  }
+
+  test.skipIf(!hasIPv4)("a port that is in use throws EADDRINUSE", () => {
+    using occupant = serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    expect(listenError({ hostname: "127.0.0.1", port: occupant.port! })).toEqual({
+      code: "EADDRINUSE",
+      syscall: "listen",
+      errno: "EADDRINUSE",
+      message: `Failed to start server. Is port ${occupant.port} in use?`,
+    });
+  });
+
+  // 192.0.2.0/24 is TEST-NET-1 (RFC 5737). No interface has such an address,
+  // so bind() refuses it, unless Linux is configured to bind non-local addresses.
+  const bindsNonLocal =
+    isLinux &&
+    (() => {
+      try {
+        return readFileSync("/proc/sys/net/ipv4/ip_nonlocal_bind", "utf8").trim() === "1";
+      } catch {
+        return false;
+      }
+    })();
+  test.skipIf(!hasIPv4 || bindsNonLocal)("an address that is not on this machine throws EADDRNOTAVAIL", () => {
+    expect(listenError({ hostname: "192.0.2.1", port: 0 })).toEqual({
+      code: "EADDRNOTAVAIL",
+      syscall: "listen",
+      errno: "EADDRNOTAVAIL",
+      message: "EADDRNOTAVAIL: address not available, listen",
+    });
+  });
+
+  // At the descriptor limit socket() fails before there is anything to bind.
+  test.skipIf(isWindows)("the file descriptor limit throws EMFILE", async () => {
+    using dir = tempDir("serve-listen-emfile", {});
+    const fixture = /* js */ `
+      const fs = require("fs");
+      const held = [];
+      for (;;) {
+        try {
+          held.push(fs.openSync("/dev/null", "r"));
+        } catch {
+          break;
+        }
+      }
+      const errors = {};
+      const addresses = { tcp: { hostname: "127.0.0.1", port: 0 }, unix: { unix: process.env.SOCKET_PATH } };
+      for (const [name, address] of Object.entries(addresses)) {
+        try {
+          Bun.serve({ ...address, fetch: () => new Response() }).stop(true);
+          errors[name] = "listening";
+        } catch (e) {
+          errors[name] = { code: e.code, syscall: e.syscall };
+        }
+      }
+      for (const fd of held) fs.closeSync(fd);
+      console.log(JSON.stringify(errors));
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "-e", fixture],
+      env: { ...bunEnv, SOCKET_PATH: join(String(dir), "emfile.sock") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        tcp: { code: "EMFILE", syscall: "listen" },
+        unix: { code: "EMFILE", syscall: "listen" },
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

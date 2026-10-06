@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -310,5 +310,49 @@ it("should not leak memory", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// At the descriptor limit socket() fails before there is anything to bind.
+// The error must name that failure, as every later step of listen() does.
+it.skipIf(isWindows)("Bun.listen at the file descriptor limit throws EMFILE", async () => {
+  using dir = tempDir("listen-emfile", {});
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const held = [];
+    for (;;) {
+      try {
+        held.push(fs.openSync("/dev/null", "r"));
+      } catch {
+        break;
+      }
+    }
+    const errors = {};
+    const addresses = { tcp: { hostname: "127.0.0.1", port: 0 }, unix: { unix: process.env.SOCKET_PATH } };
+    for (const [name, address] of Object.entries(addresses)) {
+      try {
+        Bun.listen({ ...address, socket: { data() {} } }).stop(true);
+        errors[name] = "listening";
+      } catch (e) {
+        errors[name] = { code: e.code, syscall: e.syscall };
+      }
+    }
+    for (const fd of held) fs.closeSync(fd);
+    console.log(JSON.stringify(errors));
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: { ...bunEnv, SOCKET_PATH: join(String(dir), "emfile.sock") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({
+      tcp: { code: "EMFILE", syscall: "listen" },
+      unix: { code: "EMFILE", syscall: "listen" },
+    }),
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });

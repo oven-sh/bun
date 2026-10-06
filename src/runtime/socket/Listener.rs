@@ -523,8 +523,8 @@ impl Listener {
                 bstr::BStr::new(hostname_bytes)
             ));
             log!("Failed to listen {}", errno);
-            let mapped = bun_sys::SystemErrno::init(errno as i64);
-            let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
+            let mapped = uws::SocketGroup::listen_errno(errno);
+            let (errno, mapped) = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
                 || (matches!(connection, UnixOrHost::Fd(_))
                     && matches!(
                         mapped,
@@ -532,9 +532,12 @@ impl Listener {
                             | Some(bun_sys::SystemErrno::EBADF)
                             | Some(bun_sys::SystemErrno::EOPNOTSUPP)
                     )) {
-                bun_sys::SystemErrno::EINVAL as c_int
+                (
+                    bun_sys::SystemErrno::EINVAL as c_int,
+                    Some(bun_sys::SystemErrno::EINVAL),
+                )
             } else {
-                errno
+                (errno, mapped)
             };
             if errno != 0 {
                 err.put(
@@ -551,11 +554,11 @@ impl Listener {
                 if let Some(p) = port {
                     err.put(cx.global(), b"port", JSValue::js_number(p as f64));
                 }
-                if let Some(str_) = bun_sys::SystemErrno::init(errno as i64) {
+                if let Some(code) = mapped {
                     err.put(
                         cx.global(),
                         b"code",
-                        BunString::static_(<&'static str>::from(str_)).to_js(cx.global())?,
+                        BunString::static_(<&'static str>::from(code)).to_js(cx.global())?,
                     );
                 }
             }

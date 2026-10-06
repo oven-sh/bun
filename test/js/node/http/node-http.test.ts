@@ -29,7 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
-import { inspect } from "node:util";
+import { getSystemErrorName, inspect } from "node:util";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -209,6 +209,27 @@ describe("node:http", () => {
         order: ["error:EADDRINUSE", "nextTick"],
         listeningAtOnce: false,
         listening: false,
+      });
+    });
+
+    // err.errno is the negative libuv number of the call that failed, the one
+    // util.getSystemErrorName() takes.
+    it("a listen() error carries the errno of the failed bind", async () => {
+      const occupant = createServer();
+      occupant.listen(0);
+      await once(occupant, "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const server = createServer();
+      server.listen(port);
+      const [err] = (await once(server, "error")) as [NodeJS.ErrnoException];
+      occupant.close();
+      await once(occupant, "close");
+      const { code, syscall, errno } = err;
+      expect({ code, syscall, errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno }).toEqual({
+        code: "EADDRINUSE",
+        syscall: "listen",
+        errno: "EADDRINUSE",
       });
     });
 

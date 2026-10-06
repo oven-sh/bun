@@ -2052,9 +2052,6 @@ struct NodeUnorderedLeftovers {
 
     bool entriesEqual(JSValue key1, JSValue value1, JSValue key2, JSValue value2) const
     {
-        // One key that holds two values: the probe loop has compared them.
-        if (key1 == key2)
-            return false;
         bool equal = mode.deepEquals(globalObject, key1, key2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!equal || !isMap)

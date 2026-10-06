@@ -1269,6 +1269,14 @@ describe("util.isDeepStrictEqual", () => {
   describe.each([
     ["Set member", (value: unknown) => new Set([value])],
     ["Map value", (value: unknown) => new Map([[1, value]])],
+    [
+      "Map value after an entry with a deep-equal key",
+      (value: unknown) =>
+        new Map<unknown, unknown>([
+          [{ k: 1 }, 1],
+          ["held", value],
+        ]),
+    ],
     ["Map key", (value: unknown) => new Map([[value, 1]])],
   ])("a cyclic object as a %s", (_, wrap) => {
     test("a self-loop does not equal the same loop entered through one more object", () => {

@@ -654,6 +654,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return self.provisional_shape(shape);
         }
+        // Nor is it one where the declared members are in place (`ObjectFlagsUnresolvedMembers`).
+        if self.inheriting.contains(&key) {
+            self.note_members_in_place();
+            let shape = meanwhile(self);
+            return self.provisional_shape(shape);
+        }
         if let Some(raw) = self.provisional(Query::Shape(key)) {
             // SAFETY: a pointer returned by `provisional_shape`. `check_file` clears `provisional` before it calls `release_provisional_shapes`.
             let resolved = unsafe { &*(raw as usize as *const Resolved) };
@@ -765,6 +771,7 @@ impl<'p, 's> Checker<'p, 's> {
             MapperId::IDENTITY,
             MemberBinding::Late,
             BaseMembers::Omitted,
+            None,
         );
         Some(Members {
             resolved: self.provisional_shape(shape).resolved,
@@ -852,12 +859,20 @@ impl<'p, 's> Checker<'p, 's> {
                         if are_provisional && key == ty {
                             c.mark_tainted_from(c.frames.len() - 1);
                         }
-                        let binding = MemberBinding::Late;
-                        c.build_declared_shape(target, under, binding, BaseMembers::Inherited)
+                        let (binding, bases) = (MemberBinding::Late, BaseMembers::Inherited);
+                        c.build_declared_shape(target, under, binding, bases, Some(key))
                     },
                     |c| {
-                        let binding = MemberBinding::Early;
-                        c.build_declared_shape(target, under, binding, BaseMembers::Inherited)
+                        // `resolveObjectTypeMembers`: the declared members, then the base types,
+                        // then the members of those.
+                        let (binding, bases) = if c.inheriting.contains(&key) {
+                            (MemberBinding::Late, BaseMembers::Omitted)
+                        } else if c.base_types_so_far.iter().any(|it| it.0 == target) {
+                            (MemberBinding::Late, BaseMembers::Inherited)
+                        } else {
+                            (MemberBinding::Early, BaseMembers::Inherited)
+                        };
+                        c.build_declared_shape(target, under, binding, bases, None)
                     },
                 );
                 // `mapper` is built from them.
@@ -1835,13 +1850,15 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The instance shape of a class or an interface, in terms of its own type parameters. `under`:
-    /// the mapper applied to them in the base types.
+    /// the mapper applied to them in the base types. `in_place`: the key the shape is stored
+    /// under, see `inheriting`.
     fn build_declared_shape(
         &mut self,
         sym: Sym,
         under: MapperId,
         binding: MemberBinding,
         base_members: BaseMembers,
+        in_place: Option<TypeId>,
     ) -> Shape<'s> {
         let mut b = Builder::new_in(self.arena);
         for (file, decl) in self.files().decls(sym) {
@@ -1860,9 +1877,13 @@ impl<'p, 's> Checker<'p, 's> {
         let bases = self.base_types(sym);
         let own = b.shape.props.len();
         let inherits = base_members == BaseMembers::Inherited;
+        self.inheriting.extend(in_place);
         for base in bases.iter().copied().filter(|_| inherits) {
             let base = self.instantiate(base, under);
             self.inherit(&mut b, base, Some((sym, this)));
+        }
+        if in_place.is_some() {
+            self.inheriting.pop();
         }
         // `getNamedMembers`: the members declared here, then the inherited ones, each in the order
         // of `compareSymbols`.
@@ -2168,7 +2189,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.enter(Query::Bases(sym)) {
             return self.base_types_in_progress(sym);
         }
-        let mut bases = Vec::new();
+        let so_far = self.base_types_so_far.len();
+        self.base_types_so_far.push((sym, Vec::new()));
         // `resolveBaseTypesOfClass`: the base class comes first, whichever declaration has the
         // `extends` clause.
         if let Some((file, c)) = self.extending_declaration(sym) {
@@ -2185,7 +2207,7 @@ impl<'p, 's> Checker<'p, 's> {
             });
             if let Some(base) = valid {
                 if !self.has_base(base, sym, 0) {
-                    bases.push(base);
+                    self.base_types_so_far[so_far].1.push(base);
                 } else if let Some(err) = self.circular_base_type(sym, file, Decl::Class(c)) {
                     self.add_diagnostic(err);
                 }
@@ -2212,6 +2234,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 let Some(base) = valid else { continue };
                 if !self.has_base(base, sym, 0) {
+                    let bases = &mut self.base_types_so_far[so_far].1;
                     if !bases.contains(&base) {
                         bases.push(base);
                     }
@@ -2222,6 +2245,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let left = self.leave(Query::Bases(sym));
         let in_cycle = self.left_a_cycle;
+        debug_assert_eq!(self.base_types_so_far.len(), so_far + 1);
+        let bases = self
+            .base_types_so_far
+            .pop()
+            .map_or_else(Vec::new, |it| it.1);
         let bases = match left {
             Ok(stored) => {
                 let bases = self.list(&bases);
@@ -2271,8 +2299,12 @@ impl<'p, 's> Checker<'p, 's> {
         let head = self.stack[from..]
             .iter()
             .rposition(|&q| q == Query::Bases(sym));
+        // `return data.resolvedBaseTypes`
+        let mut in_progress = self.base_types_so_far.iter().rev();
+        let so_far = in_progress.find(|it| it.0 == sym);
+        let so_far = so_far.map_or_else(List::default, |it| List::Own(it.1.clone()));
         let (Some(own), Some(head)) = (own, head) else {
-            return List::default();
+            return so_far;
         };
         let before = self.files().rank_of_file(own);
         let members = self.stack[from + head..].iter().filter_map(|&q| match q {
@@ -2292,7 +2324,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let known = p.base_types.get_ref(&self.task, &sym);
                 known.map_or_else(List::default, |known| List::Kept(known))
             }
-            _ => List::default(),
+            _ => so_far,
         }
     }
 

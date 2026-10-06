@@ -544,13 +544,20 @@ async function messagesOf(cmd: string[], cwd: string) {
 
 /**
  * One program, with a case on each line. Returns the cases about which the two say something else, in whole messages.
- * `step`: a debug build checks every `step`th case.
+ * `step`: a debug build checks every `step`th case. `files`: the other files of the program.
  */
-async function casesThatDiffer(options: object, declarations: string[], cases: string[], step = every) {
+async function casesThatDiffer(
+  options: object,
+  declarations: string[],
+  cases: string[],
+  step = every,
+  files: Record<string, string> = {},
+) {
   // After a syntax error nothing is checked. The last line shows that it was.
   const source = [...declarations, ...cases.filter((_, index) => index % step === 0), `const checked: number = "";`];
   const compilerOptions = { ...JSON.parse(tsconfig).compilerOptions, ...options };
   using dir = tempDir("bun-check-differential", {
+    ...files,
     "tsconfig.json": JSON.stringify({ compilerOptions }),
     "a.ts": source.join("\n") + "\n",
   });
@@ -811,6 +818,116 @@ for (const noImplicitAny of [true, false]) {
     timeout,
   );
 }
+
+// `interface D extends M<D>`, where the members of `M<D>` depend on those of `D`, is an error (TS2310). In a declaration
+// file that `skipLibCheck` hides, only what follows from it shows: src/js/builtins.d.ts declares `promise.$then` like that.
+// `M<D>` has its members from what `D` declares itself, and from the base types of `D` that are resolved before it where
+// `keyof D` is evaluated at once.
+const basesOfThemselves = {
+  renamed: "{ [K in keyof T as `$${K & string}`]: T[K] }",
+  filtered: "{ [K in keyof T as T[K] extends Function ? `$${K & string}` : never]: T[K] }",
+  unconstrained: "{ [K in keyof T as T[K] extends Function ? `$${K}` : never]: T[K] }",
+  plus: "{ [K in keyof T]: T[K] } & { extra: 1 }",
+  getters: "{ readonly [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K] }",
+  record: "Partial<Record<`$${keyof T & string}`, 1>>",
+  omitted: "Omit<T, 'm'> & { extra: 1 }",
+};
+// The declaration of `D` with the base type `M<D>`, and a type to use it by.
+const extendingThemselves: ((D: string, M: string) => [string, string])[] = [
+  (D, M) => [`interface ${D} extends ${M}<${D}> { m(): void; n: number }`, D],
+  (D, M) => [`interface ${D}<X> extends ${M}<${D}<X>> { m(): X; n: number }`, `${D}<string>`],
+  (D, M) => [`interface ${D} { m(): void } interface ${D} extends ${M}<${D}> { n: number }`, D],
+  (D, M) => [`interface ${D} extends ${M}<${D}> { n: number } interface ${D} { m(): void }`, D],
+  (D, M) => [`interface ${D} extends Other, ${M}<${D}> { m(): void; n: number }`, D],
+  (D, M) => [`interface ${D} extends ${M}<${D}>, Other { m(): void; n: number }`, D],
+  (D, M) => [`interface ${D} extends Other { m(): void; n: number } interface ${D} extends ${M}<${D}> {}`, D],
+  (D, M) => [`declare class ${D} { m(): void; n: number } interface ${D} extends ${M}<${D}> {}`, D],
+  (D, M) => [`interface ${D} extends ${M}<${D}> { (): void; m(): void; n: number }`, D],
+];
+const usesOfThemselves = [
+  ...["$m", "$$m", "$n", "$b", "extra", "getM", "m", "anything"].map(name => `const v: 1 = d.${name};`),
+  ...["$m", "m", "$$m", "$b", "b", "extra", "getM", "anything"].map(name => `const v: 1 = null! as Has<"${name}", D>;`),
+  "const v: { $m(): void } = d;",
+  "const v: { m(): void } = d;",
+  "const v: D = { m() {}, n: 1 } as any as { m(): any; n: number };",
+  "const v: Record<string, unknown> = d;",
+];
+
+differential(
+  "an interface that extends a type made of its own members, in a declaration file that is not checked",
+  async () => {
+    const declarations = [
+      "type Has<K, T> = K extends keyof T ? true : false;",
+      "interface Other { b(): void; [Symbol.iterator](): void }",
+      ...Object.entries(basesOfThemselves).map(([name, type]) => `type ${name}<T> = ${type};`),
+    ];
+    // What is asked for first decides in typescript-go, so every use has an interface of its own.
+    const cases = [...product(Object.keys(basesOfThemselves), extendingThemselves, usesOfThemselves)].map(
+      ([base, extending, use], index) => {
+        const [declaration, type] = extending(`D${index}`, base);
+        declarations.push(declaration);
+        return `{ const d = null! as ${type}; ${use.replace(/\bD\b/g, () => type)} }`;
+      },
+    );
+    const files = { "declarations.d.ts": declarations.join("\n") + "\n" };
+    expect(await casesThatDiffer({}, [], cases, 1, files)).toEqual([]);
+  },
+  timeout,
+);
+
+differential(
+  "an interface that extends a type made of its own members, in a file that is checked",
+  async () => {
+    const dollar = "type Dollar<T> = { [K in keyof T as `$${K & string}`]: T[K] };";
+    const programs = [
+      [dollar, "interface Foo extends Dollar<Foo> { m(): void }", "const k: 1 = null! as keyof Foo;"],
+      [
+        dollar,
+        "interface Fn extends Dollar<Fn> {}",
+        "interface Fn { (): void }",
+        "const is: 1 = null! as ((() => void) extends Fn ? true : false);",
+      ],
+    ];
+    const different = await Promise.all(programs.map(lines => casesThatDiffer({}, [], lines, 1)));
+    expect(different).toEqual([[], []]);
+  },
+  timeout,
+);
+
+differential(
+  "the interfaces of the library that extend a type made of their own members",
+  async () => {
+    const files = {
+      "declarations.d.ts": `
+        type Has<K, T> = K extends keyof T ? true : false;
+        type ClassWithIntrinsics<T> = { [K in keyof T as T[K] extends Function ? \`$\${K}\` : never]: T[K] };
+        declare interface Map<K, V> extends ClassWithIntrinsics<Map<K, V>> {}
+        declare interface CallableFunction extends ClassWithIntrinsics<CallableFunction> {}
+        declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
+        declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
+        declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
+      `,
+    };
+    const declarations = [
+      "declare const f: () => void; declare const p: Promise<number>; declare const m: Map<string, number>;",
+    ];
+    const cases = [
+      "null! as ((() => void) extends CallableFunction ? true : false)",
+      ...["f.$call", "f.$$call", "p.$then", "p.$$then", `m.$get("a")`, "m.$size", "m.$$get"],
+      ...["Promise.$resolve(1)", "Promise.$$resolve", "ArrayBuffer.$isView", "ArrayBuffer.$$isView"],
+      ...product(
+        ["$apply", "apply", "toString", "$toString", "$then", "$get", "$all", "all", "anything"],
+        ["CallableFunction", "Promise<number>", "Map<string, number>", "PromiseConstructor", "ArrayBufferConstructor"],
+      ).map(([name, type]) => `null! as Has<"${name}", ${type}>`),
+      `null! as Exclude<keyof CallableFunction, "apply" | "call" | "bind">`,
+      "null! as Exclude<keyof PromiseConstructor, string>",
+      "(<T extends (...args: any[]) => any>(fn: T): ReturnType<T> => fn.$call(undefined))(() => 2)",
+    ].map(value => `{ const v: 1 = ${value}; }`);
+    cases.push("{ const v: CallableFunction = f; }", "{ const v: ClassWithIntrinsics<CallableFunction> = f; }");
+    expect(await casesThatDiffer({}, declarations, cases, 1, files)).toEqual([]);
+  },
+  timeout,
+);
 
 // typescript-go lists the specifier of `import()` and `require()` once for each `import` and `require` in the text of the
 // call, and says why a file is in the program if there is more than one reason.

@@ -235,10 +235,33 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let scope = self.begin_scope();
         let keys = self.get_literal_type_from_properties_uncached(ty, index_flags);
-        match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.keys_of_properties).insert(&self.task, ty, keys, stored),
-            Err(_) => keys,
+        let result = self.end_scope_by_counters(scope);
+        // `c.propertiesTypes[key] = result`, whatever is in progress. `interface D extends M<D>`:
+        // whether `M<D>` is a valid base type depends on `keyof D`, which has no key of `M<D>` from
+        // then on. Unless that began with `keyof D`: the evaluation that ends last is the one that
+        // stays.
+        let replaces = (self.p.keys_of_properties.get(&self.task, &ty)).is_some();
+        let stored = match result {
+            Ok(stored) => stored,
+            Err(_) if replaces || self.is_resolving_base_types_of(ty) => Stored::new(),
+            Err(_) => return keys,
+        };
+        if replaces {
+            (self.p.keys_of_properties).rewrite(&self.task, ty, keys, stored)
+        } else {
+            (self.p.keys_of_properties).insert(&self.task, ty, keys, stored)
         }
+    }
+
+    /// Whether `ty` is the declared type of a class or an interface that `getBaseTypes` is at,
+    /// without `ObjectFlagsUnresolvedMembers`.
+    fn is_resolving_base_types_of(&mut self, ty: TypeId) -> bool {
+        let TypeData::Ref { target, .. } = *self.data(ty) else {
+            return false;
+        };
+        self.base_types_so_far.iter().any(|it| it.0 == target)
+            && !self.inheriting.contains(&ty)
+            && self.declared_type(target) == ty
     }
 
     fn get_literal_type_from_properties_uncached(

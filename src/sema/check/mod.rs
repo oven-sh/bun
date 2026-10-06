@@ -558,6 +558,8 @@ impl<'s> Program<'s> {
             late_binding_exports: Vec::new(),
             reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
+            inheriting: Vec::new(),
+            base_types_so_far: Vec::new(),
             serialization_level: 0,
             flow_type_cache: Default::default(),
             flow_type_cache_depth: usize::MAX,
@@ -964,6 +966,12 @@ pub struct Checker<'p, 's> {
     /// top, and the first member of the declaration whose computed name is some string, number or
     /// symbol.
     declared_index_infos_in_progress: Vec<(usize, FileId, MemberId)>,
+    /// The classes and interfaces whose shapes are at the members of their base types, by the key
+    /// of the shape. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the declared
+    /// members before that.
+    inheriting: Vec<TypeId>,
+    /// `resolvedBaseTypes` of each class or interface whose base types are being resolved.
+    base_types_so_far: Vec<(Sym, Vec<TypeId>)>,
     /// `c.serializationLevel`: how many `TypeToString` calls are in progress, counting those whose
     /// resolutions are made eagerly.
     serialization_level: u32,

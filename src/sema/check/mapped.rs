@@ -1254,7 +1254,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         let declared = self.type_from_node(file, check);
-        matches!(self.data(declared), TypeData::TypeParam(..))
+        self.flags(declared) & tf::TYPE_PARAMETER != 0
     }
 
     /// `for_constraint`: the check type is not the type itself but its constraint, so failing the
@@ -1272,7 +1272,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let check_declared = self.type_from_node(file, check);
         // `T extends U ? X : Y` with a naked `T` distributes over a union.
-        if matches!(self.data(check_declared), TypeData::TypeParam(..))
+        if self.flags(check_declared) & tf::TYPE_PARAMETER != 0
             && let Some(value) = self.types().map(mapper, check_declared)
         {
             // `getConditionalTypeInstantiation`: an intersection that reduces to `never` is removed
@@ -1596,7 +1596,7 @@ impl<'p, 's> Checker<'p, 's> {
         // constraint to substitute.
         let check_declared = self.type_from_node(file, check);
         let checked = self.instantiate(check_declared, mapper);
-        let is_circular = matches!(self.data(check_declared), TypeData::TypeParam(..))
+        let is_circular = self.flags(check_declared) & tf::TYPE_PARAMETER != 0
             && matches!(
                 self.data(checked),
                 TypeData::TypeParam(..) | TypeData::ThisParam(_)
@@ -1721,7 +1721,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         };
         let variable = self.actual_type_variable(target);
-        matches!(self.data(variable), TypeData::TypeParam(..)).then_some(variable)
+        (self.flags(variable) & tf::TYPE_PARAMETER != 0).then_some(variable)
     }
 
     /// `getResolvedApparentTypeOfMappedType`: `{ [P in keyof T]: X }` where `T` can only be an

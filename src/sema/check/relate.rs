@@ -1865,7 +1865,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn cond_distributes_over(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, _, _, nodes) = self.cond_origin(t);
         let declared = self.type_from_node(file, nodes[0]);
-        matches!(self.data(declared), TypeData::TypeParam(..)).then_some(declared)
+        (self.flags(declared) & tf::TYPE_PARAMETER != 0).then_some(declared)
     }
 
     /// `getInferredTrueTypeFromConditionalType`: the true branch instantiated with

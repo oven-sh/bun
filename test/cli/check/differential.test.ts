@@ -794,6 +794,103 @@ for (const noImplicitAny of [true, false]) {
   );
 }
 
+// The name in `a.name` that no property declares has the symbol of the index signature, if one is declared.
+differential("a function from an index signature that is tested and not called", async () => {
+  const declarations = [
+    "type F = () => void;",
+    "declare const mapped: Record<string, F>; declare const declared: { [k: string]: F }; declare const other: { [k: string]: F };",
+    "declare const either: { [k: string]: F } | { [k: string]: () => number };",
+    "declare const both: { f: F; [k: string]: F }; declare const nested: { a: { [k: string]: F } };",
+    "declare const several: { [k: `a${string}`]: F; [k: `${string}z`]: F }; declare const literal: Record<'foo' | 'bar', F>;",
+    "interface I { [k: string]: F } declare const inherited: I & { x: 1 };",
+    "declare class K { [k: string]: F } declare const instance: K;",
+  ];
+  const receivers = [
+    ...["mapped", "declared", "either", "both", "nested.a", "several", "literal", "inherited", "instance"],
+    ...["(declared)", "declared!"],
+  ];
+  const tests = [
+    "if (R.foo) {}",
+    "if (R.foo) { R.foo(); }",
+    "if (R.foo) { R.bar(); }",
+    "if (R.foo) { other.foo(); }",
+    "if (R.f) { R.foo(); }",
+    "if (R.foo) { R.f(); }",
+    "if (R.abz) { R.acz(); }",
+    "R.foo && R.bar();",
+    "R.foo ? 1 : 2;",
+    "R.foo ? R.bar() : 2;",
+    "function f<T extends typeof R>(t: T) { if (t.foo) {} if (t.foo) { t.bar(); } }",
+  ];
+  const cases = [...product(receivers, tests)]
+    // `typeof (a)` and `typeof a!` are not types.
+    .filter(([receiver, test]) => !test.includes("typeof") || /^[\w.]+$/.test(receiver))
+    .map(([receiver, test]) => `{ ${test.replace(/\bR\b/g, () => receiver)} }`);
+  expect(await casesThatDiffer({}, declarations, cases)).toEqual([]);
+});
+
+// Where the contextual signature of a generator is its own, nothing is expected of what it yields and returns.
+differential("a generator with literals where any type is expected", async () => {
+  const declarations = [
+    "declare function id<T>(x: T): T; declare function fn<T extends Function>(x: T): T; declare const n: number;",
+    "declare function callable<T extends (...a: any[]) => any>(x: T): T; declare class Box<T> { constructor(x: T); x: T }",
+    "declare function expects(x: () => Generator<1, 'a', 2>): void;",
+  ];
+  const contexts = [
+    ...["id(G)", "fn(G)", "callable(G)", "Object.freeze(G)", "Promise.resolve(G)", "[1].map(() => G)", "new Box(G)"],
+    ...["new Map([['a', G]])", "id({ m: G })", "id([G])", "id(id(G))", "(G)", "expects(G)", "id(n ? G : undefined)"],
+  ];
+  const generators = [
+    "function* () { yield 1; }",
+    "function* () { return 'a'; }",
+    "function* () { yield 1; return 'a'; }",
+    "function* () { yield; }",
+    "function* () { const x: 2 = yield n; }",
+    "function* () { yield n; }",
+    "function* () { yield* [1]; }",
+    "function* () {}",
+    "async function* () { yield 1; return 'a'; }",
+    "function* named() { yield true; }",
+  ];
+  const cases = [...product(contexts, generators)].map(
+    ([context, generator]) => `{ const v: 1 = ${context.replace(/\bG\b/g, () => generator)}; }`,
+  );
+  expect(await casesThatDiffer({}, declarations, cases)).toEqual([]);
+});
+
+// `this` is a type parameter: a conditional type distributes over it, and a mapped type over its keys is homomorphic.
+differential("a conditional or a mapped type over `this`", async () => {
+  const types = [
+    "this extends { a: 1 } ? 'yes' : 'no'",
+    "this extends { a: 1 } ? 1 : this extends { b: 1 } ? 2 : 3",
+    "[this] extends [{ a: 1 }] ? 'yes' : 'no'",
+    "this extends infer U ? U[] : never",
+    "{ [K in keyof this]: this[K] }",
+    "{ readonly [K in keyof this]?: K }",
+    "{ [K in keyof this as `get${K & string}`]: this[K] }",
+    "Partial<this>",
+    "keyof this",
+  ];
+  const declarations = types.flatMap((type, i) => [
+    `interface I${i} { m(): ${type}; p: ${type} } interface A${i} extends I${i} { a: 1 } interface B${i} extends I${i} { b: 1 }`,
+    `declare class C${i} { m(): ${type}; p: ${type} } declare class D${i} extends C${i} { a: 1 } declare class E${i} extends C${i} { b?: 1 }`,
+    `declare function call${i}<T extends I${i}>(x: T): ReturnType<T["m"]>; declare function get${i}<T extends C${i}>(x: T): T["p"];`,
+  ]);
+  const uses = [
+    "null! as A#",
+    "null! as B#",
+    "null! as A# | B#",
+    "null! as I#",
+    "null! as D#",
+    "null! as E#",
+    "null! as D# | E#",
+  ].flatMap(value => [`(${value}).m()`, `(${value}).p`, `call#(${value})`, `get#(${value})`]);
+  const cases = [...product(types.keys().toArray(), uses)].map(
+    ([i, use]) => `{ const v: never = ${use.replaceAll("#", String(i))}; }`,
+  );
+  expect(await casesThatDiffer({}, declarations, cases)).toEqual([]);
+});
+
 // A pattern has no name: its symbol is the one that stands for a missing name.
 differential("a parameter property that is a pattern and is never read", async () => {
   const modifiers = ["private", "public", "protected", "readonly", "private readonly"];

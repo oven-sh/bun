@@ -3271,9 +3271,12 @@ impl<'p, 's> Checker<'p, 's> {
         // widened, and only where no literal type is expected. A union of literals is preserved.
         if self.is_unit(ret) || self.is_unit(yielded) || next.is_some_and(|t| self.is_unit(t)) {
             // `getIterationTypeOfGeneratorFunctionReturnType`: `any` says nothing.
-            let expected = self
-                .return_type_of_contextual_signature(file, func)
-                .filter(|&t| !self.has_any_flag(t));
+            // `contextualSignature == getSignatureFromDeclaration(fn)`: nothing is expected of a generator.
+            let expected = match self.is_own_contextual_signature(file, func) {
+                true => None,
+                false => self.return_type_of_contextual_signature(file, func),
+            };
+            let expected = expected.filter(|&t| !self.has_any_flag(t));
             let expected = expected.and_then(|t| self.iteration_types(t, is_async));
             if self.is_unit(yielded) {
                 yielded = self.widen_literal_for_context(yielded, expected.map(|t| t.yielded));

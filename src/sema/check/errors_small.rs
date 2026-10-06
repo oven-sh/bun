@@ -7,6 +7,17 @@
 use super::*;
 use crate::bind::{Decl, Parent, PatParent, ScopeKind};
 
+/// What `getSymbolAtLocation` finds for the name in `a.name`.
+enum SymbolAtName<'p> {
+    /// The properties of a mapped type have one source.
+    Property(&'p PropSource<'p>, Atom),
+    /// `IndexInfo.indexSymbol` of the index signature of that type.
+    Index(TypeId, (FileId, MemberId)),
+    /// `findApplicableIndexInfo` makes another `IndexInfo` every time that several apply, so this
+    /// one is the same as no other.
+    IndexOfSeveral,
+}
+
 impl<'p> Checker<'p, '_> {
     /// `checkVarDeclaredNamesNotShadowed`: 2481, a `var` cannot be hoisted past a `let` or a
     /// `const` of the same name.
@@ -197,6 +208,10 @@ impl<'p> Checker<'p, '_> {
             hir[location].kind,
             ExprKind::Ident(_) | ExprKind::Dot { .. }
         );
+        // `testedSymbol == nil`
+        let is_named = is_named
+            && (matches!(hir[location].kind, ExprKind::Ident(_))
+                || self.symbol_at_name(file, location).is_some());
         if !is_named && !is_promise {
             return;
         }
@@ -328,8 +343,12 @@ impl<'p> Checker<'p, '_> {
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let same_variable = |a: ExprId, b: ExprId| matches!((hir[a].kind, hir[b].kind), (ExprKind::Ident(x), ExprKind::Ident(y)) if x == y && bound.expr_symbol[a.idx()] == bound.expr_symbol[b.idx()]);
+        // Every name that an index signature applies to has the symbol of that index signature.
         let may_be_the_same = same_variable(tested, child)
-            || matches!((hir[tested].kind, hir[child].kind), (ExprKind::Dot { name: x, .. }, ExprKind::Dot { name: y, .. }) if x == y);
+            || matches!(
+                (hir[tested].kind, hir[child].kind),
+                (ExprKind::Dot { .. }, ExprKind::Dot { .. })
+            );
         if child == tested
             || !may_be_the_same
             // `getSymbolAtLocation`: the name in `{ name }` resolves to the property.
@@ -353,14 +372,11 @@ impl<'p> Checker<'p, '_> {
             match (hir[a].kind, hir[b].kind) {
                 (ExprKind::Ident(_), ExprKind::Ident(_)) => return same_variable(a, b),
                 (ExprKind::This, ExprKind::This) => return true,
-                (
-                    ExprKind::Dot {
-                        obj: x, name: n, ..
-                    },
-                    ExprKind::Dot {
-                        obj: y, name: m, ..
-                    },
-                ) if n == m && self.same_property(file, a, b) => (a, b) = (x, y),
+                (ExprKind::Dot { obj: x, .. }, ExprKind::Dot { obj: y, .. })
+                    if self.same_property(file, a, b) =>
+                {
+                    (a, b) = (x, y)
+                }
                 (ExprKind::Call(x), ExprKind::Call(y)) => (a, b) = (hir[x].callee, hir[y].callee),
                 _ => break,
             }
@@ -368,23 +384,41 @@ impl<'p> Checker<'p, '_> {
         false
     }
 
-    /// `getSymbolAtLocation` of the name in `a.name`: the declaration source of the property it
-    /// resolves to. `None`: unknown.
-    fn property_found(&mut self, file: FileId, e: ExprId) -> Option<&'p PropSource<'p>> {
+    /// `getSymbolAtLocation` of the name in `a.name`
+    fn symbol_at_name(&mut self, file: FileId, e: ExprId) -> Option<SymbolAtName<'p>> {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
             return None;
         };
-        let ty = self.type_of_expr(file, obj);
-        let ty = self.non_nullable(ty);
+        let receiver = self.type_of_expr(file, obj);
+        let ty = self.non_nullable(receiver);
         let ty = self.apparent_type(ty);
-        self.prop_ref(ty, name).map(|(prop, _)| &prop.source)
+        if let Some((prop, _)) = self.prop_ref(ty, name) {
+            return Some(SymbolAtName::Property(&prop.source, name));
+        }
+        // `getApplicableIndexSymbol`: there is one only if an index signature is declared.
+        let ty = self.reduced(receiver);
+        let ty = self.apparent_type(ty);
+        let members = self.members(ty)?;
+        let info = self.applicable_index_info_for_name(&members, name)?;
+        if let Some(declaration) = info.declaration {
+            return Some(SymbolAtName::Index(ty, declaration));
+        }
+        let key_type = self.string_literal(name, false);
+        let is_declared = members.shape().index.iter().any(|info| {
+            info.declaration.is_some() && self.is_applicable_index_type(key_type, info.key)
+        });
+        is_declared.then_some(SymbolAtName::IndexOfSeveral)
     }
 
-    /// Whether `a.name` and `b.name` resolve to the same property. Unknown counts as the same.
+    /// Whether the names in `a.name` and `b.name` have the same symbol.
     fn same_property(&mut self, file: FileId, a: ExprId, b: ExprId) -> bool {
-        match (self.property_found(file, a), self.property_found(file, b)) {
-            (Some(x), Some(y)) => x == y,
-            _ => true,
+        match (self.symbol_at_name(file, a), self.symbol_at_name(file, b)) {
+            (Some(SymbolAtName::Property(x, n)), Some(SymbolAtName::Property(y, m))) => {
+                n == m && x == y
+            }
+            (Some(SymbolAtName::Index(x, i)), Some(SymbolAtName::Index(y, j))) => (x, i) == (y, j),
+            (None, None) => true,
+            _ => false,
         }
     }
 

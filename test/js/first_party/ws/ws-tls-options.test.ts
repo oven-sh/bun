@@ -88,7 +88,15 @@ describe.concurrent("ws TLS options", () => {
       otherCa: await dial(server.url, { ca: ca1 }),
       emptyCa: await dial(server.url, { ca: "" }),
       unverified: await dial(server.url, { rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] }),
-    }).toEqual({ none: "refused", ca: anonymous, otherCa: "refused", emptyCa: "refused", unverified: anonymous });
+      serverOption: await dial(server.url, { agent: new https.Agent({ ca, dhparam: "auto" }) }),
+    }).toEqual({
+      none: "refused",
+      ca: anonymous,
+      otherCa: "refused",
+      emptyCa: "refused",
+      unverified: anonymous,
+      serverOption: anonymous,
+    });
   });
 
   test("only an own rejectUnauthorized: false disables verification", async () => {

@@ -390,6 +390,8 @@ const nodeClientTlsKeys = [
 
 // `options` of tls.connect(), as a null-prototype copy, to the `tls` option of fetch() and WebSocket.
 function nodeClientTlsToNative(options) {
+  // BoringSSL has no DHE suites to apply it to.
+  options.dhparam = undefined;
   validateSecureContextOptions(options);
   if (options.ciphers) {
     const { cipherList, tls13Only } = stripTls13CipherNames(options.ciphers);

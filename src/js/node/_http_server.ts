@@ -361,7 +361,7 @@ function Server(options, callback): void {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
     }
 
-    let passphrase = options.passphrase;
+    let passphrase = options.passphrase || undefined;
     if (passphrase && typeof passphrase !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
     }
@@ -378,17 +378,25 @@ function Server(options, callback): void {
 
     if (tlsHelpers) {
       const { secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // A falsy value counts as absent, like in tls.Server.
+      // A falsy value counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
       const secureProtocol = options.secureProtocol || undefined;
       const minVersionOption = options.minVersion || undefined;
       const maxVersionOption = options.maxVersion || undefined;
+      const sessionTimeout = options.sessionTimeout || undefined;
       tlsHelpers.validateSecureContextOptions({
         ...options,
         secureProtocol,
         minVersion: minVersionOption,
         maxVersion: maxVersionOption,
+        sessionTimeout,
+        passphrase,
+        ciphers: options.ciphers || undefined,
+        clientCertEngine: options.clientCertEngine || undefined,
+        ticketKeys: options.ticketKeys || undefined,
+        // BoringSSL has no DHE suites to apply it to.
+        dhparam: undefined,
       });
-      const crl = options.crl;
+      const crl = options.crl || undefined;
       if (crl) {
         tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
       }
@@ -409,7 +417,7 @@ function Server(options, callback): void {
         cert,
         ca,
         crl,
-        sessionTimeout: options.sessionTimeout ?? 0,
+        sessionTimeout: sessionTimeout ?? 0,
         sigalgs: options.sigalgs,
         ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
         passphrase,

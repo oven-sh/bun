@@ -1888,7 +1888,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         let hir = self.c.hir(file);
         let (text, written) = (hir.text(name), self.get_text_of_node(file, name));
         match (hir.kind(name), written.first()) {
-            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9' | b'.')) => written.to_vec(),
+            (_, Some(b'[' | b'"' | b'\'' | b'0'..=b'9')) => written.to_vec(),
+            // `.5`. A name that is missing before a `.` is not written.
+            (_, Some(b'.')) if written.get(1).is_some_and(u8::is_ascii_digit) => written.to_vec(),
             (Kind::ComputedPropertyName, _) => match hir.data(hir.expression(name)) {
                 NodeData::Expr(e) => self.entity_name_text(file, e),
                 _ => None,

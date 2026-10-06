@@ -794,6 +794,18 @@ for (const noImplicitAny of [true, false]) {
   );
 }
 
+// A pattern has no name: its symbol is the one that stands for a missing name.
+differential("a parameter property that is a pattern and is never read", async () => {
+  const modifiers = ["private", "public", "protected", "readonly", "private readonly"];
+  const patterns = ["[a]: number[]", "{ a }: { a: number }", "[a] = [1]", "{ a: [b] }: { a: number[] }", "[]: []"];
+  const cases = [...product(modifiers, patterns)].map(
+    ([modifier, pattern]) => `(class { constructor(x: number, ${modifier} ${pattern}, private y = x) {} });`,
+  );
+  for (const options of [{ noUnusedLocals: true }, { noUnusedParameters: true }, {}]) {
+    expect(await casesThatDiffer(options, [], cases, 1)).toEqual([]);
+  }
+});
+
 // What `export =` names, with what `declare module "m"` adds to the module, is named after the file that it is in.
 // `@types/react-dom` adds to "react".
 differential("a module with `export =`, what is added to it, how it is imported, in a message", async () => {

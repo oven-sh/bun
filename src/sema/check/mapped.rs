@@ -89,9 +89,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.generic_mapped_types_cut_short.contains(&ty) {
                     return false;
                 }
-                let is_in_progress = self.generic_mapped_types_in_progress.contains(&ty);
+                // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type.
                 self.generic_mapped_types_in_progress.push(ty);
-                let name = if is_in_progress && self.is_half_of_stack_in_use() {
+                let name = if self.is_half_of_stack_in_use() {
                     self.generic_mapped_types_cut_short.push(ty);
                     self.instantiation_count = 5_000_000;
                     self.instantiation_too_deep()

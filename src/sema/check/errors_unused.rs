@@ -1985,9 +1985,19 @@ impl Checker<'_, '_> {
                         let is_referenced = property.is_some()
                             && (u.referenced_members).contains(&self.files().sym(file, property));
                         if hir[p].flags.contains(Flags::PRIVATE) && !is_referenced {
-                            let at = self.place_of_token(file, hir[hir[p].pat].pos);
-                            let name = hir.text(hir.node(hir[p].pat));
-                            self.report_unused(u, hir.node(p), false, at, 6138, &[Arg::Atom(name)]);
+                            let pat = hir[p].pat;
+                            // `ast.SymbolName(parameter.Symbol())`: a pattern (1187) has no name, and
+                            // its symbol is `InternalSymbolNameMissing`.
+                            let (at, name) = match hir[pat].kind {
+                                PatKind::Ident(name) => {
+                                    (self.place_of_token(file, hir[pat].pos), Arg::Atom(name))
+                                }
+                                _ => (
+                                    (file, hir[pat].pos, self.end_of_pat(file, pat)),
+                                    Arg::Bytes(b"\xFEmissing"),
+                                ),
+                            };
+                            self.report_unused(u, hir.node(p), false, at, 6138, &[name]);
                         }
                     }
                 }

@@ -7200,6 +7200,23 @@ export type W2 = { w: Wrap<[1]> };
       expect(exitCode).toBe(1);
     });
 
+    test("a mapped type whose `as` clause is a larger instantiation of itself at every level", async () => {
+      using dir = project({
+        "a.ts": `
+export type A<T> = { [K in "a" as A<T[]>]: 1 };
+type Box<T> = { v: T };
+export type B<T> = { [K in "a" as B<Box<T>>]: 1 };
+export type C<T> = { [K in keyof T as C<T[]> & string]: 1 };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").filter(line => line.includes("TS2322"))).toEqual([
+        "a.ts(2,35): error TS2322: Type 'A<T[]>' is not assignable to type 'string | number | symbol'.",
+        "a.ts(4,35): error TS2322: Type 'B<Box<T>>' is not assignable to type 'string | number | symbol'.",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("a callback in a loop whose receiver depends on the variable of the loop", async () => {
       using dir = project({
         "a.ts": `interface S { nxt: S | null; id: string; n: number; kids: S[]; gen<T>(x: T): T; over(a: string): S; over(a: number): S | null; p: Promise<S | null>; get(): S | null }

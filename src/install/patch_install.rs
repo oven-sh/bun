@@ -136,17 +136,10 @@ pub struct InstallContext {
 
 type ResolutionTag = crate::resolution::Tag;
 
-/// Hashed ahead of the patch file. A patched cache folder is named by the
-/// patch hash, so a folder that a version without [`PatchStamp`] wrote is
-/// never taken for one of this version.
+/// Part of the patch hash, so a patched cache folder of a version without [`PatchStamp`] is never reused.
 const PATCHED_FOLDER_LAYOUT: &[u8] = b"bun patched folder 2\0";
 
-/// Where a patched copy of a package names its patch: in the file that the
-/// hoisted linker's up-to-date check (`PackageInstall::verify`) reads for
-/// every package, so a copy is never taken for another build of the same
-/// version. For a git or github package that file is `.bun-tag` and the hash
-/// is its second line. For every other package it is `package.json` and the
-/// hash is its first key.
+/// The patch hash in a patched copy: first key of package.json, or line 2 of `.bun-tag` for git.
 pub(crate) struct PatchStamp;
 
 impl PatchStamp {
@@ -186,9 +179,7 @@ impl PatchStamp {
             && bun_tag.ends_with(hex)
     }
 
-    /// `contents` of [`Self::file`] with `patch_hash` in it. `None` when there
-    /// is no place for it: a `package.json` that is not an object, which the
-    /// up-to-date check rejects for every build.
+    /// `None` for a package.json that is not an object. `PackageInstall::verify` rejects that one anyway.
     fn stamped(tag: ResolutionTag, contents: &[u8], patch_hash: u64) -> Option<Vec<u8>> {
         let mut buf = [0u8; 16];
         let hex = Self::hex(&mut buf, patch_hash);
@@ -205,8 +196,7 @@ impl PatchStamp {
         }
     }
 
-    /// `contents` of [`Self::file`] as the unpatched package has it. `None`
-    /// when `contents` holds no patch hash.
+    /// `contents` of [`Self::file`] as the unpatched package has it. `None` when it holds no patch hash.
     fn unstamped(tag: ResolutionTag, contents: &[u8]) -> Option<Vec<u8>> {
         match tag {
             ResolutionTag::Git | ResolutionTag::Github => {
@@ -217,10 +207,7 @@ impl PatchStamp {
         }
     }
 
-    /// `bun patch --commit` diffs a copy of the package against the unpatched
-    /// cache folder. The patch hash in the copy is not part of the package, so
-    /// it is out of `Self::file` while the diff runs. Returns what
-    /// [`Self::put_back`] writes again.
+    /// Takes the patch hash out of the copy that `bun patch --commit` diffs, for [`Self::put_back`].
     pub(crate) fn take_out(folder: &[u8], tag: ResolutionTag) -> Option<Vec<u8>> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = path::resolve_path::join_z_buf::<path::platform::Auto>(

@@ -3993,18 +3993,29 @@ declare module "bun" {
      *
      * console.log(verify); // true
      * ```
+     *
+     * @throws If the algorithm is specified and does not match the hash
+     * @throws If the algorithm is invalid
+     * @throws If the hash is invalid
      */
     verifySync(
       /**
        * The password to verify.
+       *
+       * If empty, always returns false
        */
       password: Bun.StringOrBuffer,
       /**
        * The hash to verify against.
+       *
+       * If empty, always returns false
        */
       hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm is inferred from the hash.
+       *
+       * If specified and the algorithm does not match the hash, this function
+       * throws an error.
        */
       algorithm?: Password.AlgorithmLabel,
     ): boolean;

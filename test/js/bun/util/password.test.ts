@@ -367,6 +367,13 @@ describe.concurrent("argon2 hashes with memoryCost below 8 from earlier Bun vers
     });
   }
 
+  test("under the name of their own variant", async () => {
+    for (const algorithm of ["argon2id", "argon2i", "argon2d"] as const) {
+      expect(await password.verify("hello", legacy[algorithm], algorithm)).toBeTrue();
+      expect(password.verifySync("hello", legacy[algorithm], algorithm)).toBeTrue();
+    }
+  });
+
   test("hashing with memoryCost below 8 is still rejected", () => {
     expect(() => password.hashSync("hello", { algorithm: "argon2id", memoryCost: 4 })).toThrow(
       "Memory cost must be at least 8",
@@ -544,4 +551,151 @@ test("verifySync reads the password buffer only after every argument has been co
   };
   expect(password.verifySync(passwordBytes, hashObject as any)).toBeFalse();
   expect(passwordBytes.byteLength).toBe(0);
+});
+
+describe("verify with a named algorithm", () => {
+  type Label = "argon2id" | "argon2i" | "argon2d" | "bcrypt";
+  const labels: Label[] = ["argon2id", "argon2i", "argon2d", "bcrypt"];
+  const argonLabels = ["argon2id", "argon2i", "argon2d"] as const;
+  const invalidEncoding = { throws: "PASSWORD_INVALID_ENCODING" };
+
+  // A hash of "pw" from each algorithm, with the cheapest parameters.
+  const hashAll = (): Record<Label, string> => ({
+    argon2id: password.hashSync("pw", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 }),
+    argon2i: password.hashSync("pw", { algorithm: "argon2i", memoryCost: 8, timeCost: 1 }),
+    argon2d: password.hashSync("pw", { algorithm: "argon2d", memoryCost: 8, timeCost: 1 }),
+    bcrypt: password.hashSync("pw", { algorithm: "bcrypt", cost: 4 }),
+  });
+
+  // What verifySync and verify do with the same arguments: the boolean they
+  // answer, or the `code` of the error they throw or reject with.
+  async function outcome(pw: string, hash: string, algorithm?: Label) {
+    let sync: { returns: boolean } | { throws: unknown };
+    try {
+      sync = { returns: password.verifySync(pw, hash, algorithm) };
+    } catch (e: any) {
+      sync = { throws: e.code };
+    }
+    const promise = password.verify(pw, hash, algorithm);
+    expect(promise).toBeInstanceOf(Promise);
+    const async = await promise.then(
+      returns => ({ returns }),
+      e => ({ throws: e.code }),
+    );
+    return { sync, async };
+  }
+  const both = <T>(answer: T) => ({ sync: answer, async: answer });
+
+  test("a hash made with another algorithm is refused", async () => {
+    const hashes = hashAll();
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const made of labels) {
+      for (const named of labels) {
+        if (made === named) continue;
+        for (const pw of ["pw", "not pw"]) {
+          const cell = `${made} hash as "${named}", password "${pw}"`;
+          actual[cell] = await outcome(pw, hashes[made], named);
+          expected[cell] = both(invalidEncoding);
+        }
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  test("a hash verifies under its own name and under no name", async () => {
+    const hashes = hashAll();
+    for (const made of labels) {
+      for (const named of [made, undefined]) {
+        expect(await outcome("pw", hashes[made], named)).toEqual(both({ returns: true }));
+        expect(await outcome("not pw", hashes[made], named)).toEqual(both({ returns: false }));
+      }
+    }
+
+    // "bcrypt" names every `$2?$` prefix.
+    const bcrypt2y = "$2y$" + hashes.bcrypt.slice("$2b$".length);
+    expect(hashes.bcrypt).toStartWith("$2b$");
+    expect(await outcome("pw", bcrypt2y, "bcrypt")).toEqual(both({ returns: true }));
+
+    // "bcrypt" also names the PHC form of a bcrypt hash.
+    const bcryptPhc = "$bcrypt$r=4$AQMjfxOJxh56OHmHXvRMBw$pOEN04p167ZD9MnIK/OBUdguSoHoFzM";
+    for (const named of ["bcrypt", undefined] as const) {
+      expect(await outcome("pw", bcryptPhc, named)).toEqual(both({ returns: true }));
+      expect(await outcome("not pw", bcryptPhc, named)).toEqual(both({ returns: false }));
+    }
+  });
+
+  test("a hash with no version segment follows the same rule", async () => {
+    const noVersion = hashAll().argon2d.split("$v=19$").join("$");
+    expect(noVersion).toStartWith("$argon2d$m=8,t=1,p=1$");
+    expect(await outcome("pw", noVersion, "argon2d")).toEqual(both({ returns: true }));
+    expect(await outcome("pw", noVersion)).toEqual(both({ returns: true }));
+    expect(await outcome("pw", noVersion, "argon2id")).toEqual(both(invalidEncoding));
+  });
+
+  test("an argon2 id in another letter case is refused under every name", async () => {
+    const hashes = hashAll();
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const made of argonLabels) {
+      const capitalised = "$A" + hashes[made].slice("$a".length);
+      const id = capitalised.slice(0, capitalised.indexOf("$", 1) + 1);
+      expect(id).toBe(`$A${made.slice(1)}$`);
+      for (const named of labels) {
+        actual[`${id} as "${named}"`] = await outcome("pw", capitalised, named);
+        expected[`${id} as "${named}"`] = both(invalidEncoding);
+      }
+      actual[`${id} with no name`] = await outcome("pw", capitalised);
+      expected[`${id} with no name`] = both({ throws: "PASSWORD_UNSUPPORTED_ALGORITHM" });
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  test("a malformed hash: its own name changes nothing, any other name is refused", async () => {
+    // [hash, the algorithm its prefix names, the error code with no name]
+    const malformed: [string, Label | undefined, string][] = [
+      ["$argon2id$", "argon2id", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2id$v=19$m=8,t=1,p=1$", "argon2id", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2id$v=16$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2g", "argon2id", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2id$v=19$m=8,t=1$c2FsdHNhbHQ$aGFzaGhhc2g", "argon2id", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2id$v=19$m=8x,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2g", "argon2id", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2id$v=19$m=8,t=100000,p=1$c2FsdHNhbHQ$aGFzaGhhc2g", "argon2id", "PASSWORD_WEAK_PARAMETERS"],
+      ["$argon2i$v=19$m=8,t=1,p=1$!!!$aGFzaGhhc2g", "argon2i", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2i$v=19$m=8,t=1,p=1$c2FsdHNhbHQ", "argon2i", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2d$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2g$extra", "argon2d", "PASSWORD_INVALID_ENCODING"],
+      ["$argon2d$\u00e9", "argon2d", "PASSWORD_INVALID_ENCODING"],
+      ["$2", "bcrypt", "PASSWORD_INVALID_ENCODING"],
+      ["$2b$04$tooshort", "bcrypt", "PASSWORD_INVALID_ENCODING"],
+      ["$2b$99$3MLzY3YfHikKubqO9eczfegEJFCeRK2/kgxwvrZ5BiTAV073ztGTa", "bcrypt", "PASSWORD_WEAK_PARAMETERS"],
+      ["$bcrypt$", "bcrypt", "PASSWORD_INVALID_ENCODING"],
+      ["$bcrypt$r=4$AQMjfxOJxh56OHmHXvRMBw", "bcrypt", "PASSWORD_INVALID_ENCODING"],
+      ["$bcrypt$r=40$AQMjfxOJxh56OHmHXvRMBw$pOEN04p167ZD9MnIK/OBUdguSoHoFzM", "bcrypt", "PASSWORD_WEAK_PARAMETERS"],
+      // An id that only starts with `bcrypt` is read as bcrypt, with or without a name.
+      [
+        "$bcrypt-sha256$v=2,t=2b,r=12$n79VH.0Q2TMWmt3Oqt9uku$Kq4Noyk3094Y2QlB8NdRT8SvGiI4ft2",
+        "bcrypt",
+        "PASSWORD_INVALID_ENCODING",
+      ],
+      ["$scrypt$ln=16,r=8,p=1$c2FsdA$aGFzaA", undefined, "PASSWORD_UNSUPPORTED_ALGORITHM"],
+      ["$argon2id", undefined, "PASSWORD_UNSUPPORTED_ALGORITHM"],
+      ["$", undefined, "PASSWORD_UNSUPPORTED_ALGORITHM"],
+      ["garbage", undefined, "PASSWORD_UNSUPPORTED_ALGORITHM"],
+    ];
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [hash, detected, code] of malformed) {
+      actual[`${hash} with no name`] = await outcome("pw", hash);
+      expected[`${hash} with no name`] = both({ throws: code });
+      for (const named of labels) {
+        actual[`${hash} as "${named}"`] = await outcome("pw", hash, named);
+        expected[`${hash} as "${named}"`] = both(named === detected ? { throws: code } : invalidEncoding);
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  test("an empty password or an empty hash answers false under any name", async () => {
+    expect(await outcome("", hashAll().argon2d, "argon2id")).toEqual(both({ returns: false }));
+    expect(await outcome("pw", "", "bcrypt")).toEqual(both({ returns: false }));
+  });
 });

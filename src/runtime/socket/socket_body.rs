@@ -4700,6 +4700,20 @@ pub(crate) fn js_release_held_flight(
     Ok(JSValue::UNDEFINED)
 }
 
+/// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.
+#[bun_jsc::host_fn]
+pub(crate) fn js_check_server_identity_in_handshake(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket, in_handshake] = callframe.arguments_as_array::<2>();
+    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, in_handshake != JSValue::TRUE));
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 /// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
 #[bun_jsc::host_fn]
 pub(crate) fn js_first_flight_before_fin(

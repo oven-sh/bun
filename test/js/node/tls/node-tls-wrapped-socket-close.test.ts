@@ -799,6 +799,155 @@ describe("an error of the wrapped socket is reported on the TLS socket", () => {
       server.close();
     }
   });
+
+  // Node has one engine. Bun adopts the fd of "a connected socket" and runs TLS over the stream for the other two.
+  const transports = ["a connected socket", "a socket with a write still queued", "a TLS socket"];
+
+  // Makes the TLS socket under test on one side of a connection that runs through a plain TCP relay.
+  // `act` gets it, the socket it wraps, and the relay's end of that socket's TCP connection.
+  async function behindRelay(
+    transport: string,
+    side: string,
+    when: string,
+    act: (raw: net.Socket, peer: net.Socket) => void,
+    withListeners = true,
+  ) {
+    const sockets: net.Socket[] = [];
+    const quiet = <T extends net.Socket>(socket: T) => (sockets.push(socket), socket.on("error", () => {}));
+    const result = Promise.withResolvers<{ added: number; events: string[] }>();
+    const queued = transport === "a socket with a write still queued";
+    const relayEnds: Record<string, net.Socket> = {};
+
+    function wrap(isServer: boolean, raw: net.Socket) {
+      return isServer
+        ? new tls.TLSSocket(raw, { isServer, key, cert })
+        : tls.connect({ socket: raw, rejectUnauthorized: false });
+    }
+    function underTest(raw: net.Socket) {
+      sockets.push(raw);
+      const before = raw.listenerCount("error");
+      if (queued) (raw.cork(), raw.write("pre"));
+      const tlsSocket = wrap(side === "server", raw);
+      if (queued) raw.uncork();
+      sockets.push(tlsSocket);
+      const run = () => {
+        const added = raw.listenerCount("error") - before;
+        const events: string[] = [];
+        const closed = [raw, tlsSocket].map((socket, i) => {
+          const name = i ? "tls" : "raw";
+          if (i) socket.on("_tlsError", (err: NodeJS.ErrnoException) => events.push(`tls _tlsError ${err.code}`));
+          if (withListeners)
+            socket.on("error", (err: NodeJS.ErrnoException) => events.push(`${name} error ${err.code}`));
+          return new Promise<void>(resolve =>
+            socket.on("close", hadError => (events.push(`${name} close hadError=${hadError}`), resolve())),
+          );
+        });
+        tlsSocket.resume();
+        act(raw, relayEnds[side]);
+        result.resolve(Promise.all(closed).then(() => ({ added, events })));
+      };
+      const soon = () => void setImmediate(run);
+      if (when === "after the handshake") tlsSocket.once(side === "server" ? "secure" : "secureConnect", soon);
+      else soon();
+    }
+    function farEnd(raw: net.Socket) {
+      quiet(raw);
+      const start = () => (when === "after the handshake" ? quiet(wrap(side !== "server", raw)) : raw).resume();
+      if (queued) raw.once("readable", () => (raw.read(3), start()));
+      else start();
+    }
+
+    const onServerEnd = side === "server" ? underTest : farEnd;
+    const onClientEnd = side === "server" ? farEnd : underTest;
+    const overTLS = transport === "a TLS socket";
+    const server = overTLS ? tls.createServer({ key, cert }, onServerEnd) : net.createServer(onServerEnd);
+    const port = await listen(server);
+    const relay = net.createServer({ allowHalfOpen: true }, client => {
+      relayEnds.client = quiet(client);
+      relayEnds.server = quiet(net.connect({ port, host: "127.0.0.1", allowHalfOpen: true }));
+      client.pipe(relayEnds.server).pipe(client);
+    });
+    const dial = { port: await listen(relay), host: "127.0.0.1", rejectUnauthorized: false };
+    const dialed: net.Socket = overTLS ? tls.connect(dial) : net.connect(dial);
+    dialed.once(overTLS ? "secureConnect" : "connect", () => onClientEnd(dialed));
+    try {
+      return await result.promise;
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      relay.close();
+      server.close();
+    }
+  }
+
+  for (const transport of transports) {
+    for (const side of ["client", "server"]) {
+      for (const when of ["before the handshake completes", "after the handshake"]) {
+        const early = when !== "after the handshake";
+        // destroy(err) of the TLS socket itself: a server-side wrap still has its own first 'error' listener.
+        const destroyedWith = (code: string) => [
+          ...(side === "server" ? [`tls _tlsError ${code}`] : []),
+          `tls error ${code}`,
+          "raw close hadError=false",
+          "tls close hadError=true",
+        ];
+        const forwarded = (code: string) => [
+          `tls _tlsError ${code}`,
+          ...(side === "client" ? [`tls error ${code}`] : []),
+          `raw error ${code}`,
+        ];
+        const rows: [string, (raw: net.Socket, peer: net.Socket) => void, string[], boolean?][] = [
+          // TLSWrap owns the reads: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
+          ["the peer resets the connection", (_raw, peer) => peer.resetAndDestroy(), destroyedWith("ECONNRESET")],
+          [
+            "the peer sends a FIN",
+            (_raw, peer) => peer.end(),
+            side === "client" && early
+              ? destroyedWith("ECONNRESET")
+              : ["raw close hadError=false", "tls close hadError=false"],
+            // Bun's server-side wrap of an adopted fd reports a FIN ahead of the handshake as ECONNRESET.
+            typeof Bun !== "undefined" && transport === transports[0] && side === "server" && early,
+          ],
+          [
+            "destroy(err) of the wrapped socket",
+            raw => raw.destroy(failure()),
+            [...forwarded("TRANSPORT_FAILED"), "tls close hadError=false", "raw close hadError=true"],
+          ],
+          [
+            "destroy() of the wrapped socket",
+            raw => raw.destroy(),
+            ["tls close hadError=false", "raw close hadError=false"],
+          ],
+        ];
+        for (const [what, act, expected, skip] of rows) {
+          const wrap = side === "server" ? "new TLSSocket(socket, { isServer })" : "tls.connect({ socket })";
+          test(`${wrap} over ${transport}, ${when}: ${what}`, { skip }, async () => {
+            const { added, events } = await behindRelay(transport, side, when, act);
+            // When its owner destroys the wrapped socket, node closes the TLS socket first and Bun the wrapped one.
+            const closes = what.startsWith("destroy") ? -2 : events.length;
+            assert.deepStrictEqual(
+              { added, events: [...events.slice(0, closes), ...events.slice(closes).sort().reverse()] },
+              { added: 1, events: expected },
+            );
+          });
+        }
+      }
+    }
+
+    // Bun only: node throws it. A reset is reported to a socket that listens.
+    test(
+      `tls.connect({ socket }) over ${transport} with no 'error' listener: the peer resets the connection`,
+      {
+        skip: typeof Bun === "undefined",
+      },
+      async () => {
+        const reset = (_raw: net.Socket, peer: net.Socket) => peer.resetAndDestroy();
+        assert.deepStrictEqual(await behindRelay(transport, "client", "after the handshake", reset, false), {
+          added: 1,
+          events: ["raw close hadError=false", "tls close hadError=false"],
+        });
+      },
+    );
+  }
 });
 
 test("a secureContext that is not one is refused by the constructor", () => {

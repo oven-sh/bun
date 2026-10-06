@@ -709,6 +709,10 @@ const binaryTypes = {
 } as const;
 if (expect.extend)
   expect.extend({
+    toMatchNodeModulesAt,
+    toHaveBins,
+    toBeValidBin,
+    toBeWorkspaceLink,
     toHaveTestTimedOutAfter(actual: any, expected: number) {
       if (typeof actual !== "string") {
         return {
@@ -1677,7 +1681,6 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
-  // Exported from this file. The tests that use them pass them to `expect.extend()`.
   toMatchNodeModulesAt(root: string): Promise<void>;
   toHaveBins(expectedBins: string[]): void;
   toBeValidBin(expectedLinkPath: string): void;

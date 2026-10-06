@@ -1154,3 +1154,33 @@ describe("sessionTimeout", () => {
     expect(lifetime).toBeWithin(7 - skew, 8);
   });
 });
+
+it("getCiphers() lists the supported cipher names, lower-cased and sorted", () => {
+  const ciphers = tls.getCiphers();
+  expect(ciphers).toEqual([...new Set(ciphers)].sort());
+  expect(ciphers).toEqual(ciphers.map(name => name.toLowerCase()));
+  expect(ciphers).toEqual(
+    expect.arrayContaining([
+      "aes256-sha",
+      "ecdhe-rsa-aes128-gcm-sha256",
+      "tls_aes_128_gcm_sha256",
+      "tls_aes_256_gcm_sha384",
+      "tls_chacha20_poly1305_sha256",
+    ]),
+  );
+  for (const name of ciphers) expect(() => tls.createSecureContext({ ciphers: name.toUpperCase() })).not.toThrow();
+
+  tls.getCiphers().length = 0;
+  expect(tls.getCiphers()).toEqual(ciphers);
+});
+
+it("tls.SecureContext is the class of what createSecureContext() returns", () => {
+  const context = tls.createSecureContext({});
+  expect(context).toBeInstanceOf(tls.SecureContext);
+  expect(context.constructor).toBe(tls.SecureContext);
+  expect(Object.keys(tls.SecureContext.prototype)).toEqual([]);
+  expect({}).not.toBeInstanceOf(tls.SecureContext);
+  expect(new tls.SecureContext()).toBeInstanceOf(tls.SecureContext);
+  // @ts-expect-error the types only admit `new`
+  expect(tls.SecureContext()).toBeInstanceOf(tls.SecureContext);
+});

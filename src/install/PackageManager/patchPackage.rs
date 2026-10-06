@@ -732,6 +732,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
+    let patch_hash: Option<u64>;
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
@@ -863,6 +864,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 );
                 let cache_dir = cache_result.cache_dir;
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
+                patch_hash = existing_patchfile_hash;
 
                 #[cfg(windows)]
                 let buf = resolve_path::path_to_posix_buf::<u8>(argument, &mut win_normalizer[..])
@@ -924,6 +926,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
                 let cache_dir = cache_result.cache_dir;
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
+                patch_hash = existing_patchfile_hash;
 
                 let module_folder_ =
                     resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
@@ -940,6 +943,19 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
     let module_folder: &[u8] = &module_folder;
     let pkg_name: &[u8] = &pkg_name;
+
+    // This copy has no way to rebuild the entry, so an incomplete one is an error, not an editing base.
+    if let Some(patch_hash) = patch_hash {
+        let subpath = bun_core::ZBox::from_bytes(cache_dir_subpath);
+        if !super::directories::is_patched_package_in_cache_at(cache_dir, &subpath, patch_hash) {
+            bun_core::pretty_error!(
+                "<r><red>error<r>: the patched copy of <b>{}<r> in the cache is incomplete: {}\n\nRun <cyan>bun install --force<r> to rebuild it, then try again.<r>\n",
+                bstr::BStr::new(pkg_name),
+                bstr::BStr::new(cache_dir_subpath),
+            );
+            Global::crash();
+        }
+    }
 
     // The package may be installed using the hard link method,
     // meaning that changes to the folder will also change the package in the cache.

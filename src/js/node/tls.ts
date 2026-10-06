@@ -708,7 +708,11 @@ function TLSSocket(socket?, options?) {
   }
   // Internal path: keep the per-digest cache (the user-facing constructors,
   // createSecureContext() and new tls.SecureContext(), own theirs exclusively).
-  this[ksecureContext] = options.secureContext || new InternalSecureContext(options, true);
+  const secureContext = options.secureContext;
+  if (secureContext && !(secureContext.context instanceof NativeSecureContext)) {
+    throw $ERR_TLS_INVALID_CONTEXT("context must be a SecureContext");
+  }
+  this[ksecureContext] = secureContext || new InternalSecureContext(options, true);
   this.authorized = false;
   this.secureConnecting = true;
   this._secureEstablished = false;

@@ -4197,3 +4197,71 @@ describe("a server-side handshake failure reported under a JS call emits 'close'
     }
   });
 });
+
+// Bun only: node reports the reset on the wrapped socket, which has no 'error' listener here.
+it("closes a server wrap of a connection whose native socket is already gone", async () => {
+  const accepted = Promise.withResolvers<net.Socket>();
+  const rawServer = net.createServer(socket => {
+    socket.write("x");
+    accepted.resolve(socket);
+  });
+  let outgoing: net.Socket | undefined;
+  let wrapped: TLSSocket | undefined;
+  try {
+    await once(rawServer.listen(0, "127.0.0.1"), "listening");
+    outgoing = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
+    // The byte stays unread, so the reset closes the native socket and the EOF queues behind the byte.
+    const byteBuffered = Promise.withResolvers<void>();
+    const eofBuffered = Promise.withResolvers<void>();
+    let readableEvents = 0;
+    outgoing.on("readable", () => (++readableEvents === 1 ? byteBuffered : eofBuffered).resolve());
+    await byteBuffered.promise;
+    (await accepted.promise).resetAndDestroy();
+    await eofBuffered.promise;
+    expect({ destroyed: outgoing.destroyed, pending: outgoing.pending }).toEqual({ destroyed: false, pending: false });
+
+    wrapped = new TLSSocket(outgoing, { isServer: true, ...COMMON_CERT });
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    outgoing.on("close", () => events.push("raw close"));
+    wrapped.on("error", err => events.push(`error: ${err.message}`));
+    wrapped.on("close", () => {
+      events.push("close");
+      closed.resolve();
+    });
+    await closed.promise;
+    expect(events).toEqual(["raw close", "close"]);
+  } finally {
+    wrapped?.destroy();
+    outgoing?.destroy();
+    rawServer.close();
+  }
+});
+
+// Bun only: node throws ERR_INVALID_HANDLE_TYPE.
+it("resetAndDestroy() of a server wrap on the stream-level engine destroys the wrapped socket", async () => {
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  const rawServer = net.createServer(raw => {
+    raw.cork();
+    raw.write("220 banner\r\n");
+    const wrapped = new TLSSocket(raw, { isServer: true, ...COMMON_CERT });
+    raw.uncork();
+    raw.on("close", () => events.push("raw close"));
+    wrapped.on("close", () => {
+      events.push("close");
+      closed.resolve();
+    });
+    wrapped.resetAndDestroy();
+  });
+  await once(rawServer.listen(0, "127.0.0.1"), "listening");
+  const peer = net.connect({ port: (rawServer.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
+  peer.on("error", () => {});
+  try {
+    await Promise.all([closed.promise, once(peer.resume(), "end")]);
+    expect(events).toEqual(["raw close", "close"]);
+  } finally {
+    peer.destroy();
+    rawServer.close();
+  }
+});

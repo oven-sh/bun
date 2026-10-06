@@ -14,10 +14,12 @@
  *   node --test test/js/node/tls/node-tls-wrapped-socket-close.test.ts
  */
 import assert from "node:assert";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
 import { describe, test } from "node:test";
 import tls from "node:tls";
 
@@ -286,6 +288,244 @@ describe("the owner destroys the TLS socket with an error", () => {
     );
     assert.deepStrictEqual(events, destroyed);
   });
+});
+
+// 'error' and 'close' only, and no 'close' argument for the wrapped socket: node passes none when it never had a handle.
+function lifecycleLog() {
+  const events: string[] = [];
+  const closed: Promise<void>[] = [];
+  function observe(name: string, socket: Duplex, onError = true) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    closed.push(promise);
+    if (onError) socket.on("error", (err: NodeJS.ErrnoException) => events.push(`${name} error ${err.code}`));
+    socket.on("close", hadError => {
+      events.push(name === "tls" ? `tls close hadError=${hadError}` : `${name} close`);
+      resolve();
+    });
+  }
+  return { events, closed, observe };
+}
+
+// The local port of a live connection: nothing listens on it, and no concurrent listen(0) can be handed it.
+async function refusedPort() {
+  const sink = net.createServer();
+  const holder = net.connect(await listen(sink), "127.0.0.1");
+  const [[accepted]] = await Promise.all([once(sink, "connection"), once(holder, "connect")]);
+  return {
+    port: (holder.address() as net.AddressInfo).port,
+    async [Symbol.asyncDispose]() {
+      holder.destroy();
+      accepted.destroy();
+      sink.close();
+      await once(sink, "close");
+    },
+  };
+}
+
+const wraps: [string, (raw: Duplex) => tls.TLSSocket][] = [
+  ["tls.connect({ socket })", raw => tls.connect({ socket: raw, rejectUnauthorized: false })],
+  ["new TLSSocket(socket)", raw => new tls.TLSSocket(raw as net.Socket, { rejectUnauthorized: false })],
+  ["new TLSSocket(socket, { isServer })", raw => new tls.TLSSocket(raw as net.Socket, { isServer: true, key, cert })],
+];
+
+describe("the TLS socket is destroyed in the tick it was made", () => {
+  const both = ["raw close", "tls close hadError=false"];
+
+  // No 'error' listener on the wrapped socket: a connect left running would fail as an uncaught exception.
+  async function destroyedAtOnce(raw: Duplex, wrap: (raw: Duplex) => tls.TLSSocket) {
+    const { events, closed, observe } = lifecycleLog();
+    const tlsSocket = wrap(raw);
+    observe("raw", raw, false);
+    observe("tls", tlsSocket);
+    tlsSocket.destroy();
+    events.push(`raw.destroyed=${raw.destroyed}`);
+    await Promise.all(closed);
+    return events;
+  }
+
+  for (const [name, wrap] of wraps) {
+    test(`${name} over a socket whose connect will be refused`, async () => {
+      await using refused = await refusedPort();
+      const events = await destroyedAtOnce(net.connect(refused.port, "127.0.0.1"), wrap);
+      assert.deepStrictEqual(events, ["raw.destroyed=true", ...both]);
+    });
+
+    test(`${name} over a socket that was never dialed`, async () => {
+      assert.deepStrictEqual(await destroyedAtOnce(new net.Socket(), wrap), ["raw.destroyed=true", ...both]);
+    });
+  }
+
+  test("new TLSSocket(socket, { isServer }) over an accepted socket releases the connection", async () => {
+    const accepted = Promise.withResolvers<string[]>();
+    const server = net.createServer(raw => accepted.resolve(destroyedAtOnce(raw, wraps[2][1])));
+    const peer = net.connect(await listen(server), "127.0.0.1").resume();
+    try {
+      await once(peer, "close");
+      assert.deepStrictEqual(await accepted.promise, ["raw.destroyed=true", ...both]);
+      server.close();
+      await once(server, "close");
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  test("tls.connect({ socket }) over an established TLS socket", async () => {
+    const server = tls.createServer({ key, cert }, peer => peer.on("error", () => {}).resume());
+    const inner = tls.connect({ port: await listen(server), host: "127.0.0.1", rejectUnauthorized: false });
+    try {
+      await once(inner, "secureConnect");
+      assert.deepStrictEqual(await destroyedAtOnce(inner, wraps[0][1]), ["raw.destroyed=true", ...both]);
+    } finally {
+      inner.destroy();
+      server.close();
+    }
+  });
+});
+
+test("destroy() of a TLS socket made over a socket with a write still queued closes a connection the peer keeps open", async () => {
+  const { events, closed, observe } = lifecycleLog();
+  const server = net.createServer({ allowHalfOpen: true }, peer => peer.on("error", () => {}).resume());
+  const raw = net.connect(await listen(server), "127.0.0.1");
+  try {
+    await once(raw, "connect");
+    raw.cork();
+    raw.write("STARTTLS\r\n");
+    const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+    raw.uncork();
+    observe("raw", raw);
+    observe("tls", tlsSocket);
+    setImmediate(() => tlsSocket.destroy());
+    await Promise.all(closed);
+    assert.deepStrictEqual(events, ["raw close", "tls close hadError=false"]);
+  } finally {
+    raw.destroy();
+    server.close();
+  }
+});
+
+describe("the wrapped socket goes away before it connected", () => {
+  async function wrapped(raw: net.Socket, wrap: (raw: Duplex) => tls.TLSSocket, rawListeners = true) {
+    const { events, closed, observe } = lifecycleLog();
+    if (rawListeners) observe("raw", raw);
+    const tlsSocket = wrap(raw);
+    tlsSocket.on("_tlsError", (err: NodeJS.ErrnoException) => events.push(`tls _tlsError ${err.code}`));
+    observe("tls", tlsSocket);
+    return { events, closed };
+  }
+
+  // Only a socket from tls.connect() has released control, so only it re-emits '_tlsError' as 'error'.
+  for (const [name, wrap] of wraps) {
+    const tlsError = ["tls _tlsError ECONNREFUSED", ...(wrap === wraps[0][1] ? ["tls error ECONNREFUSED"] : [])];
+
+    test(`${name}: a refused connect`, async () => {
+      await using refused = await refusedPort();
+      const { events, closed } = await wrapped(net.connect(refused.port, "127.0.0.1"), wrap);
+      await Promise.all(closed);
+      assert.deepStrictEqual(events, ["raw error ECONNREFUSED", ...tlsError, "raw close", "tls close hadError=false"]);
+    });
+
+    test(`${name}: a refused connect() made after the wrap, with listeners on the TLS socket alone`, async () => {
+      await using refused = await refusedPort();
+      const raw = new net.Socket();
+      const { events, closed } = await wrapped(raw, wrap, false);
+      raw.connect(refused.port, "127.0.0.1");
+      await Promise.all(closed);
+      assert.deepStrictEqual(events, [...tlsError, "tls close hadError=false"]);
+    });
+
+    test(`${name}: destroy() of the wrapped socket`, async () => {
+      await using refused = await refusedPort();
+      const raw = net.connect(refused.port, "127.0.0.1");
+      const { events, closed } = await wrapped(raw, wrap);
+      raw.destroy();
+      await Promise.all(closed);
+      assert.deepStrictEqual(events, ["raw close", "tls close hadError=false"]);
+    });
+  }
+
+  test("a socket dialed again after the failure is no longer tied to the closed TLS socket", async () => {
+    await using refused = await refusedPort();
+    const plain = net.createServer(socket => socket.resume().end("plain"));
+    const port = await listen(plain);
+    const raw = net.connect(refused.port, "127.0.0.1");
+    try {
+      const { events, closed } = await wrapped(raw, wraps[0][1]);
+      await Promise.all(closed);
+      events.length = 0;
+      raw.connect(port, "127.0.0.1");
+      const received: Buffer[] = [];
+      raw.on("data", chunk => received.push(chunk));
+      await once(raw, "close");
+      assert.deepStrictEqual([Buffer.concat(received).toString(), ...events], ["plain", "raw close"]);
+    } finally {
+      raw.destroy();
+      plain.close();
+    }
+  });
+});
+
+describe("new TLSSocket(socket, { isServer }) over a socket that is still connecting", () => {
+  const lookups: [string, net.LookupFunction | undefined][] = [
+    ["an IP address", undefined],
+    ["a lookup that answers later", (_host, _options, callback) => void setImmediate(callback, null, "127.0.0.1", 4)],
+  ];
+  for (const [name, lookup] of lookups) {
+    test(`handshakes once it connected to ${name}, and lets the process exit`, async () => {
+      // The listener plays the TLS client over the connection it accepts.
+      const script = `
+        const net = require("node:net"), tls = require("node:tls"), { readFileSync } = require("node:fs");
+        const [key, cert] = ${JSON.stringify([join(fixtures, "agent1-key.pem"), join(fixtures, "agent1-cert.pem")])}.map(f => readFileSync(f));
+        const lookup = ${lookup};
+        const log = [];
+        const server = net.createServer(accepted => {
+          const client = tls.connect({ socket: accepted, rejectUnauthorized: false }, () => client.write("ping"));
+          client.once("data", data => { log.push("client data " + data); client.end(); });
+        }).listen(0, "127.0.0.1", () => {
+          const raw = net.connect({ port: server.address().port, host: lookup ? "localhost" : "127.0.0.1", family: 4, lookup });
+          raw.on("connect", () => log.push("raw connect"));
+          raw.on("close", () => log.push("raw close"));
+          const tlsSocket = new tls.TLSSocket(raw, { isServer: true, key, cert });
+          tlsSocket.on("data", data => tlsSocket.write("echo:" + data + " from " + tlsSocket.remoteAddress));
+          tlsSocket.on("close", () => { log.push("tls close"); server.close(); });
+        });
+        process.on("exit", () => console.log(JSON.stringify(log)));
+      `;
+      const child = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
+      let stdout = "";
+      child.stdout.on("data", chunk => (stdout += chunk));
+      const [exitCode] = await once(child, "exit");
+      assert.deepStrictEqual(JSON.parse(stdout), [
+        "raw connect",
+        "client data echo:ping from 127.0.0.1",
+        "raw close",
+        "tls close",
+      ]);
+      assert.strictEqual(exitCode, 0);
+    });
+  }
+});
+
+test("a transport is still intact inside the 'error' of a handshake that failed over it", async () => {
+  const { events, closed, observe } = lifecycleLog();
+  const transport = new Duplex({ read() {}, write: (_chunk, _encoding, callback) => callback() });
+  const tlsSocket = new tls.TLSSocket(transport as net.Socket, { isServer: true, key, cert });
+  observe("raw", transport);
+  tlsSocket.on("error", () => events.push(`tls error, raw.destroyed=${transport.destroyed}`));
+  observe("tls", tlsSocket, false);
+  transport.push("this is not a ClientHello\r\n");
+  await Promise.all(closed);
+  assert.deepStrictEqual(events, ["tls error, raw.destroyed=false", "raw close", "tls close hadError=true"]);
+});
+
+test("a secureContext that is not one is refused by the constructor", () => {
+  const invalid = { name: "TypeError", code: "ERR_TLS_INVALID_CONTEXT", message: "context must be a SecureContext" };
+  for (const secureContext of [{ context: {} }, {}, tls.createSecureContext().context, "context"]) {
+    for (const isServer of [true, false]) {
+      assert.throws(() => new tls.TLSSocket(new net.Socket(), { isServer, secureContext }), invalid);
+    }
+    assert.throws(() => tls.connect({ port: 1, secureContext }), invalid);
+  }
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

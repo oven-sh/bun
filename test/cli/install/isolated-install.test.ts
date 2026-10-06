@@ -1687,53 +1687,604 @@ describe("a workspace's dependencies have one owner", () => {
     expect(await readdirSorted(bunDir)).toEqual(entries);
   });
 
-  test.concurrent("--filter lays out a workspace that a selected workspace depends on as a full install does", async () => {
-    // `lib` is not selected and `app` depends on it, so root does not queue
-    // `lib` and the reference from `app` reaches it. `lib` still gets its own
-    // place in the tree: nothing above it provides no-deps to its `peer-deps`,
-    // which takes the version the lockfile binds (2.0.0). It does not take app's
-    // no-deps 1.0.0. `bun prune` names the store without the filter and would
-    // remove that entry from under `lib`.
+  test.concurrent(
+    "--filter lays out a workspace that a selected workspace depends on as a full install does",
+    async () => {
+      // `lib` is not selected and `app` depends on it, so root does not queue
+      // `lib` and the reference from `app` reaches it. `lib` still gets its own
+      // place in the tree: nothing above it provides no-deps to its `peer-deps`,
+      // which takes the version the lockfile binds (2.0.0). It does not take app's
+      // no-deps 1.0.0. `bun prune` names the store without the filter and would
+      // remove that entry from under `lib`.
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "workspace-filter",
+            workspaces: ["aaa", "app", "lib"],
+          }),
+          "aaa/package.json": JSON.stringify({
+            name: "aaa",
+            version: "1.0.0",
+            dependencies: { "no-deps": "2.0.0" },
+          }),
+          "app/package.json": JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            dependencies: { "a-dep": "workspace:*", "no-deps": "1.0.0" },
+          }),
+          "lib/package.json": JSON.stringify({
+            name: "a-dep",
+            version: "2.0.0",
+            dependencies: { "peer-deps": "1.0.0" },
+          }),
+        },
+      });
+      const bunDir = join(packageDir, "node_modules", ".bun");
+      const entries = ["no-deps@1.0.0", "no-deps@2.0.0", "node_modules", "peer-deps@1.0.0+e27e69f8c16af2a6"];
+
+      expect(await bun(packageDir, "install", "--filter", "app")).toMatchObject({ exitCode: 0 });
+      expect(await readdirSorted(bunDir)).toEqual(entries);
+
+      expect(await bun(packageDir, "prune")).toMatchObject({
+        stdout: expect.stringContaining("nothing to prune"),
+        exitCode: 0,
+      });
+      expect(await file(join(packageDir, "lib", "node_modules", "peer-deps", "package.json")).json()).toMatchObject({
+        name: "peer-deps",
+      });
+
+      await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+      expect(await readdirSorted(bunDir)).toEqual(entries);
+    },
+  );
+
+  // Each row reaches the workspace `a-dep` (lib) through an edge that has no
+  // `workspace:` in it. lib's `peer-deps` has a peer on `no-deps`. Root has
+  // no-deps 1.0.0 and app has 2.0.0, so a second layout of lib below app is a
+  // second `peer-deps` entry that nothing links.
+  test.concurrent.each([
+    {
+      edge: "a `catalog:` reference",
+      root: { workspaces: { packages: ["lib", "app"], catalog: { "a-dep": "^2.0.0" } } },
+      app: { "a-dep": "catalog:" },
+      link: join("app", "node_modules", "a-dep"),
+      entries: ["no-deps@1.0.0", "no-deps@2.0.0", "node_modules", "peer-deps@1.0.0+7347ae2d86f1441a"],
+    },
+    {
+      edge: "a registry range that an override moves to the workspace's version",
+      root: { workspaces: ["lib", "app"], overrides: { "a-dep": "2.0.0" } },
+      app: { "uses-a-dep-1": "1.0.0" },
+      link: join("node_modules", ".bun", "uses-a-dep-1@1.0.0", "node_modules", "a-dep"),
+      entries: [
+        "no-deps@1.0.0",
+        "no-deps@2.0.0",
+        "node_modules",
+        "peer-deps@1.0.0+7347ae2d86f1441a",
+        "uses-a-dep-1@1.0.0",
+      ],
+    },
+    {
+      edge: "a `*` peer that the resolver binds to the workspace",
+      root: { workspaces: ["lib", "app"] },
+      app: { "peer-a-dep-star": "1.0.0" },
+      link: join("node_modules", ".bun", "peer-a-dep-star@1.0.0+e718bb38612ed067", "node_modules", "a-dep"),
+      entries: [
+        "no-deps@1.0.0",
+        "no-deps@2.0.0",
+        "node_modules",
+        "peer-a-dep-star@1.0.0+e718bb38612ed067",
+        "peer-deps@1.0.0+7347ae2d86f1441a",
+      ],
+    },
+  ])("$edge is a link to the workspace: fresh, from bun.lock and frozen", async ({ root, app, link, entries }) => {
+    const lib = { name: "a-dep", version: "2.0.0", dependencies: { "peer-deps": "1.0.0" } };
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
-        "package.json": JSON.stringify({
-          name: "workspace-filter",
-          workspaces: ["aaa", "app", "lib"],
-        }),
-        "aaa/package.json": JSON.stringify({
-          name: "aaa",
-          version: "1.0.0",
-          dependencies: { "no-deps": "2.0.0" },
-        }),
+        "package.json": JSON.stringify({ name: "workspace-edge", dependencies: { "no-deps": "1.0.0" }, ...root }),
+        "lib/package.json": JSON.stringify(lib),
         "app/package.json": JSON.stringify({
           name: "app",
           version: "1.0.0",
-          dependencies: { "a-dep": "workspace:*", "no-deps": "1.0.0" },
-        }),
-        "lib/package.json": JSON.stringify({
-          name: "a-dep",
-          version: "2.0.0",
-          dependencies: { "peer-deps": "1.0.0" },
+          dependencies: { ...app, "no-deps": "2.0.0" },
         }),
       },
     });
     const bunDir = join(packageDir, "node_modules", ".bun");
-    const entries = ["no-deps@1.0.0", "no-deps@2.0.0", "node_modules", "peer-deps@1.0.0+e27e69f8c16af2a6"];
+    const layout = () =>
+      Promise.all([
+        readdirSorted(bunDir),
+        file(join(packageDir, link, "package.json")).json(),
+        file(join(packageDir, "lib", "node_modules", "peer-deps", "package.json")).json(),
+        file(join(bunDir, "peer-deps@1.0.0+7347ae2d86f1441a", "node_modules", "no-deps", "package.json")).json(),
+      ]);
+    const expected = [
+      entries,
+      lib,
+      expect.objectContaining({ name: "peer-deps" }),
+      { name: "no-deps", version: "1.0.0" },
+    ];
 
-    expect(await bun(packageDir, "install", "--filter", "app")).toMatchObject({ exitCode: 0 });
-    expect(await readdirSorted(bunDir)).toEqual(entries);
+    await runBunInstall(bunEnv, packageDir);
+    expect(await layout()).toEqual(expected);
 
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await layout()).toEqual(expected);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { frozenLockfile: true });
+    expect(await layout()).toEqual(expected);
+  });
+
+  test.concurrent("`bun add` of a package whose range links to a workspace, on a loaded bun.lock", async () => {
+    // The first install writes bun.lock. `bun add` loads it and resolves
+    // `one-range-dep` anew: its `no-deps@^1.0.0` links to the workspace `no-deps`
+    // and is an npm range in memory. The workspace's `peer-a-dep-star` must not
+    // be laid out again below `one-range-dep`, nor be a peer of it.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "workspace-add", workspaces: ["lib", "app"] }),
+        "lib/package.json": JSON.stringify({
+          name: "no-deps",
+          version: "1.0.0",
+          dependencies: { "peer-a-dep-star": "1.0.0" },
+        }),
+        "app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "a-dep": "1.0.2" } }),
+      },
+    });
+    const bunDir = join(packageDir, "node_modules", ".bun");
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await bun(packageDir, "add", "one-range-dep@1.0.0", "--cwd", "app")).toMatchObject({ exitCode: 0 });
+    expect(
+      await Promise.all([
+        readdirSorted(bunDir),
+        readlink(join(bunDir, "one-range-dep@1.0.0", "node_modules", "no-deps")),
+      ]),
+    ).toEqual([
+      ["a-dep@1.0.2", "node_modules", "one-range-dep@1.0.0", "peer-a-dep-star@1.0.0+ecb3f1b8d48bfebe"],
+      join("..", "..", "..", "..", "lib"),
+    ]);
     expect(await bun(packageDir, "prune")).toMatchObject({
       stdout: expect.stringContaining("nothing to prune"),
       exitCode: 0,
     });
-    expect(await file(join(packageDir, "lib", "node_modules", "peer-deps", "package.json")).json()).toMatchObject({
-      name: "peer-deps",
+  });
+
+  test.concurrent("a `workspace:` path outside `workspaces` has one owner, below the root", async () => {
+    // `vendor/no-deps` is not in `workspaces`, so root has no edge to it. app1
+    // and app2 reach it by `workspace:` and through the peer of `peer-deps`, each
+    // with another a-dep. The folder is laid out once, for root's a-dep 1.0.1.
+    // Its `peer-a-dep-star` is not a peer of the packages that link to it, so
+    // app1 and app2 share one `peer-deps` entry.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-path",
+          workspaces: ["app1", "app2"],
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+        "vendor/no-deps/package.json": JSON.stringify({
+          name: "no-deps",
+          version: "3.0.0",
+          dependencies: { "peer-a-dep-star": "1.0.0" },
+        }),
+        "app1/package.json": JSON.stringify({
+          name: "app1",
+          version: "1.0.0",
+          dependencies: { "peer-deps": "1.0.0", "no-deps": "workspace:../vendor/no-deps", "a-dep": "1.0.1" },
+        }),
+        "app2/package.json": JSON.stringify({
+          name: "app2",
+          version: "1.0.0",
+          dependencies: { "peer-deps": "1.0.0", "no-deps": "workspace:*", "a-dep": "1.0.2" },
+        }),
+      },
+    });
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const layout = () =>
+      Promise.all([
+        readdirSorted(bunDir),
+        readlink(join(packageDir, "vendor", "no-deps", "node_modules", "peer-a-dep-star")),
+        file(join(bunDir, "peer-a-dep-star@1.0.0+fe523e66214b73d9", "node_modules", "a-dep", "package.json")).json(),
+        readlink(join(packageDir, "app1", "node_modules", "no-deps")),
+        readlink(join(packageDir, "app2", "node_modules", "no-deps")),
+        readlink(join(packageDir, "app1", "node_modules", "peer-deps")),
+        readlink(join(packageDir, "app2", "node_modules", "peer-deps")),
+      ]);
+    const peerDeps = join(
+      "..",
+      "..",
+      "node_modules",
+      ".bun",
+      "peer-deps@1.0.0+e42a105089d73570",
+      "node_modules",
+      "peer-deps",
+    );
+    const expected = [
+      [
+        "a-dep@1.0.1",
+        "a-dep@1.0.2",
+        "node_modules",
+        "peer-a-dep-star@1.0.0+fe523e66214b73d9",
+        "peer-deps@1.0.0+e42a105089d73570",
+      ],
+      join(
+        "..",
+        "..",
+        "..",
+        "node_modules",
+        ".bun",
+        "peer-a-dep-star@1.0.0+fe523e66214b73d9",
+        "node_modules",
+        "peer-a-dep-star",
+      ),
+      { name: "a-dep", version: "1.0.1" },
+      join("..", "..", "vendor", "no-deps"),
+      join("..", "..", "vendor", "no-deps"),
+      peerDeps,
+      peerDeps,
+    ];
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await layout()).toEqual(expected);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await layout()).toEqual(expected);
+  });
+
+  test.concurrent(
+    "a `workspace:` path outside `workspaces` keeps its dependencies when the node that reaches it first is folded into another",
+    async () => {
+      // The walk reaches `vendor/no-deps` first below `forward-peer-deps` and its
+      // `peer-deps`, whose peer binds to the folder by name. `zz` is the same
+      // `peer-deps` one level higher, and the store folds the deeper one into it.
+      // The folder's owner is a child of the root, so it keeps its entry. The
+      // folder is linked in place: it is not one of the installed packages.
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "workspace-path-folded", workspaces: ["app"] }),
+          "vendor/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "3.0.0",
+            dependencies: { "a-dep": "1.0.1" },
+          }),
+          "app/package.json": JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            dependencies: {
+              "forward-peer-deps": "1.0.0",
+              "no-deps": "workspace:../vendor/no-deps",
+              "zz": "npm:peer-deps@1.0.0",
+            },
+          }),
+        },
+      });
+
+      const { out } = await runBunInstall(bunEnv, packageDir);
+      expect(
+        await Promise.all([
+          readdirSorted(join(packageDir, "node_modules", ".bun")),
+          file(join(packageDir, "vendor", "no-deps", "node_modules", "a-dep", "package.json")).json(),
+          readlink(join(packageDir, "app", "node_modules", "no-deps")),
+        ]),
+      ).toEqual([
+        ["a-dep@1.0.1", "forward-peer-deps@1.0.0+e42a105089d73570", "node_modules", "peer-deps@1.0.0+e42a105089d73570"],
+        { name: "a-dep", version: "1.0.1" },
+        join("..", "..", "vendor", "no-deps"),
+      ]);
+      expect(out).toContain("3 packages installed");
+    },
+  );
+
+  test.concurrent(
+    "a workspace that root's dependency of the same name replaces has one owner, below the root",
+    async () => {
+      // Root depends on the registry's no-deps 1.1.0. The workspace `no-deps` is
+      // 3.0.0, so that dependency takes the place of root's edge to the workspace.
+      // app1 and app2 reach the workspace with another a-dep each. It is laid out
+      // once, for root's a-dep 1.0.1.
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "workspace-replaced",
+            workspaces: ["app1", "app2", "vendor/no-deps"],
+            dependencies: { "no-deps": "1.1.0", "a-dep": "1.0.1" },
+          }),
+          "vendor/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "3.0.0",
+            dependencies: { "peer-a-dep-star": "1.0.0" },
+          }),
+          "app1/package.json": JSON.stringify({
+            name: "app1",
+            version: "1.0.0",
+            dependencies: { "peer-deps": "1.0.0", "no-deps": "workspace:*", "a-dep": "1.0.1" },
+          }),
+          "app2/package.json": JSON.stringify({
+            name: "app2",
+            version: "1.0.0",
+            dependencies: { "peer-deps": "1.0.0", "no-deps": "workspace:*", "a-dep": "1.0.2" },
+          }),
+        },
+      });
+
+      await runBunInstall(bunEnv, packageDir);
+      expect(
+        await Promise.all([
+          readdirSorted(join(packageDir, "node_modules", ".bun")),
+          readlink(join(packageDir, "vendor", "no-deps", "node_modules", "peer-a-dep-star")),
+          file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+          readlink(join(packageDir, "app2", "node_modules", "no-deps")),
+        ]),
+      ).toEqual([
+        [
+          "a-dep@1.0.1",
+          "a-dep@1.0.2",
+          "no-deps@1.1.0",
+          "node_modules",
+          "peer-a-dep-star@1.0.0+fe523e66214b73d9",
+          "peer-deps@1.0.0+e42a105089d73570",
+        ],
+        join(
+          "..",
+          "..",
+          "..",
+          "node_modules",
+          ".bun",
+          "peer-a-dep-star@1.0.0+fe523e66214b73d9",
+          "node_modules",
+          "peer-a-dep-star",
+        ),
+        { name: "no-deps", version: "1.1.0" },
+        join("..", "..", "vendor", "no-deps"),
+      ]);
+    },
+  );
+
+  test.concurrent(
+    "--filter: a peer below a selected workspace binds to root's dependency, fresh and from bun.lock",
+    async () => {
+      // Root is not selected, so the filter installs nothing for root. Root's
+      // no-deps 1.0.0 is still what the peer of app's `peer-deps` binds to, as in
+      // an install of everything. `bun prune` names the store without the filter.
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "workspace-filter-root-peer",
+            workspaces: ["app", "other"],
+            dependencies: { "no-deps": "1.0.0" },
+          }),
+          "app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "peer-deps": "1.0.0" } }),
+          "other/package.json": JSON.stringify({
+            name: "other",
+            version: "1.0.0",
+            dependencies: { "no-deps": "2.0.0" },
+          }),
+        },
+      });
+      const layout = () =>
+        Promise.all([
+          readdirSorted(join(packageDir, "node_modules", ".bun")),
+          readdirSorted(join(packageDir, "node_modules")),
+          readlink(join(packageDir, "app", "node_modules", "peer-deps")),
+        ]);
+      const expected = [
+        ["no-deps@1.0.0", "node_modules", "peer-deps@1.0.0+7347ae2d86f1441a"],
+        [".bun"],
+        join("..", "..", "node_modules", ".bun", "peer-deps@1.0.0+7347ae2d86f1441a", "node_modules", "peer-deps"),
+      ];
+
+      expect(await bun(packageDir, "install", "--filter", "app")).toMatchObject({ exitCode: 0 });
+      expect(await layout()).toEqual(expected);
+      expect(await bun(packageDir, "prune")).toMatchObject({
+        stdout: expect.stringContaining("nothing to prune"),
+        exitCode: 0,
+      });
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      expect(await bun(packageDir, "install", "--filter", "app")).toMatchObject({ exitCode: 0 });
+      expect(await layout()).toEqual(expected);
+    },
+  );
+
+  test.concurrent(
+    "--filter: a workspace that two selected workspaces depend on is laid out once, as a full install does",
+    async () => {
+      // `core` is not selected. app and web depend on it, each with another
+      // no-deps. `core` has its own place below the root, where root's no-deps 1.0.0
+      // is the peer of its `peer-deps`. An install of everything afterwards, and
+      // the filtered install after that, change no link.
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "workspace-filter-shared",
+            workspaces: ["app", "web", "core"],
+            dependencies: { "no-deps": "1.0.0" },
+          }),
+          "app/package.json": JSON.stringify({
+            name: "app",
+            version: "1.0.0",
+            dependencies: { "core": "workspace:*", "no-deps": "1.0.1" },
+          }),
+          "web/package.json": JSON.stringify({
+            name: "web",
+            version: "1.0.0",
+            dependencies: { "core": "workspace:*", "no-deps": "2.0.0" },
+          }),
+          "core/package.json": JSON.stringify({
+            name: "core",
+            version: "1.0.0",
+            dependencies: { "peer-deps": "1.0.0" },
+          }),
+        },
+      });
+      const filter = ["install", "--filter", "app", "--filter", "web"];
+      const layout = () =>
+        Promise.all([
+          readdirSorted(join(packageDir, "node_modules", ".bun")),
+          readlink(join(packageDir, "core", "node_modules", "peer-deps")),
+        ]);
+      const expected = [
+        ["no-deps@1.0.0", "no-deps@1.0.1", "no-deps@2.0.0", "node_modules", "peer-deps@1.0.0+7347ae2d86f1441a"],
+        join("..", "..", "node_modules", ".bun", "peer-deps@1.0.0+7347ae2d86f1441a", "node_modules", "peer-deps"),
+      ];
+
+      expect(await bun(packageDir, ...filter)).toMatchObject({ exitCode: 0 });
+      expect(await layout()).toEqual(expected);
+      expect(await bun(packageDir, "prune")).toMatchObject({
+        stdout: expect.stringContaining("nothing to prune"),
+        exitCode: 0,
+      });
+
+      await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+      expect(await layout()).toEqual(expected);
+
+      expect(await bun(packageDir, ...filter)).toMatchObject({
+        stdout: expect.stringContaining("(no changes)"),
+        exitCode: 0,
+      });
+      expect(await layout()).toEqual(expected);
+    },
+  );
+
+  test.concurrent(
+    "--filter on the root package installs the dependencies of a workspace that root depends on",
+    async () => {
+      // `lib` is not selected. Root's `workspace:*` reference is a link, and it is
+      // the first entry of the workspace in the store. The owner has an entry of
+      // its own, which is the one that fills `lib/node_modules`. The workspace is
+      // linked in place, so a second run installs nothing.
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "root-pkg",
+            workspaces: ["lib", "app"],
+            dependencies: { "zz-lib": "workspace:*", "no-deps": "1.0.0" },
+          }),
+          "lib/package.json": JSON.stringify({ name: "zz-lib", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+          "app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "a-dep": "1.0.2" } }),
+        },
+      });
+
+      expect(await bun(packageDir, "install", "--filter", "root-pkg")).toMatchObject({ exitCode: 0 });
+      expect(
+        await Promise.all([
+          readdirSorted(join(packageDir, "node_modules", ".bun")),
+          file(join(packageDir, "lib", "node_modules", "a-dep", "package.json")).json(),
+          readlink(join(packageDir, "node_modules", "zz-lib")),
+        ]),
+      ).toEqual([
+        ["a-dep@1.0.1", "no-deps@1.0.0", "node_modules"],
+        { name: "a-dep", version: "1.0.1" },
+        join("..", "lib"),
+      ]);
+
+      expect(await bun(packageDir, "install", "--filter", "root-pkg")).toMatchObject({
+        stdout: expect.stringContaining("(no changes)"),
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent("--filter walks a workspace that is not selected before root's own dependencies", async () => {
+    // dragon-test-3-a and dragon-test-3-b are a peer cycle, and the side the
+    // walk enters first decides the names of their entries. `lib` is not
+    // selected and app depends on it. `lib` reaches the cycle at b and root at
+    // a. An install of everything walks `lib` first, and so does the filter.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "mono",
+          workspaces: ["app", "lib"],
+          dependencies: { "dragon-test-3-a": "1.0.0" },
+        }),
+        "app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "lib": "workspace:*" } }),
+        "lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          dependencies: { "dragon-test-3-b": "1.0.0" },
+        }),
+      },
+    });
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const filter = ["install", "--filter", "mono", "--filter", "app"];
+
+    await runBunInstall(bunEnv, packageDir);
+    const entries = await readdirSorted(bunDir);
+    expect(entries).toEqual([
+      "dragon-test-3-a@1.0.0+e27e69f8c16af2a6",
+      "dragon-test-3-b@1.0.0+0dd003cb12958403",
+      "no-deps@2.0.0",
+      "node_modules",
+    ]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    expect(await bun(packageDir, ...filter)).toMatchObject({ exitCode: 0 });
+    expect(await readdirSorted(bunDir)).toEqual(entries);
+    expect(await bun(packageDir, "prune")).toMatchObject({
+      stdout: expect.stringContaining("nothing to prune"),
+      exitCode: 0,
+    });
+    expect(await bun(packageDir, ...filter)).toMatchObject({
+      stdout: expect.stringContaining("(no changes)"),
+      exitCode: 0,
+    });
+  });
+
+  // Only the owner of a workspace runs its scripts. A link to it runs nothing.
+  test.concurrent.each([
+    { edge: "`workspace:*`", catalog: {}, app: { "a-dep": "workspace:*" } },
+    { edge: "`catalog:`", catalog: { "a-dep": "^2.0.0" }, app: { "a-dep": "catalog:" } },
+    { edge: "a peer bound by name", catalog: {}, app: { "peer-a-dep-star": "1.0.0" } },
+  ])("the scripts of a workspace that $edge reaches run once per install", async ({ catalog, app }) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-scripts",
+          workspaces: { packages: ["lib", "app"], catalog },
+        }),
+        "lib/package.json": JSON.stringify({
+          name: "a-dep",
+          version: "2.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+          scripts: { postinstall: "echo ran >> ran.txt" },
+        }),
+        "app/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: app }),
+      },
+    });
+    const ran = () => file(join(packageDir, "lib", "ran.txt")).text();
+    const filter = ["install", "--filter", "app"];
+
+    await runBunInstall(bunEnv, packageDir);
+    expect((await ran()).trim().split(/\r?\n/)).toEqual(["ran"]);
+
+    // `lib` is not selected and app reaches it. Its owner runs the script, once.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    expect(await bun(packageDir, ...filter)).toMatchObject({ exitCode: 0 });
+    expect((await ran()).trim().split(/\r?\n/)).toEqual(["ran", "ran"]);
+    expect(await file(join(packageDir, "lib", "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
     });
 
-    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
-    expect(await readdirSorted(bunDir)).toEqual(entries);
+    // The workspace is not an installed package, so nothing changed.
+    expect(await bun(packageDir, ...filter)).toMatchObject({
+      stdout: expect.stringContaining("(no changes)"),
+      exitCode: 0,
+    });
   });
 });
 

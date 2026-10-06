@@ -781,6 +781,51 @@ test.concurrent("isolated linker: prune removes the peer-hash variants a peer bu
   expect(await install(dir, "--linker", "isolated")).toContain("no changes");
 });
 
+// The install that wrote bun.lock resolved `one-range-dep`'s `no-deps@^1.0.0` to the workspace `no-deps`. Prune loads the same edge from bun.lock. Both name one store.
+test.concurrent(
+  "isolated: keeps every entry of the install that resolved a registry range to a workspace",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { dependencies: { "a-dep": "1.0.1" } },
+      packages: {
+        lib: { name: "no-deps", dependencies: { "peer-a-dep-star": "1.0.0" } },
+        app: { dependencies: { "one-range-dep": "1.0.0", "a-dep": "1.0.2" } },
+      },
+    });
+    const entries = ["a-dep@1.0.1", "a-dep@1.0.2", "one-range-dep@1.0.0", "peer-a-dep-star@1.0.0+fe523e66214b73d9"];
+    expect(storeEntries(dir)).toStrictEqual(entries);
+
+    const { stdout, exitCode } = await prune(dir, "--linker", "isolated");
+    expect(out(stdout)).toEndWith(NOTHING(8, 4));
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(entries);
+    expect(existsSync(join(dir, "packages", "app", "node_modules", "one-range-dep", "package.json"))).toBeTrue();
+    expect(existsSync(join(dir, "packages", "lib", "node_modules", "peer-a-dep-star", "package.json"))).toBeTrue();
+  },
+);
+
+// `core` is not selected, and its place in the store is the one an install of everything gives it: prune names the store without the filter.
+test.concurrent("isolated: keeps every entry an install --filter links", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  await writeWorkspaces(dir, packageJson, {
+    root: { dependencies: { "no-deps": "1.0.0" } },
+    packages: {
+      app: { dependencies: { "core": "workspace:*", "no-deps": "1.0.1" } },
+      web: { dependencies: { "core": "workspace:*", "no-deps": "2.0.0" } },
+      core: { dependencies: { "peer-deps": "1.0.0" } },
+    },
+  });
+  await install(dir, "--filter", "app", "--filter", "web", "--linker", "isolated");
+  const entries = ["no-deps@1.0.0", "no-deps@1.0.1", "no-deps@2.0.0", "peer-deps@1.0.0+7347ae2d86f1441a"];
+  expect(storeEntries(dir)).toStrictEqual(entries);
+
+  const { stdout, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(out(stdout)).toEndWith(NOTHING(9, 5));
+  expect(exitCode).toBe(0);
+  expect(storeEntries(dir)).toStrictEqual(entries);
+  expect(existsSync(join(dir, "packages", "core", "node_modules", "peer-deps", "package.json"))).toBeTrue();
+});
+
 test.concurrent("isolated linker + global store: unlinks the store link, never deletes the shared entry", async () => {
   const dir = await setup(
     { name: "foo", devDependencies: { "one-dep": "1.0.0" } },

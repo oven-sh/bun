@@ -275,7 +275,12 @@ describe("Bun.serve() reports why the listen failed", () => {
       serve({ ...options, fetch: () => new Response() }).stop(true);
     } catch (e: any) {
       const { code, syscall, errno, message } = e;
-      return { code, syscall, errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno, message };
+      return {
+        code,
+        syscall,
+        errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+        message,
+      };
     }
   }
 

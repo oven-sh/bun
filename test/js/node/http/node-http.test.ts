@@ -226,7 +226,11 @@ describe("node:http", () => {
       occupant.close();
       await once(occupant, "close");
       const { code, syscall, errno } = err;
-      expect({ code, syscall, errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno }).toEqual({
+      expect({
+        code,
+        syscall,
+        errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+      }).toEqual({
         code: "EADDRINUSE",
         syscall: "listen",
         errno: "EADDRINUSE",

@@ -275,7 +275,10 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
   test.each<[string, (sql: SQL, table: string) => SQL.Query<any>]>([
     ["a simple query", (sql, table) => sql.unsafe(`INSERT INTO ${table} (id) VALUES (1)`)],
     ["a query on a prepared statement", (sql, table) => sql`INSERT INTO ${sql(table)} (id) VALUES (${1})`],
-    ["a query on a statement that is not prepared", (sql, table) => sql`INSERT INTO ${sql(table)} (id) VALUES (${1} + 0)`],
+    [
+      "a query on a statement that is not prepared",
+      (sql, table) => sql`INSERT INTO ${sql(table)} (id) VALUES (${1} + 0)`,
+    ],
   ])("cancel() rejects %s that waits in the queue, and the server never runs it", async (_, start) => {
     const { sql, marker, table, insert, rows } = await connectWithTable();
     const order: string[] = [];

@@ -464,7 +464,9 @@ impl Response {
 
     /// For a copy that moves `init` field by field. `Init::clone` carries the state for every other copy.
     pub(crate) fn copy_s3_redirect_from(&self, original: &Response) {
-        self.init_mut().s3_redirect = original.init.get().s3_redirect.clone();
+        self.init_mut()
+            .s3_redirect
+            .clone_from(&original.init.get().s3_redirect);
     }
 
     #[inline]

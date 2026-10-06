@@ -1760,7 +1760,6 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_handshake_state = HANDSHAKE_PENDING;
   s->ssl_write_wants_read = 0;
   s->ssl_write_parked = 0;
-  s->ssl_read_wants_write = 0;
   s->ssl_fatal_error = 0;
   s->ssl_raw_tap = 0;
   s->ssl_spilled = 0;
@@ -2244,7 +2243,7 @@ static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) 
       s->ssl_handshake_state = HANDSHAKE_PENDING;
       return;
     }
-    if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+    if (err != SSL_ERROR_WANT_READ) {
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         ssl_park_fatal_reason(s);
       }
@@ -2253,15 +2252,6 @@ static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) 
     }
     s->ssl_handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    /* Keep writable interest only for a blocked write. Setting this for
-     * WANT_READ too kept the always-writable socket's writable event firing
-     * every tick with zero progress (100% CPU) whenever writable interest
-     * existed while the handshake stalled, e.g. pause() mid-handshake.
-     * WANT_WRITE's blocked BIO write normally sets it in us_socket_raw_write
-     * already; kept for BIO retry paths that buffer without a send. */
-    if (err == SSL_ERROR_WANT_WRITE) {
-      s->flags.last_write_failed = 1;
-    }
     return;
   }
 
@@ -2337,8 +2327,7 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s);
  * finished). No-op while this socket's spill is undrained: the flag is kept
  * so the retry happens after on_writable drains it. */
 static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
-  if (!s->ssl_write_wants_read || s->ssl_read_wants_write) return s;
-  if (s->ssl_spilled) return s;
+  if (!s->ssl_write_wants_read || s->ssl_spilled) return s;
   s->ssl_write_wants_read = 0;
   return ssl_on_writable(s);
 }
@@ -2439,16 +2428,6 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
     return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
   }
   ssl_update_handshake(s, 0);
-  if (ssl_gone(s)) return s;
-
-  if (s->ssl_read_wants_write) {
-    s->ssl_read_wants_write = 0;
-    /* Re-enter the data path with an empty buffer; SSL_read will pull from
-     * the kernel via the next readable event but this lets it flush any
-     * pending decrypt that was blocked on a write. */
-    s = us_internal_ssl_on_data(s, "", 0);
-    if (!s || ssl_gone(s)) return s;
-  }
   s = ssl_close_if_fatal(s);
   if (!s || ssl_gone(s)) return s;
   /* uWS HTTP sockets keep the pre-existing SENT_SHUTDOWN suppression: their
@@ -2516,9 +2495,8 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */
   ERR_clear_error();
-  /* upgradeTLS [raw, _] half observes ciphertext before SSL_read consumes it.
-   * Skip the empty-flush call from on_writable (length==0 → no real wire bytes). */
-  if (s->ssl_raw_tap && length > 0) {
+  /* upgradeTLS [raw, _] half observes ciphertext before SSL_read consumes it. */
+  if (s->ssl_raw_tap) {
     s = us_dispatch_ssl_raw_tap(s, data, length);
     if (!s || us_socket_is_closed(s) || !s->ssl) return s;
   }
@@ -2604,8 +2582,7 @@ restart:
        * like WANT_READ - stop the read loop, deliver whatever was decrypted,
        * and park the socket; us_socket_sni_resolve() re-drives the handshake
        * when the JS resolution arrives. */
-      if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
-          err != SSL_ERROR_PENDING_CERTIFICATE) {
+      if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           /* The HelloRequest can share a read with the server's Finished. */
           s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
@@ -2676,8 +2653,6 @@ restart:
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
         return NULL;
       } else {
-        if (err == SSL_ERROR_WANT_WRITE) s->ssl_read_wants_write = 1;
-
         /* If the BIO still has unread ciphertext at this point, the TLS
          * framing is broken — close. */
         if (loop_ssl_data->ssl_read_input_length) {
@@ -2741,8 +2716,7 @@ restart:
   }
 
   /* If the last SSL_write failed with WANT_READ and we've now read, give the
-   * application a writable callback — but not if SSL_read just told us it
-   * needs to write first (would recurse). Re-check s->ssl: any dispatch above may
+   * application a writable callback. Re-check s->ssl: any dispatch above may
    * have closed and freed s->ssl. */
   if (ssl_gone(s)) return NULL;
   s = ssl_retry_parked_write(s);

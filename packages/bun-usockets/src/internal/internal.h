@@ -323,7 +323,6 @@ struct us_socket_t {
    * not finished. ssl_write_wants_read cannot tell: every pending handshake
    * sets it. */
   unsigned char ssl_write_parked : 1;
-  unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
   /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted

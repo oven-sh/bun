@@ -227,6 +227,10 @@ pub(crate) struct Response {
     abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
 }
 
+// A larger Response leaves the 320-byte size class of mimalloc for the 384-byte one.
+#[cfg(not(debug_assertions))]
+const _: () = assert!(mem::size_of::<Response>() <= 320);
+
 impl Default for Response {
     fn default() -> Self {
         Self {
@@ -402,6 +406,48 @@ impl Response {
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take())
+    }
+
+    #[inline]
+    pub(crate) fn has_s3_redirect(&self) -> bool {
+        self.init.get().s3_redirect.is_some()
+    }
+
+    /// Signs the `Location` of a `new Response(s3file)` for HEAD, while it is still the URL that Bun wrote.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn sign_s3_redirect_for_head(&self, global: &JSGlobalObject) -> Result<(), JSValue> {
+        let store = self.init.with_mut(|init| {
+            let state = init.s3_redirect.as_deref()?;
+            let location = init
+                .headers
+                .as_deref_mut()?
+                .fast_get(HTTPHeaderName::Location)?;
+            let written = state.location.latin1();
+            let unchanged = if location.is_16bit() {
+                let units = location.utf16_slice();
+                units.len() == written.len()
+                    && units.iter().zip(written).all(|(&u, &b)| u == u16::from(b))
+            } else {
+                location.slice() == written
+            };
+            unchanged.then(|| state.store.clone())
+        });
+        let Some(store) = store else {
+            return Ok(());
+        };
+        let result = super::blob::store::presign_redirect(store.data.as_s3(), Method::HEAD)
+            .map_err(|err| crate::webcore::s3::client::get_js_sign_error(err.into(), global))?;
+        let Some(headers) = self.get_init_headers_mut() else {
+            return Ok(());
+        };
+        headers
+            .put(
+                HTTPHeaderName::Location,
+                &BunString::ascii(&result.url),
+                global,
+            )
+            .map_err(|err| global.take_exception(err))
     }
 
     #[inline]
@@ -1070,41 +1116,29 @@ impl Response {
                         ..Default::default()
                     };
 
-                    let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
-                    let credentials = s3.get_credentials();
-
-                    let result = match credentials.sign_request::<false>(
-                        &bun_s3_signing::SignOptions {
-                            path: s3.path(),
-                            method: Method::GET,
-                            content_hash: None,
-                            content_md5: None,
-                            search_params: None,
-                            content_disposition: None,
-                            content_type: None,
-                            content_encoding: None,
-                            acl: None,
-                            storage_class: None,
-                            request_payer: false,
-                        },
-                        Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
-                    ) {
-                        Ok(r) => r,
-                        Err(sign_err) => {
-                            return Err(crate::webcore::s3::client::throw_sign_error(
-                                sign_err.into(),
-                                global_this,
-                            ));
-                        }
-                    };
+                    let store = blob.store.get().as_ref().unwrap();
+                    let result =
+                        match super::blob::store::presign_redirect(store.data.as_s3(), Method::GET)
+                        {
+                            Ok(r) => r,
+                            Err(sign_err) => {
+                                return Err(crate::webcore::s3::client::throw_sign_error(
+                                    sign_err.into(),
+                                    global_this,
+                                ));
+                            }
+                        };
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected.set(true);
                     let headers = response.get_or_create_headers(global_this)?;
-                    headers.put(
-                        HTTPHeaderName::Location,
-                        &BunString::ascii(&result.url),
-                        global_this,
-                    )?;
+                    let location = BunString::clone_latin1(&result.url);
+                    headers.put(HTTPHeaderName::Location, &location, global_this)?;
+                    response.init.with_mut(|init| {
+                        init.s3_redirect = Some(Box::new(S3Redirect {
+                            store: store.clone(),
+                            location,
+                        }));
+                    });
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
                 }
             }
@@ -1187,6 +1221,15 @@ pub(crate) struct Init {
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
+    /// Set by `new Response(s3file)`: Bun.serve signs that redirect for HEAD when the request is HEAD.
+    pub(crate) s3_redirect: Option<Box<S3Redirect>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct S3Redirect {
+    store: RefPtr<super::blob::Store>,
+    /// The `Location` value that Bun wrote. Any other value is the user's and is sent as it is.
+    location: BunString,
 }
 
 impl Default for Init {
@@ -1196,6 +1239,7 @@ impl Default for Init {
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
+            s3_redirect: None,
         }
     }
 }
@@ -1214,6 +1258,7 @@ impl Init {
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
+            s3_redirect: self.s3_redirect.clone(),
         })
     }
 

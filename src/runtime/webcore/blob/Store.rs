@@ -19,6 +19,7 @@ use crate::webcore::s3::client::{
     S3ListObjectsResult,
 };
 use bun_core::strings;
+use bun_http_types::Method::Method;
 use bun_http_types::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
@@ -424,6 +425,34 @@ impl S3Ext for S3 {
 
         Ok(value)
     }
+}
+
+/// Signs the URL of the `new Response(s3file)` redirect: for HEAD when the request is HEAD, for GET in each other case.
+#[inline(never)]
+pub(crate) fn presign_redirect(
+    s3: &S3,
+    request_method: Method,
+) -> Result<bun_s3_signing::SignResult, bun_s3_signing::SignError> {
+    s3.get_credentials().sign_request::<false>(
+        &bun_s3_signing::SignOptions {
+            path: s3.path(),
+            method: if request_method == Method::HEAD {
+                Method::HEAD
+            } else {
+                Method::GET
+            },
+            content_hash: None,
+            content_md5: None,
+            search_params: None,
+            content_disposition: None,
+            content_type: None,
+            content_encoding: None,
+            acl: None,
+            storage_class: None,
+            request_payer: false,
+        },
+        Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+    )
 }
 
 impl BytesExt for Bytes {

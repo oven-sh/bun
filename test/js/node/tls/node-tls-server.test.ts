@@ -1085,15 +1085,18 @@ describe("https.createServer forwards every TLS server option", () => {
 
   type Verdict = { authorized: boolean | undefined; authorizationError: unknown };
 
-  async function httpsRequest(port: number, agent: string) {
+  async function httpsRequest(
+    port: number,
+    agent: string,
+    identity = { key: read(`${agent}-key.pem`), cert: read(`${agent}-cert.pem`) },
+  ) {
     const outcome = Promise.withResolvers<string>();
     const req = https.request(
       {
         host: "127.0.0.1",
         port,
         path: `/${agent}`,
-        key: read(`${agent}-key.pem`),
-        cert: read(`${agent}-cert.pem`),
+        ...identity,
         rejectUnauthorized: false,
       },
       res => {
@@ -1160,7 +1163,7 @@ describe("https.createServer forwards every TLS server option", () => {
     const agent6CertChain = read("agent6-cert.pem");
     const [agent6Leaf, ca3Cert] = agent6CertChain.split(/(?=-----BEGIN CERTIFICATE-----)/);
     const verdict = async (allowPartialTrustChain: unknown) => {
-      const seen = Promise.withResolvers<Verdict>();
+      let seen: Verdict | undefined;
       await using server = https.createServer(
         {
           key: agent6Key,
@@ -1172,23 +1175,14 @@ describe("https.createServer forwards every TLS server option", () => {
         } as https.ServerOptions,
         (req, res) => {
           const socket = req.socket as TLSSocket;
-          seen.resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+          seen = { authorized: socket.authorized, authorizationError: socket.authorizationError };
           res.end("ok");
         },
       );
       await once(server.listen(0, "127.0.0.1"), "listening");
       const { port } = server.address() as AddressInfo;
-      const req = https.request({
-        host: "127.0.0.1",
-        port,
-        key: agent6Key,
-        cert: agent6Leaf,
-        rejectUnauthorized: false,
-      });
-      req.on("error", seen.reject);
-      req.on("response", res => res.resume());
-      req.end();
-      return await seen.promise;
+      const outcome = await httpsRequest(port, "agent6", { key: agent6Key, cert: agent6Leaf });
+      return { outcome, ...seen };
     };
 
     expect({
@@ -1196,9 +1190,35 @@ describe("https.createServer forwards every TLS server option", () => {
       withFlag: await verdict(true),
       withTruthy: await verdict(1),
     }).toEqual({
-      without: { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
-      withFlag: { authorized: true, authorizationError: null },
-      withTruthy: { authorized: true, authorizationError: null },
+      without: { outcome: "served ok", authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+      withFlag: { outcome: "served ok", authorized: true, authorizationError: null },
+      withTruthy: { outcome: "served ok", authorized: true, authorizationError: null },
+    });
+  });
+
+  it("skips a falsy crl like Node and fails to listen on one that does not parse", async () => {
+    const outcome = async (crl: unknown) => {
+      const server = https.createServer({ ...COMMON_CERT, crl } as https.ServerOptions, (_req, res) => res.end("ok"));
+      try {
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        return "listens";
+      } catch (e: any) {
+        return e.code;
+      } finally {
+        if (server.listening) server.close();
+      }
+    };
+
+    expect({
+      emptyString: await outcome(""),
+      false: await outcome(false),
+      zero: await outcome(0),
+      notACrl: await outcome("not a crl"),
+    }).toEqual({
+      emptyString: "listens",
+      false: "listens",
+      zero: "listens",
+      notACrl: "ERR_OSSL_PEM_NO_START_LINE",
     });
   });
 

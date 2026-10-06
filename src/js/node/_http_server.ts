@@ -366,7 +366,8 @@ function Server(options, callback): void {
       this[isTlsSymbol] = true;
     }
 
-    const crl = options.crl;
+    // Node skips a falsy crl. The native config rejects one.
+    const crl = options.crl || undefined;
     if (crl && this[isTlsSymbol]) {
       tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
     }

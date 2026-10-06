@@ -1222,6 +1222,29 @@ describe("Bun.Image", () => {
       expect(await new Bun.Image(big).rotate(90).resize(10).placeholder("hash")).toEqual(hash);
     });
 
+    test(".placeholder() ignores the JPEG decode-time downscale a chained .resize() asks for", async () => {
+      // At the 1/8 IDCT scale a resize(10) hint would pick, this 400×300 JPEG
+      // decodes to 50×38, under the 100px ThumbHash input, so a leaked hint
+      // changes which pixels get hashed.
+      const png = makePng(400, 300, (x, y) => [(x * y) & 255, (x * 3 + y) & 255, (y * 5) & 255, 255]);
+      const jpg = await new Bun.Image(png).jpeg({ quality: 90 }).bytes();
+      const hash = await new Bun.Image(jpg).placeholder("hash");
+      expect(Buffer.from(await new Bun.Image(jpg).resize(10).placeholder("hash")).toString("hex")).toBe(
+        Buffer.from(hash).toString("hex"),
+      );
+      expect(await new Bun.Image(jpg).resize(10).placeholder()).toBe(await new Bun.Image(jpg).placeholder());
+    });
+
+    test('.placeholder("hash") sets width and height to the size placeholder() renders', async () => {
+      const src = makePng(90, 40, (x, y) => [(x * 3 + y * y) & 255, (x * y * 2) & 255, (200 - x - y) & 255, 255]);
+      const hashed = new Bun.Image(src);
+      await hashed.placeholder("hash");
+      const rendered = new Bun.Image(src);
+      await rendered.placeholder();
+      expect({ width: hashed.width, height: hashed.height }).toEqual({ width: 32, height: 14 });
+      expect({ width: rendered.width, height: rendered.height }).toEqual({ width: 32, height: 14 });
+    });
+
     test(".jpeg({progressive: true}) emits SOF2 (multi-scan)", async () => {
       const baseline = await new Bun.Image(gradientPng).jpeg({ quality: 80 }).bytes();
       const prog = await new Bun.Image(gradientPng).jpeg({ quality: 80, progressive: true }).bytes();

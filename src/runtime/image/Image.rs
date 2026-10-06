@@ -1550,9 +1550,12 @@ pub(crate) enum TaskResult {
         h: u32,
         format: codecs::Format,
     },
+    /// `w`×`h` is what the hash renders to — the size `placeholder()` reports.
     Hash {
         bytes: [u8; thumbhash::MAX_LEN],
         len: usize,
+        w: u32,
+        h: u32,
     },
     Err(codecs::Error),
     IoErr(sys::Error),
@@ -1664,8 +1667,11 @@ impl PipelineTask {
         // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
-        //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        //  stays valid through them.) A placeholder skips the pipeline, so a
+        // chained resize must not shrink its decode either.
+        let hint: codecs::DecodeHint = if matches!(self.kind, Kind::Placeholder(_)) {
+            codecs::DecodeHint::default()
+        } else if let Some(r) = self.pipeline.resize {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
@@ -1785,7 +1791,9 @@ impl PipelineTask {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
         match &self.result {
-            TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
+            TaskResult::Encoded { w, h, .. }
+            | TaskResult::Meta { w, h, .. }
+            | TaskResult::Hash { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
@@ -1951,7 +1959,7 @@ impl PipelineTask {
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
-            TaskResult::Hash { bytes, len } => promise.settle(
+            TaskResult::Hash { bytes, len, .. } => promise.settle(
                 global,
                 ArrayBuffer::create_uint8_array(global, &bytes[..len]),
             )?,
@@ -2043,10 +2051,15 @@ fn make_placeholder(
     }
     let mut bytes = [0u8; thumbhash::MAX_LEN];
     let len = thumbhash::encode(&mut bytes, w, h, pixels).len();
-    if output == PlaceholderOutput::Hash {
-        return Ok(TaskResult::Hash { bytes, len });
-    }
     let rendered = thumbhash::decode(&bytes[..len])?;
+    if output == PlaceholderOutput::Hash {
+        return Ok(TaskResult::Hash {
+            bytes,
+            len,
+            w: rendered.w,
+            h: rendered.h,
+        });
+    }
     // `rendered.rgba` is owned; drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.

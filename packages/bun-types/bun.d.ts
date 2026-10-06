@@ -9549,6 +9549,8 @@ declare module "bun" {
      * ```
      */
     placeholder(as: "hash"): Promise<Uint8Array<ArrayBuffer>>;
+    /** Either output, for an `as` that is only known at runtime. */
+    placeholder(as?: "dataurl" | "hash"): Promise<string | Uint8Array<ArrayBuffer>>;
     /** Run the pipeline and return a `Blob` with the matching `type`. */
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */

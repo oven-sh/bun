@@ -3619,13 +3619,13 @@ it("ending a TLS 1.3 socket from its handshake callback still completes the serv
 });
 
 // The release of the held flight is node:net's. A socket of the Bun socket API
-// keeps its behaviour: whatever it calls in its handshake callback, its final
+// keeps its behaviour: with close() or end() in its handshake callback, its final
 // flight goes out and the server completes its handshake. A socket with no
 // handshake callback gets its open callback at that point.
 describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", () => {
   const keys = join(import.meta.dir, "..", "test", "fixtures", "keys");
   const pem = (name: string) => readFileSync(join(keys, name), "utf8");
-  type Close = "end" | "shutdown" | "close";
+  type Close = "end" | "close" | "terminate";
 
   async function run(callback: "handshake" | "open", method: Close) {
     const serverSaw = Promise.withResolvers<string>();
@@ -3689,6 +3689,11 @@ describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", 
     ["handshake", "end"],
   ] as const)("%s: %s() completes the server's handshake", async (callback, method) => {
     expect(await run(callback, method)).toEqual({ server: "handshake:agent3", sentAfterClientHello: true });
+  });
+
+  // A reset sends nothing more, so this is how a `handshake` callback refuses the server.
+  it.each(["handshake", "open"] as const)("%s: terminate() sends no client certificate", async callback => {
+    expect(await run(callback, "terminate")).toEqual({ server: "fail:ECONNRESET", sentAfterClientHello: false });
   });
 });
 

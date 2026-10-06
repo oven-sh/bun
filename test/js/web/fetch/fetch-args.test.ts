@@ -25,7 +25,7 @@ test("fetch(request subclass with headers)", async () => {
       this.headers.set("hello", "world");
     }
   }
-  const myRequest = new MyRequest(server!.url + "/");
+  const myRequest = new MyRequest(server!.url.href);
   const { headers } = await fetch(myRequest);
 
   expect(headers.get("hello")).toBe("world");

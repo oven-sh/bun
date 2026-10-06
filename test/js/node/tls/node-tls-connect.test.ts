@@ -1884,8 +1884,6 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
   it.each(["in the same tick", "after the engine started"])(
     "a connected net.Socket is closed when the TLS socket is destroyed %s",
     async when => {
-      // The TLS socket does not destroy a net.Socket it runs over, so its own
-      // close has to end that socket. Node closes it in both cases.
       const peerSawFin = Promise.withResolvers<void>();
       await using server = net.createServer({ allowHalfOpen: true }, peer => {
         peer.on("error", () => {});

@@ -1394,6 +1394,8 @@ pub mod ssl_wrapper {
                         }
                         if close_waits {
                             self.peer_close_waits.set(true);
+                            // Nothing the peer sends behind its close_notify is read.
+                            self.ciphertext.incoming.borrow_mut().clear();
                             return false;
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {

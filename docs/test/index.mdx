@@ -12,6 +12,7 @@ Bun ships with a fast, built-in, Jest-compatible test runner. Tests run in the B
 - Snapshot testing
 - UI & DOM testing
 - Watch mode with `--watch`
+- Run only the tests affected by your git changes with `--changed`
 - Script pre-loading with `--preload`
 
 <Note>
@@ -290,6 +291,63 @@ Like `bun run`, `bun test` accepts the `--watch` flag to watch for changes and r
 bun test --watch
 ```
 
+## Run only affected tests with `--changed`
+
+Use the `--changed` flag to run only the test files that your git changes affect. Bun asks git which files changed, scans the imports of every test file, and walks the import graph backwards to find the test files that reach a changed file. The flag is compatible with Vitest.
+
+```sh terminal icon="terminal"
+# tests affected by uncommitted changes (unstaged, staged, and untracked files)
+bun test --changed
+
+# tests affected by the diff against a commit, branch, or tag
+bun test --changed=HEAD~1
+bun test --changed=main
+```
+
+Without a value, `--changed` compares the working tree against `HEAD`. With `--changed=<ref>`, Bun runs `git diff <ref>` instead. Untracked files count as changed in both forms.
+
+The scan follows relative imports and `tsconfig.json` `paths` aliases such as `@/*`, so a test that imports a changed file through an alias runs too. The scan does not follow a bare package name. A change inside `node_modules`, a change to a workspace package that tests import by its name, and a file that only a `baseUrl` import reaches select no tests. Preload scripts, snapshot files, and files that tests read at runtime are not in the import graph either. Run the full suite for those changes.
+
+Bun ignores a deleted file, because the scan can only follow imports of files that exist. A change that only deletes files selects no tests. Run the full suite for that change.
+
+Bun prints how many files changed and how many test files it selected:
+
+```txt
+--changed: 1 changed file, running 2/40 test files
+```
+
+If `--changed` selects none of the discovered test files, because there are no changed files or no test file imports a changed file, `bun test` runs nothing and exits with code `0`. The flag requires `git` in `PATH` and a git repository.
+
+### `--changed` with `--watch`
+
+```sh terminal icon="terminal"
+bun test --changed --watch
+```
+
+With both flags, Bun watches every local source file in the import graph. That includes files that only tests outside the current selection import. When you save a file, Bun restarts. On macOS and Linux, the new run selects only the tests that reach the saved file. On Windows, the new run asks git again and selects the tests that any uncommitted change affects. The process stays alive even if the first run selects no tests.
+
+### `--changed` with `--shard`
+
+```sh terminal icon="terminal"
+bun test --changed=main --shard=1/3
+```
+
+Bun applies `--changed` first and then splits the remaining test files across shards. Every shard must diff the same working tree against the same commit so that each shard filters the same set. A branch name such as `origin/main` can move between the start of two shard jobs, so pass the commit sha instead. See [Splitting a suite across CI machines](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).
+
+In CI, make sure the commit exists in the checkout. `actions/checkout` fetches only the triggering commit by default, so the diff fails until you fetch the base commit. A depth of 1 is enough, because the diff only needs the tree of that commit. Run this job on `pull_request` events only: on other events the base sha is empty, `--changed=` falls back to the working tree against `HEAD`, and a clean checkout runs nothing.
+
+```yaml
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
+      - run: bun test --changed=${{ github.event.pull_request.base.sha }}
+```
+
 ## Lifecycle hooks
 
 Bun supports the following lifecycle hooks:
@@ -370,17 +428,19 @@ See [DOM testing](/test/dom).
 
 ## Large codebases
 
-For a suite with thousands of test files, `bun test` has several knobs that stack: worker processes, isolation level, sharding across machines, and duration-aware scheduling. [Parallel & isolated test runs](/test/parallel) covers each in depth. Here is how they fit together, roughly in order of payoff:
+For a suite with thousands of test files, `bun test` has several knobs that stack: worker processes, isolation level, a changed-files filter, sharding across machines, and duration-aware scheduling. [Parallel & isolated test runs](/test/parallel) covers each in depth. Here is how they fit together, roughly in order of payoff:
 
 **1. Use every core: [`--parallel`](/test/parallel#--parallel).** One worker per core, files handed out one at a time.
 
 **2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), [`--parallel --no-isolate`](/test/parallel#every-file-is-isolated-unless-you-opt-out) lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files, that is the single biggest win. See [how it compares](/test/parallel#how-it-compares).
 
-**3. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator. Each CI job runs one slice, and each slice still uses `--parallel` locally.
+**3. Skip the tests your change cannot reach: [`--changed`](#run-only-affected-tests-with---changed).** On a pull request, `bun test --changed=<base sha>` runs only the test files whose import graph reaches a file in the diff. Fetch the base commit first (see [`--changed` with `--shard`](#--changed-with---shard)). The flag filters before `--shard` splits. Keep `--update-timings` on full-suite runs only: under `--shard` it writes timings for the files that ran, so a filtered run shrinks the table.
 
-**4. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, Bun cuts shards so each gets about the same total time. The split is longest-processing-time style, but keeps path-neighbours together so a worker's module cache stays warm. Each worker starts its slowest file first, and idle workers steal the slowest remaining file. That way, one long file that happened to start last doesn't hold up the run.
+**4. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator. Each CI job runs one slice, and each slice still uses `--parallel` locally.
 
-**5. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
+**5. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, Bun cuts shards so each gets about the same total time. The split is longest-processing-time style, but keeps path-neighbours together so a worker's module cache stays warm. Each worker starts its slowest file first, and idle workers steal the slowest remaining file. That way, one long file that happened to start last doesn't hold up the run.
+
+**6. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
 
 ```yaml title=".github/workflows/test.yml" icon="github"
 jobs:
@@ -423,7 +483,7 @@ jobs:
 
 Every shard must read the _same set_ of timings files for the shards to add up to the whole suite. That is why a run reads the previous run's files (restored from the cache), and why it writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
 
-**6. Within a file: [`test.concurrent`](#concurrent-test-execution)** for I/O-bound tests that spend their time awaiting.
+**7. Within a file: [`test.concurrent`](#concurrent-test-execution)** for I/O-bound tests that spend their time awaiting.
 
 ## Performance
 

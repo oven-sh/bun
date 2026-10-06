@@ -581,6 +581,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Drop the handshake flight that usockets holds across the handshake callback.
+    pub fn release_held_flight(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).release_held_flight();
+        }
+    }
+
     /// A shutdown before the first handshake step sends its FIN after that step.
     pub fn set_first_flight_before_fin(&self) {
         if let InternalSocket::Connected(s) = self.socket {

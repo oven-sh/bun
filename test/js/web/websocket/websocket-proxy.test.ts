@@ -20,6 +20,7 @@ import {
   startProxy,
   startRawWssServer,
   startRecordingProxy,
+  startRenegotiatingWssServer,
 } from "./proxy-test-utils";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -767,6 +768,30 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
     const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
     expect(stdout).toBe(output);
     expect(exitCode).toBe(0);
+  });
+});
+
+// Whoever owns the connection when the origin renegotiates, the verdict of the first handshake stands:
+// BoringSSL refuses a changed certificate. tls.connect() in Node calls checkServerIdentity once too.
+describe.concurrent.skipIf(!harness.nodeExe())("wss:// origin that renegotiates", () => {
+  test.each([
+    ["before the 101", "direct"],
+    ["before the 101", "http proxy"],
+    ["after the 101", "http proxy"],
+  ] as const)("%s, %s: the connection stays open and checkServerIdentity runs once", async (when, route) => {
+    await using origin = await startRenegotiatingWssServer(when);
+    using recorded = await startRecordingProxy();
+    const calls: string[] = [];
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+      proxy: route === "direct" ? undefined : `http://127.0.0.1:${recorded.port}`,
+      tls: { ca: tlsCerts.cert, checkServerIdentity: hostname => void calls.push(hostname) },
+    });
+    ws.addEventListener("open", () => ws.send("ready"));
+    ws.addEventListener("message", () => ws.close(1000));
+    expect({ events: await clientEvents(ws), calls }).toEqual({
+      events: ["after renegotiation", { code: 1000, reason: "", wasClean: true }],
+      calls: ["127.0.0.1"],
+    });
   });
 });
 

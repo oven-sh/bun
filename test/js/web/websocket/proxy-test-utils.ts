@@ -3,7 +3,7 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
-import { tls as tlsCerts } from "harness";
+import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
@@ -259,6 +259,69 @@ export async function startRawWssServer(
     [Symbol.dispose]() {
       server.close();
     },
+  };
+}
+
+/**
+ * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
+ * when the upgrade client owns the connection, or on the client's first frame,
+ * when the connected client does. After the client's first frame (and that
+ * renegotiation) it sends "after renegotiation". It runs in real node because a
+ * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
+ */
+export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
+  const server = Bun.spawn({
+    cmd: [
+      nodeExe()!,
+      "-e",
+      `
+        const tls = require("tls");
+        const crypto = require("crypto");
+        const server = tls.createServer(
+          { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+          socket => {
+            socket.on("error", () => {});
+            const renegotiate = then =>
+              socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
+            const greet = () => {
+              const payload = Buffer.from("after renegotiation");
+              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+            };
+            let head = "";
+            const onHead = chunk => {
+              head += chunk.toString("latin1");
+              if (!head.includes("\\r\\n\\r\\n")) return;
+              socket.off("data", onHead);
+              const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head)[1];
+              const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+              const answer = () =>
+                socket.write(
+                  "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+                    "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+                );
+              if (process.env.WHEN === "before the 101") {
+                socket.once("data", greet);
+                renegotiate(answer);
+              } else {
+                socket.once("data", () => renegotiate(greet));
+                answer();
+              }
+            };
+            socket.on("data", onHead);
+          },
+        );
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, WHEN: when, SERVER_CERT: tlsCerts.cert, SERVER_KEY: tlsCerts.key },
+  });
+  const { value } = await server.stdout.getReader().read();
+  return {
+    port: Number(new TextDecoder().decode(value).trim()),
+    [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
   };
 }
 

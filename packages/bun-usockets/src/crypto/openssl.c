@@ -1216,6 +1216,17 @@ static void ssl_ctx_build_fail(SSL_CTX *ctx) {
   SSL_CTX_free(ctx);
 }
 
+/* BoringSSL's kVerifySignatureAlgorithms (ssl/extensions.cc) plus the two it leaves out and Node.js accepts. */
+int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx) {
+  static const uint16_t algorithms[] = {
+      SSL_SIGN_ECDSA_SECP256R1_SHA256, SSL_SIGN_RSA_PSS_RSAE_SHA256, SSL_SIGN_RSA_PKCS1_SHA256,
+      SSL_SIGN_ECDSA_SECP384R1_SHA384, SSL_SIGN_RSA_PSS_RSAE_SHA384, SSL_SIGN_RSA_PKCS1_SHA384,
+      SSL_SIGN_RSA_PSS_RSAE_SHA512,    SSL_SIGN_RSA_PKCS1_SHA512,    SSL_SIGN_ED25519,
+      SSL_SIGN_ECDSA_SECP521R1_SHA512, SSL_SIGN_RSA_PKCS1_SHA1,
+  };
+  return SSL_CTX_set_verify_algorithm_prefs(ctx, algorithms, sizeof(algorithms) / sizeof(algorithms[0]));
+}
+
 /* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
  * directly) and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
@@ -1448,11 +1459,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     X509_STORE_set_flags(partial_store, X509_V_FLAG_PARTIAL_CHAIN);
   }
 
-  if (options.sigalgs) {
-    if (!SSL_CTX_set1_sigalgs_list(ssl_context, options.sigalgs)) {
-      ssl_ctx_build_fail(ssl_context);
-      return NULL;
-    }
+  if (options.sigalgs ? !SSL_CTX_set1_sigalgs_list(ssl_context, options.sigalgs)
+                      : !us_ssl_ctx_set_verify_signature_algorithms(ssl_context)) {
+    ssl_ctx_build_fail(ssl_context);
+    return NULL;
   }
 
   if (options.ecdh_curve) {

@@ -5,17 +5,21 @@
  *
  * A request that was queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS is sent when the open
  * request is closed on the wire: after its RST_STREAM, or when both sides sent END_STREAM.
+ * The last block checks this against node's own server, which ends the session when a client
+ * exceeds the limit.
  *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-request-signal.test.ts
  *   node --test test/js/node/http2/node-http2-request-signal.test.ts
  */
 import assert from "node:assert";
+import { spawn, type ChildProcess } from "node:child_process";
 import dc from "node:diagnostics_channel";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { describe, test } from "node:test";
+import { pipeline, Readable } from "node:stream";
+import { after, before, describe, test } from "node:test";
 
 const { NGHTTP2_CANCEL } = http2.constants;
 const INITIAL_WINDOW = 65535;
@@ -78,7 +82,7 @@ async function clientAgainstRawServer(settings = Buffer.alloc(0), { respond = fa
       rstCode.resolve(null);
       connectionEnded();
     });
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceSeen) {
         if (buf.length < PREFACE.length) return;
@@ -306,6 +310,14 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent when t
     ]);
   });
 
+  test("after the RST_STREAM, when destroy() closes the open request", async () => {
+    assert.deepStrictEqual(await cancelFirstOfTwo(first => first.destroy()), [
+      "HEADERS 1",
+      "RST_STREAM 1",
+      "HEADERS 3",
+    ]);
+  });
+
   test("after the RST_STREAM, when a diagnostics_channel subscriber destroys the request before request() returns", async () => {
     const { session, wire, wireLength, close } = await clientAgainstRawServer(
       setting(SETTINGS_MAX_CONCURRENT_STREAMS, 1),
@@ -369,4 +381,150 @@ describe("a request queued behind SETTINGS_MAX_CONCURRENT_STREAMS is sent when t
       close();
     }
   });
+});
+
+// The peer is node's own http2 server (nghttp2) in a second process. It enforces its
+// SETTINGS_MAX_CONCURRENT_STREAMS: a HEADERS frame over the limit ends the whole session with
+// GOAWAY, and every request on that session fails.
+describe("one caller gives its request up at a node peer's limit, and every other caller gets its own answer", () => {
+  // /n is answered with "answer-n". /n?hold gets the response headers only: when the client
+  // resets one held request, the peer sends the body of every other held request.
+  // The peer exits when its stdin ends, so it does not outlive a test process that crashed.
+  const PEER = `
+    const http2 = require("node:http2");
+    process.stdin.resume().on("end", () => process.exit());
+    const limits = process.argv.slice(1);
+    const ports = {};
+    for (const limit of limits) {
+      const server = http2.createServer({ settings: { maxConcurrentStreams: +limit } });
+      server.on("session", session => {
+        const held = new Map();
+        session.on("error", () => {});
+        session.on("stream", (stream, headers) => {
+          const [name, hold] = headers[":path"].slice(1).split("?");
+          stream.on("error", () => {});
+          stream.resume();
+          stream.respond({ ":status": 200 });
+          if (hold === undefined) return stream.end("answer-" + name);
+          held.set(stream, name);
+          stream.on("close", () => {
+            if (!held.delete(stream)) return;
+            for (const [other, name] of held) if (!other.destroyed) other.end("answer-" + name);
+            held.clear();
+          });
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        ports[limit] = server.address().port;
+        if (Object.keys(ports).length === limits.length) console.log(JSON.stringify(ports));
+      });
+    }
+  `;
+  const LIMITS = [1, 100];
+  let peer: ChildProcess | undefined;
+  let ports: Record<number, number>;
+
+  before(async () => {
+    const node = typeof Bun === "undefined" ? process.execPath : Bun.which("node");
+    if (!node) throw new Error("node executable not found");
+    peer = spawn(node, ["-e", PEER, ...LIMITS.map(String)], { stdio: ["pipe", "pipe", "inherit"] });
+    const listening = Promise.withResolvers<string>();
+    let output = "";
+    peer.stdout!.setEncoding("utf8").on("data", chunk => {
+      output += chunk;
+      if (output.endsWith("\n")) listening.resolve(output);
+    });
+    peer.on("error", listening.reject);
+    peer.on("exit", code => listening.reject(new Error(`the node peer exited with code ${code}`)));
+    ports = JSON.parse(await listening.promise);
+  });
+  after(() => {
+    peer?.kill();
+  });
+
+  /** Settles at 'close' with the response body, or with the code or message of the error. */
+  function outcomeOf(request: http2.ClientHttp2Stream) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let body = "";
+    let failure: string | undefined;
+    request.setEncoding("utf8");
+    request.on("data", chunk => (body += chunk));
+    request.on("error", (err: NodeJS.ErrnoException) => (failure = err.code ?? err.message));
+    request.on("close", () => resolve(failure ?? body));
+    return promise;
+  }
+
+  /** Settles when the response headers arrive. Rejects if the request closes first. */
+  function responseOf(request: http2.ClientHttp2Stream) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    request.once("response", () => resolve());
+    request.once("close", () => reject(new Error("the request closed before its response")));
+    return promise;
+  }
+
+  // How the caller of request 1 gives it up, and what request 1 then reports.
+  const WAYS = {
+    "destroy": "",
+    "destroy-error": "gave up",
+    "timeout-destroy": "",
+    "pipeline": "source failed",
+    "close": "",
+    "abort": "ABORT_ERR",
+    "none": "answer-1",
+  };
+
+  for (const limit of LIMITS) {
+    for (const [how, first] of Object.entries(WAYS)) {
+      test(`limit ${limit}, ${how}`, async () => {
+        const session = http2.connect(`http://127.0.0.1:${ports[limit]}`);
+        const sessionEvents: string[] = [];
+        session.on("error", (err: NodeJS.ErrnoException) => sessionEvents.push(`error ${err.code}`));
+        session.on("goaway", code => sessionEvents.push(`goaway ${code}`));
+        try {
+          await once(session, "remoteSettings");
+          const controller = new AbortController();
+          const source = new Readable({ read() {} });
+          // `limit` requests go out and 3 wait for a free slot. The peer holds the ones that went out.
+          const requests: http2.ClientHttp2Stream[] = [];
+          for (let n = 1; n <= limit + 3; n++) {
+            const path = how !== "none" && n <= limit ? `/${n}?hold` : `/${n}`;
+            if (n === 1 && how === "pipeline") {
+              const request = session.request({ ":path": path, ":method": "POST" });
+              pipeline(source, request, () => {});
+              requests.push(request);
+            } else if (n === 1 && how === "abort") {
+              requests.push(session.request({ ":path": path }, { signal: controller.signal }));
+            } else {
+              requests.push(session.request({ ":path": path }));
+            }
+          }
+          const outcomes = requests.map(outcomeOf);
+          if (how !== "none") {
+            // Every held request has its response headers: the peer counts `limit` open streams.
+            await Promise.all(requests.slice(0, limit).map(responseOf));
+            const request = requests[0];
+            if (how === "destroy") request.destroy();
+            else if (how === "destroy-error") request.destroy(new Error("gave up"));
+            // The request's own inactivity timeout. Nothing else happens on a held request.
+            else if (how === "timeout-destroy") request.setTimeout(1, () => request.destroy());
+            else if (how === "pipeline") source.destroy(new Error("source failed"));
+            else if (how === "close") request.close();
+            else if (how === "abort") controller.abort();
+          }
+          const [firstOutcome, ...others] = await Promise.all(outcomes);
+          // What the other callers got in place of their own answer, counted by kind.
+          const lost: Record<string, number> = {};
+          others.forEach((outcome, i) => {
+            if (outcome !== `answer-${i + 2}`) lost[outcome] = (lost[outcome] ?? 0) + 1;
+          });
+          assert.deepStrictEqual(
+            { first: firstOutcome, lost, session: sessionEvents },
+            { first, lost: {}, session: [] },
+          );
+        } finally {
+          session.destroy();
+        }
+      });
+    }
+  }
 });

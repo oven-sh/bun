@@ -698,6 +698,16 @@ describe("node-fetch applies the TLS options of the agent", () => {
     assert.strictEqual(await outcome(tls12.port, { ...trust, ciphers: aes256 }), `TLSv1.2 ${aes256}`);
   });
 
+  test("ciphers with an OpenSSL security level", async () => {
+    await using server = await serveNegotiated();
+    await using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
+    const trust = { ca, servername };
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    assert.match(await outcome(server.port, { ...trust, ciphers: "DEFAULT@SECLEVEL=0" }), /^TLSv1\.3 /);
+    assert.match(await outcome(server.port, { ...trust, ciphers: "DEFAULT:@SECLEVEL=1" }), /^TLSv1\.3 /);
+    assert.strictEqual(await outcome(tls12.port, { ...trust, ciphers: `${aes256}:@SECLEVEL=0` }), `TLSv1.2 ${aes256}`);
+  });
+
   test("secureProtocol", async () => {
     await using server = await serveNegotiated();
     const trust = { ca, servername };

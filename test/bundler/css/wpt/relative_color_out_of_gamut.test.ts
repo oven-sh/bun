@@ -18,7 +18,7 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-    color: #00f942;
+    color: #00fb29;
 }
 `);
     },
@@ -198,7 +198,7 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* a.css */
   h1 {
-      color: #00f942;
+      color: #00fb29;
   }
   `);
     },
@@ -378,7 +378,7 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* a.css */
   h1 {
-      color: #00f942;
+      color: #00fb29;
   }
   `);
     },

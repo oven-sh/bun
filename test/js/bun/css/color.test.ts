@@ -347,6 +347,25 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
   });
 });
 
+describe("gamut mapping keeps the most saturated chroma under the JND (#44640)", () => {
+  // Expected values are colorjs.io 0.7.1 `toGamut({ method: "css" })`, the CSS
+  // Color 4 binary search. Stopping at the first chroma under the JND gave
+  // #fffbac, #fffea7 and #bcff61 for the first three.
+  const outOfGamut: [string, string][] = [
+    ["lab(98.2504% -7.697 88.7581)", "#fffc44"],
+    ["color(prophoto-rgb 0.9784 0.9925 0.3037)", "#ffff6d"],
+    ["lch(94.4698% 111.9227 117.6737deg)", "#b0ff00"],
+    ["lch(50.998% 135.363 338)", "#f000c0"],
+    ["color(display-p3 0 1 0)", "#00fb29"],
+    // Near white, but not within the lightness epsilon of pure white.
+    ["oklch(99.995% .01 0)", "#fffcff"],
+  ];
+
+  test.each(outOfGamut)("color(%s) maps to %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
+  });
+});
+
 // 2^24 color() calls take minutes on debug builds (past the per-test timeout) and dominate
 // the ASAN lane, so those sweep the ansi256 equivalence classes (~13k deterministic inputs):
 // each single channel, the grey diagonal, the sub-8 cube, and a coarse 17-step cube.

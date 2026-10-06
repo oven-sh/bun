@@ -1399,26 +1399,26 @@ describe("css tests", () => {
       .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
         border-left-color: #b32323;
         border-left-color: lab(40% 56.6 39);
-        border-right-color: #ee00be;
+        border-right-color: #f000c0;
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
         border-left-color: #b32323;
         border-left-color: lab(40% 56.6 39);
-        border-right-color: #ee00be;
+        border-right-color: #f000c0;
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-        border-left-color: #ee00be;
+        border-left-color: #f000c0;
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
         border-right-color: lab(40% 56.6 39);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-        border-left-color: #ee00be;
+        border-left-color: #f000c0;
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
         border-right-color: lab(40% 56.6 39);
@@ -1441,13 +1441,13 @@ describe("css tests", () => {
         border-left-color: #b32323;
         border-left-color: color(display-p3 .643308 .192455 .167712);
         border-left-color: lab(40% 56.6 39);
-        border-right-color: #ee00be;
+        border-right-color: #f000c0;
         border-right-color: color(display-p3 .972961 -.362078 .804206);
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-        border-left-color: #ee00be;
+        border-left-color: #f000c0;
         border-left-color: color(display-p3 .972961 -.362078 .804206);
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;

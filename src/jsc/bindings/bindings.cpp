@@ -2107,6 +2107,9 @@ struct NodeUnorderedLeftovers {
     // Every leftover claims a right entry of its own: front guess, back guess, then a scan from the back (L671-L722, L822-L876). The shortcut for Sets of fewer than three members (compareSmallSets, L724-L740) is not ported.
     bool pairOff(JSValue key, JSValue value, bool keyHeld) const
     {
+        // The arm sends no primitive. A callable ends the comparison here, before anything is copied.
+        if (!isTypeofObject(key))
+            return false;
         MarkedArgumentBuffer candidates;
         Bun::PendingEntries<size_t>::Queue open;
         WTF::HashSet<JSCell*> unsettledKeys;
@@ -2207,15 +2210,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 continue;
             }
 
-            if constexpr (checkPrototypes) {
-                bool restEqual = nodeUnorderedLeftoversEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set1, set2, iter1, key1, JSValue(), false);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!restEqual) {
-                    return false;
-                }
-                break;
-            }
-
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
             if constexpr (!enableAsymmetricMatchers) {
@@ -2223,6 +2217,14 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 if (key1.isPrimitive()) {
                     return false;
                 }
+            }
+            if constexpr (checkPrototypes) {
+                bool restEqual = nodeUnorderedLeftoversEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set1, set2, iter1, key1, JSValue(), false);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!restEqual) {
+                    return false;
+                }
+                break;
             }
             auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
             JSValue key2;
@@ -2282,6 +2284,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
 
+            if constexpr (!enableAsymmetricMatchers) {
+                // Without matchers a primitive equals only itself, and the lookup has ruled on that.
+                if (key1.isPrimitive()) {
+                    return false;
+                }
+            }
             if constexpr (checkPrototypes) {
                 bool restEqual = nodeUnorderedLeftoversEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map1, map2, iter1, key1, value1, !value2.isEmpty());
                 RETURN_IF_EXCEPTION(scope, {});
@@ -2289,13 +2297,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     return false;
                 }
                 break;
-            }
-
-            if constexpr (!enableAsymmetricMatchers) {
-                // Without matchers a primitive equals only itself, and the lookup has ruled on that.
-                if (key1.isPrimitive()) {
-                    return false;
-                }
             }
             // No equal value under this key: an entry of the other map matches on its key and its value together.
             auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);

@@ -4783,3 +4783,73 @@ describe("tls.connect() attaches onConnectEnd to 'end' exactly once", () => {
     });
   });
 });
+
+// Bun only: node asserts (ERR_INTERNAL_ASSERTION) or stays connecting forever.
+describe("connect(port) on a TLSSocket that runs over a transport the caller handed in reports EISCONN", () => {
+  const wraps: [name: string, established: string, wrap: (socket: Duplex) => tls.TLSSocket, proxied?: boolean][] = [
+    [
+      "tls.connect({ socket: net.Socket })",
+      "secureConnect",
+      socket => tls.connect({ socket, rejectUnauthorized: false }),
+    ],
+    [
+      "tls.connect({ socket: Duplex })",
+      "secureConnect",
+      socket => tls.connect({ socket, rejectUnauthorized: false }),
+      true,
+    ],
+    [
+      "new TLSSocket(net.Socket)",
+      "secure",
+      socket => new TLSSocket(socket as net.Socket, { rejectUnauthorized: false }),
+    ],
+  ];
+  for (const [name, established, wrap, proxied] of wraps) {
+    it(name, async () => {
+      let accepted = 0;
+      await using server = tls.createServer(COMMON_CERT_, socket => {
+        accepted++;
+        socket.on("error", () => {});
+        socket.resume();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = portOf(server);
+      const raw = net.connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      const transport = proxied ? new SocketProxy(raw) : raw;
+      const client = wrap(transport);
+      try {
+        await once(client, established);
+        // Not from inside the handshake callback.
+        await new Promise(resolve => setImmediate(resolve));
+        const errored = once(client, "error");
+        const closed = new Promise<boolean>(resolve => client.once("close", resolve));
+        const transportClosed = once(transport, "close");
+        const returned = client.connect(port, "127.0.0.1");
+        const [error] = await errored;
+        expect({
+          returned: returned === client,
+          message: error.message,
+          code: error.code,
+          syscall: error.syscall,
+          address: error.address,
+          port: error.port,
+          hadError: await closed,
+        }).toEqual({
+          returned: true,
+          message: `connect EISCONN 127.0.0.1:${port}`,
+          code: "EISCONN",
+          syscall: "connect",
+          address: "127.0.0.1",
+          port,
+          hadError: true,
+        });
+        await transportClosed;
+        expect(accepted).toBe(1);
+      } finally {
+        client.destroy();
+        raw.destroy();
+      }
+    });
+  }
+});

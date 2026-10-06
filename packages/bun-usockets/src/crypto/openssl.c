@@ -103,7 +103,8 @@ struct loop_ssl_data {
 
   /* Connections whose spill (us_ssl_spill_t) holds the rest of a batch flush. While there is
    * one, no application write batches, so its spill takes at most the rest of one record. A
-   * handshake flight is held whatever this says, and counts here if the kernel refuses it. */
+   * handshake flight is held whatever this says, with the first record written behind it, and
+   * counts here if the kernel refuses it. */
   unsigned int ssl_batch_spills;
 
   /* Why ssl_raw_write ended a write side inside the running us_internal_ssl_writev or spill drain. */
@@ -566,7 +567,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   int batch_is_foreign = loop_ssl_data->ssl_write_batch_len &&
                          loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket;
 
-  if (loop_ssl_data->ssl_write_batching && !batch_is_foreign) {
+  if ((loop_ssl_data->ssl_write_batching || loop_ssl_data->ssl_write_batch_len) && !batch_is_foreign) {
     /* Append the sealed record; the batch hits the kernel once, after
      * SSL_write returns. */
     unsigned int needed = loop_ssl_data->ssl_write_batch_len + (unsigned int)length;
@@ -590,11 +591,11 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     memcpy(loop_ssl_data->ssl_write_batch + loop_ssl_data->ssl_write_batch_len, data, (size_t)length);
     loop_ssl_data->ssl_write_batch_len = needed;
     loop_ssl_data->ssl_write_batch_owner = loop_ssl_data->ssl_socket;
+    /* Record by record, but this one leaves with the flight that was held for it: https://github.com/oven-sh/bun/issues/40653 */
+    if (!loop_ssl_data->ssl_write_batching) ssl_flush_write_batch(loop_ssl_data, loop_ssl_data->ssl_socket);
     BIO_clear_retry_flags(bio);
     return length;
   }
-  /* A flight of this socket that the batch still holds goes first. */
-  ssl_flush_write_batch(loop_ssl_data, loop_ssl_data->ssl_socket);
   ssl_emit(loop_ssl_data, loop_ssl_data->ssl_socket, data, (unsigned int)length, 0);
   BIO_clear_retry_flags(bio);
   return length;

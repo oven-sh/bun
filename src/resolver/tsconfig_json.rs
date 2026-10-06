@@ -144,7 +144,8 @@ pub struct TSConfigJSON {
     /// More info: https://github.com/microsoft/TypeScript/issues/31869
     pub(crate) base_url_for_paths: Box<[u8]>,
 
-    pub(crate) extends: Box<[u8]>,
+    /// The "extends" entries in source order. A later entry overrides an earlier one.
+    pub(crate) extends: Box<[Box<[u8]>]>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
@@ -159,8 +160,10 @@ pub struct TSConfigJSON {
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
+    /// `None` = unset, so a config further down an extends chain can set it.
+    pub emit_decorator_metadata: Option<bool>,
+    /// `None` = unset, so a config further down an extends chain can set it.
+    pub experimental_decorators: Option<bool>,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
 }
@@ -176,8 +179,8 @@ impl Default for TSConfigJSON {
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
             preserve_imports_not_used_as_values: Some(false),
-            emit_decorator_metadata: false,
-            experimental_decorators: false,
+            emit_decorator_metadata: None,
+            experimental_decorators: None,
             use_define_for_class_fields: None,
         }
     }
@@ -361,7 +364,14 @@ impl TSConfigJSON {
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = Box::from(str);
+                    result.extends = Box::from([Box::from(str)]);
+                } else if let Some(array) = extends_value.as_array() {
+                    result.extends = array
+                        .items()
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(Box::from)
+                        .collect();
                 }
             }
         }
@@ -434,12 +444,12 @@ impl TSConfigJSON {
 
             // Parse "emitDecoratorMetadata"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = emit_decorator_metadata_v {
-                result.emit_decorator_metadata = val;
+                result.emit_decorator_metadata = Some(val);
             }
 
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
-                result.experimental_decorators = val;
+                result.experimental_decorators = Some(val);
             }
 
             // Parse "useDefineForClassFields"

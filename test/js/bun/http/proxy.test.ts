@@ -1236,7 +1236,8 @@ test("a pooled HTTPS proxy tunnel does not keep the memory of a large request bo
     const before = process.memoryUsage.rss();
     await post(${bodyMiB * MiB});
     let kept = Infinity;
-    for (let attempt = 0; attempt < 100 && kept > ${(bodyMiB / 4) * MiB}; attempt++) {
+    // The body itself goes back to the system a few hundred ms after it is collected, however many requests that is.
+    for (const deadline = performance.now() + 2500; performance.now() < deadline && kept > ${(bodyMiB / 4) * MiB}; ) {
       await post(1024);
       Bun.gc(true);
       kept = Math.min(kept, process.memoryUsage.rss() - before);

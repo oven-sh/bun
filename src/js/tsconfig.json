@@ -4,6 +4,9 @@
     // Builtins are bundled into the binary and never emit declarations, so the base config's `composite`
     // (which turns on declaration-emit checks for every export) does not apply here.
     "composite": false,
+    // `skipLibCheck` would also skip builtins.d.ts, private.d.ts and the generated declarations. A type that does not
+    // resolve there is `any`, with no error anywhere.
+    "skipLibCheck": false,
     "esModuleInterop": true,
     // bun-types comes in through `include` below, by path. A `types` entry is looked up from each
     // `node_modules/@types` going up from here; the isolated install has none at the root, so from a git worktree

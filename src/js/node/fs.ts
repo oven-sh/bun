@@ -1048,7 +1048,7 @@ function opendirStatError(err, path) {
 }
 
 function opendirNotDirError(path) {
-  const err: NodeJS.ErrnoException = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
+  const err = new Error(`ENOTDIR: not a directory, opendir '${path}'`) as NodeJS.ErrnoException;
   err.code = "ENOTDIR";
   // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
   err.errno = process.platform === "win32" ? -4052 : -20;

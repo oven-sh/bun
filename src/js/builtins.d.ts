@@ -63,8 +63,10 @@ interface ReadableStream<R = any> {
   $bunNativePtr: TODO | undefined;
 }
 
-declare var ReadableStream: {
-  prototype: ReadableStream;
+// What builtins pass to a constructor beyond its public type. A `declare var` cannot be declared again with another
+// type, so assert at the call: `new (ReadableStream as unknown as $ReadableStreamConstructor)(...)`.
+/** With `type: "bytes"`, which the public constructor does not declare. */
+type $ReadableStreamConstructor = {
   new (
     underlyingSource: import("node:stream/web").UnderlyingByteSource,
     strategy?: { highWaterMark?: number },
@@ -73,14 +75,12 @@ declare var ReadableStream: {
     underlyingSource?: Omit<Bun.UnderlyingSource<R>, "type"> & { type?: "bytes" | undefined },
     strategy?: QueuingStrategy<R>,
   ): ReadableStream<R>;
-  new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
 };
-
-// The public constructor only accepts a known `Bun.Encoding`; builtins pass arbitrary labels and catch the throw.
-declare var TextDecoder: {
-  prototype: TextDecoder;
-  new (label?: string, options?: { __proto__?: null; fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
-};
+/** The public constructor only accepts a known `Bun.Encoding`; builtins pass arbitrary labels and catch the throw. */
+type $TextDecoderConstructor = new (
+  label?: string,
+  options?: { __proto__?: null; fatal?: boolean; ignoreBOM?: boolean },
+) => TextDecoder;
 
 interface Console {
   $writer: ReturnType<typeof Bun.stdout.writer>;
@@ -447,7 +447,8 @@ declare var $Buffer: {
 };
 
 declare interface Error {
-  code?: string;
+  // `DOMException.code` is a number.
+  code?: string | number;
 }
 
 declare function $makeAbortError(message?: string, options?: ErrorOptions): Error;

@@ -507,9 +507,11 @@ declare module "bun" {
     }
   }
 
-  interface BaseServeOptions {
-    /** Add a fullstack web app to this server using Bun Bake */
-    app?: Bake.Options | undefined;
+  namespace Serve {
+    interface BaseServeOptions<WebSocketData> {
+      /** Add a fullstack web app to this server using Bun Bake */
+      app?: Bake.Options | undefined;
+    }
   }
 
   interface PluginBuilder {

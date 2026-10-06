@@ -110,7 +110,7 @@ function internalBinding(name: string) {
       // encoding registry instead.
       icu.hasConverter = function hasConverter(label: string) {
         try {
-          new TextDecoder(label);
+          new (TextDecoder as $TextDecoderConstructor)(label);
           return true;
         } catch {
           return false;

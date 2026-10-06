@@ -288,7 +288,9 @@ function queryServer(worker, message) {
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
     if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
-      const error: DgramShareError = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+      const error = new Error(
+        `write ENOTSUP - cannot share a dgram socket with a worker on Windows`,
+      ) as DgramShareError;
       error.code = "ENOTSUP";
       error.syscall = "write";
       worker.emit("error", error);

@@ -524,7 +524,7 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
             out.extend_from_slice(cut);
             if cut.len() < reported.len() {
                 pretty!(out, style.color, "<d>\u{2026}<r>");
-            } else if columns(reported) + columns(&place) + 2 <= room {
+            } else if !first.path.is_empty() && columns(reported) + columns(&place) + 2 <= room {
                 pretty!(out, style.color, "  <d>{}<r>", place);
             }
             out.push(b'\n');

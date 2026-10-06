@@ -834,6 +834,57 @@ describe.concurrent("bun check", () => {
       expect(stdout + stderr).not.toContain("more files");
     });
 
+    test("an error that two projects report is printed once", async () => {
+      const compilerOptions = {
+        ...JSON.parse(tsconfig).compilerOptions,
+        ...{ composite: true, noEmit: false, emitDeclarationOnly: true, outDir: "out", rootDir: ".." },
+      };
+      const wrong = `export const wrong: number = "";\n`;
+      const files = (types: string[]) => {
+        const config = JSON.stringify({
+          compilerOptions: { ...compilerOptions, types },
+          include: ["*.ts", "../shared/*.ts"],
+        });
+        return {
+          "tsconfig.json": `{ "files": [], "references": [{ "path": "./one" }, { "path": "./two" }] }`,
+          "shared/s.ts": wrong,
+          "one/tsconfig.json": config,
+          "one/a.ts": wrong,
+          "two/tsconfig.json": config,
+          "two/a.ts": wrong,
+        };
+      };
+      using inAFile = project(files([]));
+      using withoutAFile = project(files(["missing"]));
+      const [located, global] = await Promise.all([check(inAFile), check(withoutAFile)]);
+      expect(located.stdout.split("\n").map(line => line.split("(")[0])).toEqual([
+        "one/a.ts",
+        "shared/s.ts",
+        "two/a.ts",
+      ]);
+      expect(located.stderr).toContain("Found 3 errors in 3 files");
+      expect(global.stdout.split("\n").filter(line => line.includes("error TS"))).toEqual([
+        "error TS2688: Cannot find type definition file for 'missing'.",
+      ]);
+      expect(global.stderr).toContain("Found 1 error,");
+    });
+
+    test("an error without a file has no place", async () => {
+      // More kinds of error than are shown in full.
+      const types = Array.from({ length: 60 }, (_, i) => `missing${i}`);
+      const compilerOptions = { ...JSON.parse(tsconfig).compilerOptions, types };
+      using dir = project({ "tsconfig.json": JSON.stringify({ compilerOptions }), "a.ts": "" });
+      const results = await Promise.all([check(dir, ["--pretty"]), check(dir, [], { AGENT: "1" })]);
+      const [inATerminal, forAgents] = results.map(it => it.stdout.split("\n"));
+      expect(inATerminal.filter(line => /^ +1 {2}TS2688 /.test(line)).slice(0, 2)).toEqual([
+        "  1  TS2688  Cannot find type definition file for 'missing2'.",
+        "  1  TS2688  Cannot find type definition file for 'missing20'.",
+      ]);
+      expect(forAgents[0]).toBe(`<error code="TS2688">`);
+      // Nothing like `:0`.
+      expect([...inATerminal, ...forAgents].filter(line => /(^|[\s>]):\d/.test(line))).toEqual([]);
+    });
+
     test("50 errors are not grouped", async () => {
       using dir = project({
         "a.ts": Array.from({ length: 50 }, (_, i) => `console.lgo(${i});`).join("\n") + `\nexport {};\n`,

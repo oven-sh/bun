@@ -45,6 +45,22 @@ describe.concurrent("WebKit dbdca7545d upgrade", () => {
     expect(new Function("try { throw 1; } catch (await) { return await; }")()).toBe(1);
   });
 
+  // TODO: any SyntaxError from the Function constructor aborts a build that validates exception checks
+  // (BUN_JSC_validateExceptionChecks=1, which the ASAN lane sets), `new Function("(")` included:
+  //
+  //   ERROR: Unchecked JS exception:
+  //       This scope can throw a JS exception: computeErrorInfoToJSValueWithoutSkipping @ src/jsc/bindings/FormatStackTraceForJS.cpp
+  //       But the exception was unchecked as of this scope: constructFunctionSkippingEvalEnabledCheck @ Source/JavaScriptCore/runtime/FunctionConstructor.cpp
+  //   ASSERTION FAILED: exception check validation failed
+  //
+  // JavaScriptCore's addErrorInfo() runs the stack formatting hook while the parser's error object is made, and the
+  // Function constructor then throws that error with no exception check in between. eval and vm.Script check, which is
+  // why the test above uses an indirect eval. The assertions below hold on a build without the validation.
+  test.todo("the Function constructor throws that SyntaxError too", () => {
+    expect(() => new Function("return async function () { try {} catch (await) {} };")).toThrow(SyntaxError);
+    expect(() => new Function("return async function () { try {} catch (aw\\u0061it) {} };")).toThrow(SyntaxError);
+  });
+
   test("`await` is an identifier in a non-async function nested in an async function's parameters (09c4cfc7d73)", async () => {
     const f = new Function(
       "return async function (a = function () { var await = 42; return await; }) { return a(); };",

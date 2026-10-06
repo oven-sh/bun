@@ -80,7 +80,11 @@ for kind in $KINDS; do
         for i in "${!BINARIES[@]}"; do
           rm -rf "$dir/node_modules" "$dir/bun.lock"
           # `update -r` starts from the lockfile and node_modules of an install by the same binary.
-          [ "$flow" = install ] || (cd "$dir" && "${BINARIES[$i]}" install > /dev/null 2>&1)
+          if [ "$flow" != install ] && ! (cd "$dir" && "${BINARIES[$i]}" install > "$WORK/out.log" 2>&1); then
+            echo "${LABELS[$i]}: the install before \`update -r\` failed in $kind n=$n" >&2
+            tail -3 "$WORK/out.log" >&2
+            exit 1
+          fi
           measure "${BINARIES[$i]}" "$dir" "$flow" >> "$WORK/rows.$i"
         done
       done

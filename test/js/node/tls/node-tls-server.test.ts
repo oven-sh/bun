@@ -3814,3 +3814,35 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("addContext() on connections the 
     }
   });
 });
+
+it("addContext() with a NUL in the name registers nothing under the part before it", async () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent = (n: number) => ({ key: fixture(`agent${n}-key.pem`), cert: fixture(`agent${n}-cert.pem`) });
+  const server: Server = createServer(agent(1), socket => socket.on("error", () => {}).end());
+  const front = net.createServer(raw => server.emit("connection", raw));
+  try {
+    server.addContext("before.example\0evil", agent(2));
+    server.listen(0, "127.0.0.1");
+    front.listen(0, "127.0.0.1");
+    await Promise.all([once(server, "listening"), once(front, "listening")]);
+    server.addContext("after.example\0evil", agent(2));
+    const served: Record<string, string> = {};
+    for (const [path, { port }] of Object.entries({ accepted: server.address(), injected: front.address() })) {
+      for (const servername of ["before.example", "after.example"]) {
+        const client = connect({ port, host: "127.0.0.1", servername, rejectUnauthorized: false });
+        await once(client, "secureConnect");
+        served[`${path} ${servername}`] = (client.getPeerCertificate() as PeerCertificate).subject.CN;
+        client.destroy();
+      }
+    }
+    expect(served).toEqual({
+      "accepted before.example": "agent1",
+      "accepted after.example": "agent1",
+      "injected before.example": "agent1",
+      "injected after.example": "agent1",
+    });
+  } finally {
+    front.close();
+    server.close();
+  }
+});

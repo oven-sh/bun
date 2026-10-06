@@ -4216,6 +4216,7 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
     "S3Client, stream()": row,
     "S3Client, list()": row,
     worker: AES128,
+    "connections of fetch.preconnect() and fetch()": "1",
   });
   expect(exitCode).toBe(0);
 });

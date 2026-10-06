@@ -3095,7 +3095,10 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Substitution { base, .. } = data {
             return self.is_weak_type(*base);
         }
-        if !is_object_kind(data) || is_mapped_kind(data) && self.is_generic(t) {
+        // `isWeakType` does not ask whether a mapped type is generic, see `is_generic`.
+        if !is_object_kind(data)
+            || is_mapped_kind(data) && self.has_type_variables(t) && self.is_generic(t)
+        {
             return false;
         }
         self.members(t).is_some_and(|m| {

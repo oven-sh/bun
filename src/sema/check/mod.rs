@@ -144,6 +144,7 @@ macro_rules! buffered_fields {
     ($each:ident) => {
         $each!(
             type_node_types fn_return_types pat_types literal_prop_types symbol_types circular_symbols
+            circular_base_types
             base_constructor_types symbol_reference_links mapped_types_with_errors declared_types shapes
             distributed_intersections sig_params
             sig_type_params resolved_return_types call_signatures construct_signatures candidate_orders members
@@ -200,6 +201,9 @@ pub struct Program<'s> {
     circular_initializers: ByNode<(FileId, PatId), (), Buffered, &'s Session>,
     /// The symbols whose type is the result of a resolution cycle.
     circular_symbols: ByNode<Sym, (), Buffered, &'s Session>,
+    /// The classes and interfaces whose base types were requested while they were being resolved
+    /// (2310).
+    circular_base_types: ByNode<Sym, (), Buffered, &'s Session>,
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
     circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
@@ -412,6 +416,7 @@ impl<'s> Program<'s> {
             symbol_types: ByNode::new_in(&symbols, session),
             circular_initializers: ByNode::new_in(&pats, session),
             circular_symbols: ByNode::new_in(&symbols, session),
+            circular_base_types: ByNode::new_in(&symbols, session),
             circular_returns: ByNode::new_in(&fns, session),
             calls_before_signatures: ByNode::new_in(&exprs, session),
             flows_too_deep: ByNode::new_in(&exprs, session),

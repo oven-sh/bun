@@ -664,6 +664,20 @@ impl<'p, 's> Checker<'p, 's> {
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
         }
+        // Nor is it one for a mapped type: `resolveMappedTypeMembers` begins with empty members, "such
+        // that recursive references see an empty object type". What sees them stays as it is.
+        if matches!(
+            self.data(key),
+            TypeData::Anon {
+                origin: Origin::Mapped(..),
+                ..
+            }
+        ) && self.stack[self.resolution_start..].contains(&Query::Shape(key))
+        {
+            self.note_members_in_place();
+            let shape = meanwhile(self);
+            return self.provisional_shape(shape);
+        }
         // Nor is it one where the declared members are in place (`ObjectFlagsUnresolvedMembers`).
         if self.inheriting.contains(&key) {
             self.note_members_in_place();
@@ -855,8 +869,17 @@ impl<'p, 's> Checker<'p, 's> {
                 pairs.push((self.intern(TypeData::ThisParam(target)), this));
                 let mapper = self.types().mapper(pairs);
                 // All instantiations share the shape of the declared type, unless their base types
-                // depend on the type arguments.
-                let (key, under) = if declared != ty && self.inherits_from_type_arguments(target) {
+                // depend on the type arguments, or on the members of the type: in `interface D
+                // extends M<D>`, `D` can be left without the members of `M<D>`, and `D` with a
+                // `this` argument has them.
+                let (key, under) = if declared != ty
+                    && (self.inherits_from_type_arguments(target)
+                        || self
+                            .p
+                            .circular_base_types
+                            .get(&self.task, &target)
+                            .is_some())
+                {
                     (ty, mapper)
                 } else {
                     (declared, MapperId::IDENTITY)
@@ -2275,6 +2298,7 @@ impl<'p, 's> Checker<'p, 's> {
         // reported at every class declaration and every interface declaration of the name,
         // regardless of which one has which base type.
         if in_cycle {
+            (p.circular_base_types).insert(&self.task, sym, (), Stored::new());
             for (file, decl) in self.files().decls(sym) {
                 let is_declaration = match decl {
                     Decl::Class(c) => matches!(

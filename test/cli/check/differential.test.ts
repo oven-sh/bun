@@ -899,24 +899,44 @@ const usesOfThemselves = [
   "const v: D = { m() {}, n: 1 } as any as { m(): any; n: number };",
   "const v: Record<string, unknown> = d;",
 ];
+// `M<D>` is asked for before `D`, which is then left without the members of `M<D>`.
+const usesOfTheirBases = [
+  ...["$m", "m", "$$m", "$b", "b", "extra", "getM", "anything"].map(name => `const v: 1 = null! as Has<"${name}", M>;`),
+  "const v: M = d;",
+  "const v: D = null! as M;",
+  "const v: 1 = null! as (D extends M ? true : false);",
+  "const v: 1 = null! as (M extends D ? true : false);",
+  "type First = keyof M; const v: 1 = d.$m;",
+  "type First = keyof M; const f: First = null!; const v: 1 = d.$m;",
+  "const f: M = null!; f; const v: 1 = d.$m;",
+  "const f: M = null!; f.$m; const v: 1 = d.$m;",
+];
+const declarationsForThemselves = [
+  "type Has<K, T> = K extends keyof T ? true : false;",
+  "interface Other { b(): void; [Symbol.iterator](): void }",
+  ...Object.entries(basesOfThemselves).map(([name, type]) => `type ${name}<T> = ${type};`),
+];
+// What is asked for first decides in typescript-go, so every use has an interface of its own: its declaration, and the use.
+const extendedAndUsed = [
+  ...product(Object.keys(basesOfThemselves), extendingThemselves, usesOfThemselves),
+  // Where `plus<D>` is first, typescript-go has the error type for the keys of the mapped type in it.
+  ...product(
+    Object.keys(basesOfThemselves).filter(base => base !== "plus"),
+    extendingThemselves,
+    usesOfTheirBases,
+  ),
+].map(([base, extending, use], index) => {
+  const [declaration, type] = extending(`D${index}`, base);
+  const used = use.replace(/\b[DM]\b/g, (name: string) => (name === "D" ? type : `${base}<${type}>`));
+  return [declaration, `{ const d = null! as ${type}; ${used} }`];
+});
 
 differential(
   "an interface that extends a type made of its own members, in a declaration file that is not checked",
   async () => {
-    const declarations = [
-      "type Has<K, T> = K extends keyof T ? true : false;",
-      "interface Other { b(): void; [Symbol.iterator](): void }",
-      ...Object.entries(basesOfThemselves).map(([name, type]) => `type ${name}<T> = ${type};`),
-    ];
-    // What is asked for first decides in typescript-go, so every use has an interface of its own.
-    const cases = [...product(Object.keys(basesOfThemselves), extendingThemselves, usesOfThemselves)].map(
-      ([base, extending, use], index) => {
-        const [declaration, type] = extending(`D${index}`, base);
-        declarations.push(declaration);
-        return `{ const d = null! as ${type}; ${use.replace(/\bD\b/g, () => type)} }`;
-      },
-    );
+    const declarations = [...declarationsForThemselves, ...extendedAndUsed.map(([declaration]) => declaration)];
     const files = { "declarations.d.ts": declarations.join("\n") + "\n" };
+    const cases = extendedAndUsed.map(([, use]) => use);
     expect(await casesThatDiffer({}, [], cases, 1, files)).toEqual([]);
   },
   timeout,
@@ -939,24 +959,24 @@ differential(
         "interface Fn { (): void }",
         "const is: 1 = null! as ((() => void) extends Fn ? true : false);",
       ],
+      [
+        dollar,
+        "interface Foo extends Dollar<Foo> { m(): void }",
+        "declare const foo: Foo;",
+        "foo.$m;",
+        "foo.$$m;",
+        "const keysOfBase: 1 = null! as keyof Dollar<Foo>;",
+        "const keys: 1 = null! as keyof Foo;",
+        "const base: Dollar<Foo> = foo;",
+        "const other: { $m: 1 } = foo;",
+      ],
     ];
     const different = await Promise.all(programs.map(lines => casesThatDiffer({}, [], lines, 1)));
-    expect(different).toEqual([[], [], []]);
+    expect(different).toEqual([[], [], [], []]);
 
     // Every declaration on the line of its use, before it.
-    const bases = ["plus", "record", "omitted"] as const;
-    const declarations = [
-      "type Has<K, T> = K extends keyof T ? true : false;",
-      "interface Other { b(): void; [Symbol.iterator](): void }",
-      ...bases.map(name => `type ${name}<T> = ${basesOfThemselves[name]};`),
-    ];
-    const cases = [...product([...bases], extendingThemselves, usesOfThemselves)].map(
-      ([base, extending, use], index) => {
-        const [declaration, type] = extending(`D${index}`, base);
-        return `${declaration} { const d = null! as ${type}; ${use.replace(/\bD\b/g, () => type)} }`;
-      },
-    );
-    expect(await casesThatDiffer({}, declarations, cases, 1)).toEqual([]);
+    const cases = extendedAndUsed.map(([declaration, use]) => `${declaration} ${use}`);
+    expect(await casesThatDiffer({}, declarationsForThemselves, cases, 1)).toEqual([]);
   },
   timeout,
 );

@@ -37,6 +37,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether `ty` depends on type parameters in a way that defers `keyof`, `T[K]` and `extends`.
     pub fn is_generic(&mut self, ty: TypeId) -> bool {
         if !self.has_type_variables(ty) {
+            // `isGenericMappedType` resolves the constraint type, whatever it is. `keyof D` there
+            // asks for the members of `D` before anything asks for those of the mapped type.
+            if let TypeData::Anon {
+                origin: Origin::Mapped(file, node),
+                mapper,
+            } = *self.data(ty)
+            {
+                self.mapped_constraint(file, node, mapper);
+            }
             return false;
         }
         match self.data(ty) {

@@ -1123,6 +1123,9 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
 test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {
   using dir = tempDir("parallel-drain-lock", {
     "big.test.js": `import {test} from "bun:test";
+      import {socketFaultInjection as fault} from "bun:internal-for-testing";
+      // On ASAN builds (where JSC asserts) short sends on the IPC fd make the final frame's backlog certain.
+      if (fault.available()) fault.set({ syscall: "send", action: "short", bytes: 65536, repeat: -1, fd: 3 });
       const pad = Buffer.alloc(340, "t").toString();
       for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
       for (let i = 0; i < 25; i++) test("p" + i, () => {});`,

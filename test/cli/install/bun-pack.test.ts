@@ -1799,17 +1799,19 @@ describe.concurrent("files", () => {
       "package.json": JSON.stringify({
         name: "pack-files-doublestar-path",
         version: "1.0.0",
-        files: ["**/build/out.js", "**/lib/", "!**/lib/skip.js"],
+        files: ["**/build/out.js", "src", "!**/__tests__/**", "!**/lib/skip.js"],
       }),
       "build/out.js": "x",
       "build/other.js": "x",
       "sub/build/out.js": "x",
       "a/b/build/out.js": "x",
       "out.js": "x",
-      "lib/a.js": "x",
-      "lib/skip.js": "x",
-      "sub/lib/b.js": "x",
-      "sub/lib/skip.js": "x",
+      "src/index.js": "x",
+      "src/__tests__/a.test.js": "x",
+      "src/lib/__tests__/b.test.js": "x",
+      "src/lib/b.js": "x",
+      "src/lib/skip.js": "x",
+      "src/vendor/lib/skip.js": "x",
     });
 
     const { out, err, exitCode } = await runPack(dir);
@@ -1819,9 +1821,9 @@ describe.concurrent("files", () => {
       "package/package.json",
       "package/a/b/build/out.js",
       "package/build/out.js",
-      "package/lib/a.js",
+      "package/src/index.js",
+      "package/src/lib/b.js",
       "package/sub/build/out.js",
-      "package/sub/lib/b.js",
     ]);
   });
 });
@@ -1931,15 +1933,8 @@ describe.concurrent(".gitignore/.npmignore", () => {
     async ignoreFile => {
       using dir = tempDir("pack-ignore-doublestar-path", {
         "package.json": JSON.stringify({ name: "pack-ignore-doublestar-path", version: "1.0.0" }),
-        [ignoreFile]: "**/build/*.js\n**/docs/internal.md\n**/fixtures/tmp/\n**/__tests__/**\n!**/build/keep.js\n",
+        [ignoreFile]: "**/docs/internal.md\n**/fixtures/tmp/\n**/__tests__/**\n",
         "keep.js": "keep",
-        "build/out.js": "x",
-        "build/keep.js": "x",
-        "build/readme.txt": "x",
-        "sub/build/out.js": "x",
-        "sub/build/keep.js": "x",
-        "a/b/build/out.js": "x",
-        "a/b/build/other.js": "x",
         "docs/internal.md": "x",
         "docs/public.md": "x",
         "sub/docs/internal.md": "x",
@@ -1956,13 +1951,39 @@ describe.concurrent(".gitignore/.npmignore", () => {
       expect(exitCode).toBe(0);
       expect(tarballEntries(join(dir, "pack-ignore-doublestar-path-1.0.0.tgz"))).toEqual([
         "package/package.json",
-        "package/build/keep.js",
-        "package/build/readme.txt",
         "package/docs/public.md",
         "package/keep.js",
         "package/src/lib/index.js",
-        "package/sub/build/keep.js",
         "package/sub/fixtures/tmp.txt",
+      ]);
+    },
+  );
+
+  test.each([".gitignore", ".npmignore"])(
+    "negated leading **/ with a multi-segment pattern un-ignores at any depth (%s)",
+    async ignoreFile => {
+      using dir = tempDir("pack-ignore-doublestar-negated", {
+        "package.json": JSON.stringify({ name: "pack-ignore-doublestar-negated", version: "1.0.0" }),
+        [ignoreFile]: "**/build/*.js\n!**/build/keep.js\n",
+        "keep.js": "keep",
+        "build/out.js": "x",
+        "build/keep.js": "x",
+        "build/readme.txt": "x",
+        "sub/build/out.js": "x",
+        "sub/build/keep.js": "x",
+        "a/b/build/out.js": "x",
+        "a/b/build/other.js": "x",
+      });
+
+      const { out, err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      expect(tarballEntries(join(dir, "pack-ignore-doublestar-negated-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/build/keep.js",
+        "package/build/readme.txt",
+        "package/keep.js",
+        "package/sub/build/keep.js",
       ]);
     },
   );

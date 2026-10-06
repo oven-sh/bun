@@ -286,8 +286,15 @@ impl UpgradedDuplex {
             // throws writeAfterFIN (EPIPE). The trailing end() is not a write
             // and still goes through the writableEnded probe below, so a
             // half-open transport sees our FIN.
-            if data.is_some() && Self::transport_got_eof(duplex, &global) {
-                return;
+            if data.is_some() {
+                match Self::transport_got_eof(duplex, &global) {
+                    Ok(false) => {}
+                    Ok(true) => return,
+                    Err(err) => {
+                        (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                        return;
+                    }
+                }
             }
             // Node ends no destroyed stream.
             for property in ["writableEnded", "destroyed"] {
@@ -343,20 +350,12 @@ impl UpgradedDuplex {
     }
 
     /// Not the 'end' event, which a paused transport holds back. No public property tells.
-    fn transport_got_eof(duplex: JSValue, global: &JSGlobalObject) -> bool {
-        let ended = duplex
-            .get(global, "_readableState")
-            .and_then(|state| match state {
-                Some(state) if state.is_object() => state.get(global, "ended"),
-                _ => Ok(None),
-            });
-        match ended {
-            Ok(ended) => ended.is_some_and(|ended| ended.to_boolean()),
-            Err(err) => {
-                let _ = global.take_exception(err);
-                false
-            }
-        }
+    fn transport_got_eof(duplex: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let ended = match duplex.get(global, "_readableState")? {
+            Some(state) if state.is_object() => state.get(global, "ended")?,
+            _ => None,
+        };
+        Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {

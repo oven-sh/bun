@@ -4,12 +4,13 @@
 // CTX, not one per connection. The cache holds zero refs — when the last
 // real owner drops, BoringSSL's ex_data free callback tombstones the entry.
 import { expect, test } from "bun:test";
+import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tempDir, tls as tlsCerts } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCerts } from "harness";
+import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
@@ -209,6 +210,91 @@ test("file-backed config: in-place rotation invalidates cache (mtime+size in dig
     expect(sslCtxLiveCount()).toBe(after1 + 1);
     pin.length = 0;
   });
+});
+
+test("file-backed config: a relative path is keyed on the cwd at the time of the call", async () => {
+  // Same name, size and mtime in both directories, so only the resolved path tells the files apart in the digest.
+  const pad = (a: string, b: string) => a.padEnd(Math.max(a.length, b.length), "\n");
+  using dir = tempDir("ssl-ctx-cafile-cwd", {
+    "valid/cert.pem": pad(tlsCerts.cert, expiredTls.cert),
+    "valid/key.pem": pad(tlsCerts.key, expiredTls.key),
+    "expired/cert.pem": pad(expiredTls.cert, tlsCerts.cert),
+    "expired/key.pem": pad(expiredTls.key, tlsCerts.key),
+  });
+  for (const file of ["valid/cert.pem", "valid/key.pem", "expired/cert.pem", "expired/key.pem"]) {
+    utimesSync(join(String(dir), file), 1_700_000_000, 1_700_000_000);
+  }
+
+  using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: tlsCerts, fetch: () => new Response("OK") });
+  const script = `
+    import tls from "node:tls";
+    import { once } from "node:events";
+    const pinned = [];
+    function viaBunConnect() {
+      return new Promise(resolve => {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${server.port},
+          tls: { caFile: "cert.pem" },
+          socket: {
+            open(s) { pinned.push(s); },
+            handshake(s, ok, err) { resolve(ok ? "OK" : err.code); },
+            error(s, err) { resolve(err.code); },
+            connectError(s, err) { resolve(err.code); },
+            data() {},
+            close() {},
+          },
+        }).catch(err => resolve(err.code));
+      });
+    }
+    function viaNodeTls() {
+      return new Promise(resolve => {
+        const s = tls.connect({ host: "127.0.0.1", port: ${server.port}, caFile: "cert.pem", servername: "localhost" });
+        pinned.push(s);
+        s.once("secureConnect", () => resolve("OK"));
+        s.once("error", err => resolve(err.code));
+      });
+    }
+    const mtls = tls.createServer({ key: process.env.KEY, cert: process.env.CERT, requestCert: true, rejectUnauthorized: false });
+    await once(mtls.listen(0, "127.0.0.1"), "listening");
+    async function clientCertificate() {
+      const seen = once(mtls, "secureConnection");
+      pinned.push(
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: mtls.address().port,
+          tls: { keyFile: "key.pem", certFile: "cert.pem", rejectUnauthorized: false },
+          socket: { data() {} },
+        }),
+      );
+      return (await seen)[0].getPeerCertificate().valid_to;
+    }
+    const out = {};
+    for (const [name, attempt] of [["connect", viaBunConnect], ["tls", viaNodeTls], ["clientCert", clientCertificate]]) {
+      out[name] = [];
+      for (const cwd of ["valid", "expired", "valid"]) {
+        process.chdir(process.env.DIR + "/" + cwd);
+        out[name].push(await attempt());
+      }
+    }
+    console.log(JSON.stringify(out));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, DIR: String(dir), KEY: tlsCerts.key, CERT: tlsCerts.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const validTo = (pem: string) => new X509Certificate(pem).validTo;
+  expect(stdout ? JSON.parse(stdout) : stderr).toEqual({
+    connect: ["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"],
+    tls: ["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"],
+    clientCert: [validTo(tlsCerts.cert), validTo(expiredTls.cert), validTo(tlsCerts.cert)],
+  });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("addCACert on one user-facing context does not affect another with identical options", () => {

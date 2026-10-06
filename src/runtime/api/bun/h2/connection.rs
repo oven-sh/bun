@@ -364,9 +364,7 @@ pub(crate) struct Connection {
     pub last_stream_id: u32,
     /// nghttp2's last_proc_stream_id: the highest peer stream that counts as processed (§6.8).
     last_proc_stream_id: u32,
-    /// Last-Stream-ID of the latest GOAWAY accepted from the peer (nghttp2's
-    /// remote_last_stream_id): a later GOAWAY must not raise it (RFC 9113 §6.8). Starts at
-    /// 2^31-1, the highest id, so the first GOAWAY can carry any id.
+    /// nghttp2's remote_last_stream_id: the highest id that the next GOAWAY can carry (§6.8).
     remote_last_stream_id: u32,
 }
 
@@ -944,8 +942,7 @@ impl Connection {
         let code_raw = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
         // nghttp2 (nghttp2_session_on_goaway_received): the Last-Stream-ID must refer to a stream
         // the *receiver* initiated (or 0) — for a server that means an even id, for a client an
-        // odd id. It must also not be above the id of an earlier GOAWAY (RFC 9113 §6.8). Anything
-        // else is a connection PROTOCOL_ERROR.
+        // odd id. Anything else is a connection PROTOCOL_ERROR.
         let initiated_locally = if self.is_server {
             last_stream_id.is_multiple_of(2)
         } else {

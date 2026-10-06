@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "fs";
+import { readdirSync, rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -1283,4 +1283,112 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       await installUnpatched(packageDir);
     });
   });
+});
+
+// https://github.com/oven-sh/bun/issues/33520
+// The patch task writes `.bun-tag-<hash>` into the patched cache folder as its
+// last step. A folder without that marker is not a finished patch: a cache that
+// was saved or restored halfway, or a write that was cut off.
+describe("a patched cache folder without its .bun-tag marker", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // Adds a file, so a patched folder is one that has `patched.txt`.
+  const noDepsPatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  const files = {
+    "package.json": JSON.stringify({
+      name: "patched-cache-folder",
+      dependencies: { "no-deps": "1.0.0" },
+      patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+    }),
+    patches: { "no-deps@1.0.0.patch": noDepsPatch },
+  };
+
+  async function install(packageDir: string, ...flags: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...flags],
+      cwd: packageDir,
+      // CI exports BUN_INSTALL_CACHE_DIR, which overrides the cache in bunfig.toml.
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  }
+
+  // A project with the patch installed, and the patched cache folder of `no-deps`.
+  async function installedProject(linker: "hoisted" | "isolated") {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker }, files });
+    await install(packageDir);
+    const cacheDir = join(packageDir, ".bun-cache");
+    const folders = readdirSync(cacheDir).filter(name => name.startsWith("no-deps@") && name.includes("_patch_hash="));
+    expect(folders).toHaveLength(1);
+    return { packageDir, cacheFolder: join(cacheDir, folders[0]) };
+  }
+
+  const markers = (cacheFolder: string) => readdirSync(cacheFolder).filter(name => name.startsWith(".bun-tag-"));
+
+  const installedText = (packageDir: string) =>
+    Bun.file(join(packageDir, "node_modules", "no-deps", "patched.txt"))
+      .text()
+      .catch(() => "not patched");
+
+  const removeNodeModules = (packageDir: string) =>
+    rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  describe.each([
+    ["hoisted linker", "hoisted", []],
+    ["hoisted linker, --force", "hoisted", ["--force"]],
+    ["isolated linker", "isolated", []],
+    ["isolated linker, --force", "isolated", ["--force"]],
+  ] as const)("is patched again (%s)", (_, linker, flags) => {
+    test.concurrent.each(["unpatched", "patched"] as const)("its files are %s", async content => {
+      const { packageDir, cacheFolder } = await installedProject(linker);
+      expect({ installed: await installedText(packageDir), markers: markers(cacheFolder).length }).toEqual({
+        installed: "hello world\n",
+        markers: 1,
+      });
+
+      for (const marker of markers(cacheFolder)) rmSync(join(cacheFolder, marker));
+      if (content === "unpatched") rmSync(join(cacheFolder, "patched.txt"));
+      removeNodeModules(packageDir);
+
+      await install(packageDir, ...flags);
+      expect({ installed: await installedText(packageDir), markers: markers(cacheFolder).length }).toEqual({
+        installed: "hello world\n",
+        markers: 1,
+      });
+    });
+  });
+
+  test.concurrent.each(["hoisted", "isolated"] as const)(
+    "a folder with its marker is used as it is (%s linker)",
+    async linker => {
+      const { packageDir, cacheFolder } = await installedProject(linker);
+      // A second run of the patch would write "hello world" again.
+      removeNodeModules(packageDir);
+      rmSync(join(cacheFolder, "patched.txt"));
+      writeFileSync(join(cacheFolder, "patched.txt"), "the folder from the cache\n");
+
+      await install(packageDir);
+      expect(await installedText(packageDir)).toBe("the folder from the cache\n");
+    },
+  );
 });

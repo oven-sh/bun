@@ -2,6 +2,7 @@ import cluster from "cluster";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tls as cert1, isASAN, isDebug, isWindows } from "harness";
+import http from "http";
 import http2 from "http2";
 import https from "https";
 import net, { AddressInfo } from "net";
@@ -4264,4 +4265,125 @@ it("resetAndDestroy() of a server wrap on the stream-level engine destroys the w
     peer.destroy();
     rawServer.close();
   }
+});
+
+// http.Server's 'connection' hook sets socket.server to a server that has no ALPNCallback.
+describe("a server-side TLSSocket wrap that an http.Server adopts through emit('connection')", () => {
+  async function handshake(select: (protocols: string[]) => string | undefined) {
+    const calls: string[] = [];
+    const httpServer = http.createServer((req, res) => {
+      const body = `alpn=${(req.socket as TLSSocket).alpnProtocol}`;
+      res.writeHead(200, { "Connection": "close", "Content-Length": body.length });
+      res.end(body);
+    });
+    const front = net.createServer(raw => {
+      const wrapped = new TLSSocket(raw, {
+        isServer: true,
+        ...COMMON_CERT,
+        ALPNCallback: ({ protocols }) => {
+          calls.push(protocols.join(","));
+          return select(protocols);
+        },
+      });
+      wrapped.on("error", () => {});
+      httpServer.emit("connection", wrapped);
+    });
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = connect({
+      port: (front.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      ALPNProtocols: ["h2", "http/1.1"],
+      rejectUnauthorized: false,
+    });
+    try {
+      const outcome = await new Promise<string>(resolve => {
+        client.once("secureConnect", () => resolve(`secureConnect ${client.alpnProtocol}`));
+        client.once("error", () => resolve("error"));
+      });
+      let response: string | undefined;
+      if (outcome !== "error") {
+        client.setEncoding("latin1");
+        let received = "";
+        client.on("data", chunk => (received += chunk));
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(client, "close");
+        response = received.slice(received.indexOf("\r\n\r\n") + 4);
+      }
+      return { outcome, calls, response };
+    } finally {
+      client.destroy();
+      front.close();
+    }
+  }
+
+  it("negotiates the protocol the wrap's ALPNCallback selects", async () => {
+    expect(await handshake(() => "http/1.1")).toEqual({
+      outcome: "secureConnect http/1.1",
+      calls: ["h2,http/1.1"],
+      response: "alpn=http/1.1",
+    });
+  });
+
+  it("refuses the connection when the wrap's ALPNCallback returns undefined", async () => {
+    expect(await handshake(() => undefined)).toEqual({
+      outcome: "error",
+      calls: ["h2,http/1.1"],
+      response: undefined,
+    });
+  });
+});
+
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
+describe("a ClientHello with no SNI is reported as servername false", () => {
+  // @types/node does not declare the property.
+  const servernameOf = (socket: TLSSocket) => (socket as unknown as { servername: unknown }).servername;
+
+  it("by socket.servername and the ALPNCallback of a tls.Server", async () => {
+    let alpn: unknown = "ALPNCallback did not run";
+    const server = createServer({
+      ...COMMON_CERT,
+      ALPNCallback: ({ servername, protocols }) => {
+        alpn = servername;
+        return protocols[0];
+      },
+    });
+    const observed = Promise.withResolvers<{ socket: unknown; alpn: unknown }>();
+    server.on("secureConnection", socket => {
+      observed.resolve({ socket: servernameOf(socket), alpn });
+      socket.end();
+    });
+    server.on("tlsClientError", observed.reject);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", ALPNProtocols: ["a"], rejectUnauthorized: false });
+    try {
+      client.on("error", observed.reject);
+      expect(await observed.promise).toEqual({ socket: false, alpn: false });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("by a server-side TLSSocket wrap after 'secure'", async () => {
+    const observed = Promise.withResolvers<unknown>();
+    const raw = net.createServer(socket => {
+      const secured = new TLSSocket(socket, { isServer: true, ...COMMON_CERT });
+      secured.on("error", observed.reject);
+      secured.on("secure", () => {
+        observed.resolve(servernameOf(secured));
+        secured.end();
+      });
+    });
+    await once(raw.listen(0, "127.0.0.1"), "listening");
+    const { port } = raw.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    try {
+      client.on("error", observed.reject);
+      expect(await observed.promise).toBe(false);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });

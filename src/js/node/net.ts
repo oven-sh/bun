@@ -117,7 +117,7 @@ interface ServerInternals {
   _ALPNCallback?: ALPNCallback;
 }
 type SNICallback = (servername: string, callback: (err: unknown, context?: unknown) => void) => void;
-type ALPNCallback = (arg: { servername: string; protocols: string[] }) => string | undefined;
+type ALPNCallback = (arg: { servername: string | false; protocols: string[] }) => string | undefined;
 type ServerInstance = Omit<NetServer, keyof ServerInternals> & ServerInternals;
 
 interface ConnectReq {
@@ -179,7 +179,11 @@ interface InternalSocketHandler<Data> extends SocketHandler<Data> {
 }
 
 interface InternalServerHandler<Data> extends InternalSocketHandler<Data> {
-  alpnCallback?(socket: Socket<Data>, servername: string, protocolsWire: Uint8Array): string | false | undefined;
+  alpnCallback?(
+    socket: Socket<Data>,
+    servername: string | undefined,
+    protocolsWire: Uint8Array,
+  ): string | false | undefined;
   serverName?(
     server: ServerInstance | TLSSocketInstance,
     servername: string,
@@ -1096,8 +1100,7 @@ const ServerHandlers = {
     // falls through to the static ALPNProtocols list), the selected protocol
     // string, or undefined to refuse the connection - Node's contract.
     const self = socket.data;
-    const server = self?.server ?? self;
-    const cb = server?._ALPNCallback;
+    const cb = self?._ALPNCallback ?? self?.server?._ALPNCallback;
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
@@ -1108,7 +1111,7 @@ const ServerHandlers = {
     }
     let result;
     try {
-      result = cb.$call(self, { servername, protocols });
+      result = cb.$call(self, { servername: servername ?? false, protocols });
     } catch (err) {
       // Node: a throwing ALPNCallback refuses the connection (fatal
       // no_application_protocol alert) and surfaces the thrown error as
@@ -1273,7 +1276,7 @@ const ServerHandlers = {
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
-    self.servername = socket.getServername();
+    self.servername = socket.getServername() ?? false;
     self.alpnProtocol = socket.alpnProtocol;
     self[kVerifyError] = verifyError ?? null;
     // The native verifier reports a non-OK code when there is no peer certificate,

@@ -1085,23 +1085,25 @@ describe("ES Decorators", () => {
       expect(result).toEqual(ok);
     });
 
-    // The walk keeps less stack per level than the visit pass, so between the two limits
-    // it is the first pass to stop. There it reports the error that the visit pass has not.
-    test.concurrent("the walk stops at a depth the visit pass accepts, and reports it", async () => {
+    // For these two shapes the walk needs more stack per level than the visit pass. So
+    // between the two limits the visit pass accepts the depth, and the walk has to report.
+    test.concurrent.each([
+      ["nested conditional operators", `n => repeat("a?b:", n) + "c"`],
+      ["chained tagged templates", `n => "a" + repeat("\\u0060x\\u0060", n)`],
+    ])("the walk reports a depth of %s that the visit pass accepts", async (_what, shape) => {
       const result = await inChild(`
-        const max = ${isDebug ? 20000 : 64000};
+        const shape = ${shape};
+        // The first depth at which scan() reports the overflow. It has no printer to stop first.
         const first = member => {
-          for (const shape of [n => repeat("a?b:", n) + "c", n => "a" + repeat("\\u0060x\\u0060", n)]) {
-            for (let n = 500; n <= max; n = Math.ceil(n * 1.2)) {
-              try {
-                new Bun.Transpiler({ loader: "ts" }).scan(classWith(member, "return " + shape(n)));
-              } catch (e) {
-                if (e.message !== overflow) throw new Error(n + ": " + e.message);
-                return n;
-              }
+          for (let n = 500; n <= 1000000; n = Math.ceil(n * 1.2)) {
+            try {
+              new Bun.Transpiler({ loader: "ts" }).scan(classWith(member, "return " + shape(n)));
+            } catch (e) {
+              if (e.message !== overflow) throw new Error(n + ": " + e.message);
+              return n;
             }
           }
-          return max;
+          throw new Error("no depth was reported");
         };
         const decorated = first("@d #p() {}");
         const plain = first("#p() {}");
@@ -1115,7 +1117,7 @@ describe("ES Decorators", () => {
     // next statement. Flat source becomes one deep chain that no earlier pass recursed on.
     test.concurrent("a chain that the minifier builds from flat statements is reported, not a crash", async () => {
       const result = await inChild(`
-        const n = ${many};
+        const n = ${isDebug ? 5000 : 100000};
         const parts = ["let a0 = f();"];
         for (let i = 1; i <= n; i++) parts.push("const a" + i + " = a" + (i - 1) + ".x();");
         parts.push("return a" + n + ";");
@@ -1126,7 +1128,7 @@ describe("ES Decorators", () => {
         } catch (e) {
           message = e.message;
         }
-        if (!/^(Maximum call stack size exceeded|StackOverflow.*)$/.test(message)) throw new Error(message);
+        if (message !== overflow) throw new Error(message);
         console.log("ok");
       `);
       expect(result).toEqual(ok);

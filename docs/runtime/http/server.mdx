@@ -106,7 +106,13 @@ Read the chosen port from the server's `port` or `url` property.
 
 ```ts
 console.log(server.port); // 3000
-console.log(server.url); // http://localhost:3000
+console.log(server.url.href); // http://localhost:3000/
+```
+
+`server.url` is a `URL`, and its `href` ends with `/`. To build the URL of a path, resolve the path against it. `${server.url}/users` is `http://localhost:3000//users`, with two slashes.
+
+```ts
+await fetch(new URL("/users", server.url)); // http://localhost:3000/users
 ```
 
 ### Configuring a default port

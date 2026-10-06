@@ -42,6 +42,12 @@ const oversizedText = () => Buffer.alloc(0xffffff, "-").toString();
 const counts = (rows: unknown) =>
   Array.isArray(rows) ? Object.fromEntries(rows.map(row => [row.Variable_name, Number(row.Value)])) : rows;
 
+// What changed between two reads of the session status.
+const delta = (before: Record<string, number>, after: unknown) =>
+  after && typeof after === "object"
+    ? Object.fromEntries(Object.entries(after as Record<string, number>).map(([name, n]) => [name, n - before[name]]))
+    : after;
+
 // Starts `queries` in one tick, in order, and closes the connection. close()
 // waits until every query has settled, for five seconds at most, and then
 // rejects the rest with ERR_MYSQL_CONNECTION_CLOSED. So a query that never
@@ -75,6 +81,15 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
       sql.unsafe("SHOW SESSION STATUS WHERE Variable_name IN ('Com_stmt_prepare', 'Com_stmt_execute')").simple();
     return { sql, marker, commands, before: counts(await commands()) };
   }
+
+  // Every COM_STMT_* command that the server counts for this connection.
+  const statementCommands = (sql: SQL) =>
+    sql
+      .unsafe(
+        "SHOW SESSION STATUS WHERE Variable_name IN ('Com_stmt_prepare', 'Com_stmt_execute', 'Com_stmt_reprepare', 'Com_stmt_close', 'Com_stmt_reset')",
+      )
+      .simple();
+  const unchanged = { Com_stmt_reprepare: 0, Com_stmt_close: 0, Com_stmt_reset: 0 };
 
   test.each(failures)("%s rejects the query and the queries behind it run in order", async (_, parameter, rejected) => {
     const { sql, marker, commands, before } = await connect();
@@ -304,7 +319,8 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
   });
 
   test("cancel() rejects a query that shares a statement that is being prepared", async () => {
-    const { sql, marker, commands, before } = await connect();
+    const { sql, marker } = await connect();
+    const before = counts(await statementCommands(sql));
     const value = (n: number) => sql`SELECT ${n} AS value`;
     const order: string[] = [];
     const note = (name: string) => () => void order.push(name);
@@ -317,19 +333,20 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     second.then(note("cancelled"), note("cancelled"));
     second.cancel();
 
-    const [one, two, next, after] = await settle(sql, [first, second, marker(1), commands()]);
-    expect({ one, two, next, after: counts(after), order }).toEqual({
+    const [one, two, next, after] = await settle(sql, [first, second, marker(1), statementCommands(sql)]);
+    expect({ one, two, next, commands: delta(before, counts(after)), order }).toEqual({
       one: [{ value: 1 }],
       two: cancelled,
       next: [{ marker: 1 }],
       // One prepare, and an execute for the first query and for the marker.
-      after: { Com_stmt_prepare: before.Com_stmt_prepare + 1, Com_stmt_execute: before.Com_stmt_execute + 2 },
+      commands: { Com_stmt_prepare: 1, Com_stmt_execute: 2, ...unchanged },
       order: ["cancelled", "first"],
     });
   });
 
   test("cancel() on the query that wrote the COM_STMT_PREPARE: the server prepares the statement and does not execute it", async () => {
-    const { sql, marker, commands, before } = await connect();
+    const { sql, marker } = await connect();
+    const before = counts(await statementCommands(sql));
     const value = (n: number) => sql`SELECT ${n} AS value`;
     const order: string[] = [];
     const note = (name: string) => () => void order.push(name);
@@ -341,14 +358,29 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     query.cancel();
 
     // The second `value` query shares the statement that the first one prepared.
-    const [outcome, next, again, after] = await settle(sql, [query, behind, value(2), commands()]);
-    expect({ outcome, next, again, after: counts(after), order }).toEqual({
+    const [outcome, next, again, after] = await settle(sql, [query, behind, value(2), statementCommands(sql)]);
+    expect({ outcome, next, again, commands: delta(before, counts(after)), order }).toEqual({
       outcome: cancelled,
       next: [{ marker: 1 }],
       again: [{ value: 2 }],
       // One prepare, and an execute for the marker and for the second query.
-      after: { Com_stmt_prepare: before.Com_stmt_prepare + 1, Com_stmt_execute: before.Com_stmt_execute + 2 },
+      commands: { Com_stmt_prepare: 1, Com_stmt_execute: 2, ...unchanged },
       order: ["cancelled", "behind"],
+    });
+  });
+
+  // The same queries with no cancel(): what the two tests above compare with.
+  test("two queries that share a statement prepare it one time", async () => {
+    const { sql, marker } = await connect();
+    const before = counts(await statementCommands(sql));
+    const value = (n: number) => sql`SELECT ${n} AS value`;
+
+    const [one, two, next, after] = await settle(sql, [value(1), value(2), marker(1), statementCommands(sql)]);
+    expect({ one, two, next, commands: delta(before, counts(after)) }).toEqual({
+      one: [{ value: 1 }],
+      two: [{ value: 2 }],
+      next: [{ marker: 1 }],
+      commands: { Com_stmt_prepare: 1, Com_stmt_execute: 3, ...unchanged },
     });
   });
 

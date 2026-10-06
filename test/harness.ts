@@ -1057,6 +1057,8 @@ export function toHaveBins(actual: any, expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
+    // Each bin is a pair of files, `name.exe` and `name.bunx`.
+    if (actual.length !== expectedBins.length * 2) return { pass: false, message };
     for (var i = 0; i < actual.length; i += 2) {
       if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
         return { pass: false, message };
@@ -1065,7 +1067,7 @@ export function toHaveBins(actual: any, expectedBins: string[]) {
     return { pass: true, message };
   }
 
-  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+  return { pass: actual.length === expectedBins.length && actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
 export function toBeValidBin(actual: any, expectedLinkPath: string) {

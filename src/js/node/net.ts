@@ -2470,8 +2470,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // Shared-fd TLS pair: defer the close two check-phase turns
       // (test-tls-socket-close); see closeAdoptedTLSRawNT.
       currentHandle.pause?.();
-      // The TLS socket closes with the socket it wraps, and that close is nothing to report.
-      currentHandle[kAdoptedTLSRaw]._hadError = true;
       setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
     } else {
       closeSocketHandle(this, currentHandle, isException);
@@ -4449,6 +4447,8 @@ function closeSocketHandle(self, handle, isException, isCleanupPending = false) 
   $debug("closeSocketHandle", isException, isCleanupPending);
   // Ahead of the setImmediate below: the transport's 'close' precedes this socket's.
   unadoptedTransport(self)?.destroy();
+  // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
+  handle[kAdoptedTLSRaw]?.destroy();
   handle.close(onSocketHandleClosed);
   setImmediate(() => {
     $debug("emit close", isCleanupPending);

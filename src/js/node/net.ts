@@ -387,12 +387,14 @@ function writeErrnoException(negErrno) {
   }
   return er;
 }
-function endNT(socket, callback, err) {
+function endNT(self, socket, callback) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
-  socket.shutdown();
-  callback(err);
+  // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
+  const current = self._handle;
+  (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
+  callback();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -442,6 +444,13 @@ function linkUpgraded(self, connection: SocketInstance) {
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
   forwardUpgradedError(self, connection);
+  self.connecting = connection instanceof Socket && (connection.connecting || !connection._handle);
+}
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
+function onUpgradedConnect(self, connection) {
+  if (self.destroyed || self[kupgraded] !== connection) return;
+  self.connecting = false;
+  self.emit("connect");
 }
 function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
@@ -462,7 +471,7 @@ function adoptTLSPair(self, connection, pair) {
 function attachClientTLS(self, connection, tls, upgradeDuplex) {
   const handle = connection._handle;
   if (self.destroyed || (!upgradeDuplex && !handle)) return;
-  const options = { data: { self, req: { oncomplete: afterConnect } }, tls, socket: self[khandlers], isServer: false };
+  const options = { data: { self, req: {} }, tls, socket: self[khandlers], isServer: false };
   try {
     if (upgradeDuplex || isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
       attachTLSEngine(self, connection, options);
@@ -1578,10 +1587,6 @@ const SocketHandlers2 = {
     }
     if (!self[kupgraded]) req.oncomplete(0, self._handle, req, true, true);
     socket.data.req = undefined;
-    if (self[kupgraded]) {
-      self.connecting = false;
-      SocketHandlers2.drain(socket);
-    }
   },
   data(socket, buffer) {
     $debug("Bun.Socket data");
@@ -1715,6 +1720,11 @@ const SocketHandlers2 = {
     // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
     if (req.dispatching) {
       req.errno = error.errno || uv().UV_ECANCELED;
+      return;
+    }
+    // A TLS engine that failed before it opened has no connect pending: afterConnect would drop the failure.
+    if (self[kupgraded]) {
+      if (!self.destroyed) self.destroy(new ErrnoException(error.errno, "connect"));
       return;
     }
     // Closing the handle cancels the request (ECANCELED). libuv completes it on a later loop turn,
@@ -2289,14 +2299,6 @@ Socket.prototype.connect = function connect(...args) {
     }
     // start using existing connection
     if (connection) {
-      // A generic duplex transport is already established, so this socket is
-      // not "connecting" - only the TLS layer is pending, which
-      // secureConnecting tracks. Node reports false here. A provided
-      // net.Socket keeps its existing accounting (its own connect lifecycle
-      // drives this flag).
-      if (!(connection instanceof Socket)) {
-        this.connecting = false;
-      }
       if (connectListener != null) this.once("secureConnect", connectListener);
       // reset the underlying writable object when establishing a new connection
       // this is a function on `Duplex`, originally defined on `Writable`
@@ -2305,11 +2307,9 @@ Socket.prototype.connect = function connect(...args) {
       this._undestroy();
       linkUpgraded(this, connection);
       // upgradeTLS() takes an established socket.
-      if (upgradeDuplex || (connection._handle && !connection.connecting)) {
-        attachClientTLS(this, connection, tls, upgradeDuplex);
-      } else {
-        connection.once("connect", attachClientTLS.bind(null, this, connection, tls, false));
-      }
+      if (upgradeDuplex || !this.connecting) attachClientTLS(this, connection, tls, upgradeDuplex);
+      else connection.once("connect", attachClientTLS.bind(null, this, connection, tls, false));
+      if (this.connecting) connection.once("connect", onUpgradedConnect.bind(null, this, connection));
       return this;
     }
   }
@@ -2467,11 +2467,11 @@ Socket.prototype._final = function _final(callback) {
   }
   const socket = this._handle;
 
-  // already closed call destroy
-  if (!socket) return callback();
+  // already closed call destroy. A server-side wrap attaches its handle on the tick its constructor queued, ahead of endNT.
+  if (!socket && !this[kupgraded]) return callback();
 
   // emit FIN allowHalfOpen only allow the readable side to close first
-  process.nextTick(endNT, socket, callback);
+  process.nextTick(endNT, this, socket, callback);
 };
 
 Object.defineProperty(Socket.prototype, "localAddress", {
@@ -2584,6 +2584,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   } else {
     process.nextTick(adoptServerTLS, this, connection, options);
   }
+  if (this.connecting) connection.once("connect", onUpgradedConnect.bind(null, this, connection));
 };
 
 // Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.

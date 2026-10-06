@@ -641,6 +641,7 @@ impl<'s> Program<'s> {
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
+            generic_object_flags: FxHashMap::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -1169,6 +1170,8 @@ pub struct Checker<'p, 's> {
     /// The height of `stack` at which `is_empty_intersection` began, for each one in progress.
     pub(super) never_in_progress_from: Vec<usize>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
+    /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of unions and intersections.
+    generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
     generic_mapped_types_in_progress: Vec<TypeId>,
     /// Those for which it has ended at the limit of `instantiation_count` since `check_file` began.
     generic_mapped_types_cut_short: Vec<TypeId>,

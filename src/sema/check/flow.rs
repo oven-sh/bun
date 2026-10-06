@@ -3871,7 +3871,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return true;
                 }
                 let index = self.get_type_of_expression(file, index);
-                !self.is_generic(index)
+                !self.is_generic_index_type(index)
             }
             _ => false,
         }

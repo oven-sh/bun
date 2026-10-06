@@ -794,6 +794,40 @@ for (const noImplicitAny of [true, false]) {
   );
 }
 
+// `getGenericObjectFlags`: a generic mapped type or tuple is a generic object type and no generic index type,
+// `keyof T` and a template are the reverse, and each place asks for the one, the other, or either.
+differential(
+  "a type that is generic as an object, as an index, as both or as neither, wherever that is asked",
+  async () => {
+    const types = [
+      ...["O", "T", "keyof O", "`a${T}`", "Uppercase<T>", "{ [P in keyof O]: 1 }", "[...U]", "O['x' & keyof O]"],
+      ...["T extends 'a' ? 1 : 2", "'a' & { [P in keyof O]: 1 }", "T | 'a'", "{ a: O }", "[O]"],
+    ];
+    const places = [
+      "{ [K in 'a' | 'b' as K & X]: 1 }",
+      "{ [K in ('a' & X) | 'b']: 1 }",
+      "{ [K in X & string]: 1 }",
+      "{ a: 1 }[X & 'a']",
+      "{ a: 1 }[Y]",
+      "`p${X & string}`",
+      "Uppercase<X & string>",
+      "keyof X",
+      "X extends 'a' ? 1 : 2",
+      "[X] extends ['a'] ? 1 : 2",
+      "Omit<X, 'a'>",
+    ];
+    const cases = [...product(types, places)].map(
+      ([type, place], i) =>
+        `function f${i}<T extends string, U extends unknown[], O>(v: ${place.replace(/\bX\b/g, () => `(${type})`).replace(/\bY\b/g, () => type)}) { const n: never = v; }`,
+    );
+    const rest = types.map(
+      (type, i) =>
+        `function r${i}<T extends string, U extends unknown[], O>(v: ${type}, k: T) { const { a, [k]: b, ...r } = v as (${type}) & { a: 1 }; const n: never = r; }`,
+    );
+    expect(await casesThatDiffer({}, [], [...cases, ...rest])).toEqual([]);
+  },
+);
+
 // The name in `a.name` that no property declares has the symbol of the index signature, if one is declared.
 differential("a function from an index signature that is tested and not called", async () => {
   const declarations = [

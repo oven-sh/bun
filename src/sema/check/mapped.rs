@@ -34,85 +34,107 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().mapper_of(&pairs)
     }
 
-    /// Whether `ty` depends on type parameters in a way that defers `keyof`, `T[K]` and `extends`.
+    /// `isGenericType`
     pub fn is_generic(&mut self, ty: TypeId) -> bool {
-        if !self.has_type_variables(ty) {
-            // `isGenericMappedType` resolves the constraint type, whatever it is. `keyof D` there
-            // asks for the members of `D` before anything asks for those of the mapped type.
-            // `getGenericObjectFlags` asks every member of an intersection.
-            let parts: &[TypeId] = match self.data(ty) {
-                TypeData::Intersection(parts) => &parts[..],
-                _ => std::slice::from_ref(&ty),
-            };
-            for &part in parts {
-                if let TypeData::Anon {
-                    origin: Origin::Mapped(file, node),
-                    mapper,
-                } = *self.data(part)
-                {
-                    self.mapped_constraint(file, node, mapper);
+        self.get_generic_object_flags(ty) != (false, false)
+    }
+
+    /// `isGenericObjectType`
+    pub(super) fn is_generic_object_type(&mut self, ty: TypeId) -> bool {
+        self.get_generic_object_flags(ty).0
+    }
+
+    /// `isGenericIndexType`
+    pub(super) fn is_generic_index_type(&mut self, ty: TypeId) -> bool {
+        self.get_generic_object_flags(ty).1
+    }
+
+    /// `getGenericObjectFlags`: `ObjectFlagsIsGenericObjectType`, `ObjectFlagsIsGenericIndexType`.
+    /// Whichever is asked for, a mapped type resolves its constraint type.
+    fn get_generic_object_flags(&mut self, ty: TypeId) -> (bool, bool) {
+        let both = |a: (bool, bool), b: (bool, bool)| (a.0 | b.0, a.1 | b.1);
+        match *self.data(ty) {
+            TypeData::Union(ref parts) | TypeData::Intersection(ref parts) => {
+                // `ObjectFlagsIsGenericTypeComputed`
+                if let Some(&flags) = self.generic_object_flags.get(&ty) {
+                    return flags;
                 }
+                let mut flags = (false, false);
+                for &part in parts.iter() {
+                    flags = both(flags, self.get_generic_object_flags(part));
+                }
+                self.generic_object_flags.insert(ty, flags);
+                flags
             }
+            TypeData::Substitution { base, constraint } => both(
+                self.get_generic_object_flags(base),
+                self.get_generic_object_flags(constraint),
+            ),
+            _ => {
+                let flags = self.flags(ty);
+                (
+                    flags & tf::INSTANTIABLE_NON_PRIMITIVE != 0
+                        || self.is_generic_mapped_type(ty)
+                        || self.is_generic_tuple_type(ty),
+                    flags & (tf::INSTANTIABLE_NON_PRIMITIVE | tf::INDEX) != 0
+                        || self.is_generic_string_like_type(ty),
+                )
+            }
+        }
+    }
+
+    /// `isGenericStringLikeType`
+    fn is_generic_string_like_type(&mut self, ty: TypeId) -> bool {
+        matches!(
+            self.data(ty),
+            TypeData::Template { .. } | TypeData::StringMapping { .. }
+        ) && !self.is_pattern_literal(ty)
+    }
+
+    /// `isGenericMappedType`
+    pub(super) fn is_generic_mapped_type(&mut self, ty: TypeId) -> bool {
+        let TypeData::Anon {
+            origin: Origin::Mapped(file, node),
+            mapper,
+        } = *self.data(ty)
+        else {
+            return false;
+        };
+        let constraint = self.mapped_constraint(file, node, mapper);
+        if self.is_generic_index_type(constraint) {
+            return true;
+        }
+        // So is one whose `as` clause mentions something generic other than the key: the name is
+        // generic even after the known keys are substituted for the key parameter.
+        let mapped = self.mapped_decl(file, node);
+        if mapped.name_ty.is_none() {
             return false;
         }
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.is_generic(p))
-            }
-            TypeData::Tuple { flags, .. } => flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)),
-            // `isGenericMappedType`
-            TypeData::Anon {
-                origin: Origin::Mapped(file, node),
-                mapper,
-            } => {
-                let (file, node, mapper) = (*file, *node, *mapper);
-                let constraint = self.mapped_constraint(file, node, mapper);
-                if self.is_generic(constraint) {
-                    return true;
-                }
-                // So is one whose `as` clause mentions something generic other than the key: the
-                // name is generic even after the known keys are substituted for the key parameter.
-                let mapped = self.mapped_decl(file, node);
-                if mapped.name_ty.is_none() {
-                    return false;
-                }
-                let declared = self.type_from_node(file, mapped.name_ty);
-                let param = self.type_param(file, mapped.param);
-                let with_keys = self.mapper_with_pair(mapper, param, constraint);
-                // The name may contain `ty`: `{ [K in keyof C as C[K] & string]: 1 }` as a member of
-                // `C`. `isGenericMappedType` has no guard and caches nothing. Every level
-                // instantiates the name with a mapper of its own, and does nothing else, until
-                // `instantiationCount` is at its limit. The native stack does not last that long.
-                // A recursion that ends, as in `PartialOnUndefinedDeep` of type-fest, is left alone.
-                // After that the unions and intersections in the name have
-                // `ObjectFlagsIsGenericTypeComputed`.
-                if self.generic_mapped_types_cut_short.contains(&ty) {
-                    return false;
-                }
-                // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type.
-                self.generic_mapped_types_in_progress.push(ty);
-                let name = if self.is_half_of_stack_in_use() {
-                    self.generic_mapped_types_cut_short.push(ty);
-                    self.instantiation_count = 5_000_000;
-                    self.instantiation_too_deep()
-                } else {
-                    self.instantiate(declared, with_keys)
-                };
-                let is_generic = self.is_generic(name);
-                self.generic_mapped_types_in_progress.pop();
-                is_generic
-            }
-            // `isGenericStringLikeType`: an object type that tags a placeholder, as in
-            // `${string & Tag<T>}`, may contain type variables.
-            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
-                !self.is_pattern_literal(ty)
-            }
-            // `getGenericObjectFlags`
-            &TypeData::Substitution { base, constraint } => {
-                self.is_generic(base) || self.is_generic(constraint)
-            }
-            _ => self.is_deferred(ty),
+        let declared = self.type_from_node(file, mapped.name_ty);
+        let param = self.type_param(file, mapped.param);
+        let with_keys = self.mapper_with_pair(mapper, param, constraint);
+        // The name may contain `ty`: `{ [K in keyof C as C[K] & string]: 1 }` as a member of
+        // `C`. `isGenericMappedType` has no guard and caches nothing. Every level
+        // instantiates the name with a mapper of its own, and does nothing else, until
+        // `instantiationCount` is at its limit. The native stack does not last that long.
+        // A recursion that ends, as in `PartialOnUndefinedDeep` of type-fest, is left alone.
+        // After that the unions and intersections in the name have
+        // `ObjectFlagsIsGenericTypeComputed`.
+        if self.generic_mapped_types_cut_short.contains(&ty) {
+            return false;
         }
+        // In `{ [K in "a" as Z<T[]>]: 1 }` every level is another type.
+        self.generic_mapped_types_in_progress.push(ty);
+        let name = if self.is_half_of_stack_in_use() {
+            self.generic_mapped_types_cut_short.push(ty);
+            self.instantiation_count = 5_000_000;
+            self.instantiation_too_deep()
+        } else {
+            self.instantiate(declared, with_keys)
+        };
+        let is_generic = self.is_generic_index_type(name);
+        self.generic_mapped_types_in_progress.pop();
+        is_generic
     }
 
     // ───────────────────────────── keyof ─────────────────────────────
@@ -616,7 +638,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | AccessNode::Name(_)
                 | AccessNode::Other
         );
-        if self.is_generic(index) || self.defers_access(obj, index, is_expression) {
+        if self.is_generic_index_type(index) || self.defers_access(obj, index, is_expression) {
             if self.has_any_flag(obj) || obj == TypeId::UNKNOWN {
                 return Some(obj);
             }
@@ -2743,7 +2765,9 @@ impl<'p, 's> Checker<'p, 's> {
                             new_texts.push(self.atoms().bytes(inner_texts[j + 1]).to_vec());
                         }
                         new_texts.last_mut().unwrap().extend_from_slice(next);
-                    } else if self.is_generic(ty) || self.is_pattern_literal_placeholder(ty) {
+                    } else if self.is_generic_index_type(ty)
+                        || self.is_pattern_literal_placeholder(ty)
+                    {
                         new_types.push(ty);
                         new_texts.push(next.to_vec());
                     } else {
@@ -2867,7 +2891,9 @@ impl<'p, 's> Checker<'p, 's> {
             )
             | TypeData::UnresolvedName { .. }
             | TypeData::StringMapping { .. } => self.intern(TypeData::StringMapping { kind, ty }),
-            _ if self.is_generic(ty) => self.intern(TypeData::StringMapping { kind, ty }),
+            _ if self.is_generic_index_type(ty) => {
+                self.intern(TypeData::StringMapping { kind, ty })
+            }
             // A number is mapped as its string form.
             _ if self.is_pattern_literal_placeholder(ty) => {
                 let inner = self.template_type(&[known::empty, known::empty], &[ty]);

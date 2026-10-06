@@ -626,52 +626,8 @@ impl<'p, 's> Checker<'p, 's> {
             || ty == TypeId::OBJECT
     }
 
-    pub(super) fn is_generic_mapped_type(&mut self, ty: TypeId) -> bool {
-        matches!(
-            self.data(ty),
-            TypeData::Anon {
-                origin: Origin::Mapped(..),
-                ..
-            }
-        ) && self.is_generic(ty)
-    }
-
     pub(super) fn is_generic_tuple_type(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Tuple { flags, .. } if flags.iter().any(|f| f.contains(ElemFlags::VARIADIC)))
-    }
-
-    /// `isGenericObjectType`
-    pub(super) fn is_generic_object_type(&mut self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.is_generic_object_type(p))
-            }
-            &TypeData::Substitution { base, constraint } => {
-                self.is_generic_object_type(base) || self.is_generic_object_type(constraint)
-            }
-            TypeData::TypeParam(..)
-            | TypeData::ThisParam(_)
-            | TypeData::Marker(_)
-            | TypeData::IndexedAccess { .. }
-            | TypeData::Cond { .. } => true,
-            data => is_mapped_kind(data) && self.is_generic(ty) || is_generic_tuple_kind(data),
-        }
-    }
-
-    /// `isGenericIndexType`
-    pub(super) fn is_generic_index_type(&mut self, ty: TypeId) -> bool {
-        match self.data(ty) {
-            TypeData::Union(parts) | TypeData::Intersection(parts) => {
-                parts.iter().any(|&p| self.is_generic_index_type(p))
-            }
-            &TypeData::Substitution { base, constraint } => {
-                self.is_generic_index_type(base) || self.is_generic_index_type(constraint)
-            }
-            TypeData::Template { .. } | TypeData::StringMapping { .. } => {
-                !self.is_pattern_literal(ty)
-            }
-            _ => self.is_deferred(ty),
-        }
     }
 
     /// `anyFunctionType`: the type of a context sensitive function under `CheckModeSkipContextSensitive`.

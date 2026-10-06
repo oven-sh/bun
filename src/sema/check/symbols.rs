@@ -2384,10 +2384,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // `isGenericObjectType`, `isGenericIndexType`
-        let mut is_generic = self.is_generic(ty);
-        for &key in self.parts(omitted_keys) {
-            is_generic |= !self.is_pattern_literal(key) && self.is_generic(key);
-        }
+        let is_generic =
+            self.is_generic_object_type(ty) || self.is_generic_index_type(omitted_keys);
         if is_generic {
             // `Omit<T, "a" | K>`, and the properties that cannot go into the rest are omitted by
             // name as well.

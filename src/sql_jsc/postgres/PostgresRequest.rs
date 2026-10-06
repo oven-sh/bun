@@ -543,7 +543,9 @@ pub(crate) fn on_data<Context: ReaderContext>(
                         );
                         return Ok(());
                     }
-                    continue;
+                    // Nothing the server sent before our StartupMessage is a reply to it.
+                    connection.start();
+                    return Ok(());
                 }
                 _ => return Err(AnyPostgresError::UnexpectedMessage),
             }

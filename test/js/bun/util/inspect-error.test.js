@@ -981,5 +981,176 @@ test("a symbol described as cause or errors is a property like any other", () =>
 
   const aggregate = new AggregateError([], "aggregate");
   aggregate[Symbol("errors")] = [1, 2];
-  expect(Bun.inspect(aggregate)).toContain("errors: [ 1, 2 ]");
+  expect(Bun.inspect(aggregate)).toContain(" [Symbol(errors)]: [ 1, 2 ],");
+});
+
+// A Symbol key has no name. The printer reads it from the iterator as its
+// description, so it must say which keys are Symbols.
+describe("own properties with Symbol keys", () => {
+  // What the printer writes, without the source preview, the stack frames,
+  // the empty lines and the version line of an uncaught error.
+  function printed(text) {
+    return text.split(/\r?\n/).filter(line => line.trim() !== "" && !/^\s*\d+ \| |^\s*\^$|^\s+at |^Bun v/.test(line));
+  }
+
+  test("the description is not a name that the printer hides", () => {
+    const e = new Error("x");
+    e[Symbol("message")] = "a symbol-keyed value";
+    e[Symbol("stack")] = 2;
+    e[Symbol("name")] = 3;
+    e.bar = 5;
+    expect(printed(Bun.inspect(e))).toEqual([
+      "error: x",
+      " bar: 5,",
+      ' [Symbol(message)]: "a symbol-keyed value",',
+      " [Symbol(stack)]: 2,",
+      " [Symbol(name)]: 3,",
+    ]);
+  });
+
+  test("Symbol.for('code') beside a string code", () => {
+    const e = new Error("x");
+    e.code = "E_REAL";
+    e[Symbol.for("code")] = "E_SYMBOL";
+    expect(printed(Bun.inspect(e))).toEqual(["error: x", ' [Symbol(code)]: "E_SYMBOL",', ' code: "E_REAL"']);
+  });
+
+  test("Symbol.for('code') with no string code", () => {
+    const e = new Error("x");
+    e[Symbol.for("code")] = "E_SYMBOL";
+    expect(printed(Bun.inspect(e))).toEqual(["error: x", ' [Symbol(code)]: "E_SYMBOL",']);
+  });
+
+  test("a Symbol beside the string key with the same text", () => {
+    const e = new Error("x");
+    e.foo = 1;
+    e[Symbol("foo")] = 2;
+    expect(printed(Bun.inspect(e))).toEqual(["error: x", " foo: 1,", " [Symbol(foo)]: 2,"]);
+  });
+
+  test("a Symbol that has no description, or an empty one", () => {
+    const e = new Error("x");
+    e[Symbol()] = 1;
+    e[Symbol("")] = 2;
+    // The printer does not print the string key "".
+    e[""] = 3;
+    expect(printed(Bun.inspect(e))).toEqual(["error: x", " [Symbol()]: 1,", " [Symbol()]: 2,"]);
+  });
+
+  test("a description that is not ASCII", () => {
+    const e = new Error("x");
+    e[Symbol("caf\u00e9")] = 1;
+    e[Symbol("\u4e2d\u6587")] = 2;
+    expect(printed(Bun.inspect(e))).toEqual(["error: x", " [Symbol(caf\u00e9)]: 1,", " [Symbol(\u4e2d\u6587)]: 2,"]);
+  });
+
+  test("the description does not count for the width of the names", () => {
+    const e = new Error("x");
+    e.a = 1;
+    e.abc = 2;
+    e[Symbol("a long description")] = 3;
+    expect(printed(Bun.inspect(e))).toEqual(["error: x", "   a: 1,", " abc: 2,", " [Symbol(a long description)]: 3,"]);
+  });
+
+  test("Symbol.for('cause') does not replace the cause", () => {
+    const e = new Error("top", { cause: new Error("real") });
+    e[Symbol.for("cause")] = new Error("from the Symbol");
+    expect(printed(Bun.inspect(e))).toEqual(["error: top", "error: from the Symbol", "error: real"]);
+  });
+
+  test("on the cause of an error", () => {
+    const inner = new Error("inner", { cause: new Error("real") });
+    inner[Symbol("name")] = 1;
+    inner[Symbol.for("cause")] = new Error("from the Symbol");
+    const lines = printed(Bun.inspect(new Error("outer", { cause: inner })));
+    expect(lines).toContain(" [Symbol(name)]: 1,");
+    // An error that is not the outermost one prints an Error-valued property
+    // after its key, and the source preview starts on the line of the key.
+    expect(lines.filter(line => line.includes("cause")).map(line => line.slice(0, line.indexOf(":")))).toEqual([
+      " [Symbol(cause)]",
+    ]);
+    expect(lines.filter(line => line.startsWith("error: "))).toEqual([
+      "error: outer",
+      "error: inner",
+      "error: from the Symbol",
+      "error: real",
+    ]);
+  });
+
+  test("on a member of an AggregateError", () => {
+    const member = new Error("member");
+    member[Symbol("name")] = 1;
+    member.bar = 2;
+    expect(printed(Bun.inspect(new AggregateError([member], "all")))).toEqual([
+      "error: member",
+      " bar: 2,",
+      " [Symbol(name)]: 1,",
+    ]);
+  });
+
+  test("the key has the colors that the key of an object has", () => {
+    const key = "\x1b[0m\x1b[2m[\x1b[0m\x1b[34mSymbol(foo)\x1b[0m\x1b[2m]:\x1b[0m ";
+    expect(Bun.inspect({ [Symbol("foo")]: 4 }, { colors: true })).toContain("\n  " + key);
+    const e = new Error("x");
+    e[Symbol("foo")] = 4;
+    expect(Bun.inspect(e, { colors: true })).toContain("\n " + key);
+  });
+
+  test("string keys print as before", () => {
+    const e = new Error("x");
+    e.name = "MyError";
+    e.code = "E_X";
+    e.alpha = 1;
+    e.longer_than_ten = 2;
+    e.inner = new Error("an own property");
+    expect(printed(Bun.inspect(e))).toEqual([
+      "MyError: x",
+      "      alpha: 1,",
+      " longer_than_ten: 2,",
+      '       code: "E_X"',
+      "error: an own property",
+    ]);
+  });
+
+  const make = `
+    const e = new Error("x");
+    e[Symbol("message")] = "a symbol-keyed value";
+    e[Symbol.for("cause")] = 1;
+    e[Symbol()] = 2;
+    e.bar = 3;
+  `;
+  const expected = [
+    "error: x",
+    " bar: 3,",
+    ' [Symbol(message)]: "a symbol-keyed value",',
+    " [Symbol(cause)]: 1,",
+    " [Symbol()]: 2,",
+  ];
+
+  test.concurrent.each([
+    ["console.log", "console.log(e);", "stdout", 0],
+    ["console.error", "console.error(e);", "stderr", 0],
+    ["an uncaught throw", "throw e;", "stderr", 1],
+    ["an unhandled rejection", "Promise.reject(e);", "stderr", 1],
+    ["reportError", "reportError(e);", "stderr", 1],
+  ])("%s", async (_, raise, stream, code) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", make + raise],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: printed(stdout),
+      stderr: printed(stderr),
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
+      stdout: stream === "stdout" ? expected : [],
+      stderr: stream === "stderr" ? expected : [],
+      exitCode: code,
+      signalCode: null,
+    });
+  });
 });

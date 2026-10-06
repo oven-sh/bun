@@ -7202,7 +7202,7 @@ impl VirtualMachine {
                 error_obj,
                 crate::JSPropertyIteratorOptions {
                     include_value: true,
-                    skip_empty_name: true,
+                    skip_empty_name: false,
                     own_properties_only: true,
                     observable: false,
                     only_non_index_properties: true,
@@ -7215,6 +7215,10 @@ impl VirtualMachine {
                 // A symbol is yielded as its description.
                 let is_symbol = iterator.is_symbol();
                 let is_named = |name: &[u8]| !is_symbol && field.eq_ascii(name);
+                // `skip_empty_name` would also drop a Symbol that has no description.
+                if is_named(b"") {
+                    continue;
+                }
                 if is_named(b"message") || is_named(b"name") || is_named(b"stack") {
                     continue;
                 }
@@ -7287,10 +7291,15 @@ impl VirtualMachine {
                     };
                     let formatter = &mut *restore.f;
 
-                    let pad_left = longest_name.saturating_sub(field.length());
                     is_first_property = false;
-                    splat_space(writer, pad_left as u64)?;
-                    pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+                    if is_symbol {
+                        // `[Symbol()]` is as wide as the widest padded name.
+                        pretty_write!(writer, " <r><d>[<r><blue>Symbol({})<r><d>]:<r> ", field)?;
+                    } else {
+                        let pad_left = longest_name.saturating_sub(field.length());
+                        splat_space(writer, pad_left as u64)?;
+                        pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+                    }
 
                     if allow_side_effects && global_ref.has_exception() {
                         global_ref.clear_exception();

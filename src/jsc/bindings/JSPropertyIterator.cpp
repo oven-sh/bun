@@ -105,6 +105,9 @@ extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIter
 {
     size_t longest = 0;
     for (const auto& prop : iter->properties->propertyNameVector()) {
+        // A Symbol has a description, not a name.
+        if (prop.isSymbol())
+            continue;
         if (prop.length() > longest) {
             longest = prop.length();
         }

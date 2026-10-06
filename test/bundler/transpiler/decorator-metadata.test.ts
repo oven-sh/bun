@@ -1,3 +1,5 @@
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import "reflect-metadata";
 
 describe("decorator metadata", () => {
@@ -6,6 +8,21 @@ describe("decorator metadata", () => {
     class Known {}
     class Swag {}
     class A_1 {}
+
+    // `null` and `undefined` in a union or intersection are elided unless the
+    // tsconfig this file is transpiled under turns `strictNullChecks` on
+    // (directly or through `strict`). Then they serialize as `void 0`, so
+    // `string | undefined` becomes `Object`, like tsc. The cwd's tsconfig
+    // decides at runtime, so read the mode off a sentinel instead of pinning
+    // one. The "strictNullChecks" block below pins each tsconfig combination.
+    // @ts-ignore
+    @d1
+    class Sentinel {
+      constructor(p: string | undefined) {}
+    }
+    const strictNullChecks = Reflect.getMetadata("design:paramtypes", Sentinel)[0] === Object;
+    const nullableString = strictNullChecks ? Object : String;
+    const nullableSwag = strictNullChecks ? Object : Swag;
 
     // @ts-ignore
     @d1
@@ -226,10 +243,10 @@ describe("decorator metadata", () => {
     expect(received[24]).toBe(Object);
     expect(received[25]).toBe(void 0);
     expect(received[26]).toBe(void 0);
-    expect(received[27]).toBe(String);
-    expect(received[28]).toBe(String);
-    expect(received[29]).toBe(String);
-    expect(received[30]).toBe(String);
+    expect(received[27]).toBe(nullableString);
+    expect(received[28]).toBe(nullableString);
+    expect(received[29]).toBe(nullableString);
+    expect(received[30]).toBe(nullableString);
     expect(received[31]).toBe(Object);
     expect(received[32]).toBe(Object);
     expect(received[33]).toBe(String);
@@ -238,10 +255,10 @@ describe("decorator metadata", () => {
     expect(received[36]).toBe(Object);
     expect(received[37]).toBe(String);
     expect(received[38]).toBe(String);
-    expect(received[39]).toBe(String);
-    expect(received[40]).toBe(String);
-    expect(received[41]).toBe(String);
-    expect(received[42]).toBe(String);
+    expect(received[39]).toBe(nullableString);
+    expect(received[40]).toBe(nullableString);
+    expect(received[41]).toBe(nullableString);
+    expect(received[42]).toBe(nullableString);
     expect(received[43]).toBe(Object);
     expect(received[44]).toBe(Object);
     expect(received[45]).toBe(Object);
@@ -256,10 +273,10 @@ describe("decorator metadata", () => {
     expect(received[54]).toBe(Object);
     expect(received[55]).toBe(Swag);
     expect(received[56]).toBe(Swag);
-    expect(received[57]).toBe(Swag);
-    expect(received[58]).toBe(Swag);
-    expect(received[59]).toBe(Swag);
-    expect(received[60]).toBe(Swag);
+    expect(received[57]).toBe(nullableSwag);
+    expect(received[58]).toBe(nullableSwag);
+    expect(received[59]).toBe(nullableSwag);
+    expect(received[60]).toBe(nullableSwag);
     expect(received[61]).toBe(Object);
     expect(received[62]).toBe(Object);
     expect(received[63]).toBe(Object);
@@ -268,10 +285,10 @@ describe("decorator metadata", () => {
     expect(received[66]).toBe(Object);
     expect(received[67]).toBe(void 0);
     expect(received[68]).toBe(void 0);
-    expect(received[69]).toBe(Swag);
-    expect(received[70]).toBe(Swag);
-    expect(received[71]).toBe(Swag);
-    expect(received[72]).toBe(Swag);
+    expect(received[69]).toBe(nullableSwag);
+    expect(received[70]).toBe(nullableSwag);
+    expect(received[71]).toBe(nullableSwag);
+    expect(received[72]).toBe(nullableSwag);
     expect(received[73]).toBe(Object);
     expect(received[74]).toBe(Object);
     expect(received[75]).toBe(Swag);
@@ -542,5 +559,358 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method4")[0]).toBe(Object);
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
+  });
+  describe("strictNullChecks", () => {
+    // A tiny stand-in for reflect-metadata: it records what the transpiler
+    // passes as design:paramtypes for the decorated method.
+    const probe = /* ts */ `
+    const seen: unknown[][] = [];
+    (Reflect as any).metadata = (key: string, value: unknown) => () => {
+      if (key === "design:paramtypes") seen.push(value as unknown[]);
+    };
+    function d(): any {
+      return () => {};
+    }
+    class Dto {}
+    class Probe {
+      @d()
+      method(
+        @d() a: string | undefined,
+        @d() b: string | null,
+        @d() c: number | undefined,
+        @d() e: Dto | undefined,
+        @d() f: string,
+        @d() g: null | undefined,
+        @d() h: string & null,
+      ) {}
+    }
+    console.log(seen[0].map(t => (t === undefined ? "undefined" : (t as any).name)).join(" "));
+  `;
+    const loose = "String String Number Dto String undefined String";
+    const strict = "Object Object Object Object String undefined Object";
+
+    const tsconfig = (compilerOptions: Record<string, unknown>) =>
+      JSON.stringify({
+        compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true, ...compilerOptions },
+      });
+
+    test.concurrent.each([
+      ["neither key", {}, loose],
+      ["strict: true", { strict: true }, strict],
+      ["strict: false", { strict: false }, loose],
+      ["strictNullChecks: true", { strictNullChecks: true }, strict],
+      ["strictNullChecks: false", { strictNullChecks: false }, loose],
+      ["strict: true, strictNullChecks: false", { strict: true, strictNullChecks: false }, loose],
+      ["strict: false, strictNullChecks: true", { strict: false, strictNullChecks: true }, strict],
+    ])("runtime transpiler honours %s", async (_, compilerOptions, expected) => {
+      using dir = tempDir("decorator-metadata-strict", {
+        "tsconfig.json": tsconfig(compilerOptions),
+        "index.ts": probe,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expected + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each([
+      ["inherits strict from the base", { strict: true }, {}, strict],
+      [
+        "child strictNullChecks: false wins over base strict: true",
+        { strict: true },
+        { strictNullChecks: false },
+        loose,
+      ],
+      ["child strict: true wins over base strict: false", { strict: false }, { strict: true }, strict],
+    ])("tsconfig extends: %s", async (_, base, child, expected) => {
+      using dir = tempDir("decorator-metadata-strict-extends", {
+        "tsconfig.base.json": JSON.stringify({ compilerOptions: base }),
+        "tsconfig.json": JSON.stringify({
+          extends: "./tsconfig.base.json",
+          compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true, ...child },
+        }),
+        "index.ts": probe,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expected + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each([
+      ["neither key", {}, loose],
+      ["strict: true", { strict: true }, strict],
+      ["strictNullChecks: true", { strictNullChecks: true }, strict],
+      ["strict: true, strictNullChecks: false", { strict: true, strictNullChecks: false }, loose],
+    ])("Bun.build honours %s", async (_, compilerOptions, expected) => {
+      using dir = tempDir("decorator-metadata-strict-build", {
+        "tsconfig.json": tsconfig(compilerOptions),
+        "index.ts": probe,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts")],
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", await result.outputs[0].text()],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expected + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // The 174 constructor parameter types of the "type serialization" test
+    // above, run under an explicit tsconfig in each mode. The expected strings
+    // are what tsc 6.0.2 emits for the same class (`tsc -p .` then run the
+    // output): they differ at indices 27 to 30, 39 to 42, 57 to 60 and 69 to 72.
+    const types = [
+      "any",
+      "unknown",
+      "never",
+      "void",
+      "null",
+      "undefined",
+      "number",
+      "string",
+      "boolean",
+      "symbol",
+      "bigint",
+      "object",
+      "() => {}",
+      "[]",
+      "{}",
+      "123",
+      "123n",
+      '"123"',
+      "`123`",
+      "true",
+      "false",
+      "Map",
+      "Set",
+      "Known",
+      "Unknown",
+      "never & string",
+      "string & never",
+      "null & string",
+      "string & null",
+      "undefined & string",
+      "string & undefined",
+      "void & string",
+      "string & void",
+      "unknown & string",
+      "string & unknown",
+      "any & string",
+      "string & any",
+      "never | string",
+      "string | never",
+      "null | string",
+      "string | null",
+      "undefined | string",
+      "string | undefined",
+      "void | string",
+      "string | void",
+      "unknown | string",
+      "string | unknown",
+      "any | string",
+      "string | any",
+      "string | string",
+      "string & string",
+      "Known | Swag",
+      "Swag | Known",
+      "Known & Swag",
+      "Swag & Known",
+      "never | Swag",
+      "Swag | never",
+      "null | Swag",
+      "Swag | null",
+      "undefined | Swag",
+      "Swag | undefined",
+      "void | Swag",
+      "Swag | void",
+      "unknown | Swag",
+      "Swag | unknown",
+      "any | Swag",
+      "Swag | any",
+      "never & Swag",
+      "Swag & never",
+      "null & Swag",
+      "Swag & null",
+      "undefined & Swag",
+      "Swag & undefined",
+      "void & Swag",
+      "Swag & void",
+      "unknown & Swag",
+      "Swag & unknown",
+      "any & Swag",
+      "Swag & any",
+      "Swag | Swag",
+      "Swag & Swag",
+      "Unknown | Known",
+      "Known | Unknown",
+      "Unknown & Known",
+      "Known & Unknown",
+      "Unknown | Unknown",
+      "Unknown & Unknown",
+      "never | never",
+      "never & never",
+      "null | null",
+      "null & null",
+      "undefined | undefined",
+      "undefined & undefined",
+      "void | void",
+      "void & void",
+      "unknown | unknown",
+      "unknown & unknown",
+      "any | any",
+      "any & any",
+      "never | void",
+      "void | never",
+      "null | void",
+      "void | null",
+      "undefined | void",
+      "void | undefined",
+      "void | void",
+      "void & void",
+      "unknown | void",
+      "void | unknown",
+      "any | void",
+      "void | any",
+      "never | unknown",
+      "unknown | never",
+      "null | unknown",
+      "unknown | null",
+      "undefined | unknown",
+      "unknown | undefined",
+      "void | unknown",
+      "unknown | void",
+      "unknown | unknown",
+      "unknown & unknown",
+      "any | unknown",
+      "unknown | any",
+      "never | any",
+      "any | never",
+      "null | any",
+      "any | null",
+      "undefined | any",
+      "any | undefined",
+      "void | any",
+      "any | void",
+      "unknown | any",
+      "any | unknown",
+      "any | any",
+      "never & void",
+      "void & never",
+      "null & void",
+      "void & null",
+      "undefined & void",
+      "void & undefined",
+      "void & void",
+      "void | void",
+      "unknown & void",
+      "void & unknown",
+      "any & void",
+      "void & any",
+      "never & unknown",
+      "unknown & never",
+      "null & unknown",
+      "unknown & null",
+      "undefined & unknown",
+      "unknown & undefined",
+      "void & unknown",
+      "unknown & void",
+      "unknown & unknown",
+      "unknown | unknown",
+      "any & unknown",
+      "unknown & any",
+      "never & any",
+      "any & never",
+      "null & any",
+      "any & null",
+      "undefined & any",
+      "any & undefined",
+      "void & any",
+      "any & void",
+      "unknown & any",
+      "any & unknown",
+      "any & any",
+      "string & number & boolean & never & symbol",
+      '"foo" | A_1',
+      "true | boolean",
+      '"foo" | boolean',
+      'A_1 | "foo"',
+    ];
+
+    const tscLoose =
+      "Object Object undefined undefined undefined undefined Number String Boolean Symbol BigInt Object Function Array Object Number BigInt String String Boolean Boolean Map Set Known Object undefined undefined String String String String Object Object String String Object Object String String String String String String Object Object Object Object Object Object String String Object Object Object Object Swag Swag Swag Swag Swag Swag Object Object Object Object Object Object undefined undefined Swag Swag Swag Swag Object Object Swag Swag Object Object Swag Swag Object Object Object Object Object Object undefined undefined undefined undefined undefined undefined undefined undefined Object undefined Object Object undefined undefined undefined undefined undefined undefined undefined undefined Object Object Object Object Object Object Object Object Object Object Object Object Object undefined Object Object Object Object Object Object Object Object Object Object Object Object Object undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined Object Object undefined undefined undefined undefined undefined undefined undefined undefined undefined Object Object Object undefined Object Object Object Object Object Object Object Object Object Object Object Object Boolean Object Object";
+    const tscStrict =
+      "Object Object undefined undefined undefined undefined Number String Boolean Symbol BigInt Object Function Array Object Number BigInt String String Boolean Boolean Map Set Known Object undefined undefined Object Object Object Object Object Object String String Object Object String String Object Object Object Object Object Object Object Object Object Object String String Object Object Object Object Swag Swag Object Object Object Object Object Object Object Object Object Object undefined undefined Object Object Object Object Object Object Swag Swag Object Object Swag Swag Object Object Object Object Object Object undefined undefined undefined undefined undefined undefined undefined undefined Object undefined Object Object undefined undefined undefined undefined undefined undefined undefined undefined Object Object Object Object Object Object Object Object Object Object Object Object Object undefined Object Object Object Object Object Object Object Object Object Object Object Object Object undefined undefined undefined undefined undefined undefined undefined undefined undefined undefined Object Object undefined undefined undefined undefined undefined undefined undefined undefined undefined Object Object Object undefined Object Object Object Object Object Object Object Object Object Object Object Object Boolean Object Object";
+
+    test.concurrent.each([
+      ["strict: false", { strict: false }, tscLoose],
+      ["strict: true", { strict: true }, tscStrict],
+    ])("all 174 type serialization cases match tsc with %s", async (_, compilerOptions, expected) => {
+      using dir = tempDir("decorator-metadata-strict-table", {
+        "tsconfig.json": tsconfig(compilerOptions),
+        "index.ts": `
+        const seen: unknown[][] = [];
+        (Reflect as any).metadata = (key: string, value: unknown) => () => {
+          if (key === "design:paramtypes") seen.push(value as unknown[]);
+        };
+        function d1() {}
+        class Known {}
+        class Swag {}
+        class A_1 {}
+        // @ts-ignore
+        @d1
+        class A {
+          constructor(${types.map((t, i) => `p${i}: ${t}`).join(", ")}) {}
+        }
+        console.log(seen[0].map(t => (t === undefined ? "undefined" : (t as any).name)).join(" "));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split(" ")).toEqual(expected.split(" "));
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ["neither key", {}, "String"],
+      ["strict: true", { strict: true }, "Object"],
+      ["strictNullChecks: true", { strictNullChecks: true }, "Object"],
+      ["strict: true, strictNullChecks: false", { strict: true, strictNullChecks: false }, "String"],
+    ])("Bun.Transpiler honours %s", (_, compilerOptions, expected) => {
+      const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: tsconfig(compilerOptions) });
+      const out = transpiler.transformSync(`
+      function d(): any { return () => {}; }
+      class Probe {
+        @d() method(@d() a: string | undefined) {}
+      }
+    `);
+      expect(out).toMatch(new RegExp(`"design:paramtypes", \\[\\s*${expected}\\s*\\]`));
+    });
   });
 });

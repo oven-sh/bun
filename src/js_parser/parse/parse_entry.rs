@@ -251,7 +251,7 @@ impl<'a> Options<'a> {
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
-                emit_decorator_metadata: f.emit_decorator_metadata,
+                decorator_metadata: f.decorator_metadata,
                 standard_decorators: f.standard_decorators,
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 runtime_transpiler_cache: None,

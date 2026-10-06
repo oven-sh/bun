@@ -1582,9 +1582,12 @@ impl<'a> Resolver<'a> {
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
-                result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
-                );
+                // Only the primary path is parsed.
+                if primary {
+                    result
+                        .flags
+                        .set_decorator_metadata(tsconfig.decorator_metadata());
+                }
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators,
                 );
@@ -6553,6 +6556,12 @@ impl<'a> Resolver<'a> {
                             mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                         if let Some(v) = parent_config.use_define_for_class_fields {
                             mc.use_define_for_class_fields = Some(v);
+                        }
+                        if let Some(v) = parent_config.strict {
+                            mc.strict = Some(v);
+                        }
+                        if let Some(v) = parent_config.strict_null_checks {
+                            mc.strict_null_checks = Some(v);
                         }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);

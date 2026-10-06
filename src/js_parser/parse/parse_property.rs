@@ -664,7 +664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Skip over types
                     if p.lexer.token == T::TColon {
                         p.lexer.next()?;
-                        if p.options.features.emit_decorator_metadata
+                        if p.options.features.decorator_metadata.is_on()
                             && opts.is_class
                             && opts.ts_decorators.len() > 0
                         {

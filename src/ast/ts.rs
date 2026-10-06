@@ -150,6 +150,40 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
+/// tsconfig's `emitDecoratorMetadata` widened with the effective
+/// `strictNullChecks`, because tsc's type serializer reads both.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum DecoratorMetadata {
+    /// `emitDecoratorMetadata` is off.
+    #[default]
+    Off = 0,
+    /// `emitDecoratorMetadata` is on and `strictNullChecks` is off.
+    Loose = 1,
+    /// `emitDecoratorMetadata` is on and `strictNullChecks` is on.
+    Strict = 2,
+}
+
+impl DecoratorMetadata {
+    pub const fn new(emit_decorator_metadata: bool, strict_null_checks: bool) -> Self {
+        match (emit_decorator_metadata, strict_null_checks) {
+            (false, _) => Self::Off,
+            (true, false) => Self::Loose,
+            (true, true) => Self::Strict,
+        }
+    }
+
+    #[inline]
+    pub const fn is_on(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    #[inline]
+    pub const fn strict_null_checks(self) -> bool {
+        matches!(self, Self::Strict)
+    }
+}
+
 #[derive(Clone, Default)]
 pub enum Metadata {
     #[default]
@@ -182,13 +216,28 @@ impl Metadata {
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is
     // translated from:
     // https://github.com/microsoft/TypeScript/blob/e0a324b0503be479f2b33fd2e17c6e86c94d1297/src/compiler/transformers/typeSerializer.ts#L402
+    //
+    // With `strict_null_checks` off, `null` and `undefined` are elided. With it
+    // on they serialize to `void 0` like `void`, so `string | undefined` is `Object`.
+
+    /// Serializes to `void 0`. `MNever` is handled before any comparison.
+    fn is_void_like(&self) -> bool {
+        matches!(
+            self,
+            Metadata::MNull | Metadata::MUndefined | Metadata::MVoid
+        )
+    }
 
     /// Return the final union type if possible, or return None to continue merging.
     ///
-    /// If the current type is MNever, MNull, or MUndefined assign the current type
-    /// to MNone and return None to ensure it's always replaced by the next type.
+    /// MNever (and MNull / MUndefined without strict null checks) becomes MNone
+    /// so the next type replaces it.
     /// `load_name`: closure form of `p.load_name_from_ref` to avoid coupling Metadata to P.
-    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(&mut self, load_name: F) -> Option<Self> {
+    pub fn finish_union<'b, F: Fn(Ref) -> &'b [u8]>(
+        &mut self,
+        strict_null_checks: bool,
+        load_name: F,
+    ) -> Option<Self> {
         let current = self;
         match current {
             Metadata::MIdentifier(r) => {
@@ -200,7 +249,12 @@ impl Metadata {
 
             Metadata::MUnknown | Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
 
-            Metadata::MNever | Metadata::MNull | Metadata::MUndefined => {
+            Metadata::MNever => {
+                *current = Metadata::MNone;
+                None
+            }
+
+            Metadata::MNull | Metadata::MUndefined if !strict_null_checks => {
                 *current = Metadata::MNone;
                 None
             }
@@ -209,12 +263,21 @@ impl Metadata {
         }
     }
 
-    pub fn merge_union(&mut self, left: Self) {
+    pub fn merge_union(&mut self, strict_null_checks: bool, left: Self) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
                 *result = match result {
-                    Metadata::MNever | Metadata::MUndefined | Metadata::MNull => left,
+                    Metadata::MNever => left,
+
+                    // both sides are `void 0`
+                    Metadata::MNull | Metadata::MUndefined | Metadata::MVoid
+                        if left.is_void_like() =>
+                    {
+                        left
+                    }
+
+                    Metadata::MNull | Metadata::MUndefined if !strict_null_checks => left,
 
                     _ => Metadata::MObject,
                 };
@@ -236,10 +299,11 @@ impl Metadata {
 
     /// Return the final intersection type if possible, or return None to continue merging.
     ///
-    /// If the current type is MUnknown, MNull, or MUndefined assign the current type
-    /// to MNone and return None to ensure it's always replaced by the next type.
+    /// MUnknown (and MNull / MUndefined without strict null checks) becomes
+    /// MNone so the next type replaces it.
     pub fn finish_intersection<'b, F: Fn(Ref) -> &'b [u8]>(
         &mut self,
+        strict_null_checks: bool,
         load_name: F,
     ) -> Option<Self> {
         let current = self;
@@ -256,7 +320,12 @@ impl Metadata {
 
             Metadata::MAny | Metadata::MObject => Some(Metadata::MObject),
 
-            Metadata::MUnknown | Metadata::MNull | Metadata::MUndefined => {
+            Metadata::MUnknown => {
+                *current = Metadata::MNone;
+                None
+            }
+
+            Metadata::MNull | Metadata::MUndefined if !strict_null_checks => {
                 *current = Metadata::MNone;
                 None
             }
@@ -265,15 +334,24 @@ impl Metadata {
         }
     }
 
-    pub fn merge_intersection(&mut self, left: Self) {
+    pub fn merge_intersection(&mut self, strict_null_checks: bool, left: Self) {
         let result = self;
         if !matches!(left, Metadata::MNone) {
             if core::mem::discriminant(result) != core::mem::discriminant(&left) {
                 *result = match result {
-                    Metadata::MUnknown | Metadata::MUndefined | Metadata::MNull => left,
+                    Metadata::MUnknown => left,
 
                     // ensure MNever is the final type
                     Metadata::MNever => Metadata::MNever,
+
+                    // both sides are `void 0`
+                    Metadata::MNull | Metadata::MUndefined | Metadata::MVoid
+                        if left.is_void_like() =>
+                    {
+                        left
+                    }
+
+                    Metadata::MNull | Metadata::MUndefined if !strict_null_checks => left,
 
                     _ => Metadata::MObject,
                 };

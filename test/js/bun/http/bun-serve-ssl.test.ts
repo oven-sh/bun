@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
-
-import { tempDir, tls as tlsCert } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -571,4 +570,69 @@ test("keyFile/certFile/caFile/dhParamsFile reject a path with a NUL byte instead
   expect(() => Bun.serve({ port: 0, tls: { keyFile: "", certFile }, fetch: () => new Response() })).toThrow(
     "Unable to access keyFile path",
   );
+});
+
+describe.concurrent("client certificate policy", () => {
+  async function run(NODE_TLS_REJECT_UNAUTHORIZED: string | undefined, policies: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-client-cert-policy-fixture.mjs"), ...policies],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { table: JSON.parse(stdout), exitCode };
+  }
+  // A client with no certificate | with one the server's `ca` did not issue | with one it issued.
+  const rows = {
+    "ca": ["anonymous", "anonymous", "anonymous"],
+    "caFile": ["anonymous", "anonymous", "anonymous"],
+    "ca, requestCert": [null, null, "agent10.example.com"],
+    "ca, requestCert, rejectUnauthorized: false": ["anonymous", "agent2", "agent10.example.com"],
+  };
+  function everyServer(policies: (keyof typeof rows)[]) {
+    const table = (namesItsPeer: boolean) =>
+      Object.fromEntries(
+        policies.flatMap(policy => {
+          const row = rows[policy].map(peer => (peer ? `served ${namesItsPeer ? peer : "someone"}` : "refused"));
+          return ["TLSv1.2", "TLSv1.3"].map(version => [`${policy} (${version})`, row.join(" | ")]);
+        }),
+      );
+    return {
+      "tls.createServer": table(true),
+      "tls.createServer over a Duplex": table(true),
+      "https.createServer": table(false),
+      "Bun.serve": table(false),
+      "Bun.serve serverName entry": table(false),
+      "Bun.listen": table(true),
+      "upgradeTLS({ isServer: true, tls })": table(true),
+      "upgradeTLS({ isServer: true, secureContext })": table(true),
+    };
+  }
+
+  test("no server asks for a certificate without requestCert", async () => {
+    expect(await run(undefined, ["ca", "caFile"])).toEqual({ table: everyServer(["ca", "caFile"]), exitCode: 0 });
+  }, 30_000);
+
+  describe.each([undefined, "0"])("with NODE_TLS_REJECT_UNAUTHORIZED=%p", NODE_TLS_REJECT_UNAUTHORIZED => {
+    test("every server enforces requestCert", async () => {
+      const policies = ["ca, requestCert", "ca, requestCert, rejectUnauthorized: false"] as const;
+      expect(await run(NODE_TLS_REJECT_UNAUTHORIZED, [...policies])).toEqual({
+        table: everyServer([...policies]),
+        exitCode: 0,
+      });
+    }, 30_000);
+
+    test("a client that leaves rejectUnauthorized unset follows the variable", async () => {
+      const off = NODE_TLS_REJECT_UNAUTHORIZED === "0";
+      expect(await run(NODE_TLS_REJECT_UNAUTHORIZED, [])).toEqual({
+        table: {
+          "tls.connect": off ? "connected" : "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+          fetch: off ? "connected" : "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+          "Bun.connect": off ? "connected" : "closed",
+        },
+        exitCode: 0,
+      });
+    });
+  });
 });

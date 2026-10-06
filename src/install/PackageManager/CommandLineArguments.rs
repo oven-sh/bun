@@ -1667,7 +1667,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             if !strings::has_prefix(registry, b"https://")
                 && !strings::has_prefix(registry, b"http://")
             {
-                Npm::registry::UnsupportedProtocol::new(b"--registry", registry).report();
+                Npm::registry::report_unsupported_protocol("--registry", registry);
                 Global::crash();
             }
             cli.registry = registry;

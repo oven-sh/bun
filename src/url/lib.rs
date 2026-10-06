@@ -499,22 +499,26 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
+    /// Formats `<protocol>://<displayHost>/<trimmed pathname>/`, or `<host>/<trimmed pathname>/` for a URL
+    /// that has no protocol: `Scope::from_api` dials the result, so none is made up here.
     ///
     /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
     /// `Display`); the other two pieces are raw byte slices, so we assemble
     /// into a `Vec<u8>` directly rather than going through `format!` and
     /// risking lossy UTF-8 round-trips.
     pub fn href_without_auth(&self) -> Box<[u8]> {
-        let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
 
         let mut buf: Vec<u8> =
-            Vec::with_capacity(proto.len() + 3 + self.host.len() + 1 + path.len() + 1);
-        buf.extend_from_slice(proto);
-        buf.extend_from_slice(b"://");
-        // bun_core::io::Write on Vec<u8> is infallible.
-        let _ = buf.print(format_args!("{}", self.display_host()));
+            Vec::with_capacity(self.protocol.len() + 3 + self.host.len() + 1 + path.len() + 1);
+        if self.protocol.is_empty() {
+            buf.extend_from_slice(self.host);
+        } else {
+            buf.extend_from_slice(self.protocol);
+            buf.extend_from_slice(b"://");
+            // bun_core::io::Write on Vec<u8> is infallible.
+            let _ = buf.print(format_args!("{}", self.display_host()));
+        }
         buf.push(b'/');
         buf.extend_from_slice(path);
         buf.push(b'/');
@@ -1920,6 +1924,18 @@ mod tests {
 
         let url = URL::parse(b"git+ssh://second.example/");
         assert_eq!(url.scheme(), Some(&b"git+ssh"[..]));
+    }
+
+    #[test]
+    fn href_without_auth_makes_up_no_protocol() {
+        let href = |input: &[u8]| URL::parse(input).href_without_auth().into_vec();
+        assert_eq!(
+            href(b"https://user:pw@example.com:8443/npm"),
+            b"https://example.com:8443/npm/"
+        );
+        assert_eq!(href(b"example.com:443/npm"), b"example.com:443/npm/");
+        assert_eq!(href(b"localhost:4873/"), b"localhost:4873//");
+        assert_eq!(href(b"//example.com/npm"), b"/example.com/npm/");
     }
 
     #[test]

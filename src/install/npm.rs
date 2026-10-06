@@ -35,8 +35,6 @@ pub enum WhoamiError {
     NeedAuth,
     #[error("probably invalid auth")]
     ProbablyInvalidAuth,
-    #[error("unsupported protocol")]
-    UnsupportedProtocol(registry::UnsupportedProtocol),
 }
 bun_core::oom_from_alloc!(WhoamiError);
 
@@ -171,10 +169,11 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
         }
+        Err(bun_http::Error::UnsupportedProtocol) => {
+            registry.report_unsupported_protocol();
+            Global::crash();
+        }
         Err(e) => {
-            if let Some(refused) = unsupported_protocol(registry, &req, e) {
-                return Err(WhoamiError::UnsupportedProtocol(refused));
-            }
             Output::err(e, "whoami request failed to send", format_args!(""));
             Global::crash();
         }
@@ -218,16 +217,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
     Ok(username.to_vec())
-}
-
-/// The error to report when `err` is `AsyncHTTP::send_sync` refusing `req`, a request to `scope`'s registry.
-pub fn unsupported_protocol(
-    scope: &registry::Scope,
-    req: &AsyncHTTP,
-    err: bun_http::Error,
-) -> Option<registry::UnsupportedProtocol> {
-    (err == bun_http::Error::UnsupportedProtocol)
-        .then(|| registry::UnsupportedProtocol::new(&scope.label(), req.url.href))
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
@@ -332,53 +321,45 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
-    /// What an error says about a URL that is not http(s). It keeps no text of the URL but its scheme.
-    #[derive(Debug)]
-    pub struct NotHttp {
-        scheme: Option<Box<[u8]>>,
+    /// What an error says about a URL that is not http(s): no text of it but its scheme.
+    pub enum NotHttp<'a> {
+        Scheme(&'a [u8]),
+        NoScheme,
+        NoHost,
     }
 
-    impl NotHttp {
-        pub fn of(href: &[u8]) -> NotHttp {
-            NotHttp {
-                scheme: URL::parse(href).scheme().map(Box::from),
+    impl<'a> NotHttp<'a> {
+        pub fn of(href: &'a [u8]) -> NotHttp<'a> {
+            // `https://` alone: the commands cut its slashes before they append a path, and the result is not an http(s) URL.
+            let scheme_only = strings::without_trailing_slash(href);
+            if scheme_only.eq_ignore_ascii_case(b"http:")
+                || scheme_only.eq_ignore_ascii_case(b"https:")
+            {
+                return NotHttp::NoHost;
+            }
+            match URL::parse(href).scheme() {
+                Some(scheme) => NotHttp::Scheme(scheme),
+                None => NotHttp::NoScheme,
             }
         }
     }
 
-    impl core::fmt::Display for NotHttp {
+    impl core::fmt::Display for NotHttp<'_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            match &self.scheme {
-                Some(scheme) => write!(f, "starts with \"{}://\"", bstr::BStr::new(scheme)),
-                None => f.write_str("has no scheme"),
+            match self {
+                NotHttp::Scheme(scheme) => {
+                    write!(f, "starts with \"{}://\"", bstr::BStr::new(scheme))
+                }
+                NotHttp::NoScheme => f.write_str("does not start with a scheme"),
+                NotHttp::NoHost => f.write_str("has no host"),
             }
         }
     }
 
-    /// The error for a request URL that `AsyncHTTP::send_sync` refuses.
-    #[derive(Debug)]
-    pub struct UnsupportedProtocol {
-        registry: Box<[u8]>,
-        problem: NotHttp,
-    }
-
-    impl UnsupportedProtocol {
-        /// `registry` names where `href` comes from, as `Scope::label` does.
-        pub fn new(registry: &[u8], href: &[u8]) -> Self {
-            Self {
-                registry: Box::from(registry),
-                problem: NotHttp::of(href),
-            }
-        }
-
-        pub fn report(&self) {
-            Output::err_generic("Registry URL must be http:// or https://", ());
-            bun_core::note!(
-                "the URL for {} {}",
-                bstr::BStr::new(&self.registry),
-                self.problem
-            );
-        }
+    /// Reports that `href`, the URL for `registry`, is not http(s).
+    pub fn report_unsupported_protocol(registry: impl core::fmt::Display, href: &[u8]) {
+        Output::err_generic("Registry URL must be http:// or https://", ());
+        bun_core::note!("the URL for {} {}", registry, NotHttp::of(href));
     }
 
     impl Scope {
@@ -386,14 +367,15 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        /// How an error names this registry.
-        pub fn label(&self) -> Box<[u8]> {
+        /// Reports that `AsyncHTTP::send_sync` refused a request to this registry.
+        pub fn report_unsupported_protocol(&self) {
             if self.name.is_empty() {
-                return Box::from(&b"the default registry"[..]);
+                return report_unsupported_protocol("the default registry", self.url.href());
             }
-            [&b"the \"@"[..], &self.name, &b"\" registry"[..]]
-                .concat()
-                .into_boxed_slice()
+            report_unsupported_protocol(
+                format_args!("the \"@{}\" registry", bstr::BStr::new(&self.name)),
+                self.url.href(),
+            );
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
@@ -579,17 +561,7 @@ pub mod registry {
             let user: Box<[u8]> = Box::from(&*user);
             drop(output_buf_owned);
 
-            let final_href: Box<[u8]> = if needs_normalize && url.protocol.is_empty() {
-                // `href_without_auth` would give this URL a scheme, and then the credentials go out over plain HTTP.
-                [
-                    url.host,
-                    &b"/"[..],
-                    strings::trim(url.pathname, b"/"),
-                    &b"/"[..],
-                ]
-                .concat()
-                .into_boxed_slice()
-            } else if needs_normalize {
+            let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
             } else {
                 // reshaped for borrowck — `url` (borrowing

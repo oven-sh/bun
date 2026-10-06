@@ -340,7 +340,6 @@ fn build_dependency_tree(
 }
 
 struct AuditRegistry {
-    label: Box<[u8]>,
     href: Box<[u8]>,
     url_hash: u64,
     token: Box<[u8]>,
@@ -351,7 +350,6 @@ struct AuditRegistry {
 impl AuditRegistry {
     fn from_scope(scope: &bun_install::npm::registry::Scope, is_default: bool) -> AuditRegistry {
         AuditRegistry {
-            label: scope.label(),
             href: Box::<[u8]>::from(strings::without_trailing_slash(scope.url.href())),
             url_hash: scope.url_hash,
             token: scope.token.clone(),
@@ -426,11 +424,18 @@ fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::Unaudite
     let mut reason_text: Vec<u8> = Vec::new();
     write!(&mut reason_text, "{reason}").expect("unreachable");
     let url = URL::parse(&request.registry.href);
-    // No text of a URL that is not http(s): a password in it can sit where no parser finds it.
-    let registry = if url.has_http_like_protocol() {
+    let registry: Box<[u8]> = if url.has_http_like_protocol() {
         url.href_without_auth()
     } else {
-        request.registry.label.clone()
+        // No text of a URL that is not http(s): a password in it can sit where no parser finds it.
+        let mut described: Vec<u8> = Vec::new();
+        write!(
+            &mut described,
+            "a registry whose URL {}",
+            bun_install::npm::registry::NotHttp::of(&request.registry.href)
+        )
+        .expect("unreachable");
+        described.into_boxed_slice()
     };
     audit_fix::UnauditedRegistry {
         registry: Box::from(strings::without_trailing_slash(&registry)),
@@ -792,10 +797,7 @@ fn send_audit_request(
             }
             report_non_json_response(&registry.href);
         }
-        SkipReason::UnsupportedProtocol => {
-            bun_install::npm::registry::UnsupportedProtocol::new(&registry.label, &url_str)
-                .report();
-        }
+        SkipReason::UnsupportedProtocol => pm.options.scope.report_unsupported_protocol(),
         reason => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> <red><b>POST<r><red> {}<d> - {}<r>",

@@ -739,7 +739,7 @@ impl PublishCommand {
         package_name: &[u8],
         version: &[u8],
         registry: &Npm::Registry::Scope,
-    ) -> Result<bool, PublishError> {
+    ) -> bool {
         let mut url_buf: Vec<u8> = Vec::new();
         let registry_url = strings::without_trailing_slash(registry.url.href());
         let encoded_name = bun_fmt::dependency_url(package_name);
@@ -753,7 +753,7 @@ impl PublishCommand {
         )
         .is_err()
         {
-            return Ok(false);
+            return false;
         }
 
         // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
@@ -761,7 +761,7 @@ impl PublishCommand {
         let package_url = URL::parse(crate::cli::cli_dupe(&url_buf));
 
         let Ok(mut response_buf) = MutableString::init(1024) else {
-            return Ok(false);
+            return false;
         };
 
         let mut headers = http::HeaderBuilder::default();
@@ -771,31 +771,31 @@ impl PublishCommand {
 
         if !registry.token.is_empty() {
             if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return Ok(false);
+                return false;
             }
             headers.count(b"authorization", &auth_buf);
         } else if !registry.auth.is_empty() {
             if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return Ok(false);
+                return false;
             }
             headers.count(b"authorization", &auth_buf);
         }
 
         if headers.allocate().is_err() {
-            return Ok(false);
+            return false;
         }
         headers.append(b"accept", b"application/json");
 
         if !registry.token.is_empty() {
             auth_buf.clear();
             if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return Ok(false);
+                return false;
             }
             headers.append(b"authorization", &auth_buf);
         } else if !registry.auth.is_empty() {
             auth_buf.clear();
             if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return Ok(false);
+                return false;
             }
             headers.append(b"authorization", &auth_buf);
         }
@@ -812,15 +812,14 @@ impl PublishCommand {
 
         let res = match req.send_sync(&mut response_buf) {
             Ok(res) => res,
-            Err(err) => {
-                return match Npm::unsupported_protocol(registry, &req, err) {
-                    Some(refused) => Err(PublishError::UnsupportedProtocol(refused)),
-                    None => Ok(false),
-                };
+            Err(bun_http::Error::UnsupportedProtocol) => {
+                registry.report_unsupported_protocol();
+                Global::crash();
             }
+            Err(_) => return false,
         };
         if res.status_code() != 200 {
-            return Ok(false);
+            return false;
         }
 
         // Parse the response to check if this specific version exists
@@ -828,17 +827,17 @@ impl PublishCommand {
         let mut log = bun_ast::Log::init();
         let bump = bun_alloc::Arena::new();
         let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
-            return Ok(false);
+            return false;
         };
 
         // Check if the version exists in the versions object
         if let Some(versions) = json.get(b"versions") {
             if versions.get(version).is_some() {
-                return Ok(true);
+                return true;
             }
         }
 
-        Ok(false)
+        false
     }
 
     fn publish(ctx: &Context<'_>) -> Result<(), PublishError> {
@@ -859,7 +858,7 @@ impl PublishCommand {
                 &ctx.package_name,
                 version_without_build_tag,
                 registry,
-            )?;
+            );
 
             if package_exists {
                 bun_core::warn!(
@@ -871,22 +870,8 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
-        let mut registry_shown: Vec<u8> = Vec::new();
-        if registry_url.has_http_like_protocol() {
-            let registry_href = registry_url.href_without_auth();
-            registry_shown.extend_from_slice(strings::without_trailing_slash(&registry_href));
-            registry_shown.push(b'/');
-        } else {
-            // No text of a URL that is not http(s): a password in it can sit where no parser finds it.
-            write!(
-                &mut registry_shown,
-                "a URL that {}",
-                Npm::Registry::NotHttp::of(registry_url.href)
-            )
-            .map_err(|_| AllocError)?;
-        }
         bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
+            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: ",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
             } else {
@@ -897,8 +882,20 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(&registry_shown),
         );
+        if registry_url.has_http_like_protocol() {
+            let registry_href = registry_url.href_without_auth();
+            bun_core::pretty!(
+                "{}/\n",
+                bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
+            );
+        } else {
+            // No text of a URL that is not http(s): a password in it can sit where no parser finds it.
+            bun_core::pretty!(
+                "a URL that {}\n",
+                Npm::Registry::NotHttp::of(registry_url.href),
+            );
+        }
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
@@ -957,8 +954,9 @@ impl PublishCommand {
                 if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
                     return Err(PublishError::OutOfMemory);
                 }
-                if let Some(refused) = Npm::unsupported_protocol(registry, &req, e) {
-                    return Err(PublishError::UnsupportedProtocol(refused));
+                if e == bun_http::Error::UnsupportedProtocol {
+                    registry.report_unsupported_protocol();
+                    Global::crash();
                 }
                 Output::err(e, "failed to publish package", ());
                 Global::crash();
@@ -2084,8 +2082,6 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
-    #[error("UnsupportedProtocol")]
-    UnsupportedProtocol(Npm::Registry::UnsupportedProtocol),
 }
 bun_core::oom_from_alloc!(PublishError);
 
@@ -2095,10 +2091,6 @@ impl PublishError {
             PublishError::OutOfMemory => bun_core::out_of_memory(),
             PublishError::NeedAuth => {
                 Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
-                Global::crash();
-            }
-            PublishError::UnsupportedProtocol(refused) => {
-                refused.report();
                 Global::crash();
             }
         }

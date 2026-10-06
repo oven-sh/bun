@@ -248,14 +248,22 @@ impl Checker<'_, '_> {
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
             return remove_file_extension(files.module(file).file_name()).to_owned();
         }
-        for &(file, decl) in &decls {
-            if let Decl::Module(m) = decl
-                && let ModuleName::String(name) = self.hir(file)[m].name
-            {
-                return self.atom_text(name);
-            }
+        let ambient_name = |&(file, decl): &(FileId, Decl)| match decl {
+            Decl::Module(m) => match self.hir(file)[m].name {
+                ModuleName::String(name) => Some(name),
+                _ => None,
+            },
+            _ => None,
+        };
+        // `GetSourceFileOfModule(symbol).FileName()`: what `export =` names, with what
+        // `declare module "m"` adds to the module (`getCommonJSExportEquals`), has its own name.
+        if let Some(&(file, _)) = decls.iter().find(|it| ambient_name(it).is_none()) {
+            return files.module(file).file_name().to_owned();
         }
-        Vec::new()
+        match decls.iter().find_map(ambient_name) {
+            Some(name) => self.atom_text(name),
+            None => Vec::new(),
+        }
     }
 
     /// `symbol.Parent` of the member `m`, if a class or an interface declares it.

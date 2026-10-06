@@ -794,6 +794,38 @@ for (const noImplicitAny of [true, false]) {
   );
 }
 
+// What `export =` names, with what `declare module "m"` adds to the module, is named after the file that it is in.
+// `@types/react-dom` adds to "react".
+differential("a module with `export =`, what is added to it, how it is imported, in a message", async () => {
+  const exported = {
+    namespace: "declare namespace N { const a: number; }",
+    class: "declare class N { static a: number; } declare namespace N { interface I {} }",
+    function: "declare function N(): void; declare namespace N { const a: number; }",
+    variable: "declare const N: { a: number };",
+  };
+  const added = {
+    nothing: "",
+    value: "const added: number;",
+    type: "interface Added {}",
+    both: "const b: 1; type B = 1;",
+  };
+  const files: Record<string, string> = {};
+  const declarations: string[] = [];
+  const cases: string[] = [];
+  for (const [[kind, text], [what, more]] of product(Object.entries(exported), Object.entries(added))) {
+    const [name, id] = [`${kind}-${what}`, `${kind}_${what}`];
+    files[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", types: "index.d.ts" });
+    files[`node_modules/${name}/index.d.ts`] = `${text}\nexport = N;\n`;
+    if (more) files[`${name}.d.ts`] = `import "${name}";\ndeclare module "${name}" { ${more} }\n`;
+    declarations.push(`import ${id}_default from "${name}"; import * as ${id}_star from "${name}";`);
+    for (const value of [`${id}_default`, `${id}_star`, `(null! as typeof import("${name}"))`]) {
+      cases.push(`${value}.missing;`, `{ const v: 1 = ${value}; }`, `{ const v: { missing: 1 } = ${value}; }`);
+    }
+  }
+  const options = { module: "esnext", moduleResolution: "bundler", skipLibCheck: true };
+  expect(await casesThatDiffer(options, declarations, cases, 1, files)).toEqual([]);
+});
+
 // `false | true` is `boolean` whether the two are fresh or not, and nothing is said about one of them alone.
 differential("a boolean, where it comes from, what it is assigned to, and how", async () => {
   const declarations = [

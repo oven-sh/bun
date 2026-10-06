@@ -3,7 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
-import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
+import { once } from "node:events";
+import { connect, QuicEndpoint } from "node:quic";
+import { connect as connectTLS } from "node:tls";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -2084,6 +2086,7 @@ describe("Bun.serve HTTP/3 SNI", () => {
       fetch: () => new Response("ok"),
     });
     const served: Record<string, string> = {};
+    const overTCP: Record<string, string> = {};
     for (const servername of [
       "Agent2.Example",
       "agent2.example",
@@ -2095,8 +2098,12 @@ describe("Bun.serve HTTP/3 SNI", () => {
       "other.example",
     ]) {
       served[servername] = await servedCN(server.port, servername);
+      const socket = connectTLS({ host: "127.0.0.1", port: server.port, servername, rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      overTCP[servername] = socket.getPeerCertificate().subject.CN;
+      socket.destroy();
     }
-    // The same names select the same entries on the TCP listener.
+    expect(overTCP).toEqual(served);
     expect(served).toEqual({
       "Agent2.Example": "agent2",
       "agent2.example": "agent2",

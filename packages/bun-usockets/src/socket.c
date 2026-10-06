@@ -380,7 +380,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
  * a paused socket: us_poll_change sets absolute flags, so including READABLE
  * unconditionally would silently undo us_socket_pause mid-backpressure and
  * deliver data the caller asked to defer. */
-static void us_internal_rearm_writable(struct us_socket_t *s) {
+void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
@@ -570,8 +570,9 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return 0;
     }
     if (s->ssl) {
-        /* TLS writes have their own error propagation; keep the existing path. */
-        return us_socket_write(s, data, length);
+        int written = us_internal_ssl_write(s, data, length);
+        if (fatal_write_error) *fatal_write_error = us_internal_ssl_fatal_write_error(s);
+        return written;
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
@@ -619,7 +620,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     return written < 0 ? 0 : (int)written;
 }
 
-int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
+int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {
     /* Bypass-TLS path: openssl.c uses this to flush close_notify *after*
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
@@ -629,12 +630,22 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     }
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int fatal = 0;
+    if (written >= 0) {
+        s->unclassified_send_failures = 0;
+    } else if (fatal_send_error) {
+        fatal = *fatal_send_error = us_internal_classify_failed_send(s);
+    }
     if (written != length) {
         s->flags.last_write_failed = 1;
-        us_internal_rearm_writable(s);
+        if (!fatal) us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : written;
+}
+
+int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
+    return us_internal_socket_raw_write(s, data, length, NULL);
 }
 
 #if !defined(_WIN32)
@@ -841,8 +852,9 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
-    // we are readable and writable so we can just pause readable side
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
+    // we are readable and writable so we can just pause readable side; after our FIN nothing new waits for writable
+    us_poll_change(&s->p, s->group->loop,
+                   us_internal_socket_can_raw_write(s) ? LIBUS_SOCKET_WRITABLE : us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
 }
 
@@ -852,7 +864,7 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
-    int events = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
+    int events = (s->read_eof ? 0 : LIBUS_SOCKET_READABLE) | (us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
     if (!us_socket_is_shut_down(s)) {
         // still writable: a FIN of ours would have left the socket read-only
         events |= LIBUS_SOCKET_WRITABLE;

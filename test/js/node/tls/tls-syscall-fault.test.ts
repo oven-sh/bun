@@ -106,6 +106,10 @@ const RESET_CLOSE = {
   destroyed: true,
 };
 
+function fdOf(socket: tls.TLSSocket): number {
+  return (socket as any)._handle.fd;
+}
+
 function collect(socket: tls.TLSSocket) {
   const chunks: Buffer[] = [];
   socket.on("data", c => chunks.push(c));
@@ -120,6 +124,129 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     p.serverSock.write("hello");
     await client.closed;
     expect({ events: client.events, errors: client.errors, destroyed: p.client.destroyed }).toEqual(RESET_CLOSE);
+  });
+
+  test.each(["client", "server"] as const)("send → ECONNRESET fails the %s's write", async side => {
+    using p = await connectedTLSPair();
+    const writer = side === "client" ? p.client : p.serverSock;
+    const seen = observe(writer);
+    const written = Promise.withResolvers<Error | null | undefined>();
+    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: fdOf(writer) });
+    writer.write("hello", written.resolve);
+    const WRITE_RESET = { name: "Error", code: "ECONNRESET", syscall: "write", message: "write ECONNRESET" };
+    expect(await written.promise).toMatchObject(WRITE_RESET);
+    await seen.closed;
+    expect({ events: seen.events, errors: seen.errors }).toEqual({
+      events: ["error", "close(hadError=true)"],
+      errors: [WRITE_RESET],
+    });
+  });
+
+  test("send → an errno that names no dead peer is retried 32 times in a row, then closes", async () => {
+    let received!: () => Buffer;
+    using p = await connectedTLSPair(s => (received = collect(s)));
+    const client = observe(p.client);
+    for (const round of ["a", "b"]) {
+      // A send that goes through starts the count again, or round "b" would close.
+      fault.set({ syscall: "send", action: "errno", errno: "EINVAL", repeat: 32, fd: fdOf(p.client) });
+      p.client.write(round);
+      await once(p.serverSock, "data");
+    }
+    fault.set({ syscall: "send", action: "errno", errno: "EINVAL", repeat: 33, fd: fdOf(p.client) });
+    p.client.write("c");
+    await client.closed;
+    expect({ received: received().toString(), events: client.events, codes: client.errors.map(e => e.code) }).toEqual({
+      received: "ab",
+      events: ["error", "close(hadError=true)"],
+      codes: ["EINVAL"],
+    });
+  });
+
+  // The write was reported as done with its tail still in userspace, so only the close can carry the error.
+  test.each([
+    ["closes with the error", false],
+    ["first delivers what the peer sent before", true],
+  ])("send → EPIPE for ciphertext that waits for the writable event %s", async (_name, peerWroteFirst) => {
+    using p = await connectedTLSPair();
+    const client = observe(p.client);
+    const received = collect(p.client);
+    if (peerWroteFirst) {
+      p.client.pause();
+      await new Promise<void>(resolve => p.serverSock.write("late", () => resolve()));
+    }
+    fault.set({ syscall: "send", action: "short", bytes: 10, fd: fdOf(p.client) });
+    p.client.write("hello");
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: fdOf(p.client) });
+    p.client.resume();
+    await client.closed;
+    expect({ received: received().toString(), events: client.events, codes: client.errors.map(e => e.code) }).toEqual(
+      peerWroteFirst
+        ? { received: "late", events: CLEAN_CLOSE, codes: [] }
+        : { received: "", events: ["error", "close(hadError=true)"], codes: ["EPIPE"] },
+    );
+  });
+
+  test("send → EPIPE for the ClientHello fails connect with an error (no hang)", async () => {
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
+    const c = connect();
+    const client = observe(c);
+    await client.closed;
+    fault.clear();
+    expect({ events: client.events, errors: client.errors, destroyed: c.destroyed }).toEqual(RESET_CLOSE);
+  });
+
+  // https://github.com/oven-sh/bun/issues/24845: the kernel rejects every send() and reports nothing on the read side.
+  describe("send → EPIPE while the peer stays silent", () => {
+    let silent: tls.Server;
+    let silentPort: number;
+    beforeAll(async () => {
+      silent = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true }, s =>
+        s.on("error", () => {}),
+      );
+      await once(silent.listen(0, "127.0.0.1"), "listening");
+      silentPort = (silent.address() as AddressInfo).port;
+    });
+    afterAll(() => silent.close());
+
+    test("Bun.connect: write() returns -1 and the socket closes with an error", async () => {
+      const closed = Promise.withResolvers<Error | undefined>();
+      const writes: number[] = [];
+      const accepted = once(silent, "secureConnection") as Promise<[tls.TLSSocket]>;
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: silentPort,
+        tls: { ca: certs.cert },
+        socket: {
+          async handshake(socket) {
+            await accepted;
+            fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
+            writes.push(socket.write("ping"), socket.write("ping"));
+          },
+          data() {},
+          close: (_socket, error) => closed.resolve(error),
+          connectError: (_socket, error) => closed.reject(error),
+        },
+      });
+      expect(await closed.promise).toMatchObject({ code: "ECONNRESET" });
+      expect(writes).toEqual([-1, -1]);
+      (await accepted)[0].destroy();
+    });
+
+    test("fetch rejects when a chunk of its request body cannot be sent", async () => {
+      const accepted = once(silent, "secureConnection") as Promise<[tls.TLSSocket]>;
+      let body!: ReadableStreamDefaultController<Uint8Array>;
+      const response = fetch(`https://127.0.0.1:${silentPort}/`, {
+        method: "POST",
+        body: new ReadableStream({ start: controller => void (body = controller) }),
+        tls: { ca: certs.cert, checkServerIdentity: () => undefined },
+      });
+      const [serverSock] = await accepted;
+      await once(serverSock, "data");
+      fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
+      body.enqueue(Buffer.alloc(1024, "x"));
+      expect(await response.catch(error => error.code)).toBe("ECONNRESET");
+      serverSock.destroy();
+    });
   });
 
   test("recv → short reads (1 byte) still decrypt complete payload", async () => {
@@ -206,6 +333,121 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
       ...RESET_CLOSE,
       secureConnect: false,
     });
+  });
+});
+
+// "ssl_write" fails one SSL_write call the way a record-layer failure does (#38120).
+describe.skipIf(skip)("fatal SSL_write after the handshake", () => {
+  const WRITE_EPROTO = { name: "Error", code: "EPROTO", syscall: "write", message: "write EPROTO" };
+  const EPROTO_CLOSE = { events: ["error", "close(hadError=true)"], errors: [WRITE_EPROTO] };
+
+  test.each([
+    ["the first record of a write", 5, 0, 0],
+    ["a later record of a write", 3 * 16384, 1, 16384],
+  ])("node:tls fails the write with EPROTO when %s fails", async (_name, size, after, delivered) => {
+    using p = await connectedTLSPair();
+    const client = observe(p.client);
+    const received = collect(p.client);
+    const serverSide = observe(p.serverSock);
+    const written = Promise.withResolvers<Error | null | undefined>();
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", after, fd: fdOf(p.serverSock) });
+    p.serverSock.write(Buffer.alloc(size, "w"), written.resolve);
+    expect(await written.promise).toMatchObject(WRITE_EPROTO);
+    await Promise.all([serverSide.closed, client.closed]);
+    expect({ events: serverSide.events, errors: serverSide.errors, delivered: received().length }).toEqual({
+      ...EPROTO_CLOSE,
+      delivered,
+    });
+  });
+
+  test("node:tls fails a write whose tail is retried from the writable event", async () => {
+    using p = await connectedTLSPair();
+    const serverSide = observe(p.serverSock);
+    // The client does not read, so a write ends up partial and its tail is held natively.
+    const chunk = Buffer.alloc(1024 * 1024, "z");
+    let partialWrite: Promise<Error | null | undefined>;
+    do {
+      const { promise, resolve } = Promise.withResolvers<Error | null | undefined>();
+      partialWrite = promise;
+      p.serverSock.write(chunk, resolve);
+      await new Promise(resolve => process.nextTick(resolve));
+    } while (p.serverSock.writableLength === 0);
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1, fd: fdOf(p.serverSock) });
+    p.client.resume();
+    await serverSide.closed;
+    expect(await partialWrite).toMatchObject({ code: "EPROTO", syscall: "write" });
+    expect(serverSide.events).toEqual(EPROTO_CLOSE.events);
+  });
+
+  test("Bun.serve closes the connection instead of holding the response forever", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: certs.key, cert: certs.cert },
+      fetch(req) {
+        // repeat: -1 also covers a client that retries on a fresh connection.
+        if (req.url.endsWith("/fail"))
+          fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1 });
+        return new Response("hello");
+      },
+    });
+    // The second request reuses the connection, which no longer polls for writable.
+    expect(await (await fetch(server.url, { tls: { ca: certs.cert } })).text()).toBe("hello");
+    await expect(fetch(`${server.url}fail`, { tls: { ca: certs.cert } })).rejects.toThrow();
+  });
+
+  test("Bun.serve closes the connection when its writable handler issues the failing write", async () => {
+    const body = Buffer.alloc(16 * 1024 * 1024, "y");
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: certs.key, cert: certs.cert },
+      fetch: () => new Response(body),
+    });
+    const response = await fetch(server.url, { tls: { ca: certs.cert } });
+    const reader = response.body!.getReader();
+    let received = (await reader.read()).value!.byteLength;
+    // The body is far larger than the socket buffers, so the writable handler writes the rest.
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1 });
+    const outcome = await (async () => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return "ended";
+        received += value.byteLength;
+      }
+    })().catch(() => "errored");
+    fault.clear();
+    expect({ outcome, truncated: received < body.byteLength }).toEqual({ outcome: "errored", truncated: true });
+  });
+
+  test.each([
+    ["flowing", false, false],
+    ["paused", true, false],
+    ["paused, then resumed", true, true],
+  ])("Bun.connect: write() returns -1 and the socket closes (%s)", async (_name, paused, resumed) => {
+    const closed = Promise.withResolvers<void>();
+    const writes: number[] = [];
+    const accepted = once(server, "secureConnection");
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: { ca: certs.cert },
+      socket: {
+        async handshake(socket) {
+          if (paused) socket.pause();
+          // By then the socket no longer polls for writable.
+          await accepted;
+          fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL" });
+          writes.push(socket.write("ping"), socket.write("ping"));
+          if (resumed) socket.resume();
+        },
+        data() {},
+        close: () => closed.resolve(),
+        connectError: (_socket, error) => closed.reject(error),
+      },
+    });
+    await Promise.all([closed.promise, accepted]);
+    expect(writes).toEqual([-1, -1]);
   });
 });
 

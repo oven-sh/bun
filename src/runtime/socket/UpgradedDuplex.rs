@@ -821,7 +821,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
-/// `(undefined, err)` is node's `done(err)` of `doWrite`. It calls itself on the next tick, with the errno for `finishWrite`.
+/// `(undefined, err)` is node's `done(err)` of `doWrite`, but queues `finishWrite(errno)`, itself, for the next tick: a close overtakes an immediate.
 #[bun_jsc::host_fn]
 fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(UpgradedDuplex, "onWriteDone");

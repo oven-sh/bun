@@ -255,13 +255,19 @@ describe.each([
       await Promise.all([
         dial(["", { ssl: "verify-full", tls: { ca } }]),
         dial(["", { ssl: "verify-full", tls: { ca, serverName: "other.example" } }]),
+        dial(["", { ssl: "verify-full", tls: { ca, servername: "other.example" } }]),
         dial(["?sslmode=verify-ca", { tls: { ca, serverName: "other.example" } }]),
+        dial(["?sslmode=verify-ca", { tls: { ca, servername: "other.example" } }]),
+        dial(["?sslmode=verify-ca", { tls: { ca, serverName: "localhost", servername: "other.example" } }]),
         dial(["", { ssl: "verify-full", tls: { rejectUnauthorized: false } }]),
       ]),
     ).toEqual([
       connected("localhost"),
       { outcome: "ERR_TLS_CERT_ALTNAME_INVALID", servernames: [], logins: 0 },
+      { outcome: "ERR_TLS_CERT_ALTNAME_INVALID", servernames: [], logins: 0 },
       connected("other.example"),
+      connected("other.example"),
+      connected("localhost"),
       connected("localhost"),
     ]);
   });

@@ -331,26 +331,26 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
+    const tlsHelpers =
+      this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca
+        ? require("internal/tls")
+        : undefined;
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
     // them into plain key/cert/ca so the native TLS config sees PEM material.
     let tlsOptions = options;
     if (options.pfx) {
       tlsOptions = tlsHelpers.processPfxOptions(options);
-      this[isTlsSymbol] = true;
     }
 
     let cert = tlsOptions.cert;
     if (cert) {
       tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
     }
 
     let key = tlsOptions.key;
     if (key) {
       tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
     }
 
     let ca = tlsOptions.ca;
@@ -363,7 +363,6 @@ function Server(options, callback): void {
     }
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
     }
 
     let passphrase = options.passphrase;
@@ -381,7 +380,7 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
-    if (this[isTlsSymbol]) {
+    if (tlsHelpers) {
       const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
       // Translate secureProtocol, or else minVersion/maxVersion, into the
       // integer protocol range the native layer applies; 0 keeps the native
@@ -412,8 +411,6 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
-    } else {
-      this[tlsSymbol] = null;
     }
   }
 

@@ -381,14 +381,23 @@ function Server(options, callback): void {
     }
 
     if (tlsHelpers) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate secureProtocol, or else minVersion/maxVersion, into the
-      // integer protocol range the native layer applies; 0 keeps the native
-      // defaults. A falsy value counts as absent, like in tls.Server.
+      const { secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
+      // A falsy value counts as absent, like in tls.Server.
       const secureProtocol = options.secureProtocol || undefined;
       const minVersionOption = options.minVersion || undefined;
       const maxVersionOption = options.maxVersion || undefined;
-      validateSecureProtocol(secureProtocol, minVersionOption, maxVersionOption);
+      tlsHelpers.validateSecureContextOptions({
+        ...options,
+        secureProtocol,
+        minVersion: minVersionOption,
+        maxVersion: maxVersionOption,
+      });
+      const crl = options.crl;
+      if (crl) {
+        tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
+      }
+      if (options.honorCipherOrder !== false) secureOptions |= tlsHelpers.SSL_OP_CIPHER_SERVER_PREFERENCE;
+      // secureProtocol, or else minVersion/maxVersion, as the integer range the native layer applies; 0 keeps its defaults.
       let minVersion, maxVersion;
       const range = secureProtocolToVersionRange(secureProtocol);
       if (range) {
@@ -403,6 +412,10 @@ function Server(options, callback): void {
         key,
         cert,
         ca,
+        crl,
+        sessionTimeout: options.sessionTimeout ?? 0,
+        sigalgs: options.sigalgs,
+        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
         passphrase,
         secureOptions,
         minVersion,

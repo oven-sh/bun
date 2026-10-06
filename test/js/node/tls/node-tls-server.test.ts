@@ -732,7 +732,11 @@ describe.each(["TLSv1.3", "TLSv1.2"])("an ALPNCallback over a Duplex can drop it
       "destroy(err)": ["server error boom", "client error ECONNRESET"],
       "destroy() the client": [],
       "destroy() the transport": ["client error ECONNRESET"],
-      "throw": ["server error boom", "client error ECONNRESET"],
+      // The refusal's alert goes out, as on a real socket. Node v26.3.0 sends none: its client gets ECONNRESET.
+      "throw":
+        door === "staged"
+          ? ["client error ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL", "server error boom"]
+          : ["server error boom", "client error ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL"],
       "select": ["client secureConnect h2"],
     });
     expect(exitCode).toBe(0);

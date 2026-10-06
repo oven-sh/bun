@@ -401,6 +401,8 @@ pub mod ssl_wrapper {
         HandshakeError(Option<&'a core::ffi::CStr>),
         /// Closed before the handshake finished, or a renegotiation was refused.
         Aborted,
+        /// The peer's close_notify ended the first handshake.
+        PeerClosed,
     }
 
     #[derive(Clone, Copy)]
@@ -929,6 +931,7 @@ pub mod ssl_wrapper {
                     (false, us_bun_verify_error_t::default())
                 }
                 HandshakeOutcome::Aborted => (false, self.verify_error()),
+                HandshakeOutcome::PeerClosed => (false, us_bun_verify_error_t::peer_disconnected()),
             };
             self.flags.set_authorized(success);
             // trigger the handshake callback
@@ -1068,7 +1071,12 @@ pub mod ssl_wrapper {
                     self.flags.set_received_ssl_shutdown(true);
                     // 2-step shutdown
                     let _ = self.shutdown(false);
-                    self.handle_end_of_renegotiation();
+                    if self.flags.handshake_state() == HandshakeState::HandshakePending {
+                        self.flags
+                            .set_handshake_state(HandshakeState::HandshakeCompleted);
+                        self.trigger_handshake_callback(HandshakeOutcome::PeerClosed);
+                    }
+                    self.trigger_close_callback();
                     return false;
                 }
                 // as far as I know these are the only errors we want to handle
@@ -1351,6 +1359,11 @@ pub mod ssl_wrapper {
                 // ssl_flush_pending_session: handshake/data callbacks first,
                 // then sessions.
                 self.flush_pending_events();
+            } else {
+                debug_assert!(
+                    self.flags.closed_notified() || self.ssl.get().is_none(),
+                    "update_handshake_state stopped the pass and left the wrapper open"
+                );
             }
         }
 

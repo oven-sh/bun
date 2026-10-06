@@ -4402,6 +4402,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
+    /// Folds the line breaks at `pos` in a quoted scalar into `n - 1` line feeds and returns `n`.
+    fn fold_quoted_breaks(&mut self, text: &mut Vec<Enc::Unit>) -> Result<usize, ParseError> {
+        let breaks = self.fold_lines();
+        if let Some(block_indent) = self.block_indents.get() {
+            if self.line_indent.is_less_than_or_equal(block_indent) {
+                return Err(ParseError::UnexpectedCharacter);
+            }
+        }
+        for _ in 1..breaks {
+            text.push(Enc::ch(b'\n'));
+        }
+        Ok(breaks)
+    }
+
     fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
             input: self.input,
@@ -5277,19 +5291,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
-                    // `fold_lines` starts at the break and counts it.
-                    match self.fold_lines() {
-                        1 => text.push(Enc::ch(b' ')),
-                        breaks => {
-                            for _ in 1..breaks {
-                                text.push(Enc::ch(b'\n'));
-                            }
-                        }
-                    }
-                    if let Some(block_indent) = self.block_indents.get() {
-                        if self.line_indent.is_less_than_or_equal(block_indent) {
-                            return Err(ParseError::UnexpectedCharacter);
-                        }
+                    if self.fold_quoted_breaks(&mut text)? == 1 {
+                        text.push(Enc::ch(b' '));
                     }
                 }
                 0x20 | 0x09 => {
@@ -5357,19 +5360,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                 }
                 0x0D | 0x0A => {
-                    // `fold_lines` starts at the break and counts it.
-                    match self.fold_lines() {
-                        1 => text.push(Enc::ch(b' ')),
-                        breaks => {
-                            for _ in 1..breaks {
-                                text.push(Enc::ch(b'\n'));
-                            }
-                        }
-                    }
-                    if let Some(block_indent) = self.block_indents.get() {
-                        if self.line_indent.is_less_than_or_equal(block_indent) {
-                            return Err(ParseError::UnexpectedCharacter);
-                        }
+                    if self.fold_quoted_breaks(&mut text)? == 1 {
+                        text.push(Enc::ch(b' '));
                     }
                 }
                 0x20 | 0x09 => {
@@ -5397,15 +5389,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     match Enc::wide(self.next()) {
                         0x0D | 0x0A => {
                             // The escaped break itself is not content.
-                            let breaks = self.fold_lines();
-                            if let Some(block_indent) = self.block_indents.get() {
-                                if self.line_indent.is_less_than_or_equal(block_indent) {
-                                    return Err(ParseError::UnexpectedCharacter);
-                                }
-                            }
-                            for _ in 1..breaks {
-                                text.push(Enc::ch(b'\n'));
-                            }
+                            self.fold_quoted_breaks(&mut text)?;
                             self.skip_s_white();
                             continue;
                         }

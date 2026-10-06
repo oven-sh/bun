@@ -226,7 +226,7 @@ function validateSecureContextOptions(options) {
     dhparam,
     secureProtocol,
   } = options;
-  validateSecureProtocol(secureProtocol);
+  validateSecureProtocol(secureProtocol, minVersion, maxVersion);
   if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
   if (passphrase !== undefined && passphrase !== null) validateString(passphrase, "options.passphrase");
   if (sigalgs !== undefined && sigalgs !== null) {
@@ -264,9 +264,9 @@ function validateSecureContextOptions(options) {
     throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
   }
   if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(minVersion), "minimum");
+    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(minVersion), "minimum");
   if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(maxVersion), "maximum");
+    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(JSON.stringify(maxVersion), "maximum");
   if (ticketKeys !== undefined && ticketKeys !== null) {
     validateBuffer(ticketKeys, "options.ticketKeys");
     const ticketKeysByteLength = ticketKeys.byteLength;
@@ -1289,6 +1289,20 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1456: falsy counts as absent
+      const { minVersion, maxVersion, secureProtocol } = options;
+      if (
+        (minVersion != null && !minVersion) ||
+        (maxVersion != null && !maxVersion) ||
+        (secureProtocol != null && !secureProtocol)
+      ) {
+        options = {
+          ...options,
+          minVersion: minVersion || undefined,
+          maxVersion: maxVersion || undefined,
+          secureProtocol: secureProtocol || undefined,
+        };
+      }
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
 

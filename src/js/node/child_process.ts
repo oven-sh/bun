@@ -1590,6 +1590,16 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
+    if (!this.connected) {
+      const ex = $ERR_IPC_CHANNEL_CLOSED();
+      if (callback) {
+        process.nextTick(callback, ex);
+      } else {
+        process.nextTick(() => this.emit("error", ex));
+      }
+      return false;
+    }
+
     // We still need this send function because
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback

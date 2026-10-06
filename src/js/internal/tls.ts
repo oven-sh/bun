@@ -78,8 +78,15 @@ function tlsStringToProtocolVersion(v) {
 // unknown method (THROW_ERR_TLS_INVALID_PROTOCOL_METHOD in
 // src/crypto/crypto_context.cc SecureContext::Init).
 let _SECURE_PROTOCOL_METHODS: Set<string> | undefined;
-function validateSecureProtocol(secureProtocol) {
+function validateSecureProtocol(secureProtocol, minVersion, maxVersion) {
   if (secureProtocol === undefined || secureProtocol === null) return;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/common.js#L78
+  if (secureProtocol) {
+    if (minVersion != null)
+      throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(JSON.stringify(minVersion), JSON.stringify(secureProtocol));
+    if (maxVersion != null)
+      throw $ERR_TLS_PROTOCOL_VERSION_CONFLICT(JSON.stringify(maxVersion), JSON.stringify(secureProtocol));
+  }
   if (typeof secureProtocol !== "string") {
     throw $ERR_INVALID_ARG_TYPE("options.secureProtocol", "string", secureProtocol);
   }

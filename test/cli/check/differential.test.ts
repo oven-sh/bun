@@ -929,6 +929,11 @@ differential(
     const programs = [
       [dollar, "interface Foo extends Dollar<Foo> { m(): void }", "const k: 1 = null! as keyof Foo;"],
       [
+        "type Plus<T> = { [K in keyof T]: T[K] } & { extra: 1 };",
+        "interface Foo extends Plus<Foo> { m(): void }",
+        "const k: 1 = null! as keyof Foo;",
+      ],
+      [
         dollar,
         "interface Fn extends Dollar<Fn> {}",
         "interface Fn { (): void }",
@@ -936,7 +941,22 @@ differential(
       ],
     ];
     const different = await Promise.all(programs.map(lines => casesThatDiffer({}, [], lines, 1)));
-    expect(different).toEqual([[], []]);
+    expect(different).toEqual([[], [], []]);
+
+    // Every declaration on the line of its use, before it.
+    const bases = ["plus", "record", "omitted"] as const;
+    const declarations = [
+      "type Has<K, T> = K extends keyof T ? true : false;",
+      "interface Other { b(): void; [Symbol.iterator](): void }",
+      ...bases.map(name => `type ${name}<T> = ${basesOfThemselves[name]};`),
+    ];
+    const cases = [...product([...bases], extendingThemselves, usesOfThemselves)].map(
+      ([base, extending, use], index) => {
+        const [declaration, type] = extending(`D${index}`, base);
+        return `${declaration} { const d = null! as ${type}; ${use.replace(/\bD\b/g, () => type)} }`;
+      },
+    );
+    expect(await casesThatDiffer({}, declarations, cases, 1)).toEqual([]);
   },
   timeout,
 );

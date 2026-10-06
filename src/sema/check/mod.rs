@@ -1804,7 +1804,24 @@ impl<'p, 's> Checker<'p, 's> {
         self.last_enter = EnterOutcome::Refused;
         // Everything in progress between there and here is computed without the result, so it is
         // provisional.
-        self.mark_tainted_from(i + usize::from(!self.is_requested_eagerly(i)));
+        let from = i + usize::from(!self.is_requested_eagerly(i));
+        // Except where base types are requested again. `getBaseTypes` ends with a reset of the
+        // members of the class or interface itself, and whatever else was resolved stays: in
+        // `interface D extends M<D>`, the members that `M<D>` has from `D` without a base type.
+        let from = match q {
+            Query::Bases(sym) => {
+                let is_own = |f: &Query| {
+                    matches!(*f, Query::Shape(t)
+                        if matches!(self.data(t), TypeData::Ref { target, .. } if *target == sym))
+                };
+                let own = self.stack[from..].iter().rposition(is_own);
+                own.map_or(self.stack.len(), |above| from + above)
+            }
+            _ => from,
+        };
+        if from < self.stack.len() {
+            self.mark_tainted_from(from);
+        }
         // TypeScript does not detect an expression that is rechecked while it is being checked: it
         // follows the same path again, and the first resolution on that path is the one that
         // becomes circular.

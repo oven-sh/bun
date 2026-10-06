@@ -654,6 +654,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return self.provisional_shape(shape);
         }
+        // Nor is it one while the base types are being resolved: `resolveStructuredTypeMembers` has
+        // no guard, and resolves the members again with the base types that there are so far.
+        if let TypeData::Ref { target, .. } = *self.data(key)
+            && self.base_types_so_far.iter().any(|it| it.0 == target)
+            && self.stack[self.resolution_start..].contains(&Query::Shape(key))
+        {
+            self.note_members_in_place();
+            let shape = meanwhile(self);
+            return self.provisional_shape(shape);
+        }
         // Nor is it one where the declared members are in place (`ObjectFlagsUnresolvedMembers`).
         if self.inheriting.contains(&key) {
             self.note_members_in_place();

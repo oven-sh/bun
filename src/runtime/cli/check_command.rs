@@ -28,7 +28,7 @@ struct Options {
     all: bool,
     /// `--strict`, `--target es2022` and so on.
     compiler_options: Vec<CompilerOption>,
-    /// `-b`, `--build`: the arguments name projects, as for `tsc -b`.
+    /// `-b`, `--build`: the argument names the project, which is checked as `tsc -b` builds it.
     build: bool,
     timing: bool,
 }
@@ -397,6 +397,8 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
 enum Paths<'a> {
     /// The arguments of `bun check`.
     Arguments(&'a [Vec<u8>]),
+    /// `bun check -b`, whose argument is the project. See `Request::build`.
+    Build,
     /// See `Request::are_entry_points`.
     EntryPoints(Entries<'a>),
 }
@@ -502,11 +504,13 @@ fn request<'a>(
             };
             (paths, false)
         }
+        Paths::Build => (Entries::default(), false),
         Paths::EntryPoints(entries) => (entries, true),
     };
     Request {
         cwd,
         project,
+        build: matches!(paths, Paths::Build),
         paths: entries.paths,
         are_entry_points,
         script_kinds: entries.script_kinds,
@@ -618,7 +622,10 @@ impl CheckCommand {
         let report = run(
             &cwd,
             options.project.as_deref(),
-            Paths::Arguments(&options.paths),
+            match options.build {
+                true => Paths::Build,
+                false => Paths::Arguments(&options.paths),
+            },
             &options.compiler_options,
             options.threads,
             Provided::default(),

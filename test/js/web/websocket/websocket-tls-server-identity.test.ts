@@ -7,7 +7,7 @@ import net, { type AddressInfo } from "node:net";
 import tls from "node:tls";
 import { Worker } from "node:worker_threads";
 import { WebSocket as WsPackageWebSocket } from "ws";
-import { clientEvents, startRecordingProxy } from "./proxy-test-utils";
+import { clientEvents, startRecordingProxy, startRenegotiatingWssServer } from "./proxy-test-utils";
 
 // NO_PROXY applies to explicit proxies too. An ambient
 // NO_PROXY=localhost,127.0.0.1,... would bypass the proxy tests below.
@@ -112,43 +112,6 @@ function startSniServer({
     },
   };
 }
-
-// A TLS 1.2 server that answers one WebSocket upgrade, then forces a TLS
-// renegotiation and sends a text frame. It runs in real node because a
-// BoringSSL server cannot renegotiate. It waits for the client's first frame,
-// so the connected client, not the upgrade client, owns the socket by then.
-const node = nodeExe();
-const renegotiatingServer = `
-  const tls = require("tls");
-  const crypto = require("crypto");
-  const server = tls.createServer(
-    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
-    socket => {
-      socket.on("error", () => {});
-      let head = "";
-      const onHead = chunk => {
-        head += chunk.toString("latin1");
-        if (!head.includes("\\r\\n\\r\\n")) return;
-        socket.off("data", onHead);
-        const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head)[1];
-        const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
-        socket.write(
-          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
-            "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
-        );
-        socket.once("data", () => {
-          socket.renegotiate({ rejectUnauthorized: false }, err => {
-            if (err) return socket.destroy(err);
-            const payload = Buffer.from("after renegotiation");
-            socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
-          });
-        });
-      };
-      socket.on("data", onHead);
-    },
-  );
-  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
-`;
 
 function openSession(ws: WebSocket) {
   ws.addEventListener("open", () => ws.close(1000));
@@ -566,22 +529,14 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
 
   // On a renegotiation BoringSSL requires the same certificate, so the verdict
   // of the callback still holds and the callback does not run again.
-  (node ? test : test.skip).each([
+  (nodeExe() ? test : test.skip).each([
     ["a name the certificate does not have", { serverName: "evil.test" }, "evil.test"],
     ["an IP URL, which has no SNI", {}, "127.0.0.1"],
   ] as const)("a certificate it approved survives a TLS 1.2 renegotiation: %s", async (_label, names, hostname) => {
-    await using server = Bun.spawn({
-      cmd: [node!, "-e", renegotiatingServer],
-      stdout: "pipe",
-      stderr: "inherit",
-      stdin: "ignore",
-      env: { ...bunEnv, SERVER_CERT: tlsCerts.cert, SERVER_KEY: tlsCerts.key },
-    });
-    const { value } = await server.stdout.getReader().read();
-    const port = Number(new TextDecoder().decode(value).trim());
+    await using server = await startRenegotiatingWssServer("after the 101");
 
     const calls: string[] = [];
-    const ws = new WebSocket(`wss://127.0.0.1:${port}/`, {
+    const ws = new WebSocket(`wss://127.0.0.1:${server.port}/`, {
       tls: {
         ca: tlsCerts.cert,
         ...names,

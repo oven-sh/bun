@@ -117,6 +117,7 @@ unsafe extern "C" {
         cert: &mut boringssl::c::X509,
         global_object: &JSGlobalObject,
     ) -> JSValue;
+    safe fn SSL_total_renegotiations(ssl: &boringssl::c::SSL) -> core::ffi::c_int;
 }
 
 // Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
@@ -246,8 +247,11 @@ impl CppWebSocket {
                 !hostname.is_empty() && bun_uws::check_server_identity(ssl, hostname)
             }),
             (NameCheck::Callback { callback, enforce }, TlsHandshake::First { context, .. }) => {
-                ssl.is_some_and(|ssl| run_check_server_identity(context, callback, ssl, hostname))
-                    || !enforce
+                // Before the 101 the upgrade client hears of a renegotiation too.
+                ssl.is_some_and(|ssl| {
+                    SSL_total_renegotiations(ssl) > 0
+                        || run_check_server_identity(context, callback, ssl, hostname)
+                }) || !enforce
             }
         }
     }

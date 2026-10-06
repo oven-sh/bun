@@ -1498,12 +1498,12 @@ class ChildProcess extends EventEmitter {
             });
           }
 
-          process.nextTick(
-            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
-            exitCode,
-            signalCode,
-            err,
-          );
+          const onExit = (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err);
+          // libuv runs a child's exit callback after the other I/O callbacks of the same poll, so 'exit' finds what the
+          // child wrote in its pipes: https://github.com/libuv/libuv/blob/v1.51.0/src/unix/linux.c#L1558-L1566
+          // Here the socket of an extra pipe (index >= 3) can get its turn after the exit. Let that poll finish first.
+          if (this.#hasExtraPipe()) setImmediate(onExit, exitCode, signalCode, err);
+          else process.nextTick(onExit, exitCode, signalCode, err);
         },
         lazy: true,
         ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
@@ -1665,6 +1665,16 @@ class ChildProcess extends EventEmitter {
     }
   }
 
+  #hasExtraPipe() {
+    const stdio = this.#stdioObject;
+    if (stdio) {
+      for (let i = 3; i < stdio.length; i++) {
+        if (stdio[i]) return true;
+      }
+    }
+    return false;
+  }
+
   ref() {
     if (this.#handle) this.#handle.ref();
   }
@@ -1744,9 +1754,12 @@ class ChildProcess extends EventEmitter {
 //------------------------------------------------------------------------------
 // Section 4. ChildProcess helpers
 //------------------------------------------------------------------------------
+// Set on a stream that is passed as stdio to a spawn: the child reads it now.
+const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
+
 // Node's flushStdio, for one stream. It runs on the tick after 'exit', so an 'exit' listener can still start to read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L297-L332
 function flushStdioPipe(pipe) {
-  if (pipe.readable) pipe.resume();
+  if (pipe.readable && !pipe[kIsUsedAsStdio]) pipe.resume();
 }
 
 const nodeToBunLookup = {
@@ -1805,7 +1818,10 @@ function nodeToBun(item: string, index: number): Bun.Spawn.NodeStdio[number] {
   }
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
-    if (fd !== undefined) return fd;
+    if (fd !== undefined) {
+      (item as any)[kIsUsedAsStdio] = true;
+      return fd;
+    }
     const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
     throw new Error(
       `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,

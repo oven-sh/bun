@@ -1321,10 +1321,11 @@ done
 });
 
 // Node emits 'close' after the process has ended and every stdio stream has
-// closed, the pipes at index >= 3 included. On the tick after 'exit' it also
-// resumes each stdio stream that nobody reads, so that the stream can reach EOF
-// and close. Each script runs as a process of its own: inside the test runner
-// the exit notification and the pipe reads arrive in a different order.
+// closed, the pipes at index >= 3 included. It emits 'exit' after the pipes got
+// what the child wrote, and on the tick after 'exit' it resumes each stdio
+// stream that nobody reads, so that the stream can reach EOF and close. Each
+// script runs as a process of its own: inside the test runner the exit
+// notification and the pipe reads arrive in a different order.
 describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
   async function run(script: string) {
     await using proc = Bun.spawn({
@@ -1437,6 +1438,50 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
       child.on("close", () => console.log(JSON.stringify({ got })));
     `);
     expect(result).toEqual({ stdout: '{"got":"onetwo"}\n', stderr: "", exitCode: 0 });
+  });
+
+  // readline pauses its input on close(). The lines must be in before 'exit',
+  // or they stay in the paused socket and 'close' never comes.
+  it("'close' comes when the parent closes its readline on the pipe after 'exit'", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const { once } = require("node:events");
+      const readline = require("node:readline");
+      (async () => {
+        const [file, args] =
+          process.platform === "win32"
+            ? [process.execPath, ["-e", "require('fs').writeSync(3, ['one', 'two', ''].join(String.fromCharCode(10)))"]]
+            : ["/bin/sh", ["-c", "echo one >&3; echo two >&3"]];
+        const child = spawn(file, args, { stdio: ["ignore", "ignore", "inherit", "pipe"] });
+        const lines = [];
+        const rl = readline.createInterface({ input: child.stdio[3] });
+        rl.on("line", line => lines.push(line));
+        child.on("close", () => console.log(JSON.stringify({ lines, pipeClosed: child.stdio[3].destroyed })));
+        await once(child, "exit");
+        rl.close();
+      })();
+    `);
+    expect(result).toEqual({ stdout: '{"lines":["one","two"],"pipeClosed":true}\n', stderr: "", exitCode: 0 });
+  });
+
+  // The second child reads the pipe now. A resume in the parent would take its
+  // bytes. The first child's background job holds fd 3 open until it gets a
+  // line on fd 4, so the pipe has not ended when the first child's 'exit' fires.
+  it.skipIf(isWindows)("a pipe that is passed as stdio to a second spawn is not resumed", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const first = spawn("/bin/sh", ["-c", "(read line <&4) & exit 0"], {
+        stdio: ["ignore", "ignore", "inherit", "pipe", "pipe"],
+      });
+      spawn("/bin/sh", ["-c", "cat"], { stdio: [first.stdio[3], "ignore", "inherit"] });
+      first.on("exit", () => {
+        setImmediate(() => {
+          console.log(JSON.stringify({ resumed: first.stdio[3].readableFlowing === true }));
+          first.stdio[4].write("go\\n");
+        });
+      });
+    `);
+    expect(result).toEqual({ stdout: '{"resumed":false}\n', stderr: "", exitCode: 0 });
   });
 });
 

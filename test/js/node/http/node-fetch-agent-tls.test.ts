@@ -72,6 +72,7 @@ describe("node-fetch applies the TLS options of the agent", () => {
   test("ca and servername", async () => {
     await using server = await serve();
     assert.strictEqual(await outcome(server.port, { ca, servername }), "authorized=false");
+    assert.strictEqual(await outcome(server.port, { ca, servername, dhparam: "auto" }), "authorized=false");
     assert.strictEqual(await outcome(server.port, { ca }), "ERR_TLS_CERT_ALTNAME_INVALID");
     assert.strictEqual(await outcome(server.port, { servername }), "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   });

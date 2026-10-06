@@ -15,6 +15,7 @@ import https from "node:https";
 import net from "node:net";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
+import { promisify } from "node:util";
 import {
   listeningServer,
   MYSQL_CLIENT_LONG_PASSWORD,
@@ -454,6 +455,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("a bad record on an established %
       const nodeServer = bunServer
         ? undefined
         : https.createServer(cert, (request, response) => (requests.push(request.url!), response.end("ok")));
+      for (const event of ["connection", "secureConnection"]) nodeServer?.on(event, () => requests.push(event));
       if (nodeServer) await once(nodeServer.listen(0, "127.0.0.1"), "listening");
       try {
         const relay = await faultRelay(bunServer?.port ?? (nodeServer!.address() as net.AddressInfo).port, "server");
@@ -472,7 +474,8 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("a bad record on an established %
         client.write("GET /later HTTP/1.1\r\nHost: localhost\r\n\r\n");
         await relay.closedByOwner;
         client.destroy();
-        expect(requests).toEqual(["/first"]);
+        expect(requests).toEqual(nodeServer ? ["connection", "secureConnection", "/first"] : ["/first"]);
+        if (nodeServer) expect(await promisify(nodeServer.getConnections).call(nodeServer)).toBe(0);
       } finally {
         bunServer?.stop(true);
         nodeServer?.close();

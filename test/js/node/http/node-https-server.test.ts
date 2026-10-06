@@ -220,6 +220,19 @@ describe("https.createServer forwards every TLS server option", () => {
     expect(await negotiated(false)).toBe(aes128);
   });
 
+  test("takes TLS 1.3 suite names in ciphers", async () => {
+    const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
+    await using only13 = https.createServer({ ...validCert, ciphers: "TLS_AES_256_GCM_SHA384" });
+    await using mixed = https.createServer({ ...validCert, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` });
+    const only13Port = await listen(only13);
+    const mixedPort = await listen(mixed);
+
+    expect(await handshake(only13Port, {})).toStartWith("TLS_");
+    expect(await handshake(only13Port, { maxVersion: "TLSv1.2" })).toContain("_ALERT_");
+    expect(await handshake(mixedPort, {})).toStartWith("TLS_");
+    expect(await handshake(mixedPort, { maxVersion: "TLSv1.2" })).toBe(aes256);
+  });
+
   test("takes a key as [{ pem, passphrase }]", async () => {
     const pem = readFileSync(join(import.meta.dirname, "fixtures", "cert.encrypted.key"), "utf8");
     const cert = readFileSync(join(import.meta.dirname, "fixtures", "cert.pem"), "utf8");

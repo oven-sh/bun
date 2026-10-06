@@ -25,7 +25,7 @@ struct us_nq_vtable {
     void (*on_stream_reset)(void *stream_ctx, int how, uint64_t error_code);
     ssize_t (*on_dg_write)(void *conn_ctx, void *buf, size_t buf_sz);
     void (*on_datagram)(void *conn_ctx, const void *buf, size_t sz);
-    void (*on_datagram_status)(void *conn_ctx, unsigned count, int acked);
+    void (*on_datagram_status)(void *conn_ctx, uint64_t id, int status);
     void (*on_early_data_failed)(void *conn_ctx);
     void (*on_path_switch)(void *conn_ctx, int validated, int is_preferred,
                            const struct sockaddr *new_local,
@@ -149,11 +149,14 @@ static void nq_on_datagram(lsquic_conn_t *c, const void *buf, size_t sz) {
         vt->on_datagram(ctx, buf, sz);
     }
 }
-static void nq_on_datagram_status(lsquic_conn_t *c, unsigned count, int acked) {
+/* lsquic_sys mirrors these values as LSQ_DG_*. */
+_Static_assert(LSQ_DG_ACKED == 0 && LSQ_DG_LOST == 1 && LSQ_DG_UNSENT == 2,
+               "lsquic_sys::LSQ_DG_* must match enum lsquic_dg_status");
+static void nq_on_datagram_status(lsquic_conn_t *c, uint64_t id, int status) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
         struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_datagram_status(ctx, count, acked);
+        vt->on_datagram_status(ctx, id, status);
     }
 }
 static void nq_on_early_data_failed(lsquic_conn_t *c) {

@@ -11,12 +11,14 @@ const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
-} as Certs;
+};
+// The copy of ca2 under ./fixtures has a 1024-bit key, which Node rejects as "CA certificate key too weak".
+const upstreamKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const serverTls = {
-  key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
-  cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
-  ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
-} as Certs;
+  key: readFileSync(join(upstreamKeys, "agent10-key.pem"), "utf8"),
+  cert: readFileSync(join(upstreamKeys, "agent10-cert.pem"), "utf8"),
+  ca: readFileSync(join(upstreamKeys, "ca2-cert.pem"), "utf8"),
+};
 
 function split(file: any, into: any) {
   const certs = /([^]*END CERTIFICATE-----\r?\n)(-----BEGIN[^]*)/.exec(file) as RegExpExecArray;
@@ -364,6 +366,54 @@ it("rejects an unverifiable client certificate by default when requestCert is tr
 
     expect(handled).toHaveLength(1);
     expect(secureConnections).toHaveLength(1);
+  } finally {
+    server.close();
+  }
+});
+
+it("client sees a hard error, not a clean close, when the server rejects its certificate under rejectUnauthorized", async () => {
+  // TLS 1.2, so the refusal lands before the client's 'secureConnect'. A TLS 1.3 client finishes its handshake first.
+  const untrustedClient = {
+    key: readFileSync(join(import.meta.dir, "fixtures", "agent2-key.pem"), "utf8"),
+    cert: readFileSync(join(import.meta.dir, "fixtures", "agent2-cert.pem"), "utf8"),
+  };
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+      rejectUnauthorized: true,
+      maxVersion: "TLSv1.2",
+    },
+    socket => socket.end("SECRET"),
+  );
+  const refused = once(server, "tlsClientError");
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      ca: serverTls.ca,
+      ...untrustedClient,
+      checkServerIdentity,
+    });
+    client.on("secureConnect", () => events.push("secureConnect"));
+    client.on("data", data => events.push(`data ${data}`));
+    client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    client.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed.resolve();
+    });
+    await closed.promise;
+    // The server sends neither its Finished nor an alert: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
+    expect(events).toEqual(["error ECONNRESET", "close true"]);
+    // Bun reports the certificate check to 'tlsClientError', Node how the connection ended.
+    const [err] = await refused;
+    expect(err.code).toBe(process.versions.bun ? "DEPTH_ZERO_SELF_SIGNED_CERT" : "ECONNRESET");
   } finally {
     server.close();
   }

@@ -6180,3 +6180,90 @@ describe("a fatal TLS alert that arrives after the handshake", () => {
     expect(await rejectedClientEvents(false)).toEqual(["handshake true TLSv1.3", "close undefined"]);
   });
 });
+
+// node:tls hands the context it built to Bun.listen() and Bun.connect() as `tls.secureContext`.
+describe("tls.secureContext with no other tls option", () => {
+  const native = () => (createSecureContext({ key: tls.key, cert: tls.cert }) as any).context;
+  const socket = {
+    open: (s: Socket) => void s.write("PLAINTEXT-HELLO"),
+    data() {},
+    error() {},
+  };
+  const notAContext = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+  const wrongValues: [string, unknown][] = [
+    ["a plain object", {}],
+    ["a string", "x"],
+    ["the node:tls wrapper", createSecureContext({ key: tls.key, cert: tls.cert })],
+  ];
+
+  it("Bun.listen() speaks TLS", async () => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { secureContext: native() } as any, socket });
+    // What open() wrote travels inside the session: a client that completes the handshake is the one that reads it.
+    const client = tlsConnect({ host: "127.0.0.1", port: listener.port, rejectUnauthorized: false });
+    const [chunk] = await once(client, "data");
+    expect({ encrypted: client.encrypted, text: chunk.toString() }).toEqual({
+      encrypted: true,
+      text: "PLAINTEXT-HELLO",
+    });
+    client.destroy();
+
+    // A client that sends no ClientHello is sent nothing.
+    const raw = net.connect(listener.port, "127.0.0.1");
+    const received: Buffer[] = [];
+    raw.on("data", chunk => received.push(chunk));
+    await once(raw, "connect");
+    raw.end();
+    await once(raw, "close");
+    expect(Buffer.concat(received).toString("latin1")).toBe("");
+  });
+
+  it("Bun.connect() speaks TLS", async () => {
+    const first = Promise.withResolvers<Buffer>();
+    const server = net.createServer(raw => raw.on("error", () => {}).once("data", first.resolve));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: (server.address() as net.AddressInfo).port,
+        tls: { secureContext: native() } as any,
+        socket,
+      });
+      // 22: a handshake record, the ClientHello.
+      expect((await first.promise)[0]).toBe(22);
+      client.terminate();
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each(wrongValues)("Bun.listen() throws for %s", (_, secureContext) => {
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { secureContext } as any, socket })).toThrow(
+      notAContext,
+    );
+    // Not ignored next to options that make a listener TLS by themselves either.
+    expect(() =>
+      Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: tls.key, cert: tls.cert, secureContext } as any,
+        socket,
+      }),
+    ).toThrow(notAContext);
+  });
+
+  it.each(wrongValues)("Bun.connect() throws for %s", async (_, secureContext) => {
+    let dialed = 0;
+    const server = net.createServer(() => void dialed++);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const port = (server.address() as net.AddressInfo).port;
+      const dial = async () => Bun.connect({ hostname: "127.0.0.1", port, tls: { secureContext } as any, socket });
+      await expect(dial()).rejects.toEqual(notAContext);
+      expect(dialed).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+});

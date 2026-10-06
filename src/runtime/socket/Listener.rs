@@ -137,10 +137,13 @@ impl Listener {
     }
 }
 
-/// The `SSL_CTX` of the native `SecureContext` node:tls passes as `tls.secureContext`.
+/// The `SSL_CTX` of the native `SecureContext` in `tls.secureContext`, which alone asks for TLS.
 fn prebuilt_ssl_ctx(
+    vm: &VirtualMachine,
     global: &JSGlobalObject,
     opts: JSValue,
+    config: &mut SocketConfig,
+    is_server: bool,
 ) -> JsResult<Option<boring_sys::OwnedSslCtx>> {
     let Some(tls_js) = opts.get_truthy(global, "tls")? else {
         return Ok(None);
@@ -151,9 +154,17 @@ fn prebuilt_ssl_ctx(
     let Some(sc_js) = tls_js.get_truthy(global, "secureContext")? else {
         return Ok(None);
     };
-    Ok(sc_js
-        .as_class_ref::<SecureContext>()
-        .map(|sc| sc.ctx.clone()))
+    let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
+        return Err(global.throw_invalid_argument_type_value(
+            b"secureContext",
+            b"SecureContext",
+            sc_js,
+        ));
+    };
+    if config.ssl.is_none() {
+        config.ssl = Some(crate::socket::tls_true_defaults(vm, is_server));
+    }
+    Ok(Some(sc.ctx.clone()))
 }
 
 /// Tears down the half-built `Listener` of `listen()`, unless `disarm()` runs first.
@@ -256,14 +267,10 @@ impl Listener {
                 ));
             }
         }
+        let prebuilt_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, true)?;
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
         let pause_on_connect = socket_config.pause_on_connect;
-        let prebuilt_ctx = if ssl_enabled {
-            prebuilt_ssl_ctx(cx.global(), opts)?
-        } else {
-            None
-        };
 
         #[cfg(windows)]
         if port.is_none() {
@@ -836,10 +843,7 @@ impl Listener {
     }
 
     /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
-    pub(crate) fn set_secure_context(
-        this: &Self,
-        secure_context: &SecureContext,
-    ) -> JSValue {
+    pub(crate) fn set_secure_context(this: &Self, secure_context: &SecureContext) -> JSValue {
         if !this.ssl {
             return JSValue::UNDEFINED;
         }
@@ -1130,6 +1134,7 @@ impl Listener {
         let _cell_root = handlers.root_cell(cx.global());
 
         let port = socket_config.port;
+        let mut owned_ssl_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, false)?;
         let ssl_enabled = socket_config.ssl.is_some();
         let default_data = socket_config.default_data;
 
@@ -1185,15 +1190,6 @@ impl Listener {
                 _ => 0,
             };
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
-        };
-
-        // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
-        // named-pipe path can adopt it. node:tls passes the native SecureContext as
-        // `tls.secureContext` so we share its already-built SSL_CTX.
-        let mut owned_ssl_ctx = if ssl_enabled {
-            prebuilt_ssl_ctx(cx.global(), opts)?
-        } else {
-            None
         };
 
         #[cfg(windows)]

@@ -412,6 +412,12 @@ function nodeClientTlsToNative(options) {
     }
     (tls ??= { __proto__: null })[name] = value;
   }
+  const range = secureProtocolToVersionRange(options.secureProtocol);
+  if (range) {
+    tls ??= { __proto__: null };
+    tls.minVersion = range[0];
+    tls.maxVersion = range[1];
+  }
   return tls && unsealPfxForNative(tls);
 }
 

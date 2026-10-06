@@ -20,7 +20,8 @@ function listen(server: Server, protocol: string = "http"): Promise<URL> {
   });
 }
 
-const baseline = process.memoryUsage.rss();
+const rss = process.memoryUsage.rss;
+const baseline = rss();
 let count = 0;
 
 var server = createServer(async (req, res) => {
@@ -44,11 +45,11 @@ var server = createServer(async (req, res) => {
   count += 1;
   if (count % 1000 === 0) {
     Bun.gc(true);
-    console.log("count", count, process.memoryUsage.rss());
+    console.log("count", count, rss());
   }
   if (count == 10_000) {
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log("heapStats", jsc.heapStats());
     process.send({ baseline, after });
   }

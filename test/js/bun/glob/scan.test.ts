@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -699,7 +699,7 @@ describe("absolute path pattern", async () => {
 describe("glob scan should not escape cwd boundary", () => {
   test("pattern .*/* should not match parent directory via ..", async () => {
     // Create a directory structure where we can verify paths don't escape cwd
-    const tempdir = tempDirWithFiles("glob-cwd-escape", {
+    await using tempdir = tempDir("glob-cwd-escape", {
       ".hidden": {
         "file.txt": "hidden file content",
       },
@@ -731,7 +731,7 @@ describe("glob scan should not escape cwd boundary", () => {
   });
 
   test("pattern .*/**/*.ts should not escape cwd", async () => {
-    const tempdir = tempDirWithFiles("glob-cwd-escape-ts", {
+    await using tempdir = tempDir("glob-cwd-escape-ts", {
       ".config": {
         "settings.ts": "export default {}",
         "nested": {
@@ -769,14 +769,14 @@ describe("glob scan should not escape cwd boundary", () => {
 
 describe("glob.scan wildcard fast path", async () => {
   test("works", async () => {
-    const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {
+    await using tempdir = tempDir("glob-scan-wildcard-fast-path", {
       "lol.md": "",
       "lol2.md": "",
       "shouldnt-show.md23243": "",
       "shouldnt-show.ts": "",
     });
     const glob = new Glob("*.md");
-    const entries = await Array.fromAsync(glob.scan(tempdir));
+    const entries = await Array.fromAsync(glob.scan(String(tempdir)));
     // bun root dir
     expect(entries.sort()).toEqual(["lol.md", "lol2.md"].sort());
   });
@@ -785,9 +785,9 @@ describe("glob.scan wildcard fast path", async () => {
   describe("fast-path detection edgecase", async () => {
     function runTest(pattern: string, files: Record<string, string>, expected: string[]) {
       test(`pattern: ${pattern}`, async () => {
-        const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", files);
+        await using tempdir = tempDir("glob-scan-wildcard-fast-path", files);
         const glob = new Glob(pattern);
-        const entries = await Array.fromAsync(glob.scan(tempdir));
+        const entries = await Array.fromAsync(glob.scan(String(tempdir)));
         expect(entries.sort()).toEqual(expected.sort());
       });
     }
@@ -856,7 +856,7 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   files[parts.join("/") + "/hit.txt"] = "";
   files[parts.slice(0, depth - 1).join("/") + "/miss.txt"] = "";
 
-  const dir = tempDirWithFiles("glob-deep", files);
+  using dir = tempDir("glob-deep", files);
 
   // Exact-depth pattern: depth `*` components + literal tail
   const star = Array(depth).fill("*").join("/") + "/hit.txt";
@@ -986,6 +986,46 @@ describe("explicit dotfile segments match without dot:true", () => {
     using dir = tempDir("glob-scan-explicit-dot-async", files);
     const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
     expect(norm(result)).toEqual([".dotdir/inner.txt"]);
+  });
+});
+
+// Directory entries on Linux are bytes that need not be valid UTF-8. The
+// matcher must step over them in the same units the returned names use (one
+// U+FFFD per maximal ill-formed subpart), not by the lead byte's nominal
+// length, or `?` and `*` step into the next character or past the end.
+describe.skipIf(!isLinux)("scan over entry names that are not valid UTF-8", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = String(tempDir("glob-scan-invalid-utf8", {}));
+    // Bytes after "t": `\xc3 x`, `\xe4\xb8 .js`, `é \xc3`, `😀 js`, `x \x80`, `\xed\xa0\x80` (a WTF-8 surrogate).
+    for (const hex of ["c378", "e4b82e6a73", "c3a9c3", "f09f98806a73", "7880", "eda080"]) {
+      fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/t"), Buffer.from(hex, "hex")]), "");
+    }
+  });
+  afterAll(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const scan = (pattern: string) => [...new Glob(pattern).scanSync({ cwd: dir })].sort();
+  const all = ["t\uFFFDx", "t\uFFFD.js", "té\uFFFD", "t😀js", "tx\uFFFD", "t\uFFFD\uFFFD\uFFFD"];
+
+  test.each([
+    ["*", all],
+    ["t*", all],
+    ["t?", []],
+    ["t??", ["t\uFFFDx", "té\uFFFD", "tx\uFFFD"]],
+    ["t???", ["t😀js", "t\uFFFD\uFFFD\uFFFD"]],
+    ["t????", ["t\uFFFD.js"]],
+    ["t*.js", ["t\uFFFD.js"]],
+    ["t?.js", ["t\uFFFD.js"]],
+    ["t*s", ["t\uFFFD.js", "t😀js"]],
+    ["t[!a-z]x", ["t\uFFFDx"]],
+    ["t[\uFFFD]*", ["t\uFFFDx", "t\uFFFD.js", "t\uFFFD\uFFFD\uFFFD"]],
+  ] as [string, string[]][])("%j", (pattern, expected) => {
+    expect(scan(pattern)).toEqual([...expected].sort());
+    // Wildcards and classes see the raw bytes the way match() sees the decoded
+    // name. (A literal U+FFFD in a pattern still compares bytes, since the
+    // decode is lossy.)
+    expect(scan(pattern)).toEqual(scan("*").filter(name => new Glob(pattern).match(name)));
   });
 });
 

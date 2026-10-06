@@ -34,6 +34,8 @@ use bun_core::strings;
 struct Brace {
     open_brace_idx: u32,
     branch_idx: u32,
+    /// Index of the matching `}`, or `glob.len()` if the group is unterminated.
+    close_brace_idx: u32,
 }
 type BraceStack = BoundedArray<Brace, 10>;
 
@@ -43,19 +45,31 @@ type BraceStack = BoundedArray<Brace, 10>;
 /// alternatives. Patterns that exceed this budget fail to match.
 const BRACE_BRANCH_BUDGET: u32 = 10_000;
 
-// `pub` because it appears in the signature of `pub fn match` (private-in-public is forbidden).
+/// Result of [`match`](r#match). Two independent bits: whether the path matched
+/// (after applying any leading `!` negation), and whether the pattern was negated.
+/// Most callers only want [`matches()`](Self::matches); the negation bit is for
+/// multi-pattern filter loops where a `!pattern` hit is a hard veto.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum MatchResult {
-    NoMatch,
-    Match,
-
-    NegateNoMatch,
-    NegateMatch,
+pub struct MatchResult {
+    matches: bool,
+    negated: bool,
 }
 
 impl MatchResult {
+    /// Overall result: did the path match the pattern? Leading `!`s are already
+    /// applied, so `!foo` against `bar` matches and `!foo` against `foo` does not.
+    #[inline]
     pub fn matches(self) -> bool {
-        self == MatchResult::Match || self == MatchResult::NegateMatch
+        self.matches
+    }
+
+    /// Was the pattern `!`-prefixed (an odd number of times)? Combine with
+    /// `!matches()` to detect an explicit rejection by a negated pattern.
+    /// Callers can't derive this from the pattern string because leading `!`s
+    /// toggle (`!!foo` is un-negated).
+    #[inline]
+    pub fn is_negated(self) -> bool {
+        self.negated
     }
 }
 
@@ -147,30 +161,21 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
+    // glob_start must point past the consumed `!` prefix so that a pattern-initial
+    // `**` is still recognized as being at the start of a path segment.
+    let glob_start = state.glob_index;
     let matched = glob_match_impl(
         &mut state,
         glob,
-        0,
+        glob_start,
         path,
         &mut brace_stack,
         &mut brace_budget,
     );
 
-    // TODO: consider just returning a bool
-    // return matched != negated;
-    if negated {
-        // FIXME(@DonIsaac): This looks backwards to me
-        if matched {
-            MatchResult::NegateNoMatch
-        } else {
-            MatchResult::NegateMatch
-        }
-    } else {
-        if matched {
-            MatchResult::Match
-        } else {
-            MatchResult::NoMatch
-        }
+    MatchResult {
+        matches: matched != negated,
+        negated,
     }
 }
 
@@ -203,9 +208,7 @@ fn glob_match_impl(
                             state.wildcard.glob_index = state.glob_index;
                             state.wildcard.path_index = state.path_index
                                 + if (state.path_index as usize) < path.len() {
-                                    u32::from(strings::wtf8_byte_sequence_length(
-                                        path[state.path_index as usize],
-                                    ))
+                                    u32::from(rune_len_at(path, state.path_index as usize))
                                 } else {
                                     1
                                 };
@@ -260,9 +263,7 @@ fn glob_match_impl(
                                 if !is_separator(path[state.path_index as usize]) {
                                     state.glob_index += 1;
                                     state.path_index +=
-                                        u32::from(strings::wtf8_byte_sequence_length(
-                                            path[state.path_index as usize],
-                                        ));
+                                        u32::from(rune_len_at(path, state.path_index as usize));
                                     continue 'main_loop;
                                 }
                                 break 'fallthrough;
@@ -287,7 +288,7 @@ fn glob_match_impl(
                                 let mut is_match = false;
 
                                 // source unicode char to match against the target + its byte length in `path`
-                                let (c, len) = decode_wtf8_rune_at(path, state.path_index as usize);
+                                let (c, len) = decode_rune_at(path, state.path_index as usize);
 
                                 while (state.glob_index as usize) < glob.len()
                                     && (first || glob[state.glob_index as usize] != b']')
@@ -364,17 +365,8 @@ fn glob_match_impl(
                             }
                             return match_brace(state, glob, path, brace_stack, brace_budget);
                         }
-                        b',' => {
-                            if state.brace_depth > 0 {
-                                skip_branch(state, glob);
-                                continue 'main_loop;
-                            } else {
-                                break 'to_else;
-                            }
-                        }
-                        b'}' => {
-                            if state.brace_depth > 0 {
-                                skip_branch(state, glob);
+                        b',' | b'}' => {
+                            if state.brace_depth > 0 && skip_branch(state, glob, brace_stack) {
                                 continue 'main_loop;
                             } else {
                                 break 'to_else;
@@ -439,6 +431,7 @@ fn match_brace(
     let mut in_brackets = false;
 
     let open_brace_index = state.glob_index;
+    let close_brace_index = find_brace_end(glob, open_brace_index);
 
     let mut branch_index: u32 = 0;
 
@@ -462,6 +455,7 @@ fn match_brace(
                             path,
                             open_brace_index,
                             branch_index,
+                            close_brace_index,
                             brace_stack,
                             brace_budget,
                         ) {
@@ -482,6 +476,7 @@ fn match_brace(
                         path,
                         open_brace_index,
                         branch_index,
+                        close_brace_index,
                         brace_stack,
                         brace_budget,
                     ) {
@@ -511,6 +506,7 @@ fn match_brace_branch(
     path: &[u8],
     open_brace_index: u32,
     branch_index: u32,
+    close_brace_index: u32,
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
 ) -> bool {
@@ -523,6 +519,7 @@ fn match_brace_branch(
     let Ok(()) = brace_stack.push(Brace {
         open_brace_idx: open_brace_index,
         branch_idx: branch_index,
+        close_brace_idx: close_brace_index,
     }) else {
         return false;
     };
@@ -546,39 +543,53 @@ fn match_brace_branch(
     matched
 }
 
-fn skip_branch(state: &mut State, glob: &[u8]) {
+/// Jumps `glob_index` past the `}` of the innermost stacked group that encloses
+/// it; returns `false` if none does (the `,`/`}` is then a literal).
+///
+/// `brace_stack[brace_depth - 1]` is not that group: the stack also holds
+/// already-exited sequential groups, so look up by range. Reverse iteration
+/// visits inner→outer, so the first enclosing frame is the innermost.
+fn skip_branch(state: &mut State, glob: &[u8], brace_stack: &BraceStack) -> bool {
+    let gi = state.glob_index;
+    for frame in brace_stack.as_slice().iter().rev() {
+        if frame.open_brace_idx < gi && gi <= frame.close_brace_idx {
+            let close = frame.close_brace_idx;
+            if (close as usize) < glob.len() {
+                debug_assert_eq!(glob[close as usize], b'}');
+                state.glob_index = close + 1;
+                state.brace_depth -= 1;
+            } else {
+                state.glob_index = close;
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Index of the `}` matching the `{` at `open_idx`, or `glob.len()` if unterminated.
+fn find_brace_end(glob: &[u8], open_idx: u32) -> u32 {
+    let mut i = open_idx as usize;
+    debug_assert!(i < glob.len() && glob[i] == b'{');
+    let mut depth: u32 = 0;
     let mut in_brackets = false;
-    // `state.brace_depth` only counts groups entered via `match_brace_branch`,
-    // so nesting merely scanned over while skipping is tracked locally, not in state.
-    let mut nested: u32 = 0;
-    while (state.glob_index as usize) < glob.len() {
-        match glob[state.glob_index as usize] {
-            b'{' => {
-                if !in_brackets {
-                    nested += 1;
+    while i < glob.len() {
+        match glob[i] {
+            b'{' if !in_brackets => depth += 1,
+            b'}' if !in_brackets => {
+                depth -= 1;
+                if depth == 0 {
+                    return i as u32;
                 }
             }
-            b'}' => {
-                if !in_brackets {
-                    if nested == 0 {
-                        state.brace_depth -= 1;
-                        state.glob_index += 1;
-                        return;
-                    }
-                    nested -= 1;
-                }
-            }
-            b'[' => {
-                if !in_brackets {
-                    in_brackets = true;
-                }
-            }
+            b'[' if !in_brackets => in_brackets = true,
             b']' => in_brackets = false,
-            b'\\' => state.glob_index += 1,
+            b'\\' => i += 1,
             _ => {}
         }
-        state.glob_index += 1;
+        i += 1;
     }
+    glob.len() as u32
 }
 
 use bun_paths::is_sep_native as is_separator;
@@ -604,15 +615,22 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
     true
 }
 
-/// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+/// Byte length of the codepoint at `bytes[idx]`; see [`decode_rune_at`].
 #[inline(always)]
-fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
-    let len = strings::wtf8_byte_sequence_length(bytes[idx]);
-    let mut buf = [0u8; 4];
-    let n = (bytes.len() - idx).min(4);
-    buf[..n].copy_from_slice(&bytes[idx..idx + n]);
-    let cp = strings::decode_wtf8_rune_t::<u32>(buf, len, 0xFFFD);
-    (cp, len)
+fn rune_len_at(bytes: &[u8], idx: usize) -> u8 {
+    decode_rune_at(bytes, idx).1
+}
+
+/// `(codepoint, byte_len)` at `bytes[idx]`, which need not be valid UTF-8 (a directory entry).
+#[inline(always)]
+fn decode_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
+    // Runs per path character: ASCII must not pay for the out-of-line decoder.
+    let lead = bytes[idx];
+    if lead < 0x80 {
+        return (u32::from(lead), 1);
+    }
+    let r = strings::utf8_codepoint_with_fffd(&bytes[idx..]);
+    (r.code_point, r.len)
 }
 
 /// Unescapes the character if needed
@@ -643,7 +661,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
                 b'r' => b'\r' as u32,
                 b't' => b'\t' as u32,
                 _ => 'brk: {
-                    let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+                    let (cp, len) = decode_rune_at(glob, *glob_index as usize);
                     *clen = len;
                     break 'brk cp;
                 }
@@ -651,7 +669,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
         }
         // multi-byte sequences
         _ => {
-            let (cp, len) = decode_wtf8_rune_at(glob, *glob_index as usize);
+            let (cp, len) = decode_rune_at(glob, *glob_index as usize);
             *clen = len;
             *c = cp;
         }

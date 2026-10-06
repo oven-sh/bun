@@ -162,3 +162,38 @@ test("deflate: reset() while an async write is in flight does not race", async (
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 });
+
+const resizableWriteFixture = (which: "in" | "out") => /* js */ `
+  const zlib = require("zlib");
+  const makers = [
+    () => zlib.createDeflateRaw(),
+    () => zlib.createBrotliCompress(),
+    () => zlib.createZstdCompress(),
+  ];
+  for (const make of makers) {
+    const h = make()._handle;
+    const resizable = new Uint8Array(new ArrayBuffer(64, { maxByteLength: 128 }));
+    const plain = new Uint8Array(new ArrayBuffer(64));
+    const [input, output] = ${JSON.stringify(which)} === "in" ? [resizable, plain] : [null, resizable];
+    try {
+      h.write(0, input, 0, input ? 64 : 0, output, 0, 64);
+      console.log("handled");
+    } catch (e) {
+      console.log("threw " + e.code + ": " + e.message);
+    }
+  }
+`;
+
+test("async write() rejects an output buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
+  const { stdout, exitCode } = await run(resizableWriteFixture("out"));
+  const expected = 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer';
+  expect(stdout.trim()).toBe([expected, expected, expected].join("\n"));
+  expect(exitCode).toBe(0);
+});
+
+test("async write() rejects an input buffer backed by a resizable ArrayBuffer for zlib, brotli, and zstd", async () => {
+  const { stdout, exitCode } = await run(resizableWriteFixture("in"));
+  const expected = 'threw ERR_INVALID_ARG_VALUE: The "in" argument must not be backed by a resizable ArrayBuffer';
+  expect(stdout.trim()).toBe([expected, expected, expected].join("\n"));
+  expect(exitCode).toBe(0);
+});

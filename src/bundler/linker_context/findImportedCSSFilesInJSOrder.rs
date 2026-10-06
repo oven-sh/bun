@@ -10,11 +10,13 @@ use bun_collections::DynamicBitSet as BitSet;
 /// order that JavaScript modules were evaluated in before the top-level await
 /// feature was introduced.
 ///
-///      A
-///     / \
-///    B   C
-///     \ /
-///      D
+/// ```text
+///   A
+///  / \
+/// B   C
+///  \ /
+///   D
+/// ```
 ///
 /// If A imports B and then C, B imports D, and C imports D, then the JavaScript
 /// traversal order is D B C A.
@@ -23,7 +25,7 @@ use bun_collections::DynamicBitSet as BitSet;
 /// "require()" and "import()"). This is because the import order is impossible
 /// to determine since the imports happen at run-time instead of compile-time.
 /// In this case we just pick an arbitrary but consistent order.
-pub fn find_imported_css_files_in_js_order(
+pub(crate) fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
     _temp: &Arena,
     entry_point: Index,

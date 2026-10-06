@@ -110,8 +110,7 @@ describe("AbortSignal", () => {
         expect(() => AbortSignal.timeout(timeout)).toThrow(TypeError);
       });
     }
-    // FIXME: test runner hangs when this is enabled
-    test.skip("timeout works", done => {
+    test("timeout works", done => {
       const abort = AbortSignal.timeout(1);
       abort.addEventListener("abort", event => {
         done();

@@ -1,4 +1,4 @@
-import * as b from "bindgenv2";
+import * as b from "../../codegen/bindgenv2/lib.ts";
 
 export const SSLConfigSingleFile = b.union("SSLConfigSingleFile", {
   string: b.String,
@@ -108,5 +108,9 @@ export const SSLConfig = b.dictionary(
       internalName: "session_timeout",
     },
     sigalgs: b.String.nullable,
+    ecdhCurve: {
+      type: b.String.nullable,
+      internalName: "ecdh_curve",
+    },
   },
 );

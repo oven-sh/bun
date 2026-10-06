@@ -4,7 +4,15 @@ import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  deflateRawSync,
+  deflateSync,
+  gzipSync,
+  inflateRawSync,
+  inflateSync,
+  zstdCompressSync,
+} from "node:zlib";
 import path from "path";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
@@ -19,7 +27,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
     port: 0,
 
     async fetch(req) {
-      gcTick(true);
+      gcTick();
       return new Response(require("fs").readFileSync(gzipped), {
         headers: {
           "Content-Encoding": "gzip",
@@ -28,19 +36,19 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
       });
     },
   });
-  gcTick(true);
+  gcTick();
 
   const res = await fetch(server.url, { verbose: true });
-  gcTick(true);
+  gcTick();
   const arrayBuffer = await res.arrayBuffer();
   const clone = new Buffer(arrayBuffer);
-  gcTick(true);
+  gcTick();
   await (async function () {
     const second = Buffer.from(htmlText);
-    gcTick(true);
+    gcTick();
     expect(second.equals(clone)).toBe(true);
   })();
-  gcTick(true);
+  gcTick();
 });
 
 it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
@@ -153,6 +161,9 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     ["zstd", "zstd"],
     ["ZSTD", "zstd"],
     ["Zstd", "zstd"],
+    ["identity, gzip", "gzip"],
+    ["gzip , identity", "gzip"],
+    ["identity,br,identity", "br"],
   ];
 
   it.each(cases)("Content-Encoding: %s", async (enc, kind) => {
@@ -252,6 +263,58 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
       const res = await fetch(`http://127.0.0.1:${port}/`);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("plain-text-body");
+    } finally {
+      server.close();
+    }
+  });
+
+  // We can only strip one coding; a stacked Content-Encoding is passed through raw with the header intact.
+  it.each(["gzip, br", "deflate, gzip"])("stacked Content-Encoding: %s passes through untouched", async enc => {
+    const body = brotliCompressSync(gzipSync(payload));
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", enc);
+      res.end(body);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.headers.get("content-encoding")).toBe(enc);
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(body);
+    } finally {
+      server.close();
+    }
+  });
+
+  // RFC 9112 §6.1: `Transfer-Encoding: gzip, chunked` is chunked framing.
+  it.each(["gzip, chunked", "identity,chunked", "Chunked"])("Transfer-Encoding: %s is chunked framing", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${te}\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await res.text()).toBe("hello world");
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each(["chunked, gzip", "foobar"])("Transfer-Encoding: %s is rejected", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${te}\r\nConnection: close\r\n\r\n0\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      expect(async () => await fetch(`http://127.0.0.1:${port}/`)).toThrow("UnsupportedTransferEncoding");
     } finally {
       server.close();
     }
@@ -905,4 +968,161 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
+  const plain = Buffer.alloc(2000, "The quick brown fox jumps over the lazy dog. ");
+
+  // The first byte of a zlib stream holds the window size. It is 0x78 only for a 15-bit window.
+  it.each([9, 10, 11, 12, 13, 14, 15])("decodes a zlib stream with a %i-bit window", async windowBits => {
+    const body = deflateSync(plain, { windowBits });
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(body, { headers: { "Content-Encoding": "deflate" } }),
+    });
+    const res = await fetch(server.url);
+    expect(await res.text()).toBe(plain.toString());
+  });
+
+  // A stored block (RFC 1951 section 3.2.4). Bits 3 to 7 of its first byte are padding and its second
+  // byte is the low byte of LEN, so a raw deflate stream can start with almost any two bytes.
+  const stored = (first: number, data: Buffer) => {
+    const header = Buffer.alloc(5);
+    header[0] = first;
+    header.writeUInt16LE(data.length, 1);
+    header.writeUInt16LE(~data.length & 0xffff, 3);
+    return Buffer.concat([header, data]);
+  };
+  const rawStartingWith = (first: number, len: number) =>
+    Buffer.concat([stored(first, plain.subarray(0, len)), stored(0x01, plain.subarray(len))]);
+  // A 32K-window zlib stream whose header declares a 512-byte window. Its matches reach back 4096 bytes.
+  const noise = Buffer.from(Array.from({ length: 4096 }, (_, i) => (i * 2654435761) >>> 24));
+  const lyingWindow = deflateSync(Buffer.concat([noise, noise]));
+  lyingWindow.set([0x18, 0x19]);
+  // One body that is valid as a zlib stream and as raw deflate, with different content. As zlib: the header
+  // 78 9c, a fixed-Huffman block of three literals, a stored block, the Adler-32. As raw deflate: 78 opens a
+  // stored block of 0x0a9c bytes, and the five bytes after that block open a stored block that ends the body.
+  const zlibReading = Buffer.alloc(2753, "zlib, not raw deflate. ");
+  zlibReading.set([0x56, 0x05, 0x48]);
+  zlibReading.set(stored(0x01, Buffer.alloc(39)).subarray(0, 5), 2713);
+  const twoReadings = Buffer.concat([
+    Buffer.from([0x78, 0x9c, 0x0a, 0x63, 0xf5, 0x00]),
+    stored(0x04, zlibReading.subarray(3)),
+    Buffer.from(Bun.hash.adler32(zlibReading).toString(16).padStart(8, "0"), "hex"),
+  ]);
+
+  const decodes: Record<string, Buffer> = {
+    raw: deflateRawSync(plain),
+    raw78: rawStartingWith(0x78, 1000), // 78 e8: the first byte of a zlib stream, but not a zlib header
+    wb9: deflateSync(plain, { windowBits: 9 }),
+    wb15: deflateSync(plain),
+    twoReadings, // fetch() must return the zlib reading
+  };
+  const fails: Record<string, Buffer> = {
+    rawPassing1950: rawStartingWith(0x78, 769), // 78 01: raw deflate that starts with a valid zlib header
+    lyingWindow,
+    oneByte: Buffer.from([0x78]), // the body ends while the decoder waits for the second header byte
+  };
+
+  // One process is server and client. No timer: the server writes the head and the first `split` body
+  // bytes in one write, and the rest only after the client's fetch() promise settled.
+  const fixture = /* js */ `
+    const input = JSON.parse(process.argv[1], (key, value) =>
+      typeof value === "string" ? Buffer.from(value, "base64") : value,
+    );
+    const cells = new Map();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        async data(socket, request) {
+          const { framing, bytes, split, headersSeen } = cells.get(String(request).split(" ")[1]);
+          const head = Buffer.from(
+            "HTTP/1.1 200 OK\\r\\nContent-Encoding: deflate\\r\\nConnection: close\\r\\n" +
+              (framing === "length" ? "Content-Length: " + bytes.length + "\\r\\n" : "") +
+              (framing === "chunked" ? "Transfer-Encoding: chunked\\r\\n" : "") +
+              "\\r\\n",
+          );
+          const piece = data =>
+            framing !== "chunked" || data.length === 0
+              ? data
+              : Buffer.concat([Buffer.from(data.length.toString(16) + "\\r\\n"), data, Buffer.from("\\r\\n")]);
+          const tail = Buffer.from(framing === "chunked" ? "0\\r\\n\\r\\n" : "");
+          if (split === 0) return void socket.end(Buffer.concat([head, piece(bytes), tail]));
+          socket.write(Buffer.concat([head, piece(bytes.subarray(0, split))]));
+          await headersSeen;
+          socket.end(Buffer.concat([piece(bytes.subarray(split)), tail]));
+        },
+        error() {},
+      },
+    });
+    const results = {};
+    await Promise.all(
+      Object.entries(input.bodies).flatMap(([body, bytes]) =>
+        ["length", "chunked", "close"].flatMap(framing =>
+          [0, 1, 2].map(async (split, i) => {
+            const { promise: headersSeen, resolve } = Promise.withResolvers();
+            const path = "/" + body + "/" + framing + "/" + split;
+            cells.set(path, { framing, bytes, split, headersSeen });
+            const result = await fetch("http://127.0.0.1:" + server.port + path)
+              .finally(resolve)
+              .then(res => res.arrayBuffer())
+              .then(
+                decoded => (Buffer.from(decoded).equals(input.decoded[body] ?? input.plain) ? "ok" : "wrong bytes"),
+                e => e.code,
+              );
+            ((results[body] ??= {})[framing] ??= [])[i] = result;
+          }),
+        ),
+      ),
+    );
+    server.stop(true);
+    console.log(JSON.stringify(results, (key, value) => (Array.isArray(value) ? value.join(" ") : value)));
+  `;
+  const base64 = (buffers: Record<string, Buffer>) =>
+    Object.fromEntries(Object.entries(buffers).map(([name, bytes]) => [name, bytes.toString("base64")]));
+  const input = JSON.stringify({
+    plain: plain.toString("base64"),
+    bodies: base64({ ...decodes, ...fails }),
+    // The content that fetch() must return, for a body that does not hold `plain`.
+    decoded: base64({ twoReadings: zlibReading }),
+  });
+  // One word per split (0, 1, 2) in each framing.
+  const everyCell = (result: string) => {
+    const row = [result, result, result].join(" ");
+    return { length: row, chunked: row, close: row };
+  };
+
+  it.concurrent.each(["0", "1"])(
+    "the read boundary and the framing do not change the result (BUN_FEATURE_FLAG_NO_LIBDEFLATE=%s)",
+    async noLibdeflate => {
+      // node:zlib reads `twoReadings` both ways.
+      expect(inflateSync(twoReadings)).toEqual(zlibReading);
+      expect(inflateRawSync(twoReadings)).not.toEqual(zlibReading);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture, input],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_LIBDEFLATE: noLibdeflate },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      let results: unknown = stdout;
+      try {
+        results = JSON.parse(stdout);
+      } catch {}
+      expect({
+        results,
+        errorLines: stderr.split("\n").filter(line => line.includes("Decompression error")).length,
+        exitCode,
+      }).toEqual({
+        results: {
+          ...Object.fromEntries(Object.keys(decodes).map(body => [body, everyCell("ok")])),
+          ...Object.fromEntries(Object.keys(fails).map(body => [body, everyCell("ZlibError")])),
+        },
+        // Only a body that fails prints an error: one line for each of its nine cells.
+        errorLines: Object.keys(fails).length * 9,
+        exitCode: 0,
+      });
+    },
+  );
 });

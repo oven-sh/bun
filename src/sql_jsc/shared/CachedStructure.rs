@@ -5,21 +5,21 @@ use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
 pub struct CachedStructure {
-    pub structure: StrongOptional, // Strong.Optional = .empty
+    pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
-    pub fields: Option<Box<[ExternColumnIdentifier]>>,
+    pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
 }
 
 impl CachedStructure {
-    pub fn has(&self) -> bool {
+    pub(crate) fn has(&self) -> bool {
         self.structure.has() || self.fields.is_some()
     }
 
-    pub fn js_value(&self) -> Option<JSValue> {
+    pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.structure.get()
     }
 
-    pub fn set(
+    pub(crate) fn set(
         &mut self,
         global_object: &JSGlobalObject,
         value: Option<JSValue>,
@@ -43,7 +43,7 @@ impl CachedStructure {
     ///
     /// `columns` is iterated twice (count + build), hence the `Clone` bound;
     /// `slice.iter().map(..)` satisfies it without allocation.
-    pub fn build_from_columns<'a, I>(
+    pub(crate) fn build_from_columns<'a, I>(
         &mut self,
         global_object: &JSGlobalObject,
         owner: JSValue,
@@ -111,23 +111,17 @@ impl CachedStructure {
             // becomes responsible for freeing the alloc'd slice.
             self.set(global_object, None, Some(heap_ids.into_boxed_slice()));
         } else {
-            // Every element in `ids[..]` was `.write()`n above; C++ reads them as
-            // `ExternColumnIdentifier` by raw pointer, so pass the buffer through
-            // without materialising a typed slice (avoids an unsafe assume-init cast).
-            self.set(
-                global_object,
-                // SAFETY: every `ids[..len]` slot was initialized in the loop
-                // above; the stack buffer outlives the FFI call.
-                Some(unsafe {
-                    JSObject::create_structure(
-                        global_object,
-                        owner,
-                        ids.len() as u32,
-                        ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                    )
-                }),
-                None,
-            );
+            // SAFETY: every `ids[..len]` slot was initialized in the loop above.
+            let ids: &mut [ExternColumnIdentifier] = unsafe { ids.assume_init_mut() };
+            // C++ copies each name into an `Identifier`; the stack buffer
+            // outlives the call and its atoms are released right after.
+            // SAFETY: `owner` is a cell; `ids` is a valid initialized buffer.
+            let structure = unsafe {
+                JSObject::create_structure(global_object, owner, ids.len() as u32, ids.as_mut_ptr())
+            };
+            // SAFETY: initialized above; not read again.
+            unsafe { core::ptr::drop_in_place(ids) };
+            self.set(global_object, Some(structure), None);
         }
     }
 }

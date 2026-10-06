@@ -7,4 +7,7 @@ it("powershell escaping rules", () => {
   expect(escapePowershell('foo" bar')).toBe('foo`" bar');
   expect(escapePowershell('foo" `bar')).toBe('foo`" ``bar');
   expect(escapePowershell('foo" ``"bar')).toBe('foo`" `````"bar');
+  expect(escapePowershell('a$(x)`"')).toBe('a`$(x)```"');
+  expect(escapePowershell("$env:TEMP")).toBe("`$env:TEMP");
+  expect(escapePowershell('C:\\Users\\me\\"quoted" `tick`')).toBe('C:\\Users\\me\\`"quoted`" ``tick``');
 });

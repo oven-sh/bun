@@ -1,0 +1,9 @@
+{
+  "name": "v9-link-semver-specifier",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "shared/*"
+  ]
+}

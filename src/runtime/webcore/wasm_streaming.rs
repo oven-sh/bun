@@ -27,11 +27,13 @@ unsafe extern "C" {
     );
 }
 
-pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
+fn get_body_stream_or_bytes_for_wasm_streaming(
     this: &JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,
 ) -> JsResult<JSValue> {
+    // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
+    let context = this.bun_vm().context_of_caller_no_frame();
     let response: &mut Response = match response::from_js(response_value) {
         // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
         // the cell stays live for the duration of this host call (rooted on the
@@ -107,7 +109,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
     }
 
     if matches!(response.get_body_value(), BodyValue::Locked(_)) {
-        if let Some(stream) = response.get_body_readable_stream(this) {
+        if let Some(stream) = response.get_body_readable_stream() {
             return Ok(stream.value);
         }
     }
@@ -116,7 +118,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
     let any_blob: AnyBlob = match body {
         BodyValue::Locked(_) => match body.try_use_as_any_blob() {
             Some(b) => b,
-            None => return body.to_readable_stream(this),
+            None => return body.to_readable_stream(&this.js_thread(context)),
         },
         _ => body.use_as_any_blob(),
     };
@@ -138,7 +140,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
         let blob = scopeguard::guard(blob, |b: Blob| b.detach());
         blob.resolve_size();
         let size = blob.size.get();
-        return ReadableStream::from_blob_copy_ref(this, &blob, size);
+        return ReadableStream::from_blob_copy_ref(&this.js_thread(context), &blob, size);
     }
 
     // `defer any_blob.detach()` — RAII via scopeguard.
@@ -161,7 +163,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
 /// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
 /// the call (guaranteed by the C++ host caller).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     this: *mut JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,

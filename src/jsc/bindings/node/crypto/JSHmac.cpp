@@ -62,12 +62,7 @@ JSC::GCClient::IsoSubspace* JSHmac::subspaceFor(JSC::VM& vm)
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
 
-    return WebCore::subspaceForImpl<JSHmac, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSHmac.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSHmac = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSHmac.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSHmac = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSHmac, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSHmac, m_subspaceForJSHmac));
 }
 
 JSHmac* JSHmac::create(JSC::VM& vm, JSC::Structure* structure)
@@ -119,8 +114,8 @@ bool JSHmac::update(std::span<const uint8_t> input)
 void JSHmacPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSHmac::info(), JSHmacPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSHmac::info(), JSHmacPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -222,7 +217,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         WTF::String encodingString = encodingValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     unsigned char mdValue[EVP_MAX_MD_SIZE];
@@ -316,7 +310,7 @@ JSC_DEFINE_HOST_FUNCTION(callHmac, (JSC::JSGlobalObject * globalObject, JSC::Cal
 
 JSC::Structure* JSHmacConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init)

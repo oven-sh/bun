@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunExe, tempDirWithFiles } from "harness";
+import { bunExe, tempDir } from "harness";
 
 test("11806", () => {
-  const dir = tempDirWithFiles("11806", {
+  using dir = tempDir("11806", {
     "package.json": JSON.stringify({
       "name": "project",
       "workspaces": ["apps/*"],

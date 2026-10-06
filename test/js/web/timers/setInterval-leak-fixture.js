@@ -5,9 +5,7 @@ let runs = initialRuns;
 // run far higher under bun-asan; widen the threshold to avoid false positives.
 const isASAN = process.execPath.includes("bun-asan");
 
-function usage() {
-  return process.memoryUsage.rss();
-}
+const usage = process.memoryUsage.rss;
 
 Promise.withResolvers ??= () => {
   let promise, resolve, reject;

@@ -1,0 +1,26 @@
+{
+  "src/jsc/VirtualMachine.rs": {
+    "discarded result of a call that enters script": 1
+  },
+  "src/jsc/web_worker.rs": {
+    "taken exception discarded": 1
+  },
+  "src/runtime/api/bun/h2_frame_parser.rs": {
+    "discarded result of a call that enters script": 4
+  },
+  "src/runtime/ipc.rs": {
+    "discarded result of a call that enters script": 4
+  },
+  "src/runtime/napi/napi_body.rs": {
+    "discarded result of a call that enters script": 2
+  },
+  "src/runtime/node/node_fs.rs": {
+    "discarded result of a call that enters script": 1
+  },
+  "src/runtime/webcore/Request.rs": {
+    "JsResult collapsed on the spot": 1
+  },
+  "src/runtime/webcore/Sink.rs": {
+    "discarded result of a call that enters script": 2
+  }
+}

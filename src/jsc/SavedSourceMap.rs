@@ -1,7 +1,6 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
-use core::ptr;
 use std::sync::Arc;
 
 use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
@@ -13,56 +12,23 @@ use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
+#[derive(Default)]
 pub struct SavedSourceMap {
-    /// This is a pointer to the map located on the VirtualMachine struct
-    pub map: *mut HashTable,
-    pub mutex: Mutex,
-}
-
-impl Default for SavedSourceMap {
-    fn default() -> Self {
-        Self {
-            map: ptr::null_mut(),
-            mutex: Mutex::default(),
-        }
-    }
+    /// Only accessed between [`Self::lock`] and [`Self::unlock`].
+    map: HashTable,
+    mutex: Mutex,
 }
 
 impl SavedSourceMap {
-    // In-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
-    pub unsafe fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
-        this.write(Self {
-            map,
-            mutex: Mutex::default(),
-        });
-
-        // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
-        unsafe { (*map).lock_pointers() };
-    }
-
-    /// Mutable access to the sibling `HashTable` on `VirtualMachine`.
-    ///
-    /// # Safety invariant
-    /// `self.map` is set in [`Self::init`] to a non-null pointer at a sibling
-    /// field on `VirtualMachine` and is never reassigned; the pointee outlives
-    /// `self`. Exclusive access is upheld by `&mut self` (and, for table
-    /// mutation, by `self.mutex` which callers must hold).
     #[inline]
-    fn map_mut(&mut self) -> &mut HashTable {
-        debug_assert!(!self.map.is_null());
-        // SAFETY: see invariant above — non-null sibling backref, lives as long as `self`.
-        unsafe { &mut *self.map }
-    }
-
-    #[inline]
-    pub fn lock(&mut self) {
+    pub(crate) fn lock(&mut self) {
         self.mutex.lock();
-        self.map_mut().unlock_pointers();
+        self.map.unlock_pointers();
     }
 
     #[inline]
-    pub fn unlock(&mut self) {
-        self.map_mut().lock_pointers();
+    pub(crate) fn unlock(&mut self) {
+        self.map.lock_pointers();
         self.mutex.unlock();
     }
 }
@@ -72,13 +38,13 @@ impl SavedSourceMap {
 /// handle inside it borrowed) is a registered lazy external source provider.
 /// `ParsedSourceMap` is materialized lazily from such a provider for sources
 /// that ship their own external `.map`.
-pub type Value = TaggedPtrUnion<ValueTypes>;
+pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
 /// types (all three members live in `bun_sourcemap`), which the coherence
 /// checker rejects from this crate. Tags are `1024 - i`.
-pub struct ValueTypes;
+pub(crate) struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
     const MIN_TAG: TagType = 1024 - 2;
@@ -124,7 +90,7 @@ impl SavedSourceMap {
 /// Thin forwarder to the leaf-crate state in
 /// `bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo` so the path
 /// recorded here is the same one `run_command` prints.
-pub mod missing_source_map_note_info {
+pub(crate) mod missing_source_map_note_info {
     #[inline]
     pub(super) fn record(path: &[u8]) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::set_path(path);
@@ -156,7 +122,7 @@ impl SavedSourceMap {
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
         let key = hash(path);
-        let Some(&ptr) = self.map_mut().get(&key) else {
+        let Some(&ptr) = self.map.get(&key) else {
             self.unlock();
             return;
         };
@@ -174,7 +140,7 @@ impl SavedSourceMap {
             false
         };
         if refers_to_provider {
-            self.map_mut().remove(&key);
+            self.map.remove(&key);
             // SAFETY: `old_value` was stored by us; the table's ownership of
             // it ends here.
             unsafe { Self::release_value(old_value) };
@@ -186,7 +152,7 @@ impl SavedSourceMap {
 // Keys are
 // already wyhash u64s, so use the passthrough hasher; `bun_collections`'
 // zig_hash_map uses an 80% max load factor.
-pub type HashTable = HashMap<u64, *mut c_void, IdentityContext<u64>>;
+type HashTable = HashMap<u64, *mut c_void, IdentityContext<u64>>;
 
 impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
     fn on_source_map_chunk(
@@ -200,24 +166,14 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
 
 impl Drop for SavedSourceMap {
     fn drop(&mut self) {
-        {
-            self.lock();
-            let map = self.map_mut();
-            for val in map.values() {
-                let value = Value::from(Some(*val));
-                // SAFETY: values were stored by us and are live until table
-                // teardown.
-                unsafe { Self::release_value(value) };
-            }
-            self.unlock();
+        self.lock();
+        for val in self.map.values() {
+            let value = Value::from(Some(*val));
+            // SAFETY: values were stored by us and are live until table
+            // teardown.
+            unsafe { Self::release_value(value) };
         }
-
-        self.map_mut().unlock_pointers();
-        // The HashTable storage is owned by the sibling `saved_source_map_table`
-        // field on VirtualMachine; `deinit()` resets it to an empty default in
-        // place, so the VM's later (or absent) drop of that field is a no-op —
-        // no double free.
-        self.map_mut().deinit();
+        self.unlock();
     }
 }
 
@@ -239,7 +195,7 @@ impl SavedSourceMap {
             };
             if incoming.mapping_count() == 0 {
                 self.lock();
-                let contains = self.map_mut().contains_key(&hash(source.path.text));
+                let contains = self.map.contains_key(&hash(source.path.text));
                 self.unlock();
                 if contains {
                     return Ok(());
@@ -272,7 +228,7 @@ impl SavedSourceMap {
         }
     }
 
-    pub fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
+    pub(crate) fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
         self.lock();
@@ -280,7 +236,7 @@ impl SavedSourceMap {
 
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
         // the std `entry()` API is used directly.
-        match self.map_mut().entry(hash(path)) {
+        match self.map.entry(hash(path)) {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
                 // SAFETY: `old_value` was stored by us and is live until
@@ -308,7 +264,7 @@ impl SavedSourceMap {
         self.lock();
 
         // This mapping entry is only valid while the mutex is locked
-        let Some(mapping) = self.map_mut().get_mut(&h) else {
+        let Some(mapping) = self.map.get_mut(&h) else {
             self.unlock();
             return SourceMap::ParseUrl::default();
         };
@@ -371,7 +327,7 @@ impl SavedSourceMap {
 
             self.lock();
             // does not have a valid source map. let's not try again
-            if let Some(removed) = self.map_mut().remove(&h) {
+            if let Some(removed) = self.map.remove(&h) {
                 // SAFETY: whatever occupies the slot now was stored by us;
                 // the table's ownership of it ends here.
                 unsafe { Self::release_value(Value::from(Some(removed))) };
@@ -397,7 +353,7 @@ impl SavedSourceMap {
             .map
     }
 
-    pub fn resolve_mapping(
+    pub(crate) fn resolve_mapping(
         &mut self,
         path: &[u8],
         line: Ordinal,

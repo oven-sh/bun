@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
-import * as helpers from "../helpers";
-import { NamedType, Type } from "./internal/base";
+import { createRequire } from "node:module";
+import * as helpers from "../helpers.ts";
+import { NamedType, Type } from "./internal/base.ts";
+
+const require = createRequire(import.meta.url);
 
 const USAGE = `\
 Usage: script.ts [options]
@@ -20,7 +23,7 @@ let sources: string[];
 
 function getNamedExports(): NamedType[] {
   return sources.flatMap(path => {
-    const exports = import.meta.require(path);
+    const exports = require(path);
     return Object.values(exports).filter(v => v instanceof NamedType);
   });
 }
@@ -53,9 +56,11 @@ function toZigNamespace(name: string): string {
   return result;
 }
 
+/** Must name every file generate() writes: the build declares these as the outputs of the generate step. */
 function listOutputs(): void {
   const outputs: string[] = [];
   for (const type of getNamedExports()) {
+    if (type.hasCppHeader) outputs.push(cppHeaderPath(type));
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));

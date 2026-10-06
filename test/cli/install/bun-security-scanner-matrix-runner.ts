@@ -140,6 +140,9 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
               }
             : {}),
 
+          // `bun update <name>` only updates a declared dependency; it never adds one
+          ...(command === "update" ? Object.fromEntries(args.map(arg => [arg, SimpleRegistry.packages[arg][0]])) : {}),
+
           // For npm scanner, add it to dependencies so it gets installed
           ...(scannerType === "npm"
             ? {
@@ -161,13 +164,22 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   const scannerPath = scannerType === "local" ? "./scanner.js" : "test-security-scanner";
 
+  // The manifest cache is off for both installs: the setup install writes its
+  // manifests to the cache asynchronously and `bun install` does not wait for
+  // those writes before exiting, so with the cache on, which manifests the
+  // install under test has to request would depend on whether they had landed.
+  const cache = { disable: true, disableManifest: true };
+
   // First write bunfig WITHOUT scanner for pre-install
   await Bun.write(
     join(dir, "bunfig.toml"),
-    `[install]
-cache.disable = true
-linker = "${linker}"
-registry = "${registryUrl}/"`,
+    Bun.TOML.stringify({
+      install: {
+        cache,
+        linker,
+        registry: `${registryUrl}/`,
+      },
+    }),
   );
 
   const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
@@ -201,13 +213,16 @@ registry = "${registryUrl}/"`,
   // write the full bunfig WITH scanner configuration
   await Bun.write(
     join(dir, "bunfig.toml"),
-    `[install]
-cache.disable = true
-linker = "${linker}"
-registry = "${registryUrl}/"
-
-[install.security]
-scanner = "${scannerPath}"`,
+    Bun.TOML.stringify({
+      install: {
+        cache,
+        linker,
+        registry: `${registryUrl}/`,
+        security: {
+          scanner: scannerPath,
+        },
+      },
+    }),
   );
 
   if (DO_TEST_DEBUG) {

@@ -36,7 +36,6 @@ namespace WebCore {
 
 enum class CastedThisErrorBehavior : uint8_t {
     Throw,
-    ReturnEarly,
     RejectPromise,
     Assert,
 };

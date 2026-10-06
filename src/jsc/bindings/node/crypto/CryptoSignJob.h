@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "CryptoUtil.h"
 #include "KeyObject.h"
 
@@ -49,7 +50,7 @@ public:
         JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue);
 
     void runTask(JSC::JSGlobalObject*);
-    void runFromJS(JSC::JSGlobalObject*, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
     void deinit();
 
     Mode m_mode;
@@ -71,8 +72,6 @@ public:
 };
 
 struct SignJob {
-    static SignJob* create(JSC::JSGlobalObject*, SignJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, SignJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 }

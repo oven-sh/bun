@@ -23,6 +23,7 @@ test("console.Console#table renders Map and Set iterators", async () => {
   if (exitCode !== 0) {
     expect(stderr).toBe("");
   }
+  // Known gap: Node splits the Map iterator into `Key` and `Values` columns (https://github.com/oven-sh/bun/pull/42359).
   expect(stdout).toMatchInlineSnapshot(`
     "┌───────────────────┬────────────┐
     │ (iteration index) │ Values     │

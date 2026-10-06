@@ -1050,32 +1050,30 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
+// Not interned: one SSL_CTX is one session cache and one set of ticket keys, and no other server or client may share them.
 function buildSharedCreds(server, options) {
-  return new InternalSecureContext(
-    {
-      ...options,
-      pfx: undefined,
-      _pfxExtraCACerts: undefined,
-      key: server.key,
-      cert: server.cert,
-      ca: server.ca,
-      crl: server.crl,
-      ciphers: server.ciphers,
-      secureOptions: server.secureOptions,
-      allowPartialTrustChain: server.allowPartialTrustChain,
-      sessionTimeout: server.sessionTimeout,
-      sigalgs: server.sigalgs,
-      ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
-      passphrase: server.passphrase,
-      secureProtocol: server.secureProtocol,
-      minVersion: server.minVersion,
-      maxVersion: server.maxVersion,
-      // Part of the interning key: one SSL_CTX is one session cache.
-      requestCert: server._requestCert === true,
-      rejectUnauthorized: server._rejectUnauthorized,
-    },
-    true,
-  );
+  return new InternalSecureContext({
+    ...options,
+    pfx: undefined,
+    _pfxExtraCACerts: undefined,
+    key: server.key,
+    cert: server.cert,
+    ca: server.ca,
+    crl: server.crl,
+    ciphers: server.ciphers,
+    secureOptions: server.secureOptions,
+    allowPartialTrustChain: server.allowPartialTrustChain,
+    sessionTimeout: server.sessionTimeout,
+    sigalgs: server.sigalgs,
+    ecdhCurve: server.ecdhCurve ?? DEFAULT_ECDH_CURVE,
+    passphrase: server.passphrase,
+    secureProtocol: server.secureProtocol,
+    minVersion: server.minVersion,
+    maxVersion: server.maxVersion,
+    // The verify mode accepted sockets inherit. setSecureContext() does not name them.
+    requestCert: server._requestCert === true,
+    rejectUnauthorized: server._rejectUnauthorized,
+  });
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1599-L1611
@@ -1167,6 +1165,8 @@ function Server(options, secureConnectionListener): void {
     contexts.$delete(hostname);
     contexts.$set(hostname, context);
   };
+
+  let listenerContext;
 
   this.setSecureContext = function (options) {
     const serverTLSOptions = options;
@@ -1292,13 +1292,13 @@ function Server(options, secureConnectionListener): void {
       next.maxVersion = options.maxVersion;
     }
     const isContext = serverTLSOptions instanceof InternalSecureContext;
-    // [buntls] and buildSharedCreds read the staged fields over the server's own.
-    const staged = { __proto__: this, ...next };
-    // Both throw on material BoringSSL rejects, so they run before the fields change.
-    const sharedCreds = isContext ? serverTLSOptions : buildSharedCreds(staged, serverTLSOptions);
+    // Reads the staged fields over the server's own. Throws on material BoringSSL rejects, so it runs before the fields change.
+    const sharedCreds = isContext ? serverTLSOptions : buildSharedCreds({ __proto__: this, ...next }, serverTLSOptions);
+    // Accepted sockets take their verify mode from the context, so a listener only gets one built from this server's policy.
+    if (!isContext) listenerContext = sharedCreds.context;
     const handle = this._handle;
     if (handle && options && !isContext) {
-      setListenerSecureContext(handle, staged[buntls](0, undefined, false)[0]);
+      setListenerSecureContext(handle, listenerContext);
     }
     if (options) {
       this.cert = next.cert;
@@ -1325,6 +1325,8 @@ function Server(options, secureConnectionListener): void {
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
+        // What a socket listener serves. Only a named pipe's still builds its own from the fields below.
+        secureContext: listenerContext,
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
         ca: this.ca,

@@ -1805,35 +1805,47 @@ describe("setSecureContext() on a listening server", () => {
       const { sslCtxLiveCount } = require("bun:internal-for-testing");
       const tls = require("node:tls"), { once } = require("node:events");
       const [agent1, agent3] = ${JSON.stringify([agent1, agent3])};
-      const server = tls.createServer(agent1);
-      // The shared context of a Server is interned and dies on GC. This one keeps agent3's
-      // referenced, so no call below leaves a context to the GC and every count is exact.
-      const holder = tls.createServer(agent3);
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const listening = sslCtxLiveCount();
+      const before = sslCtxLiveCount();
 
-      for (let i = 0; i < 20; i++) server.setSecureContext(i % 2 ? agent1 : agent3);
-      let threw = false;
-      try {
-        server.setSecureContext({ key: agent3.key, cert: "-----BEGIN CERTIFICATE-----\\nnope\\n-----END CERTIFICATE-----" });
-      } catch {
-        threw = true;
+      // The wrapper of a replaced context dies on GC, so wait for the condition.
+      async function settled(expected) {
+        for (let i = 0; i < 10 && sslCtxLiveCount() - before !== expected; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        return sslCtxLiveCount() - before;
       }
-      // A leak adds one live SSL_CTX per call.
-      const swapped = sslCtxLiveCount() - listening;
 
-      server.close();
-      await once(server, "close");
-      // The listener lets go of the last one.
-      console.log(JSON.stringify({ threw, swapped, closed: sslCtxLiveCount() - listening }));
-      holder.close();
+      // Nothing here outlives the call.
+      async function swap() {
+        const server = tls.createServer(agent1);
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const listening = sslCtxLiveCount() - before;
+
+        for (let i = 0; i < 20; i++) server.setSecureContext(i % 2 ? agent1 : agent3);
+        let threw = false;
+        try {
+          server.setSecureContext({ key: agent3.key, cert: "-----BEGIN CERTIFICATE-----\\nnope\\n-----END CERTIFICATE-----" });
+        } catch {
+          threw = true;
+        }
+        // A reference the listener kept outlives the wrapper: one more live SSL_CTX per call.
+        const swapped = await settled(1);
+        server.close();
+        await once(server, "close");
+        return { threw, listening, swapped };
+      }
+
+      const result = await swap();
+      console.log(JSON.stringify({ ...result, left: await settled(0) }));
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, result: JSON.parse(stdout || "null") }).toEqual({
       stderr: "",
-      result: { threw: true, swapped: 0, closed: -1 },
+      // One context per server, whatever it went through: listen() builds none.
+      result: { threw: true, listening: 1, swapped: 1, left: 0 },
     });
     expect(exitCode).toBe(0);
   });
@@ -3955,9 +3967,9 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
     expect({ stderr, result: JSON.parse(stdout || "null") }).toEqual({
       stderr: "",
       result: {
-        // The 4 entries, the listener's default (each accepted SSL holds it), and what the Server the
-        // connections keep alive owns: _sharedCreds and the context the accepted TLSSockets share.
-        open: 7,
+        // The 4 entries, the server's own (_sharedCreds, which the listener served and each accepted
+        // SSL holds), and the one the accepted TLSSockets share.
+        open: 6,
         served: ["agent1", "agent1", "agent1", "agent1"],
         left: 0,
       },
@@ -4864,6 +4876,145 @@ describe("fatal TLS error after the handshake", () => {
       client.destroy();
       relay.close();
       server.close();
+    }
+  });
+});
+
+// Node serves both from server._sharedCreds, so they share one session cache and one set of ticket keys.
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("accepted and injected connections share a context (%s)", version => {
+  it("a session issued on one resumes on the other", async () => {
+    const server: Server = createServer(COMMON_CERT, socket => socket.on("error", () => {}).end("x"));
+    const front = net.createServer(raw => server.emit("connection", raw));
+    async function dial({ port }: AddressInfo, session?: Buffer) {
+      const options = { port, host: "127.0.0.1", rejectUnauthorized: false, minVersion: version, maxVersion: version };
+      const client = connect({ ...options, session });
+      let issued: Buffer | undefined;
+      client.on("session", s => (issued = s));
+      client.resume();
+      await once(client, "secureConnect");
+      const reused = client.isSessionReused();
+      await once(client, "close");
+      return { reused, issued };
+    }
+    try {
+      server.listen(0, "127.0.0.1");
+      front.listen(0, "127.0.0.1");
+      await Promise.all([once(server, "listening"), once(front, "listening")]);
+      const accepted = server.address() as AddressInfo;
+      const injected = front.address() as AddressInfo;
+      const [onAccepted, onInjected] = [await dial(accepted), await dial(injected)];
+      expect({
+        acceptedThenInjected: (await dial(injected, onAccepted.issued)).reused,
+        injectedThenAccepted: (await dial(accepted, onInjected.issued)).reused,
+      }).toEqual({ acceptedThenInjected: true, injectedThenAccepted: true });
+
+      // A replaced context takes its sessions with it, on both paths.
+      server.setSecureContext({ key: rawKey, cert });
+      expect({
+        accepted: (await dial(accepted, onAccepted.issued)).reused,
+        injected: (await dial(injected, onAccepted.issued)).reused,
+      }).toEqual({ accepted: false, injected: false });
+    } finally {
+      front.close();
+      server.close();
+    }
+  });
+
+  it("a session issued by one server does not resume on another with the same options", async () => {
+    const serve = () =>
+      createServer(COMMON_CERT, socket => socket.on("error", () => {}).end("x")).listen(0, "127.0.0.1");
+    const [one, other] = [serve(), serve()];
+    const inject = (server: Server) => net.createServer(raw => server.emit("connection", raw)).listen(0, "127.0.0.1");
+    const [frontOne, front] = [inject(one), inject(other)];
+    async function dial(server: net.Server, session?: Buffer) {
+      const { port } = server.address() as AddressInfo;
+      const options = { port, host: "127.0.0.1", rejectUnauthorized: false, minVersion: version, maxVersion: version };
+      const client = connect({ ...options, session });
+      let issued: Buffer | undefined;
+      client.on("session", s => (issued = s));
+      client.resume();
+      await once(client, "secureConnect");
+      const reused = client.isSessionReused();
+      await once(client, "close");
+      return { reused, issued };
+    }
+    try {
+      await Promise.all([one, other, frontOne, front].map(server => once(server, "listening")));
+      const { issued } = await dial(one);
+      const { issued: issuedInjected } = await dial(frontOne);
+      expect({
+        same: (await dial(one, issued)).reused,
+        otherAccepted: (await dial(other, issued)).reused,
+        otherInjected: (await dial(front, issued)).reused,
+        injectedToOtherAccepted: (await dial(other, issuedInjected)).reused,
+        injectedToOtherInjected: (await dial(front, issuedInjected)).reused,
+      }).toEqual({
+        same: true,
+        otherAccepted: false,
+        otherInjected: false,
+        injectedToOtherAccepted: false,
+        injectedToOtherInjected: false,
+      });
+    } finally {
+      for (const server of [one, other, frontOne, front]) server.close();
+    }
+  });
+
+  // Bun only: Node's setSecureContext() takes options. Accepted sockets take their verify mode from the context.
+  it("the listener keeps asking for a client certificate after setSecureContext(aSecureContext)", async () => {
+    const material = { ...COMMON_CERT, ca: COMMON_CERT.cert };
+    const server: Server = createServer({ ...material, requestCert: true, rejectUnauthorized: false });
+    try {
+      server.setSecureContext(tls.createSecureContext(COMMON_CERT) as any);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const secure = once(server, "secureConnection");
+      const client = connect({
+        ...COMMON_CERT,
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        minVersion: version,
+        maxVersion: version,
+      });
+      client.on("error", () => {});
+      const [socket] = await secure;
+      expect(socket.getPeerCertificate().fingerprint256).toBe(
+        new crypto.X509Certificate(COMMON_CERT.cert).fingerprint256,
+      );
+      client.destroy();
+    } finally {
+      server.close();
+    }
+  });
+
+  // A resumed handshake skips client authentication.
+  it("a server that requires a client certificate shares none with one that does not", async () => {
+    const material = { ...COMMON_CERT, ca: COMMON_CERT.cert };
+    const open: Server = createServer(material, socket => socket.on("error", () => {}).end("x"));
+    const strict: Server = createServer({ ...material, requestCert: true, rejectUnauthorized: true });
+    try {
+      // requestCert is constructor-only, so rotating the certificate does not name it.
+      strict.setSecureContext(material);
+      open.listen(0, "127.0.0.1");
+      strict.listen(0, "127.0.0.1");
+      await Promise.all([once(open, "listening"), once(strict, "listening")]);
+      const options = { host: "127.0.0.1", rejectUnauthorized: false, minVersion: version, maxVersion: version };
+      const first = connect({ ...options, port: (open.address() as AddressInfo).port });
+      const [session] = await once(first.resume(), "session");
+      first.destroy();
+
+      const verdict = Promise.race([
+        once(strict, "secureConnection").then(() => "accepted"),
+        once(strict, "tlsClientError").then(([err]) => err.code),
+      ]);
+      const second = connect({ ...options, port: (strict.address() as AddressInfo).port, session });
+      second.on("error", () => {});
+      expect(await verdict).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
+      second.destroy();
+    } finally {
+      open.close();
+      strict.close();
     }
   });
 });

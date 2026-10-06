@@ -461,68 +461,35 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
   }
 });
 
-test("a server's shared SSL_CTX is interned by its client-certificate policy too", () => {
-  // The shared context carries the client-certificate policy in its verify
-  // mode, and one SSL_CTX is one session cache. Two servers that share key
-  // material but not that policy must get separate contexts: otherwise a
-  // session minted by the permissive server resumes on the mTLS server, and a
-  // resumed handshake skips client authentication.
-  const permissive = tls.createServer({ ...tlsCerts });
-  const mutual = tls.createServer({ ...tlsCerts, requestCert: true });
-  const optionalCert = tls.createServer({ ...tlsCerts, requestCert: true, rejectUnauthorized: false });
-  // The same options still intern to one context, so the split above is the
-  // policy and not a broken digest.
-  const sameAsPermissive = tls.createServer({ ...tlsCerts });
-  const ctx = (s: tls.Server) => (s as any)._sharedCreds.context;
-  try {
-    expect(ctx(permissive)).not.toBe(ctx(mutual));
-    expect(ctx(permissive)).not.toBe(ctx(optionalCert));
-    expect(ctx(mutual)).not.toBe(ctx(optionalCert));
-    expect(ctx(sameAsPermissive)).toBe(ctx(permissive));
-    // requestCert is constructor-only, so a later call does not name it.
-    mutual.setSecureContext({ ...tlsCerts });
-    expect(ctx(mutual)).not.toBe(ctx(permissive));
-  } finally {
-    for (const s of [permissive, mutual, optionalCert, sameAsPermissive]) s.close();
-  }
-});
-
-// `tls.Server.close()` must release the listener's SSL_CTX ref immediately.
-// It used to be dropped only when the GC finalized the Listener, so a `Server`
-// the program still references — or any server at process exit — kept its CTX
+// stop(), which `tls.Server.close()` calls, must release the listener's SSL_CTX ref immediately.
+// It used to be dropped only when the GC finalized the Listener, so a listener
+// the program still references — or any at process exit — kept its CTX
 // alive. That is the leak `leak:create_ssl_context_from_bun_options` used to
 // suppress. The listen socket up_refs its own ref in
 // `us_internal_init_listen_socket` and each accepted socket's `SSL_new()` takes
-// another, so releasing at close() cannot dangle.
-test("tls.Server.close() releases the listener's SSL_CTX without waiting for GC", async () => {
-  // Hold strong references so the GC can never finalize these Listeners; a
-  // distinct `sessionTimeout` per server gives each its own cache entry.
-  // tls.createServer() builds the server's shared SecureContext up front, and
-  // that one lives as long as the Server object (like Node's `_sharedCreds`),
-  // so the baseline is taken with the servers constructed: the listener's own
-  // SSL_CTX is the one close() must release.
-  const kept: tls.Server[] = [];
-  for (let i = 0; i < 5; i++) {
-    kept.push(tls.createServer({ ...tlsCerts, sessionTimeout: 100 + i }));
-  }
+// another, so releasing at stop() cannot dangle.
+test("Listener.stop() releases its SSL_CTX without waiting for GC", () => {
+  // A tls.Server's listener serves the Server's own context, which outlives close(). One from
+  // Bun.listen() is the only owner of the context it builds, so the count shows its reference.
   Bun.gc(true);
   const before = sslCtxLiveCount();
 
+  // Hold strong references so the GC can never finalize these Listeners.
+  const kept: Bun.TCPSocketListener[] = [];
   let peak = 0;
-  for (const server of kept) {
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
+  for (let i = 0; i < 5; i++) {
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsCerts, socket: { data() {} } });
+    kept.push(listener);
     peak = Math.max(peak, sslCtxLiveCount() - before);
-    server.close();
-    await once(server, "close");
+    listener.stop();
   }
 
-  // No Bun.gc() here on purpose: the point is that close() alone frees them.
-  // `peak: 1` proves each listen() did hold a context of its own meanwhile.
-  expect({ leaked: sslCtxLiveCount() - before, peak, servers: kept.length }).toEqual({
+  // No Bun.gc() here on purpose: the point is that stop() alone frees them.
+  // `peak: 1` proves each listener did hold a context of its own meanwhile.
+  expect({ leaked: sslCtxLiveCount() - before, peak, listeners: kept.length }).toEqual({
     leaked: 0,
     peak: 1,
-    servers: 5,
+    listeners: 5,
   });
 });
 

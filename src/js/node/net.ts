@@ -432,13 +432,14 @@ function destroyWhenUpgradedCloses(self, connection) {
 // Node's wrap 'error' -> _emitTLSError.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+function onUpgradedError(self, err) {
+  if (self.destroyed) return;
+  // The close that follows is no second error.
+  self._hadError = true;
+  self._emitTLSError(err);
+}
 function forwardUpgradedError(self, connection) {
-  connection.on("error", err => {
-    if (self.destroyed) return;
-    // The close that follows is no second error.
-    self._hadError = true;
-    self._emitTLSError(err);
-  });
+  connection.on("error", onUpgradedError.bind(null, self));
 }
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {

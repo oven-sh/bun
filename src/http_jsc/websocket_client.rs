@@ -61,6 +61,26 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
 
+/// Seconds a connection may outlive its close event (`closeTimeout` of the `ws` package).
+#[inline]
+fn close_timeout_seconds() -> core::ffi::c_uint {
+    bun_http::normalize_idle_timeout_seconds(
+        bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
+            .get()
+            .unwrap_or(30),
+    )
+}
+
+/// Closes with a FIN: a reset would drop what the kernel still has to send behind a clean close event.
+fn close_at_close_timeout<const SSL: bool>(socket: Socket<SSL>) {
+    socket.shutdown();
+    socket.close(uws::CloseKind::FastShutdown);
+    // uSockets defers this close once behind unsent TLS ciphertext.
+    if !socket.is_closed() {
+        socket.set_timeout(close_timeout_seconds());
+    }
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocket<const SSL: bool> {
     pub(crate) ref_count: Cell<u32>,
@@ -214,12 +234,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("cancel");
         let this = self;
         let had_tunnel = this.tunnel().is_some();
-        this.clear_data();
+        this.drop_connection();
 
-        // Failure still sends close_notify best-effort but never waits for the peer's reply.
-        this.tcp.get().close(uws::CloseKind::Failure);
-
-        // In tunnel mode tcp is .detached so close() above is a no-op and
+        // In tunnel mode tcp is .detached, so this client's
         // handle_close() never fires. Mirror what handle_close() does for
         // the non-tunnel path: drop the C++ ref (if still held) via
         // dispatch_abrupt_close so e.g. ws.terminate() — which calls
@@ -228,6 +245,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         // fail(), outgoing_websocket is already None and this is a no-op.
         if had_tunnel {
             this.dispatch_abrupt_close(ErrorCode::Ended);
+        }
+    }
+
+    /// The caller holds a ref guard. In tunnel mode the socket is the upgrade client's and only the tunnel reaches it.
+    fn drop_connection(&self) {
+        let tunnel = self.proxy_tunnel.get().clone();
+        self.clear_data();
+        match tunnel {
+            Some(tunnel) => tunnel.close_socket(),
+            None => self.tcp.get().close(uws::CloseKind::Failure),
         }
     }
 
@@ -551,6 +578,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         let terminated = loop {
+            // The close event is out: a Close frame from the server gets no second one back.
+            if self.cpp_websocket().is_none() {
+                break true;
+            }
             log!("onData ({})", <&'static str>::from(cursor.state));
 
             let step = match cursor.state {
@@ -1160,6 +1191,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.tcp.get().shutdown_read();
             self.tcp.get().shutdown();
         }
+        // RFC 6455 7.1.1: the server closes the TCP connection first, within reason.
+        match self.tunnel() {
+            Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
+            None => self.tcp.get().set_timeout(close_timeout_seconds()),
+        }
     }
 
     fn finish_pending_close(&self) {
@@ -1209,7 +1245,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.drain_send_buffer_and_finish_close();
     }
 
-    pub fn handle_timeout(&self, _socket: Socket<SSL>) {
+    pub fn handle_timeout(&self, socket: Socket<SSL>) {
+        if self.cpp_websocket().is_none() {
+            close_at_close_timeout(socket);
+            return;
+        }
         self.terminate(ErrorCode::Timeout);
     }
 
@@ -1553,19 +1593,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// The JS wrapper was collected: C++ is letting go of its ref.
     pub(crate) fn finalize(this: ThisPtr<Self>) {
         log!("finalize");
-        // clear_data() may drop the tunnel's I/O-layer ref and the block
-        // below drops the C++ ref; keep `this` alive until we've finished the
-        // tcp close check.
+        // Either release below may be the last ref.
         let _guard = RefPtr::from_this(this);
-
-        this.clear_data();
 
         // This is only called by outgoing_websocket.
         this.release_cpp_ref();
-
-        if !this.tcp.get().is_closed() {
-            this.tcp.get().close(uws::CloseKind::Failure);
-        }
+        this.drop_connection();
     }
 
     /// The owning C++ WebSocket's context is being torn down: forget it (nothing
@@ -1576,10 +1609,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _guard = RefPtr::from_this(this);
 
         let _cpp_ref = this.outgoing_websocket.replace(None);
-        this.clear_data();
-        if !this.tcp.get().is_closed() {
-            this.tcp.get().close(uws::CloseKind::Failure);
-        }
+        this.drop_connection();
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

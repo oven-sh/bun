@@ -148,8 +148,8 @@ pub struct WebSocketProxyTunnel {
     connected_websocket: Cell<Option<BackRef<WebSocketClient, Root>>>,
     /// SSL wrapper for TLS inside tunnel; set once in `start()`.
     wrapper: OnceCell<SslWrapperType>,
-    /// Socket reference (the proxy connection)
-    socket: SocketUnion,
+    /// The proxy connection, until the upgrade client that owns it lets go.
+    socket: Cell<SocketUnion>,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: JsCell<StreamBuffer>,
     /// Hostname for SNI (Server Name Indication)
@@ -180,7 +180,7 @@ impl WebSocketProxyTunnel {
             upgrade_client: Cell::new(Some(upgrade_client)),
             connected_websocket: Cell::new(None),
             wrapper: OnceCell::new(),
-            socket,
+            socket: Cell::new(socket),
             write_buffer: JsCell::new(StreamBuffer::default()),
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
@@ -410,6 +410,7 @@ impl WebSocketProxyTunnel {
     /// do not re-enter the upgrade client's terminate/clearData path.
     pub(crate) fn detach_upgrade_client(&self) {
         self.upgrade_client.set(None);
+        self.socket.set(SocketUnion::None);
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -427,7 +428,7 @@ impl WebSocketProxyTunnel {
         }
 
         // Try direct write to socket
-        let written = this.socket.write(encrypted_data);
+        let written = this.socket.get().write(encrypted_data);
         if written < 0 {
             // Write failed - buffer data for retry when socket becomes writable
             bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
@@ -466,7 +467,7 @@ impl WebSocketProxyTunnel {
                 return false;
             }
             let to_send_len = to_send.len();
-            let written = this.socket.write(to_send);
+            let written = this.socket.get().write(to_send);
             if written < 0 {
                 return true;
             }
@@ -541,7 +542,7 @@ impl WebSocketProxyTunnel {
     }
 
     pub(crate) fn pause_stream(&self) -> bool {
-        match &self.socket {
+        match self.socket.get() {
             SocketUnion::Tcp(s) => s.pause_stream(),
             SocketUnion::Ssl(s) => s.pause_stream(),
             SocketUnion::None => false,
@@ -549,10 +550,28 @@ impl WebSocketProxyTunnel {
     }
 
     pub(crate) fn resume_stream(&self) -> bool {
-        match &self.socket {
+        match self.socket.get() {
             SocketUnion::Tcp(s) => s.resume_stream(),
             SocketUnion::Ssl(s) => s.resume_stream(),
             SocketUnion::None => false,
+        }
+    }
+
+    /// The upgrade client's `handle_timeout` closes the proxy connection.
+    pub(crate) fn set_timeout(&self, seconds: core::ffi::c_uint) {
+        match self.socket.get() {
+            SocketUnion::Tcp(s) => s.set_timeout(seconds),
+            SocketUnion::Ssl(s) => s.set_timeout(seconds),
+            SocketUnion::None => {}
+        }
+    }
+
+    /// Runs the upgrade client's `handle_close`, which drops its ref on the tunnel.
+    pub(crate) fn close_socket(&self) {
+        match self.socket.replace(SocketUnion::None) {
+            SocketUnion::Tcp(s) => s.close(bun_uws::CloseKind::Failure),
+            SocketUnion::Ssl(s) => s.close(bun_uws::CloseKind::Failure),
+            SocketUnion::None => {}
         }
     }
 }

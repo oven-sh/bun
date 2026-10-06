@@ -1926,6 +1926,9 @@ describe("client TLS options", () => {
         mixedTo12: await dial(tls12.url, { ca, ciphers: `TLS_AES_256_GCM_SHA384:${aes256}` }),
         only12: version(await dial(server.url, { ca, ciphers: aes256 })),
         only12To12: await dial(tls12.url, { ca, ciphers: aes256 }),
+        secLevel: version(await dial(server.url, { ca, ciphers: "DEFAULT@SECLEVEL=0" })),
+        secLevelAgent: version(await dial(server.url, { agent: new https.Agent({ ca, ciphers: "DEFAULT:@SECLEVEL=1" }) })), // prettier-ignore
+        secLevelTo12: await dial(tls12.url, { ca, ciphers: `${aes256}:@SECLEVEL=0` }),
       }).toEqual({
         only13: "TLSv1.3",
         only13Agent: "TLSv1.3",
@@ -1935,6 +1938,9 @@ describe("client TLS options", () => {
         mixedTo12: `TLSv1.2 ${aes256}`,
         only12: "TLSv1.3",
         only12To12: `TLSv1.2 ${aes256}`,
+        secLevel: "TLSv1.3",
+        secLevelAgent: "TLSv1.3",
+        secLevelTo12: `TLSv1.2 ${aes256}`,
       });
     });
 

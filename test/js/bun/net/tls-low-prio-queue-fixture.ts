@@ -51,10 +51,8 @@
 // that closes later was parked and re-enabled. The summary reports both per
 // wave and the test asserts the exact split.
 //
-// One extra "primer" connection per round takes the first handshake flight:
-// that flight is batched, and while its unsent rest waits in the primer's
-// spill no other socket on the loop batches. So all N wave sockets take the
-// same per-record path and the per-wave numbers are exact.
+// One extra "primer" connection per round takes the first handshake flight
+// and holds its unsent rest for the whole round, like a stalled neighbour.
 import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
 import net from "node:net";
 import tls from "node:tls";
@@ -349,7 +347,7 @@ async function round() {
 
   try {
     // Primer: see the header comment. Its ClientHello is processed alone and
-    // its flight becomes the spill owner.
+    // its flight spills.
     current = newBatch(1);
     send(`connect 1 ${server.port}`);
     await withDeadline(current.allOpen.promise, "primer open");

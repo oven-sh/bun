@@ -22,7 +22,7 @@ import type { AddressInfo } from "net";
 import { Duplex } from "node:stream";
 import { pathToFileURL } from "node:url";
 import * as clientWrap from "./node-tls-client-wrap-fixture.mjs";
-import { report as closeReport } from "./tls-client-close-fixture.mjs";
+import { report as closeReport, stalledConnection } from "./tls-client-close-fixture.mjs";
 import { report as refuseReport } from "./tls-server-refuse-fixture.mjs";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -3705,6 +3705,15 @@ describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", 
   it.each(["handshake", "open"] as const)("%s: terminate() sends no client certificate", async callback => {
     expect(await run(callback, "terminate")).toEqual({ server: "fail:ECONNRESET", sentAfterClientHello: false });
   });
+
+  it("handshake: terminate() sends no client certificate beside a stalled TLS socket", async () => {
+    const stalled = await stalledConnection();
+    try {
+      expect(await run("handshake", "terminate")).toEqual({ server: "fail:ECONNRESET", sentAfterClientHello: false });
+    } finally {
+      stalled.close();
+    }
+  });
 });
 
 // End-to-end shape of the issue: a Node TLS 1.3 server that rejects the
@@ -4391,6 +4400,12 @@ describe("how a TLS client's way of closing reaches the server", () => {
       "checkServerIdentity function that writes to another TLS socket",
       turnedDown("error:ERR_PINNED_KEY", "close:true"),
     ],
+    [
+      "TLSv1.3",
+      "checkServerIdentity function beside a stalled TLS socket",
+      turnedDown("error:ERR_PINNED_KEY", "close:true"),
+    ],
+    ["TLSv1.3", "destroy() beside a stalled TLS socket", turnedDown("close:false")],
 
     // A graceful close still sends the flight.
     ["TLSv1.3", "end()", delivered("", 1)],

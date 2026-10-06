@@ -1388,6 +1388,12 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let lexed = parser.slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
+                // [10.3.2] Untagged `0o`/`0x` ints take no sign; `!!int -0x1f` still resolves.
+                if matches!(first_char, FirstChar::Negative | FirstChar::Positive)
+                    && matches!(self.tag, NodeTag::None)
+                {
+                    return Ok(());
+                }
                 let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),

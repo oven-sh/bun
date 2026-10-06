@@ -1520,6 +1520,12 @@ folded: >
           expect(YAML.parse("a:\n  !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
         });
 
+        test.todo("signed hex key right after an `!!int` value resolves as string", () => {
+          // The scan that steps past a tagged scalar still carries its tag, so
+          // the next key resolves under it. Observed: { a: 1, "-31": "x" }.
+          expect(YAML.parse("a: !!int 1\n-0x1f: x\n")).toEqual({ a: 1, "-0x1f": "x" });
+        });
+
         test("tag on e-node resolves per resolve_null", () => {
           expect(YAML.parse("a: !!null\nb: y\n")).toEqual({ a: null, b: "y" });
           expect(YAML.parse("a: !!str\nb: y\n").a).toBe("");
@@ -2004,15 +2010,33 @@ folded: >
         ] as const)("%s resolves as number %p", (input, expected) => {
           expect(YAML.parse(input)).toBe(expected);
         });
-        test.todo.each(["-0x1f", "+0x1f", "-0o17", "+0o17"])(
-          "signed hex/octal %s resolves as string (§10.2.1.2)",
+        test.each(["-0x1f", "+0x1f", "-0o17", "+0o17", "-0xFF", "+0x0", "-0o0"])(
+          "signed hex/octal %s resolves as string (§10.3.2)",
           input => {
-            // Core schema int regex is `0x [0-9a-fA-F]+` — no sign. js-yaml,
-            // PyYAML, ruamel agree. Pre-existing on the int path (not gated
-            // by is_core_schema_number, which only validates the float path).
+            // `0o [0-7]+` / `0x [0-9a-fA-F]+` take no sign. eemeli/yaml and js-yaml 5
+            // agree; js-yaml 4 and PyYAML read a signed hex as a number.
             expect(YAML.parse(input)).toBe(input);
+            expect(YAML.parse(`- ${input} # comment\n`)).toEqual([input]);
+            expect(YAML.parse(`[${input}, {k: ${input}}]`)).toEqual([input, { k: input }]);
+            expect(YAML.parse(`${input}: ${input}\n`)).toEqual({ [input]: input });
           },
         );
+        test("an explicit !!int still reads a signed hex/octal", () => {
+          expect(YAML.parse("[!!int -0x1f, !!int +0x1f, !!int -0o17, !!str -0x1f]")).toEqual([-31, 31, -15, "-0x1f"]);
+        });
+        test("a plain scalar is a number exactly when a Core schema row matches it", () => {
+          // [10.3.2] int and float rows. `.inf` and `.nan` need letters the alphabet lacks.
+          const core =
+            /^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?)$/;
+          const alphabet = isDebug || isASAN ? "+-.017fxoe" : "+-.0179afxoeE_";
+          const different: string[] = [];
+          const visit = (scalar: string) => {
+            if ((typeof YAML.parse(scalar) === "number") !== core.test(scalar)) different.push(scalar);
+            if (scalar.length < 4) for (const unit of alphabet) visit(scalar + unit);
+          };
+          for (const unit of alphabet) visit(unit);
+          expect(different).toEqual([]);
+        });
         test.each([
           [".inf", Infinity],
           ["+.inf", Infinity],
@@ -3801,6 +3825,11 @@ config:
         // Octal numbers
         expect(YAML.stringify("0o777")).toBe('"0o777"');
         expect(YAML.stringify("0O644")).toBe('"0O644"');
+
+        // The number check does not look at the sign before `0x` / `0o`, so
+        // these stay quoted although YAML.parse reads them as strings.
+        expect(YAML.stringify("+0x1F")).toBe('"+0x1F"');
+        expect(YAML.stringify("+0o17")).toBe('"+0o17"');
 
         // Zero prefix
         expect(YAML.stringify({ a: "011", b: "110" })).toBe('{a: "011",b: "110"}');

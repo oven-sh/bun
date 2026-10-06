@@ -940,6 +940,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
 ///   The parser-side gate now rejects non-conforming float-like tokens
 ///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
 ///   *quoting* whenever a token *might* parse as a number.
+/// - The sign before `0x…` / `0o…` is not checked: `YAML.parse` reads a signed one as a string.
 fn string_is_number(str: &BunString) -> bool {
     let len = str.length();
     if len == 0 {

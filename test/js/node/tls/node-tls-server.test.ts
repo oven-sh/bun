@@ -4098,6 +4098,8 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
     const url = "https://localhost:" + port + "/";
 
     const clients = {
+      "fetch": () => fetch(url, { keepalive: false }),
+      "fetch, tls: {}": () => fetch(url, { keepalive: false, tls: {} }),
       "fetch, rejectUnauthorized": () => fetch(url, { keepalive: false, tls: { rejectUnauthorized: false } }),
       "fetch, ca": () => fetch(url, { keepalive: false, tls: { ca: cert.cert } }),
       "WebSocket, rejectUnauthorized": () => void new WebSocket(url.replace("https", "wss"), { tls: { rejectUnauthorized: false } }),
@@ -4126,6 +4128,8 @@ it("tls.DEFAULT_CIPHERS reaches a client whatever its other TLS options are", as
   // Nothing assigned, a TLS 1.2 suite, TLS 1.3 suites only (which this TLS 1.2 server cannot serve).
   const row = ["ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "ERR_SSL_UNSUPPORTED_PROTOCOL"];
   expect(JSON.parse(stdout)).toEqual({
+    "fetch": row,
+    "fetch, tls: {}": row,
     "fetch, rejectUnauthorized": row,
     "fetch, ca": row,
     "WebSocket, rejectUnauthorized": row,

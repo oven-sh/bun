@@ -570,6 +570,9 @@ pub struct Report {
     pub resolution_trace: Vec<Vec<u8>>,
     pub files_loaded: usize,
     pub files_checked: usize,
+    /// Those that were to be checked in a program with an error in its syntax, its options or its
+    /// global types. As in `tsc`, nothing else is reported for such a program.
+    pub files_not_checked: usize,
     /// The steps that ran, in order. See `Plan`.
     pub steps: Vec<StepReport>,
     /// How many projects were checked, if the configuration has `references`. Otherwise 0.
@@ -608,6 +611,7 @@ impl Report {
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
         self.files_checked += other.files_checked;
+        self.files_not_checked += other.files_not_checked;
         self.steps.extend(other.steps);
         self.check_time += other.check_time;
         for (phase, more) in self.load_phases.iter_mut().zip(other.load_phases) {
@@ -2681,7 +2685,7 @@ fn check_named_files(
             let syntactic = std::mem::take(&mut *found.lock());
             if !syntactic.is_empty() {
                 report.diagnostics.extend(syntactic);
-                report.files_checked = 0;
+                report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
@@ -2690,7 +2694,7 @@ fn check_named_files(
         if stops {
             report.diagnostics.extend(global_errors());
             if report.diagnostics.len() > always_reported {
-                report.files_checked = 0;
+                report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }

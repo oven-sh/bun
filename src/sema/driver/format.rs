@@ -722,6 +722,14 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             );
         }
     }
+    if report.files_not_checked > 0 {
+        pretty!(
+            out,
+            style.color,
+            "<blue>note<r><d>:<r> Stopped before type checking {}. Fix the errors above to see the rest.\n",
+            plural(report.files_not_checked, b"file", b"files")
+        );
+    }
     let errors = report.error_count();
     let took = bun_core::output::Elapsed {
         colors: style.color,

@@ -535,6 +535,19 @@ The package that declares the name is installed, but `types` does not list it. T
 
 TypeScript 7 removed the option. See [Coming from TypeScript 5](#coming-from-typescript-5) for what to use instead.
 
+### Stopped before type checking
+
+```txt
+tsconfig.json(7,5): error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.
+  Use '"paths": {"*": ["./*"]}' instead.
+note: Stopped before type checking 2 files. Fix the errors above to see the rest.
+Found 1 error in 1 file, checked 0 files [14.00ms]
+```
+
+A syntax error, an invalid compiler option, or a missing global type stops `bun check` before it checks any types, like `tsc`. The errors it prints are not all of the errors in your project. Fix them and run `bun check` again.
+
+With [project references](#monorepos), each project stops on its own, and the other projects are still checked.
+
 ### Cannot find module './logo.svg' or './index.css'
 
 Bun can import these files, but TypeScript needs a declaration for each file type. Add a `.d.ts` file to your project. The React templates of `bun init` include this one:
@@ -603,6 +616,7 @@ These differences are intentional:
 - **A misspelled compiler option gets a suggestion.** For `"strct": true`, `bun check` reports `TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?`. `tsc` reports `TS5023: Unknown compiler option 'strct'.`
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
 - **A note tells you when dependencies are missing.** If an import fails because a package in `package.json` is not installed, `bun check` adds a line that names the `package.json` and says how to run `bun install` for it.
+- **A note tells you when type checking did not run.** If a syntax error or an invalid option stops the check, `bun check` adds a line that says [how many files it did not check](#stopped-before-type-checking).
 - **Language service plugins do not load.** `bun check` ignores the `plugins` compiler option.
 - **Some informational options have no effect.** `listFiles`, `listFilesOnly`, and `traceResolution` work. Others, such as `explainFiles`, do nothing.
 

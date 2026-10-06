@@ -157,6 +157,7 @@ describe.concurrent("bun check", () => {
       devDependencies: { "@types/typed": "1" },
     };
     const note = (text: string) => text.split("\n").filter(line => line.startsWith("note: "));
+    const stopped = "note: Stopped before type checking 1 file. Fix the errors above to see the rest.";
     using none = project({ "a.ts": source, "package.json": JSON.stringify(manifest) });
     using one = project({
       "a.ts": `import "react";\nimport "installed";\n`,
@@ -231,8 +232,12 @@ describe.concurrent("bun check", () => {
       [],
       [],
       ["note: 1 dependency in packages/a/package.json is not installed. Run: bun install --cwd=packages/a"],
-      ["note: 1 dependency in package.json is not installed. Run: bun install"],
-      ["note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun"],
+      // What `types` asks for is missing: that is an error in the options.
+      ["note: 1 dependency in package.json is not installed. Run: bun install", stopped],
+      [
+        "note: Bun's type definitions (console, fetch, Bun, bun:test) are not installed. Run: bun add -d @types/bun",
+        stopped,
+      ],
       ["note: 1 dependency in package.json is not installed. Run: bun install"],
       [],
       [],
@@ -260,6 +265,76 @@ describe.concurrent("bun check", () => {
       ["note: 2 dependencies in package.json are not installed. Run: bun install"],
       ["note: 2 dependencies in ../package.json are not installed. Run: bun install"],
     ]);
+  });
+
+  // As in `tsc`, an error in the syntax, the options or the global types of a program is all that is reported for it.
+  test("what stops the type check says how many files it leaves", async () => {
+    const options = JSON.parse(tsconfig).compilerOptions;
+    const config = (more: object) => JSON.stringify({ compilerOptions: { ...options, ...more } });
+    const note = (text: string) => text.split("\n").filter(line => line.startsWith("note: "));
+    const stoppedBefore = (files: string) => [
+      `note: Stopped before type checking ${files}. Fix the errors above to see the rest.`,
+    ];
+    const files = { "a.ts": `export const wrong: number = "";\n`, "b.ts": `export const b = 1;\n` };
+    const checkedWith = async (more: Record<string, string>, args: string[] = []) => {
+      using dir = project({ ...files, ...more });
+      return await check(dir, args);
+    };
+
+    // What is left is what is checked without that error.
+    const whole = await checkedWith({});
+    expect(whole.stdout).toContain("a.ts(1,14): error TS2322");
+    expect(note(whole.stderr)).toEqual([]);
+    const [, left] = /, checked (\d+ files)/.exec(whole.stderr)!;
+    const stopped = await Promise.all(
+      [
+        { "b.ts": `const = 1;\n` },
+        { "b.ts": `import a from "./a" assert { type: "json" };\nexport { a };\n` },
+        { "tsconfig.json": config({ baseUrl: "." }) },
+        { "tsconfig.json": config({ noLib: true }) },
+      ].map(more => checkedWith(more)),
+    );
+    expect(
+      stopped.map(it => ({
+        code: /error (TS\d+)/.exec(it.stdout)?.[1],
+        hidden: !it.stdout.includes("TS2322"),
+        note: note(it.stderr),
+        summary: /checked \d+ files?/.exec(it.stderr)?.[0],
+        exitCode: it.exitCode,
+      })),
+    ).toEqual(
+      ["TS1134", "TS2880", "TS5102", "TS2318"].map(code => ({
+        code,
+        hidden: true,
+        note: stoppedBefore(left),
+        summary: "checked 0 files",
+        exitCode: 1,
+      })),
+    );
+
+    // Nothing is left where nothing is wrong, and where there is no program.
+    const others = await Promise.all([checkedWith({ "a.ts": "" }), checkedWith({}, ["-p", "nowhere"])]);
+    expect(others.map(it => [note(it.stderr), it.exitCode])).toEqual([
+      [[], 0],
+      [[], 1],
+    ]);
+
+    // Each project stops by itself, and so does what a file imports.
+    const composite = config({ composite: true, noEmit: false, emitDeclarationOnly: true, outDir: "out" });
+    using solution = project({
+      "tsconfig.json": `{ "files": [], "references": [{ "path": "./one" }, { "path": "./two" }] }`,
+      "one/tsconfig.json": composite,
+      "one/a.ts": files["a.ts"],
+      "one/b.ts": `const = 1;\n`,
+      "two/tsconfig.json": composite,
+      "two/a.ts": files["a.ts"],
+    });
+    const [projects, file] = await Promise.all([check(solution), run(String(solution), ["--check", "one/b.ts"])]);
+    expect(projects.stdout).toContain("two/a.ts(1,14): error TS2322");
+    expect(projects.stdout).not.toContain("one/a.ts");
+    expect(note(projects.stderr)).toEqual(stoppedBefore("2 files"));
+    expect(projects.stderr).toContain("checked 1 file across 2 projects");
+    expect(note(file.stderr)).toEqual(stoppedBefore("1 file"));
   });
 
   // `[eval]` and `[stdin]` are on no disk, so nothing can be found out about the disk from them.

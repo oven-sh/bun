@@ -1778,6 +1778,7 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
   it.concurrent.each([
     ["plain", "", 0],
     ["tls", "tls: true,", 1],
+    ["tls object that sets no option", "tls: {},", 1],
   ])(
     "a connect that fails asynchronously (%s) releases the native context",
     async (_name, tlsOption, sslCtxPerAttempt) => {
@@ -2463,6 +2464,189 @@ it("socket handler validation errors don't steal GC protection from live sockets
   void stderr;
 });
 
+describe.concurrent("Bun.connect with a tls object that sets no option", () => {
+  // Every member is absent, undefined, at its default, or unknown to TLSOptions.
+  const unsetTlsObjects: [string, () => object][] = [
+    ["{}", () => ({})],
+    ["{ rejectUnauthorized: undefined }", () => ({ rejectUnauthorized: undefined })],
+    ["{ requestCert: false }", () => ({ requestCert: false })],
+    ["{ ca: undefined, cert: undefined, key: undefined }", () => ({ ca: undefined, cert: undefined, key: undefined })],
+    ["{ unknownKey: 1 }", () => ({ unknownKey: 1 })],
+    ["Object.create(null)", () => Object.create(null)],
+  ];
+  const CLIENT_HELLO_RECORD = 22;
+
+  // On Windows the unix transport is a named pipe, and createSocketPair() does not exist.
+  describe.each(["tcp", "unix", "fd"] as const)("over %s", transport => {
+    const itOnTransport = transport === "fd" ? it.skipIf(isWindows) : it;
+
+    // A raw peer that reports the first bytes it gets, and the options that dial it.
+    async function rawPeer(onFirstChunk: (chunk: Buffer) => void) {
+      if (transport === "fd") {
+        const [fd, peerFd] = createSocketPair();
+        const peer = await Bun.connect({
+          fd: peerFd,
+          socket: {
+            data(_socket, chunk) {
+              onFirstChunk(chunk);
+            },
+            error() {},
+          },
+        });
+        return { target: { fd }, [Symbol.dispose]: () => void peer.end() };
+      }
+      const dir = transport === "unix" && !isWindows ? tempDir("tls-unset-connect", {}) : null;
+      const server = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", chunk => {
+          onFirstChunk(chunk);
+          socket.destroy();
+        });
+      });
+      if (transport === "tcp") server.listen(0, "127.0.0.1");
+      else server.listen(dir ? join(String(dir), "s.sock") : `\\\\.\\pipe\\bun-test-tls-unset-${crypto.randomUUID()}`);
+      await once(server, "listening");
+      const address = server.address()!;
+      return {
+        target: typeof address === "string" ? { unix: address } : { hostname: "127.0.0.1", port: address.port },
+        [Symbol.dispose]() {
+          server.close();
+          dir?.[Symbol.dispose]();
+        },
+      };
+    }
+
+    // The first bytes the peer gets from a client whose open() writes "SECRET" at once.
+    async function firstChunkSent(tlsOption: { tls?: unknown }) {
+      const firstChunk = Promise.withResolvers<Buffer>();
+      using peer = await rawPeer(firstChunk.resolve);
+      const client = await Bun.connect({
+        ...peer.target,
+        ...tlsOption,
+        socket: {
+          open(socket: Socket) {
+            socket.write("SECRET");
+          },
+          handshake() {},
+          data() {},
+          close() {},
+          error() {},
+        },
+      } as any);
+      try {
+        return await firstChunk.promise;
+      } finally {
+        client.end();
+      }
+    }
+
+    itOnTransport.each(unsetTlsObjects)("tls: %s sends a ClientHello and no cleartext", async (_, makeTls) => {
+      const chunk = await firstChunkSent({ tls: makeTls() });
+      expect({ firstByte: chunk[0], cleartext: chunk.includes("SECRET") }).toEqual({
+        firstByte: CLIENT_HELLO_RECORD,
+        cleartext: false,
+      });
+    });
+
+    itOnTransport.each([
+      ["absent", {}],
+      ["undefined", { tls: undefined }],
+      ["null", { tls: null }],
+      ["false", { tls: false }],
+    ] as [string, { tls?: unknown }][])("tls %s stays a socket without TLS", async (_, tlsOption) => {
+      expect((await firstChunkSent(tlsOption)).toString()).toBe("SECRET");
+    });
+  });
+
+  it("a Bun.listen with the same tls: {} gets no cleartext from the client", async () => {
+    const received: Buffer[] = [];
+    const clientClosed = Promise.withResolvers<void>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: {},
+      socket: {
+        data(socket, chunk) {
+          received.push(chunk);
+          socket.end();
+        },
+        error() {},
+      },
+    });
+    using client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      tls: {},
+      socket: {
+        open(socket) {
+          socket.write("SECRET");
+        },
+        handshake() {},
+        data() {},
+        error() {},
+        close() {
+          clientClosed.resolve();
+        },
+      },
+    });
+    await clientClosed.promise;
+    expect(Buffer.concat(received).includes("SECRET")).toBe(false);
+  });
+
+  // What a client with no handshake handler sees when its peer speaks plaintext first.
+  async function eventsAgainstPlaintextPeer(tlsOption: { tls?: unknown }) {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.write("220 plaintext banner\r\n");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    try {
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: (server.address() as net.AddressInfo).port,
+        ...tlsOption,
+        socket: {
+          open(socket: Socket) {
+            events.push(`open authorized=${socket.authorized} error=${socket.getAuthorizationError()?.code ?? null}`);
+          },
+          data(socket: Socket, chunk: Buffer) {
+            events.push(`data ${chunk}`);
+            socket.end();
+          },
+          end() {
+            events.push("end");
+          },
+          error(_socket: Socket, err: Error) {
+            events.push(`error ${err.message}`);
+          },
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+        },
+      } as any);
+      await closed.promise;
+      return events;
+    } finally {
+      server.close();
+    }
+  }
+
+  it.each(unsetTlsObjects)("tls: %s sees a plaintext peer as tls: true does", async (_, makeTls) => {
+    const [events, eventsOfTrue] = await Promise.all([
+      eventsAgainstPlaintextPeer({ tls: makeTls() }),
+      eventsAgainstPlaintextPeer({ tls: true }),
+    ]);
+    expect({ events, gotBanner: events.some(event => event.startsWith("data")) }).toEqual({
+      events: eventsOfTrue,
+      gotBanner: false,
+    });
+  });
+});
+
 describe("TLS rejectUnauthorized", () => {
   // Regenerate with: openssl req -x509 -newkey rsa:2048 -nodes -days 3650 for
   // each CA, then sign two "localhost" leaves (SAN localhost,127.0.0.1,::1):
@@ -2702,6 +2886,26 @@ Reo=
       expect(t.received).toEqual([]);
     });
 
+    // A tls object that sets no option gets the defaults of tls: true, rejectUnauthorized included.
+    it.each([
+      ["{}", () => ({})],
+      ["{ rejectUnauthorized: undefined }", () => ({ rejectUnauthorized: undefined })],
+      ["{ requestCert: false }", () => ({ requestCert: false })],
+    ] as [string, () => Record<string, unknown>][])(
+      "closes an untrusted connection with tls: %s",
+      async (_, makeTls) => {
+        using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, makeTls());
+        expect(await t.handshake.promise).toEqual({
+          authorizedArg: false,
+          authorizedGetter: false,
+          callbackError: UNTRUSTED_MESSAGE,
+          getterError: UNTRUSTED_MESSAGE,
+        });
+        await t.closed.promise;
+        expect(t.received).toEqual([]);
+      },
+    );
+
     it("reports authorized=false but keeps the connection with rejectUnauthorized: false", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT, rejectUnauthorized: false });
       expect(await t.handshake.promise).toEqual({
@@ -2889,6 +3093,81 @@ Reo=
       t.client.write("ping");
       await t.echoed.promise;
       expect(t.received.join("")).toBe("hello-from-server\nping");
+    });
+
+    // A tls object that sets no option cannot carry a CA, so the child trusts it through NODE_EXTRA_CA_CERTS.
+    it("keeps a trusted connection with a tls object that sets no option", async () => {
+      using dir = tempDir("tls-unset-trusted", {
+        "ca.pem": CA_CRT,
+        "server.key": SERVER_KEY,
+        "server.crt": SERVER_CRT,
+        "trusted-fixture.ts": /* js */ `
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key: Bun.file("server.key"), cert: Bun.file("server.crt") },
+            socket: {
+              data(socket, data) {
+                socket.write(data);
+              },
+              error() {},
+            },
+          });
+          const shapes = {
+            "true": true,
+            "{}": {},
+            "{ rejectUnauthorized: undefined }": { rejectUnauthorized: undefined },
+            "{ requestCert: false }": { requestCert: false },
+          };
+          const results = {};
+          for (const [name, tls] of Object.entries(shapes)) {
+            results[name] = await new Promise(resolve => {
+              let authorized = null;
+              // No handshake handler: open() runs when the handshake is done.
+              Bun.connect({
+                hostname: "127.0.0.1",
+                port: server.port,
+                tls,
+                socket: {
+                  open(socket) {
+                    authorized = socket.authorized;
+                    socket.write("ping");
+                  },
+                  data(socket, data) {
+                    resolve({ authorized, echo: data.toString() });
+                    socket.end();
+                  },
+                  close() {
+                    resolve({ authorized, echo: null });
+                  },
+                  error() {},
+                },
+              }).catch(err => resolve({ rejected: err.code }));
+            });
+          }
+          console.log(JSON.stringify(results));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "trusted-fixture.ts"],
+        env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // If the child died before reporting, the diff shows its raw output.
+      const results = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+      const trusted = { authorized: true, echo: "ping" };
+      expect({ results, exitCode }).toEqual({
+        results: {
+          "true": trusted,
+          "{}": trusted,
+          "{ rejectUnauthorized: undefined }": trusted,
+          "{ requestCert: false }": trusted,
+        },
+        exitCode: 0,
+      });
     });
 
     it("closes an untrusted connection when no handshake callback is provided", async () => {

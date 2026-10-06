@@ -508,7 +508,12 @@ impl SocketConfig {
                         None
                     }
                 }
-                GeneratedTls::Object(ssl) => SSLConfig::from_generated(vm, global, ssl)?,
+                GeneratedTls::Object(ssl) => match SSLConfig::from_generated(vm, global, ssl) {
+                    // The parser returns `None` when no member is set. On a client, a `tls` object still asks for TLS.
+                    Ok(None) if !mode.is_server() => Some(super::tls_true_defaults(vm)),
+                    Ok(configured) => configured,
+                    Err(err) => return Err(err),
+                },
             };
             break 'blk SocketConfig {
                 hostname_or_unix: Utf8Bytes::EMPTY,

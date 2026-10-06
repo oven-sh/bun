@@ -7374,7 +7374,13 @@ declare module "bun" {
      */
     port: number;
     /**
-     * TLS configuration with which to create the socket
+     * TLS configuration with which to create the socket.
+     *
+     * `true` or an options object makes the connection a TLS connection. An
+     * options object that sets no option, `{}` included, is the same as
+     * `true`: each option has its default.
+     *
+     * Omit `tls`, or pass `false`, for a connection without TLS.
      */
     tls?: TLSOptions | boolean;
     /**
@@ -7400,7 +7406,13 @@ declare module "bun" {
     unix: string;
 
     /**
-     * TLS configuration with which to create the socket
+     * TLS configuration with which to create the socket.
+     *
+     * For `Bun.connect`, `true` or an options object makes the connection a
+     * TLS connection. An options object that sets no option, `{}` included,
+     * is the same as `true`: each option has its default.
+     *
+     * Omit `tls`, or pass `false`, for a socket without TLS.
      */
     tls?: TLSOptions | boolean;
   }

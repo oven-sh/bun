@@ -1,7 +1,9 @@
-const { isTypedArray, isArrayBuffer } = require("node:util/types");
+const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/types");
 const { validateString, validateBuffer } = require("internal/validators");
 
 const StringPrototypeSplit = String.prototype.split;
+const ArrayPrototypeSome = Array.prototype.some;
+const ArrayPrototypeMap = Array.prototype.map;
 
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
@@ -311,11 +313,89 @@ function processPfxOptions(options) {
   return out;
 }
 
+function hasPemObject(key) {
+  if (!key) return false;
+  if ($isArray(key)) return ArrayPrototypeSome.$call(key, isPemKeyEntry);
+  return isPemKeyEntry(key);
+}
+
+function isPemKeyEntry(k) {
+  return k && typeof k === "object" && !isArrayBufferView(k) && "pem" in k;
+}
+
+function normalizePemKeyOption(key, ctxPassphrase) {
+  if (!key || !hasPemObject(key)) return key;
+  const entries = $isArray(key) ? key : [key];
+  return ArrayPrototypeMap.$call(entries, k => {
+    if (!isPemKeyEntry(k)) return k;
+    // Node: val?.passphrase !== undefined ? val.passphrase : passphrase - an
+    // explicit per-key null means "no passphrase for this key" and does NOT
+    // fall back to the context-level one.
+    const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;
+    if (passphrase == null) return k.pem;
+    const { createPrivateKey } = require("node:crypto");
+    return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });
+  });
+}
+
+// The native `ca` replaces the default store, so the CAs of an archive can only extend a `ca` the caller gave.
+function unsealPfxForNative(tls) {
+  if (tls.pfx == null) return tls;
+  tls = processPfxOptions(tls);
+  const { ca, _pfxExtraCACerts: pfxCAs } = tls;
+  if (pfxCAs && ca) tls.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
+  return tls;
+}
+
+const nodeClientTlsKeys = [
+  "rejectUnauthorized",
+  "ca",
+  "cert",
+  "key",
+  "pfx",
+  "passphrase",
+  "servername",
+  "checkServerIdentity",
+  "ciphers",
+  "secureOptions",
+  "minVersion",
+  "maxVersion",
+  "crl",
+  "sigalgs",
+  "ecdhCurve",
+  "allowPartialTrustChain",
+];
+
+// `options` of tls.connect(), as a null-prototype copy, to the `tls` option of fetch() and WebSocket.
+function nodeClientTlsToNative(options) {
+  validateSecureContextOptions(options);
+  let tls;
+  for (let i = 0; i < nodeClientTlsKeys.length; i++) {
+    const name = nodeClientTlsKeys[i];
+    let value = options[name];
+    if (value == null || value === "") continue;
+    if (name === "rejectUnauthorized") {
+      value = value !== false;
+    } else if (name === "allowPartialTrustChain") {
+      if (value !== true) continue;
+    } else if (name === "key") {
+      value = normalizePemKeyOption(value, options.passphrase);
+    } else if (name === "minVersion" || name === "maxVersion") {
+      value = tlsStringToProtocolVersion(value);
+    }
+    (tls ??= { __proto__: null })[name] = value;
+  }
+  return tls && unsealPfxForNative(tls);
+}
+
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  nodeClientTlsToNative,
+  normalizePemKeyOption,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
+  unsealPfxForNative,
   validateSecureContextOptions,
 };

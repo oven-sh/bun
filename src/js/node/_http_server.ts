@@ -411,7 +411,7 @@ function Server(options, callback): void {
       }
       this[tlsSymbol] = normalizeServerTls({
         serverName,
-        key,
+        key: tlsHelpers.normalizePemKeyOption(key, passphrase),
         cert,
         ca,
         crl,

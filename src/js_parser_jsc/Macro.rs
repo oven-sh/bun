@@ -686,9 +686,6 @@ impl<'a> Run<'a> {
             T::Null => return Ok(Expr::init(E::Null {}, self.caller.loc)),
             T::Private => {
                 self.is_top_level = false;
-                if let Some(cached) = self.visited.get(value) {
-                    return Ok(*cached);
-                }
 
                 let mut blob_: Option<*const WebCore::Blob> = None;
 

@@ -102,8 +102,8 @@ struct loop_ssl_data {
   struct us_socket_t *ssl_write_batch_owner;
 
   /* Connections whose spill (us_ssl_spill_t) holds the rest of a batch flush. While there is
-   * one, nobody batches and a spill takes at most the rest of one record: userspace holds
-   * one flush unit per loop plus one record per other stalled connection. */
+   * one, no application write batches, so its spill takes at most the rest of one record. A
+   * handshake flight is held whatever this says, and counts here if the kernel refuses it. */
   unsigned int ssl_batch_spills;
 
   /* Why ssl_raw_write ended a write side inside the running us_internal_ssl_writev or spill drain. */

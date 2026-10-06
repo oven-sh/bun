@@ -544,12 +544,10 @@ impl<'a> Installer<'a> {
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
-            // The owner entry of a workspace links the workspace's dependencies in place,
-            // and every other entry of a workspace is a link. None is an installed package.
+            // The owner entry of a workspace links the workspace's dependencies in place.
+            // The workspace is not a package that the install installed.
             let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
-            if self.lockfile().packages.items_resolution()[pkg_id as usize].tag
-                == ResolutionTag::Workspace
-            {
+            if self.store.workspace_owners.get(pkg_id as usize) == Some(&node_id) {
                 break 'state (node_id, CompleteState::Skipped);
             }
 

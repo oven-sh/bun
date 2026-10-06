@@ -306,13 +306,14 @@ test.skipIf(isWindows)("a PATH from a .env file with a NUL byte finds no command
     "tool": "#!/bin/sh\necho ran-tool\n",
     ".env": "PATH=tool\0\n",
     "which-fixture.js": `
-      let spawned;
+      let ranTool;
       try {
-        spawned = Bun.spawnSync(["zz"]).stdout.toString();
-      } catch (error) {
-        spawned = error.code;
+        ranTool = Bun.spawnSync(["zz"]).stdout.toString() === "ran-tool\\n";
+      } catch {
+        // The error of a command that is not found belongs to Bun.spawnSync.
+        ranTool = false;
       }
-      console.log(JSON.stringify({ which: Bun.which("zz"), spawned }));
+      console.log(JSON.stringify({ which: Bun.which("zz"), ranTool }));
     `,
   });
   chmodSync(join(String(dir), "tool"), 0o755);
@@ -327,7 +328,7 @@ test.skipIf(isWindows)("a PATH from a .env file with a NUL byte finds no command
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: '{"which":null,"spawned":"ENOENT"}\n',
+    stdout: '{"which":null,"ranTool":false}\n',
     stderr: "",
     exitCode: 0,
   });

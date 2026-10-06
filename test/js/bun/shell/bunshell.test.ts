@@ -3540,13 +3540,13 @@ test.skipIf(isWindows)("a PATH entry or a command with a NUL byte finds no comma
   expect({
     control: await run($`tool`.env({ ...bunEnv, PATH: toolDir })),
     pathEntry: await run($`zz`.env({ ...bunEnv, PATH: tool + "\0" })),
-    // The stream and the wording of a miss are not under test here.
-    pathEntryOfWhichBuiltin: { printsAPath: whichBuiltin.stdout.includes(toolDir), exitCode: whichBuiltin.exitCode },
+    // The stream that carries the line is not under test here.
+    pathEntryOfWhichBuiltin: { output: whichBuiltin.stdout + whichBuiltin.stderr, exitCode: whichBuiltin.exitCode },
     commandFromVariable: await run($`$TOOL`.env({ ...bunEnv, PATH: toolDir, TOOL: "tool\0zz" })),
   }).toEqual({
     control: { stdout: "ran-tool\n", stderr: "", exitCode: 0 },
     pathEntry: { stdout: "", stderr: "bun: command not found: zz\n", exitCode: 1 },
-    pathEntryOfWhichBuiltin: { printsAPath: false, exitCode: 1 },
+    pathEntryOfWhichBuiltin: { output: "which: zz not found\n", exitCode: 1 },
     commandFromVariable: { stdout: "", stderr: "bun: command not found: tool\0zz\n", exitCode: 1 },
   });
 });

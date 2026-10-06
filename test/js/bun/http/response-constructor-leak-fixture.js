@@ -4,10 +4,7 @@
 // - the headers leak
 //
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const buf = new Uint8Array(1024 * 1024 * 32);
 
 for (var i = 0; i < 1000; i++) {

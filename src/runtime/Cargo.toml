@@ -5,12 +5,9 @@ edition.workspace = true
 
 [lib]
 path = "lib.rs"
-# The final Rust artifact: a staticlib the native build links together with the
-# C/C++ objects (see scripts/build/rust.ts). Being the leaf staticlib itself,
-# rather than an rlib consumed by a separate shim crate, means rustc never
-# encodes crate metadata for this (by far the largest) crate and cargo never
-# re-bundles every rlib into a second archive on each rebuild.
-crate-type = ["staticlib"]
+# The root of the crate graph the native build plans (scripts/build/rust.ts), and a library like every other crate:
+# the link takes each crate's rlib beside the C/C++ objects. No crate is a "final" Rust artifact, so nothing copies
+# every crate into one archive.
 
 [lints]
 workspace = true

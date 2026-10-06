@@ -63,16 +63,12 @@ pub fn frame_address() -> usize {
 struct MemoryAccessor {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mem: core::ffi::c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    _mem: (),
 }
 
 impl MemoryAccessor {
     const INIT: Self = Self {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: -1,
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        _mem: (),
     };
 
     fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {

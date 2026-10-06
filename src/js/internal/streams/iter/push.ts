@@ -38,6 +38,26 @@ function isError(e) {
 // PushQueue - Internal Queue with Chunk-Based Backpressure
 // =============================================================================
 
+interface PushOptions {
+  __proto__?: null;
+  highWaterMark?: number;
+  backpressure?: string;
+  signal?: AbortSignal;
+}
+
+interface PendingDrain {
+  __proto__?: null;
+  resolve: (canWrite: boolean) => void;
+  reject: (reason: unknown) => void;
+}
+
+interface PendingEnd {
+  __proto__?: null;
+  promise: Promise<number>;
+  resolve: (bytesWritten: number) => void;
+  reject: (reason: unknown) => void;
+}
+
 class PushQueue {
   /** Buffered chunks (each slot is from one write/writev call) */
   #slots = new RingBuffer();
@@ -46,7 +66,7 @@ class PushQueue {
   /** Pending reads waiting for data */
   #pendingReads = new RingBuffer();
   /** Pending drains waiting for backpressure to clear */
-  #pendingDrains = [];
+  #pendingDrains: PendingDrain[] = [];
   /** Writer state: 'open' | 'closing' | 'closed' | 'errored' */
   #writerState = "open";
   /** Consumer state: 'active' | 'returned' | 'thrown' */
@@ -56,7 +76,7 @@ class PushQueue {
   /** Total bytes written */
   #bytesWritten = 0;
   /** Pending end promise (resolves when consumer drains past end sentinel) */
-  #pendingEnd = null;
+  #pendingEnd: PendingEnd | null = null;
 
   /** Configuration */
   #highWaterMark;
@@ -64,7 +84,7 @@ class PushQueue {
   #signal;
   #abortHandler;
 
-  constructor(options = { __proto__: null }) {
+  constructor(options: PushOptions = { __proto__: null }) {
     const { highWaterMark = kPushDefaultHWM, backpressure = "strict", signal } = options;
     validateInteger(highWaterMark, "options.highWaterMark");
     validateBackpressure(backpressure);
@@ -289,7 +309,7 @@ class PushQueue {
    * No-op if errored or closed (fully drained).
    * If closing (draining), short-circuits the drain.
    */
-  fail(reason) {
+  fail(reason?) {
     if (this.#writerState === "errored" || this.#writerState === "closed") {
       return;
     }
@@ -332,7 +352,7 @@ class PushQueue {
     return this.#pendingEnd?.promise ?? null;
   }
 
-  setPendingEnd(pending) {
+  setPendingEnd(pending: PendingEnd) {
     this.#pendingEnd = pending;
   }
 
@@ -354,7 +374,7 @@ class PushQueue {
    * @returns {Promise<void>}
    */
   waitForDrain() {
-    const { promise, resolve, reject } = PromiseWithResolvers();
+    const { promise, resolve, reject } = PromiseWithResolvers<boolean>();
     this.#pendingDrains.push({ __proto__: null, resolve, reject });
     return promise;
   }
@@ -433,7 +453,7 @@ class PushQueue {
       return this.#slots.shift();
     }
 
-    const result = [];
+    const result: Uint8Array[] = [];
     for (let i = 0; i < this.#slots.length; i++) {
       const slot = this.#slots.get(i);
       for (let j = 0; j < slot.length; j++) {
@@ -619,7 +639,7 @@ class PushWriter {
       if (pendingEndPromise !== null) {
         return pendingEndPromise;
       }
-      const { promise, resolve, reject } = PromiseWithResolvers();
+      const { promise, resolve, reject } = PromiseWithResolvers<number>();
       this.#queue.setPendingEnd({ __proto__: null, promise, resolve, reject });
       return promise;
     }
@@ -634,7 +654,7 @@ class PushWriter {
     return result;
   }
 
-  fail(reason) {
+  fail(reason?) {
     this.#queue.fail(reason);
   }
 

@@ -8,7 +8,7 @@ use crate::shell::yield_::Yield;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     WaitingWriteErr,
@@ -17,7 +17,7 @@ pub enum State {
 }
 
 #[derive(Default)]
-pub struct Yes {
+pub(crate) struct Yes {
     pub(crate) state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
     /// out to ~BUFSIZ.
@@ -189,7 +189,7 @@ impl Yes {
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever.
 #[repr(C)]
-pub struct YesTask {
+pub(crate) struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
     pub(crate) interp: *mut Interpreter,
     pub(crate) cmd: NodeId,
@@ -202,6 +202,10 @@ impl Taskable for YesTask {
     /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
     /// took nothing for the bounce; nothing to do.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl YesTask {

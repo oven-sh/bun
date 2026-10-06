@@ -79,6 +79,11 @@ export default assert;
 
 const NO_EXCEPTION_SENTINEL = {};
 
+interface ErrorLike {
+  message?: unknown;
+  stack?: unknown;
+}
+
 /**
  * @class Assert
  * @param {object} [options] - `diff` ('simple'|'full'), `strict` (default true),
@@ -154,13 +159,7 @@ function fail(
   // eslint-disable-next-line @typescript-eslint/ban-types
   stackStartFn?: Function,
 ): never;
-function fail(
-  actual: unknown,
-  expected: unknown,
-  message?: string | Error,
-  operator?: string,
-  stackStartFn?: Function,
-) {
+function fail(actual?: unknown, expected?: unknown, message?: unknown, operator?: string, stackStartFn?: Function) {
   const argsLen = arguments.length;
 
   let internalMessage = false;
@@ -450,7 +449,7 @@ Assert.prototype.partialDeepStrictEqual = function partialDeepStrictEqual(actual
 };
 
 class Comparison {
-  constructor(obj, keys, actual) {
+  constructor(obj, keys, actual?) {
     for (const key of keys) {
       if (key in obj) {
         if (
@@ -647,7 +646,7 @@ async function waitForActual(promiseFn) {
   return NO_EXCEPTION_SENTINEL;
 }
 
-function expectsError(stackStartFn: Function, actual: unknown, error: unknown, message?: string | Error) {
+function expectsError(stackStartFn: Function, actual: unknown, error?: unknown, message?: string | Error) {
   if (typeof error === "string") {
     if (arguments.length === 4) {
       throw $ERR_INVALID_ARG_TYPE("error", ["Object", "Error", "Function", "RegExp"], error);
@@ -707,7 +706,7 @@ function hasMatchingError(actual, expected) {
   return expected.$apply({}, [actual]) === true;
 }
 
-function expectsNoError(stackStartFn, actual, error, message) {
+function expectsNoError(stackStartFn, actual, error?, message?) {
   if (actual === NO_EXCEPTION_SENTINEL) return;
 
   if (typeof error === "string") {
@@ -737,7 +736,7 @@ function expectsNoError(stackStartFn, actual, error, message) {
  */
 Assert.prototype.throws = function throws(
   promiseFn: () => Promise<unknown> | Promise<unknown>,
-  ...args: unknown[]
+  ...args: [error?: unknown, message?: string | Error]
 ): void {
   expectsError(throws, getActual(promiseFn), ...args);
 };
@@ -754,12 +753,18 @@ Assert.prototype.throws = function throws(
 // "at async assert.rejects" where a plain `function rejects` gives "rejects"
 // under JSC. `.name` is then restored to match node's.
 const kQualifiedStackNames = {
-  async "assert.rejects"(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
+  async "assert.rejects"(
+    block: (() => Promise<unknown>) | Promise<unknown>,
+    ...args: [error?: unknown, message?: string | Error]
+  ): Promise<void> {
     // The captured binding, not `assert.rejects`: node's implementation keeps
     // working (and reporting operator "rejects") after the property is replaced.
     expectsError(kQualifiedStackNames["assert.rejects"], await waitForActual(block), ...args);
   },
-  async "assert.doesNotReject"(fn: (() => Promise<unknown>) | Promise<unknown>, ...args: unknown[]): Promise<void> {
+  async "assert.doesNotReject"(
+    fn: (() => Promise<unknown>) | Promise<unknown>,
+    ...args: [error?: unknown, message?: unknown]
+  ): Promise<void> {
     expectsNoError(kQualifiedStackNames["assert.doesNotReject"], await waitForActual(fn), ...args);
   },
 };
@@ -772,7 +777,10 @@ Object.defineProperty(Assert.prototype.rejects, "name", { value: "rejects", conf
  * @param {...any} [args]
  * @returns {void}
  */
-Assert.prototype.doesNotThrow = function doesNotThrow(fn: () => Promise<unknown>, ...args: unknown[]): void {
+Assert.prototype.doesNotThrow = function doesNotThrow(
+  fn: () => Promise<unknown>,
+  ...args: [error?: unknown, message?: unknown]
+): void {
   expectsNoError(doesNotThrow, getActual(fn), ...args);
 };
 
@@ -790,7 +798,7 @@ Object.defineProperty(Assert.prototype.doesNotReject, "name", { value: "doesNotR
  * @param {any} err
  * @returns {void}
  */
-Assert.prototype.ifError = function ifError(err: unknown): void {
+Assert.prototype.ifError = function ifError(err: ErrorLike | null | undefined): void {
   if (err !== null && err !== undefined) {
     let message = "ifError got unwanted exception: ";
     const errMessage = typeof err === "object" ? err.message : undefined;
@@ -957,16 +965,17 @@ for (const name of [
 }
 
 for (const key of ObjectKeys(assert)) {
-  ObjectDefineProperty(strict, key, ObjectGetOwnPropertyDescriptor(assert, key));
+  ObjectDefineProperty(strict, key, ObjectGetOwnPropertyDescriptor(assert, key)!);
 }
+// The loop above already copied every other member of `assert` onto `strict`.
 assert.strict = ObjectAssign(strict, {
   equal: assert.strictEqual,
   deepEqual: assert.deepStrictEqual,
   notEqual: assert.notStrictEqual,
   notDeepEqual: assert.notDeepStrictEqual,
-});
+}) as nodeAssert["strict"];
 
-assert.strict.Assert = Assert;
+assert.strict.Assert = Assert as unknown as nodeAssert["Assert"];
 assert.strict.strict = assert.strict;
 
-assert.Assert = Assert;
+assert.Assert = Assert as unknown as nodeAssert["Assert"];

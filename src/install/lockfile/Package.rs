@@ -379,7 +379,6 @@ impl PackageField {
         PackageField::Scripts,
     ];
 
-    #[allow(dead_code)]
     pub(crate) fn name(self) -> &'static [u8] {
         match self {
             PackageField::Name => b"name",
@@ -867,17 +866,6 @@ impl Package<u64> {
 
             // Shrink off the unused default-initialized tail (`new_length <= total_len`).
             dependencies_list.truncate(new_length);
-
-            #[cfg(debug_assertions)]
-            {
-                if package.resolution.npm().url.is_empty() {
-                    Output::panic(format_args!(
-                        "tarball_url is empty for package {}@{}",
-                        bstr::BStr::new(manifest.name()),
-                        version.fmt(&manifest.string_buf),
-                    ));
-                }
-            }
 
             string_builder.clamp();
             return Ok(package);
@@ -2263,8 +2251,11 @@ impl Package<u64> {
                 }
                 if bin.expr.is_string() {
                     if let Some(str_) = bin.expr.as_utf8(&bump) {
-                        string_builder.count(str_);
-                        break 'bin;
+                        // The build pass reads `directories.bin` when `bin` is empty.
+                        if !str_.is_empty() {
+                            string_builder.count(str_);
+                            break 'bin;
+                        }
                     }
                 }
             }
@@ -3202,15 +3193,12 @@ pub mod serializer {
                     &*sliced.column_bytes_mut(field as usize)
                 }
             };
-            #[cfg(debug_assertions)]
-            {
-                bun_output::scoped_log!(
-                    Lockfile,
-                    "save(\"{}\") = {} bytes",
-                    bstr::BStr::new(field.name()),
-                    bytes.len(),
-                );
-            }
+            bun_output::scoped_log!(
+                Lockfile,
+                "save(\"{}\") = {} bytes",
+                bstr::BStr::new(field.name()),
+                bytes.len(),
+            );
             // No uninitialized padding: `Package`'s field types are all
             // `#[repr(C)]` with explicit padding zeroed by their
             // `Default`/`init` paths.

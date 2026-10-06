@@ -235,7 +235,7 @@ function installExitTracing(): void {
   // Replaces node's native `Environment::Exit` warning: the wrapper frame
   // below stands in for node's `at process.exit` top frame, so stack counts
   // under --stack-trace-limit match node exactly.
-  function exit(code?: number | string | null): never {
+  function exit(code?: number | string | null) {
     const resolved = code ?? process.exitCode ?? 0;
     let prefix: string;
     if (Bun.isMainThread) {

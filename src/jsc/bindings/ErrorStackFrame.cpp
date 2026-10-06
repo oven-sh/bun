@@ -65,10 +65,12 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
     auto expr = code->expressionInfoForBytecodeIndex(bc);
+    // Expression info has offsets only. The provider derives the line and the column from the divot.
+    auto lineColumn = code->source().provider()->documentLineColumnForOffset(expr.divot);
 
     ZigStackFramePosition pos {
-        .line_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line).zeroBasedInt(),
-        .column_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column).zeroBasedInt(),
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,
     };
 

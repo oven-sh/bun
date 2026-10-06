@@ -24,6 +24,7 @@ interface Case {
 
 const sym = Symbol("shared");
 const sharedArrayBuffer = new ArrayBuffer(4);
+const sharedMapKey = { a: 1 };
 
 function float64WithNaNPayload(bits: bigint) {
   const arr = new Float64Array(1);
@@ -738,6 +739,71 @@ const cases: Case[] = [
     strict: false,
     loose: false,
     looseBug: "reports equal",
+  },
+  // https://github.com/oven-sh/bun/issues/34830
+  {
+    name: "maps keyed by deep-equal objects with the values in another order",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 2],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 2],
+        [{ a: 1 }, 1],
+      ]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "maps keyed by deep-equal objects with the values in different counts",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 2],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 2],
+        [{ a: 1 }, 2],
+      ]),
+    strict: false,
+    loose: false,
+    strictBug: "reports equal",
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps holding undefined under a deep-equal key and under the same key",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [sharedMapKey, undefined],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [sharedMapKey, undefined],
+      ]),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "maps holding undefined under different keys",
+    a: () =>
+      new Map([
+        ["a", undefined],
+        ["b", 1],
+      ]),
+    b: () =>
+      new Map([
+        ["c", undefined],
+        ["b", 1],
+      ]),
+    strict: false,
+    loose: false,
   },
   {
     name: "sets holding deep-equal objects",

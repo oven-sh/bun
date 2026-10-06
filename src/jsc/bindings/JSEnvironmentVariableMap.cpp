@@ -743,6 +743,10 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // As in JSEnvironmentVariableMap::put, a write to an object that inherits from process.env is that object's.
+    if (slot.thisValue() != cell) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+
     auto* uid = propertyName.uid();
     if (propertyName.isSymbol() || !uid) {
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));

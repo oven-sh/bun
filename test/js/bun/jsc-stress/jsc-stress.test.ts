@@ -117,6 +117,7 @@ const jsFixtures = [
   "dfg-exception-try-catch-in-constructor-with-inlined-throw.js",
   "dfg-call-class-constructor.js",
   "dfg-osr-entry-should-not-use-callframe-argument.js",
+  "catch-osr-entry-operand-without-sample.js",
   // Allocation sinking / OSR / LICM
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",

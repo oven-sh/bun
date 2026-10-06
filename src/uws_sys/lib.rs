@@ -336,6 +336,7 @@ unsafe extern "C" {
     safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
+    safe fn WindowsNamedPipe__transport_idle(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
     safe fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe);
     safe fn WindowsNamedPipe__latest_session(
@@ -372,6 +373,10 @@ impl WindowsNamedPipe {
     #[inline]
     pub(crate) fn is_shutdown(&self) -> bool {
         WindowsNamedPipe__is_shutdown(self)
+    }
+    #[inline]
+    pub(crate) fn transport_idle(&self) -> bool {
+        WindowsNamedPipe__transport_idle(self)
     }
     #[inline]
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {

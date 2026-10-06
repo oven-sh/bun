@@ -277,10 +277,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// False while a wrapped stream has not completed a write that `write` counted.
+    /// False while the transport is behind on what `write` counted: a wrapped
+    /// stream that has not completed a write, a named pipe whose writer is over its mark.
     pub fn transport_idle(&self) -> bool {
         match self.socket {
             InternalSocket::UpgradedDuplex(d) => duplex(d).transport_idle(),
+            #[cfg(windows)]
+            InternalSocket::Pipe(p) => pipe(p).transport_idle(),
             _ => true,
         }
     }

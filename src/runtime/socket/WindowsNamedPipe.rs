@@ -44,6 +44,10 @@ pub(crate) type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
+/// With more than this queued in the writer, the pipe takes no further write
+/// until the writer is back under it. `us_internal_ssl_writev` flushes at the same size.
+const WRITE_MARK: usize = 131072;
+
 use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub(crate) struct WindowsNamedPipe {
@@ -209,12 +213,23 @@ impl WindowsNamedPipe {
         scopeguard::guard(self, |this| this.deref())
     }
 
+    /// The writer reports each write it completed here.
     fn on_writable(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
-        // flush pending data
-        self.flush();
+        if !self.transport_idle() {
+            // Still over the mark: a write now would be refused again.
+            self.flush();
+            return;
+        }
+        // flush pending data; the wrapper seals writes again
+        if self.with_wrapper(|w| w.sink_writable()).is_some() {
+            let _ = self.writer.with_mut(|w| w.flush());
+        } else {
+            self.flush();
+        }
         // call onWritable (will flush on demand)
         (self.handlers.on_writable)(self.handlers.ctx);
+        let _ = self.with_wrapper(|w| w.answer_peer_close());
     }
 
     fn on_read(&self, nread: usize) {
@@ -372,8 +387,12 @@ impl WindowsNamedPipe {
     }
     fn ssl_write(this: *mut Self, d: &[u8]) -> ssl_wrapper::Taken {
         // SAFETY: see block note above.
-        unsafe { &*this }.internal_write(d);
-        ssl_wrapper::Taken::All { more: true }
+        let this = unsafe { &*this };
+        this.internal_write(d);
+        // The writer queues all of it. Over the mark, the next write waits for `on_writable`.
+        ssl_wrapper::Taken::All {
+            more: this.transport_idle(),
+        }
     }
 
     fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
@@ -851,14 +870,23 @@ impl WindowsNamedPipe {
         if let Some(r) = self.with_wrapper(|w| w.write_data(data)) {
             return i32::try_from(r.unwrap_or(0)).expect("int cast");
         }
-        self.internal_write(data);
-        i32::try_from(data.len()).expect("int cast")
+        self.raw_write(data)
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__raw_write")]
     pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
+        // As the wrapper over the mark: the caller keeps the data and retries from `on_writable`.
+        if !self.transport_idle() {
+            return 0;
+        }
         self.internal_write(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
+    }
+
+    /// The writer holds no more than [`WRITE_MARK`] bytes that the pipe has not taken.
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__transport_idle", no_catch)]
+    pub(crate) fn transport_idle(&self) -> bool {
+        self.writer.get().buffered_len() <= WRITE_MARK
     }
 
     /// `uv::open_handles` closes a not-yet-adopted pipe through here at teardown.

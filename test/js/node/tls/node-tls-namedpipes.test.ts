@@ -106,6 +106,57 @@ it.if(isWindows)("a write larger than 64 KiB round-trips over a TLS named pipe",
   }
 });
 
+describe.each(["tls", "net"] as const)("node:%s over a named pipe whose peer does not read", kind => {
+  // The pipe queued every write and reported it as written, however much the peer had read.
+  it.if(isWindows)("completes the writes that the pipe took, and the rest once the peer reads", async () => {
+    const chunk = Buffer.alloc(64 * 1024, "a");
+    const count = 64;
+    let received = 0;
+    const all = Promise.withResolvers<void>();
+    const accepted = Promise.withResolvers<net.Socket>();
+    const onConnection = (socket: net.Socket) => {
+      socket.pause();
+      socket.on("data", (data: Buffer) => {
+        received += data.length;
+        if (received === count * chunk.length) all.resolve();
+      });
+      socket.on("error", all.reject);
+      accepted.resolve(socket);
+    };
+    const server = kind === "tls" ? createServer(tls, onConnection) : net.createServer(onConnection);
+    let client: net.Socket | null = null;
+    try {
+      const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+      server.listen(pipeName);
+      await once(server, "listening");
+
+      const socket = kind === "tls" ? connect({ path: pipeName, ca: tls.cert }) : net.connect(pipeName);
+      client = socket;
+      socket.on("error", all.reject);
+      await once(socket, kind === "tls" ? "secureConnect" : "connect");
+      const peer = await accepted.promise;
+
+      let completed = 0;
+      for (let i = 0; i < count; i++) socket.write(chunk, () => completed++);
+      // Until no further write has completed for 20 turns of the event loop.
+      for (let last = completed, same = 0; same < 20; last = completed) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        same = completed === last ? same + 1 : 0;
+      }
+      const whileStalled = completed;
+      peer.resume();
+      await all.promise;
+      expect({ whileStalled: whileStalled <= count / 4 ? "a few" : whileStalled, received }).toEqual({
+        whileStalled: "a few",
+        received: count * chunk.length,
+      });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
 describe.each(["TLSv1.2", "TLSv1.3"] as const)(
   "%s over a named pipe: write() issued before the handshake completes",
   version => {
@@ -143,6 +194,40 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
           received: `Hello World! (${version})`,
           log: ["secureConnect writableLength=12", "write callback err=null"],
         });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+
+    it.if(isWindows)("is delivered when it is more than the pipe queues at once", async () => {
+      const payload = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      const received = Promise.withResolvers<Buffer>();
+      const written = Promise.withResolvers<void>();
+      let client: ReturnType<typeof connect> | null = null;
+      const server = createServer({ ...tls, minVersion: version, maxVersion: version }, socket => {
+        const chunks: Buffer[] = [];
+        let length = 0;
+        socket.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+          length += chunk.length;
+          if (length >= payload.length) received.resolve(Buffer.concat(chunks));
+        });
+        socket.on("error", received.reject);
+      });
+      server.on("tlsClientError", received.reject);
+      try {
+        const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+        server.listen(pipeName);
+        await once(server, "listening");
+
+        const socket = connect({ path: pipeName, ca: tls.cert, minVersion: version, maxVersion: version });
+        client = socket;
+        socket.on("error", received.reject);
+        socket.write(payload, err => (err ? written.reject(err) : written.resolve()));
+
+        const [data] = await Promise.all([received.promise, written.promise]);
+        expect(data.equals(payload)).toBe(true);
       } finally {
         client?.destroy();
         server.close();

@@ -659,6 +659,56 @@ describe.skipIf(skip)("node:https server under injected syscall faults", () => {
   );
 });
 
+describe.skipIf(skip)("the final handshake flight and the first write leave in one send()", () => {
+  // While a connection on the loop holds ciphertext the kernel refused, writes leave record by record. Not the
+  // one that a held flight waits for: as a second segment it is https://github.com/oven-sh/bun/issues/40653.
+  // The client may send twice, its ClientHello and that flight. A write that needs a send() of its own fails.
+  test.concurrent.each([
+    ["before the handshake", `socket.write("HELLO");`],
+    ["in 'secureConnect'", `socket.on("secureConnect", () => socket.write("HELLO"));`],
+  ])("a write %s, beside a stalled TLS socket", async (_name, write) => {
+    const received: string[] = [];
+    const options = { key: certs.key, cert: certs.cert, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" } as const;
+    const peer = tls.createServer(options, socket => {
+      socket.on("error", () => {}).once("data", chunk => (received.push(chunk.toString()), socket.end()));
+    });
+    await once(peer.listen(0, "127.0.0.1"), "listening");
+    const fixture = /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const { stalledConnection } = require(${JSON.stringify(join(import.meta.dir, "tls-client-close-fixture.mjs"))});
+      const tls = require("node:tls");
+      (async () => {
+        const stalled = await stalledConnection();
+        for (let left = 3; left > 0; left--) {
+          const events = [];
+          const socket = tls.connect({ host: "127.0.0.1", port: ${(peer.address() as AddressInfo).port}, rejectUnauthorized: false });
+          // The ClientHello leaves after 'connect'.
+          socket.on("connect", () => fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", fd: socket._handle.fd, after: 2, repeat: -1 }));
+          ${write}
+          socket.on("error", error => events.push("error:" + error.code));
+          socket.on("end", () => events.push("end"));
+          await new Promise(resolve => socket.on("close", resolve));
+          fault.clear();
+          events.push(stalled.socket.writableNeedDrain && !stalled.socket.destroyed ? "stalled" : "not stalled");
+          console.log(events.join());
+        }
+        process.exit(0);
+      })();
+    `;
+    try {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "inherit", stdout: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ client: stdout.trim().split("\n"), received, exitCode }).toEqual({
+        client: ["end,stalled", "end,stalled", "end,stalled"],
+        received: ["HELLO", "HELLO", "HELLO"],
+        exitCode: 0,
+      });
+    } finally {
+      peer.close();
+    }
+  });
+});
+
 describe.skipIf(skip)("node:tls seeded syscall fuzz", () => {
   const seed = Number(process.env.BUN_SOCKET_FUZZ_SEED ?? 0x7a1c) >>> 0 || 1;
   function makePrng(s: number) {

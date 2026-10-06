@@ -926,11 +926,19 @@ pub mod ssl_wrapper {
 
         pub fn deinit(&self) {
             self.flags.set_closed_notified(true);
-            if let Some(ssl) = self.ssl.take() {
-                // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
-                unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
+            let ssl = self.ssl.take();
+            // A running pass can have BoringSSL on the stack (ALPNCallback): `handle_traffic` frees it.
+            if self.traffic.get() == Traffic::Idle {
+                Self::free(ssl);
             }
             self.ctx.set(None);
+        }
+
+        fn free(ssl: Option<NonNull<boring_sys::SSL>>) {
+            if let Some(ssl) = ssl {
+                // SAFETY: ssl was created by SSL_new and the caller took it out of `self.ssl`; SSL_free also frees the input and output BIOs.
+                unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
+            }
         }
 
         fn trigger_handshake_callback(&self, outcome: HandshakeOutcome) {
@@ -1306,6 +1314,7 @@ pub mod ssl_wrapper {
                 self.traffic.set(Traffic::RerunRequested);
                 return;
             }
+            let ssl = self.ssl.get();
             loop {
                 self.traffic.set(Traffic::Running);
                 self.traffic_pass();
@@ -1314,6 +1323,9 @@ pub mod ssl_wrapper {
                 }
             }
             self.traffic.set(Traffic::Idle);
+            if self.ssl.get().is_none() {
+                Self::free(ssl);
+            }
         }
 
         fn traffic_pass(&self) {
@@ -1375,7 +1387,7 @@ pub mod ssl_wrapper {
 
     impl<T: Copy> Drop for SSLWrapper<T> {
         fn drop(&mut self) {
-            self.deinit();
+            Self::free(self.ssl.take());
         }
     }
 

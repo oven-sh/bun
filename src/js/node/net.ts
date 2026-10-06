@@ -425,17 +425,16 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
-// Node's wrap 'error' -> _emitTLSError. Not for a connected net.Socket: a listener there makes its close synthesize ECONNRESET.
+// Node's wrap 'error' -> _emitTLSError.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
-function forwardUpgradedError(self, connection: SocketInstance) {
-  const isSocket = connection instanceof Socket;
-  if (isSocket && connection._handle && !connection.connecting) return;
-  const onError = err => {
-    if (!self.destroyed) self._emitTLSError(err);
-  };
-  connection.on("error", onError);
-  if (isSocket) connection.once("connect", connection.removeListener.bind(connection, "error", onError));
+function forwardUpgradedError(self, connection) {
+  connection.on("error", err => {
+    if (self.destroyed) return;
+    // The close that follows is no second error.
+    self._hadError = true;
+    self._emitTLSError(err);
+  });
 }
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {
@@ -443,8 +442,9 @@ function linkUpgraded(self, connection: SocketInstance) {
   self[kupgraded] = connection;
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
-  forwardUpgradedError(self, connection);
   self.connecting = connection instanceof Socket && (connection.connecting || !connection._handle);
+  // A listener on a connected net.Socket makes its close synthesize ECONNRESET: that one is listened to once its fd is taken.
+  if (self.connecting || !isSocket) forwardUpgradedError(self, connection);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
@@ -477,6 +477,7 @@ function attachClientTLS(self, connection, tls, upgradeDuplex) {
       attachTLSEngine(self, connection, options);
     } else {
       adoptTLSPair(self, connection, upgradeTLSDeferred(handle, options));
+      if (!self.connecting) forwardUpgradedError(self, connection);
     }
   } catch (error) {
     self.destroy(error);
@@ -2582,6 +2583,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   } else if (connection.connecting) {
     connection.once("connect", process.nextTick.bind(null, adoptServerTLS, this, connection, options));
   } else {
+    forwardUpgradedError(this, connection);
     process.nextTick(adoptServerTLS, this, connection, options);
   }
   if (this.connecting) connection.once("connect", onUpgradedConnect.bind(null, this, connection));

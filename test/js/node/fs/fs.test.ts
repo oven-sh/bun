@@ -916,6 +916,301 @@ describe("writeFile with a preallocate-sized buffer", () => {
   });
 });
 
+// appendFile runs the same write path as writeFile once the file is open.
+describe("appendFile with a preallocate-sized buffer", () => {
+  const big = Buffer.alloc(3 * 1024 * 1024, "A");
+
+  it("appends to a path, and to a file descriptor at its offset", () => {
+    using dir = tempDir("fs-append-big", {});
+    const byPath = join(String(dir), "path.bin");
+    writeFileSync(byPath, "HEADER");
+    fs.appendFileSync(byPath, big);
+
+    const byFd = join(String(dir), "fd.bin");
+    const fd = openSync(byFd, "w");
+    try {
+      writeSync(fd, "HEADER");
+      fs.appendFileSync(fd, big);
+    } finally {
+      closeSync(fd);
+    }
+
+    for (const path of [byPath, byFd]) {
+      const out = readFileSync(path);
+      expect({
+        head: out.subarray(0, 6).toString(),
+        hole: out.indexOf(0),
+        length: out.length,
+      }).toEqual({ head: "HEADER", hole: -1, length: 6 + big.length });
+    }
+  });
+
+  it("overwrites in place with flag 'r+' and truncates with flag 'w'", () => {
+    using dir = tempDir("fs-append-big-flag", {});
+    const path = join(String(dir), "file.bin");
+    writeFileSync(path, Buffer.alloc(4 * 1024 * 1024, "B"));
+    fs.appendFileSync(path, big, { flag: "r+" });
+    const inPlace = readFileSync(path);
+    expect({
+      head: inPlace.subarray(0, big.length).equals(big),
+      tail: inPlace.indexOf("B"),
+      length: inPlace.length,
+    }).toEqual({ head: true, tail: big.length, length: 4 * 1024 * 1024 });
+
+    fs.appendFileSync(path, big, { flag: "w" });
+    expect(readFileSync(path).equals(big)).toBe(true);
+  });
+});
+
+// `{ flush: true }` asks for one fsync(2) after the data is written, and a failed
+// fsync is the failure of the call. Node's promises API returns for a
+// FileHandle before its flush step, so it never syncs one.
+describe("writeFile / appendFile with { flush: true }", () => {
+  const callback = (start: (done: (err: Error | null) => void) => void) =>
+    new Promise<void>((resolve, reject) => start(err => (err ? reject(err) : resolve())));
+  async function withFd(path: string, flag: string, use: (fd: number) => unknown) {
+    const fd = openSync(path, flag);
+    try {
+      return await use(fd);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  async function withHandle(path: string, flag: string, use: (handle: FileHandle) => unknown) {
+    const handle = await promises.open(path, flag);
+    try {
+      return await use(handle);
+    } finally {
+      await handle.close();
+    }
+  }
+  async function outcome(run: () => unknown): Promise<string> {
+    try {
+      await run();
+      return "ok";
+    } catch (e: any) {
+      return e.syscall ? `${e.code} ${e.syscall} [${Object.keys(e).sort()}]` : String(e.code);
+    }
+  }
+  const fsyncFailed = "EINVAL fsync [code,errno,syscall]";
+
+  // [name, call, whether the call syncs]
+  const forms: [string, (path: string, options: any) => unknown, boolean][] = [
+    ["writeFileSync(path)", (p, o) => fs.writeFileSync(p, "x", o), true],
+    ["writeFileSync(fd)", (p, o) => withFd(p, "w", fd => fs.writeFileSync(fd, "x", o)), true],
+    ["appendFileSync(path)", (p, o) => fs.appendFileSync(p, "x", o), true],
+    ["appendFileSync(fd)", (p, o) => withFd(p, "a", fd => fs.appendFileSync(fd, "x", o)), true],
+    ["writeFile(path, cb)", (p, o) => callback(cb => fs.writeFile(p, "x", o, cb)), true],
+    ["writeFile(fd, cb)", (p, o) => withFd(p, "w", fd => callback(cb => fs.writeFile(fd, "x", o, cb))), true],
+    ["appendFile(path, cb)", (p, o) => callback(cb => fs.appendFile(p, "x", o, cb)), true],
+    ["appendFile(fd, cb)", (p, o) => withFd(p, "a", fd => callback(cb => fs.appendFile(fd, "x", o, cb))), true],
+    ["promises.writeFile(path)", (p, o) => promises.writeFile(p, "x", o), true],
+    ["promises.appendFile(path)", (p, o) => promises.appendFile(p, "x", o), true],
+    ["promises.writeFile(FileHandle)", (p, o) => withHandle(p, "w", h => promises.writeFile(h, "x", o)), false],
+    ["promises.appendFile(FileHandle)", (p, o) => withHandle(p, "a", h => promises.appendFile(h, "x", o)), false],
+    ["FileHandle.writeFile()", (p, o) => withHandle(p, "w", h => h.writeFile("x", o)), false],
+    ["FileHandle.appendFile()", (p, o) => withHandle(p, "a", h => h.appendFile("x", o)), false],
+  ];
+
+  // On Linux, fsync(2) on /dev/null fails with EINVAL, so that error proves the
+  // call synced and reported it. A write to /dev/full fails with ENOSPC: the
+  // call reports that error and does not sync.
+  it.skipIf(!isLinux)("reports a failed fsync, except on a caller's FileHandle", async () => {
+    const got: Record<string, { flush: string; noFlush: string; writeFails: string }> = {};
+    const want: typeof got = {};
+    for (const [name, call, syncs] of forms) {
+      got[name] = {
+        flush: await outcome(() => call("/dev/null", { flush: true })),
+        noFlush: await outcome(() => call("/dev/null", { flush: false })),
+        writeFails: await outcome(() => call("/dev/full", { flush: true })),
+      };
+      want[name] = {
+        flush: syncs ? fsyncFailed : "ok",
+        noFlush: "ok",
+        writeFails: "ENOSPC write [code,errno,syscall]",
+      };
+    }
+    expect(got).toEqual(want);
+  });
+
+  // A file descriptor that is not open fails in fsync on each platform. Empty
+  // data means that no write fails first.
+  it("reports the fsync error of a file descriptor that is not open", async () => {
+    const badFd = 2147483647;
+    const codeAndSyscall = async (run: () => unknown) => {
+      try {
+        await run();
+        return "ok";
+      } catch (e: any) {
+        return `${e.code} ${e.syscall}`;
+      }
+    };
+    expect({
+      writeFileSync: await codeAndSyscall(() => fs.writeFileSync(badFd, "", { flush: true })),
+      appendFileSync: await codeAndSyscall(() => fs.appendFileSync(badFd, "", { flush: true })),
+      promisesWriteFile: await codeAndSyscall(() => promises.writeFile(badFd as any, "", { flush: true })),
+      promisesAppendFile: await codeAndSyscall(() => promises.appendFile(badFd as any, "", { flush: true })),
+    }).toEqual({
+      writeFileSync: "EBADF fsync",
+      appendFileSync: "EBADF fsync",
+      promisesWriteFile: "EBADF fsync",
+      promisesAppendFile: "EBADF fsync",
+    });
+  });
+
+  it("syncs a regular file and keeps the data", async () => {
+    using dir = tempDir("fs-flush", {});
+    const got: Record<string, string> = {};
+    const want: Record<string, string> = {};
+    for (const [i, [name, call]] of forms.entries()) {
+      const path = join(String(dir), `file-${i}`);
+      writeFileSync(path, "0");
+      const result = await outcome(() => call(path, { flush: true }));
+      got[name] = result === "ok" ? readFileSync(path, "utf8") : result;
+      want[name] = name.toLowerCase().includes("append") ? "0x" : "x";
+    }
+    expect(got).toEqual(want);
+  });
+
+  it.skipIf(!isLinux)("appendFile syncs when the data is empty or the flag is explicit", async () => {
+    expect({
+      emptyData: await outcome(() => fs.appendFileSync("/dev/null", "", { flush: true })),
+      flagW: await outcome(() => fs.appendFileSync("/dev/null", "x", { flag: "w", flush: true })),
+    }).toEqual({ emptyData: fsyncFailed, flagW: fsyncFailed });
+  });
+
+  // Node's writeFileSync has a fast path for string data with an explicit utf8
+  // encoding, and that path returns before the fsync (nodejs/node#63887). Bun
+  // syncs for each encoding.
+  it.skipIf(!isLinux)("syncs string data with an explicit utf8 encoding", async () => {
+    expect({
+      writeFileSync: await outcome(() => fs.writeFileSync("/dev/null", "x", { encoding: "utf8", flush: true })),
+      appendFileSync: await outcome(() => fs.appendFileSync("/dev/null", "x", { encoding: "utf-8", flush: true })),
+    }).toEqual({ writeFileSync: fsyncFailed, appendFileSync: fsyncFailed });
+  });
+
+  // Bun's promises API also takes a raw file descriptor. Only a FileHandle is exempt.
+  it.skipIf(!isLinux)("promises.writeFile / appendFile sync a raw file descriptor", async () => {
+    expect({
+      writeFile: await withFd("/dev/null", "w", fd =>
+        outcome(() => promises.writeFile(fd as any, "x", { flush: true })),
+      ),
+      appendFile: await withFd("/dev/null", "a", fd =>
+        outcome(() => promises.appendFile(fd as any, "x", { flush: true })),
+      ),
+    }).toEqual({ writeFile: fsyncFailed, appendFile: fsyncFailed });
+  });
+
+  it.skipIf(!isLinux)("a failed fsync closes the file the call opened and leaves a caller's fd open", async () => {
+    const devNullFds = () =>
+      readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          return readlinkSync(`/proc/self/fd/${fd}`) === "/dev/null";
+        } catch {
+          return false;
+        }
+      }).length;
+    const calls: Record<string, () => unknown> = {
+      writeFileSync: () => fs.writeFileSync("/dev/null", "x", { flush: true }),
+      appendFileSync: () => fs.appendFileSync("/dev/null", "x", { flush: true }),
+      "promises.writeFile": () => promises.writeFile("/dev/null", "x", { flush: true }),
+      "promises.appendFile": () => promises.appendFile("/dev/null", "x", { flush: true }),
+    };
+    const got: Record<string, { failures: number; leaked: number }> = {};
+    const want: typeof got = {};
+    for (const [name, call] of Object.entries(calls)) {
+      const before = devNullFds();
+      let failures = 0;
+      for (let i = 0; i < 25; i++) {
+        if ((await outcome(call)) === fsyncFailed) failures++;
+      }
+      // Another test can close a descriptor meanwhile. That is not a leak.
+      got[name] = { failures, leaked: Math.max(0, devNullFds() - before) };
+      want[name] = { failures: 25, leaked: 0 };
+    }
+    expect(got).toEqual(want);
+
+    await withFd("/dev/null", "a", async fd => {
+      expect(await outcome(() => fs.appendFileSync(fd, "x", { flush: true }))).toBe(fsyncFailed);
+      expect(fstatSync(fd).isCharacterDevice()).toBe(true);
+    });
+  });
+
+  it("validates flush on every FileHandle form", async () => {
+    using dir = tempDir("fs-flush-validate", {});
+    const path = join(String(dir), "file");
+    const got: Record<string, string> = {};
+    for (const [name, call, syncs] of forms) {
+      if (!syncs) got[name] = await outcome(() => call(path, { flush: "yes" }));
+    }
+    expect(got).toEqual({
+      "promises.writeFile(FileHandle)": "ERR_INVALID_ARG_TYPE",
+      "promises.appendFile(FileHandle)": "ERR_INVALID_ARG_TYPE",
+      "FileHandle.writeFile()": "ERR_INVALID_ARG_TYPE",
+      "FileHandle.appendFile()": "ERR_INVALID_ARG_TYPE",
+    });
+  });
+
+  it("reads the other options from the caller's object when it drops flush for a FileHandle", async () => {
+    using dir = tempDir("fs-flush-options", {});
+    const path = join(String(dir), "file");
+    const inherited = { __proto__: { encoding: "hex" }, flush: true };
+    class PrivateOptions {
+      #encoding = "hex";
+      flush = true;
+      get encoding() {
+        return this.#encoding;
+      }
+    }
+    const got: Record<string, string> = {};
+    for (const [name, options] of Object.entries({ inherited, privateGetter: new PrivateOptions() })) {
+      await withHandle(path, "w", handle => promises.writeFile(handle, "6869", options as any));
+      got[name] = readFileSync(path, "utf8");
+    }
+    expect({ ...got, flush: inherited.flush }).toEqual({ inherited: "hi", privateGetter: "hi", flush: true });
+  });
+});
+
+// Node's sync forms never read `options.signal`.
+it("readFileSync / writeFileSync / appendFileSync ignore a signal that is already aborted", () => {
+  using dir = tempDir("fs-sync-aborted-signal", { read: "x" });
+  const options = { signal: AbortSignal.abort() } as any;
+  fs.writeFileSync(join(String(dir), "write"), "x", options);
+  fs.appendFileSync(join(String(dir), "append"), "x", options);
+  expect({
+    read: readFileSync(join(String(dir), "read"), { encoding: "utf8", ...options }),
+    write: readFileSync(join(String(dir), "write"), "utf8"),
+    append: readFileSync(join(String(dir), "append"), "utf8"),
+  }).toEqual({ read: "x", write: "x", append: "x" });
+});
+
+// The open of a FIFO for writing waits for a reader. So the abort lands after
+// the call started and before its open returns.
+it.skipIf(isWindows)("writeFile / appendFile write nothing when the signal aborts during the open", async () => {
+  using dir = tempDir("fs-abort-during-open", {});
+  const got: Record<string, { error: string | undefined; bytesRead: number }> = {};
+  for (const name of ["writeFile", "appendFile"] as const) {
+    const fifo = join(String(dir), name);
+    mkfifo(fifo, 0o600);
+    const controller = new AbortController();
+    const { promise, resolve } = Promise.withResolvers<Error | null>();
+    fs[name](fifo, "DATA", { signal: controller.signal }, resolve);
+    controller.abort();
+    const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      const error = await promise;
+      // The writer is closed. A read returns what it wrote, or 0 at the end of the file.
+      got[name] = { error: error?.name, bytesRead: readSync(reader, Buffer.alloc(16)) };
+    } finally {
+      closeSync(reader);
+    }
+  }
+  expect(got).toEqual({
+    writeFile: { error: "AbortError", bytesRead: 0 },
+    appendFile: { error: "AbortError", bytesRead: 0 },
+  });
+});
+
 describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = tmpdirTestMkdir();

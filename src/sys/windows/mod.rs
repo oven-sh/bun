@@ -414,6 +414,18 @@ pub fn last_system_errno() -> SystemErrno {
     Win32Error::get().to_system_errno()
 }
 
+/// `fsync(2)` for an `Fd` of either kind: a libuv fd or a system `HANDLE`.
+pub fn flush_file_buffers(fd: Fd) -> bun_sys::Result<()> {
+    // SAFETY: the handle is passed by value; a bad handle returns FALSE and sets the last error.
+    if unsafe { kernel32::FlushFileBuffers(fd.native()) } == 0 {
+        return Err(bun_sys::Error::from_win32(
+            Win32Error::get(),
+            bun_sys::Tag::fsync,
+        ));
+    }
+    Ok(())
+}
+
 pub use bun_libuv_sys as libuv;
 
 /// True when the process token is a Windows AppContainer (lowbox) token.

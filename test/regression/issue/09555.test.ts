@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { join } from "path";
 import { Readable } from "stream";
 describe("#09555", () => {
@@ -127,7 +127,7 @@ describe("#09555", () => {
   test("Bun.file() NativeReadable", async () => {
     const full = crypto.getRandomValues(new Uint8Array(1024 * 3));
     const sha = Bun.CryptoHasher.hash("sha256", full, "base64");
-    const dir = tempDirWithFiles("09555", {
+    await using dir = tempDir("09555", {
       "/file.blob": full,
     });
     await Bun.write(join(dir, "file.blob"), full);

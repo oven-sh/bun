@@ -31,7 +31,8 @@ construction. Bun does not store closures. Instead:
   `switch` over the kind — user `underlyingSource` methods, tee branches, transform halves,
   cross-realm transfers, and Bun's native sources are all arms of the same switch.
 - Promise reactions and deferred jobs go through **`JSStreamsRuntime`**
-  (`JSStreamsRuntime.{h,cpp}`), a single per-global cell reached via
+  (`JSStreamsRuntime.{h,cpp}`), a plain per-global struct held by value on
+  `Zig::GlobalObject` and reached via
   `globalObject->streamsRuntime()`. It lazily materializes one shared `JSFunction` per
   reaction handler; handlers are registered with
   `promise->performPromiseThenWithContext(vm, global, onFulfilled, onRejected, result, contextCell)`

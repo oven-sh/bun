@@ -11,16 +11,6 @@ pub struct FieldDescription {
     pub binary: bool,
 }
 
-impl Default for FieldDescription {
-    fn default() -> Self {
-        Self {
-            name_or_index: ColumnIdentifier::Name(Default::default()),
-            type_oid: 0,
-            binary: false,
-        }
-    }
-}
-
 impl FieldDescription {
     pub fn type_tag(&self) -> types::Tag {
         // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype over
@@ -28,7 +18,7 @@ impl FieldDescription {
         types::Tag(self.type_oid as Short)
     }
 
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
+    pub(crate) fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
         let name = reader.read_z()?;

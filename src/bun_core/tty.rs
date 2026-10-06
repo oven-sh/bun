@@ -1,8 +1,6 @@
 use core::ffi::{c_int, c_void};
 
-// ─── MOVE-IN: Winsize (TYPE_ONLY from bun_sys → bun_core) ─────────────────
-// Used by output.rs::TERMINAL_SIZE. Field names
-// match the move-out forward-ref in output.rs (row/col, not ws_row/ws_col).
+/// Terminal size as reported by the tty (`struct winsize` on POSIX).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Winsize {
@@ -13,8 +11,6 @@ pub struct Winsize {
 }
 // SAFETY: four `u16` fields; all-zero is a valid `Winsize`.
 unsafe impl crate::ffi::Zeroable for Winsize {}
-// SAFETY: `#[repr(C)]` over four `u16` — exactly 8 bytes, no padding.
-crate::unsafe_impl_atom!(Winsize);
 
 #[repr(C)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -22,6 +18,18 @@ pub enum Mode {
     Normal = 0,
     Raw = 1,
     Io = 2,
+}
+
+/// `tcsetattr` timing for [`State::set_mode`]. `Drain` (`TCSADRAIN`, libuv's
+/// behavior) waits for pending output before applying, which is right for a
+/// real tty. A PTY master must use `Now` (`TCSANOW`): draining waits on the
+/// slave's write lock, and a child blocked in `write()` holds that lock
+/// until the master's owner (the very thread calling `set_mode`) reads the
+/// master, deadlocking both.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum SetAttrWhen {
+    Drain,
+    Now,
 }
 
 /// Per-handle raw-mode state (libuv's `uv_tty_t` fields): the mode this handle
@@ -45,9 +53,16 @@ impl State {
     }
 
     #[inline]
-    pub fn set_mode(&mut self, fd: c_int, mode: Mode) -> c_int {
+    pub fn set_mode(&mut self, fd: c_int, mode: Mode, when: SetAttrWhen) -> c_int {
         // SAFETY: layout matches C++'s `BunTTYState`; `self` outlives the call.
-        unsafe { Bun__ttySetMode(fd, mode as c_int, core::ptr::from_mut(self).cast()) }
+        unsafe {
+            Bun__ttySetMode(
+                fd,
+                mode as c_int,
+                core::ptr::from_mut(self).cast(),
+                (when == SetAttrWhen::Drain) as c_int,
+            )
+        }
     }
 }
 
@@ -62,7 +77,7 @@ impl RawModeGuard {
     #[inline]
     pub fn new(fd: c_int) -> Self {
         let mut state = State::new();
-        let _ = state.set_mode(fd, Mode::Raw);
+        let _ = state.set_mode(fd, Mode::Raw, SetAttrWhen::Drain);
         Self { fd, state }
     }
 }
@@ -70,10 +85,12 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     #[inline]
     fn drop(&mut self) {
-        let _ = self.state.set_mode(self.fd, Mode::Normal);
+        let _ = self
+            .state
+            .set_mode(self.fd, Mode::Normal, SetAttrWhen::Drain);
     }
 }
 
 unsafe extern "C" {
-    unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void) -> c_int;
+    unsafe fn Bun__ttySetMode(fd: c_int, mode: c_int, state: *mut c_void, drain: c_int) -> c_int;
 }

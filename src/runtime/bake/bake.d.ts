@@ -463,6 +463,10 @@ declare module "bun" {
        */
       readonly pageModule: any;
       /**
+       * The request, when the page module exports `mode = "ssr"`; `undefined` for every other mode.
+       */
+      readonly request?: Request;
+      /**
        * The loaded module of all of the route layouts. The first one is the
        * inner-most, the last is the root layout.
        *

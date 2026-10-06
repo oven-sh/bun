@@ -23,7 +23,7 @@ use crate::utils::DisjointSet;
 /// property operand share the same scope, or neither has a scope.
 ///
 /// Corresponds to TS `alignMethodCallScopes(fn: HIRFunction): void`.
-pub fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environment) {
     // Maps an identifier to the scope it should be assigned to (or None to remove scope)
     let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::new();
     let mut merged_scopes = DisjointSet::<ScopeId>::new();

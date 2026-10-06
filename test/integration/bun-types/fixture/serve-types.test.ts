@@ -128,6 +128,7 @@ test("basic + websocket + upgrade", {
       expectType<typeof ws>().is<Bun.ServerWebSocket<undefined>>();
       ws.send(message);
       expectType(message).is<string | Buffer<ArrayBuffer>>();
+      expectType(ws.binaryType).is<"nodebuffer" | "arraybuffer" | "uint8array" | "blob" | undefined>();
     },
   },
 

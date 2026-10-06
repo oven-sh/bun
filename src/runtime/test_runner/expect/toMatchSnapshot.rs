@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
@@ -16,8 +15,7 @@ pub(crate) fn to_match_snapshot(
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 
@@ -43,13 +41,13 @@ pub(crate) fn to_match_snapshot(
     };
     let _ = buntest_strong; // released by Drop at scope exit.
 
-    let mut hint_string: ZigString = ZigString::EMPTY;
+    let mut hint_string = None;
     let mut property_matchers: Option<JSValue> = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                arguments[0].to_zig_string(&mut hint_string, global)?;
+                hint_string = Some(arguments[0].to_js_string_view(global)?);
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
@@ -76,7 +74,7 @@ pub(crate) fn to_match_snapshot(
             property_matchers = Some(arguments[0]);
 
             if arguments[1].is_string() {
-                arguments[1].to_zig_string(&mut hint_string, global)?;
+                hint_string = Some(arguments[1].to_js_string_view(global)?);
             } else {
                 return throw!(
                     this,
@@ -88,8 +86,7 @@ pub(crate) fn to_match_snapshot(
         }
     }
 
-    let hint = hint_string.to_slice();
-    // `hint` cleanup handled by Drop.
+    let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 
     let value: JSValue = this.get_value(
         global,

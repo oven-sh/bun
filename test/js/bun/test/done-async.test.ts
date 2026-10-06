@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("done() causes the test to fail when it should", async () => {
-  const dir = tempDirWithFiles("done", {
+  await using dir = tempDir("done", {
     "done.test.ts": await Bun.file(path.join(import.meta.dir, "done-infinity.fixture.ts")).text(),
     "package.json": JSON.stringify({
       name: "done",
@@ -17,7 +17,7 @@ test("done() causes the test to fail when it should", async () => {
 
   const $$ = new Bun.$.Shell();
   $$.nothrow();
-  $$.cwd(dir);
+  $$.cwd(String(dir));
   $$.env(bunEnv);
   const result = await $$`${bunExe()} test`;
 

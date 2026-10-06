@@ -9,9 +9,9 @@ pub struct CounterStyleRule {
     /// Declarations in the `@counter-style` rule.
     // `DeclarationBlock<'bump>` borrows the parser arena; lifetime erased to
     // `'static` here per the rules/mod.rs `CssRule<R>` lifetime-erasure note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl CounterStyleRule {

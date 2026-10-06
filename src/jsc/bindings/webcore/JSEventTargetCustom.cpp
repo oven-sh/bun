@@ -28,15 +28,10 @@
 
 // #include "DOMWindow.h"
 #include "EventTarget.h"
-// #include "EventTargetHeaders.h"
 #include "EventTargetInterfaces.h"
-// #include "JSDOMWindow.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
-// #include "JSWindowProxy.h"
-// #include "JSWorkerGlobalScope.h"
-// #include "WorkerGlobalScope.h"
-#include "BunWorkerGlobalScope.h"
+#include "GlobalEventScope.h"
 
 #if ENABLE(OFFSCREEN_CANVAS)
 #include "OffscreenCanvas.h"

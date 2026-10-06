@@ -9,7 +9,7 @@ import { once } from "node:events";
 import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { isASAN, isDebug, tls as tlsCerts } from "harness";
+import { isASAN, isDebug, rss, tls as tlsCerts } from "harness";
 
 test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () => {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, sock => {
@@ -24,7 +24,7 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     await connectOnce(port);
     Bun.gc(true);
     const ctxBefore = sslCtxLiveCount();
-    const rssBefore = process.memoryUsage.rss();
+    const rssBefore = rss();
 
     // 50 is enough to prove O(1): the old code leaked one SSL_CTX per connect,
     // so the count delta would be ~50 not ≤2. (200 was used originally but
@@ -37,7 +37,7 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     Bun.gc(true);
 
     const ctxAfter = sslCtxLiveCount();
-    const rssAfter = process.memoryUsage.rss();
+    const rssAfter = rss();
 
     // The whole point: no per-connection SSL_CTX. Allow a tiny slack for the
     // close-list / GC race, but 200 connects must not move this by 200.

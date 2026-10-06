@@ -18,7 +18,6 @@
 #pragma once
 #include <map>
 #include <list>
-#include <iostream>
 #include <unordered_set>
 #include <utility>
 #include <memory>
@@ -106,9 +105,7 @@ private:
     std::vector<T> outgoingMessages;
 
     void checkIteratingSubscriber(Subscriber *s) {
-        /* Notify user that they are doing something wrong here */
         if (iteratingSubscriber == s) {
-            std::cerr << "Error: WebSocket must not subscribe or unsubscribe to topics while iterating its topics!" << std::endl;
             std::terminate();
         }
     }
@@ -163,7 +160,6 @@ public:
 
     /* Subscribe fails if we already are subscribed */
     Topic *subscribe(Subscriber *s, std::string_view topic) {
-        /* Notify user that they are doing something wrong here */
         checkIteratingSubscriber(s);
 
         /* Lookup or create new topic */
@@ -185,27 +181,24 @@ public:
         return topicPtr;
     }
 
-    /* Returns ok, last, newCount */
-    std::tuple<bool, bool, int> unsubscribe(Subscriber *s, std::string_view topic) {
-        /* Notify user that they are doing something wrong here */
+    /* Returns ok, last */
+    std::pair<bool, bool> unsubscribe(Subscriber *s, std::string_view topic) {
         checkIteratingSubscriber(s);
 
         /* Lookup topic */
         Topic *topicPtr = lookupTopic(topic);
         if (!topicPtr) {
             /* If the topic doesn't exist we are assumed to still be subscribers of something */
-            return {false, false, -1};
+            return {false, false};
         }
 
         /* Erase from our list first */
         if (s->topics.erase(topicPtr) == 0) {
-            return {false, false, -1};
+            return {false, false};
         }
 
         /* Remove us from topic */
         topicPtr->erase(s);
-
-        int newCount = topicPtr->size();
 
         /* If there is no subscriber to this topic, remove it */
         if (!topicPtr->size()) {
@@ -214,7 +207,7 @@ public:
         }
 
         /* If we don't hold any topics we are to be freed altogether */
-        return {true, s->topics.size() == 0, newCount};
+        return {true, s->topics.size() == 0};
     }
 
     /* Factory function for creating a Subscriber */

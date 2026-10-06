@@ -38,6 +38,7 @@ pub struct SSLConfig {
     pub session_timeout: i32,
     pub allow_partial_trust_chain: bool,
     pub sigalgs: CStrPtr,
+    pub ecdh_curve: CStrPtr,
     /// Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
     pub ssl_min_version: i32,
     pub ssl_max_version: i32,
@@ -53,7 +54,7 @@ pub struct SSLConfig {
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
     /// context.
-    pub cached_hash: AtomicU64,
+    pub(crate) cached_hash: AtomicU64,
 }
 
 /// Casing alias for callers that snake_cased the type name.
@@ -66,19 +67,19 @@ pub type SslConfig = SSLConfig;
 #[repr(transparent)]
 pub struct SharedPtr(Arc<SSLConfig>);
 
-pub type WeakPtr = Weak<SSLConfig>;
+pub(crate) type WeakPtr = Weak<SSLConfig>;
 
 impl SharedPtr {
     #[inline]
-    pub fn new(config: SSLConfig) -> Self {
+    pub(crate) fn new(config: SSLConfig) -> Self {
         Self(Arc::new(config))
     }
     #[inline]
-    pub fn get(&self) -> &SSLConfig {
+    pub(crate) fn get(&self) -> &SSLConfig {
         &self.0
     }
     #[inline]
-    pub fn clone_weak(&self) -> WeakPtr {
+    pub(crate) fn clone_weak(&self) -> WeakPtr {
         Arc::downgrade(&self.0)
     }
 }
@@ -91,15 +92,8 @@ impl core::ops::Deref for SharedPtr {
     }
 }
 
-impl From<Arc<SSLConfig>> for SharedPtr {
-    #[inline]
-    fn from(a: Arc<SSLConfig>) -> Self {
-        Self(a)
-    }
-}
-
 impl SSLConfig {
-    pub const ZERO: SSLConfig = SSLConfig {
+    pub(crate) const ZERO: SSLConfig = SSLConfig {
         server_name: core::ptr::null(),
         key_file_name: core::ptr::null(),
         cert_file_name: core::ptr::null(),
@@ -114,6 +108,7 @@ impl SSLConfig {
         session_timeout: 0,
         allow_partial_trust_chain: false,
         sigalgs: core::ptr::null(),
+        ecdh_curve: core::ptr::null(),
         ssl_min_version: 0,
         ssl_max_version: 0,
         request_cert: 0,
@@ -168,7 +163,7 @@ impl SSLConfig {
     /// Extract the raw `*const SSLConfig` from an optional shared handle for
     /// pointer-equality comparison (interned configs have stable addresses).
     #[inline]
-    pub fn raw_ptr<D>(maybe_shared: Option<&D>) -> Option<*const SSLConfig>
+    pub(crate) fn raw_ptr<D>(maybe_shared: Option<&D>) -> Option<*const SSLConfig>
     where
         D: core::ops::Deref<Target = SSLConfig>,
     {
@@ -223,6 +218,9 @@ impl SSLConfig {
         if !self.sigalgs.is_null() {
             ctx_opts.sigalgs = self.sigalgs;
         }
+        if !self.ecdh_curve.is_null() {
+            ctx_opts.ecdh_curve = self.ecdh_curve;
+        }
         if let Some(crl) = &self.crl {
             ctx_opts.crl = crl.as_ptr();
             ctx_opts.crl_count = crl.len() as u32;
@@ -253,7 +251,7 @@ impl SSLConfig {
         copy
     }
 
-    pub fn is_same(&self, other: &SSLConfig) -> bool {
+    pub(crate) fn is_same(&self, other: &SSLConfig) -> bool {
         macro_rules! eq_cstr {
             ($f:ident) => {
                 if !cstr_eq(self.$f, other.$f) {
@@ -299,6 +297,7 @@ impl SSLConfig {
             return false;
         }
         eq_cstr!(sigalgs);
+        eq_cstr!(ecdh_curve);
         if self.ssl_min_version != other.ssl_min_version {
             return false;
         }
@@ -334,7 +333,7 @@ impl SSLConfig {
     // Takes `&self` (not `&mut`) because the intern registry calls this through
     // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
     // The memoization write goes through `AtomicU64` (interior mutability).
-    pub fn content_hash(&self) -> u64 {
+    pub(crate) fn content_hash(&self) -> u64 {
         let cached = self.cached_hash.load(Ordering::Relaxed);
         if cached != 0 {
             return cached;
@@ -373,6 +372,7 @@ impl SSLConfig {
         hasher.update(&self.session_timeout.to_ne_bytes());
         hasher.update(&[self.allow_partial_trust_chain as u8]);
         hash_cstr!(sigalgs);
+        hash_cstr!(ecdh_curve);
         hasher.update(&self.ssl_min_version.to_ne_bytes());
         hasher.update(&self.ssl_max_version.to_ne_bytes());
         hasher.update(&self.request_cert.to_ne_bytes());
@@ -400,7 +400,7 @@ impl SSLConfig {
     /// fields for content comparison while we're still in the map. For
     /// non-interned configs, `remove()` is a cheap no-op (pointer-identity
     /// check fails).
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         global_registry::remove(self);
         free_string(&mut self.server_name);
         free_string(&mut self.key_file_name);
@@ -413,6 +413,7 @@ impl SSLConfig {
         free_strings(&mut self.ca);
         free_strings(&mut self.crl);
         free_string(&mut self.sigalgs);
+        free_string(&mut self.ecdh_curve);
         free_string(&mut self.ssl_ciphers);
         free_string(&mut self.protos);
     }
@@ -470,6 +471,7 @@ impl Clone for SSLConfig {
             session_timeout: self.session_timeout,
             allow_partial_trust_chain: self.allow_partial_trust_chain,
             sigalgs: clone_string(self.sigalgs),
+            ecdh_curve: clone_string(self.ecdh_curve),
             ssl_min_version: self.ssl_min_version,
             ssl_max_version: self.ssl_max_version,
             request_cert: self.request_cert,
@@ -683,5 +685,3 @@ pub mod global_registry {
         drop(weak);
     }
 }
-
-pub use global_registry as GlobalRegistry;

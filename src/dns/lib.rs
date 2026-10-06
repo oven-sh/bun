@@ -175,7 +175,6 @@ pub enum Family {
     Unspecified,
     Inet,
     Inet6,
-    Unix,
 }
 
 bun_core::comptime_string_map! {
@@ -189,12 +188,11 @@ bun_core::comptime_string_map! {
 }
 
 impl Family {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             Family::Unspecified => 0,
             Family::Inet => sock::AF_INET,
             Family::Inet6 => sock::AF_INET6,
-            Family::Unix => sock::AF_UNIX,
         }
     }
 }
@@ -217,7 +215,7 @@ bun_core::comptime_string_map! {
 }
 
 impl SocketType {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             SocketType::Unspecified => 0,
             SocketType::Stream => sock::SOCK_STREAM,
@@ -242,7 +240,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Protocol {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             Protocol::Unspecified => 0,
             Protocol::Tcp => sock::IPPROTO_TCP,
@@ -288,12 +286,6 @@ impl Backend {
     #[cfg(all(not(any(target_os = "macos", windows)), not(target_os = "android")))]
     pub const fn default() -> Backend {
         Backend::CAres
-    }
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::default()
     }
 }
 
@@ -460,8 +452,6 @@ bun_core::comptime_string_map! {
 }
 
 impl Order {
-    pub const DEFAULT: Self = Order::Verbatim;
-
     pub fn from_string(order: &[u8]) -> Option<Order> {
         ORDER_MAP.get(order).copied()
     }
@@ -472,6 +462,26 @@ impl Order {
             bun_core::Global::exit(1)
         })
     }
+}
+
+/// A numeric address, or a host name within the RFC 1035 limits made of the bytes
+/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
+pub fn is_valid_hostname(name: &[u8]) -> bool {
+    fn is_hostname_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
+    }
+    if name.is_empty() || bun_core::strings::contains_char(name, 0) {
+        return false;
+    }
+    if bun_core::ip_address::to_ip_address(name).is_some() {
+        return true;
+    }
+    let name = name.strip_suffix(b".").unwrap_or(name);
+    if name.is_empty() || name.len() > 253 {
+        return false;
+    }
+    bun_core::strings::split(name, b".")
+        .all(|label| (1..=63).contains(&label.len()) && label.iter().all(|&b| is_hostname_byte(b)))
 }
 
 /// The process-wide DNS

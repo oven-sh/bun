@@ -8,18 +8,6 @@ pub struct SASLInitialResponse {
     pub data: Data,
 }
 
-impl Default for SASLInitialResponse {
-    fn default() -> Self {
-        Self {
-            mechanism: Data::Empty,
-            data: Data::Empty,
-        }
-    }
-}
-
-// `deinit` only called `.deinit()` on owned `Data` fields; `Data: Drop` handles this.
-// (No explicit `impl Drop` needed — see PORTING.md §Idiom map: deinit.)
-
 impl SASLInitialResponse {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,

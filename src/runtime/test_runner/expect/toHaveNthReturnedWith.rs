@@ -43,17 +43,17 @@ pub(crate) fn to_have_nth_returned_with(
 
     if index < calls_count {
         nth_call_exists = true;
-        let nth_result = returns.get_direct_index(global, index);
+        let nth_result = returns.get_direct_index(global, index)?;
         if nth_result.is_object() {
             let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
-                if type_str.eql_comptime("return") {
+                let type_str = result_type.to_bun_string(global)?;
+                if type_str.eq_ascii(b"return") {
                     nth_return_value = nth_result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                     if nth_return_value.jest_deep_equals(expected, global)? {
                         pass = true;
                     }
-                } else if type_str.eql_comptime("throw") {
+                } else if type_str.eq_ascii(b"throw") {
                     nth_call_threw = true;
                     nth_error_value = nth_result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                 }
@@ -68,7 +68,6 @@ pub(crate) fn to_have_nth_returned_with(
     // Handle failure
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
-    // defer formatter.deinit() — handled by Drop
 
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
@@ -108,14 +107,7 @@ pub(crate) fn to_have_nth_returned_with(
 
     // Diff if possible
     if expected.is_string() && nth_return_value.is_string() {
-        let diff_format = DiffFormatter {
-            expected: Some(expected),
-            received: Some(nth_return_value),
-            expected_string: None,
-            received_string: None,
-            global_this: Some(global),
-            not: false,
-        };
+        let diff_format = DiffFormatter::new(global, nth_return_value, expected, false)?;
         return throw!(
             this,
             global,

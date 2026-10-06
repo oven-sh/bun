@@ -89,7 +89,7 @@ pub const RUNTIME_TRANSPILER_CACHE: bool = true;
 
 /// On Windows, node_modules/.bin uses pairs of '.exe' + '.bunx' files.  The
 /// fast path is to load the .bunx file within `bun.exe` instead of
-/// `bun_shim_impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
+/// `bun-shim-impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
 ///
 /// When debugging weird script runner issues, it may be worth disabling this in
 /// order to isolate your bug.

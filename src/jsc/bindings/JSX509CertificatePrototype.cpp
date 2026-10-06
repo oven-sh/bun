@@ -233,9 +233,12 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckEmail, (JSGlobalObject *
     uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::UTF8View emailView(view);
+    // A string too long to convert is not a name in the certificate.
+    auto emailView = Bun::UTF8View::tryCreate(view);
+    if (!emailView) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 
-    auto check = thisObject->checkEmail(globalObject, emailView.span(), flags);
+    auto check = thisObject->checkEmail(globalObject, emailView->span(), flags);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     return JSValue::encode(emailString);
@@ -268,18 +271,19 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckHost, (JSGlobalObject * 
     auto view = hostString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::UTF8View hostView(view);
+    // A string too long to convert is not a name in the certificate.
+    auto hostView = Bun::UTF8View::tryCreate(view);
+    if (!hostView) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 
-    ncrypto::DataPointer peerName;
-    auto check = thisObject->checkHost(globalObject, hostView.span(), flags, &peerName);
+    WTF::String peerName;
+    auto check = thisObject->checkHost(globalObject, hostView->span(), flags, &peerName);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());
     // Node returns the subject name that matched, which differs from the query
     // for wildcard SAN entries and for case-insensitive matches.
-    if (peerName) {
-        auto matched = WTF::String::fromUTF8ReplacingInvalidSequences(peerName.span());
-        return JSValue::encode(jsString(vm, WTF::move(matched)));
-    }
+    if (!peerName.isEmpty())
+        return JSValue::encode(jsString(vm, WTF::move(peerName)));
     return JSValue::encode(hostString);
 }
 
@@ -723,10 +727,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * 
     RETURN_IF_EXCEPTION(scope, {});
     auto view = validToDate->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View validToDateView = Bun::UTF8View(view);
-    if (view->isEmpty())
+    auto validToDateView = Bun::UTF8View::tryCreate(view);
+    if (!validToDateView || view->isEmpty())
         return JSValue::encode(jsUndefined());
-    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validToDateView.span().data()), validToDateView.span().size() };
+    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validToDateView->span().data()), validToDateView->span().size() };
     double date = WTF::parseDate(span);
     return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
 }
@@ -746,10 +750,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject 
     RETURN_IF_EXCEPTION(scope, {});
     auto view = validFromDate->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::UTF8View validFromDateView = Bun::UTF8View(view);
-    if (view->isEmpty())
+    auto validFromDateView = Bun::UTF8View::tryCreate(view);
+    if (!validFromDateView || view->isEmpty())
         return JSValue::encode(jsUndefined());
-    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validFromDateView.span().data()), validFromDateView.span().size() };
+    std::span<const Latin1Character> span = { reinterpret_cast<const Latin1Character*>(validFromDateView->span().data()), validFromDateView->span().size() };
     double date = WTF::parseDate(span);
     return JSValue::encode(JSC::DateInstance::create(vm, globalObject->dateStructure(), date));
 }

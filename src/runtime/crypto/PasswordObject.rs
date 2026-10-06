@@ -22,7 +22,7 @@ pub(crate) struct PasswordObject;
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
-pub enum Algorithm {
+pub(crate) enum Algorithm {
     Argon2i,
     Argon2d,
     Argon2id,
@@ -30,7 +30,7 @@ pub enum Algorithm {
 }
 
 #[derive(Copy, Clone)]
-pub enum AlgorithmValue {
+pub(crate) enum AlgorithmValue {
     Argon2i(Argon2Params),
     Argon2d(Argon2Params),
     Argon2id(Argon2Params),
@@ -204,7 +204,7 @@ fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
 }
 
 #[derive(Copy, Clone)]
-pub struct Argon2Params {
+pub(crate) struct Argon2Params {
     // we don't support the other options right now, but can add them later if someone asks
     pub(crate) memory_cost: u32,
     pub(crate) time_cost: u32,
@@ -232,7 +232,7 @@ impl Default for Argon2Params {
 }
 
 impl Algorithm {
-    pub fn get(pw: &[u8]) -> Option<Algorithm> {
+    pub(crate) fn get(pw: &[u8]) -> Option<Algorithm> {
         if pw[0] != b'$' {
             return None;
         }
@@ -589,7 +589,7 @@ impl JSPasswordObject {
     /// throws or returns the converted value; async path boxes a
     /// `PasswordJob<Op>`, refs the loop, and schedules it.
     fn run<Op: PasswordOp, const SYNC: bool>(
-        global_object: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         password: Box<[u8]>,
         op: Op,
     ) -> JsResult<JSValue> {
@@ -598,17 +598,17 @@ impl JSPasswordObject {
         if SYNC {
             return match op.compute(&password) {
                 Err(err) => {
-                    let error_instance = password_error_instance(&err, Op::ERR_VERB, global_object);
-                    Err(global_object.throw_value(error_instance))
+                    let error_instance = password_error_instance(&err, Op::ERR_VERB, cx.global());
+                    Err(cx.global().throw_value(error_instance))
                 }
-                Ok(v) => Ok(Op::to_js(v, global_object)),
+                Ok(v) => Ok(Op::to_js(v, cx.global())),
             };
         }
 
-        let promise = JSPromiseStrong::init(global_object);
+        let promise = JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         bun_jsc::Job::<PasswordJob<Op>>::schedule(
-            &global_object.js_thread(),
+            cx,
             PasswordJob {
                 op,
                 password,
@@ -620,21 +620,21 @@ impl JSPasswordObject {
     }
 
     pub(crate) fn hash<const SYNC: bool>(
-        global_object: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         password: Box<[u8]>,
         algorithm: AlgorithmValue,
     ) -> JsResult<JSValue> {
-        Self::run::<HashOp, SYNC>(global_object, password, HashOp { algorithm })
+        Self::run::<HashOp, SYNC>(cx, password, HashOp { algorithm })
     }
 
     pub(crate) fn verify<const SYNC: bool>(
-        global_object: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         password: Box<[u8]>,
         prev_hash: Box<[u8]>,
         algorithm: Option<Algorithm>,
     ) -> JsResult<JSValue> {
         Self::run::<VerifyOp, SYNC>(
-            global_object,
+            cx,
             password,
             VerifyOp {
                 prev_hash,
@@ -679,7 +679,7 @@ fn js_password_object_hash(
     }
 
     JSPasswordObject::hash::<false>(
-        global_object,
+        &global_object.js_thread_of_caller(callframe),
         password_to_hash.into_boxed_slice(),
         algorithm,
     )
@@ -720,7 +720,7 @@ fn js_password_object_hash_sync(
     // The sync path only needs `&[u8]`; copy into a Box to share the async
     // signature.
     JSPasswordObject::hash::<true>(
-        global_object,
+        &global_object.js_thread_of_caller(callframe),
         Box::<[u8]>::from(string_or_buffer.slice()),
         algorithm,
     )
@@ -796,7 +796,7 @@ fn js_password_object_verify(
     }
 
     JSPasswordObject::verify::<false>(
-        global_object,
+        &global_object.js_thread_of_caller(callframe),
         owned_password.into_boxed_slice(),
         owned_hash.into_boxed_slice(),
         algorithm,
@@ -866,7 +866,7 @@ fn js_password_object_verify_sync(
     // The sync path only needs `&[u8]`; copy into Boxes to share the async
     // signature.
     JSPasswordObject::verify::<true>(
-        global_object,
+        &global_object.js_thread_of_caller(callframe),
         Box::<[u8]>::from(password.slice()),
         Box::<[u8]>::from(hash_.slice()),
         algorithm,

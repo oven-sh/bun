@@ -1,6 +1,7 @@
 import { heapStats } from "bun:jsc";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -159,6 +160,179 @@ test("onEndTag callbacks are released after the rewrite", () => {
   // Unfixed, every one of the 800 callbacks registered after the baseline was
   // still protected here.
   expect(after - before).toBe(0);
+});
+
+// The callback stayed gcProtect()ed until lol-html ran it or dropped it, and
+// lol-html drops it only together with the whole rewriter: when the rewrite
+// completes, or when the transform is collected. A protected value is a GC
+// root, so a callback that reached the transformed Response kept its own
+// transform alive, and a rewrite that stopped before the end tag arrived was
+// never freed. The callbacks now sit in a visited slot of the transform.
+describe("an onEndTag callback that reaches the transformed Response does not pin it", () => {
+  const N = 100;
+  const encoder = new TextEncoder();
+
+  // The <div> handler registers the callback. Its end tag never arrives.
+  const start = (paragraph: () => void = () => {}) => {
+    let controller!: ReadableStreamDefaultController;
+    const input = new ReadableStream({ start: c => void (controller = c) });
+    const registered = Promise.withResolvers<void>();
+    const holder: { response?: Response } = {};
+    const response = (holder.response = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(() => void holder.response);
+          registered.resolve();
+        },
+      })
+      .on("p", { element: paragraph })
+      .transform(new Response(input)));
+    controller.enqueue(encoder.encode("<div><p>x</p>"));
+    return { controller, response, registered: registered.promise };
+  };
+
+  const shapes: Record<string, () => Promise<void>> = {
+    "when a later handler throws": async () => {
+      const { controller, response } = start(() => {
+        throw new Error("boom");
+      });
+      controller.close();
+      expect(await response.text().catch(e => e.message)).toBe("boom");
+    },
+    "when the output reader is cancelled": async () => {
+      const reader = start().response.body!.getReader();
+      expect((await reader.read()).done).toBe(false);
+      await reader.cancel();
+    },
+    // No terminal state is ever reached: only collection can free this one.
+    "when the input never ends and the rewrite is dropped": async () => {
+      await start().registered;
+    },
+  };
+
+  const counts = () => {
+    Bun.gc(true);
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      responses: objectTypeCounts.Response ?? 0,
+      protectedFunctions: protectedObjectTypeCounts.Function ?? 0,
+    };
+  };
+
+  test.each(Object.entries(shapes))("%s", async (_, once) => {
+    for (let i = 0; i < 10; i++) await once();
+    const before = counts();
+    for (let i = 0; i < N; i++) await once();
+    const after = counts();
+
+    // Unfixed: N protected callbacks, with N output Responses behind them.
+    expect(after.protectedFunctions - before.protectedFunctions).toBeLessThan(N / 4);
+    expect(after.responses - before.responses).toBeLessThan(N / 4);
+  });
+});
+
+// A rewrite that is over never reaches another end tag. An output Response that
+// is kept (a cache, a route table) must not retain the callbacks that still
+// waited for one, or whatever they close over. (The first shape passes before
+// the change too: a rewrite that completes dropped its callbacks already.)
+describe("an output Response that outlives its rewrite does not keep the pending onEndTag callbacks", () => {
+  const N = 60;
+  const encoder = new TextEncoder();
+  // Made out here: an Error made inside a handler reaches that handler through its stack frames.
+  const failure = new Error("handler failed");
+
+  // The <div> handler registers a callback that nothing else references. Its end tag never arrives.
+  const start = (html: string, paragraph: (el: HTMLRewriterTypes.Element) => void | Promise<void> = () => {}) => {
+    let controller!: ReadableStreamDefaultController;
+    const input = new ReadableStream({ start: c => void (controller = c) });
+    const callback = Promise.withResolvers<WeakRef<object>>();
+    const response = new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          const onEndTag = () => {};
+          el.onEndTag(onEndTag);
+          callback.resolve(new WeakRef(onEndTag));
+        },
+      })
+      .on("p", { element: paragraph })
+      .transform(new Response(input));
+    controller.enqueue(encoder.encode(html));
+    return { controller, response, callback: callback.promise };
+  };
+
+  // Each returns what script keeps afterwards, and WeakRefs to the callbacks it gave to onEndTag().
+  const rewrites: Record<string, () => Promise<{ kept: unknown; callbacks: WeakRef<object>[] }>> = {
+    "a rewrite that completes": async () => {
+      const { controller, response, callback } = start("<div>x");
+      controller.close();
+      expect(await response.text()).toBe("<div>x");
+      return { kept: response, callbacks: [await callback] };
+    },
+    "a rewrite that a handler fails": async () => {
+      const { controller, response, callback } = start("<div><p>x</p>", () => {
+        throw failure;
+      });
+      controller.close();
+      expect(await response.text().catch(error => error)).toBe(failure);
+      return { kept: response, callbacks: [await callback] };
+    },
+    "a rewrite that its reader cancels": async () => {
+      const { response, callback } = start("<div>x");
+      const reader = response.body!.getReader();
+      const callbacks = [await callback];
+      await reader.cancel();
+      return { kept: [response, reader], callbacks };
+    },
+    // The cancel lands while lol-html is on the stack, and lol-html still has the second <p> to run the handler for.
+    "a rewrite that a handler cancels": async () => {
+      let calls = 0;
+      const { response, callback } = start("<div><p>x</p><p>y</p>", () => {
+        if (++calls === 1) reader.cancel();
+      });
+      const reader = response.body!.getReader();
+      // `reader.closed` settles inside the first call, before the second one runs: poll instead.
+      for (let turn = 0; calls < 2 && turn < 100; turn++) await new Promise(resolve => setImmediate(resolve));
+      expect(calls).toBe(2);
+      return { kept: [response, reader], callbacks: [await callback] };
+    },
+    // The parked element still takes calls, but its end tag can never come.
+    "a rewrite that is cancelled while a handler is parked, which then calls onEndTag()": async () => {
+      const parked = Promise.withResolvers<void>();
+      const cancelled = Promise.withResolvers<void>();
+      const late = Promise.withResolvers<WeakRef<object>>();
+      const { response, callback } = start("<div><p>x</p>", async el => {
+        // Past the one microtask checkpoint that a handler gets before it is parked.
+        await new Promise(resolve => setImmediate(resolve));
+        parked.resolve();
+        await cancelled.promise;
+        const onEndTag = () => {};
+        el.onEndTag(onEndTag);
+        late.resolve(new WeakRef(onEndTag));
+      });
+      const reader = response.body!.getReader();
+      await parked.promise;
+      await reader.cancel();
+      cancelled.resolve();
+      return { kept: [response, reader], callbacks: [await callback, await late.promise] };
+    },
+  };
+
+  test.each(Object.entries(rewrites))("%s", async (_, rewrite) => {
+    const kept: unknown[] = [];
+    const callbacks: WeakRef<object>[] = [];
+    for (let i = 0; i < N; i++) {
+      const result = await rewrite();
+      kept.push(result.kept);
+      callbacks.push(...result.callbacks);
+    }
+    // A WeakRef keeps its target until the job that made it ends, and these rewrites only use microtasks.
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+
+    // Unfixed: every one, for as long as `kept` is.
+    expect(callbacks.filter(callback => callback.deref() !== undefined).length).toBeLessThan(N / 4);
+    expect(kept).toHaveLength(N);
+  });
 });
 
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
@@ -711,6 +885,48 @@ test("a direct-stream pull parked on flush(true) is released when the handler pr
   expect(msg).toContain("will never settle");
 });
 
+// An unobserved transform reads one upstream chunk per event-loop turn: after the first chunk it
+// queues a task for the next one, and that task holds a ref on the pipe (and so the chunks the pipe
+// is holding) and a protect() on its cell. A worker that exits with the task queued must give both
+// back.
+test("a worker exiting with an unobserved transform's pull queued frees the pipe", async () => {
+  using dir = tempDir("html-rewriter-queued-pull", {
+    "worker.js": /* js */ `
+      const chunk = new Uint8Array(4 * 1024 * 1024).fill(0x61);
+      const body = new ReadableStream({
+        type: "direct",
+        pull(c) {
+          for (let i = 0; i < 8; i++) c.write(chunk);
+          c.end();
+        },
+      });
+      // One chunk in, seven held: the next pull is queued, not run.
+      globalThis.keep = new HTMLRewriter().on("p", { element() {} }).transform(new Response(body));
+      process.exit(0);
+    `,
+    "main.js": /* js */ `
+      async function round(n) {
+        for (let i = 0; i < n; i++) {
+          const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+          // A worker that fails would leak nothing and pass: fail the run instead.
+          await new Promise((resolve, reject) => {
+            worker.addEventListener("close", resolve);
+            worker.addEventListener("error", event => reject(new Error(event.message)));
+          });
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await round(2);
+      const after = await round(6);
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    `,
+  });
+
+  // Unfixed: ~145 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow([join(String(dir), "main.js")], { release: 50, debug: 60 });
+});
+
 test("element.attributes iterator does not leak names/values", async () => {
   const code = /* js */ `
     const big = Buffer.alloc(256 * 1024, "a").toString();
@@ -730,4 +946,904 @@ test("element.attributes iterator does not leak names/values", async () => {
 
   // Unfixed: ~120 MiB. Fixed: allocator slack only.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 50, debug: 70 });
+});
+
+// on() and onDocument() used to gcProtect() every callback and handler object
+// for as long as the rewriter, or any transform made from it, was alive. A
+// protected value is a GC root, so a handler that reached its own rewriter (or
+// the Response of its own transform) closed a cycle through a root and none of
+// it was ever collected. The handlers now sit in a visited slot of the
+// rewriter's and of each transform's wrapper: ordinary edges, ordinary cycles.
+describe("a handler that reaches its own rewriter does not pin it", () => {
+  const N = 100;
+
+  const shapes: Record<string, () => Promise<void>> = {
+    // The everyday shape: an object owns the rewriter, the handler is an arrow that uses `this`.
+    "an element handler that closes over the rewriter's owner": async () => {
+      class Counter {
+        count = 0;
+        rewriter = new HTMLRewriter().on("p", { element: () => void this.count++ });
+      }
+      const counter = new Counter();
+      await counter.rewriter.transform(new Response("<p>x</p>")).text();
+      expect(counter.count).toBe(1);
+    },
+    "a document handler that closes over the rewriter": async () => {
+      let ended = 0;
+      const rewriter: HTMLRewriter = new HTMLRewriter().onDocument({
+        end: () => void (ended += rewriter ? 1 : 0),
+      });
+      await rewriter.transform(new Response("<p>x</p>")).text();
+      expect(ended).toBe(1);
+    },
+    "a handler object that holds the rewriter": async () => {
+      const handler = {
+        rewriter: undefined as HTMLRewriter | undefined,
+        elements: 0,
+        element() {
+          this.elements++;
+        },
+      };
+      handler.rewriter = new HTMLRewriter().on("p", handler);
+      await handler.rewriter.transform(new Response("<p>x</p>")).text();
+      expect(handler.elements).toBe(1);
+    },
+    // No cycle through the rewriter here: each transform kept the handlers protected too.
+    "an element handler that closes over the transformed Response": async () => {
+      let elements = 0;
+      const holder: { response?: Response } = {};
+      holder.response = new HTMLRewriter()
+        .on("p", { element: () => void (elements += holder ? 1 : 0) })
+        .transform(new Response("<p>x</p>"));
+      await holder.response.text();
+      expect(elements).toBe(1);
+    },
+  };
+
+  const counts = () => {
+    Bun.gc(true);
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      rewriters: objectTypeCounts.HTMLRewriter ?? 0,
+      responses: objectTypeCounts.Response ?? 0,
+      protectedFunctions: protectedObjectTypeCounts.Function ?? 0,
+    };
+  };
+
+  test.each(Object.entries(shapes))("%s", async (_, once) => {
+    for (let i = 0; i < 10; i++) await once();
+    const before = counts();
+    for (let i = 0; i < N; i++) await once();
+    const after = counts();
+
+    // Unfixed: N protected callbacks, with N rewriters or N Responses behind them.
+    expect(after.protectedFunctions - before.protectedFunctions).toBeLessThan(N / 4);
+    expect(after.rewriters - before.rewriters).toBeLessThan(N / 4);
+    expect(after.responses - before.responses).toBeLessThan(N / 4);
+  });
+});
+
+// A transform holds the handlers so that they outlive a collected rewriter. It
+// has to let go of them once its rewrite is over: an output Response that is
+// kept (a cache, a route table) would otherwise retain every handler object
+// and whatever its callbacks close over, for as long as the Response lives.
+describe("an output Response that outlives its rewrite does not keep the handlers", () => {
+  const N = 60;
+  // Made out here: an Error made inside a handler reaches that handler through its stack frames.
+  const failure = new Error("handler failed");
+
+  const streamOf = (html: string) => {
+    let controller!: ReadableStreamDefaultController;
+    const stream = new ReadableStream({ start: c => void (controller = c) });
+    return {
+      stream,
+      send() {
+        controller.enqueue(new TextEncoder().encode(html));
+        controller.close();
+      },
+    };
+  };
+  const marks = {
+    element(el: HTMLRewriterTypes.Element) {
+      el.setAttribute("seen", "1");
+    },
+  };
+
+  // Each returns what script keeps afterwards, and a WeakRef to the handler object it gave to on().
+  const rewrites: Record<string, () => Promise<{ kept: unknown; handler: WeakRef<object> }>> = {
+    "a rewrite that completes inside transform()": async () => {
+      const handler = { ...marks };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response("<p>x</p>"));
+      expect(await response.text()).toBe('<p seen="1">x</p>');
+      return { kept: response, handler: new WeakRef(handler) };
+    },
+    "a rewrite that completes after transform() returned": async () => {
+      const input = streamOf("<p>x</p>");
+      const handler = { ...marks };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      input.send();
+      expect(await response.text()).toBe('<p seen="1">x</p>');
+      return { kept: response, handler: new WeakRef(handler) };
+    },
+    "a rewrite that a handler fails": async () => {
+      const input = streamOf("<p>x</p>");
+      const handler = {
+        element() {
+          throw failure;
+        },
+      };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      input.send();
+      expect(await response.text().catch(error => error)).toBe(failure);
+      return { kept: response, handler: new WeakRef(handler) };
+    },
+    "a rewrite that its reader cancels": async () => {
+      const input = streamOf("<p>x</p>");
+      const handler = { ...marks };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      const reader = response.body!.getReader();
+      await reader.cancel();
+      return { kept: [response, reader], handler: new WeakRef(handler) };
+    },
+    // The cancel lands while lol-html is on the stack, and lol-html still has the second <p> to run the handler for.
+    "a rewrite that a handler cancels": async () => {
+      const input = streamOf("<p>x</p><p>y</p>");
+      let calls = 0;
+      const handler = {
+        element() {
+          if (++calls === 1) reader.cancel();
+        },
+      };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      const reader = response.body!.getReader();
+      input.send();
+      // `reader.closed` settles inside the first call, before the second one runs: poll instead.
+      for (let turn = 0; calls < 2 && turn < 100; turn++) await new Promise(resolve => setImmediate(resolve));
+      expect(calls).toBe(2);
+      return { kept: [response, reader], handler: new WeakRef(handler) };
+    },
+  };
+
+  test.each(Object.entries(rewrites))("%s", async (_, rewrite) => {
+    const kept: unknown[] = [];
+    const handlers: WeakRef<object>[] = [];
+    for (let i = 0; i < N; i++) {
+      const result = await rewrite();
+      kept.push(result.kept);
+      handlers.push(result.handler);
+    }
+    Bun.gc(true);
+
+    // Unfixed: all N, for as long as `kept` is.
+    expect(handlers.filter(handler => handler.deref() !== undefined).length).toBeLessThan(N / 4);
+    expect(kept).toHaveLength(N);
+  });
+});
+
+// The other half of holding the handlers by a visited slot: they have to stay
+// alive for exactly as long as something can still invoke them. These pass
+// before the change too (a protected value cannot die): they guard the slots.
+describe("handlers that nothing else references stay alive", () => {
+  // A full collection, then garbage in the cell sizes of the handler objects,
+  // their callbacks and the list, so that a handler collected by mistake is
+  // reused and cannot keep working by luck.
+  const churn = () => {
+    Bun.gc(true);
+    const junk: unknown[] = [];
+    for (let i = 0; i < 20_000; i++) {
+      junk.push({ index: i, element() {} });
+      junk.push({ tag: "junk", element() {}, comments() {}, text() {} });
+      junk.push({ tag: "junk", doctype() {}, comments() {}, text() {}, end() {} });
+      junk.push([junk, i, "junk", churn]);
+    }
+  };
+  const alive = (refs: WeakRef<object>[]) => refs.map(ref => ref.deref() !== undefined);
+
+  test("for as long as their rewriter", async () => {
+    const seen: string[] = [];
+    // Once this returns, only the rewriter reaches the two handler objects and their callbacks.
+    const makeRewriter = () => {
+      const elementHandler = {
+        tag: "p-handler",
+        element(el: HTMLRewriterTypes.Element) {
+          el.setAttribute("by", this.tag);
+        },
+        comments(comment: HTMLRewriterTypes.Comment) {
+          comment.text = this.tag;
+        },
+        text(chunk: HTMLRewriterTypes.Text) {
+          if (chunk.lastInTextNode) chunk.after(this.tag);
+        },
+      };
+      const documentHandler = {
+        tag: "document-handler",
+        doctype(doctype: HTMLRewriterTypes.Doctype) {
+          seen.push(`${this.tag} doctype ${doctype.name}`);
+        },
+        comments(comment: HTMLRewriterTypes.Comment) {
+          seen.push(`${this.tag} comment ${comment.text}`);
+        },
+        text(chunk: HTMLRewriterTypes.Text) {
+          if (chunk.text) seen.push(`${this.tag} text ${chunk.text}`);
+        },
+        end(end: HTMLRewriterTypes.DocumentEnd) {
+          end.append(`<!--${this.tag}-->`, { html: true });
+        },
+      };
+      return {
+        rewriter: new HTMLRewriter().on("p", elementHandler).onDocument(documentHandler),
+        held: [
+          elementHandler,
+          elementHandler.element,
+          elementHandler.comments,
+          elementHandler.text,
+          documentHandler,
+          documentHandler.doctype,
+          documentHandler.comments,
+          documentHandler.text,
+          documentHandler.end,
+        ].map(value => new WeakRef<object>(value)),
+      };
+    };
+    const { rewriter, held } = makeRewriter();
+
+    for (let round = 0; round < 3; round++) {
+      churn();
+      seen.length = 0;
+      expect({
+        alive: alive(held),
+        output: await rewriter.transform(new Response("<!doctype html><p>a<!--c--></p>")).text(),
+        seen,
+      }).toEqual({
+        alive: held.map(() => true),
+        output: '<!doctype html><p by="p-handler">ap-handler<!--p-handler--></p><!--document-handler-->',
+        seen: ["document-handler doctype html", "document-handler text a", "document-handler comment p-handler"],
+      });
+    }
+  });
+
+  test("for as long as a transform is in flight, after the rewriter is collected", async () => {
+    const N = 40;
+    const rewriters = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.HTMLRewriter ?? 0;
+    };
+
+    // The rewriter is a temporary. Once this returns, only the transform reaches `handler`.
+    const start = (index: number) => {
+      let controller!: ReadableStreamDefaultController;
+      const input = new ReadableStream({ start: c => void (controller = c) });
+      const handled = Promise.withResolvers<number>();
+      const handler = {
+        index,
+        element(el: HTMLRewriterTypes.Element) {
+          el.setInnerContent(`handler ${this.index}`);
+          handled.resolve(this.index);
+        },
+      };
+      const output = new HTMLRewriter().on("p", handler).transform(new Response(input));
+      return {
+        controller,
+        handled: handled.promise,
+        held: [new WeakRef<object>(handler), new WeakRef<object>(handler.element)],
+        // Every other output is dropped as well: an unobserved rewrite still runs its handlers.
+        output: index % 2 ? undefined : output,
+      };
+    };
+
+    const before = rewriters();
+    const inFlight = Array.from({ length: N }, (_, i) => start(i));
+    churn();
+    // The premise: the rewriters are gone while their transforms still wait for input.
+    expect(rewriters() - before).toBeLessThan(N / 4);
+    expect(inFlight.map(({ held }) => alive(held))).toEqual(inFlight.map(() => [true, true]));
+
+    for (const { controller } of inFlight) {
+      controller.enqueue(new TextEncoder().encode("<p>original</p>"));
+      controller.close();
+    }
+    expect(await Promise.all(inFlight.map(({ output }) => output?.text()))).toEqual(
+      inFlight.map((_, i) => (i % 2 ? undefined : `<p>handler ${i}</p>`)),
+    );
+    expect(await Promise.all(inFlight.map(({ handled }) => handled))).toEqual(inFlight.map((_, i) => i));
+  });
+
+  test("an onEndTag callback, until its end tag arrives", async () => {
+    const N = 40;
+    const encoder = new TextEncoder();
+
+    // Once the <div> handler has returned, only the transform reaches `callback`.
+    const start = (index: number) => {
+      let controller!: ReadableStreamDefaultController;
+      const input = new ReadableStream({ start: c => void (controller = c) });
+      const registered = Promise.withResolvers<WeakRef<object>>();
+      const ran = Promise.withResolvers<number>();
+      const output = new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            const callback = (end: HTMLRewriterTypes.EndTag) => {
+              end.before(`callback ${index}`);
+              ran.resolve(index);
+            };
+            el.onEndTag(callback);
+            registered.resolve(new WeakRef(callback));
+          },
+        })
+        .transform(new Response(input));
+      controller.enqueue(encoder.encode("<div>"));
+      return {
+        controller,
+        registered: registered.promise,
+        ran: ran.promise,
+        // Every other output is dropped: the input still reaches the transform.
+        output: index % 2 ? undefined : output,
+      };
+    };
+
+    const inFlight = Array.from({ length: N }, (_, i) => start(i));
+    const held = await Promise.all(inFlight.map(({ registered }) => registered));
+    churn();
+    expect(alive(held)).toEqual(held.map(() => true));
+
+    for (const { controller } of inFlight) {
+      controller.enqueue(encoder.encode("</div>"));
+      controller.close();
+    }
+    expect(await Promise.all(inFlight.map(({ output }) => output?.text()))).toEqual(
+      inFlight.map((_, i) => (i % 2 ? undefined : `<div>callback ${i}</div>`)),
+    );
+    expect(await Promise.all(inFlight.map(({ ran }) => ran))).toEqual(inFlight.map((_, i) => i));
+  });
+});
+
+// Each rewrite keeps its pending onEndTag() callbacks in one array, reuses the
+// slot of a callback that has run, and finds that array through the element.
+// Every end tag still has to get the callback of its own element. (These pass
+// before the change too: each callback was its own GC root.)
+describe("every end tag runs the callback of its own element", () => {
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+
+  test("when slots are reused while outer elements still wait for theirs", () => {
+    let serial = 0;
+    const rewriter = new HTMLRewriter().on("*", {
+      element(el) {
+        const label = `${el.tagName}${serial++}`;
+        el.onEndTag(end => void end.before(`[${label}]`));
+      },
+    });
+    // <c> and <b> free their slots before <d> takes one, and the second <a> starts from a free list.
+    expect(rewriter.transform("<a><b><c>x</c></b><d>y</d></a><a><b><c>x</c></b><d>y</d></a>")).toBe(
+      "<a><b><c>x[c2]</c>[b1]</b><d>y[d3]</d>[a0]</a><a><b><c>x[c6]</c>[b5]</b><d>y[d7]</d>[a4]</a>",
+    );
+  });
+
+  // Each </a> also closes a <c> and a <b>: three callbacks run for one end tag.
+  test("when one end tag closes several elements", () => {
+    let serial = 0;
+    const output = new HTMLRewriter()
+      .on("*", {
+        element(el) {
+          const label = `${el.tagName}${serial++}`;
+          el.onEndTag(end => void end.before(`[${label}]`));
+        },
+      })
+      .transform("<a><b><c>u</a><a><b><c>v</a>");
+    expect(output).toBe("<a><b><c>u[c2][b1][a0]</a><a><b><c>v[c5][b4][a3]</a>");
+  });
+
+  // The rewrite is over at the cancel, but lol-html still runs the handlers for the rest of the chunk.
+  test("when a handler cancelled the output earlier in the chunk", async () => {
+    const calls: string[] = [];
+    let controller!: ReadableStreamDefaultController;
+    const input = new ReadableStream({ start: c => void (controller = c) });
+    const response = new HTMLRewriter()
+      .on("div", { element: el => void el.onEndTag(() => void calls.push("</div>")) })
+      .on("p", {
+        element() {
+          if (calls.push("<p>") === 1) reader.cancel();
+        },
+      })
+      // Registered after the cancel.
+      .on("span", { element: el => void el.onEndTag(() => void calls.push("</span>")) })
+      .transform(new Response(input));
+    const reader = response.body!.getReader();
+    controller.enqueue(new TextEncoder().encode("<div><p>x</p><p>y</p><span>z</span></div>"));
+    for (let turn = 0; calls.length < 4 && turn < 100; turn++) await tick();
+    expect(calls).toEqual(["<p>", "<p>", "</span>", "</div>"]);
+  });
+
+  test("when a later onEndTag() call replaces an earlier one", async () => {
+    const calls: string[] = [];
+    const register = (el: HTMLRewriterTypes.Element, label: string) =>
+      el.onEndTag(end => {
+        calls.push(label);
+        end.before(label);
+      });
+    const output = await new HTMLRewriter()
+      // Twice in one handler.
+      .on("p", {
+        element(el) {
+          register(el, "p1");
+          register(el, "p2");
+        },
+      })
+      // In two handlers for one element.
+      .on("i", { element: el => void register(el, "i1") })
+      .on("i", { element: el => void register(el, "i2") })
+      // Before and after an await, and again in a handler that runs after the resume.
+      .on("b", {
+        async element(el) {
+          register(el, "b1");
+          await tick();
+          register(el, "b2");
+        },
+      })
+      .on("b", { element: el => void register(el, "b3") })
+      .transform(new Response("<p><i>x</i></p><b>y</b><p>z</p>"))
+      .text();
+    expect({ output, calls }).toEqual({
+      output: "<p><i>xi2</i>p2</p><b>yb3</b><p>zp2</p>",
+      calls: ["i2", "p2", "b3", "p2"],
+    });
+  });
+
+  // No lol-html call is on the stack after the await.
+  test("when onEndTag() is called after an await in the handler", async () => {
+    const output = await new HTMLRewriter()
+      .on("div", {
+        async element(el) {
+          const label = el.getAttribute("id");
+          await tick();
+          el.onEndTag(end => void end.before(`[${label}]`));
+        },
+      })
+      .transform(new Response('<div id="a">x<div id="b">y</div></div><div id="c">z</div>'))
+      .text();
+    expect(output).toBe('<div id="a">x<div id="b">y[b]</div>[a]</div><div id="c">z[c]</div>');
+  });
+
+  // The rewrite on top of the stack is not the one that owns the element.
+  test("when the element belongs to an outer rewrite", () => {
+    const calls: string[] = [];
+    const output = new HTMLRewriter()
+      .on("p", {
+        element(outer) {
+          const inner = new HTMLRewriter()
+            .on("i", {
+              element(el) {
+                outer.onEndTag(end => {
+                  calls.push("outer");
+                  end.before("[outer]");
+                });
+                el.onEndTag(end => {
+                  calls.push("inner");
+                  end.before("[inner]");
+                });
+              },
+            })
+            .transform("<i>n</i>");
+          outer.setAttribute("inner", inner);
+        },
+      })
+      .transform("<p>a</p>");
+    expect({ output, calls }).toEqual({
+      output: '<p inner="<i>n[inner]</i>">a[outer]</p>',
+      calls: ["inner", "outer"],
+    });
+  });
+});
+
+const withoutAsanWarning = (stderr: string) =>
+  stderr
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN"))
+    .join("\n")
+    .trim();
+
+// The handlers are kept in a JS array that script never sees. Nothing it does
+// to Array.prototype may reach them either. (Passes before the change too:
+// there was no array.)
+test.concurrent("an indexed accessor on Array.prototype never sees a handler", async () => {
+  const code = /* js */ `
+    const handler = { element(el) { el.setInnerContent("rewritten"); } };
+    const documentHandler = { end(end) { end.append("!"); } };
+    const ours = new Set([handler, handler.element, documentHandler, documentHandler.end]);
+    const intercepted = new Set();
+    const INDEXES = 8;
+
+    // One registration before the accessors exist and one after: installing
+    // them converts the storage of every array that is already there.
+    const rewriter = new HTMLRewriter().on("p", handler);
+    for (let i = 0; i < INDEXES; i++) {
+      Object.defineProperty(Array.prototype, i, {
+        configurable: true,
+        get() { return undefined; },
+        set(value) { if (ours.has(value)) intercepted.add(i); },
+      });
+    }
+    const output = rewriter.onDocument(documentHandler).transform("<p>original</p>");
+    for (let i = 0; i < INDEXES; i++) delete Array.prototype[i];
+
+    process.stdout.write(JSON.stringify({ output, intercepted: [...intercepted] }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ output: "<p>rewritten</p>!", intercepted: [] }));
+  expect(exitCode).toBe(0);
+});
+
+// A handler cancels the output reader: only the native stack still reaches the
+// transform cell, and lol-html goes on to run the handlers for the rest of the
+// chunk. A collection in that window swept the cell, and the next handler to
+// throw recorded its error on a null cell (segfault at address 0x40).
+test.concurrent(
+  "a handler can throw after an earlier one cancelled the output and collected, in the same chunk",
+  async () => {
+    const code = /* js */ `
+    const encoder = new TextEncoder();
+    const readerAttached = Promise.withResolvers();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode("<!doctype html>"));
+              await readerAttached.promise;
+              controller.enqueue(encoder.encode("<p>a</p><p>b</p>"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+
+    let calls = 0;
+    const upstream = await fetch(server.url);
+    // The output Response is a temporary: only its reader is kept, and
+    // cancelling it cuts the stream's edge to the transform cell.
+    const reader = new HTMLRewriter()
+      .on("p", {
+        element() {
+          if (++calls === 1) {
+            reader.cancel();
+            Bun.gc(true);
+          } else {
+            throw new Error("second handler");
+          }
+        },
+      })
+      .transform(upstream)
+      .body.getReader();
+
+    // Both <p> arrive in one chunk, so both handlers run in one lol-html call.
+    readerAttached.resolve();
+    while (!(await reader.read()).done);
+    process.stdout.write(JSON.stringify({ calls }));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe(JSON.stringify({ calls: 2 }));
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Cancelling the output cuts the stream's edge to the transform cell before the
+// pipe tells its input. A collection that finished in between swept the input
+// stream, its pump and its sink controller: the input's cancel() never ran, and
+// the pipe went on to use them (a release ASAN build stops with a SEGV, or with
+// "ASSERTION FAILED: status() == Status::Pending" when a promise took a dead
+// one's place).
+test.concurrent("cancelling the output cancels a JS stream input while a collection is in flight", async () => {
+  // A collector thread that never stops puts a collection inside that window.
+  // It is too slow for Windows and for debug builds.
+  const stress = !isWindows && !isDebug;
+  const N = stress ? 100 : 50;
+  const code = /* js */ `
+    const N = ${N};
+    const encoder = new TextEncoder();
+    let cancelled = 0;
+    for (let i = 0; i < N; i++) {
+      let controller;
+      const input = new ReadableStream({
+        start: c => void (controller = c),
+        cancel: () => void cancelled++,
+      });
+      // The output Response is a temporary: only its reader is kept.
+      const reader = new HTMLRewriter()
+        .on("div", { element() {} })
+        .transform(new Response(input))
+        .body.getReader();
+      controller.enqueue(encoder.encode("<div>x"));
+      controller = undefined;
+      if ((await reader.read()).done) throw new Error("the output ended early");
+      Bun.gc(false);
+      await reader.cancel();
+    }
+    process.stdout.write(JSON.stringify({ rewrites: N, cancelled }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: stress ? { ...bunEnv, BUN_JSC_collectContinuously: "1" } : bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ rewrites: N, cancelled: N }));
+  expect(exitCode).toBe(0);
+});
+
+// A handler parks on a promise that nothing can settle, and the whole rewrite
+// dies with it. The task that abandons the rewrite can run before the sweep:
+// the transform cell is dead, but the pipe still points at it. The pipe then
+// cancelled the dead input stream, which calls the dead source's cancel() (a
+// SEGV on a release build, "ASSERTION FAILED: decontaminate()" on a debug one).
+test.concurrent("a parked rewrite that dies with its handler promise does not reach its dead input", async () => {
+  // A file, not -e: the same code does not reach the window when it is evaluated from the command line.
+  using dir = tempDir("hr-abandon-dead-input", {
+    "abandon.js": /* js */ `
+      const N = 50;
+      const encoder = new TextEncoder();
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      let cancelled = 0;
+      for (let i = 0; i < N; i++) {
+        let controller;
+        const input = new ReadableStream({
+          start: c => void (controller = c),
+          cancel: () => void cancelled++,
+        });
+        // Nothing keeps the Response, the input or the handler's promise.
+        new HTMLRewriter().on("p", { element: () => new Promise(() => {}) }).transform(new Response(input));
+        controller.enqueue(encoder.encode("<p>x</p>"));
+      }
+      for (let i = 0; i < 5; i++) await tick();
+      // Not synchronous: a cell that this collection finds dead waits for its sweep.
+      for (let round = 0; round < 10; round++) {
+        Bun.gc(false);
+        const junk = [];
+        for (let j = 0; j < 500; j++) junk.push({ j });
+        await tick();
+      }
+      process.stdout.write(JSON.stringify({ rewrites: N, cancelled }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "abandon.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  // A dead stream is not cancelled: nothing is left that could observe it.
+  expect(stdout).toBe(JSON.stringify({ rewrites: 50, cancelled: 0 }));
+  expect(exitCode).toBe(0);
+});
+
+// The handler's promise is collected while script still holds the Response, so
+// the abandon task is queued for a reachable rewrite. Script then drops the
+// Response: when the task runs the transform cell is unreachable, but no
+// collection has found that out. Failing the rewrite allocates, and a collection
+// in there freed the output stream that the error was then written to (a release
+// ASAN build reports a heap-use-after-free in ByteStream::on_data).
+test.concurrent(
+  "a parked rewrite that script drops before it is abandoned keeps its streams while it fails",
+  async () => {
+    const code = /* js */ `
+    const ROUNDS = 20;
+    const encoder = new TextEncoder();
+    const tick = () => new Promise(resolve => setImmediate(resolve));
+    const responses = [];
+    const promises = [];
+    let cancelled = 0;
+    function start() {
+      let controller;
+      const input = new ReadableStream({
+        start: c => void (controller = c),
+        cancel: () => void cancelled++,
+      });
+      const response = new HTMLRewriter()
+        .on("p", {
+          element() {
+            const promise = new Promise(() => {});
+            promises.push(promise);
+            return promise;
+          },
+        })
+        .transform(new Response(input));
+      response.body; // The output stream exists.
+      responses.push(response);
+      controller.enqueue(encoder.encode("<p>x</p>"));
+    }
+    for (let round = 0; round < ROUNDS; round++) {
+      for (let i = 0; i < 4; i++) start();
+      await tick();
+      promises.length = 0;
+      Bun.gc(true);
+      responses.length = 0;
+      await tick();
+    }
+    process.stdout.write(JSON.stringify({ rounds: ROUNDS, cancelledSome: cancelled > 0 }));
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      // A full collection at every 25th slow-path allocation: over the rounds, one lands inside a task.
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "25" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(withoutAsanWarning(stderr)).toBe("");
+    // Some tasks did find their rewrite alive, which is the case under test.
+    expect(stdout).toBe(JSON.stringify({ rounds: 20, cancelledSome: true }));
+    expect(exitCode).toBe(0);
+  },
+);
+
+// dispose() cancels the sources of the streams that the graph's script was given, from native
+// code: nothing on that stack reaches a stream that script has dropped. A collection that
+// finished inside the cancel freed the source under it, and the rewrite that feeds it. After one
+// that had finished before, the cancel went on to the dead input of that rewrite. (Either way a
+// SEGV on a release build, "ASSERTION FAILED: decontaminate()" on a debug one.)
+test.concurrent.each([
+  ["is being collected", 0],
+  ["is collected and waits for its sweep", 1],
+])("disposing a Bun.ModuleGraph whose dropped rewrite %s", async (_, ticks) => {
+  // A file, not -e, as above.
+  using dir = tempDir("hr-dispose-dropped", {
+    "dispose.js": /* js */ `
+      const encoder = new TextEncoder();
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      const rewrite = input => new HTMLRewriter().on("div", { element() {} }).transform(input);
+      function start(chained) {
+        for (let i = 0; i < 20; i++) {
+          const input = new ReadableStream({ start: c => void c.enqueue(encoder.encode("<div>x")), cancel() {} });
+          const output = rewrite(new Response(input));
+          // The output stream exists, and nothing keeps it.
+          (chained ? rewrite(output) : output).body;
+        }
+      }
+      let disposed = 0;
+      for (const chained of [false, true]) {
+        for (let i = 0; i < 20; i++) {
+          const graph = new Bun.ModuleGraph();
+          graph.run(() => start(chained));
+          await tick();
+          // Not synchronous: it finishes at a later allocation, and sweeps nothing.
+          Bun.gc(false);
+          for (let t = 0; t < ${ticks}; t++) await tick();
+          graph.dispose();
+          disposed++;
+        }
+      }
+      process.stdout.write(JSON.stringify({ disposed }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "dispose.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ disposed: 40 }));
+  expect(exitCode).toBe(0);
+});
+
+// The same for the array of pending onEndTag() callbacks, whose slots are also
+// read back, cleared and reused. (Passes before the change too.)
+test.concurrent("an indexed accessor on Array.prototype never sees an onEndTag callback", async () => {
+  const code = /* js */ `
+    const ours = new Set();
+    const intercepted = new Set();
+    const INDEXES = 8;
+    let serial = 0;
+    const rewriter = new HTMLRewriter().on("*", {
+      element(el) {
+        const label = el.tagName + serial++;
+        const callback = end => void end.before("[" + label + "]");
+        ours.add(callback);
+        el.onEndTag(callback);
+      },
+    });
+
+    // One rewrite before the accessors exist, and one that starts before and ends after.
+    const before = rewriter.transform("<a><b>x</b></a>");
+    let controller;
+    const straddling = rewriter.transform(new Response(new ReadableStream({ start: c => void (controller = c) })));
+    controller.enqueue(new TextEncoder().encode("<a><b>x</b><c>"));
+    await new Promise(resolve => setImmediate(resolve));
+    for (let i = 0; i < INDEXES; i++) {
+      Object.defineProperty(Array.prototype, i, {
+        configurable: true,
+        get() { return undefined; },
+        set(value) { if (ours.has(value)) intercepted.add(i); },
+      });
+    }
+    controller.enqueue(new TextEncoder().encode("y</c><d>z</d></a>"));
+    controller.close();
+    const outputs = [before, await straddling.text(), rewriter.transform("<a><b>x</b><c>y</c></a>")];
+    for (let i = 0; i < INDEXES; i++) delete Array.prototype[i];
+
+    process.stdout.write(JSON.stringify({ outputs, intercepted: [...intercepted] }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(
+    JSON.stringify({
+      outputs: [
+        "<a><b>x[b1]</b>[a0]</a>",
+        "<a><b>x[b3]</b><c>y[c4]</c><d>z[d5]</d>[a2]</a>",
+        "<a><b>x[b7]</b><c>y[c8]</c>[a6]</a>",
+      ],
+      intercepted: [],
+    }),
+  );
+  expect(exitCode).toBe(0);
+});
+
+// A handler parks its element on a promise that is then collected unsettled,
+// together with the transform. Until the queued abandon task detaches the
+// element, script can still call onEndTag() on it, and the transform that would
+// hold the callback is dead. (Passes before the change too: the callback was
+// protected, which needs no transform.)
+test.concurrent("onEndTag() on a parked element whose rewrite was collected", async () => {
+  const code = /* js */ `
+    const N = 20;
+    const parked = [];
+    for (let i = 0; i < N; i++) {
+      new HTMLRewriter()
+        .on("p", {
+          element(el) {
+            parked.push(el);
+            return new Promise(() => {});
+          },
+        })
+        .transform(new Response("<p>x</p>"));
+    }
+    Bun.gc(true);
+    const returnedTheElement = parked.filter(el => el.onEndTag(() => {}) === el).length;
+    // A store into a dead transform would be visited by this collection.
+    Bun.gc(true);
+    process.stdout.write(JSON.stringify({ parked: parked.length, returnedTheElement }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ parked: 20, returnedTheElement: 20 }));
+  expect(exitCode).toBe(0);
 });

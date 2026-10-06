@@ -112,6 +112,11 @@ pub(crate) fn assign_unminified(
         used.put(name, 1)?;
         let name = intern(c, name);
         c.cross_chunk_names.insert(ref_, name);
+        // An importing chunk's renamer looks the binding up by the symbol its links lead to.
+        let followed = c.graph.symbols.follow(ref_);
+        if !followed.eql(ref_) {
+            c.cross_chunk_names.insert(followed, name);
+        }
     }
     Ok(())
 }

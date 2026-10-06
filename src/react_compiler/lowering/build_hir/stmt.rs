@@ -386,7 +386,6 @@ fn ref_in_nested_fn_class(builder: &HirBuilder, target: Ref, class: &G::Class, d
         })
 }
 
-#[allow(clippy::too_many_lines)]
 fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32) -> bool {
     match &e.data {
         ExprData::EIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,

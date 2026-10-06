@@ -57,7 +57,6 @@ struct Ref {
     static SEL s_init;
     static SEL s_release;
     static SEL s_retain;
-    static SEL s_description;
     static SEL s_isKindOfClass;
 
     template<typename R, typename... A>
@@ -184,12 +183,6 @@ struct NSDictionary : Ref {
         id ks[3] = { k1, k2, k3 };
         return msgCls<id>(cls, s_dictionaryWithObjects_forKeys_count, vs, ks, (unsigned long)3);
     }
-};
-
-struct NSObject : Ref {
-    using Ref::Ref;
-    // -description works on anything; toWTF() only on NSStrings.
-    WTF::String describe() const { return NSString(msg<id>(s_description)).toWTF(); }
 };
 
 // ---------------------------------------------------------------------------
@@ -590,7 +583,6 @@ struct WKWebView : Ref {
     static SEL s_canGoForward;
     static SEL s_goBack;
     static SEL s_goForward;
-    static SEL s_isLoading;
     static SEL s_URL;
     static SEL s_title;
     static SEL s_setAfterScreenUpdates;
@@ -630,7 +622,6 @@ struct WKWebView : Ref {
     bool canGoForward() const { return msg<signed char>(s_canGoForward) != 0; }
     void goBack() { msg<void>(s_goBack); }
     void goForward() { msg<void>(s_goForward); }
-    bool isLoading() const { return msg<signed char>(s_isLoading) != 0; }
     NSURL url() const { return msg<id>(s_URL); }
     WTF::String title() const { return NSString(msg<id>(s_title)).toWTF(); }
 

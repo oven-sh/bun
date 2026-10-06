@@ -476,9 +476,9 @@ devTest("removing 'use client' from a component with a pending resolution failur
       async test(dev) {
         expect((await dev.fetch("/")).status).toBe(500);
         await dev.write("routes/index.ts", page);
-        await dev.fetch("/").equals({ which, loads: { "index.ts": 2, [`${which}.js`]: 1 } });
+        expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 2, [`${which}.js`]: 1 } });
         await dev.write("routes/index.ts", page + "// saved again");
-        await dev.fetch("/").equals({ which, loads: { "index.ts": 3, [`${which}.js`]: 1 } });
+        expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 3, [`${which}.js`]: 1 } });
       },
     });
   }

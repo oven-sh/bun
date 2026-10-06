@@ -4439,3 +4439,133 @@ describe("negotiated parameters", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32234
+describe("signature algorithms a peer may sign with", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const ed25519 = { key: fixture("ed25519-key.pem"), cert: fixture("ed25519-cert.pem") };
+  const p521 = { key: fixture("p521-key.pem"), cert: fixture("p521-cert.pem") };
+  const rsa = { key: COMMON_CERT_.key, cert: COMMON_CERT_.cert };
+
+  /** The extensions of the ClientHello that `connect` sends, as lists of 16-bit values. */
+  async function clientHello(connect: (port: number) => unknown) {
+    const { promise, resolve } = Promise.withResolvers<Record<"signatureAlgorithms" | "supportedGroups", number[]>>();
+    const server = net.createServer(socket => {
+      let hello = Buffer.alloc(0);
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        hello = Buffer.concat([hello, chunk]);
+        if (hello.length < 5 || hello.length < 5 + hello.readUInt16BE(3)) return;
+        // record header, handshake header, version, random; then session id, cipher suites, compression methods
+        let at = 5 + 4 + 2 + 32;
+        at += 1 + hello[at];
+        at += 2 + hello.readUInt16BE(at);
+        at += 1 + hello[at];
+        const end = at + 2 + hello.readUInt16BE(at);
+        const lists: Record<number, number[]> = {};
+        for (at += 2; at < end; at += 4 + hello.readUInt16BE(at + 2)) {
+          const list = (lists[hello.readUInt16BE(at)] = [] as number[]);
+          for (let i = at + 6; i + 1 < at + 4 + hello.readUInt16BE(at + 2); i += 2) list.push(hello.readUInt16BE(i));
+        }
+        socket.destroy();
+        resolve({ signatureAlgorithms: lists[13], supportedGroups: lists[10] });
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      await connect((server.address() as AddressInfo).port);
+      return await promise;
+    } finally {
+      server.close();
+    }
+  }
+
+  it.each<[string, (port: number) => unknown]>([
+    ["tls.connect", port => tls.connect({ port, host: "127.0.0.1" }).on("error", () => {})],
+    [
+      "tls.connect, TLS 1.2",
+      port => tls.connect({ port, host: "127.0.0.1", maxVersion: "TLSv1.2" }).on("error", () => {}),
+    ],
+    [
+      "tls.connect over a Duplex",
+      port => {
+        const raw = net.connect(port, "127.0.0.1").on("error", () => {});
+        const socket = new Duplex({
+          read() {},
+          write: (chunk, _encoding, callback) => void raw.write(chunk, callback),
+        });
+        tls.connect({ socket }).on("error", () => {});
+      },
+    ],
+    ["Bun.connect", port => Bun.connect({ port, hostname: "127.0.0.1", tls: true, socket: { data() {}, error() {} } })],
+    ["fetch", port => void fetch(`https://127.0.0.1:${port}/`).catch(() => {})],
+    ["WebSocket", port => void new WebSocket(`wss://127.0.0.1:${port}/`)],
+  ])("%s offers what it offered before, ed25519 and ecdsa_secp521r1_sha512", async (name, connect) => {
+    const added = [0x0807, 0x0603];
+    const { signatureAlgorithms, supportedGroups } = await clientHello(connect);
+    expect({
+      before: signatureAlgorithms.filter(algorithm => !added.includes(algorithm)),
+      added: signatureAlgorithms.filter(algorithm => added.includes(algorithm)),
+      supportedGroups,
+    }).toEqual({
+      // BoringSSL's kVerifySignatureAlgorithms, in its order. rsa_pkcs1_sha1 is last.
+      before: [0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601, 0x0201],
+      added,
+      // X25519MLKEM768 (TLS 1.3 only), x25519, secp256r1, secp384r1
+      supportedGroups: name.endsWith("TLS 1.2") ? [0x001d, 0x0017, 0x0018] : [0x11ec, 0x001d, 0x0017, 0x0018],
+    });
+  });
+
+  async function handshake(serverOptions: tls.TlsOptions, clientOptions: tls.ConnectionOptions) {
+    const accepted = Promise.withResolvers<boolean | string>();
+    const server = tls.createServer(serverOptions, socket => {
+      accepted.resolve(socket.authorized);
+      socket.end();
+    });
+    server.on("tlsClientError", error => accepted.resolve((error as NodeJS.ErrnoException).code!));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = tls.connect({ port, host: "127.0.0.1", servername: "localhost", ...clientOptions });
+    try {
+      const connected = Promise.withResolvers<boolean | string>();
+      client.on("secureConnect", () => connected.resolve(client.authorized));
+      client.on("error", error => connected.resolve((error as NodeJS.ErrnoException).code!));
+      return { client: await connected.promise, server: await accepted.promise, protocol: client.getProtocol() };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  it.each([
+    ["Ed25519", "TLSv1.2", ed25519],
+    ["Ed25519", "TLSv1.3", ed25519],
+    ["P-521", "TLSv1.3", p521],
+  ] as const)("a client verifies a server certificate: %s, %s", async (_name, maxVersion, { key, cert }) => {
+    expect(await handshake({ key, cert }, { ca: cert, maxVersion })).toEqual({
+      client: true,
+      server: false,
+      protocol: maxVersion,
+    });
+  });
+
+  // In TLS 1.2 the curve of the certificate must also be a supported group, and secp521r1 is not one by default.
+  it.todo("a client verifies a server certificate: P-521, TLSv1.2");
+
+  it.each(["TLSv1.2", "TLSv1.3"] as const)("a server verifies an Ed25519 client certificate (%s)", async maxVersion => {
+    expect(
+      await handshake({ ...rsa, requestCert: true, ca: ed25519.cert }, { ...ed25519, ca: rsa.cert, maxVersion }),
+    ).toEqual({ client: true, server: true, protocol: maxVersion });
+  });
+
+  // Node.js v26.3.0 does not offer rsa_pkcs1_sha1.
+  it("a client still connects to a TLS 1.2 server that signs with rsa_pkcs1_sha1 only", async () => {
+    // An ECDHE suite, so that the server has a ServerKeyExchange to sign.
+    const server = { ...rsa, maxVersion: "TLSv1.2", sigalgs: "rsa_pkcs1_sha1", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" };
+    expect(await handshake(server as tls.TlsOptions, { ca: rsa.cert })).toEqual({
+      client: true,
+      server: false,
+      protocol: "TLSv1.2",
+    });
+  });
+});

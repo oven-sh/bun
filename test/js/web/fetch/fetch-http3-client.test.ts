@@ -1259,3 +1259,22 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/32234
+test("connects to a server with an Ed25519 certificate", async () => {
+  const fixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const server = Bun.serve({
+    port: 0,
+    tls: { key: Bun.file(join(fixtures, "ed25519-key.pem")), cert: Bun.file(join(fixtures, "ed25519-cert.pem")) },
+    http3: true,
+    http1: false,
+    fetch: () => new Response("ed25519 over h3"),
+  });
+  try {
+    const res = await fetch(`https://127.0.0.1:${server.port}/`, h3);
+    expect(await res.text()).toBe("ed25519 over h3");
+  } finally {
+    // As in afterAll: the pooled session drains on lsquic's idle timeout, so stop(true) is not awaited.
+    server.stop(true);
+  }
+});

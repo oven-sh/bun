@@ -1,4 +1,4 @@
-import { SQL, randomUUIDv7 } from "bun";
+import { randomUUIDv7, SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled, tls as tlsCert } from "harness";
 import net from "node:net";

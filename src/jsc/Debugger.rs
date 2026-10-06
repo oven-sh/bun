@@ -121,7 +121,11 @@ pub struct Debugger {
     pub poll_ref: KeepAlive,
     pub wait_for_connection: Wait,
     // wait_for_connection: bool = false,
+    /// `--inspect-brk` / `BUN_INSPECT=…?break=1`. The first entry load of the
+    /// process takes it (`schedule_pause_at_entry`).
     pub set_breakpoint_on_first_line: bool,
+    /// JSC holds a request to pause when the entry starts to run.
+    pub pause_at_entry_scheduled: bool,
     pub mode: Mode,
     pub protocol: Protocol,
 
@@ -144,6 +148,7 @@ impl Default for Debugger {
             poll_ref: KeepAlive::default(),
             wait_for_connection: Wait::Off,
             set_breakpoint_on_first_line: false,
+            pause_at_entry_scheduled: false,
             mode: Mode::Listen,
             protocol: Protocol::Jsc,
             test_reporter_agent: TestReporterAgent::default(),
@@ -169,6 +174,12 @@ unsafe extern "C" {
         is_connect: bool,
         is_node_inspector: bool,
     );
+    safe fn Debugger__schedulePauseAtEntry(
+        global: &JSGlobalObject,
+        url: &BunString,
+        program_code: bool,
+    ) -> bool;
+    safe fn Debugger__cancelPauseAtEntry(global: &JSGlobalObject);
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
@@ -186,6 +197,37 @@ struct DebuggerThreadInit {
 }
 
 impl Debugger {
+    /// `--inspect-brk` / `BUN_INSPECT=…?break=1`: the entry is about to load.
+    /// Asks JSC to pause when the code of `vm.main()` starts to run. Only the
+    /// first entry load of the process asks: a hot reload and the next test
+    /// file do not pause.
+    pub(crate) fn schedule_pause_at_entry(vm: &VirtualMachine) {
+        let asked = vm
+            .debugger_mut()
+            .is_some_and(|dbg| core::mem::take(&mut dbg.set_breakpoint_on_first_line));
+        if !asked {
+            return;
+        }
+        let url = BunString::from_bytes(vm.main());
+        // The code of `-e` and stdin runs as a program, not as a module or a CommonJS wrapper.
+        let program_code = vm.module_loader.eval_source.is_some();
+        let scheduled = Debugger__schedulePauseAtEntry(vm.global(), &url, program_code);
+        if let Some(dbg) = vm.debugger_mut() {
+            dbg.pause_at_entry_scheduled = scheduled;
+        }
+    }
+
+    /// Takes back a request that the entry did not use: it failed to load, it
+    /// has no code, or it loads again.
+    pub(crate) fn cancel_pause_at_entry(vm: &VirtualMachine) {
+        let scheduled = vm
+            .debugger_mut()
+            .is_some_and(|dbg| core::mem::take(&mut dbg.pause_at_entry_scheduled));
+        if scheduled {
+            Debugger__cancelPauseAtEntry(vm.global());
+        }
+    }
+
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.

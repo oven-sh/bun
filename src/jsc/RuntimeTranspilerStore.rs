@@ -3,7 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_alloc::Arena;
 use bun_ast::Loader;
@@ -180,15 +180,6 @@ fn dump_source_string_failiable(
     }
 
     Ok(())
-}
-
-// `pub`: also consumed cross-crate by bun_runtime's ModuleLoader transpile path
-// (runtime/jsc_hooks.rs). The one-shot AtomicBool
-// must stay shared between that path and this store — whichever transpiles the
-// main module first consumes it.
-pub fn set_break_point_on_first_line() -> bool {
-    static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
-    SET_BREAK_POINT.swap(false, Ordering::SeqCst)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -823,13 +814,6 @@ impl TranspilerJob {
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
-            // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
-            set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
-                .as_ref()
-                .map(|d| d.set_breakpoint_on_first_line)
-                .unwrap_or(false)
-                && is_main
-                && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
                 // SAFETY: `cache` is a stack local declared above and outlives
                 // `parse_options`; `addr_of_mut!` avoids an intermediate `&mut`

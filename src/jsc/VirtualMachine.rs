@@ -3409,6 +3409,7 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
+        crate::debugger::Debugger::cancel_pause_at_entry(self);
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
@@ -3469,6 +3470,7 @@ impl VirtualMachine {
                 // Check if Module.runMain was patched.
                 if self.has_patched_run_main {
                     bun_core::hint::cold();
+                    crate::debugger::Debugger::schedule_pause_at_entry(self);
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)?;
@@ -3512,6 +3514,7 @@ impl VirtualMachine {
             // Preloads (evaluated above, synchronously) are not the entry: only
             // module evaluations from here on mark the entry graph as executing.
             self.entry_evaluation_started = false;
+            crate::debugger::Debugger::schedule_pause_at_entry(self);
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
@@ -3534,6 +3537,7 @@ impl VirtualMachine {
             Ok(promise)
         } else {
             self.entry_evaluation_started = false;
+            crate::debugger::Debugger::schedule_pause_at_entry(self);
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
             let promise =
@@ -3551,6 +3555,10 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
+        // Only the entry takes the `--inspect-brk` pause. If it did not run, nothing else does.
+        let _cancel_pause_at_entry = scopeguard::guard((), |()| {
+            crate::debugger::Debugger::cancel_pause_at_entry(VirtualMachine::get());
+        });
         let promise = self.reload_entry_point(entry_path)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
@@ -5627,6 +5635,7 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        crate::debugger::Debugger::cancel_pause_at_entry(self);
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
@@ -5639,6 +5648,7 @@ impl VirtualMachine {
             }
         }
 
+        crate::debugger::Debugger::schedule_pause_at_entry(self);
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
@@ -5685,6 +5695,10 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
+        // As in `load_entry_point`.
+        let _cancel_pause_at_entry = scopeguard::guard((), |()| {
+            crate::debugger::Debugger::cancel_pause_at_entry(VirtualMachine::get());
+        });
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
 
         // pending_internal_promise can change if hot module reloading is enabled

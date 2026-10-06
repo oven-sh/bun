@@ -236,6 +236,8 @@ pub mod ssl_wrapper {
         outgoing: RefCell<Vec<u8>>,
         /// How much of the front of `outgoing` the transport took.
         head: Cell<usize>,
+        /// `outgoing` holds ciphertext of a `write_data`, not only what the engine emitted by itself.
+        has_write: Cell<bool>,
         /// From the peer, not yet read by BoringSSL.
         incoming: RefCell<VecDeque<u8>>,
     }
@@ -254,7 +256,7 @@ pub mod ssl_wrapper {
         /// It left part of what it was given. Nothing is offered to it, and no
         /// write is sealed, until [`SSLWrapper::sink_writable`].
         Refused,
-        /// It took everything and wants no more yet. What the engine emits by
+        /// It took a write and wants no more yet. What the engine emits by
         /// itself still goes out; no write is sealed until [`SSLWrapper::sink_writable`].
         Busy,
     }
@@ -564,8 +566,9 @@ pub mod ssl_wrapper {
         /// seals no write until the owner calls [`SSLWrapper::sink_writable`].
         Bytes(usize),
         /// It took every byte and queues what it cannot send yet. With
-        /// `more: false` the wrapper seals no write until the owner calls
-        /// [`SSLWrapper::sink_writable`].
+        /// `more: false` after a write, the wrapper seals no further write
+        /// until the owner calls [`SSLWrapper::sink_writable`]. A handshake
+        /// flight or an alert alone never holds a write back.
         All { more: bool },
     }
 
@@ -1028,6 +1031,7 @@ pub mod ssl_wrapper {
                     return Err(WriteDataError::ConnectionClosed);
                 }
                 written += usize::try_from(sealed).expect("int cast");
+                self.ciphertext.has_write.set(true);
                 if written == data.len() {
                     break;
                 }
@@ -1190,6 +1194,7 @@ pub mod ssl_wrapper {
                 // Not only skipped below: a re-entered `handle_traffic` flushes the queue and never gets here.
                 self.ciphertext.outgoing.borrow_mut().clear();
                 self.ciphertext.head.set(0);
+                self.ciphertext.has_write.set(false);
                 // The peer never gets our Finished, so it cannot read a close_notify.
                 self.flags.set_fatal_error(true);
                 self.flags
@@ -1419,9 +1424,10 @@ pub mod ssl_wrapper {
             }
             let mut pending = self.ciphertext.outgoing.take();
             let head = self.ciphertext.head.take();
+            let has_write = self.ciphertext.has_write.take();
             let unsent = pending.len() - head;
             if unsent > 0 {
-                let taken = match self.trigger_wanna_write_callback(&pending[head..]) {
+                match self.trigger_wanna_write_callback(&pending[head..]) {
                     Taken::Bytes(taken) if taken < unsent => {
                         // The transport is full. What it left stays ahead of what was queued since.
                         let mut outgoing = self.ciphertext.outgoing.borrow_mut();
@@ -1430,19 +1436,14 @@ pub mod ssl_wrapper {
                         pending.extend_from_slice(queued_since);
                         *outgoing = pending;
                         self.ciphertext.head.set(head + taken);
+                        if has_write {
+                            self.ciphertext.has_write.set(true);
+                        }
                         self.sink.set(Sink::Refused);
                         return;
                     }
-                    taken => taken,
-                };
-                // A `write` made from inside this one may have been refused: its tail is queued.
-                if self.sink.get() != Sink::Refused {
-                    self.sink
-                        .set(if matches!(taken, Taken::All { more: false }) {
-                            Sink::Busy
-                        } else {
-                            Sink::Ready
-                        });
+                    Taken::All { more: false } if has_write => self.sink.set(Sink::Busy),
+                    Taken::Bytes(_) | Taken::All { .. } => {}
                 }
                 pending.clear();
             }

@@ -181,33 +181,6 @@ services:
       - redis-unix:/tmp/redis
       - redis-data:/data
 
-  # MinIO (S3) Service
-  minio:
-    image: quay.io/minio/minio:latest
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-      MINIO_DOMAIN: localhost
-    command: server /data --console-address :9001
-    ports:
-      - target: 9000
-        published: 0
-        protocol: tcp
-        name: api
-      - target: 9001
-        published: 0
-        protocol: tcp
-        name: console
-    tmpfs:
-      - /data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-      start_interval: 1s
-
   # WebSocket Autobahn Test Suite
   # NOTE: Autobahn requires port 9002 to match both internal and external ports
   # because it validates the Host header against its configured listening port.

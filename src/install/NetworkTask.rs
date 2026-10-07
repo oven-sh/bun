@@ -162,7 +162,6 @@ impl NetworkTask {
     /// single-threaded main setup path, so no overlapping `&mut
     /// PackageManager` exists for the returned borrow.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn pm_mut<'a>(&self) -> &'a mut PackageManager {
         // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
         unsafe { self.package_manager.assume_mut() }

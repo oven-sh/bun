@@ -36,7 +36,9 @@ pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
 pub use crate::jsc_scheduler as JSCScheduler;
-pub use crate::posix_signal_handle::{PosixSignalHandle, PosixSignalTask};
+#[cfg(unix)]
+pub use crate::posix_signal_handle::PosixSignalHandle;
+pub use crate::posix_signal_handle::PosixSignalTask;
 
 bun_core::declare_scope!(EventLoop, hidden);
 
@@ -108,8 +110,6 @@ pub struct EventLoop {
     /// `enqueue()` reads go through the single audited `BackRef::deref`
     /// instead of an open-coded `NonNull::as_ref` `unsafe` at each site.
     pub signal_handler: Option<bun_ptr::BackRef<PosixSignalHandle>>,
-    #[cfg(not(unix))]
-    pub signal_handler: (),
 }
 
 impl Default for EventLoop {
@@ -136,8 +136,6 @@ impl Default for EventLoop {
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
             signal_handler: None,
-            #[cfg(not(unix))]
-            signal_handler: (),
         }
     }
 }
@@ -467,20 +465,12 @@ impl EventLoop {
         Ok(())
     }
 
-    /// `run_callback*`'s way in: whether `callback` may be called at all, and if so the scope it
-    /// is called inside of. Not with an exception pending, and not a function of a realm that
-    /// `bun test --isolate` retired (a killed child's late `onExit`). `context` is entered for
+    /// `run_callback*`'s way in: whether a callback may be called at all, and if so the scope it
+    /// is called inside of. Not with an exception pending. `context` is entered for
     /// the call; [`ContextId::NONE`](crate::ContextId::NONE) enters nothing.
     #[inline]
-    fn enter_js<'a>(
-        context: crate::ContextId,
-        callback: JSValue,
-        global_object: &'a JSGlobalObject,
-    ) -> EnterJs<'a> {
-        if global_object.has_exception()
-            || (global_object.bun_vm().test_isolation_enabled
-                && callback.is_from_retired_test_isolation_realm())
-        {
+    fn enter_js<'a>(context: crate::ContextId, global_object: &'a JSGlobalObject) -> EnterJs<'a> {
+        if global_object.has_exception() {
             return EnterJs::CannotEnter;
         }
         EnterJs::Entered(
@@ -511,7 +501,7 @@ impl EventLoop {
         // exception already pending — a prior callback's microtasks can request
         // termination (worker.terminate()), and entering JS then would trip
         // executeCallImpl's `assertNoException`.
-        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return;
         };
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
@@ -550,7 +540,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return JSValue::ZERO;
         };
         // R-2 noalias mitigation — see `run_callback` above.
@@ -704,9 +694,9 @@ impl EventLoop {
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
     ///
-    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: `Bun.spawnSync`
-    /// points the latter at its private loop, and a GC inside it still refs
-    /// this loop (FinalizationRegistry, MessagePort).
+    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: on Windows
+    /// `Bun.spawnSync` points the latter at its private loop, and a GC inside it
+    /// still refs this loop (FinalizationRegistry, MessagePort).
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
         // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
@@ -1163,6 +1153,23 @@ impl EventLoop {
         }
     }
 
+    /// The ctx whose loop is the one this `EventLoop` runs on. Windows has none for a spawnSync loop:
+    /// a libuv handle knows its loop, and the counters stay on the thread's.
+    pub fn event_loop_ctx(&self) -> Async::EventLoopCtx {
+        #[cfg(unix)]
+        if self.isolated_poster.is_some() {
+            // SAFETY: the VM owns the spawnSync loop, which outlives what the call makes on it.
+            return unsafe {
+                Async::EventLoopCtx::new(
+                    Async::EventLoopCtxKind::SpawnSync,
+                    core::ptr::from_ref(self).cast_mut(),
+                )
+            };
+        }
+        // SAFETY: the VM this loop belongs to outlives it.
+        unsafe { VirtualMachine::event_loop_ctx(self.vm()) }
+    }
+
     /// JS thread: the weak poster other threads use to reach the loop this
     /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
     /// loop's own poster for a spawnSync loop.
@@ -1253,7 +1260,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
-        let EnterJs::Entered(_context) = Self::enter_js(context, callback, global_object) else {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = callback.call(global_object, this_value, arguments)?;
@@ -1517,6 +1524,7 @@ bun_event_loop::link_impl_JsEventLoop! {
             (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
         },
         uws_loop() => (*this).usockets_loop(),
+        event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),
         auto_tick() => (*this).auto_tick(),
         auto_tick_active() => (*this).auto_tick_active(),
@@ -1533,6 +1541,21 @@ bun_event_loop::link_impl_JsEventLoop! {
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>
             (*(*this).vm_ref().transpiler.env).map.create_null_delimited_env_map(),
+    }
+}
+
+// A spawnSync loop differs from its VM's in the loop alone.
+bun_io::link_impl_EventLoopCtx! {
+    SpawnSync for EventLoop => |this| {
+        platform_event_loop_ptr() => (*this).usockets_loop(),
+        file_polls_ptr() => VirtualMachine::event_loop_ctx((*this).vm()).file_polls_ptr(),
+        // The VM takes what it counts off its own loop, and nothing a spawnSync call makes asks for this.
+        increment_pending_unref_counter() => unreachable!(),
+        after_event_loop_callback() =>
+            VirtualMachine::event_loop_ctx((*this).vm()).after_event_loop_callback(),
+        set_after_event_loop_callback(cb, ctx) =>
+            VirtualMachine::event_loop_ctx((*this).vm()).set_after_event_loop_callback(cb, ctx),
+        pipe_read_scratch() => VirtualMachine::event_loop_ctx((*this).vm()).pipe_read_scratch(),
     }
 }
 
@@ -1602,6 +1625,7 @@ pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
     el_ref(el).tick_tasks_only();
 }
 
+#[cfg(windows)]
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm: *mut (),
@@ -1609,6 +1633,7 @@ pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
 }
 
+#[cfg(windows)]
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     vm: *mut (),

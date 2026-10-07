@@ -146,7 +146,6 @@ impl Flags {
 // Codegen: JSServerWebSocket wrapper cached property accessors.
 // `js::data_{get,set}_cached` are emitted by `.classes.ts` codegen
 // (`generate-classes.ts` → `${T}__data{Get,Set}Cached`).
-#[allow(non_snake_case)]
 pub(crate) mod js {
     // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.

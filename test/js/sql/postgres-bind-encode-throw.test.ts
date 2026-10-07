@@ -12,7 +12,7 @@
 // written and truncates back to it when any part of the group fails.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -62,6 +62,41 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 
+  test.each<[string, unknown]>([
+    ["an Error", new Error("boom")],
+    ["a string", "boom"],
+    ["a number", 42],
+    ["null", null],
+    ["undefined", undefined],
+  ])("a parameter whose toJSON throws %s rejects the query with that value", async (_, thrown) => {
+    await container.ready;
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    try {
+      let outcome: unknown = "pending";
+      // The connection is new, so this is the first use of the statement.
+      const bad = sql`SELECT ${{
+        toJSON() {
+          throw thrown;
+        },
+      }}::json AS v`;
+      bad.then(
+        () => (outcome = "resolved"),
+        reason => (outcome = { rejected: reason }),
+      );
+      // This query waits behind `bad`. When it resolves, `bad` is done.
+      const next = await sql`SELECT ${"x"}::text AS v`;
+
+      expect({ outcome, same: Object.is((outcome as { rejected?: unknown })?.rejected, thrown), next }).toEqual({
+        outcome: { rejected: thrown },
+        same: true,
+        next: [{ v: "x" }],
+      });
+    } finally {
+      // close() with no timeout waits for a query that never settles.
+      await sql.close({ timeout: 5 });
+    }
+  });
+
   test("with prepare: false, a throwing parameter does not break the query queued behind it", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1, prepare: false, idleTimeout: 5, connectionTimeout: 5 });
@@ -79,6 +114,33 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       sibling,
     ]);
     expect({ badResult, s }).toEqual({ badResult: "boom from toString", s: [{ v: "x" }] });
+  });
+
+  // The rejected query sends nothing, so no reply comes back to release the
+  // event loop ref that the query took. The connection must release it itself.
+  test.each([false, true])("a script whose last query was rejected exits on its own (prepare: %p)", async prepare => {
+    await container.ready;
+    const script = `
+      const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
+      await sql.connect();
+      // A later tick: the idle connection does not hold the process any more.
+      await new Promise(resolve => setImmediate(resolve));
+      const param = { toString() { throw new Error("boom from toString"); } };
+      console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, DATABASE_URL: url() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is here so that a failure shows it. A sanitizer build can write to it.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "boom from toString\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {

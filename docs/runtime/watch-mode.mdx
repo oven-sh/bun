@@ -26,6 +26,12 @@ To run your tests in `--watch` mode:
 bun --watch test
 ```
 
+To type check before every restart, add [`--check`](/runtime/check#watch-mode). After a type error, Bun waits for your next change instead of running the file.
+
+```bash terminal icon="terminal"
+bun --watch --check index.tsx
+```
+
 In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
 
 <Note>

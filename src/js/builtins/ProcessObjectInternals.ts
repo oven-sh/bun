@@ -85,26 +85,6 @@ export function getStdioWriteStream(
         });
       }
     };
-
-    const kFastPath = require("internal/fs/streams").kWriteStreamFastPath;
-    stream._final = function (cb) {
-      try {
-        const sink = this[kFastPath];
-        if (sink && sink !== true) {
-          const result = sink.flush();
-          if ($isPromise(result)) {
-            result.then(
-              () => cb(null),
-              err => cb(err),
-            );
-            return;
-          }
-        }
-        cb(null);
-      } catch (err) {
-        cb(err);
-      }
-    };
   }
 
   stream._isStdio = true;

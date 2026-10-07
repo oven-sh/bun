@@ -2127,6 +2127,12 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
+        // `resolveIntersectionTypeMembers` has none either, and calls `setStructuredTypeMembers` at its end.
+        if matches!(q, Query::Shape(ty) if matches!(self.data(ty), TypeData::Intersection(_)))
+            && self.ends_at_reduction_in_progress(i)
+        {
+            return false;
+        }
         self.last_enter = EnterOutcome::Refused;
         // Everything in progress between there and here is computed without the result, so it is
         // provisional.

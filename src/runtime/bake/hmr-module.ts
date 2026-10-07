@@ -6,16 +6,7 @@
 // Some build failures from the bundler surface as runtime errors here, such as
 // `require` on a module with transitive top-level await, or a missing export.
 // This was done to make incremental updates as isolated as possible.
-import {
-  __callDispose,
-  __EARLY_RETURN_SENTINEL,
-  __legacyDecorateClassTS,
-  __legacyDecorateParamTS,
-  __legacyMetadataTS,
-  __MEMO_CACHE_SENTINEL,
-  __name,
-  __using,
-} from "../../runtime.bun";
+import * as runtimeHelpers from "../../runtime.bun";
 // This import is different based on client vs server side.
 // On the server, remapping is done automatically.
 import { type SourceMapURL, derefMapping } from "#stack-trace";
@@ -906,17 +897,13 @@ declare global {
 }
 
 // bun:bake/server, bun:bake/client, and bun:wrap are
-// provided by this file instead of the bundler
-registerSynthetic("bun:wrap", {
-  __name,
-  __legacyDecorateClassTS,
-  __legacyDecorateParamTS,
-  __legacyMetadataTS,
-  __using,
-  __callDispose,
-  __MEMO_CACHE_SENTINEL,
-  __EARLY_RETURN_SENTINEL,
-});
+// provided by this file instead of the bundler.
+//
+// The transpiler can reference any export of runtime.js through `bun:wrap`
+// (see `Imports::ALL` in src/ast/runtime.rs). Register the whole namespace so
+// the list cannot drift. The spread turns the namespace's getters into data
+// properties, so a helper read through `toCommonJS` stays a single hop.
+registerSynthetic("bun:wrap", { ...runtimeHelpers });
 
 if (side === "server") {
   registerSynthetic("bun:bake/server", {

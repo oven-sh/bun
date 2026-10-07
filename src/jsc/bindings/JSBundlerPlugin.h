@@ -42,7 +42,8 @@ public:
         {
         }
 
-        bool match(JSC::VM& vm, const String& path);
+        // Abandoned is not a miss: the matcher ran out of steps or memory, and the path may match.
+        [[nodiscard]] Yarr::MatchStatus match(JSC::VM& vm, const String& path);
     };
 
     class NamespaceList {
@@ -95,6 +96,11 @@ public:
 
         PerNamespaceCallbackList fileCallbacks = {};
         Vector<PerNamespaceCallbackList> namespaceCallbacks = {};
+
+        // What call() returns when it is not the number of callbacks it ran.
+        static constexpr int noCallbacks = -1;
+        // The search of one filter was abandoned. `Plugin::FILTER_ABANDONED` in src/bundler/bundle_v2.rs.
+        static constexpr int filterAbandoned = -2;
 
         int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);

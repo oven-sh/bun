@@ -778,6 +778,9 @@ pub mod bv2_impl {
                 ) -> i32;
             }
             impl Plugin {
+                /// `NativePluginList::filterAbandoned` in JSBundlerPlugin.h.
+                pub(crate) const FILTER_ABANDONED: i32 = -2;
+
                 /// `Plugin.drainDeferred` — resolve every onLoad
                 /// `.defer()` promise. The
                 /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)

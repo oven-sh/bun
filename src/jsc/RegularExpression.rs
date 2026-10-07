@@ -20,6 +20,16 @@ pub enum Flags {
     Sticky = 1 << 7,
 }
 
+/// Mirrors `JSC::Yarr::MatchStatus`, asserted in bindings/RegularExpression.cpp.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum MatchStatus {
+    NoMatch = 0,
+    Match = 1,
+    /// The matcher ran out of steps or of backtracking memory. The string may match.
+    Abandoned = 2,
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum RegularExpressionError {
     #[error("InvalidRegExp")]
@@ -38,7 +48,10 @@ unsafe extern "C" {
     ) -> *mut RegularExpression;
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
     safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
-    safe fn Yarr__RegularExpression__matches(this: &RegularExpression, string: &BunString) -> i32;
+    safe fn Yarr__RegularExpression__matches(
+        this: &RegularExpression,
+        string: &BunString,
+    ) -> MatchStatus;
 }
 
 impl RegularExpression {
@@ -69,10 +82,11 @@ impl RegularExpression {
     // pub fn r#match(&mut self, str: BunString, start_from: i32) -> MatchResult {
     // }
 
-    /// Simple boolean matcher
+    /// Searches `str` for the pattern.
     #[inline]
-    pub fn matches(&mut self, str: &BunString) -> bool {
-        Yarr__RegularExpression__matches(self, str) >= 0
+    #[must_use]
+    pub fn matches(&mut self, str: &BunString) -> MatchStatus {
+        Yarr__RegularExpression__matches(self, str)
     }
 
     /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.
@@ -109,7 +123,12 @@ fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool
     // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
     // centralised non-null deref proof. `regex` was produced by
     // `__bun_regex_compile` and remains live until `__bun_regex_drop`.
-    RegularExpression::opaque_mut(regex.as_ptr().cast()).matches(input)
+    match RegularExpression::opaque_mut(regex.as_ptr().cast()).matches(input) {
+        MatchStatus::Match => true,
+        MatchStatus::NoMatch => false,
+        // A hoist pattern has no group: its search is abandoned only when the limits leave no room for one step.
+        MatchStatus::Abandoned => false,
+    }
 }
 
 #[unsafe(no_mangle)]

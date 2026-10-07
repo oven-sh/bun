@@ -1866,6 +1866,132 @@ describe("bundler", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A bundler thread runs each filter in the RegExp interpreter before it asks the JS thread for
+  // the plugin. A search that the interpreter abandons used to count as "the filter does not
+  // match", and the plugin was skipped. Now the JS thread runs the filter, which answers or throws.
+  describe("a plugin filter whose search is abandoned", () => {
+    // argv: onResolve or onLoad, the filter, then builds as "<count of a's>:<last character>".
+    // The filter sees the import specifier, and then that same string as the path in "virtual".
+    const buildScript = `
+      import { join } from "node:path";
+      const [kind, source, ...builds] = process.argv.slice(2);
+      const filter = new RegExp(source);
+      // BundlerPlugin.ts calls filter.test() on the JS thread. This counts those calls.
+      let filterRuns = 0;
+      const test = filter.test;
+      filter.test = function (path) {
+        filterRuns++;
+        return test.call(this, path);
+      };
+      async function build(count, ending) {
+        const specifier = Buffer.alloc(count, "a").toString() + ending;
+        const entry = join(import.meta.dir, "entry-" + count + ending + ".js");
+        await Bun.write(entry, "import value from " + JSON.stringify(specifier) + ";\\nconsole.log(value);\\n");
+        let calls = 0;
+        filterRuns = 0;
+        const result = await Bun.build({
+          entrypoints: [entry],
+          throw: false,
+          plugins: [
+            {
+              name: "virtual",
+              setup(b) {
+                const resolve = ({ path }) => ({ path, namespace: "virtual" });
+                const load = ({ path }) => ({ contents: "export default " + path.length, loader: "js" });
+                if (kind === "onResolve") {
+                  b.onResolve({ filter }, args => (calls++, resolve(args)));
+                  b.onLoad({ filter: /.*/, namespace: "virtual" }, load);
+                } else {
+                  b.onResolve({ filter: /^a+[cd]$/ }, resolve);
+                  b.onLoad({ filter, namespace: "virtual" }, args => (calls++, load(args)));
+                }
+              },
+            },
+          ],
+        });
+        const logs = result.logs.map(log => log.message.replace(specifier, "<specifier>"));
+        return { success: result.success, logs, calls, filterRuns };
+      }
+      const results = {};
+      for (const arm of builds) {
+        const [count, ending] = arm.split(":");
+        results[arm] = await build(Number(count), ending);
+      }
+      console.log(JSON.stringify(results));
+    `;
+    async function runBuilds(args: string[], env: Record<string, string>) {
+      using dir = tempDir("plugin-filter-abandoned", { "build.mjs": buildScript });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.mjs", ...args],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { results: stdout.trim() ? JSON.parse(stdout) : undefined, stderr, exitCode };
+    }
+    const ran = { success: true, logs: [], calls: 1, filterRuns: 1 };
+
+    describe.each(["onResolve", "onLoad"] as const)("%s", kind => {
+      // The interpreter keeps a context for each iteration of the group in its pool: about 600 fit
+      // in 64 KB. JIT code, which the JS thread runs, keeps them on the stack.
+      test.concurrent("the JS thread answers when the bundler thread has no room", async () => {
+        const ranOut = await runBuilds([kind, "^(?:a|b)+c$", "3:c", "3:d", "2000:c", "2000:d"], {
+          BUN_JSC_maxRegExpStackSize: "65536",
+        });
+        const notResolved = 'Could not resolve: "<specifier>". Maybe you need to "bun install"?';
+        expect(ranOut).toEqual({
+          results: {
+            "3:c": ran,
+            // The bundler thread rules this one out, so the JS thread is not asked.
+            "3:d": {
+              success: false,
+              logs: [kind === "onResolve" ? notResolved : 'File not found "<specifier>"'],
+              calls: 0,
+              filterRuns: 0,
+            },
+            // Abandoned on the bundler thread, matched on the JS thread.
+            "2000:c": ran,
+            // Abandoned on the bundler thread, no match on the JS thread: no plugin takes the path.
+            "2000:d": {
+              success: false,
+              logs: [
+                kind === "onResolve" ? notResolved : 'Module not found "virtual:<specifier>" in namespace "virtual"',
+              ],
+              calls: 0,
+              filterRuns: 1,
+            },
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // With 2,000 steps the last specifier this filter matches has 60 a's in JIT code and 42 in
+      // the interpreter.
+      test.concurrent("the RegExp's error fails the build when both threads run out of steps", async () => {
+        const ranOut = await runBuilds([kind, "^(?:(?:a)*(?:a)*b|(a+)c)$", "3:c", "51:c", "200:c"], {
+          BUN_JSC_regExpMatchLimit: "2000",
+        });
+        expect(ranOut).toEqual({
+          results: {
+            "3:c": ran,
+            "51:c": ran,
+            "200:c": {
+              success: false,
+              logs: ["Regular expression backtracking limit exceeded"],
+              calls: 0,
+              filterRuns: 1,
+            },
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+  });
+
   // Two entry point names that onResolve maps to one file make one output file.
   for (const splitting of [false, true]) {
     test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {

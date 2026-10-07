@@ -2140,6 +2140,22 @@ pub mod parse_worker {
                 result_ptr,
                 should_continue_running,
             );
+            if count == bundler::JSBundlerPlugin::FILTER_ABANDONED {
+                if let Some(free_user_context) = wrapper.result.free_user_context {
+                    free_user_context(wrapper.result.user_context);
+                }
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "The filter of a native onBeforeParse plugin could not be matched against {}: the regular expression exceeded its backtracking limit",
+                        bun_core::fmt::QuotedFormatter {
+                            text: self.file_path.text,
+                        },
+                    ),
+                );
+                return Err(crate::Error::Plugin);
+            }
             if count > 0 {
                 if let Some(e) = self.deferred_error {
                     if let Some(free_user_context) = wrapper.result.free_user_context {

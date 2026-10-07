@@ -631,6 +631,62 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect(exitCode).toBe(0);
   });
 
+  // The filter runs in the RegExp interpreter, which keeps a context for each iteration of the
+  // group in a pool: about 70 fit in 8 KB. A search that does not fit is abandoned. A native
+  // callback has no JS thread to run its filter again on, so the build fails. It used to parse
+  // the file as if the filter did not match it.
+  it("fails the build when the search of an onBeforeParse filter is abandoned", async () => {
+    const name = Buffer.alloc(200, "a").toString() + "c.ts";
+    await Bun.write(path.join(tempdir, "slow_src", name), `export const v = "foo";\n`);
+    await Bun.write(path.join(tempdir, "slow_index.ts"), `import { v } from "./slow_src/${name}";\nconsole.log(v);\n`);
+
+    const buildScript = /* ts */ `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR!;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+      const external = napiModule.createExternal();
+      const result = await Bun.build({
+        outdir: path.join(tempdir, "dist-slow-filter"),
+        entrypoints: [path.join(tempdir, "slow_index.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "slow-filter",
+            setup(build) {
+              // The name of the imported file matches this. The search runs out of room on its a's.
+              build.onBeforeParse({ filter: /(?:a|b)+c\\.ts$/ }, { napiModule, symbol: "plugin_impl", external });
+            },
+          },
+        ],
+      });
+      console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));
+    `;
+    await Bun.write(path.join(tempdir, "slow_filter_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "slow_filter_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir, BUN_JSC_maxRegExpStackSize: "8192" },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"success"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    expect(parsed).toEqual({
+      success: false,
+      logs: [
+        expect.stringMatching(
+          new RegExp(
+            `^The filter of a native onBeforeParse plugin could not be matched against ".*${name}": the regular expression exceeded its backtracking limit$`,
+          ),
+        ),
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("should use result of the first plugin that runs and doesn't execute the others", async () => {
     const filter = /\.ts/;
 

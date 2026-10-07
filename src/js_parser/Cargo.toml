@@ -30,6 +30,7 @@ bun_sema.workspace = true
 bun_react_compiler = { path = "../react_compiler" }
 bun_options_types.workspace = true
 bun_paths.workspace = true
+bun_sys.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
 

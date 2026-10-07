@@ -318,6 +318,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) bundler_feature_flag_ref: Ref,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
+    /// True while visiting the first argument of `new Worker(...)`, whose URL the bundler
+    /// already handles; `new URL(...)` is not embedded there.
+    pub(crate) in_worker_url_arg: bool,
 
     pub(crate) has_classic_runtime_warned: bool,
     pub(crate) macro_call_count: MacroCallCountType,
@@ -9975,6 +9978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
             in_branch_condition: false,
+            in_worker_url_arg: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),

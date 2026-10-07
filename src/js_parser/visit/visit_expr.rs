@@ -14,6 +14,7 @@ use crate::parser::{
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
+use bun_ast::ImportKind;
 use bun_ast::flags as Flags;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
 
@@ -2468,8 +2469,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
 
-        for arg in e_.args.slice_mut() {
+        // Decided before the arguments are visited: in CommonJS output `import.meta.url` is inlined to
+        // the build path while visiting, but the file still has to be found at runtime inside `$bunfs`.
+        let is_url_of_import_meta = p.options.features.embed_new_url_assets
+            && p.unbound_global_name(&e_.target).is_some_and(|n| n == b"URL")
+            && e_.args.len_u32() == 2
+            && matches!(
+                &e_.args.slice()[1].data,
+                Data::EDot(dot) if matches!(dot.target.data, Data::EImportMeta(..)) && dot.name.slice() == b"url"
+            );
+
+        let is_worker = p.options.features.embed_new_url_assets
+            && p.unbound_global_name(&e_.target).is_some_and(|n| n == b"Worker" || n == b"SharedWorker");
+
+        for (i, arg) in e_.args.slice_mut().iter_mut().enumerate() {
+            let saved = p.in_worker_url_arg;
+            p.in_worker_url_arg = is_worker && i == 0;
             p.visit_expr(arg);
+            p.in_worker_url_arg = saved;
+        }
+
+        if is_url_of_import_meta && !p.in_worker_url_arg {
+            p.embed_new_url_asset(&mut *e_);
         }
 
         if p.options.features.minify_syntax {
@@ -2484,6 +2505,81 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 return;
             }
         }
+    }
+
+    /// The name of `target` when it is a reference to an unbound global.
+    fn unbound_global_name(&self, target: &Expr) -> Option<&[u8]> {
+        let Data::EIdentifier(ident) = target.data else {
+            return None;
+        };
+        let symbol = &self.symbols[ident.ref_.inner_index() as usize];
+        (symbol.kind == js_ast::symbol::Kind::Unbound).then(|| symbol.original_name.slice())
+    }
+
+    /// `--compile`: rewrite `new URL("./file", import.meta.url)` to `new URL(require("./file"), import.meta.url)`
+    /// with the import record loaded by the file loader, so the file is embedded in `$bunfs` and the URL
+    /// resolves to the embedded copy. A target that does not exist at build time is left as written.
+    fn embed_new_url_asset(&mut self, e_: &mut E::New) {
+        if self.is_control_flow_dead {
+            return;
+        }
+        let args = e_.args.slice_mut();
+        let arg_loc = args[0].loc;
+        let Some(mut specifier) = args[0].data.as_e_string() else {
+            return;
+        };
+        if specifier.is_utf16 {
+            return;
+        }
+        let specifier = specifier.slice(self.arena);
+        // Only plain relative file paths: a query, fragment or escape would make the URL differ from the file name.
+        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../"))
+            || specifier.iter().any(|&c| matches!(c, b'?' | b'#' | b'%' | b'\\' | 0))
+        {
+            return;
+        }
+        // Source files are reached through Worker/import() (and a `--compile` entry point is embedded under its
+        // own name), so a URL naming one keeps its existing handling.
+        let ext = bun_paths::extension(specifier);
+        if [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
+            .iter()
+            .any(|e| ext.eq_ignore_ascii_case(e.as_bytes()))
+        {
+            return;
+        }
+        let dir = self.source.path.name().dir;
+        let mut joined = bun_paths::path_buffer_pool::get();
+        let joined_len = {
+            let abs = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::resolve_path::platform::Auto>(
+                dir,
+                &mut joined.0[..],
+                &[specifier],
+            );
+            abs.len()
+        };
+        if joined_len >= joined.0.len() {
+            return;
+        }
+        joined.0[joined_len] = 0;
+        let z = bun_core::ZStr::from_buf(&joined.0[..], joined_len);
+        if !matches!(
+            bun_sys::exists_at_type(bun_sys::Fd::cwd(), z),
+            Ok(bun_sys::ExistsAtType::File)
+        ) {
+            return;
+        }
+
+        let import_record_index = self.add_import_record(ImportKind::Require, arg_loc, specifier);
+        self.import_records.items_mut()[import_record_index as usize].loader =
+            Some(bun_ast::Loader::File);
+        self.import_records_for_current_part.push(import_record_index);
+        args[0] = self.new_expr(
+            E::RequireString {
+                import_record_index,
+                ..Default::default()
+            },
+            arg_loc,
+        );
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.

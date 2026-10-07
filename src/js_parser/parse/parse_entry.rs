@@ -236,6 +236,7 @@ impl<'a> Options<'a> {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
                 react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
+                embed_new_url_assets: f.embed_new_url_assets,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,

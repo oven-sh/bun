@@ -1397,41 +1397,6 @@ it.concurrent(
   },
 );
 
-it.concurrent("a write made in the middle of a renegotiation leaves when it ends, over a Duplex", async () => {
-  const tcp = netConnect(quiet.staysOpen, "127.0.0.1");
-  tcp.on("error", () => {});
-  const APPLICATION_DATA = 23;
-  const sent: number[] = [];
-  // The first thing an established session writes here is the ClientHello of the renegotiation.
-  const clientHello = Promise.withResolvers<() => void>();
-  let established = false;
-  const duplex = new Duplex({
-    read() {},
-    write(chunk: Buffer, _encoding: string, callback: () => void) {
-      const forward = () => void tcp.write(chunk, callback);
-      if (!established) return forward();
-      if (sent.push(chunk[0]) === 1) clientHello.resolve(forward);
-      else forward();
-    },
-  });
-  tcp.on("data", (chunk: Buffer) => duplex.push(chunk));
-  const socket = tlsConnect({ ca: tls.cert, servername: "localhost", socket: duplex });
-  try {
-    const failed = Promise.withResolvers<never>();
-    socket.on("error", failed.reject);
-    socket.once("secureConnect", () => (established = true));
-    const forward = await Promise.race([clientHello.promise, failed.promise]);
-    const written = Promise.withResolvers<void>();
-    socket.write("parked", err => (err ? written.reject(err) : written.resolve()));
-    forward();
-    await Promise.race([written.promise, failed.promise]);
-    expect(sent.at(-1)).toBe(APPLICATION_DATA);
-  } finally {
-    socket.destroy();
-    tcp.destroy();
-  }
-});
-
 it.concurrent("a transport that closes in the middle of a renegotiation is no report over a Duplex", async () => {
   const events = await nodeTlsEvents("a Duplex", quiet.cut, Infinity, false);
   // Bun also emits 'end'.

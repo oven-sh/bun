@@ -477,7 +477,8 @@ function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
-  connection.on("close", events[2]);
+  connection.on("drain", events[2]);
+  connection.on("close", events[3]);
   connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();

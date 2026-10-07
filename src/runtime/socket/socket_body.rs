@@ -2727,9 +2727,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // node:net fails the write like Node's onWriteComplete;
                         // -1 stays the legacy closed/shutdown sentinel.
                         JSValue::js_number(f64::from(wrote))
-                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total
-                        && this.socket.get().transport_idle()
-                    {
+                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -2761,10 +2759,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let _ = this.internal_flush();
                 }
 
-                JSValue::from(
-                    usize::try_from(wrote.max(0)).expect("int cast") == total
-                        && this.socket.get().transport_idle(),
-                )
+                JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
             }
         };
         Ok(result)
@@ -5000,7 +4995,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
 
     let array = JSValue::create_empty_array(global, 2)?;
     array.put_index(global, 0, tls_js_value)?;
-    // data, end and close events must be reported
+    // data, end, drain and close events must be reported
     array.put_index(
         global,
         1,

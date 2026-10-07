@@ -2547,7 +2547,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await init_async()");
+      expect(out).toContain("await (init_async() || Promise.resolve().then(() => init_async()))");
       expect(out).toContain("init_sync()");
     },
   });

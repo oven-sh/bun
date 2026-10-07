@@ -2473,8 +2473,6 @@ describe("backpressure", () => {
       return Object.fromEntries(names.map(name => [name, received.indexOf(name.includes(" ") ? name : `<${name}>`)]));
     }
     const response = "HTTP/1.1 200 OK";
-    // More than the kernel takes at once from a peer that reads nothing.
-    const LARGE = 8 * 1024 * 1024;
 
     describe.each(["http", "https"] as const)("%s", protocol => {
       describe.each(Object.keys(sources) as Source[])("%s", source => {
@@ -2661,23 +2659,44 @@ describe("backpressure", () => {
       });
     });
 
-    // One order of calls on the socket of a plain http connection, and what the client then receives.
-    // `act` returns the value of its first write().
+    // Writes chunks until write() returns false. From there a write waits for the client on every
+    // platform: a kernel can take one large write whole and refuse the next one.
+    function fill(socket: Duplex) {
+      let filled = 0;
+      let waits = false;
+      while (!waits && filled < TOTAL) {
+        waits = !socket.write(CHUNK);
+        filled += CHUNK.length;
+      }
+      return { filled, waits };
+    }
+
+    // One order of calls behind a write that waits, on the socket of a plain http connection, and
+    // what the client then receives behind the bytes of fill(). `write` is the socket's write() from
+    // before the first write that waited.
     async function wire(
       source: Source,
-      act: (socket: Duplex, done: (name: string) => (err?: Error | null) => void, res?: http.ServerResponse) => boolean,
+      act: (
+        socket: Duplex,
+        done: (name: string) => (err?: Error | null) => void,
+        res: http.ServerResponse | undefined,
+        write: Duplex["write"],
+      ) => void,
     ) {
       const callbacks: string[] = [];
       const done = (name: string) => (err?: Error | null) => void callbacks.push(err ? `${name}: error` : name);
-      const firstWrite = Promise.withResolvers<boolean>();
+      const filling = Promise.withResolvers<ReturnType<typeof fill>>();
       const connection = await open("http", source, (socket, res) => {
         socket.on("error", () => {});
-        firstWrite.resolve(act(socket, done, res));
+        const write = socket.write;
+        const result = fill(socket);
+        act(socket, done, res, write);
+        filling.resolve(result);
       });
       try {
-        const returned = await firstWrite.promise;
+        const { filled, waits } = await filling.promise;
         const { received, ended } = await connection.read();
-        return { returned, received, ended, callbacks };
+        return { waits, received: received.subarray(filled), ended, callbacks };
       } finally {
         connection.close();
       }
@@ -2685,20 +2704,19 @@ describe("backpressure", () => {
 
     describe("the bytes reach the client in the order of the calls", () => {
       it("a response that ends behind two raw writes", async () => {
-        const first = piece("first", LARGE);
+        const first = piece("first", 4096);
         const second = piece("second", 1024);
-        const { returned, received, ended, callbacks } = await wire(
+        const { waits, received, ended, callbacks } = await wire(
           "req.socket in a 'request' listener",
           (socket, done, res) => {
-            const returned = socket.write(first, done("first"));
+            socket.write(first, done("first"));
             socket.write(second, done("second"));
             res!.writeHead(200, { "Connection": "close", "Content-Length": 2 });
             res!.end("ok");
-            return returned;
           },
         );
-        expect({ returned, ...offsets(received, ["first", "second", response]), ended, callbacks }).toEqual({
-          returned: false,
+        expect({ waits, ...offsets(received, ["first", "second", response]), ended, callbacks }).toEqual({
+          waits: true,
           first: 0,
           second: first.length,
           [response]: first.length + second.length,
@@ -2707,44 +2725,34 @@ describe("backpressure", () => {
         });
       });
 
-      it("end(chunk) behind a write that waits", async () => {
-        const first = piece("first", LARGE);
+      it("end(chunk)", async () => {
+        const first = piece("first", 4096);
         const last = piece("last", 1024);
-        const { returned, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
-          const returned = socket.write(first, done("first"));
+        const { waits, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
+          socket.write(first, done("first"));
           socket.end(last, done("end"));
-          return returned;
         });
-        expect({ returned, bytes: received.length, ...offsets(received, ["first", "last"]), ended, callbacks }).toEqual(
-          {
-            returned: false,
-            bytes: first.length + last.length,
-            first: 0,
-            last: first.length,
-            ended: true,
-            callbacks: ["first", "end"],
-          },
-        );
+        expect({ waits, bytes: received.length, ...offsets(received, ["first", "last"]), ended, callbacks }).toEqual({
+          waits: true,
+          bytes: first.length + last.length,
+          first: 0,
+          last: first.length,
+          ended: true,
+          callbacks: ["first", "end"],
+        });
       });
 
       it("an empty write() between two writes", async () => {
-        const first = piece("first", LARGE);
-        const third = piece("third", 1024 * 1024);
-        const { returned, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
-          const returned = socket.write(first, done("first"));
+        const first = piece("first", 4096);
+        const third = piece("third", 1024);
+        const { waits, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
+          socket.write(first, done("first"));
           socket.write("", done("empty"));
           socket.write(third, done("third"));
           socket.end();
-          return returned;
         });
-        expect({
-          returned,
-          bytes: received.length,
-          ...offsets(received, ["first", "third"]),
-          ended,
-          callbacks,
-        }).toEqual({
-          returned: false,
+        expect({ waits, bytes: received.length, ...offsets(received, ["first", "third"]), ended, callbacks }).toEqual({
+          waits: true,
           bytes: first.length + third.length,
           first: 0,
           third: first.length,
@@ -2753,27 +2761,26 @@ describe("backpressure", () => {
         });
       });
 
-      it("writes under cork() behind a write that waits", async () => {
-        const first = piece("first", LARGE);
+      it("writes under cork()", async () => {
+        const first = piece("first", 4096);
         const second = piece("second", 1024);
         const third = piece("third", 1024);
-        const { returned, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
-          const returned = socket.write(first, done("first"));
+        const { waits, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
           socket.cork();
+          socket.write(first, done("first"));
           socket.write(second, done("second"));
-          socket.write(third, done("third"));
           socket.uncork();
+          socket.write(third, done("third"));
           socket.end();
-          return returned;
         });
         expect({
-          returned,
+          waits,
           bytes: received.length,
           ...offsets(received, ["first", "second", "third"]),
           ended,
           callbacks,
         }).toEqual({
-          returned: false,
+          waits: true,
           bytes: first.length + second.length + third.length,
           first: 0,
           second: first.length,
@@ -2783,26 +2790,27 @@ describe("backpressure", () => {
         });
       });
 
-      it("a write through a reference to write() that was taken before the first write waited", async () => {
-        const first = piece("first", LARGE);
+      it("a write through a reference to write() from before the first write that waited", async () => {
+        const first = piece("first", 4096);
         const second = piece("second", 1024);
         const third = piece("third", 1024);
-        const { returned, received, ended, callbacks } = await wire("the socket of 'connection'", (socket, done) => {
-          const write = socket.write;
-          const returned = socket.write(first, done("first"));
-          write.call(socket, second, done("second"));
-          socket.write(third, done("third"));
-          socket.end();
-          return returned;
-        });
+        const { waits, received, ended, callbacks } = await wire(
+          "the socket of 'connection'",
+          (socket, done, _res, write) => {
+            socket.write(first, done("first"));
+            write.call(socket, second, done("second"));
+            socket.write(third, done("third"));
+            socket.end();
+          },
+        );
         expect({
-          returned,
+          waits,
           bytes: received.length,
           ...offsets(received, ["first", "second", "third"]),
           ended,
           callbacks,
         }).toEqual({
-          returned: false,
+          waits: true,
           bytes: first.length + second.length + third.length,
           first: 0,
           second: first.length,
@@ -2818,27 +2826,28 @@ describe("backpressure", () => {
       async function settled(kill: (socket: Duplex, client: Duplex) => void) {
         const events: string[] = [];
         const closed = Promise.withResolvers<void>();
-        const written = Promise.withResolvers<{ socket: Duplex; returned: boolean }>();
+        const written = Promise.withResolvers<{ socket: Duplex; waits: boolean }>();
         const connection = await open("http", "the socket of 'connection'", socket => {
           socket.on("error", () => {});
           socket.on("close", () => {
             events.push("close");
             closed.resolve();
           });
-          const returned = socket.write(Buffer.alloc(LARGE, "a"), err => events.push(err ? "first: error" : "first"));
+          const { waits } = fill(socket);
+          socket.write("a", err => events.push(err ? "first: error" : "first"));
           socket.write("b", err => events.push(err ? "second: error" : "second"));
-          written.resolve({ socket, returned });
+          written.resolve({ socket, waits });
         });
         try {
-          const { socket, returned } = await written.promise;
+          const { socket, waits } = await written.promise;
           kill(socket, connection.client);
           await closed.promise;
-          return { returned, callbacks: events.slice(0, -1).sort(), last: events.at(-1) };
+          return { waits, callbacks: events.slice(0, -1).sort(), last: events.at(-1) };
         } finally {
           connection.close();
         }
       }
-      const expected = { returned: false, callbacks: ["first: error", "second: error"], last: "close" };
+      const expected = { waits: true, callbacks: ["first: error", "second: error"], last: "close" };
 
       it("socket.destroy()", async () => {
         expect(await settled(socket => socket.destroy())).toEqual(expected);

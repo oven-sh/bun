@@ -137,8 +137,10 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
 describe.each(["http", "https"] as const)(
   "%s: res.socket.end() behind response bytes that wait for the client",
   protocol => {
-    // More than a loopback socket takes from a peer that reads nothing.
-    const body = Buffer.alloc(8 * 1024 * 1024, "a");
+    // 16 MiB in writes of 64 KiB: more than a loopback connection takes from a peer that reads
+    // nothing. A kernel can take one large write whole, and then it refuses the next one.
+    const chunk = Buffer.alloc(64 * 1024, "a");
+    const length = 256 * chunk.length;
 
     test("the end() callback and 'finish' wait until the client has read them", async () => {
       const events: string[] = [];
@@ -146,8 +148,8 @@ describe.each(["http", "https"] as const)(
       const finished = Promise.withResolvers<void>();
       const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
         if (req.url === "/turn") return void res.end();
-        res.writeHead(200, { "Content-Length": body.length });
-        res.write(body);
+        res.writeHead(200, { "Content-Length": length });
+        for (let written = 0; written < length; written += chunk.length) res.write(chunk);
         const socket = res.socket!;
         socket.on("finish", () => events.push("finish"));
         socket.end(() => {
@@ -190,7 +192,7 @@ describe.each(["http", "https"] as const)(
         client.on("data", chunk => {
           if (head === -1 && (head = chunk.indexOf("\r\n\r\n")) !== -1) head += received + 4;
           received += chunk.length;
-          if (head !== -1 && received - head === body.length) read.resolve();
+          if (head !== -1 && received - head === length) read.resolve();
         });
         client.resume();
         await read.promise;

@@ -280,22 +280,6 @@ impl UpgradedDuplex {
         // probe so write-after-end still errors like node.
         let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
         if teardown {
-            // A teardown payload (close_notify) after the transport's readable
-            // side ended has no reader behind it: node writes nothing there,
-            // and a transport that forwards into an auto-ended net.Socket
-            // throws writeAfterFIN (EPIPE). The trailing end() is not a write
-            // and still goes through the writableEnded probe below, so a
-            // half-open transport sees our FIN.
-            if data.is_some() {
-                match Self::transport_got_eof(duplex, &global) {
-                    Ok(false) => {}
-                    Ok(true) => return,
-                    Err(err) => {
-                        (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
-                        return;
-                    }
-                }
-            }
             // Node ends no destroyed stream.
             for property in ["writableEnded", "destroyed"] {
                 match duplex.get(&global, property) {
@@ -368,13 +352,10 @@ impl UpgradedDuplex {
         self.in_flight.get() == 0
     }
 
-    /// Not the 'end' event, which a paused transport holds back. No public property tells.
-    fn transport_got_eof(duplex: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-        let ended = match duplex.get(global, "_readableState")? {
-            Some(state) if state.is_object() => state.get(global, "ended")?,
-            _ => None,
-        };
-        Ok(ended.is_some_and(|ended| ended.to_boolean()))
+    fn on_peer_close(this: *mut Self) {
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        (this.handlers.on_end)(this.handlers.ctx);
     }
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
@@ -549,6 +530,7 @@ impl UpgradedDuplex {
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),
             server_identity: Some(Self::server_identity),
+            on_peer_close: Some(Self::on_peer_close),
         }
     }
 

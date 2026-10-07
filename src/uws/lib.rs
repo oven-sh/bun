@@ -357,6 +357,8 @@ pub mod ssl_wrapper {
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
+        /// `on_peer_close` ran: the peer sends no more, and the owner's `shutdown` is the answer that closes.
+        peer_closed: Cell<bool>,
         ciphertext: Ciphertext,
     }
 
@@ -510,6 +512,9 @@ pub mod ssl_wrapper {
         pub on_keylog: Option<fn(T, &[u8])>,
         /// The name check of the verify step. `None`: the owner checks after the handshake.
         pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
+        /// The peer's close_notify on an established session, as an EOF: the session stays writable until the
+        /// owner's `shutdown`, like a half-open fd. `None`: answered and closed at once.
+        pub on_peer_close: Option<fn(T)>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -607,6 +612,7 @@ pub mod ssl_wrapper {
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
+                peer_closed: Cell::new(false),
                 ciphertext: Ciphertext::default(),
             });
             let this = Self { inner };
@@ -824,6 +830,11 @@ pub mod ssl_wrapper {
             }
             // SSL_shutdown only queues close_notify, and nothing else hands it to the owner.
             self.handle_writing();
+            if self.peer_closed.get() {
+                // No read is left to report the close.
+                self.flags.set_received_ssl_shutdown(true);
+                self.trigger_close_callback();
+            }
             ret == 1 // truly closed
         }
 
@@ -864,7 +875,8 @@ pub mod ssl_wrapper {
 
         /// Receive data from the network (encrypted data)
         pub fn receive_data(&self, data: &[u8]) {
-            if self.ssl.get().is_none() {
+            // Nothing behind the peer's close_notify is read.
+            if self.ssl.get().is_none() || self.peer_closed.get() {
                 return;
             }
             {
@@ -1051,9 +1063,10 @@ pub mod ssl_wrapper {
                     "the initial handshake completed outside update_handshake_state, unreported"
                 );
                 // SAFETY: ssl is a live SSL*.
-                if (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
-                    & boring_sys::SSL_RECEIVED_SHUTDOWN)
-                    != 0
+                if !self.peer_closed.get()
+                    && (unsafe { boring_sys::SSL_get_shutdown(ssl.as_ptr()) }
+                        & boring_sys::SSL_RECEIVED_SHUTDOWN)
+                        != 0
                 {
                     // we received a shutdown
                     self.flags.set_received_ssl_shutdown(true);
@@ -1236,7 +1249,10 @@ pub mod ssl_wrapper {
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-                            self.flags.set_received_ssl_shutdown(true);
+                            // Not yet for an owner that answers: the data callback below can still write.
+                            self.flags.set_received_ssl_shutdown(
+                                self.handlers.get().on_peer_close.is_none(),
+                            );
                             self.handle_end_of_renegotiation();
                         }
                         // Taken now: the callbacks below run JS, which can change the queue.
@@ -1254,6 +1270,16 @@ pub mod ssl_wrapper {
                             return false;
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {
+                            let handlers = self.handlers.get();
+                            if let Some(on_peer_close) = handlers.on_peer_close
+                                && !self.flags.sent_ssl_shutdown()
+                            {
+                                self.peer_closed.set(true);
+                                self.ciphertext.incoming.take();
+                                on_peer_close(handlers.ctx);
+                                return false;
+                            }
+                            self.flags.set_received_ssl_shutdown(true);
                             // 2-step shutdown, last: write_data fails once our close_notify is out.
                             let _ = self.shutdown(false);
                         }

@@ -150,6 +150,8 @@ function socketData(this: TLSProxySocket, _socket: NativeHandle, chunk: Buffer) 
 
 // end: TLS peer signaled end-of-stream; signal EOF to the H2 session.
 function socketEnd(this: TLSProxySocket) {
+  // No handshake completes after the client's FIN, and nothing reads this socket before one did.
+  if (!this._secureEstablished) return void this._ctx.rawSocket.destroy();
   this.push(null);
 }
 
@@ -307,7 +309,8 @@ function upgradeRawSocketToH2(
   rawSocket: import("node:net").Socket,
 ): boolean {
   // Create a Duplex stream that acts as the TLS "socket" from the H2 session's perspective.
-  const tlsSocket = new Duplex() as TLSProxySocket;
+  // Like the socket of a tls.Server, it ends its side once the client closed and what was written is out.
+  const tlsSocket = new Duplex({ allowHalfOpen: false }) as TLSProxySocket;
   tlsSocket._ctx = new UpgradeContext(connectionListener, server, rawSocket);
 
   // Duplex stream methods — `this` is tlsSocket, no bind needed
@@ -388,6 +391,8 @@ function upgradeRawSocketToH2(
   rawSocket.on("data", events[0]);
   rawSocket.on("end", events[1]);
   rawSocket.on("close", events[2]);
+  // Node's TLSWrap reads the handle itself: the raw socket never hears of the client's FIN, so it does not end at it.
+  rawSocket.allowHalfOpen = true;
 
   // When the TLS socket closes (e.g. H2 session destroyed), clean up the raw socket
   // listeners to prevent memory leaks and stale callback references.

@@ -1477,10 +1477,13 @@ it("the last 'data' event fires before the close_notify reply is written to a du
   client.on("end", () => log.push("end"));
   held = Buffer.alloc(0);
   client.write("go");
+  // Over a half-open Duplex the reply is the client's own end(), as in Node.
+  await once(client, "end");
+  client.end();
   await once(client, "close");
 
   // 23 is application data. One push carried it and the alert.
-  expect(log).toEqual(["push 23,21", "data last", "write close_notify", "transport end", "end"]);
+  expect(log).toEqual(["push 23,21", "data last", "end", "write close_notify", "transport end"]);
 });
 
 describe("application data written over a Duplex transport before the handshake completes", () => {

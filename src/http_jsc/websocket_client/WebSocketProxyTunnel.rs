@@ -223,6 +223,7 @@ impl WebSocketProxyTunnel {
                 on_session: None,
                 on_keylog: None,
                 server_identity: Some(Self::server_identity),
+                on_peer_close: None,
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;

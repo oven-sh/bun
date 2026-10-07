@@ -473,8 +473,15 @@ function onUpgradedConnect(self, connection) {
 function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
+// No handshake completes after the EOF. A write that waits for one would hold the end() behind it, and the connection, for good.
+function destroyIfWriteAwaitsHandshake() {
+  if (!this._secureEstablished && this.writableLength > 0) this.destroy();
+}
 function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
+  // Node's TLSWrap reads the handle of a net.Socket itself: that socket never hears of the peer's FIN, so it does not end at it.
+  if (connection instanceof Socket) connection.allowHalfOpen = true;
+  self.once("end", destroyIfWriteAwaitsHandshake);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
   connection.on("close", events[2]);
@@ -3040,7 +3047,11 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this[kwriteCallback] = callback;
     // A pending write holds the loop even on a handle whose FIN/pause dropped
     // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
+    // Over a stream that is no net.Socket there is no such request: what that stream does with the write holds the loop or not.
+    const upgraded = this[kupgraded];
+    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed] && (!upgraded || upgraded instanceof Socket)) {
+      socket.ref?.();
+    }
   }
 };
 

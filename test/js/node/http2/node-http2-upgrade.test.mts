@@ -327,6 +327,93 @@ describe("HTTP/2 upgrade — ALPN negotiation", () => {
       netServer.close();
     }
   });
+
+  test("a client that negotiated no protocol reads the 403 over a transport that completes its writes a turn later", async () => {
+    // The server answers from its handshake callback and ends the socket. Its
+    // transport still has that write when the end arrives.
+    const h2Server = http2.createSecureServer(TLS);
+    const ended = Promise.withResolvers<void>();
+    h2Server.on("error", () => {});
+    h2Server.on("session", () => ended.reject(new Error("a client without ALPN must not get a session")));
+    const clientSide: Duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        serverSide.push(chunk);
+        callback();
+      },
+    });
+    const serverSide: Duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        setImmediate(() => {
+          clientSide.push(chunk);
+          callback();
+        });
+      },
+    });
+    serverSide.on("error", () => {});
+    serverSide.on("close", () => clientSide.push(null));
+    h2Server.emit("connection", serverSide);
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    try {
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      client.on("error", () => {});
+      client.once("end", () => ended.resolve());
+      client.once("close", () => ended.resolve());
+      await ended.promise;
+      assert.match(received, /^HTTP\/1\.0 403 Forbidden\r\n[^]*Missing ALPN Protocol, expected `h2` to be available\./);
+    } finally {
+      client.destroy();
+      serverSide.destroy();
+    }
+  });
+});
+
+describe("HTTP/2 upgrade — the client closes its side first", () => {
+  test("what the server still has to send arrives, over a raw socket that got the client's FIN", async () => {
+    const h2Server = http2.createSecureServer(TLS);
+    const log: string[] = [];
+    const first = Buffer.alloc(16 * 1024 * 1024, "a");
+    const writing = Promise.withResolvers<void>();
+    h2Server.on("error", err => log.push(`server 'error': ${err.code}`));
+    h2Server.on("unknownProtocol", socket => {
+      socket.on("error", (err: NodeJS.ErrnoException) => log.push(`'error': ${err.code}`));
+      socket.resume();
+      // More than the kernel takes at once, so the writes behind it are still queued when the FIN arrives.
+      socket.write(first, err => log.push(`write callback: ${(err as NodeJS.ErrnoException)?.code}`));
+      socket.write("tail", err => log.push(`queued write callback: ${(err as NodeJS.ErrnoException)?.code}`));
+      socket.write("third", err => log.push(`last write callback: ${(err as NodeJS.ErrnoException)?.code}`));
+      writing.resolve();
+    });
+    const netServer = net.createServer(socket => void h2Server.emit("connection", socket));
+    await once(netServer.listen(0, "127.0.0.1"), "listening");
+    const port = (netServer.address() as net.AddressInfo).port;
+    const client = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false, allowHalfOpen: true });
+    try {
+      client.on("error", err => log.push(`client 'error': ${(err as NodeJS.ErrnoException).code}`));
+      await once(client, "secureConnect");
+      await writing.promise;
+      let received = 0;
+      const ended = once(client, "end");
+      client.end();
+      // Its FIN is out before it reads the first byte.
+      await once(client, "finish");
+      client.on("data", chunk => (received += chunk.length));
+      await ended;
+      assert.deepStrictEqual(
+        { received, log },
+        {
+          received: first.length + "tail".length + "third".length,
+          log: ["write callback: undefined", "queued write callback: undefined", "last write callback: undefined"],
+        },
+      );
+    } finally {
+      client.destroy();
+      netServer.close();
+    }
+  });
 });
 
 describe("HTTP/2 upgrade — varied status codes", () => {

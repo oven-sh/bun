@@ -536,7 +536,7 @@ private:
                  * response's per-request framing bits (204/304, close-delimited,
                  * trailers), which writeHead only ever sets: a stale one would
                  * strip the next response's body framing. */
-                httpResponseData->resetResponseState();
+                httpResponseData->resetResponseState(httpContextData->idleTimeout);
 
                 /* An ancient (HTTP/1.0) request gets no keep-alive and no chunked
                  * framing; so does an explicit `Connection: close`. */
@@ -667,7 +667,7 @@ private:
                     /* We still have some more data coming in later, so reset timeout */
                     /* Only reset timeout if we got enough bytes (16kb/sec) since last time we reset here */
                     httpResponseData->received_bytes_per_timeout += (unsigned int) data.length();
-                    if (httpResponseData->received_bytes_per_timeout >= HTTP_RECEIVE_THROUGHPUT_BYTES * httpResponseData->idleTimeout) {
+                    if (httpResponseData->received_bytes_per_timeout >= HTTP_RECEIVE_THROUGHPUT_BYTES * httpResponseData->idleTimeoutInForce) {
                         ((HttpResponse<SSL> *) user)->resetTimeout();
                         httpResponseData->received_bytes_per_timeout = 0;
                     }
@@ -966,6 +966,10 @@ private:
 
         /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
         asyncSocket->flush();
+
+        /* The tail of a response that ended under backpressure may be out now;
+         * the resetTimeout() below arms what this leaves. */
+        reinterpret_cast<HttpResponse<SSL> *>(s)->endTimeoutOverrideIfDrained();
 
         /* node:http compat: reads were paused while pipelined responses were
          * queued and stayed paused because the socket still had outgoing

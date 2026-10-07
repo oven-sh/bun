@@ -53,16 +53,36 @@ public:
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
 
+    /* Replaces the server's idle timeout (HttpContextData::idleTimeout) for
+     * the response in flight, and arms it. */
     void setTimeout(uint8_t seconds) {
         auto* data = getHttpResponseData();
-        data->idleTimeout = seconds;
-        Super::timeout(data->idleTimeout);
+        if (!(data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) {
+            return;
+        }
+        data->state |= HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
+        data->idleTimeoutInForce = seconds;
+        Super::timeout(data->idleTimeoutInForce);
+    }
+
+    /* A setTimeout() override ends when its response is complete and
+     * hasFullyDrained(): a response that ended under backpressure keeps it
+     * until onWritable has drained the tail. Bytes still in the cork buffer
+     * do not count. Does not arm. */
+    void endTimeoutOverrideIfDrained() {
+        auto* data = getHttpResponseData();
+        if ((data->state & (HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)) == HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN) [[unlikely]] {
+            if (Super::hasFullyDrained()) {
+                data->state &= ~HttpResponseData<SSL>::HTTP_TIMEOUT_OVERRIDDEN;
+                data->idleTimeoutInForce = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->idleTimeout;
+            }
+        }
     }
 
     void resetTimeout() {
         auto* data = getHttpResponseData();
 
-        Super::timeout(data->idleTimeout);
+        Super::timeout(data->idleTimeoutInForce);
     }
     /* The chunk-size line of a chunk. Returns its length. */
     static constexpr size_t CHUNK_HEAD_MAX = 10;
@@ -361,17 +381,21 @@ public:
 
             /* Success is when we wrote the entire thing without any failures */
             bool success = written == data.length() && !failed;
-            /* Reset the timeout on each tryEnd */
-            this->resetTimeout();
 
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
+                /* After markDone(), which can end a setTimeout() override, and
+                 * before the close gate, which can destruct the ext. */
+                this->resetTimeout();
 
                 /* We need to check if we should close this socket here now */
                 if (uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
                 }
+            } else {
+                /* Reset the timeout on each tryEnd */
+                this->resetTimeout();
             }
 
             return success;

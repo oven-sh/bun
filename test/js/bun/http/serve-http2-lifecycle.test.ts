@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { closeSync, openSync, writeSync } from "node:fs";
 import http2 from "node:http2";
+import { join } from "node:path";
 import tls from "node:tls";
 import {
   F,
@@ -293,6 +296,70 @@ describe("Bun.serve http2 lifecycle", () => {
     const tDone = Date.now();
     expect((await closed) - tDone).toBeLessThan(15000);
   }, 40000);
+
+  // A FIFO with an open writer is the one file body that can stay quiet. Windows has no FIFO.
+  test.skipIf(isWindows)(
+    "server.timeout(req, 0) holds while a Bun.file body is quiet",
+    async () => {
+      using dir = tempDir("serve-http2-quiet-file", {});
+      const fifo = join(String(dir), "body.fifo");
+      mkfifo(fifo);
+      // A writer that stays open: the body is quiet, not at its end.
+      const writer = openSync(fifo, "r+");
+      let writerOpen = true;
+      const fx = await startFixture({ tls: false, idleTimeout: 2 });
+      try {
+        writeSync(writer, "first");
+        const session = await connectH2(fx.port, false);
+        const stream = session.request({ ":path": "/file-no-timeout?path=" + encodeURIComponent(fifo) });
+        let body = "";
+        let closedByServer = false;
+        let wake = Promise.withResolvers<void>();
+        const streamClosed = Promise.withResolvers<void>();
+        stream.on("error", () => {});
+        stream.on("data", chunk => {
+          body += chunk;
+          wake.resolve();
+        });
+        stream.on("close", () => {
+          closedByServer = true;
+          streamClosed.resolve();
+          wake.resolve();
+        });
+        const sees = async (text: string) => {
+          while (!body.includes(text) && !closedByServer) {
+            wake = Promise.withResolvers<void>();
+            await wake.promise;
+          }
+          return body.includes(text);
+        };
+        // The clock: the server closes a silent connection in its next timer
+        // sweep, and that sweep also ends a stream that is under idleTimeout.
+        const sweep = async () => {
+          const silent = await connectH2(fx.port, false);
+          await new Promise<void>(resolve => silent.once("close", () => resolve()));
+        };
+        const first = await sees("first");
+        await sweep();
+        writeSync(writer, "late");
+        const late = await sees("late");
+        expect({ first, late, closedByServer }).toEqual({ first: true, late: true, closedByServer: false });
+        // The end of the FIFO ends the body. A fixture that exits with the
+        // body open leaves the stream allocated, and the leak check reports it.
+        closeSync(writer);
+        writerOpen = false;
+        let waiting = true;
+        await Promise.race([streamClosed.promise, sweep().then(() => waiting && sweep())]);
+        waiting = false;
+        session.destroy();
+      } finally {
+        if (writerOpen) closeSync(writer);
+        await fx[Symbol.asyncDispose]();
+      }
+      expect(fx.proc.exitCode).toBe(0);
+    },
+    40000,
+  );
 
   test("h2 is not negotiated below TLS 1.2; a TLS 1.2 client offering only ECDHE-RSA-AES128-GCM-SHA256 works", async () => {
     await using fx = await startFixture({ tls: true });

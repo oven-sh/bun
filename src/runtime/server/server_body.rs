@@ -336,7 +336,8 @@ pub(super) trait RespLike {
     const IS_MUX: bool;
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
-    fn timeout(&mut self, seconds: u8);
+    /// A request starts under the server's idle timeout.
+    fn start_timeout(&mut self);
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
     /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
@@ -357,8 +358,8 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         uws_sys::NewAppResponse::<SSL>::end_without_body(self, c)
     }
     #[inline]
-    fn timeout(&mut self, s: u8) {
-        uws_sys::NewAppResponse::<SSL>::timeout(self, s)
+    fn start_timeout(&mut self) {
+        uws_sys::NewAppResponse::<SSL>::reset_timeout(self)
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
@@ -402,9 +403,7 @@ impl RespLike for uws_sys::h3::Response {
         uws_sys::h3::Response::end_without_body(self, c)
     }
     #[inline]
-    fn timeout(&mut self, s: u8) {
-        uws_sys::h3::Response::timeout(self, s)
-    }
+    fn start_timeout(&mut self) {}
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
         uws_sys::h3::Response::on_timeout(
@@ -433,8 +432,8 @@ impl RespLike for uws_sys::h2::Response {
         uws_sys::h2::Response::end_without_body(self, c)
     }
     #[inline]
-    fn timeout(&mut self, s: u8) {
-        uws_sys::h2::Response::timeout(self, s)
+    fn start_timeout(&mut self) {
+        uws_sys::h2::Response::start_timeout(self)
     }
     #[inline]
     fn on_timeout_warn(&mut self, ud: *mut c_void) {
@@ -2926,7 +2925,7 @@ where
         server.on_pending_request();
 
         ReqLike::set_yield(req, false);
-        RespLike::timeout(resp, server.config.idle_timeout);
+        RespLike::start_timeout(resp);
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.

@@ -259,6 +259,8 @@ Bun.serve({
 });
 ```
 
+`idleTimeout` is also how long Bun keeps an idle keep-alive connection open between requests. Behind a load balancer or a reverse proxy, set `idleTimeout` above the keep-alive time the proxy uses for its upstream connections, or set it to `0`. [`server.timeout(req, seconds)`](#server-timeout-request-seconds) lasts until the response to that request is complete. After that, the connection is under `idleTimeout` again.
+
 <Note>
   **Streaming & Server-Sent Events** — The idle timer applies while a response is being streamed. If your stream goes
   quiet for longer than `idleTimeout`, Bun closes the connection mid-response. For long-lived streams, disable the

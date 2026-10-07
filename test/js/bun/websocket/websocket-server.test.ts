@@ -2663,5 +2663,4 @@ it("server.upgrade() reports false for a connection the idle timeout already end
     opened: 0,
     pendingWebSockets: 0,
   });
-}, // The fixture waits for the server's own idle timeout on a spawned debug build.
-40_000);
+}, 40_000); // The fixture waits for the server's own idle timeout on a spawned debug build.

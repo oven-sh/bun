@@ -102,6 +102,12 @@ impl Plan {
         }
     }
 
+    fn sorted_linked_folders(&mut self) -> &[Box<[u8]>] {
+        sort_names(&mut self.linked_folders);
+        self.linked_folders.dedup();
+        &self.linked_folders
+    }
+
     fn scope_name(&self, scope: usize, parent: usize) -> &[u8] {
         &self.folders[scope].path[self.folders[parent].path.len() + 1..]
     }
@@ -296,8 +302,16 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
-    if !quiet {
-        warn_linked_folders(&mut plan.linked_folders);
+    // A folder the command was asked to prune and did not: the rest is pruned, and the exit code is 1.
+    let refused = !plan.linked_folders.is_empty();
+    if refused && !quiet {
+        for folder in plan.sorted_linked_folders() {
+            Output::err_generic(
+                "{} is a symlink, so Bun did not prune it",
+                (BStr::new(folder),),
+            );
+        }
+        bun_core::note!("to have Bun prune that folder, remove the link and run 'bun install'");
     }
     Output::flush();
 
@@ -310,14 +324,27 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
                 .iter()
                 .filter(|f| matches!(f.kind, FolderKind::NodeModules | FolderKind::Store))
                 .count();
-            bun_core::pretty!(
-                "<r><green>Done<r>! Checked <green>{} installed package{}<r> across {} folder{} <d>(nothing to prune)<r> ",
-                checked,
-                plural(checked),
-                folders,
-                plural(folders)
-            );
+            if refused {
+                bun_core::pretty!(
+                    "<r>Checked {} installed package{} across {} folder{} <d>(nothing else to prune)<r> ",
+                    checked,
+                    plural(checked),
+                    folders,
+                    plural(folders)
+                );
+            } else {
+                bun_core::pretty!(
+                    "<r><green>Done<r>! Checked <green>{} installed package{}<r> across {} folder{} <d>(nothing to prune)<r> ",
+                    checked,
+                    plural(checked),
+                    folders,
+                    plural(folders)
+                );
+            }
             print_elapsed();
+        }
+        if refused {
+            Global::exit(1);
         }
         return Ok(());
     }
@@ -342,6 +369,9 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
             print_elapsed();
             print_apply_hint();
         }
+        if refused {
+            Global::exit(1);
+        }
         return Ok(());
     }
 
@@ -362,7 +392,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         );
         print_elapsed();
     }
-    if failed > 0 {
+    if failed > 0 || refused {
         Global::exit(1);
     }
     Ok(())
@@ -1482,8 +1512,14 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         );
     }
 
-    if !quiet {
-        warn_linked_folders(&mut plan.linked_folders);
+    if !quiet && !plan.linked_folders.is_empty() {
+        for folder in plan.sorted_linked_folders() {
+            bun_core::warn!(
+                "{} is a symlink, so Bun did not look behind it",
+                BStr::new(folder)
+            );
+        }
+        bun_core::note!("to have Bun clean that folder, remove the link and run 'bun install'");
     }
     if plan.removals.is_empty() {
         return;
@@ -1575,20 +1611,6 @@ fn open_importer_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> O
         return Dir::open(folder).ok();
     }
     open_workspace_folder(folder, linked_folders)
-}
-
-fn warn_linked_folders(linked_folders: &mut Vec<Box<[u8]>>) {
-    sort_names(linked_folders);
-    linked_folders.dedup();
-    for folder in linked_folders.iter() {
-        bun_core::warn!(
-            "{} is a symlink, so Bun did not look behind it",
-            BStr::new(folder)
-        );
-    }
-    if !linked_folders.is_empty() {
-        bun_core::note!("to have Bun clean that folder, remove the link and run 'bun install'");
-    }
 }
 
 fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
@@ -1733,12 +1755,7 @@ fn importer_roots(manager: &PackageManager, keep: &dyn Fn(usize) -> bool) -> Vec
         .collect()
 }
 
-/// `kept_whole` are importers whose `node_modules` this run does not clean: the store keeps all they can load.
-fn wanted_packages(
-    manager: &PackageManager,
-    selection: Option<&Selection>,
-    kept_whole: &[PackageID],
-) -> DynamicBitSet {
+fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> DynamicBitSet {
     let lockfile: &Lockfile = &manager.lockfile;
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let options = reachable::Options::install(manager);
@@ -1748,21 +1765,20 @@ fn wanted_packages(
         let roots = importer_roots(manager, &|_| true);
         reachable::packages_from(lockfile, resolutions, &roots, false, options)
     };
-    let mut unmanaged: Vec<PackageID> = match selection {
-        Some(sel) => importer_roots(manager, &|id| !sel.selected.is_set(id)),
-        None => Vec::new(),
-    };
-    unmanaged.extend_from_slice(kept_whole);
-    if !unmanaged.is_empty() {
-        let full = reachable::Options {
-            dev: true,
-            optional: true,
-            peer: true,
-            optional_peer: true,
-            ..options
-        };
-        let protected = reachable::packages_from(lockfile, resolutions, &unmanaged, false, full);
-        wanted.unmanaged.set_union(&protected.unmanaged);
+    if let Some(sel) = selection {
+        let unselected = importer_roots(manager, &|id| !sel.selected.is_set(id));
+        if !unselected.is_empty() {
+            let full = reachable::Options {
+                dev: true,
+                optional: true,
+                peer: true,
+                optional_peer: true,
+                ..options
+            };
+            let protected =
+                reachable::packages_from(lockfile, resolutions, &unselected, false, full);
+            wanted.unmanaged.set_union(&protected.unmanaged);
+        }
     }
     wanted
 }
@@ -1870,7 +1886,7 @@ fn plan_isolated(
     selection: Option<&Selection>,
     plan: &mut Plan,
 ) {
-    let wanted = wanted_packages(manager, selection, &[]);
+    let wanted = wanted_packages(manager, selection);
     let names = store_entry_names(manager, &wanted);
 
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
@@ -1886,14 +1902,9 @@ fn plan_isolated(
                 stale.push((name, kind));
             }
         }
-        if !stale.is_empty() {
-            // A workspace behind a link is not cleaned, so the store keeps all that its links can lead to.
-            let behind_links = workspaces_behind_links(manager, selection);
-            if !behind_links.is_empty() {
-                let wanted = wanted_packages(manager, selection, &behind_links);
-                let names = store_entry_names(manager, &wanted);
-                stale.retain(|(name, _)| !contains(&names, name));
-            }
+        // The links in a workspace folder that is not pruned can lead to any store entry, so the store stays as it is.
+        if !stale.is_empty() && any_workspace_behind_link(manager, selection) {
+            stale.clear();
         }
         for (name, kind) in stale {
             plan.remove(store_idx, &name, kind);
@@ -1946,21 +1957,15 @@ fn plan_isolated(
     }
 }
 
-/// The selected workspaces whose `node_modules` is a link, the ones `open_workspace_folder` refuses.
-fn workspaces_behind_links(
-    manager: &PackageManager,
-    selection: Option<&Selection>,
-) -> Vec<PackageID> {
+/// Whether a selected workspace's `node_modules` is a link, one that `open_workspace_folder` refuses.
+fn any_workspace_behind_link(manager: &PackageManager, selection: Option<&Selection>) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
-    (0..lockfile.packages.len())
-        .filter(|&id| {
-            selection.is_none_or(|sel| sel.selected.is_set(id))
-                && !is_pruned_workspace(manager, id)
-                && workspace_node_modules(lockfile, id as PackageID)
-                    .is_some_and(|folder| is_symlink(&folder))
-        })
-        .map(|id| id as PackageID)
-        .collect()
+    (0..lockfile.packages.len()).any(|id| {
+        selection.is_none_or(|sel| sel.selected.is_set(id))
+            && !is_pruned_workspace(manager, id)
+            && workspace_node_modules(lockfile, id as PackageID)
+                .is_some_and(|folder| is_symlink(&folder))
+    })
 }
 
 fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {

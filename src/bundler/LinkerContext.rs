@@ -5161,38 +5161,42 @@ impl InsideWrapperPrefix {
         }
 
         if let bun_ast::StmtData::SLocal(local) = stmt.data {
-            let mut hoisted = G::DeclList::init_capacity(local.decls.len());
-            for decl in local.decls.iter() {
-                let bun_ast::binding::Data::BIdentifier(id) = decl.binding.data else {
-                    debug_assert!(false, "a joined declaration binds an identifier");
-                    self.joined.push(Joined::Sync(stmt));
-                    return Ok(());
-                };
-                hoisted.push(G::Decl {
-                    binding: decl.binding,
-                    value: None,
-                });
-                if let Some(value) = decl.value {
-                    self.joined.push(Joined::Sync(Stmt::alloc(
-                        S::SExpr {
-                            value: Expr::assign(
-                                Expr::init_identifier(id.get().r#ref, decl.binding.loc),
-                                value,
-                            ),
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    )));
+            let binds_identifiers = local
+                .decls
+                .iter()
+                .all(|decl| matches!(decl.binding.data, bun_ast::binding::Data::BIdentifier(_)));
+            debug_assert!(binds_identifiers);
+            if binds_identifiers {
+                let mut hoisted = G::DeclList::init_capacity(local.decls.len());
+                for decl in local.decls.iter() {
+                    hoisted.push(G::Decl {
+                        binding: decl.binding,
+                        value: None,
+                    });
+                    if let (Some(value), bun_ast::binding::Data::BIdentifier(id)) =
+                        (decl.value, decl.binding.data)
+                    {
+                        self.joined.push(Joined::Sync(Stmt::alloc(
+                            S::SExpr {
+                                value: Expr::assign(
+                                    Expr::init_identifier(id.get().r#ref, decl.binding.loc),
+                                    value,
+                                ),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        )));
+                    }
                 }
+                self.stmts.push(Stmt::alloc(
+                    S::Local {
+                        decls: hoisted,
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ));
+                return Ok(());
             }
-            self.stmts.push(Stmt::alloc(
-                S::Local {
-                    decls: hoisted,
-                    ..Default::default()
-                },
-                stmt.loc,
-            ));
-            return Ok(());
         }
 
         self.joined.push(Joined::Sync(stmt));

@@ -185,13 +185,6 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
-    /// `undefinedProperties`, with `Files::rank_of_file` of the file that created the entry. Written
-    /// at a barrier (`Program::validate_in_program_order`), read on a cache miss in
-    /// `get_undefined_property`.
-    serial_undefined_properties: Guarded<ArenaHashMap<'s, Atom, (u32, Prop<'s>)>>,
-    /// By file: an entry of `serial_undefined_properties` is declared in it, so other tasks than
-    /// its own read its HIR (`Program::keeps_tree`). Written at a barrier.
-    trees_kept: ArenaVec<'s, AtomicBool>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     pub files: &'s Files<'s>,
@@ -443,13 +436,10 @@ impl<'s> Program<'s> {
                     arena,
                 )),
             });
-        let trees_kept = files.modules.iter().map(|_| AtomicBool::new(false));
         let mut program = Program {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
-            serial_undefined_properties: Guarded::new(map_in(session.arena())),
-            trees_kept: vec_from_iter_in(trees_kept, arena),
             auto_array_type,
             types,
             expr_types: ByNode::new_in(&exprs, session),
@@ -1409,8 +1399,7 @@ pub struct Checker<'p, 's> {
     awaiting: Vec<TypeId>,
     /// `lastFlowNode`, `lastFlowNodeReachable`
     last_flow_node: (FileId, crate::bind::FlowId, bool),
-    /// `undefinedProperties`, as far as the task has asked: what it has created, and what it has
-    /// read from `Program::serial_undefined_properties`.
+    /// `undefinedProperties`
     undefined_properties: FxHashMap<Atom, Prop<'s>>,
     /// `cachedTypes[CachedTypeKindSyntheticType]`, by the type of a module: whether the cached type
     /// has a synthetic `default`.

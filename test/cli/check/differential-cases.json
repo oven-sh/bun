@@ -2067,13 +2067,6 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"commonjs\" } }\n"
     }
   },
-  "10-C6": {
-    "files": {
-      "a.ts": "export {};\ndeclare const cond: boolean;\nconst x = cond ? { p: 1 } as const : { q: 2 } as const;\n",
-      "b.ts": "export {};\ndeclare const cond: boolean;\nlet y = cond ? { p: 1 } : { q: 2 };\ny.p = undefined;\nconst sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
-    }
-  },
   "10-C7": {
     "files": {
       "a.ts": "function f1() { return g1(); }\nconst g1 = f1;\nconst sentinel: number = \"\";\n",
@@ -8438,14 +8431,6 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [\"foo\"], \"preserveSymlinks\": true, \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n"
     }
   },
-  "35-C8d": {
-    "files": {
-      "a.ts": "const s: 0 = fromAbs;\nconst sentinel: number = \"\";\n",
-      "abs/index.d.ts": "declare const fromAbs: 1;\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [\"/Users/jarred/code/tmp/sema-work/fan/r10/cases/35-C8d/abs\"], \"typeRoots\": [\"./types\"], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n",
-      "types/x/index.d.ts": "declare const fromX: 1;\n"
-    }
-  },
   "35-C9a": {
     "files": {
       "a.ts": "import \"p//sub\";\nconst sentinel: number = \"\";\n",
@@ -9099,12 +9084,6 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] }, \"extends\": \"./sub/b.json\" }\n"
     }
   },
-  "37-C5": {
-    "files": {
-      "o.ts": "const sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] }, \"include\": [\"/Users/jarred/code/tmp/sema-work/fan/r10/cases/./37-P1/o.ts\"] }\n"
-    }
-  },
   "37-C6": {
     "files": {
       "tsconfig.json": "{ \"files\": [], \"extends\": null }\n"
@@ -9135,12 +9114,6 @@
       "a.ts": "const x: number = foo;\nconst sentinel: number = \"\";\n",
       "foo/index.d.ts": "declare const foo: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"noEmit\": true, \"types\": [\"foo\"], \"typeRoots\": [\"\"], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
-    }
-  },
-  "37-P1": {
-    "files": {
-      "o.ts": "const sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] }, \"include\": [\"/*sers/jarred/code/tmp/sema-work/fan/r10/cases/37-C5/o.ts\"] }\n"
     }
   },
   "37-P2": {
@@ -10526,13 +10499,6 @@
     "files": {
       "src/a.ts": "const sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"rootDir\": \"./ſrc\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"src/a.ts\"] }\n"
-    }
-  },
-  "42-P6a": {
-    "files": {
-      "a.ts": "import {} from \"//Users/jarred/code/tmp/sema-work/fan/r10/cases/42-P6a/x\";\nconst sentinel: number = \"\";\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" }, \"files\": [\"a.ts\"] }\n",
-      "x.ts": "export const bad: 0 = 1;\n"
     }
   },
   "42-P6b": {

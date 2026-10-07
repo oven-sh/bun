@@ -11,7 +11,7 @@ use super::errors_operators::{
     check_tagged_template, check_template_spans, check_yield_result,
 };
 use super::errors_statements::is_with_statement;
-use super::task::{Finished, InProgramOrder, Published, UndefinedProperty};
+use super::task::{Finished, Published};
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use crate::types::LinkCounts;
@@ -82,62 +82,6 @@ impl<'s> Program<'s> {
                     of == file && other != node && (is_in(node, other) || is_in(other, node))
                 })
         })
-    }
-
-    /// Validation after `validate`, which has filled in `is_invalid`, for the fields of the
-    /// original's checker that hold one answer for all files. One checker visits the files in
-    /// program order, so here the serial order is program order.
-    ///
-    /// `undefinedProperties[name]` keeps the flags and the declarations of the first property that
-    /// is normalized under the name. `first_unchecked`: `Files::rank_of_file` of the first file in
-    /// program order that neither a valid task nor one of `finished` has checked, or `u32::MAX`. A
-    /// task that has created a property while it visited a later file `is_too_early`: that file
-    /// could still create another one. So an entry of `serial_undefined_properties` is final, and
-    /// `get_undefined_property` reads it on a cache miss. Of the properties that the other tasks
-    /// have created under one name, that of the first file stays. A task that has created another
-    /// one is invalid if that shows (`UndefinedProperty::is_observed`), or if the task publishes
-    /// the types that have it. What a valid task has published and reported cannot be taken back: a
-    /// file that was retried can create a property before the one that stayed, which stays.
-    pub fn validate_in_program_order(
-        &self,
-        finished: &[Finished<'s>],
-        first_unchecked: u32,
-        is_invalid: &mut [bool],
-    ) -> InProgramOrder {
-        let is_after_unchecked = |it: &UndefinedProperty| it.rank >= first_unchecked;
-        let is_too_early: Vec<bool> = (finished.iter())
-            .map(|task| task.undefined_properties.iter().any(is_after_unchecked))
-            .collect();
-        let mut created: Vec<(usize, &UndefinedProperty<'s>)> = Vec::new();
-        for (index, task) in finished.iter().enumerate() {
-            is_invalid[index] |= is_too_early[index];
-            if !is_too_early[index] {
-                created.extend(task.undefined_properties.iter().map(|it| (index, it)));
-            }
-        }
-        created.sort_by_key(|(_, it)| it.rank);
-        let arena = self.session.arena();
-        let mut serial = self.serial_undefined_properties.lock();
-        for (index, it) in created {
-            let Some((rank, first)) = serial.get_mut(&it.created.name) else {
-                serial.insert(it.created.name, (it.rank, it.created.clone_in(arena)));
-                for file in symbols::declaring_files(&it.created) {
-                    self.trees_kept[file.idx()].store(true, std::sync::atomic::Ordering::Relaxed);
-                }
-                continue;
-            };
-            if *first == it.created {
-                *rank = it.rank.min(*rank);
-            } else if it.rank >= *rank && (it.is_observed || finished[index].is_read_later) {
-                is_invalid[index] = true;
-            }
-        }
-        InProgramOrder { is_too_early }
-    }
-
-    /// Whether the HIR of `file`, which `is_leaf`, is not to be freed at the end of its task.
-    pub fn keeps_tree(&self, file: FileId) -> bool {
-        self.trees_kept[file.idx()].load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The first half. Of the types, signatures, mappers and component lists that several tasks

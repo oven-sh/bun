@@ -2874,7 +2874,7 @@ fn check_named_files_as_planned(
     let files_after =
         |file: FileId| to_check.len() - to_check.partition_point(|&it| place(it) <= place(file));
     let free_trees = |files: Vec<FileId>| {
-        for file in files.into_iter().filter(|&file| !program.keeps_tree(file)) {
+        for file in files {
             // SAFETY: the only task that reads the HIR has ended and will not be retried.
             unsafe { program.files.free_tree(file) };
         }
@@ -2936,12 +2936,7 @@ fn check_named_files_as_planned(
                 let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
                 outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
                 if !finished.can_be_invalid() {
-                    // The barrier decides what `Program::keeps_tree` says about the others.
-                    let trees = std::mem::take(&mut outcome.trees_to_free).into_iter();
-                    let (undecided, decided): (Vec<FileId>, Vec<FileId>) =
-                        trees.partition(|&file| finished.has_created_property_in(file));
-                    outcome.trees_to_free = undecided;
-                    free_trees(decided);
+                    free_trees(std::mem::take(&mut outcome.trees_to_free));
                 }
             }
             outcome
@@ -3068,20 +3063,15 @@ fn check_named_files_as_planned(
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // See `Report::needs_serial_order`. Once it is set, no further task is started.
     let needs_serial_order = std::cell::Cell::new(false);
-    // Whether a step after step `number` has files that no earlier step has.
-    let has_later_files =
-        |number: usize| number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len();
-    // The files of the tasks that were too early (`Program::validate_in_program_order`), until the
-    // first step without later files.
-    let too_early: std::cell::RefCell<Vec<usize>> = Default::default();
     // Returns the invalid tasks.
     // `ahead`: by task. Empty: every task checks whole files.
     let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
         // After the last step the published state is read by the loop over the files that are not
         // checked, which runs with `after_file`, and by a caller that goes on to query the program.
         // The tasks of split files read the ranges, and nothing else of the step before theirs.
-        let is_read_later =
-            has_later_files(number) || request.retains_everything || request.after_file.is_some();
+        let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
+            || request.retains_everything
+            || request.after_file.is_some();
         let tasks = step.len();
         let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
         // The largest first, so that no thread begins it when the others are nearly done.
@@ -3130,20 +3120,6 @@ fn check_named_files_as_planned(
         if checker_count == 0 {
             // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
             let mut is_invalid = program.validate(&finished);
-            // The first file in program order that is left to check after this round. The tasks of
-            // a step, and the files of a task, are in program order.
-            let first_unchecked = match has_later_files(number) {
-                true => {
-                    let later = plan.steps[number + 1..].iter();
-                    let later = later.filter_map(|step| step.first()?.first());
-                    let waiting = too_early.borrow();
-                    let first = later.chain(waiting.iter()).min();
-                    first.map_or(u32::MAX, |&file| place(to_check[file]))
-                }
-                false => u32::MAX,
-            };
-            let in_program_order =
-                program.validate_in_program_order(&finished, first_unchecked, &mut is_invalid);
             // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
             // evaluates what is missing.
             let tolerated = request.plan_options.split_tolerates & 7;
@@ -3166,10 +3142,7 @@ fn check_named_files_as_planned(
                         progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
                         progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                     }
-                    match in_program_order.is_too_early[index] {
-                        true => too_early.borrow_mut().extend(task),
-                        false => invalid.push(task.clone()),
-                    }
+                    invalid.push(task.clone());
                 }
                 !is_invalid
             });
@@ -3229,21 +3202,7 @@ fn check_named_files_as_planned(
     };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-    // What makes a task invalid for `Program::validate_in_program_order` is in the table when its files are retried.
     let run_step = |number: usize, step: &[Task], expected: Requested| {
-        // Each file that was too early is a task of its own, after those that `ahead` describes.
-        let waiting = match has_later_files(number) {
-            true => Vec::new(),
-            false => too_early.take(),
-        };
-        let with_waiting: Vec<Task>;
-        let step = if waiting.is_empty() {
-            step
-        } else {
-            let waiting = waiting.into_iter().map(|file| vec![file]);
-            with_waiting = step.iter().cloned().chain(waiting).collect();
-            &with_waiting[..]
-        };
         let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
         while !invalid.is_empty() {
             let mut files = invalid.concat();

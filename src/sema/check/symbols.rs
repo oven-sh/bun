@@ -186,20 +186,6 @@ enum IteratorMethod {
     Throw,
 }
 
-/// The files that `prop.Declarations` are in.
-pub(super) fn declaring_files(prop: &Prop) -> SmallVec<[FileId; 1]> {
-    let mut files = SmallVec::new();
-    super::print::for_each_declared(prop, &mut |declared| {
-        match declared.source {
-            PropSource::Literal(file, _) => files.push(file),
-            PropSource::Symbol(symbol) => files.push(symbol.file),
-            _ => {}
-        }
-        false
-    });
-    files
-}
-
 impl<'p, 's> Checker<'p, 's> {
     /// The type of `sym` as a value.
     #[inline]
@@ -2002,58 +1988,22 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached) = self.undefined_properties.get(&prop.name) {
             return cached.clone_in(self.arena);
         }
-        let rank = match self.task.file {
-            Some(visited) => self.files().rank_of_file(visited),
-            None => u32::MAX,
+        // `undefinedOrMissingType`, which is not widened again wherever it is copied to.
+        let missing = if self.p.files.options.exact_optional_property_types {
+            TypeId::MISSING
+        } else {
+            TypeId::UNDEFINED
         };
-        let serial = self.p.serial_undefined_properties.lock();
-        let first = serial.get(&prop.name).filter(|first| first.0 <= rank);
-        let first = first.map(|first| first.1.clone_in(self.arena));
-        drop(serial);
-        let result = match first {
-            Some(first) => {
-                // Nothing that mentions a node of a leaf is published.
-                for file in declaring_files(&first) {
-                    if self.files().module(file).is_leaf {
-                        self.task.own.add_unimported_file(file);
-                    }
-                }
-                first
-            }
-            None => {
-                // `undefinedOrMissingType`, which is not widened again wherever it is copied to.
-                let missing = if self.p.files.options.exact_optional_property_types {
-                    TypeId::MISSING
-                } else {
-                    TypeId::UNDEFINED
-                };
-                let created = Prop {
-                    name: prop.name,
-                    // `createSymbolWithType`
-                    flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
-                    source: Self::copy_of(missing, &[prop], true, self.arena),
-                    mapper: MapperId::IDENTITY,
-                };
-                self.task
-                    .undefined_properties
-                    .push(task::UndefinedProperty {
-                        rank,
-                        created: created.clone_in(self.arena),
-                        is_observed: false,
-                    });
-                created
-            }
+        let result = Prop {
+            name: prop.name,
+            // `createSymbolWithType`
+            flags: PropFlags::OPTIONAL | (prop.flags & PropFlags::READONLY),
+            source: Self::copy_of(missing, &[prop], true, self.arena),
+            mapper: MapperId::IDENTITY,
         };
         self.undefined_properties
             .insert(prop.name, result.clone_in(self.arena));
         result
-    }
-
-    /// See `UndefinedProperty::is_observed`.
-    pub(super) fn note_observed_property(&mut self, name: Atom) {
-        for it in &mut self.task.undefined_properties {
-            it.is_observed |= it.created.name == name;
-        }
     }
 
     /// `getWidenedTypeOfObjectLiteral`

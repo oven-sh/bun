@@ -616,6 +616,9 @@ fn run(args: &[String]) {
                     // SAFETY: `path` ends with a zero. The descriptors are open.
                     unsafe {
                         let file = libc::open(path.as_ptr(), flags, 0o644 as libc::c_uint);
+                        if file < 0 {
+                            libc::_exit(127);
+                        }
                         libc::dup2(file, fd);
                         libc::close(file);
                     }

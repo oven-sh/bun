@@ -3072,7 +3072,6 @@ impl Checker<'_, '_> {
         if expression_symbol.is_some_and(|it| files.flags(it).contains(SymFlags::MODULE_EXPORTS)) {
             return false;
         }
-        self.note_observed_property(symbol.name);
         if self.is_readonly_symbol(symbol) {
             // "Allow assignments to readonly properties within constructors of the same class declaration."
             if let Some(&PropSource::Symbol(property)) = Self::value_declaration(symbol)

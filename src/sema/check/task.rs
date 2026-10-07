@@ -22,7 +22,7 @@ use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
-use crate::types::{Link, Marks, OwnRecords, OwnStore, Prop};
+use crate::types::{Link, Marks, OwnRecords, OwnStore};
 use crate::util::{InParallel, for_each_mut};
 use std::cell::{RefCell, UnsafeCell};
 
@@ -65,8 +65,6 @@ pub struct Task<'s> {
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// See `Finished::undefined_properties`.
-    pub(super) undefined_properties: Vec<UndefinedProperty<'s>>,
     /// See `Finished::assignments_walked`. It is added to under `&Checker`.
     pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// The types, signatures, mappers and component lists that the task has created.
@@ -91,7 +89,6 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
-            undefined_properties: Vec::new(),
             assignments_walked: RefCell::default(),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
@@ -162,7 +159,6 @@ impl<'s> Task<'s> {
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
-        self.undefined_properties.clear();
         self.assignments_walked.get_mut().clear();
         self.own = OwnStore::new_in(self.arena);
         self.buffer.get_mut().clear();
@@ -230,8 +226,6 @@ impl<'s> Task<'s> {
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
         let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
-        let undefined_properties = std::mem::take(&mut self.undefined_properties);
-        let is_read_later = self.is_read_later;
         let assignments_walked = self.assignments_walked.take();
         self.drop_everything();
         Finished {
@@ -241,8 +235,6 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             foreign_evaluations,
             order_dependent_variances,
-            undefined_properties,
-            is_read_later,
             assignments_walked,
             own,
             link: Link::default(),
@@ -262,11 +254,6 @@ pub struct Finished<'s> {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
-    /// The entries of `undefinedProperties` that the task has created, in that order. See
-    /// `Program::validate_in_program_order`.
-    pub(super) undefined_properties: Vec<UndefinedProperty<'s>>,
-    /// See `Task::begin`.
-    pub(super) is_read_later: bool,
     /// The functions and source files that `markNodeAssignments` has walked in the task
     /// (`Program::assignments_marked`), and whether the task was visiting the file. See
     /// `Program::validate`.
@@ -287,33 +274,7 @@ impl Finished<'_> {
         let mut measured = self.order_dependent_variances.iter();
         measured.any(|it| it.compared | it.failed | it.inferred != 0)
             || self.assignments_walked.iter().any(|it| it.2)
-            || (self.undefined_properties.iter()).any(|it| it.is_observed || self.is_read_later)
     }
-
-    /// Whether a property that the task has created is declared in `file`. If it stays for the later
-    /// files of the program, their tasks read the declaration (`Program::keeps_tree`).
-    pub fn has_created_property_in(&self, file: FileId) -> bool {
-        let mut created = self.undefined_properties.iter();
-        created.any(|it| super::symbols::declaring_files(&it.created).contains(&file))
-    }
-}
-
-/// `undefinedProperties[name]`, which a task has found empty and filled.
-pub struct UndefinedProperty<'s> {
-    /// `Files::rank_of_file` of the file that the task was visiting. `u32::MAX`: it visited none.
-    pub(super) rank: u32,
-    pub(super) created: Prop<'s>,
-    /// The task has printed a property of that name, or looked whether one can be assigned to, so
-    /// its output shows which property is in the table: the declarations of a property give it its
-    /// place among the members of a type and the spelling of its name, and its flags say whether it
-    /// is read-only.
-    pub(super) is_observed: bool,
-}
-
-/// What `Program::validate_in_program_order` returns.
-pub struct InProgramOrder {
-    /// By task: it is invalid, and its files are retried in the step after which no file is left.
-    pub is_too_early: Vec<bool>,
 }
 
 /// Variances that a task computed during a cycle (`variances_worker` was re-entered for a symbol in progress), so their value depends on

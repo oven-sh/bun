@@ -4648,7 +4648,6 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         mapper: MapperId,
         elements: &mut Vec<Vec<u8>>,
     ) {
-        self.c.note_observed_property(prop.name);
         let reverse_mapped = if matches!(self.c.data(owner), TypeData::ReverseMapped { .. }) {
             Some(self.reverse_mapped_property(owner, prop.name))
         } else {

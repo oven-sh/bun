@@ -477,14 +477,10 @@ setTimeout(() => query.cancel(), 100);
 await query;
 ```
 
-On MySQL and MariaDB, `cancel()` stops a query that Bun has not sent to the server. Bun has not sent a query in two cases:
+On MySQL and MariaDB, what `cancel()` does depends on how far the query got:
 
-- Another query runs on the same connection. A connection sends one query at a time, so the new query waits for its turn.
-- The query is the first one on its connection with that statement text. Bun first asks the server to prepare the statement, and sends the query when the server answers.
-
-In both cases `cancel()` rejects the query with `ERR_MYSQL_QUERY_CANCELLED`, and Bun never sends the query.
-
-`cancel()` does not stop a query that Bun already sent. That query finishes and resolves as usual.
+- A query that waits behind another query on its connection never runs. It rejects with `ERR_MYSQL_QUERY_CANCELLED`. A connection sends one query at a time, so a query that starts while another one runs waits for its turn.
+- A query that Bun has started to send cannot be stopped. `cancel()` has no effect on it.
 
 ---
 

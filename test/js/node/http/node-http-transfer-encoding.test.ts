@@ -2209,12 +2209,9 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     const { req, counts } = await fillCorkBuffer(socket, 16 * 1024);
     const before = req.writableNeedDrain;
     req.uncork();
-    expect({ before, drains: counts.drains, after: req.writableNeedDrain }).toEqual({
-      before: true,
-      drains: 1,
-      after: false,
-    });
+    const after = req.writableNeedDrain;
     req.destroy();
+    expect({ before, drains: counts.drains, after }).toEqual({ before: true, drains: 1, after: false });
   });
 
   test("'drain' follows a flush that the socket takes late", async () => {
@@ -2235,12 +2232,12 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     const before = { drains: counts.drains, writableNeedDrain: req.writableNeedDrain };
     (await held.promise)();
     await drained;
-    expect({ before, drains: counts.drains, writableNeedDrain: req.writableNeedDrain }).toEqual({
-      before: { drains: 0, writableNeedDrain: true },
-      drains: 1,
-      writableNeedDrain: false,
-    });
+    const after = { drains: counts.drains, writableNeedDrain: req.writableNeedDrain };
     req.destroy();
+    expect({ before, after }).toEqual({
+      before: { drains: 0, writableNeedDrain: true },
+      after: { drains: 1, writableNeedDrain: false },
+    });
   });
 
   test.concurrent("a pipe into a corked request continues after uncork()", async () => {

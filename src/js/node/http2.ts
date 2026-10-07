@@ -409,6 +409,16 @@ const kGoawayCode = Symbol("goawayCode");
 const kGoawayLastStreamID = Symbol("goawayLastStreamID");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
+// Node's kState.flags: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L342-L345
+const kSessionFlags = Symbol("sessionFlags");
+enum SessionFlags {
+  // Set when the session takes its connected socket (node's setupHandle). Never cleared.
+  Ready = 1 << 0,
+  // Set by close().
+  Closed = 1 << 1,
+  // Set when destroy() starts, before any stream is torn down (node's closeSession).
+  Destroyed = 1 << 2,
+}
 
 // Node's socketOnError: once a GOAWAY has been received the peer is fully
 // within its rights to drop the connection, so an ECONNRESET behind it is
@@ -1892,13 +1902,18 @@ interface ClientRequestOptions {
   silent?: boolean;
   weight?: number;
 }
-type Socket = import("node:net").Socket & { servername?: undefined; alpnProtocol?: undefined };
-type TLSSocket = import("node:tls").TLSSocket;
+type Socket = import("node:net").Socket & {
+  servername?: undefined;
+  alpnProtocol?: undefined;
+  secureConnecting?: undefined;
+};
+// secureConnecting is true from the TCP connect until the TLS handshake completes.
+type TLSSocket = import("node:tls").TLSSocket & { secureConnecting?: boolean };
 
 abstract class Http2Session extends EventEmitter {
   declare timeout: number | undefined;
-  abstract get destroyed(): boolean;
   abstract destroy(error?: Error | number | null, code?: number): void;
+  abstract get [bunHTTP2Native](): typeof H2FrameParser | null;
   [bunHTTP2SessionTeardownFrame]: typeof kNoSessionTeardown | import("./async_hooks").Frame | undefined =
     kNoSessionTeardown;
   [bunHTTP2Socket]: TLSSocket | Socket | null | undefined;
@@ -1907,6 +1922,28 @@ abstract class Http2Session extends EventEmitter {
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback]: typeof process.nextTick | typeof setImmediate = setImmediate;
+  [kSessionFlags]: number = 0;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1399-L1411
+  get connecting() {
+    return (this[kSessionFlags] & SessionFlags.Ready) === 0;
+  }
+  get closed() {
+    return (this[kSessionFlags] & SessionFlags.Closed) !== 0;
+  }
+  get destroyed() {
+    return (this[kSessionFlags] & SessionFlags.Destroyed) !== 0;
+  }
+  get connected() {
+    return (this[kSessionFlags] & SessionFlags.Ready) !== 0 && this[bunHTTP2Socket] != null;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1520-L1523
+  get state() {
+    const parser = this[bunHTTP2Native];
+    if (!parser || (this[kSessionFlags] & (SessionFlags.Ready | SessionFlags.Destroyed)) !== SessionFlags.Ready) {
+      return {};
+    }
+    return parser.getCurrentState();
+  }
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
     return this[kGoawayCode] || NGHTTP2_NO_ERROR;
@@ -1925,6 +1962,14 @@ abstract class Http2Session extends EventEmitter {
         this.destroy(err);
     }
   }
+}
+
+// node's localSettings and remoteSettings return their cached object before they test
+// `destroyed`, so listeners that run inside destroy() still read the settings:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1525-L1555
+// The session has none while it connects and once it released its socket.
+function settingsUnavailable(session: Http2Session) {
+  return (session[kSessionFlags] & SessionFlags.Ready) === 0 || session[bunHTTP2Socket] === null;
 }
 
 function streamErrorFromCode(code: number) {
@@ -2538,9 +2583,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   get session() {
-    // node detaches the session reference once the session has been destroyed.
+    // node clears the reference in the stream's own _destroy, so listeners that run inside
+    // session.destroy() still read the session. A stream that outlives that call reads
+    // undefined once the session released its socket.
     const session = this[bunHTTP2Session];
-    if (session == null || session.destroyed) return undefined;
+    if (session == null || session[bunHTTP2Socket] === null) return undefined;
     return session;
   }
 
@@ -4011,11 +4058,6 @@ class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server | Http2SecureServer | null | undefined = null;
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
-  // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
-  #destroying: boolean = false;
-  /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
-  /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
-  #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
   #connections: number = 0;
@@ -4533,7 +4575,17 @@ class ServerHttp2Session extends Http2Session {
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
 
-    process.nextTick(emitConnectNT, this, socket);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1337-L1350
+    if (socket.connecting || socket.secureConnecting) {
+      socket.once(socket instanceof TLSSocket ? "secureConnect" : "connect", () => {
+        // node's setupHandle leaves a destroyed session alone and still emits 'connect'.
+        if (!this.destroyed) this[kSessionFlags] |= SessionFlags.Ready;
+        process.nextTick(emitConnectNT, this, socket);
+      });
+    } else {
+      this[kSessionFlags] |= SessionFlags.Ready;
+      process.nextTick(emitConnectNT, this, socket);
+    }
   }
 
   // undefined for performServerHandshake() sessions; node never clears it, not even on destroy().
@@ -4551,33 +4603,17 @@ class ServerHttp2Session extends Http2Session {
   get alpnProtocol() {
     return this.#alpnProtocol;
   }
-  get connecting() {
-    const socket = this[bunHTTP2Socket];
-    if (!socket) {
-      return false;
-    }
-    return socket.connecting || false;
-  }
-  get connected() {
-    return this[bunHTTP2Socket]?.connecting === false;
-  }
-  get destroyed() {
-    return this[bunHTTP2Socket] === null;
-  }
   get encrypted() {
     return this.#encrypted;
   }
-  get closed() {
-    return this.#closeCalled;
-  }
 
   get remoteSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (settingsUnavailable(this)) return {};
     return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (settingsUnavailable(this)) return {};
     return (this.#localSettings ??= getDefaultSettings());
   }
 
@@ -4597,9 +4633,6 @@ class ServerHttp2Session extends Http2Session {
     if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
-  }
-  get state() {
-    return this.#parser?.getCurrentState();
   }
 
   get [bunHTTP2Native]() {
@@ -4713,7 +4746,7 @@ class ServerHttp2Session extends Http2Session {
   close(callback?: (...args: any[]) => void) {
     if (this.#closed || this.destroyed) return;
     this.#closed = true;
-    this.#closeCalled = true;
+    this[kSessionFlags] |= SessionFlags.Closed;
 
     if (typeof callback === "function") {
       this.once("close", callback);
@@ -4737,19 +4770,12 @@ class ServerHttp2Session extends Http2Session {
   }
 
   destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
-    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
-    // first line - so a second destroy (e.g. the received-GOAWAY handler
-    // destroying with a session error after a socket error's destroy already
-    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
+    // Like node, `destroyed` is raised before the teardown runs: a destroy() re-entered from
+    // it (a listener, a socket error, the received-GOAWAY handler) returns at once and never
     // re-emits 'error' on a session whose one-shot listeners are consumed.
-    // Guard on a latch, not the destroyed getter: that getter reads "socket
-    // detached", which #onError sets before calling in here, and the
-    // error-carrying destroy must still run once.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
-    if (this.#destroying) {
-      return;
-    }
-    this.#destroying = true;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1220-L1224
+    if (this.destroyed) return;
+    this[kSessionFlags] |= SessionFlags.Destroyed;
     emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
     try {
       const server = this[kServer];
@@ -4775,15 +4801,17 @@ class ServerHttp2Session extends Http2Session {
       }
 
       const socket = this[bunHTTP2Socket];
-      if (!this.#connected) return;
       this.#closed = true;
       this.#connected = false;
       if (socket) {
         if (!this[kGoawaySent] || code) {
           // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
           // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+          // a destroy(err) after close() must still put the error GOAWAY on the wire. The public
+          // goaway() refuses a destroyed session, so the frame goes to the parser directly.
+          const goawayCode = code || constants.NGHTTP2_NO_ERROR;
+          validateInteger(goawayCode, "code", 0, kMaxUint32);
+          this.#parser?.goaway(goawayCode, 0, Buffer.alloc(0));
         }
         if (error) {
           // node's finishSessionClose destroys the socket when the session dies
@@ -4820,10 +4848,10 @@ class ServerHttp2Session extends Http2Session {
         this.#parser = null;
       }
     } catch (e) {
-      // A throwing destroy did not destroy: argument validation (goaway's
-      // validateInteger, the native session rejecting a non-numeric error
-      // code) throws mid-teardown, and a corrected retry must still run.
-      this.#destroying = false;
+      // A throwing destroy did not destroy: argument validation (the GOAWAY
+      // code check, the native session rejecting a non-numeric error code)
+      // throws mid-teardown, and a corrected retry must still run.
+      this[kSessionFlags] &= ~SessionFlags.Destroyed;
       throw e;
     }
     this[bunHTTP2Socket] = null;
@@ -4971,11 +4999,6 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
 class ClientHttp2Session extends Http2Session {
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
-  // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
-  #destroying: boolean = false;
-  /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
-  /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
-  #closeCalled: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
   #connections: number = 0;
@@ -5406,6 +5429,7 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
+    this[kSessionFlags] |= SessionFlags.Ready;
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
@@ -5446,6 +5470,8 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
+    // Node's socketOnClose does nothing once the session is destroyed.
+    if (this.destroyed) return;
     const parser = this.#parser;
     const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
@@ -5455,16 +5481,14 @@ class ClientHttp2Session extends Http2Session {
       this.#parser = null;
     }
     this.destroy(err, NGHTTP2_NO_ERROR);
-    this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
-    // See the client session's #onError: Node's socketOnError is a no-op once
-    // the session has been detached from the socket, so a transport error that
-    // races our own teardown is not re-reported.
+    // See the server session's #onError: Node's socketOnError is a no-op once
+    // the session is destroyed, so a transport error that races our own
+    // teardown is not re-reported.
     if (this.destroyed) {
       return;
     }
-    this[bunHTTP2Socket] = null;
     if (this.#closed) {
       this.destroy();
       return;
@@ -5497,33 +5521,17 @@ class ClientHttp2Session extends Http2Session {
       parser.flush();
     }
   }
-  get connecting() {
-    const socket = this[bunHTTP2Socket];
-    if (!socket) {
-      return false;
-    }
-    return socket.connecting || false;
-  }
-  get connected() {
-    return this[bunHTTP2Socket]?.connecting === false;
-  }
-  get destroyed() {
-    return this[bunHTTP2Socket] === null;
-  }
   get encrypted() {
     return this.#encrypted;
   }
-  get closed() {
-    return this.#closeCalled;
-  }
 
   get remoteSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (settingsUnavailable(this)) return {};
     return (this.#remoteSettings ??= getDefaultSettings());
   }
 
   get localSettings() {
-    if (this.destroyed || this.connecting) return {};
+    if (settingsUnavailable(this)) return {};
     return (this.#localSettings ??= getDefaultSettings());
   }
 
@@ -5603,9 +5611,6 @@ class ClientHttp2Session extends Http2Session {
     if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
-  }
-  get state() {
-    return this.#parser?.getCurrentState();
   }
 
   settings(settings: Settings, callback?) {
@@ -5733,6 +5738,9 @@ class ClientHttp2Session extends Http2Session {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
         socket.once(connectEvent, onConnect.bind(this));
       } else {
+        // node sets the session up at once on a socket that is already connected:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1337-L1350
+        this[kSessionFlags] |= SessionFlags.Ready;
         connectOnNextTick = true;
       }
     } else {
@@ -5790,7 +5798,7 @@ class ClientHttp2Session extends Http2Session {
   close(callback?: (...args: any[]) => void) {
     if (this.#closed || this.destroyed) return;
     this.#closed = true;
-    this.#closeCalled = true;
+    this[kSessionFlags] |= SessionFlags.Closed;
 
     if (typeof callback === "function") {
       this.once("close", callback);
@@ -5825,27 +5833,11 @@ class ClientHttp2Session extends Http2Session {
   }
 
   destroy(error?: Error | number | null, code?: number) {
-    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
-    // first line - so a second destroy (e.g. the received-GOAWAY handler
-    // destroying with a session error after a socket error's destroy already
-    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
-    // re-emits 'error' on a session whose one-shot listeners are consumed.
-    // Guard on a latch, not the destroyed getter: that getter reads "socket
-    // detached", which #onError sets before calling in here, and the
-    // error-carrying destroy must still run once.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
-    if (this.#destroying) {
-      return;
-    }
+    // See the server session's destroy(): `destroyed` is raised before the teardown runs.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1220-L1224
+    if (this.destroyed) return;
+    this[kSessionFlags] |= SessionFlags.Destroyed;
     const socket = this[bunHTTP2Socket];
-    if (this.#closed && !this.#connected && !this.#parser) {
-      // Nothing left to tear down. Do NOT latch here: latching on this
-      // early-out left the session permanently un-destroyable when a
-      // redundant destroy() ran first (zombie sessions on the darwin agents:
-      // half-torn sockets surfacing ECONNRESET, writes into closed handles).
-      return;
-    }
-    this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, socket);
     try {
       if (this[kTimeout]) {
@@ -5893,8 +5885,9 @@ class ClientHttp2Session extends Http2Session {
         if (!this[kGoawaySent] || code) {
           // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
           // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+          // a destroy(err) after close() must still put the error GOAWAY on the wire. The public
+          // goaway() refuses a destroyed session, so the frame goes to the parser directly.
+          this.#parser?.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
         if (error) {
           // See the client session: end first, destroy a tick later (node's
@@ -5928,10 +5921,10 @@ class ClientHttp2Session extends Http2Session {
         parser.detach();
       }
     } catch (e) {
-      // A throwing destroy did not destroy: argument validation (goaway's
-      // validateInteger, the native session rejecting a non-numeric error
-      // code) throws mid-teardown, and a corrected retry must still run.
-      this.#destroying = false;
+      // A throwing destroy did not destroy: argument validation (the native
+      // session rejecting a non-numeric error code) throws mid-teardown, and
+      // a corrected retry must still run.
+      this[kSessionFlags] &= ~SessionFlags.Destroyed;
       throw e;
     }
     this.#parser = null;

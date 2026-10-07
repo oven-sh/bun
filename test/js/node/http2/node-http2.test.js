@@ -792,24 +792,17 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           client.on("error", reject);
           const req = client.request({ ":path": "/", "test-header": "test-value" });
           {
-            // Like node, the stream has no id (and an empty state object) until the session
-            // finishes connecting; the populated shape is asserted from the 'response' handler.
+            // Like node, the session has no native handle and the stream has no id until the
+            // session finishes connecting: both report an empty state object. The populated
+            // shapes are asserted from the 'connect' and 'response' handlers.
+            expect(client.connecting).toBe(true);
+            expect(client.state).toEqual({});
             expect(req.state).toEqual({});
           }
-          // Test Session State.
-          {
-            const state = client.state;
-            expect(typeof state).toBe("object");
-            expect(typeof state.effectiveLocalWindowSize).toBe("number");
-            expect(typeof state.effectiveRecvDataLength).toBe("number");
-            expect(typeof state.nextStreamID).toBe("number");
-            expect(typeof state.localWindowSize).toBe("number");
-            expect(typeof state.lastProcStreamID).toBe("number");
-            expect(typeof state.remoteWindowSize).toBe("number");
-            expect(typeof state.outboundQueueSize).toBe("number");
-            expect(typeof state.deflateDynamicTableSize).toBe("number");
-            expect(typeof state.inflateDynamicTableSize).toBe("number");
-          }
+          let session_state = null;
+          client.on("connect", () => {
+            session_state = client.state;
+          });
           let response_headers = null;
           let response_state = null;
           req.on("response", (headers, flags) => {
@@ -823,6 +816,20 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           await promise;
           expect(response_headers[":status"]).toBe(200);
+          // Test Session State.
+          {
+            const state = session_state;
+            expect(typeof state).toBe("object");
+            expect(typeof state.effectiveLocalWindowSize).toBe("number");
+            expect(typeof state.effectiveRecvDataLength).toBe("number");
+            expect(typeof state.nextStreamID).toBe("number");
+            expect(typeof state.localWindowSize).toBe("number");
+            expect(typeof state.lastProcStreamID).toBe("number");
+            expect(typeof state.remoteWindowSize).toBe("number");
+            expect(typeof state.outboundQueueSize).toBe("number");
+            expect(typeof state.deflateDynamicTableSize).toBe("number");
+            expect(typeof state.inflateDynamicTableSize).toBe("number");
+          }
           {
             const state = response_state;
             expect(typeof state).toBe("object");
@@ -2320,6 +2327,406 @@ describe.concurrent("http2 session goawayCode / goawayLastStreamID", () => {
     } finally {
       client.destroy();
       serverSession.destroy();
+      server.close();
+    }
+  });
+});
+
+// node keeps READY, CLOSED and DESTROYED in one flags word on Http2Session and defines
+// connecting, closed, destroyed and state from it. A session that has no native handle (it is
+// still connecting, or destroy() started) reports an empty state object. Expected values below
+// were checked against node v26.3.0.
+describe.concurrent("http2 session lifecycle getters", () => {
+  const sessionStateKeys = [
+    "deflateDynamicTableSize",
+    "effectiveLocalWindowSize",
+    "effectiveRecvDataLength",
+    "inflateDynamicTableSize",
+    "lastProcStreamID",
+    "localWindowSize",
+    "nextStreamID",
+    "outboundQueueSize",
+    "remoteWindowSize",
+  ];
+  // "empty" for {}, "populated" for the nine numeric fields, the value itself for anything else.
+  function stateKind(state) {
+    if (state === null || typeof state !== "object") return state;
+    const keys = Object.keys(state).sort();
+    if (keys.length === 0) return "empty";
+    if (keys.join() === sessionStateKeys.join() && keys.every(key => typeof state[key] === "number")) {
+      return "populated";
+    }
+    return state;
+  }
+  function lifecycle(session) {
+    return {
+      connecting: session.connecting,
+      closed: session.closed,
+      destroyed: session.destroyed,
+      state: stateKind(session.state),
+      // node builds a new object on every read.
+      freshState: session.state !== session.state,
+    };
+  }
+  const connecting = { connecting: true, closed: false, destroyed: false, state: "empty", freshState: true };
+  const ready = { connecting: false, closed: false, destroyed: false, state: "populated", freshState: true };
+  const destroyed = { connecting: false, closed: false, destroyed: true, state: "empty", freshState: true };
+  const destroyedBeforeReady = { ...destroyed, connecting: true };
+
+  // What each public method does on a session whose destroy() has started.
+  const refused = "ERR_HTTP2_INVALID_SESSION";
+  const sessionMethods = {
+    ping: session => session.ping(() => {}),
+    goaway: session => session.goaway(),
+    settings: session => session.settings({}),
+    setLocalWindowSize: session => session.setLocalWindowSize(65535),
+    close: session => session.close(),
+    setTimeout: session => session.setTimeout(1000),
+    destroy: session => session.destroy(),
+  };
+  const sessionMethodResults = {
+    ping: refused,
+    goaway: refused,
+    settings: refused,
+    setLocalWindowSize: refused,
+    close: "returns",
+    setTimeout: "returns",
+    destroy: "returns",
+  };
+  function callEach(session, methods) {
+    const results = {};
+    for (const [name, call] of Object.entries(methods)) {
+      try {
+        call(session);
+        results[name] = "returns";
+      } catch (error) {
+        results[name] = error.code;
+      }
+    }
+    return results;
+  }
+
+  const once = (emitter, name) => new Promise(resolve => emitter.once(name, resolve));
+  async function listen(server) {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    return server.address().port;
+  }
+  // An h2c server that answers every request at once.
+  async function h2cServer() {
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 }, { endStream: true });
+    });
+    return { server, port: await listen(server) };
+  }
+
+  it("client: {} while it connects, populated from 'connect' until it is destroyed", async () => {
+    const { server, port } = await h2cServer();
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", () => {});
+      const seen = { afterConnectCall: lifecycle(client) };
+      await once(client, "connect");
+      seen.connectEvent = lifecycle(client);
+      const closed = once(client, "close");
+      client.close();
+      seen.afterCloseCall = lifecycle(client);
+      await closed;
+      seen.closeEvent = lifecycle(client);
+      expect(seen).toEqual({
+        afterConnectCall: connecting,
+        connectEvent: ready,
+        afterCloseCall: { ...ready, closed: true },
+        closeEvent: { ...destroyed, closed: true },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client and server: {} from the destroy() call on", async () => {
+    const { server, port } = await h2cServer();
+    const serverSessionCreated = once(server, "session");
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", () => {});
+      const connected = once(client, "connect");
+      const serverSession = await serverSessionCreated;
+      serverSession.on("error", () => {});
+      const seen = { serverSessionEvent: lifecycle(serverSession) };
+      await connected;
+      const serverClosed = once(serverSession, "close");
+      const clientClosed = once(client, "close");
+      serverSession.destroy();
+      seen.serverAfterDestroyCall = lifecycle(serverSession);
+      client.destroy();
+      seen.clientAfterDestroyCall = lifecycle(client);
+      await serverClosed;
+      seen.serverCloseEvent = lifecycle(serverSession);
+      await clientClosed;
+      seen.clientCloseEvent = lifecycle(client);
+      expect(seen).toEqual({
+        serverSessionEvent: ready,
+        serverAfterDestroyCall: destroyed,
+        clientAfterDestroyCall: destroyed,
+        serverCloseEvent: destroyed,
+        clientCloseEvent: destroyed,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client: destroyed before its socket connects, it stays connecting", async () => {
+    const { server, port } = await h2cServer();
+    // A port that was just released: nothing listens on it.
+    const released = net.createServer();
+    const releasedPort = await listen(released);
+    await new Promise(resolve => released.close(resolve));
+    try {
+      const seen = {};
+
+      const destroyedEarly = http2.connect(`http://127.0.0.1:${port}`);
+      destroyedEarly.on("error", () => {});
+      const destroyedEarlyClosed = once(destroyedEarly, "close");
+      destroyedEarly.destroy();
+      seen.afterDestroyCall = lifecycle(destroyedEarly);
+      await destroyedEarlyClosed;
+      seen.closeEvent = lifecycle(destroyedEarly);
+
+      const refusedClient = http2.connect(`http://127.0.0.1:${releasedPort}`);
+      refusedClient.on("error", error => {
+        seen.refusedErrorEvent = { code: error.code, ...lifecycle(refusedClient) };
+      });
+      await once(refusedClient, "close");
+      seen.refusedCloseEvent = lifecycle(refusedClient);
+
+      expect(seen).toEqual({
+        afterDestroyCall: destroyedBeforeReady,
+        closeEvent: destroyedBeforeReady,
+        refusedErrorEvent: { code: "ECONNREFUSED", ...destroyedBeforeReady },
+        refusedCloseEvent: destroyedBeforeReady,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client: still connecting through the TLS handshake", async () => {
+    const server = http2.createSecureServer({ ...TLS_CERT });
+    server.on("sessionError", () => {});
+    const port = await listen(server);
+    try {
+      const seen = {};
+      let client;
+      const socket = tls.connect({ host: "127.0.0.1", port, ALPNProtocols: ["h2"], ca: TLS_CERT.cert });
+      // TCP is up and the handshake has not finished.
+      socket.once("connect", () => {
+        seen.tcpConnected = {
+          ...lifecycle(client),
+          remoteSettings: client.remoteSettings,
+          localSettings: client.localSettings,
+        };
+      });
+      client = http2.connect(`https://127.0.0.1:${port}`, { createConnection: () => socket });
+      client.on("error", () => {});
+      // Registered after the session's own listener, so the session is set up when it runs.
+      socket.once("secureConnect", () => {
+        seen.handshakeDone = lifecycle(client);
+      });
+      await once(client, "connect");
+      client.destroy();
+      expect(seen).toEqual({
+        tcpConnected: { ...connecting, remoteSettings: {}, localSettings: {} },
+        handshakeDone: ready,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client: connecting until the session's own socket 'connect' listener ran", async () => {
+    const { server, port } = await h2cServer();
+    try {
+      const seen = {};
+      let client;
+      const socket = net.connect(port, "127.0.0.1");
+      socket.once("connect", () => {
+        seen.listenerAddedBeforeSession = lifecycle(client);
+      });
+      client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+      client.on("error", () => {});
+      socket.once("connect", () => {
+        seen.listenerAddedAfterSession = lifecycle(client);
+      });
+      await once(client, "connect");
+      client.destroy();
+      expect(seen).toEqual({ listenerAddedBeforeSession: connecting, listenerAddedAfterSession: ready });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a session over a connected socket or a Duplex is ready at once", async () => {
+    const { server, port } = await h2cServer();
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      await once(socket, "connect");
+      const overSocket = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket });
+      overSocket.on("error", () => {});
+      const [clientSide, serverSide] = duplexPair();
+      const overDuplexServer = http2.performServerHandshake(serverSide);
+      overDuplexServer.on("error", () => {});
+      const overDuplex = http2.connect("http://localhost", { createConnection: () => clientSide });
+      overDuplex.on("error", () => {});
+      const seen = {
+        overSocket: lifecycle(overSocket),
+        overDuplex: lifecycle(overDuplex),
+        overDuplexServer: lifecycle(overDuplexServer),
+      };
+      overSocket.destroy();
+      overDuplex.destroy();
+      overDuplexServer.destroy();
+      expect(seen).toEqual({ overSocket: ready, overDuplex: ready, overDuplexServer: ready });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server: connecting until its socket connects", async () => {
+    // Accepts the connection and never speaks HTTP/2.
+    const sink = net.createServer(socket => socket.resume());
+    const port = await listen(sink);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      const session = http2.performServerHandshake(socket);
+      session.on("error", () => {});
+      const seen = { afterHandshakeCall: lifecycle(session) };
+      socket.once("connect", () => {
+        seen.socketConnected = lifecycle(session);
+      });
+      await once(session, "connect");
+      seen.connectEvent = lifecycle(session);
+      session.destroy();
+      expect(seen).toEqual({ afterHandshakeCall: connecting, socketConnected: ready, connectEvent: ready });
+    } finally {
+      sink.close();
+    }
+  });
+
+  it("the getters are accessors of the prototype that client and server sessions share", async () => {
+    const { server, port } = await h2cServer();
+    const serverSessionCreated = once(server, "session");
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", () => {});
+      const serverSession = await serverSessionCreated;
+      serverSession.on("error", () => {});
+      const clientPrototype = Object.getPrototypeOf(client);
+      const serverPrototype = Object.getPrototypeOf(serverSession);
+      const shared = Object.getPrototypeOf(clientPrototype);
+      const names = ["connecting", "closed", "destroyed", "state"];
+      const seen = {
+        sharedPrototype: Object.getPrototypeOf(serverPrototype) === shared,
+        onShared: names.map(name => typeof Object.getOwnPropertyDescriptor(shared, name)?.get),
+        onClient: names.filter(name => Object.hasOwn(clientPrototype, name)),
+        onServer: names.filter(name => Object.hasOwn(serverPrototype, name)),
+      };
+      client.destroy();
+      serverSession.destroy();
+      expect(seen).toEqual({
+        sharedPrototype: true,
+        onShared: ["function", "function", "function", "function"],
+        onClient: [],
+        onServer: [],
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server: a stream 'aborted' listener that runs inside destroy() sees the session destroyed", async () => {
+    const seen = {};
+    const { promise: handled, resolve: onHandled } = Promise.withResolvers();
+    const server = http2.createServer((req, res) => {
+      const stream = req.stream;
+      const session = stream.session;
+      session.on("error", () => {});
+      req.on("error", () => {});
+      res.on("error", () => {});
+      let insideDestroy = false;
+      req.on("aborted", () => {
+        seen.insideDestroy = insideDestroy;
+        seen.session = lifecycle(session);
+        seen.streamKeepsItsSession = stream.session === session;
+        seen.streamState = stream.state;
+        seen.remoteAddress = typeof req.socket.remoteAddress;
+        seen.methods = callEach(session, {
+          ...sessionMethods,
+          altsvc: session => session.altsvc('h2=":1"', 1),
+          origin: session => session.origin("https://a.test"),
+        });
+      });
+      insideDestroy = true;
+      session.destroy();
+      insideDestroy = false;
+      onHandled();
+    });
+    server.on("sessionError", () => {});
+    const port = await listen(server);
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", () => {});
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      req.write("x");
+      await handled;
+      client.destroy();
+      expect(seen).toEqual({
+        insideDestroy: true,
+        session: destroyed,
+        streamKeepsItsSession: true,
+        streamState: {},
+        remoteAddress: "string",
+        methods: { ...sessionMethodResults, altsvc: refused, origin: refused },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client: a queued request's 'aborted' listener that runs inside destroy() sees the session destroyed", async () => {
+    const { server, port } = await h2cServer();
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", () => {});
+      // Made before the socket connects: the request has no id yet.
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      req.on("error", () => {});
+      const seen = {};
+      let insideDestroy = false;
+      req.on("aborted", () => {
+        seen.insideDestroy = insideDestroy;
+        seen.session = lifecycle(client);
+        seen.requestKeepsItsSession = req.session === client;
+        seen.requestState = req.state;
+        seen.methods = callEach(client, { ...sessionMethods, setNextStreamID: session => session.setNextStreamID(1) });
+      });
+      const closed = once(client, "close");
+      insideDestroy = true;
+      client.destroy();
+      insideDestroy = false;
+      await closed;
+      expect(seen).toEqual({
+        insideDestroy: true,
+        session: destroyedBeforeReady,
+        requestKeepsItsSession: true,
+        requestState: {},
+        methods: { ...sessionMethodResults, setNextStreamID: refused },
+      });
+    } finally {
       server.close();
     }
   });

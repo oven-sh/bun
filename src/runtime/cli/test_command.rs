@@ -1718,19 +1718,20 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
 
     if let Some(runner) = jest::Jest::runner() {
         if runner.test_options.coverage.skip_test_files {
-            let is_test_file = if runner.test_options.file_patterns.is_empty() {
-                scanner::has_test_suffix(&slice[0..slice.len() - ext.len()])
-            } else {
-                // Same rule as discovery: `filePatterns` against the
-                // project-root-relative path.
+            if scanner::has_test_suffix(&slice[0..slice.len() - ext.len()]) {
+                return false;
+            }
+            // A file discovered through `filePatterns` is a test file too. The
+            // suffix rule stays on because an explicit `bun test ./x.test.ts`
+            // runs whether or not it matches the patterns.
+            if !runner.test_options.file_patterns.is_empty() {
                 let rel_path = resolve_path::relative(FileSystem::instance().top_level_dir, slice);
-                scanner::matches_any_file_pattern(
+                if scanner::matches_any_file_pattern(
                     runner.test_options.file_patterns.iter().map(|p| &**p),
                     rel_path,
-                )
-            };
-            if is_test_file {
-                return false;
+                ) {
+                    return false;
+                }
             }
         }
     }
@@ -1761,7 +1762,7 @@ fn print_test_file_rule(file_patterns: &[Box<[u8]>], as_note: bool) {
     }
     if file_patterns.is_empty() {
         pretty_errorln!(
-            "Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
+            "Tests need \".test\", \"_test\", \".spec\" or \"_spec\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
         );
     } else {
         pretty_errorln!(
@@ -2509,7 +2510,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     if file_patterns.is_empty() {
                         Output::err_generic(
-                            "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
+                            "0 test files matching **{{.test,.spec,_test,_spec}}.{{js,ts,jsx,tsx}} in --cwd={}",
                             (bun_fmt::quote(FileSystem::instance().top_level_dir),),
                         );
                     } else {

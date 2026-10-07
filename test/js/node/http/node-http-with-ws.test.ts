@@ -983,12 +983,14 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
 // below reach the refusal: the first with a socket that is shut down before the upgrade starts, the
 // second with one that turns shut down while the 101 is written. Each runs in a child process,
 // and a debug build needs several seconds there to load node:http and ws, hence the timeouts.
-test.concurrent("handleUpgrade() refuses a socket that a 'headers' listener ended, and the close of that socket is clean", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "handleUpgrade() refuses a socket that a 'headers' listener ended, and the close of that socket is clean",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
       const http = require("node:http");
       const net = require("node:net");
       const { once } = require("node:events");
@@ -1029,31 +1031,37 @@ test.concurrent("handleUpgrade() refuses a socket that a 'headers' listener ende
         console.log(JSON.stringify([await run("request"), await run("upgrade")]));
       })();
       `,
-    ],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([
-    { listenFor: "request", connections: 0, serverSocketClosed: true },
-    { listenFor: "upgrade", connections: 0, serverSocketClosed: true },
-  ]);
-  expect(exitCode).toBe(0);
-}, 30_000);
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      { listenFor: "request", connections: 0, serverSocketClosed: true },
+      { listenFor: "upgrade", connections: 0, serverSocketClosed: true },
+    ]);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
-test.concurrent("an upgrade survives a 101 that cannot reach the wire on its own TLS socket", async () => {
-  // The 101 goes out after the adopt, so a TLS write that BoringSSL refuses there cannot refuse the
-  // upgrade: every connection becomes a WebSocket, like ws on Node. It used to mark the socket shut
-  // down between the test in upgrade() and us_socket_adopt, which is what corrupted the socket.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-ws-upgrade-spilled-tls-fixture.js")],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(JSON.parse(stdout)).toEqual({ ok: true, upgraded: 3, refused: 0, guardThrew: null });
-}, 30_000);
+test.concurrent(
+  "an upgrade survives a 101 that cannot reach the wire on its own TLS socket",
+  async () => {
+    // The 101 goes out after the adopt, so a TLS write that BoringSSL refuses there cannot refuse the
+    // upgrade: every connection becomes a WebSocket, like ws on Node. It used to mark the socket shut
+    // down between the test in upgrade() and us_socket_adopt, which is what corrupted the socket.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-ws-upgrade-spilled-tls-fixture.js")],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({ ok: true, upgraded: 3, refused: 0, guardThrew: null });
+  },
+  30_000,
+);

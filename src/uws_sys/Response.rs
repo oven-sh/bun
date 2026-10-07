@@ -179,7 +179,8 @@ impl<const SSL: bool> Response<SSL> {
     /// Our side sent a FIN, or TLS its close_notify. uWS refuses to adopt such a socket, so an
     /// upgrade of it cannot succeed.
     pub(crate) fn is_shutdown(&self) -> bool {
-        us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_shutdown()
+        us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>())
+            .is_shutdown()
     }
 
     pub(crate) fn prepare_for_sendfile(&mut self) {

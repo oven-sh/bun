@@ -316,14 +316,9 @@ impl<'a> EntryLookup<'a> {
 pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
-    /// Basename → entry-pointer map backing `DirEntry::data`.
-    ///
-    /// Keys are the ASCII-lowercased basenames, so one probe serves both
-    /// exact-case and case-folded (macOS/Windows) lookups. When a directory on
-    /// a case-sensitive filesystem holds several names that differ only in
-    /// case, the all-lowercase spelling (if any) owns the lowercased key and
-    /// every other spelling is keyed by its exact name; `DirEntry::get`
-    /// checks `Entry::base` against the query to tell the variants apart.
+    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`. Names
+    /// that differ only in case share one lowercased key: the all-lowercase
+    /// spelling owns it, every other spelling is keyed by its exact name.
     pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
@@ -385,15 +380,12 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     }
 }
 
-/// Whether the filesystem under one directory opens a name spelled in a
-/// different ASCII case than the file on disk.
+/// Whether the filesystem under one directory folds ASCII case.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum CaseVerdict {
     Unknown = 0,
-    /// `a` and `A` are different files (ext4, case-sensitive APFS).
     Exact = 1,
-    /// `A` opens `a` (default APFS and NTFS volumes).
     Folds = 2,
 }
 
@@ -414,9 +406,8 @@ pub struct DirEntry {
     pub fd: Fd,
     pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
-    /// Settled once per directory, the first time a lookup is answered by an
-    /// entry spelled in a different case (see [`Self::pick_case`]). Atomic
-    /// only so `DirEntry` stays `Sync`; every access is under `entries_mutex`.
+    /// Settled once, by the first case-mismatched lookup (see `pick_case`).
+    /// Atomic only so `DirEntry` stays `Sync`; accessed under `entries_mutex`.
     case_verdict: AtomicU8,
 }
 
@@ -439,8 +430,6 @@ impl DirEntry {
         self.case_verdict.store(verdict as u8, Ordering::Relaxed);
     }
 
-    /// A re-read replaces the whole `DirEntry`; the filesystem under it did
-    /// not change, so a verdict the old listing settled carries over.
     pub(crate) fn inherit_case_verdict(&self, prev: &DirEntry) {
         if self.case_verdict() == CaseVerdict::Unknown {
             self.set_case_verdict(prev.case_verdict());
@@ -512,11 +501,7 @@ impl DirEntry {
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
                 // Recycle the previous generation's slot for this exact name
-                // only. The lowercased key (probed first, reusing `name_hash`)
-                // may instead hold a sibling differing in case, or the name as
-                // it was spelled before a case-only rename; both get a fresh
-                // `Entry` below. A name that lost the lowercased key to a
-                // sibling sits under its exact spelling (see the insert below).
+                // only; a sibling differing in case gets a fresh `Entry`.
                 let recycled: Option<*mut Entry> = match map.get_hashed(name_hash, name_lc) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     Some(&p) if unsafe { (*p).base() } == name_slice => Some(p),
@@ -631,11 +616,8 @@ impl DirEntry {
             .data
             .get_or_put_static_key_hashed(name_hash, key, stored);
         if lowercase_slot.found_existing {
-            // This directory holds another name differing from this one only
-            // in ASCII case (so it is on a case-sensitive filesystem and both
-            // are distinct files). Keep the lowercased key for the spelling
-            // that *is* all-lowercase, if either is, and key the other one by
-            // its exact name (see `dir_entry::EntryMap`).
+            // Two names differing only in case: the all-lowercase one keeps
+            // the lowercased key, the other is keyed by its exact name.
             let other: *mut Entry = *lowercase_slot.value_ptr;
             let spilled: *mut Entry = if name_slice == name_lc {
                 *lowercase_slot.value_ptr = stored;
@@ -678,11 +660,7 @@ impl DirEntry {
         );
     }
 
-    /// Looks up `query_` the way the filesystem would: an entry spelled
-    /// exactly `query_` always wins, and one spelled differently is returned
-    /// only if the filesystem itself resolves `query_` to it (see
-    /// [`Self::pick_case`]).
-    ///
+    /// Looks up `query_` the way the filesystem would (see `pick_case`).
     /// `query_` borrow is detached from the returned `Entry` lifetime so
     /// callers can pass a slice into the same threadlocal buffer they then
     /// mutate.
@@ -714,13 +692,9 @@ impl DirEntry {
         self.get_comptime_query(query_lower).is_some()
     }
 
-    /// `candidate` is the entry stored under `query`'s lowercased key. It is
-    /// the answer when it is spelled exactly `query`. Otherwise the directory's
-    /// filesystem decides: where it folds case, `query` opens `candidate`;
-    /// where it does not, only an entry keyed by its exact spelling (see
-    /// `dir_entry::EntryMap`) can match. The verdict is probed once per
-    /// directory, not guessed from the platform, so a case-sensitive volume
-    /// on macOS and a case-folding mount on Linux both get the right answer.
+    /// `candidate` holds `query`'s lowercased key. An entry spelled exactly
+    /// `query` wins; otherwise the directory's case verdict decides, probed
+    /// from the filesystem rather than guessed from the platform.
     fn pick_case<'a>(&'a self, candidate: *mut Entry, query: &[u8]) -> Option<EntryLookup<'a>> {
         // SAFETY: ARENA — `data` holds EntryStore slots, which are never freed,
         // and `base_` is never mutated after construction.
@@ -729,8 +703,6 @@ impl DirEntry {
         }
         let verdict = match self.case_verdict() {
             CaseVerdict::Unknown => {
-                // Two names differing only in case would have settled the
-                // verdict at insert time, so nothing is keyed by `query` here.
                 let verdict = self.probe_case_verdict(query, candidate);
                 debug!(
                     "case verdict for {}: {:?} (asked for {})",
@@ -756,9 +728,7 @@ impl DirEntry {
         }
     }
 
-    /// Asks the filesystem whether `query` names the same file as `candidate`.
-    /// `Unknown` means a transient error kept it from deciding; the next
-    /// case-mismatched lookup asks again.
+    /// `Unknown` means a transient error; the next mismatched lookup asks again.
     #[cfg(windows)]
     fn probe_case_verdict(&self, _query: &[u8], _candidate: *mut Entry) -> CaseVerdict {
         CaseVerdict::Folds
@@ -776,8 +746,8 @@ impl DirEntry {
             Ok(st) if st.st_dev == queried.st_dev && st.st_ino == queried.st_ino => {
                 CaseVerdict::Folds
             }
-            // `query` exists beside `candidate` as a distinct file, so the
-            // filesystem tells the two spellings apart (the listing is stale).
+            // A distinct file under `query`: the listing is stale, and the
+            // filesystem provably tells the two spellings apart.
             Ok(_) => CaseVerdict::Exact,
             Err(_) => CaseVerdict::Unknown,
         }
@@ -787,8 +757,7 @@ impl DirEntry {
     fn lstat_in_dir(&self, name: &[u8]) -> core::result::Result<bun_sys::Stat, bun_sys::E> {
         use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let mut buf = bun_paths::path_buffer_pool::get();
-        // Leave room for the NUL; a path that does not fit cannot be opened
-        // under this name either.
+        // Leave room for the NUL.
         let len = join_abs_string_buf_checked::<platform::Auto>(
             crate::fs::FileSystem::get().fs.cwd,
             &mut buf[..MAX_PATH_BYTES - 1],

@@ -679,11 +679,9 @@ impl<'a> Resolver<'a> {
         unsafe { &*self.fs }
     }
 
-    /// The absolute path of a listed file, spelled the way the directory
-    /// listing spells it, interned once per `Entry`. Every probe that can
-    /// reach an entry under a different spelling of its name (a case-folding
-    /// filesystem) shares this one cached path, so it must never be built
-    /// from the probed spelling.
+    /// `Entry::abs_path`, interned once from the on-disk spelling. Never build
+    /// it from the probed spelling: every spelling that reaches the entry
+    /// shares this one cached path.
     fn entry_abs_path(&self, query: &Fs::EntryLookup<'_>) -> &'static [u8] {
         if query.entry().abs_path.is_empty() {
             let mut buf = bun_paths::path_buffer_pool::get();

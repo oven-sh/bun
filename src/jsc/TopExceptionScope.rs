@@ -242,7 +242,6 @@ impl TopExceptionScope {
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
-        #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");
@@ -418,8 +417,6 @@ macro_rules! validation_scope {
 pub struct ExceptionValidationScope {
     #[cfg(any(debug_assertions, bun_asan))]
     scope: TopExceptionScope,
-    #[cfg(not(any(debug_assertions, bun_asan)))]
-    _scope: (),
 }
 
 /// RAII guard for an [`ExceptionValidationScope`]. See [`TopExceptionScopeGuard`].
@@ -485,7 +482,7 @@ impl ExceptionValidationScope {
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
             let _ = (global, src);
-            storage.write(Self { _scope: () })
+            storage.write(Self {})
         }
     }
 

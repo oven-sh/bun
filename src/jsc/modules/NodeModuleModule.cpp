@@ -1,6 +1,8 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "CodeGenerationFromStrings.h"
+#include "ModuleGraph.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -175,6 +177,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
     auto* out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
         dirname, SourceCode());
+    // A module made in a Bun.ModuleGraph's context is that graph's: what it requires and compiles
+    // loads into the graph, over the graph's `globals`.
+    out->setModuleGraph(vm, Bun::currentModuleGraph(defaultGlobalObject(globalObject)));
 
     if (!parentValue.isUndefined()) {
         out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,
@@ -269,8 +274,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         val = Bun__Node__Path_joinWTF(&lhs, "noop.js", sizeof("noop.js") - 1).transferToWTFString();
     }
 
+    // Called in a Bun.ModuleGraph's context: that graph's require().
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -688,9 +694,15 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
 // subclass, as jest-runtime does) is not an override.
-static void setModuleWrapper(Zig::GlobalObject* global, String&& start, String&& end)
+// A wrapper that is not the default is a string compiled around every CommonJS module.
+static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, String&& start, String&& end)
 {
-    global->hasOverriddenModuleWrapper = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
+    bool isOverride = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
+    if (isOverride) [[unlikely]] {
+        Bun::throwIfMayNotMakeScriptFromStrings(global, scope);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    global->hasOverriddenModuleWrapper = isOverride;
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
 }
@@ -705,7 +717,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    setModuleWrapper(global, WTF::move(aString), WTF::move(bString));
+    setModuleWrapper(global, scope, WTF::move(aString), WTF::move(bString));
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -762,7 +775,8 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     auto bstring = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    setModuleWrapper(globalObject, WTF::move(astring), WTF::move(bstring));
+    setModuleWrapper(globalObject, scope, WTF::move(astring), WTF::move(bstring));
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -792,11 +806,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto arg1 = callFrame->argument(0);
-    auto name = arg1.toWTFString(globalObject);
+    auto name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
+    // JSC::loadAndEvaluateModule() takes a key.
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
 
@@ -818,10 +835,17 @@ JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
 extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
 {
-    auto overrideHandler = uncheckedDowncast<JSObject>(global->m_moduleRunMainFunction.get(global));
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue overrideHandler = global->m_moduleRunMainFunction.get(global);
+    auto callData = JSC::getCallData(overrideHandler);
+    if (callData.type == JSC::CallData::Type::None) {
+        throwException(global, scope, createNotAFunctionError(global, overrideHandler));
+        return {};
+    }
     MarkedArgumentBuffer args;
     args.append(argv1);
-    return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, callData, global, args)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
@@ -1173,11 +1197,9 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
-            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
-            ASSERT(!returnedException);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            JSValue result = Bun::createRequireCacheObject(globalObject, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap());
+            ASSERT_UNUSED(scope, !scope.exception());
             init.set(result.toObject(globalObject));
         });
 

@@ -1,0 +1,1734 @@
+//! Dumps a `hir::File` as text, to compare the output of two front ends for the same source.
+//!
+//! The order in which the nodes were pushed into their vectors is an implementation detail, so no
+//! id is ever printed: the HIR is walked from `File::body`, a node is one line with all of its own
+//! data, and its children follow, indented, each after the name of its field.
+//!
+//! ```text
+//! body[1]:
+//!   Stmt If pos=0
+//!     test: Expr Ident pos=4 "a"
+//!     yes: Stmt Empty pos=6
+//!     no: -
+//! ```
+
+use bun_sema::atom::{Atom, Intern, Interner};
+use bun_sema::hir::*;
+
+/// Nothing is printed below this depth: printing a cyclic HIR would otherwise never terminate.
+const MAX_DEPTH: usize = 2000;
+
+/// Placeholder for the node of an out-of-bounds id.
+const NO_SUCH_NODE: &str = "<no such node>";
+
+/// One line: `put!(self, depth, label, "format", arguments..)`.
+macro_rules! put {
+    ($self:ident, $depth:expr, $label:expr, $($format:tt)*) => {{
+        let text = format!($($format)*);
+        $self.line($depth, $label, &text);
+    }};
+}
+
+/// The node that `$id` refers to in `File::$arena`. If there is none to print, prints a line with
+/// the reason and returns from the function.
+macro_rules! node {
+    ($self:ident, $depth:ident, $label:ident, $arena:ident, $id:ident) => {{
+        if $id.is_none() {
+            return $self.line($depth, $label, "-");
+        }
+        if $depth > MAX_DEPTH {
+            return $self.line($depth, $label, "...");
+        }
+        match $self.file.$arena.get($id.idx()) {
+            Some(node) => {
+                $self.seen.insert((stringify!($arena), $id.idx() as u32));
+                *node
+            }
+            None => return $self.line($depth, $label, NO_SUCH_NODE),
+        }
+    }};
+}
+
+struct Dump<'a, 's> {
+    file: &'a File<'s>,
+    atoms: &'a dyn Intern,
+    out: String,
+    /// Every visited node: its vector and its index.
+    seen: bun_sema::util::FxHashSet<(&'static str, u32)>,
+}
+
+/// Also returns the unreachable nodes, which code that iterates over a whole vector still visits:
+/// `vector[index] pos=..`.
+pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) {
+    // Every field is destructured by name, so that a new one must be handled. `error_pos` is only
+    // the position to report when a parser bailed out.
+    let File {
+        kind,
+        has_module_syntax,
+        is_js,
+        check_directive,
+        is_module_by_decree,
+        has_errors,
+        ran_out_of_stack: _,
+        decorators,
+        legacy_decorators,
+        diagnostics,
+        syntax_errors,
+        error_pos: _,
+        source_len,
+        text: _,
+        unclosed_literals: _,
+        modifiers_of_params: _,
+        modifiers_of_props: _,
+        body,
+        references,
+        comment_directives,
+        with_bodies,
+        body_starts: _,
+        after_skipped,
+        stray_decorators,
+        specifier_uses,
+        deferred_import_calls,
+        import_call_type_args: _,
+        import_attributes,
+        specifier_expressions,
+        exports_from_expressions: _,
+        has_parse_diagnostics,
+        parens,
+        jsx_expressions,
+        jsx_pragmas,
+        jsdoc_comments,
+        jsdoc_hosts: _,
+        jsdoc_types,
+        jsdoc_modifiers,
+        jsdoc_member_comments: _,
+        jsdoc_param_errors,
+        functions_with_param_tags: _,
+        ids: _,
+        numbers: _,
+        exprs: _,
+        stmts: _,
+        types: _,
+        pats: _,
+        pat_props: _,
+        pat_elems: _,
+        fns: _,
+        params: _,
+        type_params: _,
+        classes: _,
+        interfaces: _,
+        aliases: _,
+        enums: _,
+        enum_members: _,
+        modules: _,
+        members: _,
+        props: _,
+        var_decls: _,
+        calls: _,
+        cases: _,
+        jsx: _,
+        imports: _,
+        import_specs: _,
+        import_equals: _,
+        exports: _,
+        export_specs: _,
+        tuple_elems: _,
+        mapped: _,
+        modifiers: _,
+        names: _,
+        bases: _,
+        lazy: _,
+        keyword_identifier_positions: _,
+        fn_nodes: _,
+        class_nodes: _,
+    } = file;
+    let mut d = Dump {
+        file,
+        atoms,
+        out: String::new(),
+        seen: Default::default(),
+    };
+    d.list(0, "body", *body, Dump::stmt);
+
+    put!(d, 0, "kind", "{kind:?}");
+    put!(d, 0, "has_module_syntax", "{has_module_syntax}");
+    put!(
+        d,
+        0,
+        "is_js",
+        "{is_js} {check_directive:?} {is_module_by_decree}"
+    );
+    put!(d, 0, "has_errors", "{has_errors}");
+    put!(d, 0, "source_len", "{source_len}");
+    put!(d, 0, "legacy_decorators", "{legacy_decorators}");
+    put!(d, 0, "syntax_errors", "{syntax_errors}");
+
+    put!(d, 0, "", "references[{}]:", references.len());
+    for &(kind, path, pos, mode) in references {
+        put!(d, 1, "", "{kind:?} {} pos={pos} mode={mode:?}", d.q(path));
+    }
+
+    put!(
+        d,
+        0,
+        "",
+        "with_bodies[{}]: {with_bodies:?}",
+        with_bodies.len()
+    );
+    // Only in files with syntax errors.
+    if !after_skipped.is_empty() {
+        put!(
+            d,
+            0,
+            "",
+            "after_skipped[{}]: {after_skipped:?}",
+            after_skipped.len()
+        );
+    }
+    if !stray_decorators.is_empty() {
+        put!(
+            d,
+            0,
+            "",
+            "stray_decorators[{}]: {stray_decorators:?}",
+            stray_decorators.len()
+        );
+    }
+    if *has_parse_diagnostics {
+        put!(d, 0, "", "has_parse_diagnostics");
+    }
+    for &(with_pos, attributes) in import_attributes {
+        put!(d, 0, "", "import_attributes at {with_pos}:");
+        d.expr(1, "attributes", attributes);
+    }
+    for &specifier in specifier_expressions {
+        d.expr(0, "specifier_expression", specifier);
+    }
+
+    for &(_, close_pos) in deferred_import_calls {
+        put!(d, 0, "", "deferred_import_call close_pos={close_pos}");
+    }
+
+    put!(
+        d,
+        0,
+        "",
+        "comment_directives[{}]:",
+        comment_directives.len()
+    );
+    for directive in comment_directives {
+        let CommentDirective { start, end, kind } = directive;
+        put!(d, 1, "", "{start}..{end} {kind:?}");
+    }
+
+    let mut uses: Vec<(u32, String, String)> = specifier_uses
+        .iter()
+        .map(
+            |&SpecifierUse {
+                 spec,
+                 pos,
+                 kind,
+                 mode,
+             }| (pos, d.q(spec), format!("{kind:?} {mode:?}")),
+        )
+        .collect();
+    uses.sort();
+    put!(d, 0, "", "specifier_uses[{}]:", uses.len());
+    for (pos, spec, kind) in &uses {
+        put!(d, 1, "", "{kind} {spec} pos={pos}");
+    }
+
+    let mut sorted: Vec<&Diagnostic> = diagnostics.iter().collect();
+    sorted.sort_by_key(|d| (d.start, d.code, d.end));
+    put!(d, 0, "", "diagnostics[{}]:", sorted.len());
+    for Diagnostic {
+        kind,
+        start,
+        end,
+        code,
+        ..
+    } in sorted
+    {
+        put!(d, 1, "", "{kind:?} {start}..{end} {code}");
+    }
+
+    let JsxPragmas {
+        classic,
+        factory,
+        fragment_factory,
+        import_source,
+    } = *jsx_pragmas;
+    put!(
+        d,
+        0,
+        "jsx_pragmas",
+        "classic={classic:?} factory={} fragment_factory={} import_source={}",
+        d.q(factory),
+        d.q(fragment_factory),
+        d.q(import_source)
+    );
+
+    // Only in JavaScript.
+    if !jsdoc_comments.is_empty() {
+        put!(
+            d,
+            0,
+            "",
+            "jsdoc_comments[{}]: {jsdoc_comments:?}",
+            jsdoc_comments.len()
+        );
+    }
+    for &(owner, ty) in jsdoc_types {
+        let (kind, pos) = match owner {
+            JsDocTypeOwner::Fn(id) => ("Fn", file.fns.get(id.idx()).map(|func| func.start)),
+            JsDocTypeOwner::Prop(id) => ("Prop", file.props.get(id.idx()).map(|prop| prop.pos)),
+            JsDocTypeOwner::Assign(id) => ("Assign", file.exprs.get(id.idx()).map(|expr| expr.pos)),
+            JsDocTypeOwner::Export(id) => {
+                ("Export", file.stmts.get(id.idx()).map(|stmt| stmt.start))
+            }
+        };
+        match pos {
+            Some(pos) => put!(d, 0, "", "jsdoc_type of {kind} pos={pos}:"),
+            None => put!(d, 0, "", "jsdoc_type of {kind} {NO_SUCH_NODE}:"),
+        }
+        d.ty(1, "ty", ty);
+    }
+    for &(expr, flags) in jsdoc_modifiers {
+        match file.exprs.get(expr.idx()) {
+            Some(expr) => put!(d, 0, "", "jsdoc_modifiers pos={} {flags:?}", expr.pos),
+            None => put!(d, 0, "", "jsdoc_modifiers {NO_SUCH_NODE} {flags:?}"),
+        }
+    }
+    for &(
+        func,
+        Diagnostic {
+            start: pos, code, ..
+        },
+    ) in jsdoc_param_errors.iter()
+    {
+        match file.fns.get(func.idx()) {
+            Some(func) => put!(
+                d,
+                0,
+                "",
+                "jsdoc_param_error of Fn pos={} pos={pos} code={code}",
+                func.start
+            ),
+            None => put!(
+                d,
+                0,
+                "",
+                "jsdoc_param_error of Fn {NO_SUCH_NODE} pos={pos} code={code}"
+            ),
+        }
+    }
+
+    // An expression is identified by its start and its kind.
+    let mut around: Vec<(u32, &str, u32, u32)> = parens
+        .iter()
+        .map(|&(expr, open, end)| match file.exprs.get(expr.idx()) {
+            Some(expr) => (expr.pos, expr_kind_name(expr.kind), open, end),
+            None => (u32::MAX, NO_SUCH_NODE, open, end),
+        })
+        .collect();
+    around.sort_unstable();
+    put!(d, 0, "", "parens[{}]:", around.len());
+    for (pos, kind, open, end) in around {
+        put!(d, 1, "", "{kind} pos={pos} open={open} end={end}");
+    }
+
+    put!(d, 0, "", "jsx_expressions[{}]:", jsx_expressions.len());
+    for &(_, open, end) in jsx_expressions {
+        put!(d, 1, "", "open={open} end={end}");
+    }
+
+    put!(d, 0, "", "decorators[{}]:", decorators.len());
+    for &(owner, expr) in decorators {
+        let (kind, pos) = match owner {
+            DecoratorOwner::Class(id) => (
+                "Class",
+                file.classes.get(id.idx()).map(|class| class.name_pos),
+            ),
+            DecoratorOwner::Member(id) => (
+                "Member",
+                file.members.get(id.idx()).map(|member| member.name_pos),
+            ),
+            DecoratorOwner::Param(id) => {
+                ("Param", file.params.get(id.idx()).map(|param| param.pos))
+            }
+        };
+        match pos {
+            Some(pos) => put!(d, 1, "", "{kind} pos={pos}"),
+            None => put!(d, 1, "", "{kind} {NO_SUCH_NODE}"),
+        }
+        d.expr(2, "expr", expr);
+    }
+    let mut orphans = Vec::new();
+    macro_rules! look_for_orphans {
+        ($($vector:ident . $pos:ident),*) => {$(
+            for (i, node) in file.$vector.iter().enumerate() {
+                if !d.seen.contains(&(stringify!($vector), i as u32)) {
+                    orphans.push(format!("{}[{i}] pos={}", stringify!($vector), node.$pos));
+                }
+            }
+        )*};
+    }
+    look_for_orphans!(
+        types.pos,
+        fns.start,
+        members.name_pos,
+        params.pos,
+        type_params.pos,
+        pats.pos,
+        exprs.pos,
+        stmts.start
+    );
+    macro_rules! compare_walks {
+        ($($vector:ident $id:ident),*) => {$(
+            for i in 0..file.$vector.len() as u32 {
+                let seen = d.seen.contains(&(stringify!($vector), i));
+                let has_parent = file.parent(file.node($id(i))).is_some();
+                if seen != has_parent {
+                    orphans.push(format!("{}[{i}] seen={seen} has_parent={has_parent}", stringify!($vector)));
+                }
+            }
+        )*};
+    }
+    compare_walks!(
+        exprs ExprId, types TypeNodeId, pat_props PatPropId, pat_elems PatElemId, params ParamId, type_params TypeParamId,
+        members MemberId, props PropId, var_decls VarDeclId, cases CaseId, enum_members EnumMemberId, import_specs ImportSpecId,
+        export_specs ExportSpecId, tuple_elems TupleElemId, fns FnId, classes ClassId
+    );
+    // The two entries that are not nodes: node.rs.
+    for (i, statement) in file.stmts.iter().enumerate() {
+        let seen = d.seen.contains(&("stmts", i as u32));
+        let has_parent = match statement.kind {
+            StmtKind::Expr(e) => file.parent(file.node(e)).is_some(),
+            _ => file.parent(file.node(StmtId(i as u32))).is_some(),
+        };
+        if seen != has_parent {
+            orphans.push(format!("stmts[{i}] seen={seen} has_parent={has_parent}"));
+        }
+    }
+    for (i, pattern) in file.pats.iter().enumerate() {
+        let seen = d.seen.contains(&("pats", i as u32));
+        let has_parent = file.parent(file.node(PatId(i as u32))).is_some();
+        if seen != has_parent && !matches!(pattern.kind, PatKind::Missing) {
+            orphans.push(format!("pats[{i}] seen={seen} has_parent={has_parent}"));
+        }
+    }
+    (d.out, orphans)
+}
+
+/// `forEachChild` from the file down, one line per node: its depth, its `Kind`, its start.
+pub fn nodes(file: &File) -> String {
+    let mut out = String::new();
+    let mut open = vec![(Node::FILE, 0)];
+    while let Some((node, depth)) = open.pop() {
+        out.push_str(&format!(
+            "{depth} {:?} {}\n",
+            file.kind(node),
+            file.start(node)
+        ));
+        let first = open.len();
+        file.for_each_child(node, &mut |child| {
+            open.push((child, depth + 1));
+            false
+        });
+        open[first..].reverse();
+    }
+    out
+}
+
+impl Dump<'_, '_> {
+    fn line(&mut self, depth: usize, label: &str, text: &str) {
+        for _ in 0..depth {
+            self.out.push_str("  ");
+        }
+        if !label.is_empty() {
+            self.out.push_str(label);
+            self.out.push_str(": ");
+        }
+        self.out.push_str(text);
+        self.out.push('\n');
+    }
+
+    /// A name in quotes, `-` for none.
+    fn q(&self, atom: Atom) -> String {
+        if atom.is_none() {
+            return "-".to_owned();
+        }
+        let bytes = self.atoms.bytes(atom);
+        match std::str::from_utf8(bytes) {
+            Ok(text) => format!("{text:?}"),
+            Err(_) => format!("b\"{}\"", bytes.escape_ascii()),
+        }
+    }
+
+    fn number(&self, index: u32) -> String {
+        match self.file.numbers.get(index as usize) {
+            Some(value) => format!("{value:?}"),
+            None => NO_SUCH_NODE.to_owned(),
+        }
+    }
+
+    fn has_ids<T>(&self, list: IdList<T>) -> bool {
+        list.start as usize + list.len() <= self.file.ids.len()
+    }
+
+    /// The parts of `A.B.C`, the texts of a template.
+    fn names(&self, list: IdList<Atom>) -> String {
+        if !self.has_ids(list) {
+            return NO_SUCH_NODE.to_owned();
+        }
+        let mut out = String::from("[");
+        for (i, atom) in self.file.ids(list).enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&self.q(atom));
+        }
+        out.push(']');
+        out
+    }
+
+    /// `A.B.C`, with the position of each name.
+    fn entity_name(&self, names: Span<NameId>) -> String {
+        if names.range().end > self.file.names.len() {
+            return NO_SUCH_NODE.to_owned();
+        }
+        let names = names.iter().map(|n| self.file[n]);
+        let names: Vec<String> = names
+            .map(|n| format!("{}@{}", self.q(n.text), n.pos()))
+            .collect();
+        format!("[{}]", names.join(", "))
+    }
+
+    /// Prints `label[len]:`. Returns false if the elements of the list must not be printed.
+    fn open_list(&mut self, depth: usize, label: &str, len: usize) -> bool {
+        if depth > MAX_DEPTH {
+            self.line(depth, label, "...");
+            return false;
+        }
+        put!(self, depth, "", "{label}[{len}]:");
+        true
+    }
+
+    fn list<T: From<u32>>(
+        &mut self,
+        depth: usize,
+        label: &str,
+        list: IdList<T>,
+        each: fn(&mut Self, usize, &str, T),
+    ) {
+        if !self.open_list(depth, label, list.len()) {
+            return;
+        }
+        if !self.has_ids(list) {
+            return self.line(depth + 1, "", NO_SUCH_NODE);
+        }
+        let file = self.file;
+        for id in file.ids(list) {
+            each(self, depth + 1, "", id);
+        }
+    }
+
+    fn span<T: From<u32>>(
+        &mut self,
+        depth: usize,
+        label: &str,
+        span: Span<T>,
+        each: fn(&mut Self, usize, &str, T),
+    ) {
+        if !self.open_list(depth, label, span.len()) {
+            return;
+        }
+        for id in span.iter() {
+            each(self, depth + 1, "", id);
+        }
+    }
+
+    fn expr(&mut self, depth: usize, label: &str, id: ExprId) {
+        let Expr { kind, pos, end } = node!(self, depth, label, exprs, id);
+        let head = format!("Expr {} pos={pos} end={end}", expr_kind_name(kind));
+        let d = depth + 1;
+        match kind {
+            ExprKind::Missing
+            | ExprKind::This
+            | ExprKind::Super
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Regex
+            | ExprKind::ImportMeta
+            | ExprKind::NewTarget(_) => self.line(depth, label, &head),
+            ExprKind::Ident(name)
+            | ExprKind::PrivateIdentifier(name)
+            | ExprKind::String(name)
+            | ExprKind::BigInt(name) => {
+                put!(self, depth, label, "{head} {}", self.q(name))
+            }
+            ExprKind::Number(index) => put!(self, depth, label, "{head} {}", self.number(index)),
+            ExprKind::Template { exprs } => {
+                let texts = self.file.template_texts(exprs);
+                put!(self, depth, label, "{head} texts={}", self.names(texts));
+                self.list(d, "exprs", exprs, Self::expr);
+            }
+            ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
+                self.line(depth, label, &head);
+                self.call(d, "call", call);
+            }
+            ExprKind::Array(items) => {
+                self.line(depth, label, &head);
+                self.list(d, "items", items, Self::expr);
+            }
+            ExprKind::Object(props) => {
+                self.line(depth, label, &head);
+                self.span(d, "props", props, Self::prop);
+            }
+            ExprKind::Fn(func) => {
+                self.line(depth, label, &head);
+                self.func(d, "func", func);
+            }
+            ExprKind::Class(class) => {
+                self.line(depth, label, &head);
+                self.class(d, "class", class);
+            }
+            ExprKind::Dot {
+                obj,
+                name,
+                name_pos,
+                chain,
+            } => {
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} name={} name_pos={name_pos} chain={chain:?}",
+                    self.q(name)
+                );
+                self.expr(d, "obj", obj);
+            }
+            ExprKind::Index { obj, index, chain } => {
+                put!(self, depth, label, "{head} chain={chain:?}");
+                self.expr(d, "obj", obj);
+                self.expr(d, "index", index);
+            }
+            ExprKind::Unary { op, operand } => {
+                put!(self, depth, label, "{head} op={op:?}");
+                self.expr(d, "operand", operand);
+            }
+            ExprKind::Binary { op, left, right } => {
+                put!(self, depth, label, "{head} op={op:?}");
+                self.expr(d, "left", left);
+                self.expr(d, "right", right);
+            }
+            ExprKind::Assign { op, target, value } => {
+                put!(self, depth, label, "{head} op={op:?}");
+                self.expr(d, "target", target);
+                self.expr(d, "value", value);
+            }
+            ExprKind::Cond { test, yes, no } => {
+                self.line(depth, label, &head);
+                self.expr(d, "test", test);
+                self.expr(d, "yes", yes);
+                self.expr(d, "no", no);
+            }
+            ExprKind::Spread(expr)
+            | ExprKind::Await(expr)
+            | ExprKind::AsConst(expr)
+            | ExprKind::NonNull(expr) => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+            }
+            ExprKind::ImportCall { args } => {
+                let type_args = self.file.type_args_of_import_call(args);
+                self.line(depth, label, &head);
+                self.list(d, "type_args", type_args, Self::ty);
+                self.list(d, "args", args, Self::expr);
+            }
+            ExprKind::Instantiation { expr, type_args } => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+                self.list(d, "type_args", type_args, Self::ty);
+            }
+            ExprKind::Yield { value, star } => {
+                put!(self, depth, label, "{head} star={star}");
+                self.expr(d, "value", value);
+            }
+            ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+                self.ty(d, "ty", ty);
+            }
+            ExprKind::Jsx(jsx) => {
+                self.line(depth, label, &head);
+                self.jsx(d, "jsx", jsx);
+            }
+        }
+    }
+
+    fn call(&mut self, depth: usize, label: &str, id: CallId) {
+        let Call {
+            callee,
+            args,
+            type_args,
+            close_pos,
+            chain,
+            template,
+        } = node!(self, depth, label, calls, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Call close_pos={close_pos} chain={chain:?}"
+        );
+        let d = depth + 1;
+        self.expr(d, "callee", callee);
+        self.list(d, "type_args", type_args, Self::ty);
+        self.list(d, "args", args, Self::expr);
+        if template.is_some() {
+            self.expr(d, "template", template);
+        }
+    }
+
+    fn name_kind(&mut self, depth: usize, kind: NameKind) {
+        if kind != NameKind::Identifier {
+            put!(self, depth, "name_kind", "{kind:?}");
+        }
+    }
+
+    fn key(&mut self, depth: usize, label: &str, key: PropKey) {
+        match key {
+            PropKey::None => self.line(depth, label, "None"),
+            PropKey::Name(name) => put!(self, depth, label, "Name {}", self.q(name)),
+            PropKey::Private(name) => put!(self, depth, label, "Private {}", self.q(name)),
+            PropKey::Computed(expr) => {
+                self.line(depth, label, "Computed");
+                self.expr(depth + 1, "expr", expr);
+            }
+        }
+    }
+
+    fn prop(&mut self, depth: usize, label: &str, id: PropId) {
+        let Prop {
+            kind,
+            key,
+            name_kind,
+            value,
+            pos,
+            start,
+            end,
+            postfix_token,
+        } = node!(self, depth, label, props, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Prop kind={} pos={pos} start={start} end={end} postfix_token={postfix_token}",
+            prop_kind_name(kind)
+        );
+        let (d, file) = (depth + 1, self.file);
+        for modifier in file.modifier_list(file.prop_modifiers(id)) {
+            put!(self, d, "modifier", "{:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.key(d, "key", key);
+        self.name_kind(d, name_kind);
+        self.expr(d, "value", value);
+    }
+
+    fn jsx(&mut self, depth: usize, label: &str, id: JsxId) {
+        let Jsx {
+            tag,
+            attrs,
+            children,
+            type_args,
+            opening_end,
+            close_pos,
+            end,
+            close_tag,
+        } = node!(self, depth, label, jsx, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Jsx opening_end={opening_end} close_pos={close_pos} end={end}"
+        );
+        let d = depth + 1;
+        self.expr(d, "tag", tag);
+        self.expr(d, "close_tag", close_tag);
+        self.list(d, "type_args", type_args, Self::ty);
+        self.span(d, "attrs", attrs, Self::prop);
+        self.list(d, "children", children, Self::expr);
+    }
+
+    fn pat(&mut self, depth: usize, label: &str, id: PatId) {
+        let Pat { kind, pos, end } = node!(self, depth, label, pats, id);
+        match kind {
+            PatKind::Missing => put!(self, depth, label, "Pat Missing pos={pos} end={end}"),
+            PatKind::Ident(name) => {
+                let name = self.q(name);
+                put!(self, depth, label, "Pat Ident pos={pos} end={end} {name}")
+            }
+            PatKind::Object(props) => {
+                put!(self, depth, label, "Pat Object pos={pos} end={end}");
+                self.span(depth + 1, "props", props, Self::pat_prop);
+            }
+            PatKind::Array(elems) => {
+                put!(self, depth, label, "Pat Array pos={pos} end={end}");
+                self.span(depth + 1, "elems", elems, Self::pat_elem);
+            }
+        }
+    }
+
+    fn pat_prop(&mut self, depth: usize, label: &str, id: PatPropId) {
+        let PatProp {
+            key,
+            name_kind,
+            value,
+            default,
+            is_rest,
+            pos,
+            key_pos,
+            end,
+        } = node!(self, depth, label, pat_props, id);
+        put!(
+            self,
+            depth,
+            label,
+            "PatProp is_rest={is_rest} pos={pos} key_pos={key_pos} end={end}"
+        );
+        let d = depth + 1;
+        self.key(d, "key", key);
+        self.name_kind(d, name_kind);
+        self.pat(d, "value", value);
+        self.expr(d, "default", default);
+    }
+
+    fn pat_elem(&mut self, depth: usize, label: &str, id: PatElemId) {
+        let PatElem {
+            pat,
+            default,
+            is_rest,
+            start,
+            end,
+        } = node!(self, depth, label, pat_elems, id);
+        put!(
+            self,
+            depth,
+            label,
+            "PatElem is_rest={is_rest} start={start} end={end}"
+        );
+        let d = depth + 1;
+        self.pat(d, "pat", pat);
+        self.expr(d, "default", default);
+    }
+
+    fn var_decl(&mut self, depth: usize, label: &str, id: VarDeclId) {
+        let VarDecl {
+            pat,
+            ty,
+            init,
+            kind,
+            flags,
+            loc,
+        } = node!(self, depth, label, var_decls, id);
+        put!(
+            self,
+            depth,
+            label,
+            "VarDecl kind={kind:?} flags={flags:?} loc={}..{}",
+            loc.pos,
+            loc.end
+        );
+        let d = depth + 1;
+        self.pat(d, "pat", pat);
+        self.ty(d, "ty", ty);
+        self.expr(d, "init", init);
+    }
+
+    fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
+        let Stmt {
+            kind,
+            start,
+            loc,
+            modifiers,
+        } = node!(self, depth, label, stmts, id);
+        let mut head = format!(
+            "Stmt {} start={start} loc={}..{}",
+            stmt_kind_name(kind),
+            loc.pos,
+            loc.end
+        );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        let d = depth + 1;
+        match kind {
+            StmtKind::Empty | StmtKind::Debugger => self.line(depth, label, &head),
+            StmtKind::Expr(expr)
+            | StmtKind::Return(expr)
+            | StmtKind::Throw(expr)
+            | StmtKind::ExportDefault(expr)
+            | StmtKind::ExportAssign(expr) => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+            }
+            StmtKind::Var(decls) => {
+                self.line(depth, label, &head);
+                self.span(d, "decls", decls, Self::var_decl);
+            }
+            StmtKind::Fn(func) => {
+                self.line(depth, label, &head);
+                self.func(d, "func", func);
+            }
+            StmtKind::Class(class) => {
+                self.line(depth, label, &head);
+                self.class(d, "class", class);
+            }
+            StmtKind::Interface(interface) => {
+                self.line(depth, label, &head);
+                self.interface(d, "interface", interface);
+            }
+            StmtKind::TypeAlias(alias) => {
+                self.line(depth, label, &head);
+                self.alias(d, "alias", alias);
+            }
+            StmtKind::Enum(decl) => {
+                self.line(depth, label, &head);
+                self.enum_decl(d, "enum", decl);
+            }
+            StmtKind::Module(module) => {
+                self.line(depth, label, &head);
+                self.module(d, "module", module);
+            }
+            StmtKind::If { test, yes, no } => {
+                self.line(depth, label, &head);
+                self.expr(d, "test", test);
+                self.stmt(d, "yes", yes);
+                self.stmt(d, "no", no);
+            }
+            StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                self.line(depth, label, &head);
+                self.stmt(d, "init", init);
+                self.expr(d, "test", test);
+                self.expr(d, "update", update);
+                self.stmt(d, "body", body);
+            }
+            StmtKind::ForIn { left, expr, body } => {
+                self.line(depth, label, &head);
+                self.stmt(d, "left", left);
+                self.expr(d, "expr", expr);
+                self.stmt(d, "body", body);
+            }
+            StmtKind::ForOf {
+                left,
+                expr,
+                body,
+                is_await,
+            } => {
+                put!(self, depth, label, "{head} is_await={is_await}");
+                self.stmt(d, "left", left);
+                self.expr(d, "expr", expr);
+                self.stmt(d, "body", body);
+            }
+            StmtKind::While { test, body } => {
+                self.line(depth, label, &head);
+                self.expr(d, "test", test);
+                self.stmt(d, "body", body);
+            }
+            StmtKind::DoWhile { body, test } => {
+                self.line(depth, label, &head);
+                self.stmt(d, "body", body);
+                self.expr(d, "test", test);
+            }
+            StmtKind::Block(stmts) => {
+                self.line(depth, label, &head);
+                self.list(d, "stmts", stmts, Self::stmt);
+            }
+            StmtKind::Switch { expr, cases } => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+                self.span(d, "cases", cases, Self::case);
+            }
+            StmtKind::Try {
+                block,
+                param,
+                handler,
+                finalizer,
+            } => {
+                self.line(depth, label, &head);
+                self.stmt(d, "block", block);
+                self.var_decl(d, "param", param);
+                self.stmt(d, "handler", handler);
+                self.stmt(d, "finalizer", finalizer);
+            }
+            StmtKind::Break(name)
+            | StmtKind::Continue(name)
+            | StmtKind::ExportAsNamespace(name) => {
+                put!(self, depth, label, "{head} {}", self.q(name));
+            }
+            StmtKind::Labeled { label: name, body } => {
+                put!(self, depth, label, "{head} label={}", self.q(name));
+                self.stmt(d, "body", body);
+            }
+            StmtKind::Import(import) => {
+                self.line(depth, label, &head);
+                self.import(d, "import", import);
+            }
+            StmtKind::ImportEquals(import) => {
+                self.line(depth, label, &head);
+                self.import_equals(d, "import", import);
+            }
+            StmtKind::ExportNamed(export) => {
+                self.line(depth, label, &head);
+                self.export(d, "export", export);
+            }
+            StmtKind::ExportStar {
+                spec,
+                alias,
+                type_only,
+                mode,
+                star_pos,
+                alias_pos,
+            } => {
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} spec={} alias={} type_only={type_only} mode={mode:?} star_pos={star_pos} alias_pos={alias_pos}",
+                    self.q(spec),
+                    self.q(alias)
+                )
+            }
+        }
+    }
+
+    fn case(&mut self, depth: usize, label: &str, id: CaseId) {
+        let Case {
+            test,
+            body,
+            pos,
+            end,
+        } = node!(self, depth, label, cases, id);
+        put!(self, depth, label, "Case pos={pos} end={end}");
+        let d = depth + 1;
+        self.expr(d, "test", test);
+        self.list(d, "body", body, Self::stmt);
+    }
+
+    fn func(&mut self, depth: usize, label: &str, id: FnId) {
+        let Func {
+            kind,
+            flags,
+            name,
+            name_pos,
+            type_params,
+            params,
+            this_param,
+            ret,
+            body,
+            anchor,
+            start,
+        } = node!(self, depth, label, fns, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} start={start}",
+            self.q(name)
+        );
+        let d = depth + 1;
+        self.span(d, "type_params", type_params, Self::type_param);
+        self.span(d, "params", params, Self::param);
+        if this_param.is_some() {
+            self.param(d, "this_param", this_param);
+        }
+        self.ty(d, "ret", ret);
+        match body {
+            FnBody::None => self.line(d, "body", "None"),
+            FnBody::Block(stmts) => {
+                self.line(d, "body", "Block");
+                self.list(d + 1, "stmts", stmts, Self::stmt);
+            }
+            FnBody::Expr(expr) => {
+                self.line(d, "body", "Expr");
+                self.expr(d + 1, "expr", expr);
+            }
+        }
+    }
+
+    fn param(&mut self, depth: usize, label: &str, id: ParamId) {
+        let Param {
+            pat,
+            ty,
+            default,
+            flags,
+            pos,
+            loc,
+        } = node!(self, depth, label, params, id);
+        let mut head = format!(
+            "Param flags={flags:?} pos={pos} loc={}..{}",
+            loc.pos, loc.end
+        );
+        for modifier in self.file.modifier_list(self.file.param_modifiers(id)) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
+        let d = depth + 1;
+        self.pat(d, "pat", pat);
+        self.ty(d, "ty", ty);
+        self.expr(d, "default", default);
+    }
+
+    fn type_param(&mut self, depth: usize, label: &str, id: TypeParamId) {
+        let TypeParam {
+            name,
+            pos,
+            start,
+            end,
+            constraint,
+            default,
+            flags,
+            modifiers,
+        } = node!(self, depth, label, type_params, id);
+        let mut head = format!(
+            "TypeParam name={} pos={pos} start={start} end={end} flags={flags:?}",
+            self.q(name)
+        );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
+        let d = depth + 1;
+        self.ty(d, "constraint", constraint);
+        self.ty(d, "default", default);
+    }
+
+    fn member(&mut self, depth: usize, label: &str, id: MemberId) {
+        let Member {
+            kind,
+            key,
+            flags,
+            ty,
+            init,
+            func,
+            name_pos,
+            start,
+            loc,
+            modifiers,
+        } = node!(self, depth, label, members, id);
+        let mut head = format!(
+            "Member kind={} flags={flags:?} name_pos={name_pos} start={start} loc={}..{}",
+            member_kind_name(kind),
+            loc.pos,
+            loc.end
+        );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
+        let d = depth + 1;
+        self.key(d, "key", key);
+        self.ty(d, "ty", ty);
+        self.expr(d, "init", init);
+        self.func(d, "func", func);
+    }
+
+    fn class(&mut self, depth: usize, label: &str, id: ClassId) {
+        let Class {
+            name,
+            name_pos,
+            flags,
+            type_params,
+            extends,
+            extends_args,
+            other_extends,
+            implements,
+            other_implements,
+            members,
+            start,
+            modifiers,
+        } = node!(self, depth, label, classes, id);
+        let mut head = format!(
+            "Class name={} name_pos={name_pos} flags={flags:?} start={start}",
+            self.q(name)
+        );
+        for modifier in self.file.modifier_list(modifiers) {
+            head += &format!(" {:?}@{}", modifier.kind, modifier.pos);
+        }
+        self.line(depth, label, &head);
+        let d = depth + 1;
+        self.span(d, "type_params", type_params, Self::type_param);
+        self.expr(d, "extends", extends);
+        self.list(d, "extends_args", extends_args, Self::ty);
+        self.list(d, "other_extends", other_extends, Self::expr);
+        self.list(d, "implements", implements, Self::ty);
+        self.list(d, "other_implements", other_implements, Self::ty);
+        self.span(d, "members", members, Self::member);
+    }
+
+    fn interface(&mut self, depth: usize, label: &str, id: InterfaceId) {
+        let Interface {
+            name,
+            name_pos,
+            flags,
+            type_params,
+            extends,
+            other_heritage,
+            members,
+            stmt: _,
+        } = node!(self, depth, label, interfaces, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Interface name={} name_pos={name_pos} flags={flags:?}",
+            self.q(name)
+        );
+        let d = depth + 1;
+        self.span(d, "type_params", type_params, Self::type_param);
+        self.list(d, "extends", extends, Self::ty);
+        self.list(d, "other_heritage", other_heritage, Self::ty);
+        self.span(d, "members", members, Self::member);
+    }
+
+    fn alias(&mut self, depth: usize, label: &str, id: AliasId) {
+        let Alias {
+            name,
+            name_pos,
+            flags,
+            type_params,
+            ty,
+            stmt: _,
+        } = node!(self, depth, label, aliases, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Alias name={} name_pos={name_pos} flags={flags:?}",
+            self.q(name)
+        );
+        let d = depth + 1;
+        self.span(d, "type_params", type_params, Self::type_param);
+        self.ty(d, "ty", ty);
+    }
+
+    fn enum_decl(&mut self, depth: usize, label: &str, id: EnumId) {
+        let Enum {
+            name,
+            name_pos,
+            flags,
+            members,
+            stmt: _,
+        } = node!(self, depth, label, enums, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Enum name={} name_pos={name_pos} flags={flags:?}",
+            self.q(name)
+        );
+        self.span(depth + 1, "members", members, Self::enum_member);
+    }
+
+    fn enum_member(&mut self, depth: usize, label: &str, id: EnumMemberId) {
+        let EnumMember {
+            name,
+            name_kind,
+            computed_name,
+            init,
+            pos,
+            loc,
+        } = node!(self, depth, label, enum_members, id);
+        put!(
+            self,
+            depth,
+            label,
+            "EnumMember name={} pos={pos} loc={}..{}",
+            self.q(name),
+            loc.pos,
+            loc.end
+        );
+        self.name_kind(depth + 1, name_kind);
+        self.expr(depth + 1, "computed_name", computed_name);
+        self.expr(depth + 1, "init", init);
+    }
+
+    fn module(&mut self, depth: usize, label: &str, id: ModuleId) {
+        let Module {
+            name,
+            name_pos,
+            flags,
+            body,
+            has_body,
+            specifies_module: _,
+            stmt: _,
+        } = node!(self, depth, label, modules, id);
+        let name = match name {
+            ModuleName::Ident(name) => format!("Ident {}", self.q(name)),
+            ModuleName::String(name) => format!("String {}", self.q(name)),
+            ModuleName::Global => "Global".to_owned(),
+        };
+        put!(
+            self,
+            depth,
+            label,
+            "Module name={name} name_pos={name_pos} flags={flags:?} has_body={has_body}"
+        );
+        self.list(depth + 1, "body", body, Self::stmt);
+    }
+
+    fn import(&mut self, depth: usize, label: &str, id: ImportId) {
+        let Import {
+            spec,
+            default,
+            default_pos,
+            namespace,
+            namespace_pos,
+            clause_start,
+            clause_end,
+            namespace_start,
+            named,
+            type_only,
+            is_deferred,
+            mode,
+            stmt: _,
+        } = node!(self, depth, label, imports, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Import spec={} default={} default_pos={default_pos} namespace={} namespace_pos={namespace_pos} clause_start={clause_start} namespace_start={namespace_start} type_only={type_only} mode={mode:?}",
+            self.q(spec),
+            self.q(default),
+            self.q(namespace)
+        );
+        put!(
+            self,
+            depth + 1,
+            "clause",
+            "end={clause_end} is_deferred={is_deferred}"
+        );
+        self.span(depth + 1, "named", named, Self::import_spec);
+    }
+
+    fn import_spec(&mut self, depth: usize, label: &str, id: ImportSpecId) {
+        let ImportSpec {
+            start,
+            imported,
+            local,
+            pos,
+            type_only,
+            imported_pos,
+            end,
+            import: _,
+        } = node!(self, depth, label, import_specs, id);
+        put!(
+            self,
+            depth,
+            label,
+            "ImportSpec imported={} local={} pos={pos} type_only={type_only} imported_pos={imported_pos} start={start} end={end}",
+            self.q(imported),
+            self.q(local)
+        );
+    }
+
+    fn import_equals(&mut self, depth: usize, label: &str, id: ImportEqualsId) {
+        let ImportEquals {
+            name,
+            name_pos,
+            target,
+            expression,
+            flags,
+            stmt: _,
+        } = node!(self, depth, label, import_equals, id);
+        let target = match target {
+            ImportEqualsTarget::Require(spec) => format!("Require {}", self.q(spec)),
+            ImportEqualsTarget::Entity(name) => format!("Entity {}", self.entity_name(name)),
+        };
+        put!(
+            self,
+            depth,
+            label,
+            "ImportEquals name={} name_pos={name_pos} target={target} flags={flags:?}",
+            self.q(name)
+        );
+        if expression.is_some() {
+            self.expr(depth + 1, "expression", expression);
+        }
+    }
+
+    fn export(&mut self, depth: usize, label: &str, id: ExportId) {
+        let Export {
+            spec,
+            has_module_specifier: _,
+            items,
+            type_only,
+            mode,
+            stmt: _,
+        } = node!(self, depth, label, exports, id);
+        put!(
+            self,
+            depth,
+            label,
+            "Export spec={} type_only={type_only} mode={mode:?}",
+            self.q(spec)
+        );
+        self.span(depth + 1, "items", items, Self::export_spec);
+    }
+
+    fn export_spec(&mut self, depth: usize, label: &str, id: ExportSpecId) {
+        let ExportSpec {
+            start,
+            local,
+            exported,
+            pos,
+            type_only,
+            local_pos,
+            end,
+            export: _,
+        } = node!(self, depth, label, export_specs, id);
+        put!(
+            self,
+            depth,
+            label,
+            "ExportSpec local={} exported={} pos={pos} type_only={type_only} local_pos={local_pos} start={start} end={end}",
+            self.q(local),
+            self.q(exported)
+        );
+    }
+
+    fn ty(&mut self, depth: usize, label: &str, id: TypeNodeId) {
+        let TypeNode { kind, pos, end } = node!(self, depth, label, types, id);
+        let head = format!("TypeNode {} pos={pos} end={end}", type_kind_name(kind));
+        let d = depth + 1;
+        match kind {
+            TypeNodeKind::Error | TypeNodeKind::UniqueSymbol => self.line(depth, label, &head),
+            TypeNodeKind::Heritage(expr) => {
+                self.line(depth, label, &head);
+                self.expr(d, "expr", expr);
+            }
+            TypeNodeKind::Keyword(keyword) => put!(self, depth, label, "{head} {keyword:?}"),
+            TypeNodeKind::Ref { name, args } => {
+                put!(self, depth, label, "{head} name={}", self.entity_name(name));
+                self.list(d, "args", args, Self::ty);
+            }
+            TypeNodeKind::StringLit(text) => put!(self, depth, label, "{head} {}", self.q(text)),
+            TypeNodeKind::NumberLit(index) => {
+                put!(self, depth, label, "{head} {}", self.number(index))
+            }
+            TypeNodeKind::BigIntLit { text, negative } => put!(
+                self,
+                depth,
+                label,
+                "{head} text={} negative={negative}",
+                self.q(text)
+            ),
+            TypeNodeKind::BoolLit(value) => put!(self, depth, label, "{head} {value}"),
+            TypeNodeKind::Template { types, texts } => {
+                put!(self, depth, label, "{head} texts={}", self.names(texts));
+                self.list(d, "types", types, Self::ty);
+            }
+            TypeNodeKind::Array(ty)
+            | TypeNodeKind::Keyof(ty)
+            | TypeNodeKind::Readonly(ty)
+            | TypeNodeKind::Unique(ty)
+            | TypeNodeKind::JSDoc { ty, .. } => {
+                self.line(depth, label, &head);
+                self.ty(d, "ty", ty);
+            }
+            TypeNodeKind::Tuple(elems) => {
+                self.line(depth, label, &head);
+                self.span(d, "elems", elems, Self::tuple_elem);
+            }
+            TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+                self.line(depth, label, &head);
+                self.list(d, "types", types, Self::ty);
+            }
+            TypeNodeKind::Fn(func) => {
+                self.line(depth, label, &head);
+                self.func(d, "func", func);
+            }
+            TypeNodeKind::Object(members) => {
+                self.line(depth, label, &head);
+                self.span(d, "members", members, Self::member);
+            }
+            TypeNodeKind::Cond {
+                check,
+                extends,
+                yes,
+                no,
+            } => {
+                self.line(depth, label, &head);
+                self.ty(d, "check", check);
+                self.ty(d, "extends", extends);
+                self.ty(d, "yes", yes);
+                self.ty(d, "no", no);
+            }
+            TypeNodeKind::Infer(param) => {
+                self.line(depth, label, &head);
+                self.type_param(d, "param", param);
+            }
+            TypeNodeKind::Mapped(mapped) => {
+                self.line(depth, label, &head);
+                self.mapped(d, "mapped", mapped);
+            }
+            TypeNodeKind::IndexedAccess { obj, index } => {
+                self.line(depth, label, &head);
+                self.ty(d, "obj", obj);
+                self.ty(d, "index", index);
+            }
+            TypeNodeKind::Typeof {
+                name,
+                args,
+                has_type_arguments,
+                expr,
+            } => {
+                let empty_list = if has_type_arguments && args.is_empty() {
+                    " <>"
+                } else {
+                    ""
+                };
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} name={}{empty_list}",
+                    self.entity_name(name)
+                );
+                self.list(d, "args", args, Self::ty);
+                self.expr(d, "expr", expr);
+            }
+            TypeNodeKind::Import {
+                spec,
+                name,
+                args,
+                is_typeof,
+                mode,
+                attributes,
+            } => {
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} spec={} name={} is_typeof={is_typeof} mode={mode:?} attributes={attributes:?}",
+                    self.q(spec),
+                    self.entity_name(name)
+                );
+                self.list(d, "args", args, Self::ty);
+            }
+            TypeNodeKind::Predicate { param, ty, asserts } => {
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} param={} asserts={asserts}",
+                    self.q(param)
+                );
+                self.ty(d, "ty", ty);
+            }
+        }
+    }
+
+    fn mapped(&mut self, depth: usize, label: &str, id: MappedId) {
+        let Mapped {
+            param,
+            name_ty,
+            ty,
+            readonly,
+            optional,
+            is_readonly_with_plus,
+            is_optional_with_plus,
+            members,
+        } = node!(self, depth, label, mapped, id);
+        let plus_readonly = if is_readonly_with_plus {
+            " +readonly"
+        } else {
+            ""
+        };
+        let plus_optional = if is_optional_with_plus { " +?" } else { "" };
+        put!(
+            self,
+            depth,
+            label,
+            "Mapped readonly={readonly:?} optional={optional:?}{plus_readonly}{plus_optional}"
+        );
+        let d = depth + 1;
+        self.type_param(d, "param", param);
+        self.ty(d, "name_ty", name_ty);
+        self.ty(d, "ty", ty);
+        self.span(d, "members", members, Self::member);
+    }
+
+    fn tuple_elem(&mut self, depth: usize, label: &str, id: TupleElemId) {
+        let TupleElem {
+            ty,
+            written,
+            member_type,
+            name,
+            optional,
+            rest,
+            has_dots,
+            start,
+            end,
+        } = node!(self, depth, label, tuple_elems, id);
+        put!(
+            self,
+            depth,
+            label,
+            "TupleElem name={} optional={optional} rest={rest} has_dots={has_dots} member_type={member_type:?} start={start} end={end}",
+            self.q(name)
+        );
+        self.ty(depth + 1, "ty", ty);
+        if written != ty {
+            self.ty(depth + 1, "written", written);
+        }
+    }
+}
+
+fn expr_kind_name(kind: ExprKind) -> &'static str {
+    match kind {
+        ExprKind::Missing => "Missing",
+        ExprKind::Instantiation { .. } => "Instantiation",
+        ExprKind::Ident(_) => "Ident",
+        ExprKind::PrivateIdentifier(_) => "PrivateIdentifier",
+        ExprKind::This => "This",
+        ExprKind::Super => "Super",
+        ExprKind::Null => "Null",
+        ExprKind::True => "True",
+        ExprKind::False => "False",
+        ExprKind::Number(_) => "Number",
+        ExprKind::String(_) => "String",
+        ExprKind::BigInt(_) => "BigInt",
+        ExprKind::Regex => "Regex",
+        ExprKind::Template { .. } => "Template",
+        ExprKind::TaggedTemplate(_) => "TaggedTemplate",
+        ExprKind::Array(_) => "Array",
+        ExprKind::Object(_) => "Object",
+        ExprKind::Fn(_) => "Fn",
+        ExprKind::Class(_) => "Class",
+        ExprKind::Dot { .. } => "Dot",
+        ExprKind::Index { .. } => "Index",
+        ExprKind::Call(_) => "Call",
+        ExprKind::New(_) => "New",
+        ExprKind::Unary { .. } => "Unary",
+        ExprKind::Binary { .. } => "Binary",
+        ExprKind::Assign { .. } => "Assign",
+        ExprKind::Cond { .. } => "Cond",
+        ExprKind::Spread(_) => "Spread",
+        ExprKind::Await(_) => "Await",
+        ExprKind::Yield { .. } => "Yield",
+        ExprKind::As { .. } => "As",
+        ExprKind::Satisfies { .. } => "Satisfies",
+        ExprKind::AsConst(_) => "AsConst",
+        ExprKind::NonNull(_) => "NonNull",
+        ExprKind::Jsx(_) => "Jsx",
+        ExprKind::ImportCall { .. } => "ImportCall",
+        ExprKind::ImportMeta => "ImportMeta",
+        ExprKind::NewTarget(_) => "NewTarget",
+    }
+}
+
+fn stmt_kind_name(kind: StmtKind) -> &'static str {
+    match kind {
+        StmtKind::Empty => "Empty",
+        StmtKind::Debugger => "Debugger",
+        StmtKind::Expr(_) => "Expr",
+        StmtKind::Var(_) => "Var",
+        StmtKind::Fn(_) => "Fn",
+        StmtKind::Class(_) => "Class",
+        StmtKind::Interface(_) => "Interface",
+        StmtKind::TypeAlias(_) => "TypeAlias",
+        StmtKind::Enum(_) => "Enum",
+        StmtKind::Module(_) => "Module",
+        StmtKind::Return(_) => "Return",
+        StmtKind::If { .. } => "If",
+        StmtKind::For { .. } => "For",
+        StmtKind::ForIn { .. } => "ForIn",
+        StmtKind::ForOf { .. } => "ForOf",
+        StmtKind::While { .. } => "While",
+        StmtKind::DoWhile { .. } => "DoWhile",
+        StmtKind::Block(_) => "Block",
+        StmtKind::Switch { .. } => "Switch",
+        StmtKind::Try { .. } => "Try",
+        StmtKind::Throw(_) => "Throw",
+        StmtKind::Break(_) => "Break",
+        StmtKind::Continue(_) => "Continue",
+        StmtKind::Labeled { .. } => "Labeled",
+        StmtKind::Import(_) => "Import",
+        StmtKind::ImportEquals(_) => "ImportEquals",
+        StmtKind::ExportNamed(_) => "ExportNamed",
+        StmtKind::ExportStar { .. } => "ExportStar",
+        StmtKind::ExportDefault(_) => "ExportDefault",
+        StmtKind::ExportAssign(_) => "ExportAssign",
+        StmtKind::ExportAsNamespace(_) => "ExportAsNamespace",
+    }
+}
+
+fn type_kind_name(kind: TypeNodeKind) -> &'static str {
+    match kind {
+        TypeNodeKind::Error => "Error",
+        TypeNodeKind::Heritage(_) => "Heritage",
+        TypeNodeKind::Keyword(_) => "Keyword",
+        TypeNodeKind::Ref { .. } => "Ref",
+        TypeNodeKind::StringLit(_) => "StringLit",
+        TypeNodeKind::NumberLit(_) => "NumberLit",
+        TypeNodeKind::BigIntLit { .. } => "BigIntLit",
+        TypeNodeKind::BoolLit(_) => "BoolLit",
+        TypeNodeKind::Template { .. } => "Template",
+        TypeNodeKind::Array(_) => "Array",
+        TypeNodeKind::Tuple(_) => "Tuple",
+        TypeNodeKind::Union(_) => "Union",
+        TypeNodeKind::Intersection(_) => "Intersection",
+        TypeNodeKind::Fn(_) => "Fn",
+        TypeNodeKind::Object(_) => "Object",
+        TypeNodeKind::Cond { .. } => "Cond",
+        TypeNodeKind::Infer(_) => "Infer",
+        TypeNodeKind::Mapped(_) => "Mapped",
+        TypeNodeKind::IndexedAccess { .. } => "IndexedAccess",
+        TypeNodeKind::Keyof(_) => "Keyof",
+        TypeNodeKind::Readonly(_) => "Readonly",
+        TypeNodeKind::UniqueSymbol => "UniqueSymbol",
+        TypeNodeKind::Unique(_) => "Unique",
+        TypeNodeKind::JSDoc { kind, .. } => match kind {
+            JSDocTypeKind::Nullable => "JSDocNullable",
+            JSDocTypeKind::NonNullable => "JSDocNonNullable",
+            JSDocTypeKind::Optional => "JSDocOptional",
+            JSDocTypeKind::Variadic => "JSDocVariadic",
+        },
+        TypeNodeKind::Typeof { .. } => "Typeof",
+        TypeNodeKind::Import { .. } => "Import",
+        TypeNodeKind::Predicate { .. } => "Predicate",
+    }
+}
+
+fn prop_kind_name(kind: PropKind) -> &'static str {
+    match kind {
+        PropKind::Init => "Init",
+        PropKind::Shorthand => "Shorthand",
+        PropKind::Spread => "Spread",
+        PropKind::Method => "Method",
+        PropKind::Getter => "Getter",
+        PropKind::Setter => "Setter",
+    }
+}
+
+fn member_kind_name(kind: MemberKind) -> &'static str {
+    match kind {
+        MemberKind::Property => "Property",
+        MemberKind::Method => "Method",
+        MemberKind::Getter => "Getter",
+        MemberKind::Setter => "Setter",
+        MemberKind::Constructor => "Constructor",
+        MemberKind::CallSignature => "CallSignature",
+        MemberKind::ConstructSignature => "ConstructSignature",
+        MemberKind::IndexSignature => "IndexSignature",
+        MemberKind::StaticBlock => "StaticBlock",
+    }
+}

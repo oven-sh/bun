@@ -4,6 +4,8 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
+use crate::parse::lists::{ListKind, ListStep};
+use crate::parser::AwaitOrYield;
 use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
@@ -31,7 +33,9 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
@@ -40,7 +44,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut decorators: BumpVec<'_, ExprNodeIndex> = BumpVec::new_in(p.arena);
         while p.lexer.token == T::TAt {
+            let at_sign = p.lexer.loc();
             p.lexer.next()?;
+
+            if p.is_tolerant() {
+                let mut decorator = p.parse_decorator_expression_tolerant()?;
+                p.note_loc(&mut decorator.loc, crate::sema::Mark::AtSign, at_sign);
+                p.note_token_full_start(&mut decorator.loc, crate::sema::Mark::DecoratorEnd);
+                decorators.push(decorator);
+                continue;
+            }
 
             if p.options.features.standard_decorators {
                 // TC39 standard decorator grammar:
@@ -67,6 +80,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ExprNodeList::from_bump_vec(decorators))
     }
 
+    /// `parseDecoratorExpression`: any left-hand-side expression, for both kinds of decorators. The checker reports 1497.
+    #[cold]
+    #[inline(never)]
+    fn parse_decorator_expression_tolerant(&mut self) -> Result<ExprNodeIndex, Error> {
+        let p = self;
+        let is_await_keyword = p.lexer.token == T::TIdentifier
+            && p.lexer.raw() == b"await"
+            && p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent;
+        // `parse_prefix` starts a unary expression or a cast at these. `parsePrimaryExpression` has no case for them.
+        let starts_no_primary_expression = matches!(
+            p.lexer.token,
+            T::TLessThan
+                | T::TVoid
+                | T::TTypeof
+                | T::TDelete
+                | T::TPlus
+                | T::TMinus
+                | T::TTilde
+                | T::TExclamation
+                | T::TPlusPlus
+                | T::TMinusMinus
+        );
+        if is_await_keyword || starts_no_primary_expression {
+            // 1109 and a missing identifier. Only `await` is consumed.
+            let (range, before) = (p.lexer.range(), p.lexer.prev_error_loc);
+            p.lexer.ts_error(range, 1109);
+            let mut expr = p.new_expr(E::Missing {}, range.loc);
+            if is_await_keyword {
+                // In a script `await` is an identifier at the top level: the file is then reparsed.
+                if p.fn_or_arrow_data_parse.is_top_level {
+                    p.top_level_await_keyword = range;
+                }
+                p.lexer.next()?;
+            } else {
+                p.lexer.put_up_with(before)?;
+            }
+            p.parse_suffix(&mut expr, Level::New, None, EFlags::TsDecorator)?;
+            return Ok(expr);
+        }
+        let mut expr = Expr::EMPTY;
+        p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
+        Ok(expr)
+    }
+
+    /// The decorators of a missing declaration or of a `this` parameter. They stay in TypeScript's
+    /// tree, and `checkDecorators` never visits them. Each becomes a statement of the list being
+    /// parsed. `end`: the start of the syntax that follows them.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_stray_decorators(&mut self, decorators: &[Expr], end: bun_ast::Loc) {
+        if !self.is_tolerant() || self.lexer.is_log_disabled || !self.preserves_type_syntax() {
+            return;
+        }
+        for decorator in decorators {
+            self.note_stray_decorator(decorator, end);
+            self.stray_decorators.push(*decorator);
+        }
+    }
+
     /// Parse a standard (TC39) decorator expression following the `@` token.
     ///
     /// DecoratorExpression:
@@ -79,9 +151,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // @(Expression) — parenthesized, any expression allowed
         if p.lexer.token == T::TOpenParen {
+            let open = p.lexer.loc();
             p.lexer.next()?;
-            let expr = p.parse_expr(Level::Lowest)?;
+            let mut expr = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
+            p.mark_paren(&mut expr, open, bun_ast::Loc::EMPTY);
             return Ok(expr);
         }
 
@@ -206,12 +280,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
+        is_nested: bool,
+        is_module_keyword: bool,
     ) -> Result<Stmt, Error> {
         let p = self;
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
-        let name_text = p.lexer.identifier;
-        p.lexer.next()?;
+        let mut name_text = p.lexer.identifier;
+        // `parseModuleDeclaration`: `parseAmbientExternalModuleDeclaration` only right after `module`.
+        let name_is_string = p.lexer.token == T::TStringLiteral
+            && (is_module_keyword && !is_nested || !p.is_tolerant());
+        let mut string_name: &'a [u8] = b"";
+        let mut has_body = true;
+        // `parseIdentifierName` after a dot, `parseIdentifier` after `namespace`.
+        let is_name = if is_nested {
+            p.is_identifier_or_keyword()
+        } else {
+            p.is_identifier_in_context()
+        };
+        if is_name || !p.is_tolerant() {
+            p.lexer.next()?;
+        } else {
+            // A string names no symbol. Any other token is not consumed, and the name is missing.
+            name_text = b"";
+            if name_is_string {
+                if p.preserves_type_syntax() {
+                    string_name = p.lexer.to_utf8_e_string()?.data.slice();
+                }
+                p.lexer.next()?;
+            } else {
+                p.report_missing_identifier()?;
+            }
+        }
 
         // Generate the namespace object
         // Arena-owned `StoreRef<TSNamespaceScope>`.
@@ -242,12 +342,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_top_level: old_fn_or_arrow_data.is_top_level,
             ..Default::default()
         };
+        // `parseModuleBlock` stays in the [Await] and [Yield] contexts of the function around it.
+        if p.is_tolerant() && !old_fn_or_arrow_data.is_top_level {
+            p.fn_or_arrow_data_parse.allow_await = old_fn_or_arrow_data.allow_await;
+            p.fn_or_arrow_data_parse.allow_yield = old_fn_or_arrow_data.allow_yield;
+        }
 
         // Parse the statements inside the namespace
         let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.arena);
         if p.lexer.token == T::TDot {
             let dot_loc = p.lexer.loc();
             p.lexer.next()?;
+            let inner_start = p.lexer.loc();
+            let inner_full_start = p.lexer.full_start();
 
             let mut _opts = ParseStatementOptions {
                 is_export: true,
@@ -258,24 +365,60 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !p.stack_check.is_safe_to_recurse() {
                 return Err(crate::Error::StackOverflow);
             }
-            stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
-        } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
+            let inner_loc = if p.preserves_type_syntax() {
+                inner_start
+            } else {
+                dot_loc
+            };
+            let mut inner =
+                p.parse_type_script_namespace_stmt(inner_loc, &mut _opts, true, is_module_keyword)?;
+            p.finish_node(&mut inner.loc, inner_full_start);
+            stmts.push(inner);
+        } else if p.lexer.token != T::TOpenBrace
+            // `parseAmbientExternalModuleDeclaration`: in TypeScript only a module named by a
+            // string may omit its body.
+            && (if p.is_tolerant() {
+                name_is_string
+            } else {
+                opts.is_typescript_declare
+            })
+        {
+            has_body = false;
             p.lexer.expect_or_insert_semicolon()?;
         } else {
+            // `parseModuleBlock`: without a "{" there are no statements and no "}" is expected.
+            let has_body = p.lexer.token == T::TOpenBrace || !p.is_tolerant();
             p.lexer.expect(T::TOpenBrace)?;
             let mut _opts = ParseStatementOptions {
                 scope: StatementScope::Namespace,
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
-            p.lexer.next()?;
+            if has_body {
+                stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
+                p.lexer.expect(T::TCloseBrace)?;
+            }
         }
         let has_non_local_export_declare_inside_namespace =
             p.has_non_local_export_declare_inside_namespace;
         p.has_non_local_export_declare_inside_namespace =
             old_has_non_local_export_declare_inside_namespace;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
+
+        // The rest is only needed for code generation.
+        if p.preserves_type_syntax() {
+            use crate::sema::parse_declarations::ModuleNameKind;
+            p.pop_and_discard_scope(scope_index);
+            let (name, kind) = if name_is_string {
+                (string_name, ModuleNameKind::String)
+            } else if is_module_keyword {
+                (name_text, ModuleNameKind::AfterModule)
+            } else {
+                (name_text, ModuleNameKind::Identifier)
+            };
+            let body = has_body.then(|| stmts.into_bump_slice_mut());
+            return Ok(p.keep_module(loc, name_loc, name, kind, body, opts.is_export));
+        }
 
         // Add any exported members from this namespace's body as members of the
         // associated namespace object.
@@ -301,7 +444,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 StmtData::SClass(class) => {
                     if class.is_export {
-                        let locref = class.class.class_name.unwrap();
+                        // Tolerant mode: `export class {}`.
+                        let Some(locref) = class.class.class_name else {
+                            continue;
+                        };
                         let ref_ = locref.ref_;
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let class_name: &[u8] =
@@ -402,7 +548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.scope.is_module() {
                 p.local_type_names.put(name_text, true)?;
             }
-            return Ok(p.s(S::TypeScript {}, loc));
+            return Ok(p.s(S::TypeScript::default(), loc));
         }
 
         let mut arg_ref = Ref::NONE;
@@ -488,9 +634,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEquals)?;
+        let names_base = p.begin_entity_name();
+        let mut external = None;
 
         let kind = js_ast::LocalKind::KConst;
-        let name = p.lexer.identifier;
+        // `parseEntityName`: any token but a name is not consumed, and the name is missing.
+        let is_name = matches!(p.lexer.token, T::TIdentifier | T::TPrivateIdentifier);
+        let name: &'a [u8] = if is_name || !p.is_tolerant() {
+            p.lexer.identifier
+        } else {
+            b""
+        };
         let target_ref = p.store_name_in_ref(name);
         let target_loc = p.lexer.loc();
         let target = p.new_expr(
@@ -501,15 +655,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             target_loc,
         );
         let mut value = target;
-        p.lexer.expect(T::TIdentifier)?;
+        p.push_entity_name();
+        let escaped_name = if p.lexer.token == T::TIdentifier {
+            p.lexer.escaped_word()
+        } else {
+            None
+        };
+        p.expect_identifier()?;
 
         if name == b"require" && p.lexer.token == T::TOpenParen {
             // "import ns = require('x')"
+            p.lexer.keyword_was_taken(escaped_name);
             p.lexer.next()?;
-            let path_estr = p.lexer.to_e_string()?;
-            let path_loc = p.lexer.loc();
-            let path = p.new_expr(path_estr, path_loc);
-            p.lexer.expect(T::TStringLiteral)?;
+            let path = if p.lexer.token != T::TStringLiteral && p.is_tolerant() {
+                // `parseModuleSpecifier`: any expression. `checkExternalImportOrExportDeclaration` reports 1141 unless it is
+                // missing. `checkGrammarModuleElementContext` returns first.
+                let at = p.lexer.loc();
+                let specifier = p.parse_expr(Level::Lowest)?;
+                let is_written = !specifier.is_missing();
+                if is_written && p.is_in_appropriate_context() {
+                    p.ts_checker_error(p.lexer.range_from(at), 1141);
+                }
+                external = Some(crate::sema::ts_syntax::ModuleReference::External {
+                    text: None,
+                    loc: at,
+                    expression: is_written.then_some(specifier),
+                });
+                specifier
+            } else {
+                external = p.external_module_reference();
+                let path_estr = p.lexer.to_e_string()?;
+                let path_loc = p.lexer.loc();
+                let path = p.new_expr(path_estr, path_loc);
+                p.lexer.expect(T::TStringLiteral)?;
+                path
+            };
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
                 let args = ExprNodeList::init_one(path);
@@ -530,6 +710,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut prev_value = value;
             while p.lexer.token == T::TDot {
                 p.lexer.next()?;
+                if p.is_tolerant() && p.lexer.token == T::TPrivateIdentifier {
+                    let name = p.skip_private_identifier_after_dot()?;
+                    if p.preserves_type_syntax() {
+                        p.type_syntax_mut().name_stack.push(name);
+                    }
+                    continue;
+                }
+                p.push_entity_name();
                 let dot_name = E::Str::new(p.lexer.identifier);
                 let dot_name_loc = p.lexer.loc();
                 value = p.new_expr(
@@ -548,10 +736,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect_or_insert_semicolon()?;
 
+        if p.preserves_type_syntax() {
+            return Ok(p.keep_import_equals(names_base, external, loc));
+        }
         if opts.is_typescript_declare {
             // "import type foo = require('bar');"
             // "import type foo = bar.baz;"
-            return Ok(p.s(S::TypeScript {}, loc));
+            return Ok(p.s(S::TypeScript::default(), loc));
         }
 
         let ref_ = p
@@ -573,6 +764,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
+    /// `parsePropertyName` for the names of enum members that only TypeScript's parser accepts: a number, a bigint, a private name or
+    /// `[expression]`. The checker reports them (2452, 18024, 1164). Leaves the lexer on the last token of the name. Returns false if
+    /// the current token starts no such name.
+    #[cold]
+    #[inline(never)]
+    fn parse_other_enum_member_name(&mut self, value: &mut EnumValue) -> Result<bool, Error> {
+        let p = self;
+        match p.lexer.token {
+            T::TNumericLiteral => {
+                let text = bun_sema::atom::number_to_string(p.lexer.number);
+                value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(&text));
+                p.note(&mut value.loc, crate::sema::Mark::NameKind, 2);
+            }
+            T::TBigIntegerLiteral => value.name = js_ast::StoreStr::new(p.lexer.raw()),
+            T::TPrivateIdentifier => value.name = js_ast::StoreStr::new(p.lexer.identifier),
+            T::TOpenBracket => {
+                p.lexer.next()?;
+                // `[("a")]`: a `ParenthesizedExpression` is no literal.
+                let is_literal = p.lexer.token != T::TOpenParen;
+                let old_allow_in = core::mem::replace(&mut p.allow_in, true);
+                let name = p.parse_expr(Level::Lowest);
+                p.allow_in = old_allow_in;
+                // `["a"]` and `[1]` are names like `"a"` and `1`. Any other expression leaves the member without a name.
+                let name = name?;
+                match name.data {
+                    js_ast::ExprData::EString(string) if is_literal && !string.is_utf16 => {
+                        value.name = string.data;
+                        p.note(&mut value.loc, crate::sema::Mark::NameKind, 3);
+                    }
+                    js_ast::ExprData::ENumber(number) if is_literal => {
+                        let text = bun_sema::atom::number_to_string(number.value());
+                        value.name = js_ast::StoreStr::new(p.arena.alloc_slice_copy(&text));
+                        p.note(&mut value.loc, crate::sema::Mark::NameKind, 4);
+                    }
+                    js_ast::ExprData::EString(_) if is_literal => {}
+                    // `checkEnumMember` never checks it.
+                    _ => {
+                        p.note_expr(&mut value.loc, crate::sema::Mark::ComputedName, name);
+                    }
+                }
+                if p.lexer.token != T::TCloseBracket {
+                    p.lexer.expect(T::TCloseBracket)?;
+                    return Err(crate::Error::SyntaxError);
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
     pub(crate) fn parse_typescript_enum_stmt(
         &mut self,
         loc: bun_ast::Loc,
@@ -580,9 +821,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEnum)?;
-        let name_loc = p.lexer.loc();
-        let name_text = p.lexer.identifier;
-        p.lexer.expect(T::TIdentifier)?;
+        let mut name_loc = p.lexer.loc();
+        let mut name_text: &'a [u8] = p.lexer.identifier;
+        // `parseIdentifier`: any other token but a private name is not consumed, and the name is
+        // missing.
+        if p.is_tolerant()
+            && p.lexer.token != T::TPrivateIdentifier
+            && !p.is_identifier_in_context()
+        {
+            name_loc = p.report_missing_identifier()?;
+            name_text = b"";
+        } else {
+            p.expect_identifier()?;
+        }
         let mut name = LocRef {
             loc: name_loc,
             ref_: Ref::NONE,
@@ -608,8 +859,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name.ref_,
                 TSNamespaceMemberData::Namespace(exported_members),
             );
+        } else if p.preserves_type_syntax() {
+            name = p.keep_name(name_loc, name_text);
         }
 
+        // `parseEnumDeclaration`: without a "{" there are no members and no "}" is expected.
+        let has_body = p.lexer.token == T::TOpenBrace || !p.is_tolerant();
         p.lexer.expect(T::TOpenBrace)?;
 
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
@@ -623,7 +878,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Parse the body
         let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.arena);
-        while p.lexer.token != T::TCloseBrace {
+        let saved_contexts = p.enter_list(ListKind::EnumMembers);
+        while p.lexer.token != T::TCloseBrace && has_body {
+            match p.classify_list_token(ListKind::EnumMembers)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            let value_full_start = p.lexer.full_start();
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
                 ref_: Ref::NONE,
@@ -637,10 +899,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
                 value.name = estr.data;
+                p.note(&mut value.loc, crate::sema::Mark::NameKind, 1);
                 js_lexer::is_identifier(value.name.slice())
             } else if p.lexer.is_identifier_or_keyword() {
                 value.name = js_ast::StoreStr::new(p.lexer.identifier);
                 true
+            } else if p.is_tolerant() && p.parse_other_enum_member_name(&mut value)? {
+                false
             } else {
                 p.lexer.expect(T::TIdentifier)?;
                 // error early, name is still `undefined`
@@ -650,7 +915,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {
-                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, value.name.slice())?;
+                value.ref_ =
+                    p.declare_symbol(SymbolKind::Other, p.real_loc(value.loc), value.name.slice())?;
             }
 
             // Parse the initializer
@@ -660,7 +926,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let value_name = value.name;
-            let value_loc = value.loc;
+            let value_loc = p.real_loc(value.loc);
+            p.finish_node(&mut value.loc, value_full_start);
             values.push(value);
 
             exported_members.put(
@@ -671,12 +938,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
             )?;
 
-            if p.lexer.token != T::TComma && p.lexer.token != T::TSemicolon {
+            // `parseDelimitedList`: only a comma separates members.
+            if p.lexer.token != T::TComma && (p.lexer.token != T::TSemicolon || p.is_tolerant()) {
+                if p.recover_missing_comma(ListKind::EnumMembers, value_loc)? {
+                    continue;
+                }
                 break;
             }
 
             p.lexer.next()?;
         }
+        p.lexer.list_contexts = saved_contexts;
 
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
@@ -732,14 +1004,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_scope();
         }
 
-        p.lexer.expect(T::TCloseBrace)?;
+        if has_body {
+            p.lexer.expect(T::TCloseBrace)?;
+        }
 
         if opts.is_typescript_declare {
             if opts.scope.is_namespace() && opts.is_export {
                 p.has_non_local_export_declare_inside_namespace = true;
             }
+            if p.preserves_type_syntax() {
+                return Ok(p.s(
+                    S::Enum {
+                        name,
+                        arg: Ref::NONE,
+                        values: bun_ast::StoreSlice::new_mut(values.into_bump_slice_mut()),
+                        is_export: opts.is_export,
+                    },
+                    loc,
+                ));
+            }
 
-            return Ok(p.s(S::TypeScript {}, loc));
+            return Ok(p.s(S::TypeScript::default(), loc));
         }
 
         // Save these for when we do out-of-order enum visiting

@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { exists } from "fs/promises";
+import { exists, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -1231,11 +1231,19 @@ test.concurrent("in a workspace, `bun update` from one member also re-points a s
   expect(exitCode).toBe(0);
 });
 
-type Manifests = Record<string, Record<string, { dependencies?: Record<string, string> }>>;
+type Manifests = Record<
+  string,
+  Record<string, { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>
+>;
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.
-type RegistryKnobs = { times?: Record<string, Record<string, string>>; status?: Record<string, number> };
+// `status` is keyed by package name or by tarball file name ("leaf-1.1.0.tgz"); `tarballOrigin` replaces this server's origin in every `dist.tarball`.
+type RegistryKnobs = {
+  times?: Record<string, Record<string, string>>;
+  status?: Record<string, number>;
+  tarballOrigin?: string;
+};
 
 async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: RegistryKnobs = {}) {
   const tarballs = new Map<string, Uint8Array>();
@@ -1252,16 +1260,17 @@ async function serveRegistry(manifests: Manifests, tags: Tags = {}, knobs: Regis
     port: 0,
     fetch(request) {
       const { origin, pathname } = new URL(request.url);
-      const tarball = tarballs.get(pathname);
-      if (tarball) return new Response(tarball);
       const name = pathname.slice(1);
-      const entry = manifests[name];
       const status = knobs.status?.[name];
       if (status) return new Response("registry says no", { status });
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const entry = manifests[name];
       if (!entry) return new Response("not found", { status: 404 });
+      const tarballOrigin = knobs.tarballOrigin ?? origin;
       const versions: Json = {};
       for (const [version, extra] of Object.entries(entry)) {
-        versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+        versions[version] = { name, version, dist: { tarball: `${tarballOrigin}/${name}-${version}.tgz` }, ...extra };
       }
       const latest = Object.keys(entry).sort(Bun.semver.order).at(-1);
       const time = knobs.times?.[name];
@@ -1335,6 +1344,266 @@ test.concurrent("`bun update <name>` leaves the named package's own dependencies
   await frozen(dir);
   expect(bare.exitCode).toBe(0);
 });
+
+// util's peer `core` is auto-installed and nothing depends on it outright, so `bun update <names>` re-resolves it after a manifest fetch of its own. Every other entry that still waits for its manifest at that point has to resolve too.
+const PEER_ONLY: Manifests = {
+  util: { "1.0.0": { peerDependencies: { core: "^1.0.0" } }, "1.1.0": { peerDependencies: { core: "^1.0.0" } } },
+  core: { "1.0.0": {}, "1.1.0": {} },
+  app: { "1.0.0": { dependencies: { util: "^1.0.0" } } },
+  extra: { "1.0.0": {}, "1.1.0": {} },
+};
+const CORE_NEEDS_UTIL = { dependencies: { util: "^1.0.0" } };
+
+type NamedPeerCase = {
+  manifests?: Manifests;
+  // The first install pins util and core to 1.0.0; the second drops the pins and leaves both parked.
+  pinned: Json;
+  stale: Json;
+  // Written without an install in between, so the update is the first to see them.
+  edited?: Json;
+  files?: Record<string, string>;
+  args: string[];
+  packageJson: Json;
+  versions: Record<string, string>;
+  rows: string[];
+};
+
+const DIRECT = { pinned: pkgJson({ util: "1.0.0", core: "1.0.0" }), stale: pkgJson({ util: "^1.0.0" }) };
+const UTIL_ROW = movedRow("util", "1.0.0", "1.1.0");
+const CORE_ROW = movedRow("core", "1.0.0", "1.1.0");
+const BOTH_MOVED = {
+  packageJson: pkgJson({ util: "^1.1.0" }),
+  versions: { util: "1.1.0", core: "1.1.0" },
+  rows: [UTIL_ROW, CORE_ROW],
+};
+const ONLY_CORE_MOVED = { args: ["core"], rows: [CORE_ROW] };
+
+const NAMED_PEER_CASES: Record<string, NamedPeerCase> = {
+  "after the package that declares it": { ...DIRECT, args: ["util", "core"], ...BOTH_MOVED },
+  "before the package that declares it": { ...DIRECT, args: ["core", "util"], ...BOTH_MOVED },
+  "by a pattern next to the package that declares it": { ...DIRECT, args: ["u*", "core"], ...BOTH_MOVED },
+  "by `*`": { ...DIRECT, args: ["*"], ...BOTH_MOVED },
+  "with --latest": { ...DIRECT, args: ["--latest", "util", "core"], ...BOTH_MOVED },
+  "next to a transitive dependency": {
+    pinned: pkgJson({ app: "1.0.0", util: "1.0.0", core: "1.0.0" }),
+    stale: pkgJson({ app: "1.0.0" }),
+    args: ["util", "core"],
+    packageJson: pkgJson({ app: "1.0.0" }),
+    versions: { app: "1.0.0", util: "1.1.0", core: "1.1.0" },
+    rows: [UTIL_ROW, CORE_ROW],
+  },
+  "next to an optional dependency": {
+    pinned: { name: "foo", dependencies: { core: "1.0.0" }, optionalDependencies: { util: "1.0.0" } },
+    stale: { name: "foo", optionalDependencies: { util: "^1.0.0" } },
+    args: ["util", "core"],
+    packageJson: { name: "foo", optionalDependencies: { util: "^1.1.0" } },
+    versions: { util: "1.1.0", core: "1.1.0" },
+    rows: [UTIL_ROW, CORE_ROW],
+  },
+  "when it depends on the package that declares it": {
+    manifests: { ...PEER_ONLY, core: { "1.0.0": CORE_NEEDS_UTIL, "1.1.0": CORE_NEEDS_UTIL } },
+    ...DIRECT,
+    args: ["util", "core"],
+    ...BOTH_MOVED,
+  },
+  "after package.json gained a dependency": {
+    ...DIRECT,
+    edited: pkgJson({ util: "^1.0.0", extra: "^1.0.0" }),
+    ...ONLY_CORE_MOVED,
+    packageJson: pkgJson({ util: "^1.0.0", extra: "^1.0.0" }),
+    versions: { util: "1.0.0", core: "1.1.0", extra: "1.1.0" },
+  },
+  "after package.json gained an optional dependency": {
+    ...DIRECT,
+    edited: pkgJson({ util: "^1.0.0" }, { optionalDependencies: { extra: "^1.0.0" } }),
+    ...ONLY_CORE_MOVED,
+    packageJson: pkgJson({ util: "^1.0.0" }, { optionalDependencies: { extra: "^1.0.0" } }),
+    versions: { util: "1.0.0", core: "1.1.0", extra: "1.1.0" },
+  },
+  "after package.json gained the peer itself": {
+    ...DIRECT,
+    edited: pkgJson({ util: "^1.0.0", core: "^1.0.0" }),
+    args: ["core"],
+    rows: [],
+    packageJson: pkgJson({ util: "^1.0.0", core: "^1.1.0" }),
+    versions: { util: "1.0.0", core: "1.1.0" },
+  },
+  "after package.json gained an override": {
+    pinned: pkgJson({ util: "1.0.0", core: "1.0.0", extra: "^1.0.0" }),
+    stale: pkgJson({ util: "^1.0.0", extra: "^1.0.0" }),
+    edited: pkgJson({ util: "^1.0.0", extra: "^1.0.0" }, { overrides: { extra: "1.0.0" } }),
+    ...ONLY_CORE_MOVED,
+    packageJson: pkgJson({ util: "^1.0.0", extra: "^1.0.0" }, { overrides: { extra: "1.0.0" } }),
+    versions: { util: "1.0.0", core: "1.1.0", extra: "1.0.0" },
+  },
+  "after package.json gained a folder with a registry dependency": {
+    ...DIRECT,
+    edited: pkgJson({ util: "^1.0.0", local: "file:./local" }),
+    files: { "local/package.json": stringify({ name: "local", version: "1.0.0", dependencies: { extra: "^1.0.0" } }) },
+    ...ONLY_CORE_MOVED,
+    packageJson: pkgJson({ util: "^1.0.0", local: "file:./local" }),
+    versions: { util: "1.0.0", core: "1.1.0", extra: "1.1.0" },
+  },
+};
+
+test.concurrent.each(Object.entries(NAMED_PEER_CASES))(
+  "`bun update` resolves every entry when an auto-installed peer is named %s",
+  async (_, { manifests = PEER_ONLY, pinned, stale, edited, files = {}, args, packageJson, versions, rows }) => {
+    using server = await serveRegistry(manifests);
+    const dir = await setupServed(server, "update-named-peer-", pinned, stale);
+    expect(await lockedVersions(dir, "util")).toStrictEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "core")).toStrictEqual(["1.0.0"]);
+    if (edited) await write(join(dir, "package.json"), stringify(edited));
+    for (const [path, text] of Object.entries(files)) await write(join(dir, path), text);
+
+    const { stdout, exitCode } = await run(dir, "update", ...args);
+    expect(movedRows(stdout)).toStrictEqual(rows);
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    for (const [name, version] of Object.entries(versions)) {
+      expect(await lockedVersions(dir, name)).toStrictEqual([version]);
+      expect(await installedVersion(dir, name)).toBe(version);
+    }
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "`bun update <names>` from a workspace member resolves its entry next to an auto-installed peer",
+  async () => {
+    using server = await serveRegistry(PEER_ONLY);
+    const dir = String(
+      tempDir("update-named-peer-member-", {
+        "package.json": stringify(ROOT),
+        "packages/pkg1/package.json": stringify(member("pkg1", { util: "1.0.0", core: "1.0.0" })),
+      }),
+    );
+    await servedBunfig(server, dir);
+    await install(dir);
+    await reinstall(dir, member("pkg1", { util: "^1.0.0" }), {}, "packages/pkg1");
+    expect(await lockedVersions(dir, "util")).toStrictEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "core")).toStrictEqual(["1.0.0"]);
+
+    const { stdout, exitCode } = await runIn(dir, "packages/pkg1", "update", "util", "core");
+    expect(movedRows(stdout)).toStrictEqual([UTIL_ROW, CORE_ROW]);
+    expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { util: "^1.1.0" }));
+    expect(await lockedVersions(dir, "util")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(dir, "core")).toStrictEqual(["1.1.0"]);
+    expect(await installedVersion(dir, "util")).toBe("1.1.0");
+    expect(await installedVersion(dir, "core")).toBe("1.1.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// With the peer's manifest on disk, --prefer-offline fetches nothing for it; the only request of the update is for util's manifest.
+test.concurrent(
+  "`bun update --prefer-offline <names>` resolves an entry whose manifest is not cached next to an auto-installed peer",
+  async () => {
+    using server = await serveRegistry(PEER_ONLY);
+    const dir = await setupServed(server, "update-named-peer-offline-", DIRECT.pinned, DIRECT.stale);
+    const cache = join(dir, ".bun-cache");
+    const cached = await Array.fromAsync(new Bun.Glob("*.npm").scan({ cwd: cache }));
+    const ofUtil: string[] = [];
+    for (const name of cached) {
+      if ((await file(join(cache, name)).text()).includes("/util-1.0.0.tgz")) ofUtil.push(name);
+    }
+    expect({ cached: cached.length, ofUtil: ofUtil.length }).toStrictEqual({ cached: 2, ofUtil: 1 });
+    await rm(join(cache, ofUtil[0]));
+
+    const { stdout, exitCode } = await run(dir, "update", "--prefer-offline", "util", "core");
+    expect(movedRows(stdout)).toStrictEqual([UTIL_ROW, CORE_ROW]);
+    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ util: "^1.1.0" }));
+    expect(await lockedVersions(dir, "util")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(dir, "core")).toStrictEqual(["1.1.0"]);
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+const UTIL_PATCHED = { patchedDependencies: { "util@1.0.0": "patches/util@1.0.0.patch" } };
+
+test.concurrent(
+  "`bun update <names>` holds a patched dependency and moves the auto-installed peer named next to it",
+  async () => {
+    using server = await serveRegistry(PEER_ONLY);
+    const dir = String(
+      tempDir("update-named-peer-patched-", {
+        "package.json": stringify(pkgJson({ util: "1.0.0", core: "1.0.0" }, UTIL_PATCHED)),
+        "patches/util@1.0.0.patch": NO_DEPS_PATCH,
+      }),
+    );
+    await servedBunfig(server, dir);
+    await install(dir);
+    const packageJson = pkgJson({ util: "^1.0.0" }, UTIL_PATCHED);
+    await reinstall(dir, packageJson);
+    const patched = file(join(dir, "node_modules", "util", "patched.txt"));
+    expect(await patched.exists()).toBeTrue();
+
+    const { stdout, exitCode } = await run(dir, "update", "util", "core");
+    expectSummary(stdout, CORE_ROW, keptPatched("util", "1.0.0", "1.1.0"), "", installed(1));
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    expect(await lockedVersions(dir, "util")).toStrictEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "core")).toStrictEqual(["1.1.0"]);
+    expect(await installedVersion(dir, "core")).toBe("1.1.0");
+    expect(await patched.exists()).toBeTrue();
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `extra` is resolved while the peer's manifest is fetched, and its tarball fails there.
+test.concurrent(
+  "a failed download for an entry that resolves next to a named auto-installed peer fails the update and writes nothing",
+  async () => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(PEER_ONLY, {}, knobs);
+    const dir = await setupServed(server, "update-named-peer-failed-", DIRECT.pinned, DIRECT.stale);
+    await write(join(dir, "package.json"), stringify(pkgJson({ util: "^1.0.0", extra: "^1.0.0" })));
+    const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+    knobs.status!["extra-1.1.0.tgz"] = 404;
+    const { stderr, exitCode } = await run(dir, "update", "core");
+    expect(errorLines(stderr)).toStrictEqual([`error: GET ${server.url.origin}/extra-1.1.0.tgz - 404`]);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await packageJsonText(dir)).toBe(before.packageJson);
+    expect(await lockText(dir)).toBe(before.lock);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// `extra` fails in the wave that resolves parent. The pass that then moves parent's own dependencies prints the log, and the error has to outlive that.
+test.concurrent(
+  "a failed download next to `bun update --latest <name>` fails the update and writes nothing",
+  async () => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(
+      {
+        parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } }, "1.1.0": { dependencies: { leaf: "^1.0.0" } } },
+        leaf: { "1.0.0": {}, "1.1.0": {} },
+        extra: { "1.0.0": {}, "1.1.0": {} },
+      },
+      {},
+      knobs,
+    );
+    const dir = await setupServed(
+      server,
+      "update-latest-failed-",
+      pkgJson({ parent: "1.0.0", leaf: "1.0.0" }),
+      pkgJson({ parent: "^1.0.0" }),
+    );
+    await write(join(dir, "package.json"), stringify(pkgJson({ parent: "^1.0.0", extra: "^1.0.0" })));
+    const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+    knobs.status!["extra-1.1.0.tgz"] = 404;
+    const { stderr, exitCode } = await run(dir, "update", "--latest", "parent");
+    expect(errorLines(stderr)).toStrictEqual([`error: GET ${server.url.origin}/extra-1.1.0.tgz - 404`]);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(await packageJsonText(dir)).toBe(before.packageJson);
+    expect(await lockText(dir)).toBe(before.lock);
+    expect(exitCode).toBe(1);
+  },
+);
 
 // parent and other are already at their newest; the leaf under each is parked one release behind by the dropped root pins.
 const STALE_CHILDREN: Manifests = {
@@ -1859,6 +2128,165 @@ test.concurrent(
     expect(exitCode).toBe(1);
   },
 );
+
+// A named request whose download fails exits 1 and writes nothing, also when the failure is only a warning (an optional dependency). The request names the package.json key; the failed download reports the registry name, which an `npm:` alias spells differently.
+const LEAF_ONLY: Manifests = { leaf: { "1.0.0": {}, "1.1.0": {} } };
+const warningLines = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("warn:"));
+
+// A host that closes every connection before it answers. It keeps its port for the whole test; the port of a stopped server could go to another test's registry.
+const hangUp = () =>
+  Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: socket => void socket.end(), data() {} } });
+
+// Breaks the download of leaf's manifest or of leaf@1.1.0's tarball; `down` is the origin of a `hangUp()` host. Returns the one warning to expect and the flags the update needs.
+type Outage = (server: Bun.Server, knobs: RegistryKnobs, down: string) => { warning: unknown; flags?: string[] };
+const OUTAGES: Record<string, Outage> = {
+  "a 404 for the manifest": (server, knobs) => {
+    knobs.status!.leaf = 404;
+    return { warning: `warn: ${manifestFailure(server, 404)}` };
+  },
+  "a registry that hangs up": (_server, _knobs, down) => ({
+    warning: expect.stringMatching(/^warn: \w+ downloading package manifest leaf$/),
+    flags: ["--registry", `${down}/`],
+  }),
+  "a 404 for the tarball": (server, knobs) => {
+    knobs.status!["leaf-1.1.0.tgz"] = 404;
+    return { warning: `warn: GET ${server.url.origin}/leaf-1.1.0.tgz - 404` };
+  },
+  "a tarball host that hangs up": (_server, knobs, down) => {
+    knobs.tarballOrigin = down;
+    return { warning: expect.stringMatching(/^warn: \w+ downloading tarball leaf@1\.1\.0$/) };
+  },
+};
+
+// [label, the package.json key that reaches leaf, the fields that declare it with `range` on leaf, the update's arguments]
+const aliasedLeaf = (range: string) => ({ optionalDependencies: { aliased: `npm:leaf@${range}` } });
+const OPTIONAL_LEAF_ENTRIES: [string, string, (range: string) => Json, string[]][] = [
+  ["a plain entry", "leaf", range => ({ optionalDependencies: { leaf: range } }), ["leaf"]],
+  ["an npm: alias named by its key", "aliased", aliasedLeaf, ["aliased"]],
+  ["an npm: alias named by its key with --latest", "aliased", aliasedLeaf, ["aliased", "--latest"]],
+  ["an npm: alias named by its target", "aliased", aliasedLeaf, ["leaf"]],
+  [
+    "an entry that an override renames",
+    "renamed",
+    range => ({ optionalDependencies: { renamed: "*" }, overrides: { renamed: `npm:leaf@${range}` } }),
+    ["renamed"],
+  ],
+  [
+    "a catalog: entry that is an npm: alias",
+    "cataloged",
+    range => ({
+      workspaces: { catalog: { cataloged: `npm:leaf@${range}` } },
+      optionalDependencies: { cataloged: "catalog:" },
+    }),
+    ["cataloged"],
+  ],
+];
+
+test.concurrent.each(
+  Object.keys(OUTAGES).flatMap(outage => OPTIONAL_LEAF_ENTRIES.map(entry => [outage, ...entry] as const)),
+)("%s fails `bun update <name>` for %s and writes nothing", async (outage, _, key, fields, args) => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  using down = hangUp();
+  const optional = (range: string) => ({ name: "foo", ...fields(range) });
+  const dir = await setupServed(server, "update-failed-download-", optional("1.0.0"), optional("^1.0.0"));
+  expect(await installedVersion(dir, key)).toBe("1.0.0");
+  const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+  const { warning, flags = [] } = OUTAGES[outage](server, knobs, `http://127.0.0.1:${down.port}`);
+  const { stderr, exitCode } = await run(dir, "update", ...args, ...flags);
+  expect(warningLines(stderr)).toStrictEqual([warning]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await packageJsonText(dir)).toBe(before.packageJson);
+  expect(await lockText(dir)).toBe(before.lock);
+  expect(await installedVersion(dir, key)).toBe("1.0.0");
+  expect(exitCode).toBe(1);
+});
+
+// An npm tarball is downloaded once for every entry that resolves to it, on behalf of the first one.
+test.concurrent("a 404 for the tarball fails the request for a second alias of the same package", async () => {
+  const knobs: RegistryKnobs = { status: { "leaf-1.1.0.tgz": 404 } };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  const packageJson = stringify({
+    name: "foo",
+    optionalDependencies: { first: "npm:leaf@^1.0.0", second: "npm:leaf@^1.0.0" },
+  });
+  const dir = String(tempDir("update-failed-shared-tarball-", { "package.json": packageJson }));
+  await servedBunfig(server, dir);
+
+  const { stderr, exitCode } = await run(dir, "update", "second");
+  expect(warningLines(stderr)).toStrictEqual([`warn: GET ${server.url.origin}/leaf-1.1.0.tgz - 404`]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonText(dir)).toBe(packageJson);
+  expect(await exists(join(dir, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+// The failed download is the only message: a warning for an optional dependency, an error otherwise. A request that is not failed goes on to a second error, "<spec> failed to resolve".
+test.concurrent.each([
+  ["warn", ["--optional", "leaf"]],
+  ["warn", ["--optional", "aliased@npm:leaf@^1.0.0"]],
+  ["error", ["leaf"]],
+  ["error", ["aliased@npm:leaf@^1.0.0"]],
+])("a 404 for the manifest is the one %s of `bun add %p`, which writes nothing", async (level, args) => {
+  const knobs: RegistryKnobs = { status: { leaf: 404 } };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  const packageJson = stringify({ name: "foo" });
+  const dir = String(tempDir("add-failed-download-", { "package.json": packageJson }));
+  await servedBunfig(server, dir);
+
+  const { stderr, exitCode } = await run(dir, "add", ...args);
+  expect([...warningLines(stderr), ...errorLines(stderr)]).toStrictEqual([`${level}: ${manifestFailure(server, 404)}`]);
+  expect(await packageJsonText(dir)).toBe(packageJson);
+  expect(await exists(join(dir, "bun.lock"))).toBe(false);
+  expect(exitCode).toBe(1);
+});
+
+// A version that bun.lock already holds gets no download while it resolves. The install phase downloads it, after the package.json entry was rewritten in memory.
+test.concurrent.each([
+  ["a plain entry", "leaf", ""],
+  ["an npm: alias", "aliased", "npm:leaf@"],
+])("a 404 for a tarball that the install phase downloads fails `bun update <name>` for %s", async (_, key, target) => {
+  const knobs: RegistryKnobs = { status: {} };
+  using server = await serveRegistry(LEAF_ONLY, {}, knobs);
+  const packageJson = { name: "foo", optionalDependencies: { [key]: `${target}^1.0.0` } };
+  const dir = await installServed(server, "update-failed-install-download-", packageJson);
+  expect(await installedVersion(dir, key)).toBe("1.1.0");
+  await Promise.all(["node_modules", ".bun-cache"].map(name => rm(join(dir, name), { recursive: true, force: true })));
+  const before = { packageJson: await packageJsonText(dir), lock: await lockText(dir) };
+
+  knobs.status!["leaf-1.1.0.tgz"] = 404;
+  const { stderr, exitCode } = await run(dir, "update", key);
+  expect(warningLines(stderr)).toStrictEqual([`warn: GET ${server.url.origin}/leaf-1.1.0.tgz - 404`]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonText(dir)).toBe(before.packageJson);
+  expect(await lockText(dir)).toBe(before.lock);
+  expect(exitCode).toBe(1);
+});
+
+// pkg2's optional `leaf` is an alias of a package the registry does not have. It has the key of the request, but the request is for pkg1's entry. The alias range must not admit pkg1's range, or bun resolves pkg1's `leaf` through the alias too.
+test.concurrent("a failed download for the same key in another workspace does not fail the request", async () => {
+  using server = await serveRegistry(LEAF_ONLY);
+  const pkg2 = { name: "pkg2", version: "1.0.0", optionalDependencies: { leaf: "npm:missing@^9.0.0" } };
+  const dir = String(
+    tempDir("update-failed-download-elsewhere-", {
+      "package.json": stringify(ROOT),
+      "packages/pkg1/package.json": stringify(member("pkg1", { leaf: "^1.0.0" })),
+      "packages/pkg2/package.json": stringify(pkg2),
+    }),
+  );
+  await servedBunfig(server, dir);
+
+  const { stderr, exitCode } = await runIn(dir, "packages/pkg1", "update", "leaf");
+  expect(warningLines(stderr)).toStrictEqual([`warn: GET ${server.url.origin}/missing - 404`]);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(stderr).toContain("Saved lockfile");
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { leaf: "^1.1.0" }));
+  expect(await packageJsonOf(dir, "packages/pkg2")).toStrictEqual(pkg2);
+  expect(await installedVersion(dir, "leaf")).toBe("1.1.0");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("`bun update <name>` from a member leaves a sibling's own entry alone but lets it follow", async () => {
   const { dir, pkg2Text } = await staleMembers("~1.0.0", "^1.0.0");

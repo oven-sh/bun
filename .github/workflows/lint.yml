@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUN_VERSION: "1.3.14"
+  BUN_VERSION: "1.4.2"
 
 jobs:
   lint-js:
@@ -27,3 +27,18 @@ jobs:
           bun install --frozen-lockfile
       - name: Lint
         run: bun lint
+      - name: Typecheck the build system and the CI scripts
+        run: |
+          bun x tsc --noEmit -p scripts/build/tsconfig.json
+          bun x tsc --noEmit -p scripts/tsconfig.json
+      - name: Typecheck the built-in modules
+        # The code generators write the types src/js/builtins.d.ts references (build/types) and the enums the dev
+        # server's sources import (src/runtime/bake/generated.ts).
+        run: |
+          bun run build:types
+          bun x tsc --noEmit -p src/js/tsconfig.json
+      - name: Typecheck the rest of src
+        # The code generators, the class definitions and the other build-time TypeScript, then the dev server.
+        run: |
+          bun x tsc --noEmit -p src/tsconfig.json
+          bun x tsc --noEmit -p src/runtime/bake/tsconfig.json

@@ -1,13 +1,10 @@
 use core::ffi::c_void;
 
-use crate::plugin_runner::PluginRunner;
 use crate::{
     CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task,
     VirtualMachineRef as VirtualMachine,
 };
-use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
-use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
@@ -110,7 +107,13 @@ pub fn vm_handle_queue_task_concurrently(
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
-pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
+/// `rejection_owner`: the `Bun.ModuleGraph` whose code rejected the promise
+/// (decided by promiseRejectionTracker when it happened), or null.
+pub fn handle_rejected_promise(
+    global: &JSGlobalObject,
+    promise: &mut JSPromise,
+    rejection_owner: JSValue,
+) {
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
@@ -121,11 +124,12 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
         return;
     }
 
-    jsc_vm.unhandled_rejection(global, result, promise.to_js());
+    jsc_vm.unhandled_rejection_owned(global, result, promise.to_js(), rejection_owner);
     jsc_vm.auto_garbage_collect();
 }
 
-struct HandledPromiseContext {
+/// `Bun__handleHandledPromise`'s hop to the next turn of the loop.
+pub struct HandledPromiseTask {
     // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
     global_this: crate::GlobalRef,
     // PORTING.md forbids bare JSValue fields on heap-allocated structs;
@@ -134,20 +138,27 @@ struct HandledPromiseContext {
     promise: Strong,
 }
 
-impl HandledPromiseContext {
-    fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `context` was produced by `heap::alloc` below; we are the
-        // sole owner and reconstitute the Box to drop it at end of scope.
-        let context = unsafe { bun_core::heap::take(context) };
-        let global: &JSGlobalObject = &context.global_this;
+impl HandledPromiseTask {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub fn run(self: Box<Self>) {
+        let global: &JSGlobalObject = &self.global_this;
         // JSGlobalObject::bun_vm contract.
         let _ = global
             .bun_vm()
             .as_mut()
-            .handled_promise(global, context.promise.get());
-        // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
-        // Strong's Drop replaces the explicit `.unprotect()`.
-        Ok(())
+            .handled_promise(global, self.promise.get());
+    }
+}
+
+impl bun_event_loop::Taskable for HandledPromiseTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HandledPromise;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `handle_handled_promise`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -155,30 +166,15 @@ impl HandledPromiseContext {
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
-    let context = bun_core::heap::into_raw(Box::new(HandledPromiseContext {
-        global_this: global.into(),
-        promise: Strong::create(promise_js, global),
-    }));
     global
         .bun_vm()
         .event_loop_mut()
-        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
-}
-
-// HOST_EXPORT(Bun__onDidAppendPlugin, c)
-pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
-    if jsc_vm.plugin_runner.is_some() {
-        return;
-    }
-
-    // `Option::insert` returns `&mut PluginRunner` into the VM-owned slot;
-    // `plugin_runner` and `transpiler` are disjoint fields so the split borrow
-    // is fine. The slot is embedded in `*jsc_vm` and stable for the VM's
-    // lifetime, so taking a raw pointer into it for the linker BACKREF is sound.
-    let runner = jsc_vm.plugin_runner.insert(PluginRunner {
-        global_object: bun_ptr::BackRef::new(global),
-    });
-    jsc_vm.transpiler.linker.plugin_runner = Some(std::ptr::from_mut::<dyn PluginResolver>(runner));
+        .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+            HandledPromiseTask {
+                global_this: global.into(),
+                promise: Strong::create(promise_js, global),
+            },
+        )));
 }
 
 #[cfg(windows)]

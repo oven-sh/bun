@@ -1,4 +1,5 @@
 #include "BunProcess.h"
+#include "CodeGenerationFromStrings.h"
 #include "headers.h"
 #include "BunClientData.h"
 #include "node_api.h"
@@ -1285,8 +1286,6 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     // napi_delete_reference with node_api_basic_env and deliberately omits
     // both CHECK_ENV_NOT_IN_GC and the pending-exception check, so we must
     // not use NAPI_CHECK_ENV_NOT_IN_GC or the throw-scope preamble here.
-    // Deleting the NapiRef mid-sweep is safe: its WeakImpl is already in the
-    // Finalized state, so clearing it only marks it Deallocated.
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);
@@ -3058,6 +3057,9 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     JSValue scriptValue = toJS(script);
     NAPI_RETURN_EARLY_IF_FALSE(env, scriptValue.isString(), napi_string_expected);
 
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope);
+    RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_pending_exception));
+
     WTF::String code = scriptValue.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, napi_set_last_error(env, napi_generic_failure));
 
@@ -3415,6 +3417,11 @@ extern "C" void Bun__napi_remove_finalizer(napi_env env, napi_finalize callback,
 extern "C" void Bun__napi_check_gc(napi_env env)
 {
     env->checkGC();
+}
+
+extern "C" bool NapiEnv__setCompletingForStoppedContext(napi_env env, bool value)
+{
+    return std::exchange(env->m_isCompletingForStoppedContext, value);
 }
 
 extern "C" bool NapiEnv__hasPendingException(napi_env env)

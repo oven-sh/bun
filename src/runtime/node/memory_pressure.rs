@@ -65,6 +65,10 @@ impl bun_event_loop::Taskable for MemoryPressureTask {
     const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
     /// Nothing is owned (`this` is the packed level).
     unsafe fn release_unrun(_: *mut Self) {}
+    /// The process's memory pressure: listeners of the realm.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 fn pressure_task(lvl: i32) -> Task {

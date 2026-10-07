@@ -5490,6 +5490,8 @@ class ClientHttp2Session extends Http2Session {
     if (this.destroyed) {
       return;
     }
+    // Detached first, so destroy() leaves the socket that failed alone.
+    this[bunHTTP2Socket] = null;
     if (this.#closed) {
       this.destroy();
       return;

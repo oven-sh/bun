@@ -63,6 +63,10 @@ public:
     // function-local static would be shared across worker threads, so a
     // worker's exit would suppress the main thread's 'exit' event.
     bool m_isExiting = false;
+    // process.exit() emitted 'exit', so the next process.exit() does not (node's
+    // `process._exiting` check). The natural exit emits it again, as in node,
+    // unless process.reallyExit() armed m_isExiting.
+    bool m_processExitEmittedExit = false;
     // DEP0111/DEP0119 latches. Node's deprecate() closures live in each
     // Environment's own JS, so every worker warns once itself.
     bool m_warnedProcessBinding = false;

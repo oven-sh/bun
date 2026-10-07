@@ -447,6 +447,14 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit, (JSGlobalObject *
     return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_emitBody>(*lexicalGlobalObject, *callFrame, "emit");
 }
 
+bool JSEventEmitter::isBuiltInEmit(JSC::JSValue value)
+{
+    if (!value)
+        return false;
+    auto callData = JSC::getCallData(value);
+    return callData.type == CallData::Type::Native && callData.native.function.untaggedPtr() == &jsEventEmitterPrototypeFunction_emit;
+}
+
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

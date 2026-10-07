@@ -16,6 +16,7 @@ use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
+use super::postgres_request::EncodeRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
 use bun_sql::postgres::CommandTag;
@@ -77,7 +78,7 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
+    /// Rejected while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
@@ -218,13 +219,14 @@ impl PostgresSQLQuery {
         );
     }
 
+    /// For a request that is owed no `ReadyForQuery`: `Fail` lets `advance()` drop it at once.
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.status.set(Status::Fail);
         self.reject(err, global_object);
     }
 
-    /// Rejects now, but `status` stays in flight: the server is still answering this query.
-    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+    /// Rejects now. `status`, the counter and the queue head stay until its `ReadyForQuery`.
+    pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);
     }
@@ -301,7 +303,14 @@ impl PostgresSQLQuery {
         let tag = CommandTag::init(command_tag_str);
         let js_tag: JSValue = match tag.to_js_tag(global_object) {
             Ok(v) => v,
-            Err(e) => return self.on_js_error(global_object.take_exception(e), global_object),
+            Err(e) => {
+                let err = global_object.take_exception(e);
+                return if is_last {
+                    self.on_js_error(err, global_object)
+                } else {
+                    self.reject_in_flight(err, global_object)
+                };
+            }
         };
         js_tag.ensure_still_alive();
 
@@ -639,12 +648,13 @@ impl PostgresSQLQuery {
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = PostgresRequest::bind_and_execute(
+                                if let Err(err) = connection.encode_request(
                                     global_object,
-                                    stmt,
-                                    binding_value,
-                                    columns_value,
-                                    writer,
+                                    EncodeRequest::BindAndExecute {
+                                        statement: stmt,
+                                        binding_value,
+                                        columns_value,
+                                    },
                                 ) {
                                     this.release_statement();
                                     return Err(throw_write_error(
@@ -697,12 +707,13 @@ impl PostgresSQLQuery {
                 if !has_params {
                     bun_core::scoped_log!(Postgres, "prepareAndQueryWithSignature");
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                    if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
+                    if let Err(err) = connection.encode_request(
                         global_object,
-                        query_str.slice(),
-                        binding_value,
-                        writer,
-                        &mut signature,
+                        EncodeRequest::PrepareAndQuery {
+                            query: query_str.slice(),
+                            signature: &mut signature,
+                            binding_value,
+                        },
                     ) {
                         if connection_entry_value.is_some() {
                             let _ = connection

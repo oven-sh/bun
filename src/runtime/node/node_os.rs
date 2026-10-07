@@ -853,7 +853,6 @@ mod _impl {
         // SAFETY: valid out-pointer
         let rc = unsafe { libc::getifaddrs(&raw mut interface_start) };
         if rc != 0 {
-            let _ = rc;
             let errno = bun_sys::posix::errno();
             // Android API 30+: SELinux denies the netlink socket getifaddrs uses.
             // Node returns {} rather than throwing.

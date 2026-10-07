@@ -649,7 +649,6 @@ impl TextDecoder {
 /// `TextDecoder` is allocated: `*out_utf8_fast_path` is set and null is
 /// returned with no exception.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextDecoder__createForStream(
     global: &JSGlobalObject,
     label: JSValue,
@@ -709,7 +708,6 @@ pub(crate) extern "C" fn TextDecoder__encodingToJS(
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
@@ -723,7 +721,6 @@ pub(crate) extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
 /// `input_len == 0`. Returns a JSString on success, or `JSValue::zero` with
 /// the exception pending on `global`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn TextDecoder__decodeForStream(
     this: *mut TextDecoder,
     global: &JSGlobalObject,

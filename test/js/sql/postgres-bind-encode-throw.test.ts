@@ -62,6 +62,41 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 
+  test.each<[string, unknown]>([
+    ["an Error", new Error("boom")],
+    ["a string", "boom"],
+    ["a number", 42],
+    ["null", null],
+    ["undefined", undefined],
+  ])("a parameter whose toJSON throws %s rejects the query with that value", async (_, thrown) => {
+    await container.ready;
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    try {
+      let outcome: unknown = "pending";
+      // The connection is new, so this is the first use of the statement.
+      const bad = sql`SELECT ${{
+        toJSON() {
+          throw thrown;
+        },
+      }}::json AS v`;
+      bad.then(
+        () => (outcome = "resolved"),
+        reason => (outcome = { rejected: reason }),
+      );
+      // This query waits behind `bad`. When it resolves, `bad` is done.
+      const next = await sql`SELECT ${"x"}::text AS v`;
+
+      expect({ outcome, same: Object.is((outcome as { rejected?: unknown })?.rejected, thrown), next }).toEqual({
+        outcome: { rejected: thrown },
+        same: true,
+        next: [{ v: "x" }],
+      });
+    } finally {
+      // close() with no timeout waits for a query that never settles.
+      await sql.close({ timeout: 5 });
+    }
+  });
+
   test("with prepare: false, a throwing parameter does not break the query queued behind it", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1, prepare: false, idleTimeout: 5, connectionTimeout: 5 });

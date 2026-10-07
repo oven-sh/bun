@@ -33,7 +33,6 @@ impl HmrSocket {
     /// DevServer (the socket is removed from `active_websocket_connections` and
     /// destroyed before DevServer is torn down) — the BackRef invariant.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     unsafe fn dev<'a>(&self) -> &'a mut DevServer {
         // Detach the borrow from `&self` (explicit unbound `'a`) so callers may
         // interleave `self.*` field access with `dev.*` — DevServer is a
@@ -146,10 +145,7 @@ impl HmrSocket {
                                 _ => {}
                             }
                         }
-                    } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        // Note: this `else if` condition is identical to the `if`
-                        // above and is therefore unreachable; likely a bug
-                        // (intended: `!new && old` → unsubscribe).
+                    } else if !new_bits.contains(bit) && self.subscriptions.contains(bit) {
                         let _ = ws.unsubscribe(&field.uws_topic());
                     }
                 }

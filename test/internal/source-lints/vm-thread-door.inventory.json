@@ -39,6 +39,11 @@
       "SourceLocation"
     ]
   },
+  "src/jsc/VirtualMachine.rs": {
+    "unsafe impl Send": [
+      "Shared"
+    ]
+  },
   "src/jsc/hot_reloader.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

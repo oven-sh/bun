@@ -119,6 +119,8 @@ pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
 mod baby_vec;
 pub use baby_vec::BabyVec;
+mod arena_box;
+pub use arena_box::ArenaBox;
 /// Arena-backed `Vec` with `u32` length/capacity.
 /// 24 B (vs 32 B for `Vec<T, &'a MimallocArena>`); the
 /// allocator handle is kept inline for lifetime checking. Growth/free route
@@ -768,7 +770,6 @@ impl WTFStringImplStruct {
                 > old / Self::S_REF_COUNT_INCREMENT
                 || old & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
         );
-        let _ = old;
     }
     /// Inline port of `WTF::StringImpl::deref()` (StringImpl.h:1193).
     ///

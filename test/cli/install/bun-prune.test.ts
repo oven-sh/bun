@@ -3487,6 +3487,22 @@ test.concurrent("hoisted: a workspace linked to the root's folder does not stop 
   expect(exitCode).toBe(1);
 });
 
+// The root itself has nothing to remove here. The folder below one of its packages is still inside what the link leads to.
+test.concurrent("hoisted: a folder below a root package is spared when only it has an entry to remove", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  symlinkSync(join(dir, "node_modules"), join(dir, "packages", "a", "node_modules"), "junction");
+  const stray = plant(dir, "node_modules/no-deps/node_modules/stray");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+  expect(lines(stdout).at(-1)).toBe(NOTHING_ELSE(4, 2));
+  expect(existsSync(stray)).toBeTrue();
+  expect(exitCode).toBe(1);
+});
+
 // The link leads to a scope folder of the root, so the entries of that scope folder are not pruned.
 test.concurrent("hoisted: a workspace node_modules that is a link to a scope folder of the root", async () => {
   const dir = await setupWorkspaces("hoisted", {

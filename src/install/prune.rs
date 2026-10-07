@@ -108,56 +108,43 @@ impl Plan {
             return;
         }
         let id = |st: sys::Stat| (st.st_dev as u64, st.st_ino as u64);
+        let id_at = |path: &[u8]| {
+            sys::stat(ZStr::from_slice_with_nul(&zname(path)))
+                .ok()
+                .map(id)
+        };
         let targets: Vec<(u64, u64)> = self
             .linked_folders
             .iter()
-            .filter_map(|link| {
-                sys::stat(ZStr::from_slice_with_nul(&zname(link)))
-                    .ok()
-                    .map(id)
-            })
+            .filter_map(|link| id_at(link))
             .collect();
         let mut spared: Vec<usize> = Vec::new();
         for (idx, folder) in self.folders.iter().enumerate() {
-            let (FolderKind::NodeModules | FolderKind::Scope { .. }, Some(dir)) =
-                (&folder.kind, &folder.dir)
-            else {
+            if !matches!(
+                folder.kind,
+                FolderKind::NodeModules | FolderKind::Scope { .. }
+            ) {
                 continue;
+            }
+            // A folder with nothing to remove has no open `Dir`. Its path still reaches it, a workspace's through the link in the root.
+            let folder_id = match &folder.dir {
+                Some(dir) => sys::fstat(dir.fd()).ok().map(id),
+                None => id_at(&folder.path),
             };
-            if sys::fstat(dir.fd())
-                .ok()
-                .map(id)
-                .is_some_and(|folder_id| targets.contains(&folder_id))
-            {
+            if folder_id.is_some_and(|folder_id| targets.contains(&folder_id)) {
                 spared.push(idx);
             }
         }
         if spared.is_empty() {
             return;
         }
-        // The `node_modules` of a package in a spared folder goes with it. A link on the way down, a workspace's for one, leads out of the folder.
         let led_to = spared.len();
         for (idx, folder) in self.folders.iter().enumerate() {
-            if !matches!(folder.kind, FolderKind::NodeModules) {
-                continue;
-            }
-            let is_inside = |at: usize| {
-                let above = &self.folders[at];
-                let (Some(dir), Some(below)) = (
-                    &above.dir,
-                    folder
-                        .path
-                        .strip_prefix(&*above.path)
-                        .and_then(|rest| rest.strip_prefix(&[SEP])),
-                ) else {
-                    return false;
-                };
-                (0..below.len())
-                    .filter(|&end| below[end] == SEP)
-                    .chain(core::iter::once(below.len()))
-                    .all(|end| lstat_kind(dir, &below[..end]) == EntryKind::Directory)
-            };
-            if spared[..led_to].iter().any(|&at| is_inside(at)) {
+            if matches!(folder.kind, FolderKind::NodeModules)
+                && spared[..led_to]
+                    .iter()
+                    .any(|&at| is_inside(&self.folders[at].path, &folder.path))
+            {
                 spared.push(idx);
             }
         }
@@ -1675,8 +1662,35 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
 
 /// `path` is relative to the project root, or absolute.
 fn is_symlink(path: &[u8]) -> bool {
-    sys::lstat(ZStr::from_slice_with_nul(&zname(path)))
-        .is_ok_and(|st| sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
+    path_kind(path) == EntryKind::SymLink
+}
+
+fn path_kind(path: &[u8]) -> EntryKind {
+    match sys::lstat(ZStr::from_slice_with_nul(&zname(path))) {
+        Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
+        Err(_) => EntryKind::Unknown,
+    }
+}
+
+/// Whether `folder` is below `above` with a real directory at each step. A link on the way, a workspace's for one, leads out of `above`.
+fn is_inside(above: &[u8], folder: &[u8]) -> bool {
+    let Some(below) = folder
+        .strip_prefix(above)
+        .and_then(|rest| rest.strip_prefix(&[SEP]))
+    else {
+        return false;
+    };
+    let mut end = 0;
+    loop {
+        end = strings::index_of_char_usize(&below[end..], SEP).map_or(below.len(), |at| end + at);
+        if path_kind(&join(above, &below[..end])) != EntryKind::Directory {
+            return false;
+        }
+        if end == below.len() {
+            return true;
+        }
+        end += 1;
+    }
 }
 
 /// A plain open for the root `node_modules`, `open_workspace_folder` for a workspace's.

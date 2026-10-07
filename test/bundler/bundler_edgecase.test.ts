@@ -4599,6 +4599,54 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // `a.mjs` imports a CommonJS file, then an ES module that a lazy route also
+  // reaches, so the bundle wraps both. `init_w()` stays below the `require_c()`
+  // of the import before it: every bundle prints what the source prints.
+  // `exports.x = 1` keeps its wrapper because `Object.keys(d)` holds the
+  // default import as a value. `module.exports = {...}` always keeps it.
+  for (const [name, commonjs] of [
+    ["LiftedExportsHeldAsValue", `exports.x = 1;`],
+    ["ModuleExportsObject", `module.exports = { x: 1 };`],
+  ]) {
+    test.concurrent(`edgecase/WrappedESMImportAfterCommonJSImport${name}`, async () => {
+      using dir = tempDir("cjs-then-wrapped-esm", {
+        "entry.mjs": `import "./a.mjs";\nimport("./lazy.mjs");\n`,
+        "a.mjs": `import d from "./c.cjs";\nimport "./w.mjs";\nconsole.log("a", Object.keys(d).join());\n`,
+        "c.cjs": `console.log("cjs");\nglobalThis.ready = true;\n${commonjs}\n`,
+        "lazy.mjs": `import "./w.mjs";\n`,
+        "w.mjs": `console.log("w, ready =", globalThis.ready);\n`,
+      });
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      const source = await run("entry.mjs");
+      expect(source).toEqual({ stdout: "cjs\nw, ready = true\na x\n", stderr: "", exitCode: 0 });
+
+      const modes = {
+        bun: ["--target=bun"],
+        node: ["--target=node"],
+        browser: ["--target=browser"],
+        minify: ["--target=bun", "--minify"],
+      };
+      const bundles = await Promise.all(
+        Object.entries(modes).map(async ([mode, flags]) => {
+          const build = await run("build", ...flags, "entry.mjs", `--outdir=out-${mode}`);
+          expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+          return [mode, await run(`out-${mode}/entry.js`)];
+        }),
+      );
+      expect(Object.fromEntries(bundles)).toEqual({ bun: source, node: source, browser: source, minify: source });
+    });
+  }
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -929,6 +929,10 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
 void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
+    // end() waited for these bytes. uWS shuts a connection down behind a response that is done, and a tunnel has none: its FIN goes out here, and it still reads.
+    if (ended && isTunnel(this) && !us_socket_is_shut_down(socket)) {
+        us_socket_shutdown(socket);
+    }
     updateTunnelIdle();
     queueDrainReport();
 }

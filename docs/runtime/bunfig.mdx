@@ -201,6 +201,28 @@ pathIgnorePatterns = ["vendor/**", "submodules/**", "fixtures/**"]
 
 Equivalent CLI flag: `--path-ignore-patterns`. CLI flags override the `bunfig.toml` value entirely.
 
+### `test.filePatterns`
+
+Choose which files are test files with glob patterns. Can be a string or an array of strings. The patterns replace the default rule, which takes every file whose name ends in `.test`, `_test`, `.spec` or `_spec` before its extension.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+filePatterns = ["**/*.itest.ts", "**/__tests__/*.unit.tsx"]
+```
+
+Each pattern is matched against the file path relative to the project root, like `pathIgnorePatterns`. `*` does not cross a `/`, so use `**/*.itest.ts` to match at any depth. Only files with a JavaScript or TypeScript extension are considered. A positional filter such as `bun test nested` still narrows the matched set, `pathIgnorePatterns` still excludes from it, and a file passed by path (`bun test ./b.test.ts`) runs whether or not it matches.
+
+### `test.isolate`
+
+Run each test file in a fresh global object, as if you passed `--isolate`. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+isolate = true
+```
+
+The `--isolate` and `--no-isolate` CLI flags override this setting. `--parallel` implies `--isolate` unless `--no-isolate` is passed. See [Parallel & isolated test runs](/test/parallel#--isolate).
+
 ### `test.smol`
 
 Same as the top-level `smol` field, but only applies to `bun test`.
@@ -379,6 +401,8 @@ Enable the dots reporter, which prints one dot per test. Default `false`.
 dots = true
 ```
 
+Equivalent to the `--dots` flag.
+
 #### `test.reporter.junit`
 
 Enable JUnit XML reporting and specify the output file path.
@@ -388,7 +412,7 @@ Enable JUnit XML reporting and specify the output file path.
 junit = "test-results.xml"
 ```
 
-CI systems and other tools can consume the report.
+CI systems and other tools can consume the report. The `--reporter-outfile` CLI flag overrides the output file path.
 
 ## Package manager
 

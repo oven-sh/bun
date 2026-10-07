@@ -82,6 +82,17 @@ By default, Bun looks for test files starting from the current working directory
 root = "src"  # Only scan for tests in the src directory
 ```
 
+### Changing the File Patterns
+
+To use a naming scheme other than the default suffixes, set `filePatterns` in `bunfig.toml`. The globs replace the default rule and are matched against the path relative to the project root:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+filePatterns = ["**/*.itest.ts"]
+```
+
+See [File Patterns](/test/configuration#file-patterns) for the details.
+
 ## Execution Order
 
 Tests run in the following order:

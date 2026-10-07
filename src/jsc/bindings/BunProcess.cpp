@@ -400,7 +400,7 @@ enum class ReplacedProcessEmit : uint8_t {
 };
 
 // 'beforeExit' and 'exit' for a program that replaced `process.emit`: node's `emit.call(process, event, code)`.
-static ReplacedProcessEmit emitToReplacedProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral event, int exitCode, ProcessEmitCall shape)
+static ReplacedProcessEmit emitThroughReplacedEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral event, int exitCode, ProcessEmitCall shape)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -442,7 +442,7 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
         return;
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
-    if (emitToReplacedProcessEmit(globalObject, process, "exit"_s, exitCode, shape) != ReplacedProcessEmit::No) [[unlikely]]
+    if (emitThroughReplacedEmit(globalObject, process, "exit"_s, exitCode, shape) != ReplacedProcessEmit::No) [[unlikely]]
         return;
 
     auto event = Identifier::fromString(vm, "exit"_s);
@@ -961,7 +961,7 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    if (auto replaced = emitToReplacedProcessEmit(globalObject, process, "beforeExit"_s, exitCode, ProcessEmitCall::MakeCallback); replaced != ReplacedProcessEmit::No) [[unlikely]] {
+    if (auto replaced = emitThroughReplacedEmit(globalObject, process, "beforeExit"_s, exitCode, ProcessEmitCall::MakeCallback); replaced != ReplacedProcessEmit::No) [[unlikely]] {
         // node's MakeCallback runs the checkpoint after each call of `emit`, whatever it returned.
         if (replaced == ReplacedProcessEmit::Called)
             globalObject->drainMicrotasks();

@@ -817,6 +817,11 @@ export const defines: Flag[] = [
     desc: "Compile usockets bsd_* syscall fault-injection hooks (runtime-armed via bun:internal-for-testing)",
   },
   {
+    flag: "BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1",
+    when: c => c.disallowCodeGenerationFromStrings,
+    desc: "--disallow-code-generation-from-strings=strict as a compile-time constant",
+  },
+  {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
     flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
     when: c => c.debug && !c.ci,

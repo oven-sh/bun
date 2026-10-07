@@ -6,6 +6,12 @@ import { bunEnv, bunExe, isDebug, nodeExe, tempDir } from "harness";
 const refused = "EvalError: Code generation from strings disallowed for this context";
 const flag = "--disallow-code-generation-from-strings";
 const strict = flag + "=strict";
+// A build of Bun configured with disallowCodeGenerationFromStrings (scripts/build/config.ts) has
+// =strict as a constant, and reports it in process.execArgv with no flag given.
+const builtStrict =
+  Bun.spawnSync({ cmd: [bunExe(), "-p", `process.execArgv.includes("${strict}")`], env: bunEnv })
+    .stdout.toString()
+    .trim() === "true";
 
 const files = {
   "worker.mjs": `
@@ -244,7 +250,7 @@ const graph = (viaEval: unknown, viaFunction: unknown) => ({
   afterDispose: [viaEval, viaFunction],
 });
 
-describe.concurrent("--disallow-code-generation-from-strings", () => {
+describe.concurrent.skipIf(builtStrict)("--disallow-code-generation-from-strings", () => {
   test("without the flag, every route makes script", async () => {
     const { stdout, exitCode } = await run([]);
     expect(JSON.parse(stdout)).toEqual({
@@ -501,5 +507,33 @@ describe.concurrent("--disallow-code-generation-from-strings", () => {
       expect(stderr).toContain(" 2 pass\n 0 fail\n");
       expect(exitCode).toBe(0);
     });
+  });
+});
+
+describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", () => {
+  test.each([
+    ["no flag", [], [strict]],
+    ["the flag, which does not lower it", [flag], [flag, strict]],
+    ["=strict", [strict], [strict]],
+  ] as const)("refuses every way a string becomes script, with %s", async (_, args, execArgv) => {
+    const { stdout, exitCode } = await run([...args]);
+    expect(JSON.parse(stdout)).toEqual({
+      execArgv,
+      evalAndFunction: all(Object.keys(evalAndFunction), refused),
+      everythingElse: all(Object.keys(everythingElse), refused),
+      notScriptFromAString,
+      workers: workers("EvalError", [...execArgv], given => [...given, strict]),
+      graph: graph("EvalError", "EvalError"),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("--inspect is a startup error with no flag", async () => {
+    const { stdout, stderr, exitCode } = await run(["--inspect=127.0.0.1:0"]);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: "",
+      stderr: `error: --inspect cannot be used with ${strict}: the inspector evaluates code from strings`,
+    });
+    expect(exitCode).toBe(1);
   });
 });

@@ -416,6 +416,13 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
   }
+  // `bun_disallow_code_generation_from_strings`: `bun_core::code_generation_from_strings()` is the
+  // constant `Disallowed` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
+  // does not import the Rust symbol).
+  rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
+  if (cfg.disallowCodeGenerationFromStrings) {
+    rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string

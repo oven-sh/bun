@@ -138,6 +138,12 @@ export interface Config {
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Build with `--disallow-code-generation-from-strings=strict` always on: the level is a
+   * compile-time constant in Rust and C++, so no flag, environment variable or API of the built
+   * binary lowers it, and what it guards is compiled out.
+   */
+  disallowCodeGenerationFromStrings: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -353,6 +359,7 @@ export interface PartialConfig {
   valgrind?: boolean;
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
+  disallowCodeGenerationFromStrings?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -1287,6 +1294,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     valgrind,
     fuzzilli,
     socketFaultInjection,
+    disallowCodeGenerationFromStrings: partial.disallowCodeGenerationFromStrings ?? false,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1659,6 +1667,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
+  if (cfg.disallowCodeGenerationFromStrings) features.push("disallow-code-generation-from-strings");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

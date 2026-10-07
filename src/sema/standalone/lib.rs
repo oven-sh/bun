@@ -151,8 +151,8 @@ pub fn peak_rss() -> u64 {
 // Here and not beside what it tests: this crate has what a test binary needs to link (`native`).
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use bun_sema::resolve::{displayed_path, join};
-    use bun_sema_driver::host::{from_native, to_native};
+    use bun_sema::resolve::{Host, displayed_path, join};
+    use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
 
     #[test]
     fn a_directory_in_the_root_can_be_named_like_a_root_of_typescript() {
@@ -180,5 +180,20 @@ mod tests {
         assert_eq!(to_native(&join(&inside, b"../b")), b"/c:/b");
         assert_eq!(&*displayed_path(&join(&inside, b"../..")), b"/");
         assert_eq!(&*displayed_path(&join(&inside, b"../../..")), b"/");
+        // On the command line.
+        assert_eq!(
+            from_argument(&inside, b"/c:/a/b.ts"),
+            from_native(b"/c:/a/b.ts")
+        );
+        assert_eq!(from_argument(&inside, b"b.ts"), from_native(b"/c:/a/b.ts"));
+        assert_eq!(from_argument(&inside, b"c:/a"), drive);
+    }
+
+    #[test]
+    fn the_real_path_of_what_is_below_the_marked_root_is_below_it() {
+        // No test can make a directory in `/`. This one is there, and is no link.
+        let disk = Disk::with_already_read(1, Default::default(), b"/");
+        assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
+        assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");
     }
 }

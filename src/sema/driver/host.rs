@@ -70,6 +70,15 @@ pub fn from_native(path: &[u8]) -> Vec<u8> {
     }
 }
 
+/// A path of the command line, which is relative to `cwd`. Where `/` is the root of the file system,
+/// one that begins with it is a native path.
+pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    match !cfg!(windows) && path.starts_with(b"/") {
+        true => from_native(path),
+        false => join(cwd, path),
+    }
+}
+
 /// The entries of a directory. The names are sorted.
 #[derive(Default)]
 struct Listing {
@@ -536,8 +545,9 @@ impl Disk {
         let real_parent = match self.real_directories.get_ref(parent) {
             Some(known) => known,
             None => {
-                let real = if parent == b"/" {
-                    b"/".to_vec()
+                // A root is where it is. See `root_length` for the second one.
+                let real = if matches!(parent, b"/" | b"/\0") {
+                    parent.to_vec()
                 } else {
                     self.real_path_of(parent)
                 };

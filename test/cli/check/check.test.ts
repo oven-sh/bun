@@ -15079,6 +15079,53 @@ describe.concurrent("--check", () => {
       expect(exitCode).toBe(1);
     });
 
+    // A flag is for the projects that are reported.
+    test.concurrent.each([
+      [["--strict"], ["scripts/s.ts"]],
+      [
+        [".", "--strict"],
+        ["packages/a/a.ts", "scripts/s.ts"],
+      ],
+      [
+        ["-b", "--strict"],
+        ["packages/a/a.ts", "scripts/s.ts"],
+      ],
+      [["."], []],
+    ])("in a project with files, and references below it: %j", async (args, files) => {
+      const loose = { ...composite, strict: false };
+      const implicitAny = `export function f(x) {\n  return x;\n}\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: loose,
+          include: ["scripts"],
+          references: [{ path: "packages/a" }],
+        }),
+        "scripts/s.ts": implicitAny,
+        "packages/a/tsconfig.json": JSON.stringify({ compilerOptions: loose, include: ["*.ts"] }),
+        "packages/a/a.ts": implicitAny,
+      });
+      const { stdout } = await check(dir, args);
+      expect(stdout.split("\n").filter(Boolean)).toEqual(
+        files.map(file => `${file}(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`),
+      );
+    });
+
+    test.concurrent("nothing is written, so no file would be overwritten, with references too", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...base, noEmit: false, allowJs: true },
+          include: ["src"],
+          references: [{ path: "lib" }],
+        }),
+        "src/a.js": `export const a = 1;\n`,
+        "src/b.ts": wrong("b"),
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
+        "lib/l.ts": `export const l = 1;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe(error("src/b.ts"));
+    });
+
     test.concurrent.each([
       [[], true],
       [["-b"], false],

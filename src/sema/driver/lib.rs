@@ -617,7 +617,7 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
     // directory, not to the configuration file that it overrides.
     let cwd = host::from_native(request.cwd);
     let absolute = |value: &Json| match value {
-        Json::String(path) => Json::String(join(&cwd, path)),
+        Json::String(path) => Json::String(host::from_argument(&cwd, path)),
         other => other.clone(),
     };
     request
@@ -1052,7 +1052,7 @@ pub fn check_provided_then<R>(
     };
     let cwd = host::from_native(request.cwd);
     let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
-    let project = named.map_or_else(|| cwd.clone(), |it| join(&cwd, it));
+    let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
     let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
@@ -1060,7 +1060,7 @@ pub fn check_provided_then<R>(
         disk.bundled_libs = Some(libs);
     }
     let script_kinds = request.script_kinds.iter().map(|(path, kind)| {
-        let path = disk.as_written(&join(&cwd, path));
+        let path = disk.as_written(&host::from_argument(&cwd, path));
         (to_path(&path, disk.is_case_sensitive()).into_owned(), *kind)
     });
     disk.script_kinds = script_kinds.collect();
@@ -1200,11 +1200,11 @@ struct Projects {
 
 impl Projects {
     fn load(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &config::Project {
-        // `bun check` never emits. Without `references` it behaves like `tsc --noEmit`, so output-path errors are not reported. With
-        // `references` it behaves like `tsc -b`, which has no `--noEmit`.
+        // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
+        // `tsc -b` has no such option.
         self.loaded.entry(config.to_vec()).or_insert_with(|| {
-            config::load_overriding(disk, &Session::new(), config, &|has_references| {
-                overriding_options(request, has_references)
+            config::load_overriding(disk, &Session::new(), config, &|_| {
+                overriding_options(request, false)
             })
         })
     }
@@ -1426,7 +1426,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let is_case_sensitive = disk.is_case_sensitive();
     let is_same = |a: &[u8], b: &[u8]| is_same_path(a, b, is_case_sensitive);
     let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
-        .map(|path| disk.as_written(&join(&cwd, path)))
+        .map(|path| disk.as_written(&host::from_argument(&cwd, path)))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
     let not_found = (missing.iter()).map(|path| global(6053, &[displayed_path(path)]));
     report.diagnostics.extend(not_found);
@@ -1434,7 +1434,8 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     let project = request.project;
-    let explicit = match project.map(|project| disk.as_written(&join(&cwd, project))) {
+    let explicit = match project.map(|project| disk.as_written(&host::from_argument(&cwd, project)))
+    {
         // `ResolvedProjectPaths`, and `upToDateStatusTypeConfigFileNotFound`.
         Some(path) if request.build => {
             let config = config::resolve_config_file_name_of_project_reference(&path);
@@ -2040,8 +2041,9 @@ fn check_with_references(
     let mut graph = Graph {
         host,
         session: &configuration,
-        // The command line of a plain `tsc` is for the project that it is given.
-        overrides: match request.build || follows_references {
+        // The command line is for the projects that are reported: that of a plain `tsc`, for the
+        // one that it is given.
+        overrides: match reports_references {
             true => overriding_options(request, true),
             false => Vec::new(),
         },

@@ -73,6 +73,45 @@ console.log(stderr); // Buffer(0) []
 
 ---
 
+## Colors and terminal output
+
+By default, Bun Shell prints the output of a command and also buffers it for the result. To do both, it gives the command a pipe for stdout and a pipe for stderr, and copies what the command writes to the terminal. The command cannot tell that its output ends on a terminal, so most programs turn off colors, progress bars and prompts.
+
+To give a command the terminal itself, call `.inheritStdio()`. The command then writes to the stdout and stderr of the Bun process directly, as it does under `Bun.spawn` with `stdio: "inherit"`.
+
+```js
+import { $ } from "bun";
+
+await $`git log --oneline -5`.inheritStdio(); // colors, as in a terminal
+```
+
+Nothing is buffered in this mode:
+
+- The result has an empty `stdout` and `stderr`, and its output methods (`.text()`, `.json()`, ...) throw.
+- `.inheritStdio()` cannot be combined with `.quiet()` or an output method such as `.text()` on the same command.
+- The command finishes when its process exits. In the default mode it finishes when its output pipes close, which is later if it leaves a background process that holds them open.
+
+To make it the default for all commands, call `.inheritStdio()` on the `$` function itself. A command can still buffer its output with `.quiet()` or an output method.
+
+```js
+import { $ } from "bun";
+
+$.inheritStdio();
+
+await $`git status`; // written to the terminal, not buffered
+const head = await $`git rev-parse HEAD`.text(); // buffered, not printed
+```
+
+To get the colors and also the bytes, keep the default mode and ask the program for colors. Many programs have a flag such as `--color=always` or read the `FORCE_COLOR` environment variable.
+
+```js
+import { $ } from "bun";
+
+const { stdout } = await $`FORCE_COLOR=1 eslint .`;
+```
+
+---
+
 ## Error handling
 
 By default, a non-zero exit code throws an error. The `ShellError` contains information about the command that ran.

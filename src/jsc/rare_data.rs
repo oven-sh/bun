@@ -754,8 +754,7 @@ impl RareData {
         self.h2_padded_frame_buffer.get_or_insert(buffer);
     }
 
-    /// Empty scratch with the capacity the last header call left. By value, like
-    /// [`Self::take_h2_padded_frame_buffer`]: a header value's `toString` can make another header call.
+    /// By value, like [`Self::take_h2_padded_frame_buffer`]: a value's `toString` can re-enter.
     pub fn take_h2_header_scratch(&mut self) -> H2HeaderScratch {
         self.h2_header_scratch.take().unwrap_or_default()
     }

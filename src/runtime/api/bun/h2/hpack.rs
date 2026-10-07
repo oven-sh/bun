@@ -50,8 +50,7 @@ impl Coder {
         write_table_size_update(dst, offset, cap)
     }
 
-    /// Append one header block to `dst`: the pending §6.3 size update, then every field of `block`
-    /// or none. On `Err` nothing was appended and the size update stays pending.
+    /// Appends the pending §6.3 size update, then all of `block`, to `dst`, or nothing on `Err`.
     pub(crate) fn encode_block(
         &mut self,
         block: &HeaderBlock,

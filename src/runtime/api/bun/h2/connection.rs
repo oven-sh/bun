@@ -12,7 +12,7 @@ use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
-use bun_http::lshpack::HeaderBlock;
+use bun_http::lshpack::{HeaderBlock, HpackError};
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
 
@@ -1921,34 +1921,28 @@ impl Connection {
         self.enc_block.push(name, value, never_index).is_ok()
     }
 
-    /// HPACK-encode the current block, every field or none. `None` when the encoder refuses the
-    /// block: its table is as it was, and nothing may be sent for this block.
-    fn encode_header_block(&mut self) -> Option<Vec<u8>> {
+    /// HPACK-encode the current block, every field or none.
+    fn encode_header_block(&mut self) -> Result<Vec<u8>, HpackError> {
         let mut block = std::mem::take(&mut self.enc_buf);
         block.clear();
-        if self
-            .hpack
-            .encode_block(&self.enc_block, &mut block)
-            .is_err()
-        {
-            self.enc_buf = block;
-            return None;
+        match self.hpack.encode_block(&self.enc_block, &mut block) {
+            Ok(()) => Ok(block),
+            Err(err) => {
+                self.enc_buf = block;
+                Err(err)
+            }
         }
-        Some(block)
     }
 
-    /// Encode the accumulated header block and emit it as a HEADERS frame, splitting into
-    /// CONTINUATION frames when it exceeds the peer's max frame size (§4.3/§6.10), and advance the
-    /// send-side stream state. Returns false, with nothing sent, when the encoder refuses the block.
+    /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
+    /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
     pub(crate) fn send_header_block(
         &mut self,
         sink: &impl Sink,
         stream_id: u32,
         end_stream: bool,
-    ) -> bool {
-        let Some(block) = self.encode_header_block() else {
-            return false;
-        };
+    ) -> Result<(), HpackError> {
+        let block = self.encode_header_block()?;
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
 
@@ -2004,7 +1998,7 @@ impl Connection {
         if stream_id > self.last_stream_id {
             self.last_stream_id = stream_id;
         }
-        true
+        Ok(())
     }
 
     /// Send DATA honoring connection + stream send windows and the max frame size. Returns the
@@ -2079,16 +2073,13 @@ impl Connection {
 
     /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
     /// promised request headers staged via begin_header_block/add_header (RFC 9113 §6.6).
-    /// Returns false, with nothing sent, when the encoder refuses the block.
     pub(crate) fn send_push_promise(
         &mut self,
         sink: &impl Sink,
         parent_id: u32,
         promised_id: u32,
-    ) -> bool {
-        let Some(block) = self.encode_header_block() else {
-            return false;
-        };
+    ) -> Result<(), HpackError> {
+        let block = self.encode_header_block()?;
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 
         // First frame: PUSH_PROMISE = 4-byte promised id + (head of) the header block.
@@ -2134,7 +2125,7 @@ impl Connection {
         if promised_id > self.last_stream_id {
             self.last_stream_id = promised_id;
         }
-        true
+        Ok(())
     }
 }
 
@@ -2377,7 +2368,7 @@ mod tests {
         assert!(client.add_header(b":scheme", b"http", false));
         assert!(client.add_header(b":path", b"/x", false));
         assert!(client.add_header(b":authority", b"localhost", false));
-        client.send_header_block(&csink, 1, true);
+        client.send_header_block(&csink, 1, true).unwrap();
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
             client.streams.get(&1).map(|s| s.state),
@@ -2418,7 +2409,7 @@ mod tests {
         assert!(server.add_header(b":scheme", b"http", false));
         assert!(server.add_header(b":path", b"/pushed", false));
         assert!(server.add_header(b":authority", b"localhost", false));
-        server.send_push_promise(&ssink, 1, 2);
+        server.send_push_promise(&ssink, 1, 2).unwrap();
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
             server.streams.get(&2).map(|s| s.state),
@@ -2470,7 +2461,7 @@ mod tests {
         // Open a stream (send side) with a tiny peer window.
         c.begin_header_block();
         assert!(c.add_header(b":method", b"POST", false));
-        c.send_header_block(&sink, 1, false);
+        c.send_header_block(&sink, 1, false).unwrap();
         sink.out.borrow_mut().clear();
         if let Some(s) = c.streams.get_mut(&1) {
             s.send_window = SendWindow::new(4);

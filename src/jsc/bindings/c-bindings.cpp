@@ -487,10 +487,7 @@ size_t lshpack_wrapper_encode(lshpack_wrapper* self,
     return ptr - start;
 }
 
-// Encodes a whole header block or none of it. `fields` holds two uint32_t per field (name length
-// with never_index in bit 31, value length), `bytes` each name followed by its value. Returns the
-// bytes written, 0 when the block is refused (no field reached the encoder), or SIZE_MAX when the
-// encoder could not allocate after it inserted earlier fields.
+// Returns the bytes written, 0 if the block is refused (encoder untouched), or SIZE_MAX if lshpack ran out of memory mid-block.
 size_t lshpack_wrapper_encode_block(lshpack_wrapper* self,
     const unsigned char* bytes, const uint32_t* fields, size_t field_count,
     unsigned char* dst, size_t dst_len)

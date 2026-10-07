@@ -1965,8 +1965,7 @@ impl Stream {
     }
 }
 
-/// The per-VM header scratch, held for one outbound header call. The walk stages its validated
-/// fields in `block`. Nothing reaches the HPACK encoder before `encode_header_list`.
+/// The per-VM header scratch, held for one outbound header call and put back on drop.
 struct HeaderScratch<'a> {
     global: &'a JSGlobalObject,
     scratch: H2HeaderScratch,
@@ -2020,8 +2019,7 @@ impl core::ops::DerefMut for HeaderScratch<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    /// The only call into the HPACK encoder: every field of `scratch.block` into
-    /// `scratch.encoded`, or none. `Err` leaves the dynamic table as it was.
+    /// The only call into the HPACK encoder: all of `scratch.block` to `scratch.encoded`, or none.
     fn encode_header_list(&self, scratch: &mut H2HeaderScratch) -> crate::Result<()> {
         scratch.encoded.clear();
         // The 256 is room for the pad-length byte and the padding of a PADDED HEADERS frame.
@@ -2029,8 +2027,7 @@ impl H2FrameParser {
             .encoded
             .try_reserve(scratch.block.encode_bound() + 256)
             .map_err(|_| bun_alloc::AllocError)?;
-        // Taking the cork can flush another session through transport JS. Take it before the
-        // encode, so that JS cannot run between the encode and the block's last write.
+        // Cork first: the hand-over can run transport JS, and none may run from encode to write.
         if ENABLE_AUTO_CORK {
             self.cork();
         }
@@ -2518,8 +2515,7 @@ impl H2FrameParser {
     }
 
     fn cork(&self) {
-        // Read the slot again after each forced uncork: its transport JS can cork any parser,
-        // this one too, and those frames must stay in the buffer.
+        // Loop: a forced uncork runs transport JS, which can cork again. Keep those frames.
         while let Some(corked) = Self::corked() {
             if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
@@ -3253,9 +3249,8 @@ impl H2FrameParser {
         }
     }
 
-    /// `write()` for a session whose transport write runs user JS (`transport_write_runs_js`):
-    /// the `onWrite` handler (`socket.write()` on a JS stream), or a native socket layered on
-    /// a JS Duplex. That call runs the transport's
+    /// `write()` for a session whose transport write runs user JS (`transport_write_runs_js`:
+    /// the `onWrite` handler, or a socket layered on a JS Duplex). That call runs the transport's
     /// `_write` synchronously, and user code there can serialize another frame (ping(),
     /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
     /// handed over where another frame may legally follow: at a frame boundary outside a header
@@ -7024,8 +7019,7 @@ impl H2FrameParser {
                     JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                     JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
                 );
-                // The peer waits for this response: reset the stream, as node does. A refused
-                // 1xx block leaves the stream open for the final response.
+                // Reset like node. After a refused 1xx block the final response still follows.
                 if !scratch.is_informational() {
                     this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
                 }
@@ -7050,8 +7044,7 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        // From here to the last write of the block nothing returns, throws or runs JS: a block
-        // that is in the encoder's table goes on the wire.
+        // Nothing from here to the block's last write may return, throw or run JS.
         if let Err(err) = this.encode_header_list(&mut scratch) {
             if matches!(err, crate::Error::Alloc(_)) {
                 return Err(global_object.throw(format_args!("Failed to allocate header buffer")));

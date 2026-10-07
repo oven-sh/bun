@@ -170,9 +170,7 @@ impl HPACK {
         })
     }
 
-    /// Encodes every field of `block` into the spare capacity of `dst`, or none of them: on `Err`
-    /// no field entered the dynamic table. The peer mirrors that table, so a field that enters it
-    /// and is not sent puts every later header block of the connection out of step.
+    /// Encodes all of `block` into `dst`'s spare capacity, or none: `Err` leaves the table as is.
     pub fn encode_block(
         &mut self,
         block: &HeaderBlock,
@@ -357,8 +355,7 @@ unsafe extern "C" {
         buffer_len: usize,
         buffer_offset: usize,
     ) -> usize;
-    // `fields` is `field_count` pairs of u32 that describe `bytes` (see `HeaderBlock`). The C
-    // side reads both and writes at most `dst_len` bytes at `dst`.
+    // `fields` holds `field_count` pairs of u32 that describe `bytes` (see `HeaderBlock`).
     fn lshpack_wrapper_encode_block(
         self_: &mut HPACK,
         bytes: *const u8,

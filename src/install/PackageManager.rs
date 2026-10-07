@@ -1466,6 +1466,36 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// Allocates the env loader that `holder::ENV_LOADER` owns for the process lifetime.
+#[inline(always)]
+fn new_env_loader() -> &'static mut dot_env::Loader {
+    let loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
+    holder::ENV_LOADER.store(loader_ptr);
+    // SAFETY: `init()` runs on the main thread before any other access to the
+    // loader, and the allocation is never freed.
+    unsafe { &mut *loader_ptr }
+}
+
+/// Reads the `--env-file` paths before `init()` changes the cwd they are relative to.
+#[cold]
+#[inline(never)]
+fn load_explicit_env_files(env_files: &[&[u8]]) -> Result<(), Error> {
+    // `init()` runs again after it creates a missing package.json; the cwd has moved by then.
+    if !holder::ENV_LOADER.load().is_null() {
+        return Ok(());
+    }
+    let env = new_env_loader();
+    env.load_process()?;
+    let env_suffix = env.default_suffix();
+    env.load(
+        &dot_env::DirEntryKeys(Vec::new()),
+        env_files,
+        env_suffix,
+        true,
+    )?;
+    Ok(())
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1483,6 +1513,10 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
+    if !cli.env_files.is_empty() {
+        load_explicit_env_files(cli.env_files)?;
+    }
+
     if cli.global {
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
@@ -1883,31 +1917,30 @@ pub fn init(
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
-    // SAFETY: `init()` runs once on the main thread before any other access to
-    // the singleton. Allocate into a process-lifetime static (same pattern as
-    // `holder::RAW_PTR`) instead of `Box::leak`.
-    let env: &mut dot_env::Loader = unsafe {
-        let loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
-        holder::ENV_LOADER.store(loader_ptr);
-        &mut *loader_ptr
+    let env: &mut dot_env::Loader = if cli.env_files.is_empty() {
+        let env = new_env_loader();
+        env.load_process()?;
+        let env_suffix = env.default_suffix();
+        let skip_default_env = cli.no_env_file || ctx.args.disable_default_env_files;
+        // Copy the listing's basenames out under `entries_mutex`; `.data` must
+        // only be probed while the lock is held.
+        let env_probe_keys = {
+            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            dot_env::DirEntryKeys(
+                entries_option
+                    .data
+                    .iter()
+                    .map(|(k, _)| Box::from(&**k))
+                    .collect(),
+            )
+        };
+        env.load(&env_probe_keys, &[], env_suffix, skip_default_env)?;
+        env
+    } else {
+        // SAFETY: `load_explicit_env_files` stored this loader when `init()`
+        // started; nothing else holds a reference to it yet.
+        unsafe { &mut *holder::ENV_LOADER.load() }
     };
-
-    env.load_process()?;
-    let env_suffix = env.default_suffix();
-    let skip_default_env = cli.no_env_file || ctx.args.disable_default_env_files;
-    // Copy the listing's basenames out under `entries_mutex`; `.data` must
-    // only be probed while the lock is held.
-    let env_probe_keys = {
-        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
-        dot_env::DirEntryKeys(
-            entries_option
-                .data
-                .iter()
-                .map(|(k, _)| Box::from(&**k))
-                .collect(),
-        )
-    };
-    env.load(&env_probe_keys, cli.env_files, env_suffix, skip_default_env)?;
 
     initialize_store();
 

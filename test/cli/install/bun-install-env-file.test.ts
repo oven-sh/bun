@@ -1,22 +1,31 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/12011
 // `bun install` hardcoded the dotenv suffix to Production and never looked at
 // --env-file / --no-env-file / NODE_ENV, so bunfig `$VAR` substitution always
 // used .env.production (or .env) regardless of what the user asked for.
 
-function projectFiles(port: number) {
-  return {
-    "package.json": JSON.stringify({
-      name: "env-file-install",
-      version: "1.0.0",
-      dependencies: { "no-deps": "1.0.0" },
-    }),
-    "bunfig.toml": `[install]
+type Files = Record<string, string>;
+
+const packageJson = JSON.stringify({
+  name: "env-file-install",
+  version: "1.0.0",
+  dependencies: { "no-deps": "1.0.0" },
+});
+
+// The registry token comes from `$NPM_TOKEN`, so the Authorization header the
+// registry receives shows which `.env*` file install loaded.
+const bunfig = (port: number) => `[install]
 cache = false
 registry = { url = "http://localhost:${port}/", token = "$NPM_TOKEN" }
-`,
+`;
+
+function projectFiles(port: number): Files {
+  return {
+    "package.json": packageJson,
+    "bunfig.toml": bunfig(port),
     ".env": "NPM_TOKEN=BASE\n",
     ".env.development": "NPM_TOKEN=DEV\n",
     ".env.production": "NPM_TOKEN=PROD\n",
@@ -25,10 +34,16 @@ registry = { url = "http://localhost:${port}/", token = "$NPM_TOKEN" }
   };
 }
 
-async function runInstall(
-  extraArgs: string[],
-  extraEnv: Record<string, string> = {},
-): Promise<{ auth: string[]; stderr: string }> {
+type RunOptions = {
+  files: (port: number) => Files;
+  argv: string[];
+  /** Relative to the temp dir. */
+  cwd?: string;
+  env?: (root: string, port: number) => Record<string, string>;
+};
+
+/** Runs `bun <argv>` against a loopback registry that records each Authorization header. */
+async function run(opts: RunOptions): Promise<{ auth: string[]; stderr: string }> {
   const received: string[] = [];
   await using server = Bun.serve({
     port: 0,
@@ -38,17 +53,18 @@ async function runInstall(
     },
   });
 
-  using dir = tempDir("install-env-file", projectFiles(server.port));
+  using dir = tempDir("install-env-file", opts.files(server.port));
+  const root = String(dir);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...extraArgs],
-    cwd: String(dir),
+    cmd: [bunExe(), ...opts.argv],
+    cwd: join(root, opts.cwd ?? "."),
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
       BUN_ENV: undefined,
       NPM_TOKEN: undefined,
-      ...extraEnv,
+      ...opts.env?.(root, server.port),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -57,6 +73,9 @@ async function runInstall(
   const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { auth: received, stderr };
 }
+
+const runInstall = (extraArgs: string[], extraEnv: Record<string, string> = {}) =>
+  run({ files: projectFiles, argv: ["install", ...extraArgs], env: () => extraEnv });
 
 describe("bun install .env loading (#12011)", () => {
   test.concurrent("--env-file loads the requested file for bunfig $VAR substitution", async () => {
@@ -104,53 +123,17 @@ describe("bun install .env loading (#12011)", () => {
   });
 
   test.concurrent("bunfig `env = false` suppresses auto-loading", async () => {
-    const received: string[] = [];
-    await using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        received.push(req.headers.get("authorization") ?? "<none>");
-        return new Response("{}", { status: 404 });
-      },
+    const { auth, stderr } = await run({
+      files: port => ({ ...projectFiles(port), "bunfig.toml": `env = false\n${bunfig(port)}` }),
+      argv: ["install"],
     });
-    using dir = tempDir("install-bunfig-env-false", {
-      ...projectFiles(server.port),
-      "bunfig.toml": `env = false
-[install]
-cache = false
-registry = { url = "http://localhost:${server.port}/", token = "$NPM_TOKEN" }
-`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: undefined },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(received[0]).toBe("Bearer $NPM_TOKEN");
+    expect(auth[0]).toBe("Bearer $NPM_TOKEN");
     expect(stderr).not.toContain(".env");
   });
 
   test.concurrent("`bun --env-file=PATH install` (flag before the subcommand) works", async () => {
-    const received: string[] = [];
-    await using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        received.push(req.headers.get("authorization") ?? "<none>");
-        return new Response("{}", { status: 404 });
-      },
-    });
-    using dir = tempDir("install-env-file-global-flag", projectFiles(server.port));
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--env-file=.env.custom", "install"],
-      cwd: String(dir),
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, NPM_TOKEN: undefined },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(received[0]).toBe("Bearer CUSTOM");
+    const { auth } = await run({ files: projectFiles, argv: ["--env-file=.env.custom", "install"] });
+    expect(auth[0]).toBe("Bearer CUSTOM");
   });
 
   test.concurrent("--env-file value is consumed, not treated as a package to add", async () => {
@@ -169,6 +152,92 @@ registry = { url = "http://localhost:${server.port}/", token = "$NPM_TOKEN" }
     expect(stderr).not.toContain("unrecognised dependency format");
     expect(stdout).not.toMatch(/add v\d/);
     expect(exitCode).toBe(0);
+  });
+});
+
+// Install changes into the project root, the workspace root, or the global
+// directory before it resolves packages. Each layout puts a decoy of the same
+// name there, so a path that is resolved after the change reads the decoy.
+describe("a relative --env-file is resolved against the directory the command runs in", () => {
+  const nested = (port: number): Files => ({
+    "package.json": packageJson,
+    "bunfig.toml": bunfig(port),
+    ".env.ci": "NPM_TOKEN=ROOT\n",
+    ".env.development": "NPM_TOKEN=ROOT_DEV\n",
+    "sub/.env.ci": "NPM_TOKEN=SUB\n",
+    "sub/.env.a": "NPM_TOKEN=A\n",
+    "sub/.env.b": "NPM_TOKEN=B\n",
+    "sub/.env.development": "NPM_TOKEN=SUB_DEV\n",
+  });
+
+  const workspace = (port: number): Files => ({
+    "package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] }),
+    "bunfig.toml": bunfig(port),
+    ".env.ci": "NPM_TOKEN=ROOT\n",
+    "packages/foo/package.json": JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+    "packages/foo/.env.ci": "NPM_TOKEN=MEMBER\n",
+  });
+
+  const globalDir =
+    (extra: Files) =>
+    (port: number): Files => ({
+      "work/.env.ci": "NPM_TOKEN=WORK\n",
+      "global/bunfig.toml": bunfig(port),
+      "global/.env.ci": "NPM_TOKEN=GLOBAL\n",
+      ...extra,
+    });
+  const addGlobal = { cwd: "work", argv: ["add", "-g", "--env-file", ".env.ci", "no-deps"] };
+  const globalEnv = (root: string, port: number) => ({
+    BUN_INSTALL_GLOBAL_DIR: join(root, "global"),
+    BUN_INSTALL_BIN: join(root, "bin"),
+    BUN_CONFIG_REGISTRY: `http://localhost:${port}/`,
+  });
+
+  const rows: [label: string, opts: RunOptions, token: string][] = [
+    ["from a subdirectory", { files: nested, cwd: "sub", argv: ["install", "--env-file", ".env.ci"] }, "SUB"],
+    [
+      "from a workspace member",
+      { files: workspace, cwd: "packages/foo", argv: ["install", "--env-file", ".env.ci"] },
+      "MEMBER",
+    ],
+    ["after --cwd", { files: nested, argv: ["install", "--cwd", "sub", "--env-file", ".env.ci"] }, "SUB"],
+    ["with a ../ path", { files: nested, cwd: "sub", argv: ["install", "--env-file", "../.env.ci"] }, "ROOT"],
+    [
+      "for each file of a comma list",
+      { files: nested, cwd: "sub", argv: ["install", "--env-file=.env.a,.env.b"] },
+      "B",
+    ],
+    [
+      "for each repeated flag",
+      { files: nested, cwd: "sub", argv: ["install", "--env-file", ".env.a", "--env-file", ".env.b"] },
+      "B",
+    ],
+    ["by `bun add`", { files: nested, cwd: "sub", argv: ["add", "--env-file", ".env.ci", "left-pad"] }, "SUB"],
+    // Without a package.json there, install creates one and starts over.
+    [
+      "by `bun add -g` into a global directory without a package.json",
+      { ...addGlobal, files: globalDir({}), env: globalEnv },
+      "WORK",
+    ],
+    [
+      "by `bun add -g` into a global directory with a package.json",
+      { ...addGlobal, files: globalDir({ "global/package.json": "{}" }), env: globalEnv },
+      "WORK",
+    ],
+  ];
+
+  test.concurrent.each(rows)("%s", async (_label, opts, token) => {
+    const { auth } = await run(opts);
+    expect(auth[0]).toBe(`Bearer ${token}`);
+  });
+
+  test.concurrent("the default .env files still come from the project root", async () => {
+    const { auth } = await run({ files: nested, cwd: "sub", argv: ["install"] });
+    expect(auth[0]).toBe("Bearer ROOT_DEV");
   });
 });
 

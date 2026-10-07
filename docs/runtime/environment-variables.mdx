@@ -75,6 +75,8 @@ bun --env-file=.env.abc --env-file=.env.def run build
 bun install --env-file=.env.ci
 ```
 
+Bun resolves a relative path against the directory where the command runs, after `--cwd` is applied. `bun install` loads its default `.env` files from the project root, but it resolves `--env-file` the same way as the other commands.
+
 The path does not have to be a regular file. Bun reads a pipe, a FIFO, or a device until the end of the input, so secrets can reach the process without a file on disk:
 
 ```sh

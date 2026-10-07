@@ -1,4 +1,6 @@
 // A TLS handshake that finishes after this side shut its write direction down keeps the certificate verdict.
+// The last tests cover the other order on an established session: the peer closes first, while this side still has
+// writes that its transport has not completed.
 // Runs under node:test, so the same file runs on node (`node --test`) and on bun (`bun test`).
 import assert from "node:assert";
 import fs from "node:fs";
@@ -1501,3 +1503,150 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
     });
   }
 }
+
+// Two in-memory Duplexes, one per side of a connection. From `stall()` on, the side named by `stalls` keeps each chunk
+// and its write callback, as a transport does that has not completed the write. `release()` completes them in order.
+// With `peerStaysOpen`, the end() of a side does not end the other one: only the close_notify says that it closed.
+function stallingPair(stalls, { peerStaysOpen = false } = {}) {
+  const held = [];
+  let stalled = false;
+  const makeSide = name =>
+    new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (stalled && name === stalls) return void held.push([chunk, callback]);
+        sides[name === "client" ? "server" : "client"].push(chunk);
+        callback();
+      },
+      final(callback) {
+        if (!peerStaysOpen) sides[name === "client" ? "server" : "client"].push(null);
+        callback();
+      },
+    });
+  const sides = { client: makeSide("client"), server: makeSide("server") };
+  return {
+    sides,
+    held,
+    stall: () => void (stalled = true),
+    release() {
+      stalled = false;
+      for (const [chunk, callback] of held.splice(0)) {
+        sides[stalls === "client" ? "server" : "client"].push(chunk);
+        callback();
+      }
+    },
+  };
+}
+const turn = () => new Promise(resolve => setImmediate(resolve));
+
+// An established session over `pair`. `writer` is the socket on the side that can stall.
+async function connectOver(pair, stalls) {
+  const server = new tls.TLSSocket(pair.sides.server, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ key, cert }),
+  });
+  const client = tls.connect({ socket: pair.sides.client, rejectUnauthorized: false });
+  await Promise.all([
+    new Promise(secured => client.once("secureConnect", secured)),
+    new Promise(secured => server.once("secure", secured)),
+  ]);
+  // The session tickets of TLS 1.3 have left the server.
+  await turn();
+  const [writer, reader] = stalls === "server" ? [server, client] : [client, server];
+  return { client, server, writer, reader };
+}
+
+// The peer's close_notify does not end the session while the transport still has a write. Node completes that write
+// and the ones queued behind it. An answer at once fails them all, with an 'error' that an application which only
+// called write() does not expect.
+for (const side of ["client", "server"]) {
+  for (const ends of [false, true]) {
+    test(`over a Duplex: a ${side} write in flight and the write behind it complete when the peer closes its side first${ends ? ", and so does an end() behind them" : ""}`, async () => {
+      const pair = stallingPair(side);
+      const { client, server, writer, reader } = await connectOver(pair, side);
+      const log = [];
+      let received = "";
+      const bothReceived = Promise.withResolvers();
+      const bothWritten = Promise.withResolvers();
+      reader.on("data", chunk => {
+        received += chunk;
+        if (received.length === 2) bothReceived.resolve();
+      });
+      // It reads the peer's close.
+      writer.resume();
+      writer.on("error", err => log.push(`'error': ${err.message}`));
+      reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+      const closed = new Promise(resolve => writer.once("close", resolve));
+      try {
+        pair.stall();
+        writer.write("x", err => log.push(`write callback: ${err?.message}`));
+        writer.write("y", err => {
+          log.push(`queued write callback: ${err?.message}`);
+          bothWritten.resolve();
+        });
+        await turn();
+        // The peer's close_notify, then its end of the Duplex. A socket that closes at the close_notify destroys the Duplex.
+        const transportEnded = new Promise(resolve => pair.sides[side].once("end", resolve));
+        reader.end();
+        await Promise.race([transportEnded, closed]);
+        await turn();
+        assert.deepStrictEqual({ held: pair.held.length, log }, { held: 1, log: [] });
+        if (ends) writer.end();
+        pair.release();
+
+        await Promise.all([bothWritten.promise, bothReceived.promise]);
+        assert.deepStrictEqual(
+          { received, log },
+          { received: "xy", log: ["write callback: undefined", "queued write callback: undefined"] },
+        );
+        // Node leaves a socket over a half-open Duplex writable until its own end(). Bun closes it once its writes are out.
+        if (isBun || ends) await closed;
+      } finally {
+        client.destroy();
+        server.destroy();
+      }
+    });
+  }
+}
+
+test("over a Duplex: what the peer sends behind its close_notify is not kept while a write is in flight", async () => {
+  const pair = stallingPair("client", { peerStaysOpen: true });
+  const { client, server, writer, reader } = await connectOver(pair, "client");
+  const log = [];
+  let received = "";
+  const arrived = Promise.withResolvers();
+  const written = Promise.withResolvers();
+  reader.on("data", chunk => {
+    received += chunk;
+    arrived.resolve();
+  });
+  writer.resume();
+  writer.on("error", err => log.push(`'error': ${err.message}`));
+  reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+  try {
+    pair.stall();
+    writer.write("x", err => {
+      log.push(`write callback: ${err?.message}`);
+      written.resolve();
+    });
+    await turn();
+    // The next chunk of the writer's transport is the peer's close_notify. The TLS socket reads it first.
+    const closeNotify = new Promise(resolve => pair.sides.client.once("data", resolve));
+    reader.end();
+    await closeNotify;
+    const flood = Buffer.alloc(1024 * 1024, 0x17);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 128; i++) pair.sides.client.push(flood);
+    await turn();
+    const kept = process.memoryUsage.rss() - before;
+    pair.release();
+
+    await Promise.all([written.promise, arrived.promise]);
+    assert.deepStrictEqual({ received, log }, { received: "x", log: ["write callback: undefined"] });
+    // 128 MiB went in. Node's own buffering is not what this checks.
+    if (isBun) assert.ok(kept < 64 * 1024 * 1024, `kept ${kept} bytes`);
+  } finally {
+    client.destroy();
+    server.destroy();
+  }
+});

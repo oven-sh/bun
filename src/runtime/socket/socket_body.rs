@@ -3155,6 +3155,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
             && self.buffered_data_for_node_net.get().len() == 0
+            && self.socket.get().transport_idle()
     }
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of

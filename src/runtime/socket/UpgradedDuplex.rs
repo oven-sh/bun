@@ -377,6 +377,11 @@ impl UpgradedDuplex {
         Ok(ended.is_some_and(|ended| ended.to_boolean()))
     }
 
+    fn write_in_flight(this: *mut Self) -> bool {
+        // SAFETY: see handler note above.
+        !unsafe { &*this }.transport_idle()
+    }
+
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
         // SAFETY: see handler note above.
         unsafe { &*this }.write_encrypted(encoded_data);
@@ -549,6 +554,7 @@ impl UpgradedDuplex {
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),
             server_identity: Some(Self::server_identity),
+            write_in_flight: Some(Self::write_in_flight),
         }
     }
 
@@ -841,7 +847,14 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 err.message = bun_core::String::create_format(format_args!("write {}", err.code));
                 (this.handlers.on_error)(this.handlers.ctx, err.to_error_instance(global));
             } else if this.in_flight.get() == 0 {
+                let peer_close_waits = this.wrapper_ref().is_some_and(|w| w.peer_close_waits());
                 (this.handlers.on_writable)(this.handlers.ctx);
+                // That ran JS, which can close this duplex: `teardown` clears the function data.
+                if peer_close_waits && host_fn::get_function_data(function).is_some() {
+                    if let Some(w) = this.wrapper_ref() {
+                        w.answer_peer_close();
+                    }
+                }
             }
             return Ok(JSValue::UNDEFINED);
         }

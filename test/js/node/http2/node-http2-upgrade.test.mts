@@ -327,6 +327,48 @@ describe("HTTP/2 upgrade — ALPN negotiation", () => {
       netServer.close();
     }
   });
+
+  test("a client that negotiated no protocol reads the 403 over a transport that completes its writes a turn later", async () => {
+    // The server answers from its handshake callback and ends the socket. Its
+    // transport still has that write when the end arrives.
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("error", () => {});
+    h2Server.on("session", () => assert.fail("a client without ALPN must not get a session"));
+    const clientSide: Duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        serverSide.push(chunk);
+        callback();
+      },
+    });
+    const serverSide: Duplex = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        setImmediate(() => {
+          clientSide.push(chunk);
+          callback();
+        });
+      },
+    });
+    serverSide.on("error", () => {});
+    serverSide.on("close", () => clientSide.push(null));
+    h2Server.emit("connection", serverSide);
+
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false });
+    try {
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      client.on("error", () => {});
+      await new Promise(resolve => {
+        client.once("end", resolve);
+        client.once("close", resolve);
+      });
+      assert.match(received, /^HTTP\/1\.0 403 Forbidden\r\n[^]*Missing ALPN Protocol, expected `h2` to be available\./);
+    } finally {
+      client.destroy();
+      serverSide.destroy();
+    }
+  });
 });
 
 describe("HTTP/2 upgrade — varied status codes", () => {

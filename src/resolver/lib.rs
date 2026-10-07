@@ -1326,7 +1326,10 @@ pub mod fs {
             };
             if let Some(original) = in_place {
                 // SAFETY: BSSMap-owned; entries_mutex held.
-                unsafe { (*original).data.clear() };
+                unsafe {
+                    entries.inherit_case_verdict(&*original);
+                    (*original).data.clear();
+                }
             }
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;

@@ -44,7 +44,10 @@ pub struct JSMySQLQuery {
     // Process-lifetime backrefs (JSC_BORROW on m_ctx payload).
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
-    query: MySQLQuery,
+    query: JsCell<MySQLQuery>,
+    /// `run()` is encoding this query. That runs the getters and `toJSON` of its
+    /// values, and they can call `cancel()` on it.
+    encoding: Cell<bool>,
 }
 
 impl JSMySQLQuery {
@@ -95,7 +98,12 @@ impl JSMySQLQuery {
                 NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
             ),
             global_object: BackRef::new(global_this),
-            query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
+            query: JsCell::new(MySQLQuery::init(
+                query.to_bun_string(global_this)?,
+                bigint,
+                simple,
+            )),
+            encoding: Cell::new(false),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,
@@ -173,17 +181,17 @@ impl JSMySQLQuery {
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // A pending request has no COM_QUERY or COM_STMT_EXECUTE on the wire. A request
-        // that the server has stays: MySQL stops it only with KILL QUERY on a second
-        // connection.
-        if this.is_pending() {
-            let err = mysql_error_to_js(
-                global_object,
-                "Query cancelled",
-                AnyMySQLError::Error::QueryCancelled,
-            );
-            this.reject_when(MySQLQuery::cancel, JSValue::ZERO, err);
+        // The server stops a query that it has only with KILL QUERY on a second
+        // connection. A query that is being encoded is written next.
+        if this.encoding.get() || !this.query.get().is_unwritten() {
+            return Ok(JSValue::UNDEFINED);
         }
+        let err = mysql_error_to_js(
+            global_object,
+            "Query cancelled",
+            AnyMySQLError::Error::QueryCancelled,
+        );
+        this.reject_with_js_value(JSValue::ZERO, err);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -219,7 +227,7 @@ impl JSMySQLQuery {
                 );
             }
         };
-        this.query.set_result_mode(mode);
+        this.query.with_mut(|q| q.set_result_mode(mode));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -246,7 +254,7 @@ impl JSMySQLQuery {
             }
         });
 
-        if !self.query.result(is_last_result) {
+        if !self.query.with_mut(|q| q.result(is_last_result)) {
             return;
         }
 
@@ -310,7 +318,7 @@ impl JSMySQLQuery {
         if self.this_value.get().is_not_empty() {
             self.this_value.with_mut(|v| v.downgrade());
         }
-        let _ = self.query.fail();
+        let _ = self.query.with_mut(|q| q.fail());
     }
 
     pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
@@ -346,7 +354,7 @@ impl JSMySQLQuery {
     /// a rejection is still to be delivered to JS.
     fn reject_when(
         &self,
-        transition: fn(&MySQLQuery) -> bool,
+        transition: fn(&mut MySQLQuery) -> bool,
         queries_array: JSValue,
         err: JSValue,
     ) {
@@ -361,7 +369,7 @@ impl JSMySQLQuery {
             }
         });
 
-        if !transition(&self.query) {
+        if !self.query.with_mut(transition) {
             return;
         }
 
@@ -409,14 +417,13 @@ impl JSMySQLQuery {
     }
 
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
-        if !self.query.is_pending() || self.query.is_being_prepared() {
-            debug!("run already running or being prepared");
-            // already running or completed
-            return Ok(());
-        }
-        if self.query.is_cancelled() {
-            // `cancel()` rejected it while its statement was being prepared.
-            return Err(AnyMySQLError::Error::QueryCancelled);
+        {
+            let q = self.query.get();
+            if !q.is_pending() || q.is_being_prepared() {
+                debug!("run already running or being prepared");
+                // already running or completed
+                return Ok(());
+            }
         }
         let global_object: &JSGlobalObject = self.global_object();
         self.this_value.with_mut(|v| v.upgrade(global_object));
@@ -429,14 +436,21 @@ impl JSMySQLQuery {
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
         let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
-        // `run_query` runs user JS (`toJSON` and the index getters of the parameters),
-        // which can re-enter a host fn of this `JSMySQLQuery`: `cancel()`, or a close of
-        // the connection that rejects it. Every field of `MySQLQuery` is
-        // interior-mutable, so that call only forms another `&Self`.
-        if let Err(err) =
-            self.query
-                .run_query(connection, global_object, columns_value, binding_value)
-        {
+        // R-2: `JsCell::with_mut` scopes the `&mut MySQLQuery` to the closure
+        // body. `run_query` may run user JS (binding getters), which could
+        // re-enter another host-fn on this `JSMySQLQuery`; that re-entrant call
+        // would form a fresh `&Self` — sound, since the noalias attribute is
+        // suppressed by the `UnsafeCell` in `JsCell`. A re-entrant `with_mut`
+        // on `self.query` would still alias; `set_mode_from_js` is the only
+        // such path and is not reachable from a binding getter in well-formed
+        // SQL usage. This mirrors the pre-R-2 behaviour but with the *outer*
+        // `&mut self` UB structurally eliminated.
+        let was_encoding = self.encoding.replace(true);
+        let result = self
+            .query
+            .with_mut(|q| q.run_query(connection, global_object, columns_value, binding_value));
+        self.encoding.set(was_encoding);
+        if let Err(err) = result {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
                 // Throw for side-effect and map to the enum variant.
@@ -455,47 +469,47 @@ impl JSMySQLQuery {
 
     #[inline]
     pub(crate) fn is_completed(&self) -> bool {
-        self.query.is_completed()
+        self.query.get().is_completed()
     }
     #[inline]
     pub(crate) fn is_running(&self) -> bool {
-        self.query.is_running()
+        self.query.get().is_running()
     }
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
-        self.query.is_pending()
+        self.query.get().is_pending()
     }
     #[inline]
     pub(crate) fn is_being_prepared(&self) -> bool {
-        self.query.is_being_prepared()
+        self.query.get().is_being_prepared()
     }
     #[inline]
     pub(crate) fn is_pipelined(&self) -> bool {
-        self.query.is_pipelined()
+        self.query.get().is_pipelined()
     }
     #[inline]
     pub(crate) fn is_discarding_response(&self) -> bool {
-        self.query.is_discarding_response()
+        self.query.get().is_discarding_response()
     }
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
-        self.query.is_simple()
+        self.query.get().is_simple()
     }
     #[inline]
     pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.query.is_bigint_supported()
+        self.query.get().is_bigint_supported()
     }
     #[inline]
     pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.query.get_result_mode()
+        self.query.get().get_result_mode()
     }
     // TODO: isolate statement modification away from the connection
     pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
-        self.query.get_statement()
+        self.query.get().get_statement()
     }
 
     pub(crate) fn mark_as_prepared(&self) {
-        self.query.mark_as_prepared();
+        self.query.with_mut(|q| q.mark_as_prepared());
     }
 
     #[inline]

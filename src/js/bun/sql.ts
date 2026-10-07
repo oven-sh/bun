@@ -508,7 +508,8 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
+          // allSettled: the timer rejects the pending queries, and nothing else observes this chain.
+          Promise.all([Promise.allSettled(pending_queries), Promise.allSettled(pending_transactions)]).then(() => {
             clearTimeout(timer);
             resolve();
           });
@@ -666,11 +667,22 @@ const SQL = function SQL(
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
     }
 
+    // The queries that this scope sends by itself: BEGIN, COMMIT, ROLLBACK and the savepoint statements.
+    const internalQueries = new WeakSet<object>();
     function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
+      const query = unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
+      internalQueries.add(query);
+      return query;
+    }
+    // close() cancels the queries of the caller only. A cancelled COMMIT or ROLLBACK never reaches
+    // the server, and begin() then releases a connection that is still inside the transaction.
+    function cancelQueries() {
+      for (const query of state.queries) {
+        if (!internalQueries.has(query)) (query as Query<any, any>).cancel();
+      }
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -783,9 +795,7 @@ const SQL = function SQL(
           const pending_queries = Array.from(transactionQueries);
           const pending_savepoints = Array.from(transactionSavepoints);
           const timer = setTimeout(async () => {
-            for (const query of transactionQueries) {
-              (query as Query<any, any>).cancel();
-            }
+            cancelQueries();
             if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
               await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
             }
@@ -794,16 +804,15 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
+          // allSettled: the timer rejects the queries that it cancels, and nothing else observes this chain.
+          Promise.all([Promise.allSettled(pending_queries), Promise.allSettled(pending_savepoints)]).then(() => {
             clearTimeout(timer);
             resolve();
           });
           return promise;
         }
       }
-      for (const query of transactionQueries) {
-        (query as Query<any, any>).cancel();
-      }
+      cancelQueries();
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }

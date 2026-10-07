@@ -6430,8 +6430,11 @@ declare module "bun" {
      * A bare name could also be a package in the registry, so `onResolve`
      * callbacks run on it once more. If one of them returns a path, the name is
      * the plugin's own and is never auto-installed.
+     *
+     * A result without a `path` does not resolve the import. The one exception
+     * is `external: true` in `Bun.build`.
      */
-    path: string;
+    path?: string | undefined;
     /**
      * The namespace of the destination
      * It is concatenated with `path` to form the final import specifier
@@ -6441,6 +6444,24 @@ declare module "bun" {
      * ```
      */
     namespace?: string;
+    /**
+     * In `Bun.build`, `true` leaves the import out of the bundle. The output
+     * keeps the `import` or `require()` and uses `path` as its specifier.
+     * Without a `path`, the output keeps the specifier from the source file.
+     *
+     * The build fails when an entry point is external.
+     *
+     * A runtime plugin ignores `external`.
+     *
+     * @example
+     * ```ts
+     * // import React from "react" becomes import React from "https://esm.sh/react"
+     * build.onResolve({ filter: /^react$/ }, args => ({
+     *   path: "https://esm.sh/" + args.path,
+     *   external: true,
+     * }));
+     * ```
+     */
     external?: boolean;
   }
 

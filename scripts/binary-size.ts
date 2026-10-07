@@ -1,7 +1,7 @@
 // Measure stripped binary sizes for every release platform and compare them
 // against the latest finished `main` build ("canary").
 //
-// CI mode (invoked from .buildkite/ci.mjs after all *-build-bun jobs finish):
+// CI mode (invoked from .buildkite/ci.ts after all *-build-bun jobs finish):
 //   bun scripts/binary-size.ts \
 //     --targets '[{"triplet":"bun-darwin-aarch64"},...]' \
 //     --threshold-mb 0.5 \
@@ -11,7 +11,7 @@
 //   any binary grew by more than --threshold-mb vs canary; on main it never
 //   fails (--no-fail) but still shows the comparison against the previous main
 //   build. Escape hatch: put `[skip size check]` in the commit message, which
-//   makes ci.mjs set soft_fail on this step (it still runs and annotates).
+//   makes ci.ts set soft_fail on this step (it still runs and annotates).
 //
 // Local mode (no args):
 //   bun scripts/binary-size.ts
@@ -22,6 +22,7 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { markBuildkiteStepReported } from "./buildkite.ts";
 
 type Target = { triplet: string };
 type Sizes = Record<string, number>;
@@ -158,7 +159,7 @@ function delta(now: number, base: number | undefined): Delta | undefined {
   return { base, bytes: now - base };
 }
 
-// Preserve --targets order (buildPlatforms in ci.mjs) so OS families stay grouped.
+// Preserve --targets order (buildPlatforms in ci.ts) so OS families stay grouped.
 const rows: Row[] = targets
   .filter(t => sizes[t.triplet] !== undefined)
   .map(({ triplet }) => ({
@@ -236,6 +237,9 @@ for (const r of rows) {
 
 if (failed) {
   console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
+  // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
+  // owns its failure annotation.
+  markBuildkiteStepReported();
   process.exit(1);
 }
 

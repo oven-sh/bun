@@ -1,5 +1,6 @@
 const { Duplex } = require("node:stream");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 
 interface NativeHandle {
   resume(): void;
@@ -9,12 +10,15 @@ interface NativeHandle {
   alpnProtocol?: string;
 }
 
+type UpgradeEventListener = (...args: any[]) => void;
+type UpgradeEvents = [UpgradeEventListener, UpgradeEventListener, UpgradeEventListener, UpgradeEventListener];
+
 interface UpgradeContextType {
   connectionListener: (...args: any[]) => any;
   server: Http2SecureServer;
   rawSocket: import("node:net").Socket;
   nativeHandle: NativeHandle | null;
-  events: [(...args: any[]) => void, ...Function[]] | null;
+  events: UpgradeEvents | null;
 }
 
 interface Http2SecureServer {
@@ -26,9 +30,12 @@ interface Http2SecureServer {
   _requestCert?: boolean;
   _rejectUnauthorized?: boolean;
   emit(event: string, ...args: any[]): boolean;
+  [kSharedCreds](): { context: unknown };
 }
 
-interface TLSProxySocket {
+type DuplexStream = import("node:stream").Duplex;
+
+interface TLSProxySocket extends DuplexStream {
   _ctx: UpgradeContextType;
   _writeCallback: ((err?: Error | null) => void) | null;
   alpnProtocol: string | null;
@@ -36,16 +43,11 @@ interface TLSProxySocket {
   encrypted: boolean;
   server: Http2SecureServer;
   _requestCert: boolean;
-  _rejectUnauthorized: boolean;
+  _rejectUnauthorized: boolean | undefined;
   _securePending: boolean;
   secureConnecting: boolean;
   _secureEstablished: boolean;
   authorizationError?: string;
-  push(chunk: Buffer | null): boolean;
-  destroy(err?: Error): this;
-  emit(event: string, ...args: any[]): boolean;
-  resume(): void;
-  readonly destroyed: boolean;
 }
 
 /**
@@ -83,7 +85,7 @@ function tlsSocketRead(this: TLSProxySocket) {
 // _write: called when the H2 session writes outbound frames.
 // Forward to the native TLS handle for encryption, then back to rawSocket.
 // Mirrors net.ts Socket.prototype._write which calls socket.$write().
-function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, callback: (err?: Error) => void) {
+function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, callback: (err?: Error | null) => void) {
   const h = this._ctx.nativeHandle;
   if (!h) {
     callback(new Error("Socket is closed"));
@@ -238,8 +240,9 @@ function socketHandshake(
   // and is what normally fires on the 'secureConnection' event.
   ctx.connectionListener.$call(ctx.server, tlsSocket);
 
-  // Resume the Duplex so the H2 session can read frames from it.
-  // Mirrors net.ts ServerHandlers.handshake line 438: `self.resume()`.
+  // Resume the Duplex so the H2 session can read frames from it. The accept
+  // path in net.ts ServerHandlers.handshake only read(0)s (node's manualStart
+  // server socket); the H2 session is the consumer here, so it flows.
   tlsSocket.resume();
 }
 
@@ -300,7 +303,7 @@ function upgradeRawSocketToH2(
   rawSocket: import("node:net").Socket,
 ): boolean {
   // Create a Duplex stream that acts as the TLS "socket" from the H2 session's perspective.
-  const tlsSocket = new Duplex() as unknown as TLSProxySocket;
+  const tlsSocket = new Duplex() as TLSProxySocket;
   tlsSocket._ctx = new UpgradeContext(connectionListener, server, rawSocket);
 
   // Duplex stream methods — `this` is tlsSocket, no bind needed
@@ -329,7 +332,7 @@ function upgradeRawSocketToH2(
   tlsSocket._rejectUnauthorized = server._requestCert ? server._rejectUnauthorized : false;
 
   // socket: callbacks — bind to tlsSocket since they are invoked with the native handle as `this`
-  let handle: NativeHandle, events: UpgradeContextType["events"];
+  let handle: NativeHandle, events: UpgradeEvents;
   try {
     // upgradeDuplexToTLS wraps rawSocket with a TLS layer in server mode (isServer: true).
     // The native side will:
@@ -342,10 +345,7 @@ function upgradeRawSocketToH2(
     [handle, events] = upgradeDuplexToTLS(rawSocket, {
       isServer: true,
       tls: {
-        key: server.key,
-        cert: server.cert,
-        ca: server.ca,
-        passphrase: server.passphrase,
+        secureContext: server[kSharedCreds]().context,
         requestCert: server._requestCert,
         rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols

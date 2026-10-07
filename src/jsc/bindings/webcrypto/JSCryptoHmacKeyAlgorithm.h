@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-template<> CryptoHmacKeyAlgorithm convertDictionary<CryptoHmacKeyAlgorithm>(JSC::JSGlobalObject&, JSC::JSValue);
-
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoHmacKeyAlgorithm&);
 
 } // namespace WebCore

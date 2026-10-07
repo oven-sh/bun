@@ -1,9 +1,12 @@
 #![warn(unused_must_use)]
-#![allow(unexpected_cfgs)]
 #![feature(allocator_api)]
+
+pub mod error;
+pub use error::{Error, Result};
 
 pub mod json_index;
 mod json_stage2;
+pub mod xml_index;
 
 #[cfg(test)]
 mod native_test_shims;
@@ -21,3 +24,6 @@ pub mod toml;
 
 #[path = "yaml.rs"]
 pub mod yaml;
+
+#[path = "xml.rs"]
+pub mod xml;

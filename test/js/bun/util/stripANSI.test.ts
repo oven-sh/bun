@@ -1,5 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { totalmem } from "node:os";
 import stripAnsi from "strip-ansi";
 
 describe("Bun.stripANSI", () => {
@@ -234,7 +236,8 @@ describe("Bun.stripANSI", () => {
 
     // Nested-looking sequences (not actually nested)
     ["\x1b[31m\x1b in text\x1b[39m", "n text"], // ESC SP <x> is a two-byte sequence
-    ["\x1b]0;\x1b[31mred\x1b[39m\x07text", "text"],
+    // ESC aborts an in-progress sequence (VT500): the OSC ends at the inner ESC.
+    ["\x1b]0;\x1b[31mred\x1b[39m\x07text", "red\x07text"],
 
     // Control characters mixed with ANSI
     "\x1b[31m\x08\x09\x0a\x0d\x1b[39m",
@@ -258,7 +261,7 @@ describe("Bun.stripANSI", () => {
 
     // Invalid OSC sequences (missing terminator)
     ["\x1b]0;title", ""], // No terminator, consumes rest
-    ["\x1b]2;test\x1bother", ""], // Incomplete ESC terminator
+    ["\x1b]2;test\x1bother", "ther"], // ESC aborts an in-progress sequence (VT500); ESC o is a two-byte escape
 
     // Complex prefix combinations
     ["\x1b[[[31mtext", "[31mtext"], // [ terminates CSI
@@ -439,6 +442,26 @@ describe("Bun.stripANSI", () => {
 
     // Strip a single escape character
     ["\x1b", ""],
+
+    // The rest of the ECMA-48 grammar (npm strip-ansi does not remove these)
+    ["\x1b7hi\x1b8", "hi"], // Fp: DECSC / DECRC
+    ["ab\x1bcd", "abd"], // Fs: RIS
+    ["ab\x1b(Bcd", "abcd"], // nF: charset designation
+    ["ab\x1b#8d", "abd"], // nF: DECALN
+    ["a\x1bP+q544e\x1b\\b", "ab"], // DCS ... ST
+    ["a\x1b_apc payload\x1b\\b", "ab"], // APC ... ST
+    ["\x1b[31mre\x1b\x1b[0md", "red"], // ESC re-introduces a sequence
+    ["a\x1b中b", "a中b"], // ESC followed by a non-ASCII char is not a sequence
+    ["\x9B31mhi\x9B39m", "hi"], // C1 CSI
+    ["\x9D8;;url\x9Clink\x9D8;;\x9C", "link"], // C1 OSC ... C1 ST
+    ["a\x90dcs\x9Cb", "ab"], // C1 DCS ... C1 ST
+
+    // ESC / CAN / C1 ST abort an in-progress sequence (VT500)
+    ["text\x1b[3\x1b[0mmore", "textmore"], // ESC inside CSI parameters
+    ["\x1b]0;title\x1b[31mtext\x1b[0m", "text"], // ESC inside an OSC payload
+    ["ab\x1b[31\x18mcd", "abmcd"], // CAN inside CSI parameters (CAN is consumed)
+    ["ab\x1b[31\x9cmcd", "abmcd"], // C1 ST inside CSI parameters (0x9C is consumed)
+    ["a\x1b\x9cb", "ab"], // C1 ST right after ESC aborts to ground (both consumed)
   ];
 
   for (const testCase of testCases) {
@@ -506,6 +529,33 @@ describe("Bun.stripANSI", () => {
       expect(after).toBe(before); // no copy made
     });
 
+    // A standalone C1 ST (0x9C) stops the escape scan but introduces
+    // nothing, so nothing is stripped and the input must come back as the
+    // same object — including when it is the last byte, and across the
+    // 1 KB dispatch threshold.
+    const bigA = Buffer.alloc(2048, "a").toString();
+    const bigB = Buffer.alloc(2048, "b").toString();
+    for (const [label, input] of [
+      ["trailing", "abc\x9c"],
+      ["mid-string", "abc\x9cdef"],
+      ["trailing, past the dispatch threshold", bigA + "\x9c"],
+      ["mid-string, past the dispatch threshold", bigA + "\x9c" + bigB],
+    ] as const) {
+      test(`standalone C1 ST is not stripped (${label}): returns the same object`, () => {
+        Bun.stripANSI(input);
+        Bun.gc(true);
+
+        const before = heapStats().objectTypeCounts.string;
+        const result = Bun.stripANSI(input);
+        const after = heapStats().objectTypeCounts.string;
+        expect(result).toBe(input);
+        // A copy would hold `after` above `before` (the copy is rooted by
+        // `result`). The reverse — GC collecting something between the two
+        // heapStats() calls — is fine, so the check is one-sided.
+        expect(after).toBeLessThanOrEqual(before);
+      });
+    }
+
     // Dispatched path matches the inlined path for a variety of sequences: the
     // long no-escape prefix is skipped identically, so stripping the prefixed
     // input equals the prefix plus stripping the sequence alone.
@@ -555,4 +605,83 @@ describe("Bun.stripANSI", () => {
       expect(Bun.stripANSI(input)).toBe(input);
     });
   });
+
+  // stripANSI writes into a buffer that has the length of the input. A 64 KiB synthetic allocation limit: a buffer
+  // of more than 65,536 characters cannot be allocated.
+  describe("an output buffer that cannot be allocated", () => {
+    const outOfMemory = "RangeError: Out of memory";
+
+    test("throws a RangeError", async () => {
+      // The child reports each result's length, or the error. It builds the inputs with repeat(), which does not
+      // depend on the limit the child runs under.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const red = "\\x1b[31m";
+          const cases = {
+            atLimit: red + "a".repeat(65531),
+            pastLimit: red + "a".repeat(65532),
+            wideAtLimit: red + "あ".repeat(65531),
+            widePastLimit: red + "あ".repeat(65532),
+            // With no escape sequence the input comes back as it is, and no buffer exists.
+            nothingToStrip: "a".repeat(70000),
+          };
+          const results = {};
+          for (const [name, input] of Object.entries(cases)) {
+            try {
+              results[name] = Bun.stripANSI(input).length;
+            } catch (e) {
+              results[name] = e.name + ": " + e.message;
+            }
+          }
+          console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: {
+          atLimit: 65531,
+          pastLimit: outOfMemory,
+          wideAtLimit: 65531,
+          widePastLimit: outOfMemory,
+          nothingToStrip: 70000,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The length is what is under test, so the child holds a flat 16-bit string of 2 GiB. A Vector<char16_t> holds
+  // 2^30 - 1 code units, and stripANSI aborted the process when its buffer was one. Every code unit here is inside
+  // an "ESC ( x" sequence, so the output is empty and the child never writes to the buffer: it needs no second
+  // 2 GiB. The child takes about 6 seconds in a debug ASAN build, so this one test carries its own ceiling.
+  test.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 8 * 1024 ** 3)(
+    "strips a 16-bit string of more than 2^30 code units",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const input = "\\x1b(あ".repeat(357913942);
+          console.log(JSON.stringify({ input: input.length, output: Bun.stripANSI(input).length }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: { input: 1073741826, output: 0 },
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    30_000,
+  );
 });

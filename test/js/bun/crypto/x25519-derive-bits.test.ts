@@ -113,7 +113,7 @@ test("X25519 deriveBits rejects when base key lacks deriveBits usage", async () 
   const { privateKey, publicKey } = await importX25519Keys(["deriveKey"]);
 
   await expect(crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, 256)).rejects.toThrow(
-    "CryptoKey doesn't support bits derivation",
+    "baseKey does not have deriveBits usage",
   );
 });
 

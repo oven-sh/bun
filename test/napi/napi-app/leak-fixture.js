@@ -1,8 +1,10 @@
 // UNUSED as of #14501
 const nativeTests = require("./build/Debug/napitests.node");
 
+const rss = process.memoryUsage.rss;
+
 function usage() {
-  return process.memoryUsage.rss();
+  return rss();
 }
 
 function gc() {

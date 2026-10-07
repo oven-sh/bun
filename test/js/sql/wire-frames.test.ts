@@ -7,14 +7,27 @@ import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlHandshakeV10,
   mysqlLenencInt,
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgBind,
+  pgCommandComplete,
+  pgCopyData,
+  pgCopyDone,
+  pgCopyOutResponse,
+  pgDataRow,
+  pgDescribe,
   pgErrorResponse,
+  pgExecute,
+  pgFlush,
   pgMinimalReadyServer,
+  pgParse,
   pgReadyForQuery,
+  pgRowDescription,
+  pgSync,
 } from "./wire-frames";
 
 test("mysqlLenencInt encodes per page_protocol_basic_dt_integers.html", () => {
@@ -33,6 +46,36 @@ test("pgErrorResponse encodes per §55.7", () => {
   );
 });
 
+test("frontend message builders encode per §55.7", () => {
+  expect(pgParse("s1", "select $1", [23])).toEqual(
+    Buffer.from("P\x00\x00\x00\x17s1\x00select $1\x00\x00\x01\x00\x00\x00\x17", "binary"),
+  );
+  expect(pgDescribe("S", "s1")).toEqual(Buffer.from("D\x00\x00\x00\x08Ss1\x00", "binary"));
+  expect(
+    pgBind({
+      statement: "s1",
+      paramFormats: [1, 0],
+      params: [Buffer.from([0, 0, 0, 42]), null],
+      resultFormats: [1],
+    }),
+  ).toEqual(
+    Buffer.from(
+      "B\x00\x00\x00\x20" + // length: 4 + 28 bytes of body
+        "\x00" + // portal ""
+        "s1\x00" +
+        "\x00\x02\x00\x01\x00\x00" + // two parameter format codes: binary, text
+        "\x00\x02" + // two parameter values
+        "\x00\x00\x00\x04\x00\x00\x00\x2a" + // 4 bytes
+        "\xff\xff\xff\xff" + // NULL
+        "\x00\x01\x00\x01", // one result format code: binary
+      "binary",
+    ),
+  );
+  expect(pgExecute()).toEqual(Buffer.from("E\x00\x00\x00\x09\x00\x00\x00\x00\x00", "binary"));
+  expect(pgFlush()).toEqual(Buffer.from("H\x00\x00\x00\x04", "binary"));
+  expect(pgSync()).toEqual(Buffer.from("S\x00\x00\x00\x04", "binary"));
+});
+
 test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parser", async () => {
   // Minimal Postgres mock: on the startup packet, reply AuthenticationOk +
   // ReadyForQuery. connect() resolving proves both frames decode.
@@ -47,6 +90,43 @@ test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parse
   } finally {
     await db.close({ timeout: 0 });
     server.close();
+  }
+});
+
+test("postgres: COPY OUT response frames are consumed and the following result set decodes", async () => {
+  const { port, server } = await listeningServer(socket => {
+    socket.on("error", () => {});
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      if (data[0] !== 0x51) return;
+      socket.end(
+        Buffer.concat([
+          pgCopyOutResponse([0]),
+          pgCopyData(Buffer.from("1\n")),
+          pgCopyData(Buffer.from("2\n")),
+          pgCopyDone(),
+          pgCommandComplete("COPY 2"),
+          pgRowDescription([{ name: "y", typeOid: 25 }]),
+          pgDataRow([Buffer.from("2")]),
+          pgCommandComplete("SELECT 1"),
+          pgReadyForQuery(),
+        ]),
+      );
+    });
+  });
+
+  const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+  try {
+    const result = await db`copy t to stdout; select 2 as y`.simple();
+    expect(result).toEqual([[], [{ y: "2" }]]);
+  } finally {
+    await db.close().catch(() => {});
+    await new Promise<void>(r => server.close(() => r()));
   }
 });
 
@@ -69,10 +149,12 @@ test("mysql: mysqlHandshakeV10 + mysqlOkPacket are accepted by Bun's parser", as
     let authed = false;
     socket.write(mysqlHandshakeV10());
     socket.on("data", chunk => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
+        } else {
+          mysqlAckSessionSetup(socket, payload);
         }
       });
     });

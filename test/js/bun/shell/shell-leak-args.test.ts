@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { isASAN, rss } from "harness";
 
 test("shell parsing error does not leak emmory", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "A").toString();
@@ -9,14 +9,14 @@ test("shell parsing error does not leak emmory", async () => {
       $`${{ raw: buffer }} <!INVALID ==== SYNTAX!>`;
     } catch (e) {}
   }
-  const rss = process.memoryUsage.rss();
+  const rssBefore = rss();
   for (let i = 0; i < 200; i++) {
     try {
       $`${{ raw: buffer }} <!INVALID ==== SYNTAX!>`;
     } catch (e) {}
   }
-  const after = process.memoryUsage.rss() / 1024 / 1024;
-  const before = rss / 1024 / 1024;
+  const after = rss() / 1024 / 1024;
+  const before = rssBefore / 1024 / 1024;
   // In Bun v1.3.0 on macOS arm64:
   //   Expected: < 100
   //   Received: 524.65625
@@ -39,12 +39,12 @@ test("shell execution doesn't leak argv", async () => {
   for (let i = 0; i < 5; i++) {
     await $`${{ raw: cmd }}`.quiet();
   }
-  const rss = process.memoryUsage.rss();
+  const rssBefore = rss();
   for (let i = 0; i < 200; i++) {
     await $`${{ raw: cmd }}`.quiet();
   }
-  const after = process.memoryUsage.rss() / 1024 / 1024;
-  const before = rss / 1024 / 1024;
+  const after = rss() / 1024 / 1024;
+  const before = rssBefore / 1024 / 1024;
   // In Bun v1.3.0 on macOS arm64:
   //   Expected: < 250
   //   Received: 588.515625
@@ -64,12 +64,12 @@ test("non-awaited shell command does not leak argv", async () => {
   for (let i = 0; i < 5; i++) {
     $`${{ raw: cmd }}`.quiet();
   }
-  const rss = process.memoryUsage.rss();
+  const rssBefore = rss();
   for (let i = 0; i < 200; i++) {
     $`${{ raw: cmd }}`.quiet();
   }
-  const after = process.memoryUsage.rss() / 1024 / 1024;
-  const before = rss / 1024 / 1024;
+  const after = rss() / 1024 / 1024;
+  const before = rssBefore / 1024 / 1024;
   // In Bun v1.3.0 on macOS arm64:
   //   Expected: < 250
   //   Received: 588.515625

@@ -11,8 +11,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Default to format mode (modify files)
 MODE="${1:-format}"
 
-# Use LLVM_VERSION_MAJOR from environment or default to 19
-LLVM_VERSION="${LLVM_VERSION_MAJOR:-21}"
+# Use LLVM_VERSION_MAJOR from environment or default to 23
+LLVM_VERSION="${LLVM_VERSION_MAJOR:-23}"
 
 # Ensure we have the specific clang-format version
 CLANG_FORMAT="clang-format-${LLVM_VERSION}"
@@ -32,9 +32,10 @@ echo "Finding header files..."
 while IFS= read -r -d '' file; do
     # Additional filtering for specific files and patterns
     if [[ "$file" =~ src/runtime/ffi/ffi- ]] || \
-       [[ "$file" =~ src/napi/ ]] || \
+       [[ "$file" =~ src/runtime/napi/ ]] || \
        [[ "$file" =~ src/jsc/bindings/libuv/ ]] || \
        [[ "$file" =~ src/jsc/bindings/sqlite/ ]] || \
+       [[ "$file" =~ src/jsc/bindings/node/http/llhttp/ ]] || \
        [[ "$file" =~ packages/bun-usockets/.*libuv ]] || \
        [[ "$file" =~ vendor/ ]]; then
         continue

@@ -22,7 +22,7 @@ const Uint8ArraySlice = Uint8Array.prototype.slice;
 
 // Matches node's internal/errors genericNodeError().
 function genericNodeError(message, options) {
-  const error = new Error(message);
+  const error: NodeJS.ErrnoException = new Error(message);
   error.errno = options.errno;
   error.code = options.code;
   return error;
@@ -182,9 +182,7 @@ function createZlibHandle(mode, options, processCallback, onError) {
 function createBrotliHandle(mode, options, processCallback, onError) {
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
-  // Note: bun's NativeBrotli.init() does not take a dictionary parameter;
-  // validate for parity but the dictionary is not passed to the engine.
-  validateDictionary(options.dictionary);
+  const dictionary = validateDictionary(options.dictionary);
   validateParams(options.params, kMaxBrotliParam, key => $ERR_BROTLI_INVALID_PARAM(key));
 
   const handle = new NativeBrotli(mode);
@@ -211,7 +209,7 @@ function createBrotliHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  if (!handle.init(brotliInitParamsArray, writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -227,9 +225,7 @@ function createZstdHandle(mode, options, processCallback, onError) {
 
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
-  // Note: bun's NativeZstd.init() does not take a dictionary parameter;
-  // validate for parity but the dictionary is not passed to the engine.
-  validateDictionary(options.dictionary);
+  const dictionary = validateDictionary(options.dictionary);
   const maxParam = isCompress ? kMaxZstdCParam : kMaxZstdDParam;
   validateParams(options.params, maxParam, key => $ERR_ZSTD_INVALID_PARAM(key));
 
@@ -258,7 +254,7 @@ function createZstdHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  handle.init(initArray, pledgedSrcSize, writeState, processCallback);
+  handle.init(initArray, pledgedSrcSize, writeState, processCallback, dictionary);
 
   return { __proto__: null, handle, writeState, chunkSize };
 }
@@ -285,7 +281,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
       let outBuf;
       let outOffset = 0;
       let chunkSize;
-      let pending = [];
+      let pending: Uint8Array[] = [];
       let pendingBytes = 0;
 
       // Current write operation state (read by the callback for looping).
@@ -403,10 +399,10 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
           pendingBytes = 0;
           return batch;
         }
-        const batch = [];
+        const batch: Uint8Array[] = [];
         let batchBytes = 0;
         while (pending.length > 0 && batchBytes < BATCH_HWM) {
-          const buf = pending.shift();
+          const buf = pending.shift()!;
           batch.push(buf);
           const len = buf.byteLength;
           batchBytes += len;
@@ -497,7 +493,7 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
     transform: function* (source) {
       // The processCallback is never called in sync mode, but handle.init()
       // requires it. Pass a no-op.
-      let error = null;
+      let error: NodeJS.ErrnoException | null = null;
       function onError(message, errno, code) {
         error = genericNodeError(message, { __proto__: null, errno, code });
         error.errno = errno;
@@ -510,7 +506,7 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
       const chunkSize = result.chunkSize;
       let outBuf = Buffer.allocUnsafe(chunkSize);
       let outOffset = 0;
-      let pending = [];
+      let pending: Uint8Array[] = [];
       let pendingBytes = 0;
 
       function processSyncInput(input, flushFlag) {
@@ -571,10 +567,10 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
           pendingBytes = 0;
           return batch;
         }
-        const batch = [];
+        const batch: Uint8Array[] = [];
         let batchBytes = 0;
         while (pending.length > 0 && batchBytes < BATCH_HWM) {
-          const buf = pending.shift();
+          const buf = pending.shift()!;
           const len = buf.byteLength;
           batch.push(buf);
           batchBytes += len;

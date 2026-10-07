@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-template<> CryptoRsaHashedKeyAlgorithm convertDictionary<CryptoRsaHashedKeyAlgorithm>(JSC::JSGlobalObject&, JSC::JSValue);
-
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const CryptoRsaHashedKeyAlgorithm&);
 
 } // namespace WebCore

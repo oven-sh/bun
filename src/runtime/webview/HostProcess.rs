@@ -14,15 +14,15 @@
 //! This file owns process lifetime only. The usockets client lives in C++
 //! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
-use core::ptr::{self, NonNull};
+use core::ptr;
 
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{self, Process};
+use bun_spawn::{self, ProcessHandle};
 
 #[cfg(target_os = "macos")]
 use {
-    bun_core::Error,
+    crate::Error,
     bun_jsc::virtual_machine::VirtualMachine,
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
@@ -33,10 +33,10 @@ use {
 
 declare_scope!(WebViewHost, hidden);
 
-pub struct HostProcess {
-    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
-    // because the refcount, not this struct, owns the allocation.
-    process: NonNull<Process>,
+pub(crate) struct HostProcess {
+    process: ProcessHandle,
+    /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
+    retired: bool,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
@@ -51,7 +51,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 /// WebContent/GPU/Network helpers are XPC-connected to the child — when the
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebViewHost__kill() {
+extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
         if let Some(i) = INSTANCE
@@ -60,9 +60,22 @@ pub(crate) extern "C" fn Bun__WebViewHost__kill() {
         {
             // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = i.process.as_mut().kill(9);
+            let _ = (*i.process.as_ptr()).kill(9);
         }
     }
+}
+
+/// HostClient::retireGlobal (`bun test --isolate`): unpublish and kill this host so the next file can spawn its own at once.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__WebViewHost__retire() {
+    let this = INSTANCE.swap(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+    // SAFETY: INSTANCE held a live heap-allocated pointer; on_process_exit
+    // only frees it after it runs, and we have just taken it out of INSTANCE.
+    let Some(host) = (unsafe { this.as_mut() }) else {
+        return;
+    };
+    host.retired = true;
+    let _ = host.process.kill(9);
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
@@ -73,7 +86,7 @@ pub(crate) extern "C" fn Bun__WebViewHost__kill() {
 /// owns it; re-returning a fd usockets may have already closed would be a
 /// use-after-close. Rust only owns process lifetime (watch + kill).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebViewHost__ensure(
+extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
     stdout_inherit: bool,
     stderr_inherit: bool,
@@ -116,122 +129,119 @@ bun_spawn::link_impl_ProcessExit! {
         // pending promises and mark the host dead.
         on_process_exit(_process, status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
-            let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
-            Bun__WebViewHost__childDied(signo);
-            // `this` was heap-allocated in spawn(); process is the
-            // intrusive-rc *mut Process whose strong ref we hold. `deref()`
-            // drops that ref, then drop the Box.
-            Process::deref((*this).process.as_ptr());
+            // A retired host was already unpublished by Bun__WebViewHost__retire.
+            if !(*this).retired {
+                let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
+                Bun__WebViewHost__childDied(signo);
+            }
+            // `this` was heap-allocated in spawn(); dropping it releases our
+            // ref on the process.
             drop(bun_core::heap::take(this));
-            INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+            let _ = INSTANCE.compare_exchange(
+                this,
+                ptr::null_mut(),
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         },
     }
 }
 
 #[cfg(target_os = "macos")]
 fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (vm, stdout_inherit, stderr_inherit);
-        return Err(bun_core::err!("Unsupported"));
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
-        // again after dup2 (socketpair flags are per-fd, not per-pair).
-        let fds: [Fd; 2] = bun_sys::socketpair(
-            libc::AF_UNIX as i32,
-            libc::SOCK_STREAM as i32,
-            0,
-            true, // .nonblocking
-        )?;
-        // fd0_guard rolls back fds[0] on any error below.
-        let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());
-        // fds[1] is closed by spawnProcess after dup2 into the child.
+    // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
+    // again after dup2 (socketpair flags are per-fd, not per-pair).
+    let fds: [Fd; 2] = bun_sys::socketpair(
+        libc::AF_UNIX as i32,
+        libc::SOCK_STREAM as i32,
+        0,
+        true, // .nonblocking
+    )?;
+    // fd0_guard rolls back fds[0] on any error below.
+    let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());
+    // fds[1] is closed by spawnProcess after dup2 into the child.
 
-        let exe = bun_core::self_exe_path()?;
+    let exe = bun_core::self_exe_path()?;
 
-        // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
-        // signal; no argv changes so `ps` shows a normal `bun` invocation.
-        // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
-        // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
-        // `transpiler.env` is set during VM init and lives for VM lifetime.
-        let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
-        let base_slice = base.as_slice();
-        // base_slice already has a trailing None sentinel; drop it, append our
-        // var, then re-terminate.
-        let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
-        let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
-        env.extend(base_entries.iter().copied());
-        env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
-        env.push(ptr::null());
+    // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
+    // signal; no argv changes so `ps` shows a normal `bun` invocation.
+    // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
+    // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
+    // `transpiler.env` is set during VM init and lives for VM lifetime.
+    let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+    let base_slice = base.as_slice();
+    // base_slice already has a trailing None sentinel; drop it, append our
+    // var, then re-terminate.
+    let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
+    let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
+    env.extend(base_entries.iter().copied());
+    env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
+    env.push(ptr::null());
 
-        let argv: [*const c_char; 2] = [exe.as_ptr(), ptr::null()];
+    let argv: [*const c_char; 2] = [exe.as_ptr(), ptr::null()];
 
-        let opts = SpawnOptions {
-            stdin: Stdio::Ignore,
-            // Default ignore — the child runs no JS or user code, so output is
-            // only panics/NSLog from WebKit. Opt-in via backend.stderr when
-            // debugging a silent host crash.
-            stdout: if stdout_inherit {
-                Stdio::Inherit
-            } else {
-                Stdio::Ignore
-            },
-            stderr: if stderr_inherit {
-                Stdio::Inherit
-            } else {
-                Stdio::Ignore
-            },
-            extra_fds: vec![Stdio::Pipe(fds[1])].into_boxed_slice(),
-            argv0: Some(exe.as_ptr()),
-            ..SpawnOptions::default()
-        };
+    let opts = SpawnOptions {
+        stdin: Stdio::Ignore,
+        // Default ignore — the child runs no JS or user code, so output is
+        // only panics/NSLog from WebKit. Opt-in via backend.stderr when
+        // debugging a silent host crash.
+        stdout: if stdout_inherit {
+            Stdio::Inherit
+        } else {
+            Stdio::Ignore
+        },
+        stderr: if stderr_inherit {
+            Stdio::Inherit
+        } else {
+            Stdio::Ignore
+        },
+        extra_fds: vec![Stdio::Pipe(fds[1])].into_boxed_slice(),
+        argv0: Some(exe.as_ptr()),
+        ..SpawnOptions::default()
+    };
 
-        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
-        // argv[0] non-null; valid for this call.
-        let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
+    // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
+    // argv[0] non-null; valid for this call.
+    let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
-        // per-thread `jsc::EventLoop`.
-        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
-        let process =
-            NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
-        let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
-        // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
-        // owns `process` and outlives it.
-        unsafe {
-            (*process.as_ptr())
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+    // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
+    // per-thread `jsc::EventLoop`.
+    let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
+    let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
+        process: spawned.to_process_handle(event_loop),
+        retired: false,
+    }));
+    // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
+    // and outlives it.
+    let process = unsafe {
+        let process = &(*self_ptr).process;
+        process
+            .process_mut()
+            .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+        process
+    };
+    match process.process_mut().watch() {
+        Ok(()) => {
+            // Weak handle: parent exits when no views + nothing pending,
+            // child gets socket EOF and exits, EVFILT_PROC fires into a
+            // dead process (kernel discards). If we ref'd, parent would
+            // stay alive forever waiting on a child that is waiting on us.
+            // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
+            process.process_mut().disable_keeping_event_loop_alive();
         }
-        // SAFETY: process is live and exclusively owned here.
-        match unsafe { (*process.as_ptr()).watch() } {
-            Ok(()) => {
-                // Weak handle: parent exits when no views + nothing pending,
-                // child gets socket EOF and exits, EVFILT_PROC fires into a
-                // dead process (kernel discards). If we ref'd, parent would
-                // stay alive forever waiting on a child that is waiting on us.
-                // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
-                // SAFETY: process is live and exclusively owned here.
-                unsafe { (*process.as_ptr()).disable_keeping_event_loop_alive() };
-            }
-            Err(e) => {
-                scoped_log!(WebViewHost, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold, then reclaim the Box.
-                unsafe {
-                    Process::deref(process.as_ptr());
-                    drop(bun_core::heap::take(self_ptr));
-                }
-                // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
-                return Err(bun_core::err!("WatchFailed"));
-            }
+        Err(e) => {
+            scoped_log!(WebViewHost, "watch failed: {}", e);
+            // SAFETY: reclaim the Box (drops our process ref).
+            drop(unsafe { bun_core::heap::take(self_ptr) });
+            // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
+            return Err(crate::Error::WatchFailed);
         }
-        INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
-        // fd handed to C++ which adopts it into usockets. Not stored here —
-        // usockets owns the socket; Rust only owns process lifetime.
-        let fd0 = scopeguard::ScopeGuard::into_inner(fd0_guard);
-        Ok(fd0)
     }
+    INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
+    // fd handed to C++ which adopts it into usockets. Not stored here —
+    // usockets owns the socket; Rust only owns process lifetime.
+    let fd0 = scopeguard::ScopeGuard::into_inner(fd0_guard);
+    Ok(fd0)
 }
 
 // Implemented in WebKitBackend.cpp. Rejects all pending promises, marks the

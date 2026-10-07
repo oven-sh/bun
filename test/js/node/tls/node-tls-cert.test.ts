@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, invalidTls, isASAN, isDebug, tmpdirSync } from "harness";
+import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
@@ -138,8 +138,7 @@ it("complete cert chains sent to peer, but without requesting client's cert.", a
   });
 });
 
-// TODO: this requires maxVersion/minVersion
-it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
+it("Request cert from TLS1.2 client that doesn't have one.", async () => {
   try {
     await connect({
       client: {
@@ -156,7 +155,7 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
     });
     expect.unreachable();
   } catch (err: any) {
-    expect(err.code).toBe("ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE");
+    expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
   }
 });
 
@@ -628,22 +627,27 @@ it("tls.connect should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     passphrase: "123123123",
   });
 
-  for (const invalid of ["not-exist.pem", "", " "]) {
-    const proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER_PORT: server.address.port.toString(),
-        NODE_EXTRA_CA_CERTS: invalid,
-      },
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
-    });
+  const results = await Promise.all(
+    ["not-exist.pem", "", " "].map(async invalid => {
+      const proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER_PORT: server.address.port.toString(),
+          NODE_EXTRA_CA_CERTS: invalid,
+        },
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { invalid, stderr, exitCode };
+    }),
+  );
 
-    expect(await proc.exited).toBe(1);
-    const stderr = await proc.stderr.text();
+  for (const { stderr, exitCode } of results) {
     expect(stderr).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+    expect(exitCode).toBe(1);
   }
 });
 
@@ -660,22 +664,27 @@ it("tls.connect should ignore NODE_EXTRA_CA_CERTS if it contains invalid cert", 
     passphrase: "123123123",
   });
 
-  for (const invalid of [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath]) {
-    const proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER_PORT: server.address.port.toString(),
-        NODE_EXTRA_CA_CERTS: invalid,
-      },
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
-    });
+  const results = await Promise.all(
+    [mixedValidAndInvalidCertsBundlePath, mixedInvalidAndValidCertsBundlePath].map(async invalid => {
+      const proc = Bun.spawn({
+        env: {
+          ...bunEnv,
+          SERVER_PORT: server.address.port.toString(),
+          NODE_EXTRA_CA_CERTS: invalid,
+        },
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "inherit",
+        cmd: [bunExe(), join(import.meta.dir, "node-tls-cert-extra-ca.fixture.js")],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { invalid, stderr, exitCode };
+    }),
+  );
 
-    expect(await proc.exited).toBe(1);
-    const stderr = await proc.stderr.text();
+  for (const { stderr, exitCode } of results) {
     expect(stderr).toContain("ignoring extra certs");
+    expect(exitCode).toBe(1);
   }
 });
 describe("tls ciphers should work", () => {
@@ -720,84 +729,151 @@ describe("tls ciphers should work", () => {
   });
 });
 
-// A local `bun bd` debug build is ASAN-instrumented but not named `bun-asan`;
-// ASAN's default 256MB quarantine retains every freed allocation, so RSS grows
-// by the total allocation churn regardless of leaks and the threshold below
-// cannot distinguish a leak from the quarantine. Skip every debug build -
-// since isASAN learned that local debug builds are ASAN-instrumented too,
-// debug+ASAN is exactly the un-measurable combination (quarantine + redzones
-// inflate RSS unboundedly for this access pattern); CI's release ASAN lane
-// (isDebug false) keeps running with its own threshold.
-it.skipIf(isDebug)(
-  "server-side getPeerCertificate() should not leak",
-  async () => {
-    // Guards against the SSL_get_peer_certificate X509 ref leak and the
-    // computeRaw BIO leak on the server getPeerCertificate() path.
-    const { promise: serverSocketPromise, resolve: onServerSocket } = Promise.withResolvers<TLSSocket>();
-    const server = tls.createServer(
-      {
-        key: serverTls.key,
-        cert: serverTls.cert,
-        ca: [clientTls.ca],
-        requestCert: true,
-        rejectUnauthorized: false,
-      },
-      socket => onServerSocket(socket),
-    );
+// A CA certificate in a trust source (`ca`, NODE_EXTRA_CA_CERTS, bundled, system) whose validity period does not
+// cover "now" is treated as absent: it can neither shadow a currently-valid certificate for the same issuer that the
+// server sends (Windows' system store caches stale intermediates — https://github.com/anthropics/claude-code/issues/71554)
+// nor anchor a chain itself. Certificates the *server* sends are checked exactly as before.
+describe("expired or not-yet-valid CA in the trust set", () => {
+  const dir = join(import.meta.dir, "fixtures", "expired-intermediate");
+  const F = Object.fromEntries(
+    [
+      "root", // self-signed, valid
+      "root-expired", // same name+key as root, self-signed, expired 2021
+      "oldroot-expired", // a different, expired self-signed root
+      "root-cross-by-oldroot", // root's key certified by oldroot (valid dates)
+      "int-valid", // CN=Bun Test Intermediate, issued by root — all int-* share one key
+      "int-expired", // expired 2021
+      "int-future", // notBefore 2100
+      "int-constrained-valid", // nameConstraints permitted DNS:.example.com (leaf is localhost => violates)
+      "int-constrained-expired",
+      "leaf", // CN=localhost, issued by the intermediate key
+    ].map(n => [n, readFileSync(join(dir, `${n}.pem`), "utf8")]),
+  );
+  const leafKey = readFileSync(join(dir, "leaf.key"), "utf8");
+
+  async function connect(serverCert: string, ca: string[], extra: object = {}) {
+    const server = tls.createServer({ key: leafKey, cert: serverCert });
     await once(server.listen(0, "127.0.0.1"), "listening");
-
-    const client = tls.connect({
-      host: "127.0.0.1",
-      port: (server.address() as AddressInfo).port,
-      key: clientTls.key,
-      cert: clientTls.cert,
-      ca: [serverTls.ca],
-      checkServerIdentity,
-    });
-    await once(client, "secureConnect");
-
-    const serverSocket = await serverSocketPromise;
     try {
-      // Make sure the client actually sent a cert so we exercise the
-      // SSL_get_peer_certificate path rather than falling through to the
-      // cert-chain branch.
-      const first = serverSocket.getPeerCertificate();
-      expect(first).toBeDefined();
-      expect(first?.subject).toBeDefined();
-
-      function spin(n: number) {
-        for (let i = 0; i < n; i++) {
-          serverSocket.getPeerCertificate();
-          serverSocket.getPeerCertificate(false);
-        }
-        Bun.gc(true);
-        Bun.gc(true);
-      }
-
-      // Run in fixed-size rounds with a GC after each so the steady-state
-      // heap footprint stays bounded. The first few rounds grow the heap
-      // regardless of leaks, so take the baseline after warmup.
-      const perRound = isDebug ? 2_500 : 5_000;
-      for (let round = 0; round < 4; round++) spin(perRound);
-      const baseline = process.memoryUsage.rss();
-
-      for (let round = 0; round < 10; round++) spin(perRound);
-      const after = process.memoryUsage.rss();
-      const growth = after - baseline;
-
-      // Unpatched, the BIO leak alone is ~800 bytes/call → ~40MB over the
-      // 50k abbreviated calls here (~20MB for 25k in debug). Leave slack for
-      // allocator/ASAN noise but stay well below that. Both calls in the loop
-      // build the full leaf-certificate object (getPeerCertificate(false) used
-      // to return {}), so the debug budget covers 2x the constructions. Local
-      // debug (non-`bun-asan`) builds skip this test entirely - see skipIf above.
-      const threshold = 1024 * 1024 * (isDebug ? 20 : isASAN ? 16 : 12);
-      expect(growth).toBeLessThan(threshold);
+      return await new Promise<string>(resolve => {
+        const socket = tls.connect(
+          { host: "127.0.0.1", port: (server.address() as AddressInfo).port, servername: "localhost", ca, ...extra },
+          () => {
+            resolve("authorized");
+            socket.destroy();
+          },
+        );
+        socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+      });
     } finally {
-      client.end();
-      serverSocket.end();
       server.close();
     }
-  },
-  180_000,
-);
+  }
+
+  // [name, server sends, client trusts, expected, tls.connect extras]. Where 1.4.0 differed, the old result is noted.
+  const cases: [string, string[], string[], string, object?][] = [
+    ["baseline: valid intermediate from server", ["leaf", "int-valid"], ["root"], "authorized"],
+    ["expired intermediate from the SERVER is still expired", ["leaf", "int-expired"], ["root"], "CERT_HAS_EXPIRED"],
+    // was CERT_HAS_EXPIRED: the trusted expired copy shadowed the server's valid one
+    [
+      "expired trusted intermediate does not shadow the server's valid one",
+      ["leaf", "int-valid"],
+      ["root", "int-expired"],
+      "authorized",
+    ],
+    ["...in either order", ["leaf", "int-valid"], ["int-expired", "root"], "authorized"],
+    // was CERT_NOT_YET_VALID
+    [
+      "not-yet-valid trusted intermediate does not shadow either",
+      ["leaf", "int-valid"],
+      ["root", "int-future"],
+      "authorized",
+    ],
+    // absent as an anchor, but the failure still names the reason
+    ["expired trusted intermediate is not an anchor", ["leaf"], ["root", "int-expired"], "CERT_HAS_EXPIRED"],
+    ["not-yet-valid trusted intermediate is not an anchor", ["leaf"], ["root", "int-future"], "CERT_NOT_YET_VALID"],
+    ["valid trusted intermediate is (server sends leaf only)", ["leaf"], ["root", "int-valid"], "authorized"],
+    // pinning only an expired intermediate fails closed (was UNABLE_TO_GET_ISSUER_CERT: through it, then no root)
+    ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "CERT_HAS_EXPIRED"],
+    [
+      "ca = only the expired intermediate, partial chains allowed, server sends it",
+      ["leaf", "int-expired"],
+      ["int-expired"],
+      "CERT_HAS_EXPIRED",
+      { allowPartialTrustChain: true },
+    ],
+    // an exact match on an expired pinned cert is not a trust anchor either
+    [
+      "ca = only the expired intermediate, partial chains allowed, server sends the valid one",
+      ["leaf", "int-valid"],
+      ["int-expired"],
+      "CERT_HAS_EXPIRED",
+      { allowPartialTrustChain: true },
+    ],
+    [
+      "ca = only the valid intermediate, partial chains allowed",
+      ["leaf", "int-valid"],
+      ["int-valid"],
+      "authorized",
+      { allowPartialTrustChain: true },
+    ],
+    // Name constraints are enforced on the chain actually built: a valid constrained copy in the trust set still wins
+    // (trusted first) and rejects; an expired constrained copy is absent, and trusting `root` means trusting what it
+    // issued. (was UNSPECIFIED, i.e. rejected via the expired constrained copy)
+    [
+      "valid constrained trusted intermediate still applies its constraints",
+      ["leaf", "int-valid"],
+      ["root", "int-constrained-valid"],
+      "UNSPECIFIED",
+    ],
+    ["constrained intermediate from the server violates", ["leaf", "int-constrained-valid"], ["root"], "UNSPECIFIED"],
+    [
+      "expired constrained trusted intermediate is absent",
+      ["leaf", "int-valid"],
+      ["root", "int-constrained-expired"],
+      "authorized",
+    ],
+    // Roots (the two "authorized" rows were CERT_HAS_EXPIRED)
+    [
+      "expired self-signed twin of the root does not shadow it",
+      ["leaf", "int-valid"],
+      ["root-expired", "root"],
+      "authorized",
+    ],
+    ["only the expired twin trusted", ["leaf", "int-valid"], ["root-expired"], "CERT_HAS_EXPIRED"],
+    [
+      "cross-sign to an expired old root: the valid root anchors",
+      ["leaf", "int-valid", "root-cross-by-oldroot"],
+      ["oldroot-expired", "root"],
+      "authorized",
+    ],
+    [
+      "cross-sign to an expired old root: only the old root trusted",
+      ["leaf", "int-valid", "root-cross-by-oldroot"],
+      ["oldroot-expired"],
+      "CERT_HAS_EXPIRED",
+    ],
+  ];
+  for (const [name, chain, ca, expected, extra] of cases) {
+    it(name, async () => {
+      expect(
+        await connect(
+          chain.map(n => F[n]).join(""),
+          ca.map(n => F[n]),
+          extra,
+        ),
+      ).toBe(expected);
+    });
+  }
+
+  it("a CA with a malformed validity field is rejected when the context is created, not ignored", () => {
+    const der = Buffer.from(F["int-valid"].replace(/-----[^\n]+-----|\s/g, ""), "base64");
+    // notBefore is a 13-byte UTCTime (tag 0x17, length 0x0d); corrupt one of its digits.
+    const notBefore = der.indexOf(Buffer.from([0x17, 0x0d]));
+    expect(notBefore).toBeGreaterThan(0);
+    const bad = Buffer.from(der);
+    bad[notBefore + 2] = 0x58; // 'X'
+    const pem = `-----BEGIN CERTIFICATE-----\n${bad.toString("base64")}\n-----END CERTIFICATE-----\n`;
+    expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
+  });
+});

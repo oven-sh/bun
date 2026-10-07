@@ -48,6 +48,21 @@
 namespace Bun {
 using namespace JSC;
 
+// Tables end with a `{ nullptr, 0 }` row: every entry of some tables is
+// `#ifdef`-guarded, and an empty array could not be passed as a span.
+struct NumericConstant {
+    const char* name;
+    double value;
+};
+
+// One loop instead of a `putDirect` call sequence per constant; these objects
+// are each built once, lazily.
+static void putNumericConstants(VM& vm, JSObject* object, const NumericConstant* constants)
+{
+    for (; constants->name; ++constants)
+        object->putDirect(vm, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constants->name)), jsNumber(constants->value));
+}
+
 static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
@@ -56,554 +71,574 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
     auto errnoObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     auto signalsObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     auto priorityObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    osObj->putDirect(vm, Identifier::fromString(vm, "UV_UDP_REUSEADDR"_s), jsNumber(4));
-    osObj->putDirect(vm, Identifier::fromString(vm, "dlopen"_s), dlopenObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "errno"_s), errnoObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "signals"_s), signalsObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "priority"_s), priorityObj);
+    static constexpr NumericConstant kConstants1[] = {
+        { "UV_UDP_REUSEADDR", static_cast<double>(4) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, osObj, kConstants1);
+    Bun::putDirectNamed(vm, osObj, "dlopen"_s, dlopenObj);
+    Bun::putDirectNamed(vm, osObj, "errno"_s, errnoObj);
+    Bun::putDirectNamed(vm, osObj, "signals"_s, signalsObj);
+    Bun::putDirectNamed(vm, osObj, "priority"_s, priorityObj);
+    static constexpr NumericConstant kConstants2[] = {
 #ifdef E2BIG
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "E2BIG"_s), jsNumber(E2BIG));
+        { "E2BIG", static_cast<double>(E2BIG) },
 #endif
 #ifdef EACCES
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EACCES"_s), jsNumber(EACCES));
+        { "EACCES", static_cast<double>(EACCES) },
 #endif
 #ifdef EADDRINUSE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EADDRINUSE"_s), jsNumber(EADDRINUSE));
+        { "EADDRINUSE", static_cast<double>(EADDRINUSE) },
 #endif
 #ifdef EADDRNOTAVAIL
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EADDRNOTAVAIL"_s), jsNumber(EADDRNOTAVAIL));
+        { "EADDRNOTAVAIL", static_cast<double>(EADDRNOTAVAIL) },
 #endif
 #ifdef EAFNOSUPPORT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EAFNOSUPPORT"_s), jsNumber(EAFNOSUPPORT));
+        { "EAFNOSUPPORT", static_cast<double>(EAFNOSUPPORT) },
 #endif
 #ifdef EAGAIN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EAGAIN"_s), jsNumber(EAGAIN));
+        { "EAGAIN", static_cast<double>(EAGAIN) },
 #endif
 #ifdef EALREADY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EALREADY"_s), jsNumber(EALREADY));
+        { "EALREADY", static_cast<double>(EALREADY) },
 #endif
 #ifdef EBADF
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EBADF"_s), jsNumber(EBADF));
+        { "EBADF", static_cast<double>(EBADF) },
 #endif
 #ifdef EBADMSG
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EBADMSG"_s), jsNumber(EBADMSG));
+        { "EBADMSG", static_cast<double>(EBADMSG) },
 #endif
 #ifdef EBUSY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EBUSY"_s), jsNumber(EBUSY));
+        { "EBUSY", static_cast<double>(EBUSY) },
 #endif
 #ifdef ECANCELED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ECANCELED"_s), jsNumber(ECANCELED));
+        { "ECANCELED", static_cast<double>(ECANCELED) },
 #endif
 #ifdef ECHILD
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ECHILD"_s), jsNumber(ECHILD));
+        { "ECHILD", static_cast<double>(ECHILD) },
 #endif
 #ifdef ECONNABORTED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ECONNABORTED"_s), jsNumber(ECONNABORTED));
+        { "ECONNABORTED", static_cast<double>(ECONNABORTED) },
 #endif
 #ifdef ECONNREFUSED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ECONNREFUSED"_s), jsNumber(ECONNREFUSED));
+        { "ECONNREFUSED", static_cast<double>(ECONNREFUSED) },
 #endif
 #ifdef ECONNRESET
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ECONNRESET"_s), jsNumber(ECONNRESET));
+        { "ECONNRESET", static_cast<double>(ECONNRESET) },
 #endif
 #ifdef EDEADLK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EDEADLK"_s), jsNumber(EDEADLK));
+        { "EDEADLK", static_cast<double>(EDEADLK) },
 #endif
 #ifdef EDESTADDRREQ
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EDESTADDRREQ"_s), jsNumber(EDESTADDRREQ));
+        { "EDESTADDRREQ", static_cast<double>(EDESTADDRREQ) },
 #endif
 #ifdef EDOM
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EDOM"_s), jsNumber(EDOM));
+        { "EDOM", static_cast<double>(EDOM) },
 #endif
 #ifdef EDQUOT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EDQUOT"_s), jsNumber(EDQUOT));
+        { "EDQUOT", static_cast<double>(EDQUOT) },
 #endif
 #ifdef EEXIST
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EEXIST"_s), jsNumber(EEXIST));
+        { "EEXIST", static_cast<double>(EEXIST) },
 #endif
 #ifdef EFAULT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EFAULT"_s), jsNumber(EFAULT));
+        { "EFAULT", static_cast<double>(EFAULT) },
 #endif
 #ifdef EFBIG
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EFBIG"_s), jsNumber(EFBIG));
+        { "EFBIG", static_cast<double>(EFBIG) },
 #endif
 #ifdef EHOSTUNREACH
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EHOSTUNREACH"_s), jsNumber(EHOSTUNREACH));
+        { "EHOSTUNREACH", static_cast<double>(EHOSTUNREACH) },
 #endif
 #ifdef EIDRM
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EIDRM"_s), jsNumber(EIDRM));
+        { "EIDRM", static_cast<double>(EIDRM) },
 #endif
 #ifdef EILSEQ
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EILSEQ"_s), jsNumber(EILSEQ));
+        { "EILSEQ", static_cast<double>(EILSEQ) },
 #endif
 #ifdef EINPROGRESS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EINPROGRESS"_s), jsNumber(EINPROGRESS));
+        { "EINPROGRESS", static_cast<double>(EINPROGRESS) },
 #endif
 #ifdef EINTR
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EINTR"_s), jsNumber(EINTR));
+        { "EINTR", static_cast<double>(EINTR) },
 #endif
 #ifdef EINVAL
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EINVAL"_s), jsNumber(EINVAL));
+        { "EINVAL", static_cast<double>(EINVAL) },
 #endif
 #ifdef EIO
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EIO"_s), jsNumber(EIO));
+        { "EIO", static_cast<double>(EIO) },
 #endif
 #ifdef EISCONN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EISCONN"_s), jsNumber(EISCONN));
+        { "EISCONN", static_cast<double>(EISCONN) },
 #endif
 #ifdef EISDIR
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EISDIR"_s), jsNumber(EISDIR));
+        { "EISDIR", static_cast<double>(EISDIR) },
 #endif
 #ifdef ELOOP
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ELOOP"_s), jsNumber(ELOOP));
+        { "ELOOP", static_cast<double>(ELOOP) },
 #endif
 #ifdef EMFILE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EMFILE"_s), jsNumber(EMFILE));
+        { "EMFILE", static_cast<double>(EMFILE) },
 #endif
 #ifdef EMLINK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EMLINK"_s), jsNumber(EMLINK));
+        { "EMLINK", static_cast<double>(EMLINK) },
 #endif
 #ifdef EMSGSIZE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EMSGSIZE"_s), jsNumber(EMSGSIZE));
+        { "EMSGSIZE", static_cast<double>(EMSGSIZE) },
 #endif
 #ifdef EMULTIHOP
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EMULTIHOP"_s), jsNumber(EMULTIHOP));
+        { "EMULTIHOP", static_cast<double>(EMULTIHOP) },
 #endif
 #ifdef ENAMETOOLONG
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENAMETOOLONG"_s), jsNumber(ENAMETOOLONG));
+        { "ENAMETOOLONG", static_cast<double>(ENAMETOOLONG) },
 #endif
 #ifdef ENETDOWN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENETDOWN"_s), jsNumber(ENETDOWN));
+        { "ENETDOWN", static_cast<double>(ENETDOWN) },
 #endif
 #ifdef ENETRESET
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENETRESET"_s), jsNumber(ENETRESET));
+        { "ENETRESET", static_cast<double>(ENETRESET) },
 #endif
 #ifdef ENETUNREACH
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENETUNREACH"_s), jsNumber(ENETUNREACH));
+        { "ENETUNREACH", static_cast<double>(ENETUNREACH) },
 #endif
 #ifdef ENFILE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENFILE"_s), jsNumber(ENFILE));
+        { "ENFILE", static_cast<double>(ENFILE) },
 #endif
 #ifdef ENOBUFS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOBUFS"_s), jsNumber(ENOBUFS));
+        { "ENOBUFS", static_cast<double>(ENOBUFS) },
 #endif
 #ifdef ENODATA
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENODATA"_s), jsNumber(ENODATA));
+        { "ENODATA", static_cast<double>(ENODATA) },
 #endif
 #ifdef ENODEV
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENODEV"_s), jsNumber(ENODEV));
+        { "ENODEV", static_cast<double>(ENODEV) },
 #endif
 #ifdef ENOENT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOENT"_s), jsNumber(ENOENT));
+        { "ENOENT", static_cast<double>(ENOENT) },
 #endif
 #ifdef ENOEXEC
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOEXEC"_s), jsNumber(ENOEXEC));
+        { "ENOEXEC", static_cast<double>(ENOEXEC) },
 #endif
 #ifdef ENOLCK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOLCK"_s), jsNumber(ENOLCK));
+        { "ENOLCK", static_cast<double>(ENOLCK) },
 #endif
 #ifdef ENOLINK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOLINK"_s), jsNumber(ENOLINK));
+        { "ENOLINK", static_cast<double>(ENOLINK) },
 #endif
 #ifdef ENOMEM
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOMEM"_s), jsNumber(ENOMEM));
+        { "ENOMEM", static_cast<double>(ENOMEM) },
 #endif
 #ifdef ENOMSG
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOMSG"_s), jsNumber(ENOMSG));
+        { "ENOMSG", static_cast<double>(ENOMSG) },
 #endif
 #ifdef ENOPROTOOPT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOPROTOOPT"_s), jsNumber(ENOPROTOOPT));
+        { "ENOPROTOOPT", static_cast<double>(ENOPROTOOPT) },
 #endif
 #ifdef ENOSPC
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOSPC"_s), jsNumber(ENOSPC));
+        { "ENOSPC", static_cast<double>(ENOSPC) },
 #endif
 #ifdef ENOSR
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOSR"_s), jsNumber(ENOSR));
+        { "ENOSR", static_cast<double>(ENOSR) },
 #endif
 #ifdef ENOSTR
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOSTR"_s), jsNumber(ENOSTR));
+        { "ENOSTR", static_cast<double>(ENOSTR) },
 #endif
 #ifdef ENOSYS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOSYS"_s), jsNumber(ENOSYS));
+        { "ENOSYS", static_cast<double>(ENOSYS) },
 #endif
 #ifdef ENOTCONN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOTCONN"_s), jsNumber(ENOTCONN));
+        { "ENOTCONN", static_cast<double>(ENOTCONN) },
 #endif
 #ifdef ENOTDIR
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOTDIR"_s), jsNumber(ENOTDIR));
+        { "ENOTDIR", static_cast<double>(ENOTDIR) },
 #endif
 #ifdef ENOTEMPTY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOTEMPTY"_s), jsNumber(ENOTEMPTY));
+        { "ENOTEMPTY", static_cast<double>(ENOTEMPTY) },
 #endif
 #ifdef ENOTSOCK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOTSOCK"_s), jsNumber(ENOTSOCK));
+        { "ENOTSOCK", static_cast<double>(ENOTSOCK) },
 #endif
 #ifdef ENOTSUP
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOTSUP"_s), jsNumber(ENOTSUP));
+        { "ENOTSUP", static_cast<double>(ENOTSUP) },
 #endif
 #ifdef ENOTTY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENOTTY"_s), jsNumber(ENOTTY));
+        { "ENOTTY", static_cast<double>(ENOTTY) },
 #endif
 #ifdef ENXIO
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ENXIO"_s), jsNumber(ENXIO));
+        { "ENXIO", static_cast<double>(ENXIO) },
 #endif
 #ifdef EOPNOTSUPP
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EOPNOTSUPP"_s), jsNumber(EOPNOTSUPP));
+        { "EOPNOTSUPP", static_cast<double>(EOPNOTSUPP) },
 #endif
 #ifdef EOVERFLOW
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EOVERFLOW"_s), jsNumber(EOVERFLOW));
+        { "EOVERFLOW", static_cast<double>(EOVERFLOW) },
 #endif
 #ifdef EPERM
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EPERM"_s), jsNumber(EPERM));
+        { "EPERM", static_cast<double>(EPERM) },
 #endif
 #ifdef EPIPE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EPIPE"_s), jsNumber(EPIPE));
+        { "EPIPE", static_cast<double>(EPIPE) },
 #endif
 #ifdef EPROTO
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EPROTO"_s), jsNumber(EPROTO));
+        { "EPROTO", static_cast<double>(EPROTO) },
 #endif
 #ifdef EPROTONOSUPPORT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EPROTONOSUPPORT"_s), jsNumber(EPROTONOSUPPORT));
+        { "EPROTONOSUPPORT", static_cast<double>(EPROTONOSUPPORT) },
 #endif
 #ifdef EPROTOTYPE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EPROTOTYPE"_s), jsNumber(EPROTOTYPE));
+        { "EPROTOTYPE", static_cast<double>(EPROTOTYPE) },
 #endif
 #ifdef ERANGE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ERANGE"_s), jsNumber(ERANGE));
+        { "ERANGE", static_cast<double>(ERANGE) },
 #endif
 #ifdef EROFS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EROFS"_s), jsNumber(EROFS));
+        { "EROFS", static_cast<double>(EROFS) },
 #endif
 #ifdef ESPIPE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ESPIPE"_s), jsNumber(ESPIPE));
+        { "ESPIPE", static_cast<double>(ESPIPE) },
 #endif
 #ifdef ESRCH
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ESRCH"_s), jsNumber(ESRCH));
+        { "ESRCH", static_cast<double>(ESRCH) },
 #endif
 #ifdef ESTALE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ESTALE"_s), jsNumber(ESTALE));
+        { "ESTALE", static_cast<double>(ESTALE) },
 #endif
 #ifdef ETIME
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ETIME"_s), jsNumber(ETIME));
+        { "ETIME", static_cast<double>(ETIME) },
 #endif
 #ifdef ETIMEDOUT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ETIMEDOUT"_s), jsNumber(ETIMEDOUT));
+        { "ETIMEDOUT", static_cast<double>(ETIMEDOUT) },
 #endif
 #ifdef ETXTBSY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "ETXTBSY"_s), jsNumber(ETXTBSY));
+        { "ETXTBSY", static_cast<double>(ETXTBSY) },
 #endif
 #ifdef EWOULDBLOCK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EWOULDBLOCK"_s), jsNumber(EWOULDBLOCK));
+        { "EWOULDBLOCK", static_cast<double>(EWOULDBLOCK) },
 #endif
 #ifdef EXDEV
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "EXDEV"_s), jsNumber(EXDEV));
+        { "EXDEV", static_cast<double>(EXDEV) },
 #endif
 #ifdef WSAEINTR
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEINTR"_s), jsNumber(WSAEINTR));
+        { "WSAEINTR", static_cast<double>(WSAEINTR) },
 #endif
 #ifdef WSAEBADF
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEBADF"_s), jsNumber(WSAEBADF));
+        { "WSAEBADF", static_cast<double>(WSAEBADF) },
 #endif
 #ifdef WSAEACCES
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEACCES"_s), jsNumber(WSAEACCES));
+        { "WSAEACCES", static_cast<double>(WSAEACCES) },
 #endif
 #ifdef WSAEFAULT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEFAULT"_s), jsNumber(WSAEFAULT));
+        { "WSAEFAULT", static_cast<double>(WSAEFAULT) },
 #endif
 #ifdef WSAEINVAL
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEINVAL"_s), jsNumber(WSAEINVAL));
+        { "WSAEINVAL", static_cast<double>(WSAEINVAL) },
 #endif
 #ifdef WSAEMFILE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEMFILE"_s), jsNumber(WSAEMFILE));
+        { "WSAEMFILE", static_cast<double>(WSAEMFILE) },
 #endif
 #ifdef WSAEWOULDBLOCK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEWOULDBLOCK"_s), jsNumber(WSAEWOULDBLOCK));
+        { "WSAEWOULDBLOCK", static_cast<double>(WSAEWOULDBLOCK) },
 #endif
 #ifdef WSAEINPROGRESS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEINPROGRESS"_s), jsNumber(WSAEINPROGRESS));
+        { "WSAEINPROGRESS", static_cast<double>(WSAEINPROGRESS) },
 #endif
 #ifdef WSAEALREADY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEALREADY"_s), jsNumber(WSAEALREADY));
+        { "WSAEALREADY", static_cast<double>(WSAEALREADY) },
 #endif
 #ifdef WSAENOTSOCK
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENOTSOCK"_s), jsNumber(WSAENOTSOCK));
+        { "WSAENOTSOCK", static_cast<double>(WSAENOTSOCK) },
 #endif
 #ifdef WSAEDESTADDRREQ
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEDESTADDRREQ"_s), jsNumber(WSAEDESTADDRREQ));
+        { "WSAEDESTADDRREQ", static_cast<double>(WSAEDESTADDRREQ) },
 #endif
 #ifdef WSAEMSGSIZE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEMSGSIZE"_s), jsNumber(WSAEMSGSIZE));
+        { "WSAEMSGSIZE", static_cast<double>(WSAEMSGSIZE) },
 #endif
 #ifdef WSAEPROTOTYPE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEPROTOTYPE"_s), jsNumber(WSAEPROTOTYPE));
+        { "WSAEPROTOTYPE", static_cast<double>(WSAEPROTOTYPE) },
 #endif
 #ifdef WSAENOPROTOOPT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENOPROTOOPT"_s), jsNumber(WSAENOPROTOOPT));
+        { "WSAENOPROTOOPT", static_cast<double>(WSAENOPROTOOPT) },
 #endif
 #ifdef WSAEPROTONOSUPPORT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEPROTONOSUPPORT"_s), jsNumber(WSAEPROTONOSUPPORT));
+        { "WSAEPROTONOSUPPORT", static_cast<double>(WSAEPROTONOSUPPORT) },
 #endif
 #ifdef WSAESOCKTNOSUPPORT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAESOCKTNOSUPPORT"_s), jsNumber(WSAESOCKTNOSUPPORT));
+        { "WSAESOCKTNOSUPPORT", static_cast<double>(WSAESOCKTNOSUPPORT) },
 #endif
 #ifdef WSAEOPNOTSUPP
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEOPNOTSUPP"_s), jsNumber(WSAEOPNOTSUPP));
+        { "WSAEOPNOTSUPP", static_cast<double>(WSAEOPNOTSUPP) },
 #endif
 #ifdef WSAEPFNOSUPPORT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEPFNOSUPPORT"_s), jsNumber(WSAEPFNOSUPPORT));
+        { "WSAEPFNOSUPPORT", static_cast<double>(WSAEPFNOSUPPORT) },
 #endif
 #ifdef WSAEAFNOSUPPORT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEAFNOSUPPORT"_s), jsNumber(WSAEAFNOSUPPORT));
+        { "WSAEAFNOSUPPORT", static_cast<double>(WSAEAFNOSUPPORT) },
 #endif
 #ifdef WSAEADDRINUSE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEADDRINUSE"_s), jsNumber(WSAEADDRINUSE));
+        { "WSAEADDRINUSE", static_cast<double>(WSAEADDRINUSE) },
 #endif
 #ifdef WSAEADDRNOTAVAIL
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEADDRNOTAVAIL"_s), jsNumber(WSAEADDRNOTAVAIL));
+        { "WSAEADDRNOTAVAIL", static_cast<double>(WSAEADDRNOTAVAIL) },
 #endif
 #ifdef WSAENETDOWN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENETDOWN"_s), jsNumber(WSAENETDOWN));
+        { "WSAENETDOWN", static_cast<double>(WSAENETDOWN) },
 #endif
 #ifdef WSAENETUNREACH
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENETUNREACH"_s), jsNumber(WSAENETUNREACH));
+        { "WSAENETUNREACH", static_cast<double>(WSAENETUNREACH) },
 #endif
 #ifdef WSAENETRESET
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENETRESET"_s), jsNumber(WSAENETRESET));
+        { "WSAENETRESET", static_cast<double>(WSAENETRESET) },
 #endif
 #ifdef WSAECONNABORTED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAECONNABORTED"_s), jsNumber(WSAECONNABORTED));
+        { "WSAECONNABORTED", static_cast<double>(WSAECONNABORTED) },
 #endif
 #ifdef WSAECONNRESET
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAECONNRESET"_s), jsNumber(WSAECONNRESET));
+        { "WSAECONNRESET", static_cast<double>(WSAECONNRESET) },
 #endif
 #ifdef WSAENOBUFS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENOBUFS"_s), jsNumber(WSAENOBUFS));
+        { "WSAENOBUFS", static_cast<double>(WSAENOBUFS) },
 #endif
 #ifdef WSAEISCONN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEISCONN"_s), jsNumber(WSAEISCONN));
+        { "WSAEISCONN", static_cast<double>(WSAEISCONN) },
 #endif
 #ifdef WSAENOTCONN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENOTCONN"_s), jsNumber(WSAENOTCONN));
+        { "WSAENOTCONN", static_cast<double>(WSAENOTCONN) },
 #endif
 #ifdef WSAESHUTDOWN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAESHUTDOWN"_s), jsNumber(WSAESHUTDOWN));
+        { "WSAESHUTDOWN", static_cast<double>(WSAESHUTDOWN) },
 #endif
 #ifdef WSAETOOMANYREFS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAETOOMANYREFS"_s), jsNumber(WSAETOOMANYREFS));
+        { "WSAETOOMANYREFS", static_cast<double>(WSAETOOMANYREFS) },
 #endif
 #ifdef WSAETIMEDOUT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAETIMEDOUT"_s), jsNumber(WSAETIMEDOUT));
+        { "WSAETIMEDOUT", static_cast<double>(WSAETIMEDOUT) },
 #endif
 #ifdef WSAECONNREFUSED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAECONNREFUSED"_s), jsNumber(WSAECONNREFUSED));
+        { "WSAECONNREFUSED", static_cast<double>(WSAECONNREFUSED) },
 #endif
 #ifdef WSAELOOP
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAELOOP"_s), jsNumber(WSAELOOP));
+        { "WSAELOOP", static_cast<double>(WSAELOOP) },
 #endif
 #ifdef WSAENAMETOOLONG
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENAMETOOLONG"_s), jsNumber(WSAENAMETOOLONG));
+        { "WSAENAMETOOLONG", static_cast<double>(WSAENAMETOOLONG) },
 #endif
 #ifdef WSAEHOSTDOWN
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEHOSTDOWN"_s), jsNumber(WSAEHOSTDOWN));
+        { "WSAEHOSTDOWN", static_cast<double>(WSAEHOSTDOWN) },
 #endif
 #ifdef WSAEHOSTUNREACH
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEHOSTUNREACH"_s), jsNumber(WSAEHOSTUNREACH));
+        { "WSAEHOSTUNREACH", static_cast<double>(WSAEHOSTUNREACH) },
 #endif
 #ifdef WSAENOTEMPTY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENOTEMPTY"_s), jsNumber(WSAENOTEMPTY));
+        { "WSAENOTEMPTY", static_cast<double>(WSAENOTEMPTY) },
 #endif
 #ifdef WSAEPROCLIM
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEPROCLIM"_s), jsNumber(WSAEPROCLIM));
+        { "WSAEPROCLIM", static_cast<double>(WSAEPROCLIM) },
 #endif
 #ifdef WSAEUSERS
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEUSERS"_s), jsNumber(WSAEUSERS));
+        { "WSAEUSERS", static_cast<double>(WSAEUSERS) },
 #endif
 #ifdef WSAEDQUOT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEDQUOT"_s), jsNumber(WSAEDQUOT));
+        { "WSAEDQUOT", static_cast<double>(WSAEDQUOT) },
 #endif
 #ifdef WSAESTALE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAESTALE"_s), jsNumber(WSAESTALE));
+        { "WSAESTALE", static_cast<double>(WSAESTALE) },
 #endif
 #ifdef WSAEREMOTE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEREMOTE"_s), jsNumber(WSAEREMOTE));
+        { "WSAEREMOTE", static_cast<double>(WSAEREMOTE) },
 #endif
 #ifdef WSASYSNOTREADY
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSASYSNOTREADY"_s), jsNumber(WSASYSNOTREADY));
+        { "WSASYSNOTREADY", static_cast<double>(WSASYSNOTREADY) },
 #endif
 #ifdef WSAVERNOTSUPPORTED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAVERNOTSUPPORTED"_s), jsNumber(WSAVERNOTSUPPORTED));
+        { "WSAVERNOTSUPPORTED", static_cast<double>(WSAVERNOTSUPPORTED) },
 #endif
 #ifdef WSANOTINITIALISED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSANOTINITIALISED"_s), jsNumber(WSANOTINITIALISED));
+        { "WSANOTINITIALISED", static_cast<double>(WSANOTINITIALISED) },
 #endif
 #ifdef WSAEDISCON
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEDISCON"_s), jsNumber(WSAEDISCON));
+        { "WSAEDISCON", static_cast<double>(WSAEDISCON) },
 #endif
 #ifdef WSAENOMORE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAENOMORE"_s), jsNumber(WSAENOMORE));
+        { "WSAENOMORE", static_cast<double>(WSAENOMORE) },
 #endif
 #ifdef WSAECANCELLED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAECANCELLED"_s), jsNumber(WSAECANCELLED));
+        { "WSAECANCELLED", static_cast<double>(WSAECANCELLED) },
 #endif
 #ifdef WSAEINVALIDPROCTABLE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEINVALIDPROCTABLE"_s), jsNumber(WSAEINVALIDPROCTABLE));
+        { "WSAEINVALIDPROCTABLE", static_cast<double>(WSAEINVALIDPROCTABLE) },
 #endif
 #ifdef WSAEINVALIDPROVIDER
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEINVALIDPROVIDER"_s), jsNumber(WSAEINVALIDPROVIDER));
+        { "WSAEINVALIDPROVIDER", static_cast<double>(WSAEINVALIDPROVIDER) },
 #endif
 #ifdef WSAEPROVIDERFAILEDINIT
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEPROVIDERFAILEDINIT"_s), jsNumber(WSAEPROVIDERFAILEDINIT));
+        { "WSAEPROVIDERFAILEDINIT", static_cast<double>(WSAEPROVIDERFAILEDINIT) },
 #endif
 #ifdef WSASYSCALLFAILURE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSASYSCALLFAILURE"_s), jsNumber(WSASYSCALLFAILURE));
+        { "WSASYSCALLFAILURE", static_cast<double>(WSASYSCALLFAILURE) },
 #endif
 #ifdef WSASERVICE_NOT_FOUND
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSASERVICE_NOT_FOUND"_s), jsNumber(WSASERVICE_NOT_FOUND));
+        { "WSASERVICE_NOT_FOUND", static_cast<double>(WSASERVICE_NOT_FOUND) },
 #endif
 #ifdef WSATYPE_NOT_FOUND
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSATYPE_NOT_FOUND"_s), jsNumber(WSATYPE_NOT_FOUND));
+        { "WSATYPE_NOT_FOUND", static_cast<double>(WSATYPE_NOT_FOUND) },
 #endif
 #ifdef WSA_E_NO_MORE
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSA_E_NO_MORE"_s), jsNumber(WSA_E_NO_MORE));
+        { "WSA_E_NO_MORE", static_cast<double>(WSA_E_NO_MORE) },
 #endif
 #ifdef WSA_E_CANCELLED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSA_E_CANCELLED"_s), jsNumber(WSA_E_CANCELLED));
+        { "WSA_E_CANCELLED", static_cast<double>(WSA_E_CANCELLED) },
 #endif
 #ifdef WSAEREFUSED
-    errnoObj->putDirect(vm, Identifier::fromString(vm, "WSAEREFUSED"_s), jsNumber(WSAEREFUSED));
+        { "WSAEREFUSED", static_cast<double>(WSAEREFUSED) },
 #endif
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, errnoObj, kConstants2);
+    static constexpr NumericConstant kConstants3[] = {
 #ifdef SIGHUP
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGHUP"_s), jsNumber(SIGHUP));
+        { "SIGHUP", static_cast<double>(SIGHUP) },
 #endif
 #ifdef SIGINT
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGINT"_s), jsNumber(SIGINT));
+        { "SIGINT", static_cast<double>(SIGINT) },
 #endif
 #ifdef SIGQUIT
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGQUIT"_s), jsNumber(SIGQUIT));
+        { "SIGQUIT", static_cast<double>(SIGQUIT) },
 #endif
 #ifdef SIGILL
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGILL"_s), jsNumber(SIGILL));
+        { "SIGILL", static_cast<double>(SIGILL) },
 #endif
 #ifdef SIGTRAP
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGTRAP"_s), jsNumber(SIGTRAP));
+        { "SIGTRAP", static_cast<double>(SIGTRAP) },
 #endif
 #ifdef SIGABRT
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGABRT"_s), jsNumber(SIGABRT));
+        { "SIGABRT", static_cast<double>(SIGABRT) },
 #endif
 #ifdef SIGIOT
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGIOT"_s), jsNumber(SIGIOT));
+        { "SIGIOT", static_cast<double>(SIGIOT) },
 #endif
 #ifdef SIGBUS
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGBUS"_s), jsNumber(SIGBUS));
+        { "SIGBUS", static_cast<double>(SIGBUS) },
 #endif
 #ifdef SIGFPE
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGFPE"_s), jsNumber(SIGFPE));
+        { "SIGFPE", static_cast<double>(SIGFPE) },
 #endif
 #ifdef SIGKILL
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGKILL"_s), jsNumber(SIGKILL));
+        { "SIGKILL", static_cast<double>(SIGKILL) },
 #endif
 #ifdef SIGUSR1
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGUSR1"_s), jsNumber(SIGUSR1));
+        { "SIGUSR1", static_cast<double>(SIGUSR1) },
 #endif
 #ifdef SIGSEGV
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGSEGV"_s), jsNumber(SIGSEGV));
+        { "SIGSEGV", static_cast<double>(SIGSEGV) },
 #endif
 #ifdef SIGUSR2
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGUSR2"_s), jsNumber(SIGUSR2));
+        { "SIGUSR2", static_cast<double>(SIGUSR2) },
 #endif
 #ifdef SIGPIPE
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGPIPE"_s), jsNumber(SIGPIPE));
+        { "SIGPIPE", static_cast<double>(SIGPIPE) },
 #endif
 #ifdef SIGALRM
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGALRM"_s), jsNumber(SIGALRM));
+        { "SIGALRM", static_cast<double>(SIGALRM) },
 #endif
 #ifdef SIGTERM
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGTERM"_s), jsNumber(SIGTERM));
+        { "SIGTERM", static_cast<double>(SIGTERM) },
 #endif
 #ifdef SIGCHLD
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGCHLD"_s), jsNumber(SIGCHLD));
+        { "SIGCHLD", static_cast<double>(SIGCHLD) },
 #endif
 #ifdef SIGSTKFLT
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGSTKFLT"_s), jsNumber(SIGSTKFLT));
+        { "SIGSTKFLT", static_cast<double>(SIGSTKFLT) },
 #endif
 #ifdef SIGCONT
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGCONT"_s), jsNumber(SIGCONT));
+        { "SIGCONT", static_cast<double>(SIGCONT) },
 #endif
 #ifdef SIGSTOP
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGSTOP"_s), jsNumber(SIGSTOP));
+        { "SIGSTOP", static_cast<double>(SIGSTOP) },
 #endif
 #ifdef SIGTSTP
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGTSTP"_s), jsNumber(SIGTSTP));
+        { "SIGTSTP", static_cast<double>(SIGTSTP) },
 #endif
 #ifdef SIGBREAK
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGBREAK"_s), jsNumber(SIGBREAK));
+        { "SIGBREAK", static_cast<double>(SIGBREAK) },
 #endif
 #ifdef SIGTTIN
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGTTIN"_s), jsNumber(SIGTTIN));
+        { "SIGTTIN", static_cast<double>(SIGTTIN) },
 #endif
 #ifdef SIGTTOU
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGTTOU"_s), jsNumber(SIGTTOU));
+        { "SIGTTOU", static_cast<double>(SIGTTOU) },
 #endif
 #ifdef SIGURG
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGURG"_s), jsNumber(SIGURG));
+        { "SIGURG", static_cast<double>(SIGURG) },
 #endif
 #ifdef SIGXCPU
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGXCPU"_s), jsNumber(SIGXCPU));
+        { "SIGXCPU", static_cast<double>(SIGXCPU) },
 #endif
 #ifdef SIGXFSZ
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGXFSZ"_s), jsNumber(SIGXFSZ));
+        { "SIGXFSZ", static_cast<double>(SIGXFSZ) },
 #endif
 #ifdef SIGVTALRM
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGVTALRM"_s), jsNumber(SIGVTALRM));
+        { "SIGVTALRM", static_cast<double>(SIGVTALRM) },
 #endif
 #ifdef SIGPROF
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGPROF"_s), jsNumber(SIGPROF));
+        { "SIGPROF", static_cast<double>(SIGPROF) },
 #endif
 #ifdef SIGWINCH
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGWINCH"_s), jsNumber(SIGWINCH));
+        { "SIGWINCH", static_cast<double>(SIGWINCH) },
 #endif
 #ifdef SIGIO
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGIO"_s), jsNumber(SIGIO));
+        { "SIGIO", static_cast<double>(SIGIO) },
 #endif
 #ifdef SIGPOLL
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGPOLL"_s), jsNumber(SIGPOLL));
+        { "SIGPOLL", static_cast<double>(SIGPOLL) },
 #endif
 #ifdef SIGLOST
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGLOST"_s), jsNumber(SIGLOST));
+        { "SIGLOST", static_cast<double>(SIGLOST) },
 #endif
 #ifdef SIGPWR
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGPWR"_s), jsNumber(SIGPWR));
+        { "SIGPWR", static_cast<double>(SIGPWR) },
 #endif
 #ifdef SIGINFO
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGINFO"_s), jsNumber(SIGINFO));
+        { "SIGINFO", static_cast<double>(SIGINFO) },
 #endif
 #ifdef SIGSYS
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGSYS"_s), jsNumber(SIGSYS));
+        { "SIGSYS", static_cast<double>(SIGSYS) },
 #endif
 #ifdef SIGUNUSED
-    signalsObj->putDirect(vm, Identifier::fromString(vm, "SIGUNUSED"_s), jsNumber(SIGUNUSED));
+        { "SIGUNUSED", static_cast<double>(SIGUNUSED) },
 #endif
-    priorityObj->putDirect(vm, Identifier::fromString(vm, "PRIORITY_LOW"_s), jsNumber(19));
-    priorityObj->putDirect(vm, Identifier::fromString(vm, "PRIORITY_BELOW_NORMAL"_s), jsNumber(10));
-    priorityObj->putDirect(vm, Identifier::fromString(vm, "PRIORITY_NORMAL"_s), jsNumber(0));
-    priorityObj->putDirect(vm, Identifier::fromString(vm, "PRIORITY_ABOVE_NORMAL"_s), jsNumber(-7));
-    priorityObj->putDirect(vm, Identifier::fromString(vm, "PRIORITY_HIGH"_s), jsNumber(-14));
-    priorityObj->putDirect(vm, Identifier::fromString(vm, "PRIORITY_HIGHEST"_s), jsNumber(-20));
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, signalsObj, kConstants3);
+    static constexpr NumericConstant kConstants4[] = {
+        { "PRIORITY_LOW", static_cast<double>(19) },
+        { "PRIORITY_BELOW_NORMAL", static_cast<double>(10) },
+        { "PRIORITY_NORMAL", static_cast<double>(0) },
+        { "PRIORITY_ABOVE_NORMAL", static_cast<double>(-7) },
+        { "PRIORITY_HIGH", static_cast<double>(-14) },
+        { "PRIORITY_HIGHEST", static_cast<double>(-20) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, priorityObj, kConstants4);
+    static constexpr NumericConstant kConstants5[] = {
 #ifdef RTLD_LAZY
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_LAZY"_s), jsNumber(RTLD_LAZY));
+        { "RTLD_LAZY", static_cast<double>(RTLD_LAZY) },
 #endif
 #ifdef RTLD_NOW
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_NOW"_s), jsNumber(RTLD_NOW));
+        { "RTLD_NOW", static_cast<double>(RTLD_NOW) },
 #endif
 #ifdef RTLD_GLOBAL
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_GLOBAL"_s), jsNumber(RTLD_GLOBAL));
+        { "RTLD_GLOBAL", static_cast<double>(RTLD_GLOBAL) },
 #endif
 #ifdef RTLD_LOCAL
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_LOCAL"_s), jsNumber(RTLD_LOCAL));
+        { "RTLD_LOCAL", static_cast<double>(RTLD_LOCAL) },
 #endif
 #ifdef RTLD_DEEPBIND
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_DEEPBIND"_s), jsNumber(RTLD_DEEPBIND));
+        { "RTLD_DEEPBIND", static_cast<double>(RTLD_DEEPBIND) },
 #endif
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, dlopenObj, kConstants5);
     return osObj;
 }
 
@@ -611,32 +646,36 @@ static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
     auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_BEGIN"_s)), jsNumber(66));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_END"_s)), jsNumber(69));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_COMPLETE"_s)), jsNumber(88));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_INSTANT"_s)), jsNumber(73));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_ASYNC_BEGIN"_s)), jsNumber(83));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_ASYNC_STEP_INTO"_s)), jsNumber(84));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_ASYNC_STEP_PAST"_s)), jsNumber(112));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_ASYNC_END"_s)), jsNumber(70));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN"_s)), jsNumber(98));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_NESTABLE_ASYNC_END"_s)), jsNumber(101));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT"_s)), jsNumber(110));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_FLOW_BEGIN"_s)), jsNumber(115));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_FLOW_STEP"_s)), jsNumber(116));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_FLOW_END"_s)), jsNumber(102));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_METADATA"_s)), jsNumber(77));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_COUNTER"_s)), jsNumber(67));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_SAMPLE"_s)), jsNumber(80));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_CREATE_OBJECT"_s)), jsNumber(78));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_SNAPSHOT_OBJECT"_s)), jsNumber(79));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_DELETE_OBJECT"_s)), jsNumber(68));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_MEMORY_DUMP"_s)), jsNumber(118));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_MARK"_s)), jsNumber(82));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_CLOCK_SYNC"_s)), jsNumber(99));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_ENTER_CONTEXT"_s)), jsNumber(40));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_LEAVE_CONTEXT"_s)), jsNumber(41));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TRACE_EVENT_PHASE_LINK_IDS"_s)), jsNumber(61));
+    static constexpr NumericConstant kConstants6[] = {
+        { "TRACE_EVENT_PHASE_BEGIN", static_cast<double>(66) },
+        { "TRACE_EVENT_PHASE_END", static_cast<double>(69) },
+        { "TRACE_EVENT_PHASE_COMPLETE", static_cast<double>(88) },
+        { "TRACE_EVENT_PHASE_INSTANT", static_cast<double>(73) },
+        { "TRACE_EVENT_PHASE_ASYNC_BEGIN", static_cast<double>(83) },
+        { "TRACE_EVENT_PHASE_ASYNC_STEP_INTO", static_cast<double>(84) },
+        { "TRACE_EVENT_PHASE_ASYNC_STEP_PAST", static_cast<double>(112) },
+        { "TRACE_EVENT_PHASE_ASYNC_END", static_cast<double>(70) },
+        { "TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN", static_cast<double>(98) },
+        { "TRACE_EVENT_PHASE_NESTABLE_ASYNC_END", static_cast<double>(101) },
+        { "TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT", static_cast<double>(110) },
+        { "TRACE_EVENT_PHASE_FLOW_BEGIN", static_cast<double>(115) },
+        { "TRACE_EVENT_PHASE_FLOW_STEP", static_cast<double>(116) },
+        { "TRACE_EVENT_PHASE_FLOW_END", static_cast<double>(102) },
+        { "TRACE_EVENT_PHASE_METADATA", static_cast<double>(77) },
+        { "TRACE_EVENT_PHASE_COUNTER", static_cast<double>(67) },
+        { "TRACE_EVENT_PHASE_SAMPLE", static_cast<double>(80) },
+        { "TRACE_EVENT_PHASE_CREATE_OBJECT", static_cast<double>(78) },
+        { "TRACE_EVENT_PHASE_SNAPSHOT_OBJECT", static_cast<double>(79) },
+        { "TRACE_EVENT_PHASE_DELETE_OBJECT", static_cast<double>(68) },
+        { "TRACE_EVENT_PHASE_MEMORY_DUMP", static_cast<double>(118) },
+        { "TRACE_EVENT_PHASE_MARK", static_cast<double>(82) },
+        { "TRACE_EVENT_PHASE_CLOCK_SYNC", static_cast<double>(99) },
+        { "TRACE_EVENT_PHASE_ENTER_CONTEXT", static_cast<double>(40) },
+        { "TRACE_EVENT_PHASE_LEAVE_CONTEXT", static_cast<double>(41) },
+        { "TRACE_EVENT_PHASE_LINK_IDS", static_cast<double>(61) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants6);
     return object;
 }
 
@@ -644,138 +683,139 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
     auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_SYMLINK_DIR"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_SYMLINK_JUNCTION"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_RDONLY"_s)), jsNumber(O_RDONLY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_WRONLY"_s)), jsNumber(O_WRONLY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_RDWR"_s)), jsNumber(O_RDWR));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_UNKNOWN"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_FILE"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_DIR"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_LINK"_s)), jsNumber(3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_FIFO"_s)), jsNumber(4));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_SOCKET"_s)), jsNumber(5));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_CHAR"_s)), jsNumber(6));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_DIRENT_BLOCK"_s)), jsNumber(7));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFMT"_s)), jsNumber(S_IFMT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFREG"_s)), jsNumber(S_IFREG));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFDIR"_s)), jsNumber(S_IFDIR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFCHR"_s)), jsNumber(S_IFCHR));
+    static constexpr NumericConstant kConstants7[] = {
+        { "UV_FS_SYMLINK_DIR", static_cast<double>(1) },
+        { "UV_FS_SYMLINK_JUNCTION", static_cast<double>(2) },
+        { "O_RDONLY", static_cast<double>(O_RDONLY) },
+        { "O_WRONLY", static_cast<double>(O_WRONLY) },
+        { "O_RDWR", static_cast<double>(O_RDWR) },
+        { "UV_DIRENT_UNKNOWN", static_cast<double>(0) },
+        { "UV_DIRENT_FILE", static_cast<double>(1) },
+        { "UV_DIRENT_DIR", static_cast<double>(2) },
+        { "UV_DIRENT_LINK", static_cast<double>(3) },
+        { "UV_DIRENT_FIFO", static_cast<double>(4) },
+        { "UV_DIRENT_SOCKET", static_cast<double>(5) },
+        { "UV_DIRENT_CHAR", static_cast<double>(6) },
+        { "UV_DIRENT_BLOCK", static_cast<double>(7) },
+        { "S_IFMT", static_cast<double>(S_IFMT) },
+        { "S_IFREG", static_cast<double>(S_IFREG) },
+        { "S_IFDIR", static_cast<double>(S_IFDIR) },
+        { "S_IFCHR", static_cast<double>(S_IFCHR) },
 #ifdef S_IFBLK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFBLK"_s)), jsNumber(S_IFBLK));
+        { "S_IFBLK", static_cast<double>(S_IFBLK) },
 #endif
 #ifdef S_IFIFO
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFIFO"_s)), jsNumber(S_IFIFO));
+        { "S_IFIFO", static_cast<double>(S_IFIFO) },
 #endif
 #ifdef S_IFLNK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFLNK"_s)), jsNumber(S_IFLNK));
+        { "S_IFLNK", static_cast<double>(S_IFLNK) },
 #endif
 #ifdef S_IFSOCK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IFSOCK"_s)), jsNumber(S_IFSOCK));
+        { "S_IFSOCK", static_cast<double>(S_IFSOCK) },
 #endif
 #ifdef O_CREAT
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_CREAT"_s)), jsNumber(O_CREAT));
+        { "O_CREAT", static_cast<double>(O_CREAT) },
 #endif
 #ifdef O_EXCL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_EXCL"_s)), jsNumber(O_EXCL));
+        { "O_EXCL", static_cast<double>(O_EXCL) },
 #endif
 #if OS(WINDOWS)
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s)), jsNumber(536870912));
+        { "UV_FS_O_FILEMAP", static_cast<double>(536870912) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s)), jsNumber(0));
+        { "UV_FS_O_FILEMAP", static_cast<double>(0) },
 #endif
 #ifdef O_NOCTTY
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOCTTY"_s)), jsNumber(O_NOCTTY));
+        { "O_NOCTTY", static_cast<double>(O_NOCTTY) },
 #endif
 #ifdef O_TRUNC
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_TRUNC"_s)), jsNumber(O_TRUNC));
+        { "O_TRUNC", static_cast<double>(O_TRUNC) },
 #endif
 #ifdef O_APPEND
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_APPEND"_s)), jsNumber(O_APPEND));
+        { "O_APPEND", static_cast<double>(O_APPEND) },
 #endif
 #ifdef O_DIRECTORY
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_DIRECTORY"_s)), jsNumber(O_DIRECTORY));
+        { "O_DIRECTORY", static_cast<double>(O_DIRECTORY) },
 #endif
 #ifdef O_NOATIME
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOATIME"_s)), jsNumber(O_NOATIME));
+        { "O_NOATIME", static_cast<double>(O_NOATIME) },
 #endif
 #ifdef O_NOFOLLOW
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOFOLLOW"_s)), jsNumber(O_NOFOLLOW));
+        { "O_NOFOLLOW", static_cast<double>(O_NOFOLLOW) },
 #endif
 #ifdef O_SYNC
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_SYNC"_s)), jsNumber(O_SYNC));
+        { "O_SYNC", static_cast<double>(O_SYNC) },
 #endif
 #ifdef O_DSYNC
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_DSYNC"_s)), jsNumber(O_DSYNC));
+        { "O_DSYNC", static_cast<double>(O_DSYNC) },
 #endif
 #ifdef O_SYMLINK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_SYMLINK"_s)), jsNumber(O_SYMLINK));
+        { "O_SYMLINK", static_cast<double>(O_SYMLINK) },
 #endif
 #ifdef O_DIRECT
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_DIRECT"_s)), jsNumber(O_DIRECT));
+        { "O_DIRECT", static_cast<double>(O_DIRECT) },
 #endif
 #ifdef O_NONBLOCK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NONBLOCK"_s)), jsNumber(O_NONBLOCK));
+        { "O_NONBLOCK", static_cast<double>(O_NONBLOCK) },
 #endif
 #ifdef S_IRWXU
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IRWXU"_s)), jsNumber(S_IRWXU));
+        { "S_IRWXU", static_cast<double>(S_IRWXU) },
 #endif
 #ifdef S_IRUSR
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IRUSR"_s)), jsNumber(S_IRUSR));
+        { "S_IRUSR", static_cast<double>(S_IRUSR) },
 #endif
 #ifdef S_IWUSR
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IWUSR"_s)), jsNumber(S_IWUSR));
+        { "S_IWUSR", static_cast<double>(S_IWUSR) },
 #endif
 #ifdef S_IXUSR
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IXUSR"_s)), jsNumber(S_IXUSR));
+        { "S_IXUSR", static_cast<double>(S_IXUSR) },
 #endif
 #ifdef S_IRWXG
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IRWXG"_s)), jsNumber(S_IRWXG));
+        { "S_IRWXG", static_cast<double>(S_IRWXG) },
 #endif
 #ifdef S_IRGRP
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IRGRP"_s)), jsNumber(S_IRGRP));
+        { "S_IRGRP", static_cast<double>(S_IRGRP) },
 #endif
 #ifdef S_IWGRP
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IWGRP"_s)), jsNumber(S_IWGRP));
+        { "S_IWGRP", static_cast<double>(S_IWGRP) },
 #endif
 #ifdef S_IXGRP
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IXGRP"_s)), jsNumber(S_IXGRP));
+        { "S_IXGRP", static_cast<double>(S_IXGRP) },
 #endif
 #ifdef S_IRWXO
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IRWXO"_s)), jsNumber(S_IRWXO));
+        { "S_IRWXO", static_cast<double>(S_IRWXO) },
 #endif
 #ifdef S_IROTH
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IROTH"_s)), jsNumber(S_IROTH));
+        { "S_IROTH", static_cast<double>(S_IROTH) },
 #endif
 #ifdef S_IWOTH
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IWOTH"_s)), jsNumber(S_IWOTH));
+        { "S_IWOTH", static_cast<double>(S_IWOTH) },
 #endif
 #ifdef S_IXOTH
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "S_IXOTH"_s)), jsNumber(S_IXOTH));
+        { "S_IXOTH", static_cast<double>(S_IXOTH) },
 #endif
 #ifdef F_OK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "F_OK"_s)), jsNumber(F_OK));
+        { "F_OK", static_cast<double>(F_OK) },
 #endif
 #ifdef R_OK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "R_OK"_s)), jsNumber(R_OK));
+        { "R_OK", static_cast<double>(R_OK) },
 #endif
 #ifdef W_OK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "W_OK"_s)), jsNumber(W_OK));
+        { "W_OK", static_cast<double>(W_OK) },
 #endif
 #ifdef X_OK
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "X_OK"_s)), jsNumber(X_OK));
+        { "X_OK", static_cast<double>(X_OK) },
 #endif
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_COPYFILE_EXCL"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_EXCL"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_COPYFILE_FICLONE"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_FICLONE"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_COPYFILE_FICLONE_FORCE"_s)), jsNumber(4));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "COPYFILE_FICLONE_FORCE"_s)), jsNumber(4));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_WASM"_s)), jsNumber(1));
+        { "UV_FS_COPYFILE_EXCL", static_cast<double>(1) },
+        { "COPYFILE_EXCL", static_cast<double>(1) },
+        { "UV_FS_COPYFILE_FICLONE", static_cast<double>(2) },
+        { "COPYFILE_FICLONE", static_cast<double>(2) },
+        { "UV_FS_COPYFILE_FICLONE_FORCE", static_cast<double>(4) },
+        { "COPYFILE_FICLONE_FORCE", static_cast<double>(4) },
+        { "EXTENSIONLESS_FORMAT_JAVASCRIPT", static_cast<double>(0) },
+        { "EXTENSIONLESS_FORMAT_WASM", static_cast<double>(1) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants7);
 
     return object;
 }
@@ -784,167 +824,179 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
     auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    static constexpr NumericConstant kConstants8[] = {
 #ifdef OPENSSL_VERSION_NUMBER
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "OPENSSL_VERSION_NUMBER"_s)), jsNumber(OPENSSL_VERSION_NUMBER));
+        { "OPENSSL_VERSION_NUMBER", static_cast<double>(OPENSSL_VERSION_NUMBER) },
 #endif
 #ifdef SSL_OP_ALL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALL"_s)), jsNumber(SSL_OP_ALL));
+        { "SSL_OP_ALL", static_cast<double>(SSL_OP_ALL) },
 #endif
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s)), jsNumber(SSL_OP_ALLOW_NO_DHE_KEX));
+        { "SSL_OP_ALLOW_NO_DHE_KEX", static_cast<double>(SSL_OP_ALLOW_NO_DHE_KEX) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s)), jsNumber(0));
+        { "SSL_OP_ALLOW_NO_DHE_KEX", static_cast<double>(0) },
 #endif
 #ifdef SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s)), jsNumber(SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION));
+        { "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION", static_cast<double>(SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION) },
 #endif
 #ifdef SSL_OP_CIPHER_SERVER_PREFERENCE
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CIPHER_SERVER_PREFERENCE"_s)), jsNumber(SSL_OP_CIPHER_SERVER_PREFERENCE));
+        { "SSL_OP_CIPHER_SERVER_PREFERENCE", static_cast<double>(SSL_OP_CIPHER_SERVER_PREFERENCE) },
 #endif
 #ifdef SSL_OP_CISCO_ANYCONNECT
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s)), jsNumber(SSL_OP_CISCO_ANYCONNECT));
+        { "SSL_OP_CISCO_ANYCONNECT", static_cast<double>(SSL_OP_CISCO_ANYCONNECT) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s)), jsNumber(0));
+        { "SSL_OP_CISCO_ANYCONNECT", static_cast<double>(0) },
 #endif
 #ifdef SSL_OP_COOKIE_EXCHANGE
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s)), jsNumber(SSL_OP_COOKIE_EXCHANGE));
+        { "SSL_OP_COOKIE_EXCHANGE", static_cast<double>(SSL_OP_COOKIE_EXCHANGE) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s)), jsNumber(0));
+        { "SSL_OP_COOKIE_EXCHANGE", static_cast<double>(0) },
 #endif
 #ifdef SSL_OP_CRYPTOPRO_TLSEXT_BUG
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s)), jsNumber(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
+        { "SSL_OP_CRYPTOPRO_TLSEXT_BUG", static_cast<double>(SSL_OP_CRYPTOPRO_TLSEXT_BUG) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s)), jsNumber(0));
+        { "SSL_OP_CRYPTOPRO_TLSEXT_BUG", static_cast<double>(0) },
 #endif
 #ifdef SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s)), jsNumber(SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS));
+        { "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS", static_cast<double>(SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) },
 #endif
 #ifdef SSL_OP_LEGACY_SERVER_CONNECT
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_LEGACY_SERVER_CONNECT"_s)), jsNumber(SSL_OP_LEGACY_SERVER_CONNECT));
+        { "SSL_OP_LEGACY_SERVER_CONNECT", static_cast<double>(SSL_OP_LEGACY_SERVER_CONNECT) },
 #endif
 #ifdef SSL_OP_NO_COMPRESSION
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_COMPRESSION"_s)), jsNumber(SSL_OP_NO_COMPRESSION));
+        { "SSL_OP_NO_COMPRESSION", static_cast<double>(SSL_OP_NO_COMPRESSION) },
 #endif
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s)), jsNumber(SSL_OP_NO_ENCRYPT_THEN_MAC));
+        { "SSL_OP_NO_ENCRYPT_THEN_MAC", static_cast<double>(SSL_OP_NO_ENCRYPT_THEN_MAC) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s)), jsNumber(0));
+        { "SSL_OP_NO_ENCRYPT_THEN_MAC", static_cast<double>(0) },
 #endif
 #ifdef SSL_OP_NO_QUERY_MTU
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_QUERY_MTU"_s)), jsNumber(SSL_OP_NO_QUERY_MTU));
+        { "SSL_OP_NO_QUERY_MTU", static_cast<double>(SSL_OP_NO_QUERY_MTU) },
 #endif
 #ifdef SSL_OP_NO_RENEGOTIATION
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_RENEGOTIATION"_s)), jsNumber(SSL_OP_NO_RENEGOTIATION));
+        { "SSL_OP_NO_RENEGOTIATION", static_cast<double>(SSL_OP_NO_RENEGOTIATION) },
 #endif
 #ifdef SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION"_s)), jsNumber(SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION));
+        { "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION", static_cast<double>(SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION) },
 #endif
 #ifdef SSL_OP_NO_SSLv2
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_SSLv2"_s)), jsNumber(SSL_OP_NO_SSLv2));
+        { "SSL_OP_NO_SSLv2", static_cast<double>(SSL_OP_NO_SSLv2) },
 #endif
 #ifdef SSL_OP_NO_SSLv3
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_SSLv3"_s)), jsNumber(SSL_OP_NO_SSLv3));
+        { "SSL_OP_NO_SSLv3", static_cast<double>(SSL_OP_NO_SSLv3) },
 #endif
 #ifdef SSL_OP_NO_TICKET
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_TICKET"_s)), jsNumber(SSL_OP_NO_TICKET));
+        { "SSL_OP_NO_TICKET", static_cast<double>(SSL_OP_NO_TICKET) },
 #endif
 #ifdef SSL_OP_NO_TLSv1
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_TLSv1"_s)), jsNumber(SSL_OP_NO_TLSv1));
+        { "SSL_OP_NO_TLSv1", static_cast<double>(SSL_OP_NO_TLSv1) },
 #endif
 #ifdef SSL_OP_NO_TLSv1_1
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_TLSv1_1"_s)), jsNumber(SSL_OP_NO_TLSv1_1));
+        { "SSL_OP_NO_TLSv1_1", static_cast<double>(SSL_OP_NO_TLSv1_1) },
 #endif
 #ifdef SSL_OP_NO_TLSv1_2
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_TLSv1_2"_s)), jsNumber(SSL_OP_NO_TLSv1_2));
+        { "SSL_OP_NO_TLSv1_2", static_cast<double>(SSL_OP_NO_TLSv1_2) },
 #endif
 #ifdef SSL_OP_NO_TLSv1_3
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_TLSv1_3"_s)), jsNumber(SSL_OP_NO_TLSv1_3));
+        { "SSL_OP_NO_TLSv1_3", static_cast<double>(SSL_OP_NO_TLSv1_3) },
 #endif
 #ifdef SSL_OP_PRIORITIZE_CHACHA
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s)), jsNumber(SSL_OP_PRIORITIZE_CHACHA));
+        { "SSL_OP_PRIORITIZE_CHACHA", static_cast<double>(SSL_OP_PRIORITIZE_CHACHA) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s)), jsNumber(0));
+        { "SSL_OP_PRIORITIZE_CHACHA", static_cast<double>(0) },
 #endif
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_ROLLBACK_BUG"_s)), jsNumber(SSL_OP_TLS_ROLLBACK_BUG));
+        { "SSL_OP_TLS_ROLLBACK_BUG", static_cast<double>(SSL_OP_TLS_ROLLBACK_BUG) },
 #endif
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants8);
     // OBSOLETE OPTIONS retained for compatibility
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MICROSOFT_SESS_ID_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_D5_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_TLS_BLOCK_PADDING_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SINGLE_ECDH_USE"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_SINGLE_DH_USE"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_EPHEMERAL_RSA"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NO_SSLv2"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_1"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_2"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CA_DN_BUG"_s)), jsNumber(0));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s)), jsNumber(0));
+    static constexpr NumericConstant kConstants9[] = {
+        { "SSL_OP_MICROSOFT_SESS_ID_BUG", static_cast<double>(0) },
+        { "SSL_OP_NETSCAPE_CHALLENGE_BUG", static_cast<double>(0) },
+        { "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG", static_cast<double>(0) },
+        { "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG", static_cast<double>(0) },
+        { "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER", static_cast<double>(0) },
+        { "SSL_OP_MSIE_SSLV2_RSA_PADDING", static_cast<double>(0) },
+        { "SSL_OP_SSLEAY_080_CLIENT_DH_BUG", static_cast<double>(0) },
+        { "SSL_OP_TLS_D5_BUG", static_cast<double>(0) },
+        { "SSL_OP_TLS_BLOCK_PADDING_BUG", static_cast<double>(0) },
+        { "SSL_OP_SINGLE_ECDH_USE", static_cast<double>(0) },
+        { "SSL_OP_SINGLE_DH_USE", static_cast<double>(0) },
+        { "SSL_OP_EPHEMERAL_RSA", static_cast<double>(0) },
+        { "SSL_OP_NO_SSLv2", static_cast<double>(0) },
+        { "SSL_OP_PKCS1_CHECK_1", static_cast<double>(0) },
+        { "SSL_OP_PKCS1_CHECK_2", static_cast<double>(0) },
+        { "SSL_OP_NETSCAPE_CA_DN_BUG", static_cast<double>(0) },
+        { "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG", static_cast<double>(0) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants9);
     // BoringSSL does not define engine constants in openssl/engine.h
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s)), jsNumber(0x0001));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s)), jsNumber(0x0002));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s)), jsNumber(0x0004));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s)), jsNumber(0x0008));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s)), jsNumber(0x0040));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s)), jsNumber(0x0080));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s)), jsNumber(0x0200));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s)), jsNumber(0x0400));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s)), jsNumber(0x0800));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s)), jsNumber(0xFFFF));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s)), jsNumber(0x0000));
+    static constexpr NumericConstant kConstants10[] = {
+        { "ENGINE_METHOD_RSA", static_cast<double>(0x0001) },
+        { "ENGINE_METHOD_DSA", static_cast<double>(0x0002) },
+        { "ENGINE_METHOD_DH", static_cast<double>(0x0004) },
+        { "ENGINE_METHOD_RAND", static_cast<double>(0x0008) },
+        { "ENGINE_METHOD_CIPHERS", static_cast<double>(0x0040) },
+        { "ENGINE_METHOD_DIGESTS", static_cast<double>(0x0080) },
+        { "ENGINE_METHOD_PKEY_METHS", static_cast<double>(0x0200) },
+        { "ENGINE_METHOD_PKEY_ASN1_METHS", static_cast<double>(0x0400) },
+        { "ENGINE_METHOD_EC", static_cast<double>(0x0800) },
+        { "ENGINE_METHOD_ALL", static_cast<double>(0xFFFF) },
+        { "ENGINE_METHOD_NONE", static_cast<double>(0x0000) },
 #ifdef DH_CHECK_P_NOT_SAFE_PRIME
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DH_CHECK_P_NOT_SAFE_PRIME"_s)), jsNumber(DH_CHECK_P_NOT_SAFE_PRIME));
+        { "DH_CHECK_P_NOT_SAFE_PRIME", static_cast<double>(DH_CHECK_P_NOT_SAFE_PRIME) },
 #endif
 #ifdef DH_CHECK_P_NOT_PRIME
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DH_CHECK_P_NOT_PRIME"_s)), jsNumber(DH_CHECK_P_NOT_PRIME));
+        { "DH_CHECK_P_NOT_PRIME", static_cast<double>(DH_CHECK_P_NOT_PRIME) },
 #endif
 #ifdef DH_UNABLE_TO_CHECK_GENERATOR
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DH_UNABLE_TO_CHECK_GENERATOR"_s)), jsNumber(DH_UNABLE_TO_CHECK_GENERATOR));
+        { "DH_UNABLE_TO_CHECK_GENERATOR", static_cast<double>(DH_UNABLE_TO_CHECK_GENERATOR) },
 #endif
 #ifdef DH_NOT_SUITABLE_GENERATOR
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DH_NOT_SUITABLE_GENERATOR"_s)), jsNumber(DH_NOT_SUITABLE_GENERATOR));
+        { "DH_NOT_SUITABLE_GENERATOR", static_cast<double>(DH_NOT_SUITABLE_GENERATOR) },
 #endif
 #ifdef RSA_PKCS1_PADDING
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PKCS1_PADDING"_s)), jsNumber(RSA_PKCS1_PADDING));
+        { "RSA_PKCS1_PADDING", static_cast<double>(RSA_PKCS1_PADDING) },
 #endif
 #ifdef RSA_SSLV23_PADDING
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_SSLV23_PADDING"_s)), jsNumber(RSA_SSLV23_PADDING));
+        { "RSA_SSLV23_PADDING", static_cast<double>(RSA_SSLV23_PADDING) },
 #endif
 #ifdef RSA_NO_PADDING
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_NO_PADDING"_s)), jsNumber(RSA_NO_PADDING));
+        { "RSA_NO_PADDING", static_cast<double>(RSA_NO_PADDING) },
 #endif
 #ifdef RSA_PKCS1_OAEP_PADDING
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PKCS1_OAEP_PADDING"_s)), jsNumber(RSA_PKCS1_OAEP_PADDING));
+        { "RSA_PKCS1_OAEP_PADDING", static_cast<double>(RSA_PKCS1_OAEP_PADDING) },
 #endif
 #ifdef RSA_X931_PADDING
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_X931_PADDING"_s)), jsNumber(RSA_X931_PADDING));
+        { "RSA_X931_PADDING", static_cast<double>(RSA_X931_PADDING) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_X931_PADDING"_s)), jsNumber(5));
+        { "RSA_X931_PADDING", static_cast<double>(5) },
 #endif
 #ifdef RSA_PKCS1_PSS_PADDING
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PKCS1_PSS_PADDING"_s)), jsNumber(RSA_PKCS1_PSS_PADDING));
+        { "RSA_PKCS1_PSS_PADDING", static_cast<double>(RSA_PKCS1_PSS_PADDING) },
 #endif
 #ifdef RSA_PSS_SALTLEN_DIGEST
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s)), jsNumber(RSA_PSS_SALTLEN_DIGEST));
+        { "RSA_PSS_SALTLEN_DIGEST", static_cast<double>(RSA_PSS_SALTLEN_DIGEST) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s)), jsNumber(-1));
+        { "RSA_PSS_SALTLEN_DIGEST", static_cast<double>(-1) },
 #endif
 #ifdef RSA_PSS_SALTLEN_MAX_SIGN
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s)), jsNumber(RSA_PSS_SALTLEN_MAX_SIGN));
+        { "RSA_PSS_SALTLEN_MAX_SIGN", static_cast<double>(RSA_PSS_SALTLEN_MAX_SIGN) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s)), jsNumber(-2));
+        { "RSA_PSS_SALTLEN_MAX_SIGN", static_cast<double>(-2) },
 #endif
 #ifdef RSA_PSS_SALTLEN_AUTO
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s)), jsNumber(RSA_PSS_SALTLEN_AUTO));
+        { "RSA_PSS_SALTLEN_AUTO", static_cast<double>(RSA_PSS_SALTLEN_AUTO) },
 #else
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s)), jsNumber(-2));
+        { "RSA_PSS_SALTLEN_AUTO", static_cast<double>(-2) },
 #endif
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants10);
     auto cipherList = String("TLS_AES_256_GCM_SHA384:"
                              "TLS_CHACHA20_POLY1305_SHA256:"
                              "TLS_AES_128_GCM_SHA256:"
@@ -973,13 +1025,17 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
         jsString(vm, cipherList));
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "defaultCipherList"_s)),
         jsString(vm, cipherList));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_VERSION"_s)), jsNumber(TLS1_VERSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_1_VERSION"_s)), jsNumber(TLS1_1_VERSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_2_VERSION"_s)), jsNumber(TLS1_2_VERSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "TLS1_3_VERSION"_s)), jsNumber(TLS1_3_VERSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_COMPRESSED"_s)), jsNumber(POINT_CONVERSION_COMPRESSED));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_UNCOMPRESSED"_s)), jsNumber(POINT_CONVERSION_UNCOMPRESSED));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "POINT_CONVERSION_HYBRID"_s)), jsNumber(POINT_CONVERSION_HYBRID));
+    static constexpr NumericConstant kConstants11[] = {
+        { "TLS1_VERSION", static_cast<double>(TLS1_VERSION) },
+        { "TLS1_1_VERSION", static_cast<double>(TLS1_1_VERSION) },
+        { "TLS1_2_VERSION", static_cast<double>(TLS1_2_VERSION) },
+        { "TLS1_3_VERSION", static_cast<double>(TLS1_3_VERSION) },
+        { "POINT_CONVERSION_COMPRESSED", static_cast<double>(POINT_CONVERSION_COMPRESSED) },
+        { "POINT_CONVERSION_UNCOMPRESSED", static_cast<double>(POINT_CONVERSION_UNCOMPRESSED) },
+        { "POINT_CONVERSION_HYBRID", static_cast<double>(POINT_CONVERSION_HYBRID) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants11);
     return object;
 }
 
@@ -987,183 +1043,180 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
     auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_NO_FLUSH"_s)), jsNumber(Z_NO_FLUSH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_PARTIAL_FLUSH"_s)), jsNumber(Z_PARTIAL_FLUSH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_SYNC_FLUSH"_s)), jsNumber(Z_SYNC_FLUSH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_FULL_FLUSH"_s)), jsNumber(Z_FULL_FLUSH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_FINISH"_s)), jsNumber(Z_FINISH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_BLOCK"_s)), jsNumber(Z_BLOCK));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_OK"_s)), jsNumber(Z_OK));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_STREAM_END"_s)), jsNumber(Z_STREAM_END));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_NEED_DICT"_s)), jsNumber(Z_NEED_DICT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_ERRNO"_s)), jsNumber(Z_ERRNO));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_STREAM_ERROR"_s)), jsNumber(Z_STREAM_ERROR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DATA_ERROR"_s)), jsNumber(Z_DATA_ERROR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MEM_ERROR"_s)), jsNumber(Z_MEM_ERROR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_BUF_ERROR"_s)), jsNumber(Z_BUF_ERROR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_VERSION_ERROR"_s)), jsNumber(Z_VERSION_ERROR));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_NO_COMPRESSION"_s)), jsNumber(Z_NO_COMPRESSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_BEST_SPEED"_s)), jsNumber(Z_BEST_SPEED));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_BEST_COMPRESSION"_s)), jsNumber(Z_BEST_COMPRESSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_COMPRESSION"_s)), jsNumber(Z_DEFAULT_COMPRESSION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_FILTERED"_s)), jsNumber(Z_FILTERED));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_HUFFMAN_ONLY"_s)), jsNumber(Z_HUFFMAN_ONLY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_RLE"_s)), jsNumber(Z_RLE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_FIXED"_s)), jsNumber(Z_FIXED));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_STRATEGY"_s)), jsNumber(Z_DEFAULT_STRATEGY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZLIB_VERNUM"_s)), jsNumber(ZLIB_VERNUM));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DEFLATE"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "INFLATE"_s)), jsNumber(2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "GZIP"_s)), jsNumber(3));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "GUNZIP"_s)), jsNumber(4));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "DEFLATERAW"_s)), jsNumber(5));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "INFLATERAW"_s)), jsNumber(6));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UNZIP"_s)), jsNumber(7));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODE"_s)), jsNumber(8));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_ENCODE"_s)), jsNumber(9));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_COMPRESS"_s)), jsNumber(10));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_DECOMPRESS"_s)), jsNumber(11));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_WINDOWBITS"_s)), jsNumber(8));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_WINDOWBITS"_s)), jsNumber(15));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_WINDOWBITS"_s)), jsNumber(15));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_CHUNK"_s)), jsNumber(64));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_CHUNK"_s)), jsNumber(std::numeric_limits<double>::infinity()));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_CHUNK"_s)), jsNumber(16 * 1024));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_MEMLEVEL"_s)), jsNumber(1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_MEMLEVEL"_s)), jsNumber(9));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_MEMLEVEL"_s)), jsNumber(8));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MIN_LEVEL"_s)), jsNumber(-1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_MAX_LEVEL"_s)), jsNumber(9));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "Z_DEFAULT_LEVEL"_s)), jsNumber(Z_DEFAULT_COMPRESSION));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_PROCESS"_s)), jsNumber(BROTLI_OPERATION_PROCESS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_FLUSH"_s)), jsNumber(BROTLI_OPERATION_FLUSH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_FINISH"_s)), jsNumber(BROTLI_OPERATION_FINISH));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_OPERATION_EMIT_METADATA"_s)), jsNumber(BROTLI_OPERATION_EMIT_METADATA));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_MODE"_s)), jsNumber(BROTLI_PARAM_MODE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_GENERIC"_s)), jsNumber(BROTLI_MODE_GENERIC));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_TEXT"_s)), jsNumber(BROTLI_MODE_TEXT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MODE_FONT"_s)), jsNumber(BROTLI_MODE_FONT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_MODE"_s)), jsNumber(BROTLI_DEFAULT_MODE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_QUALITY"_s)), jsNumber(BROTLI_PARAM_QUALITY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_QUALITY"_s)), jsNumber(BROTLI_MIN_QUALITY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_QUALITY"_s)), jsNumber(BROTLI_MAX_QUALITY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_QUALITY"_s)), jsNumber(BROTLI_DEFAULT_QUALITY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LGWIN"_s)), jsNumber(BROTLI_PARAM_LGWIN));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_WINDOW_BITS"_s)), jsNumber(BROTLI_MIN_WINDOW_BITS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_WINDOW_BITS"_s)), jsNumber(BROTLI_MAX_WINDOW_BITS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_LARGE_MAX_WINDOW_BITS"_s)), jsNumber(BROTLI_LARGE_MAX_WINDOW_BITS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DEFAULT_WINDOW"_s)), jsNumber(BROTLI_DEFAULT_WINDOW));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LGBLOCK"_s)), jsNumber(BROTLI_PARAM_LGBLOCK));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MIN_INPUT_BLOCK_BITS"_s)), jsNumber(BROTLI_MIN_INPUT_BLOCK_BITS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_MAX_INPUT_BLOCK_BITS"_s)), jsNumber(BROTLI_MAX_INPUT_BLOCK_BITS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING"_s)), jsNumber(BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_SIZE_HINT"_s)), jsNumber(BROTLI_PARAM_SIZE_HINT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_LARGE_WINDOW"_s)), jsNumber(BROTLI_PARAM_LARGE_WINDOW));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_NPOSTFIX"_s)), jsNumber(BROTLI_PARAM_NPOSTFIX));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_PARAM_NDIRECT"_s)), jsNumber(BROTLI_PARAM_NDIRECT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_ERROR"_s)), jsNumber(BROTLI_DECODER_RESULT_ERROR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_SUCCESS"_s)), jsNumber(BROTLI_DECODER_RESULT_SUCCESS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT"_s)), jsNumber(BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT"_s)), jsNumber(BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION"_s)), jsNumber(BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_PARAM_LARGE_WINDOW"_s)), jsNumber(BROTLI_DECODER_PARAM_LARGE_WINDOW));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NO_ERROR"_s)), jsNumber(BROTLI_DECODER_NO_ERROR));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_SUCCESS"_s)), jsNumber(BROTLI_DECODER_SUCCESS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NEEDS_MORE_INPUT"_s)), jsNumber(BROTLI_DECODER_NEEDS_MORE_INPUT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_NEEDS_MORE_OUTPUT"_s)), jsNumber(BROTLI_DECODER_NEEDS_MORE_OUTPUT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_RESERVED"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_RESERVED));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_CL_SPACE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_TRANSFORM));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_DICTIONARY));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_PADDING_1"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_PADDING_1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_PADDING_2"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_PADDING_2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_FORMAT_DISTANCE"_s)), jsNumber(BROTLI_DECODER_ERROR_FORMAT_DISTANCE));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET"_s)), jsNumber(BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS"_s)), jsNumber(BROTLI_DECODER_ERROR_INVALID_ARGUMENTS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES"_s)), jsNumber(BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "BROTLI_DECODER_ERROR_UNREACHABLE"_s)), jsNumber(BROTLI_DECODER_ERROR_UNREACHABLE));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_continue"_s)), jsNumber(ZSTD_e_continue));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_flush"_s)), jsNumber(ZSTD_e_flush));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_e_end"_s)), jsNumber(ZSTD_e_end));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_fast"_s)), jsNumber(ZSTD_fast));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_dfast"_s)), jsNumber(ZSTD_dfast));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_greedy"_s)), jsNumber(ZSTD_greedy));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_lazy"_s)), jsNumber(ZSTD_lazy));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_lazy2"_s)), jsNumber(ZSTD_lazy2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btlazy2"_s)), jsNumber(ZSTD_btlazy2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btopt"_s)), jsNumber(ZSTD_btopt));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btultra"_s)), jsNumber(ZSTD_btultra));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_btultra2"_s)), jsNumber(ZSTD_btultra2));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_compressionLevel"_s)), jsNumber(ZSTD_c_compressionLevel));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_windowLog"_s)), jsNumber(ZSTD_c_windowLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_hashLog"_s)), jsNumber(ZSTD_c_hashLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_chainLog"_s)), jsNumber(ZSTD_c_chainLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_searchLog"_s)), jsNumber(ZSTD_c_searchLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_minMatch"_s)), jsNumber(ZSTD_c_minMatch));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_targetLength"_s)), jsNumber(ZSTD_c_targetLength));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_strategy"_s)), jsNumber(ZSTD_c_strategy));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_enableLongDistanceMatching"_s)), jsNumber(ZSTD_c_enableLongDistanceMatching));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmHashLog"_s)), jsNumber(ZSTD_c_ldmHashLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmMinMatch"_s)), jsNumber(ZSTD_c_ldmMinMatch));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmBucketSizeLog"_s)), jsNumber(ZSTD_c_ldmBucketSizeLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_ldmHashRateLog"_s)), jsNumber(ZSTD_c_ldmHashRateLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_contentSizeFlag"_s)), jsNumber(ZSTD_c_contentSizeFlag));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_checksumFlag"_s)), jsNumber(ZSTD_c_checksumFlag));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_dictIDFlag"_s)), jsNumber(ZSTD_c_dictIDFlag));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_nbWorkers"_s)), jsNumber(ZSTD_c_nbWorkers));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_jobSize"_s)), jsNumber(ZSTD_c_jobSize));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_c_overlapLog"_s)), jsNumber(ZSTD_c_overlapLog));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_d_windowLogMax"_s)), jsNumber(ZSTD_d_windowLogMax));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_CLEVEL_DEFAULT"_s)), jsNumber(ZSTD_CLEVEL_DEFAULT));
-
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_no_error"_s)), jsNumber(ZSTD_error_no_error));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_GENERIC"_s)), jsNumber(ZSTD_error_GENERIC));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_prefix_unknown"_s)), jsNumber(ZSTD_error_prefix_unknown));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_version_unsupported"_s)), jsNumber(ZSTD_error_version_unsupported));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_frameParameter_unsupported"_s)), jsNumber(ZSTD_error_frameParameter_unsupported));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_frameParameter_windowTooLarge"_s)), jsNumber(ZSTD_error_frameParameter_windowTooLarge));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_corruption_detected"_s)), jsNumber(ZSTD_error_corruption_detected));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_checksum_wrong"_s)), jsNumber(ZSTD_error_checksum_wrong));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_literals_headerWrong"_s)), jsNumber(ZSTD_error_literals_headerWrong));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionary_corrupted"_s)), jsNumber(ZSTD_error_dictionary_corrupted));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionary_wrong"_s)), jsNumber(ZSTD_error_dictionary_wrong));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dictionaryCreation_failed"_s)), jsNumber(ZSTD_error_dictionaryCreation_failed));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_unsupported"_s)), jsNumber(ZSTD_error_parameter_unsupported));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_combination_unsupported"_s)), jsNumber(ZSTD_error_parameter_combination_unsupported));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_parameter_outOfBound"_s)), jsNumber(ZSTD_error_parameter_outOfBound));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_tableLog_tooLarge"_s)), jsNumber(ZSTD_error_tableLog_tooLarge));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_maxSymbolValue_tooLarge"_s)), jsNumber(ZSTD_error_maxSymbolValue_tooLarge));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_maxSymbolValue_tooSmall"_s)), jsNumber(ZSTD_error_maxSymbolValue_tooSmall));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_stabilityCondition_notRespected"_s)), jsNumber(ZSTD_error_stabilityCondition_notRespected));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_stage_wrong"_s)), jsNumber(ZSTD_error_stage_wrong));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_init_missing"_s)), jsNumber(ZSTD_error_init_missing));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_memory_allocation"_s)), jsNumber(ZSTD_error_memory_allocation));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_workSpace_tooSmall"_s)), jsNumber(ZSTD_error_workSpace_tooSmall));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dstSize_tooSmall"_s)), jsNumber(ZSTD_error_dstSize_tooSmall));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_srcSize_wrong"_s)), jsNumber(ZSTD_error_srcSize_wrong));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_dstBuffer_null"_s)), jsNumber(ZSTD_error_dstBuffer_null));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_noForwardProgress_destFull"_s)), jsNumber(ZSTD_error_noForwardProgress_destFull));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "ZSTD_error_noForwardProgress_inputEmpty"_s)), jsNumber(ZSTD_error_noForwardProgress_inputEmpty));
+    static constexpr NumericConstant kConstants12[] = {
+        { "Z_NO_FLUSH", static_cast<double>(Z_NO_FLUSH) },
+        { "Z_PARTIAL_FLUSH", static_cast<double>(Z_PARTIAL_FLUSH) },
+        { "Z_SYNC_FLUSH", static_cast<double>(Z_SYNC_FLUSH) },
+        { "Z_FULL_FLUSH", static_cast<double>(Z_FULL_FLUSH) },
+        { "Z_FINISH", static_cast<double>(Z_FINISH) },
+        { "Z_BLOCK", static_cast<double>(Z_BLOCK) },
+        { "Z_OK", static_cast<double>(Z_OK) },
+        { "Z_STREAM_END", static_cast<double>(Z_STREAM_END) },
+        { "Z_NEED_DICT", static_cast<double>(Z_NEED_DICT) },
+        { "Z_ERRNO", static_cast<double>(Z_ERRNO) },
+        { "Z_STREAM_ERROR", static_cast<double>(Z_STREAM_ERROR) },
+        { "Z_DATA_ERROR", static_cast<double>(Z_DATA_ERROR) },
+        { "Z_MEM_ERROR", static_cast<double>(Z_MEM_ERROR) },
+        { "Z_BUF_ERROR", static_cast<double>(Z_BUF_ERROR) },
+        { "Z_VERSION_ERROR", static_cast<double>(Z_VERSION_ERROR) },
+        { "Z_NO_COMPRESSION", static_cast<double>(Z_NO_COMPRESSION) },
+        { "Z_BEST_SPEED", static_cast<double>(Z_BEST_SPEED) },
+        { "Z_BEST_COMPRESSION", static_cast<double>(Z_BEST_COMPRESSION) },
+        { "Z_DEFAULT_COMPRESSION", static_cast<double>(Z_DEFAULT_COMPRESSION) },
+        { "Z_FILTERED", static_cast<double>(Z_FILTERED) },
+        { "Z_HUFFMAN_ONLY", static_cast<double>(Z_HUFFMAN_ONLY) },
+        { "Z_RLE", static_cast<double>(Z_RLE) },
+        { "Z_FIXED", static_cast<double>(Z_FIXED) },
+        { "Z_DEFAULT_STRATEGY", static_cast<double>(Z_DEFAULT_STRATEGY) },
+        { "ZLIB_VERNUM", static_cast<double>(ZLIB_VERNUM) },
+        { "DEFLATE", static_cast<double>(1) },
+        { "INFLATE", static_cast<double>(2) },
+        { "GZIP", static_cast<double>(3) },
+        { "GUNZIP", static_cast<double>(4) },
+        { "DEFLATERAW", static_cast<double>(5) },
+        { "INFLATERAW", static_cast<double>(6) },
+        { "UNZIP", static_cast<double>(7) },
+        { "BROTLI_DECODE", static_cast<double>(8) },
+        { "BROTLI_ENCODE", static_cast<double>(9) },
+        { "ZSTD_COMPRESS", static_cast<double>(10) },
+        { "ZSTD_DECOMPRESS", static_cast<double>(11) },
+        { "Z_MIN_WINDOWBITS", static_cast<double>(8) },
+        { "Z_MAX_WINDOWBITS", static_cast<double>(15) },
+        { "Z_DEFAULT_WINDOWBITS", static_cast<double>(15) },
+        { "Z_MIN_CHUNK", static_cast<double>(64) },
+        { "Z_MAX_CHUNK", static_cast<double>(std::numeric_limits<double>::infinity()) },
+        { "Z_DEFAULT_CHUNK", static_cast<double>(16 * 1024) },
+        { "Z_MIN_MEMLEVEL", static_cast<double>(1) },
+        { "Z_MAX_MEMLEVEL", static_cast<double>(9) },
+        { "Z_DEFAULT_MEMLEVEL", static_cast<double>(8) },
+        { "Z_MIN_LEVEL", static_cast<double>(-1) },
+        { "Z_MAX_LEVEL", static_cast<double>(9) },
+        { "Z_DEFAULT_LEVEL", static_cast<double>(Z_DEFAULT_COMPRESSION) },
+        { "BROTLI_OPERATION_PROCESS", static_cast<double>(BROTLI_OPERATION_PROCESS) },
+        { "BROTLI_OPERATION_FLUSH", static_cast<double>(BROTLI_OPERATION_FLUSH) },
+        { "BROTLI_OPERATION_FINISH", static_cast<double>(BROTLI_OPERATION_FINISH) },
+        { "BROTLI_OPERATION_EMIT_METADATA", static_cast<double>(BROTLI_OPERATION_EMIT_METADATA) },
+        { "BROTLI_PARAM_MODE", static_cast<double>(BROTLI_PARAM_MODE) },
+        { "BROTLI_MODE_GENERIC", static_cast<double>(BROTLI_MODE_GENERIC) },
+        { "BROTLI_MODE_TEXT", static_cast<double>(BROTLI_MODE_TEXT) },
+        { "BROTLI_MODE_FONT", static_cast<double>(BROTLI_MODE_FONT) },
+        { "BROTLI_DEFAULT_MODE", static_cast<double>(BROTLI_DEFAULT_MODE) },
+        { "BROTLI_PARAM_QUALITY", static_cast<double>(BROTLI_PARAM_QUALITY) },
+        { "BROTLI_MIN_QUALITY", static_cast<double>(BROTLI_MIN_QUALITY) },
+        { "BROTLI_MAX_QUALITY", static_cast<double>(BROTLI_MAX_QUALITY) },
+        { "BROTLI_DEFAULT_QUALITY", static_cast<double>(BROTLI_DEFAULT_QUALITY) },
+        { "BROTLI_PARAM_LGWIN", static_cast<double>(BROTLI_PARAM_LGWIN) },
+        { "BROTLI_MIN_WINDOW_BITS", static_cast<double>(BROTLI_MIN_WINDOW_BITS) },
+        { "BROTLI_MAX_WINDOW_BITS", static_cast<double>(BROTLI_MAX_WINDOW_BITS) },
+        { "BROTLI_LARGE_MAX_WINDOW_BITS", static_cast<double>(BROTLI_LARGE_MAX_WINDOW_BITS) },
+        { "BROTLI_DEFAULT_WINDOW", static_cast<double>(BROTLI_DEFAULT_WINDOW) },
+        { "BROTLI_PARAM_LGBLOCK", static_cast<double>(BROTLI_PARAM_LGBLOCK) },
+        { "BROTLI_MIN_INPUT_BLOCK_BITS", static_cast<double>(BROTLI_MIN_INPUT_BLOCK_BITS) },
+        { "BROTLI_MAX_INPUT_BLOCK_BITS", static_cast<double>(BROTLI_MAX_INPUT_BLOCK_BITS) },
+        { "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING", static_cast<double>(BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING) },
+        { "BROTLI_PARAM_SIZE_HINT", static_cast<double>(BROTLI_PARAM_SIZE_HINT) },
+        { "BROTLI_PARAM_LARGE_WINDOW", static_cast<double>(BROTLI_PARAM_LARGE_WINDOW) },
+        { "BROTLI_PARAM_NPOSTFIX", static_cast<double>(BROTLI_PARAM_NPOSTFIX) },
+        { "BROTLI_PARAM_NDIRECT", static_cast<double>(BROTLI_PARAM_NDIRECT) },
+        { "BROTLI_DECODER_RESULT_ERROR", static_cast<double>(BROTLI_DECODER_RESULT_ERROR) },
+        { "BROTLI_DECODER_RESULT_SUCCESS", static_cast<double>(BROTLI_DECODER_RESULT_SUCCESS) },
+        { "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT", static_cast<double>(BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) },
+        { "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT", static_cast<double>(BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) },
+        { "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION", static_cast<double>(BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION) },
+        { "BROTLI_DECODER_PARAM_LARGE_WINDOW", static_cast<double>(BROTLI_DECODER_PARAM_LARGE_WINDOW) },
+        { "BROTLI_DECODER_NO_ERROR", static_cast<double>(BROTLI_DECODER_NO_ERROR) },
+        { "BROTLI_DECODER_SUCCESS", static_cast<double>(BROTLI_DECODER_SUCCESS) },
+        { "BROTLI_DECODER_NEEDS_MORE_INPUT", static_cast<double>(BROTLI_DECODER_NEEDS_MORE_INPUT) },
+        { "BROTLI_DECODER_NEEDS_MORE_OUTPUT", static_cast<double>(BROTLI_DECODER_NEEDS_MORE_OUTPUT) },
+        { "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE) },
+        { "BROTLI_DECODER_ERROR_FORMAT_RESERVED", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_RESERVED) },
+        { "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE) },
+        { "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET) },
+        { "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME) },
+        { "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_CL_SPACE) },
+        { "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE) },
+        { "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT) },
+        { "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1) },
+        { "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2) },
+        { "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_TRANSFORM) },
+        { "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_DICTIONARY) },
+        { "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS) },
+        { "BROTLI_DECODER_ERROR_FORMAT_PADDING_1", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_PADDING_1) },
+        { "BROTLI_DECODER_ERROR_FORMAT_PADDING_2", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_PADDING_2) },
+        { "BROTLI_DECODER_ERROR_FORMAT_DISTANCE", static_cast<double>(BROTLI_DECODER_ERROR_FORMAT_DISTANCE) },
+        { "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET", static_cast<double>(BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET) },
+        { "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS", static_cast<double>(BROTLI_DECODER_ERROR_INVALID_ARGUMENTS) },
+        { "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES) },
+        { "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS) },
+        { "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP) },
+        { "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1) },
+        { "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2) },
+        { "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES", static_cast<double>(BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES) },
+        { "BROTLI_DECODER_ERROR_UNREACHABLE", static_cast<double>(BROTLI_DECODER_ERROR_UNREACHABLE) },
+        { "ZSTD_e_continue", static_cast<double>(ZSTD_e_continue) },
+        { "ZSTD_e_flush", static_cast<double>(ZSTD_e_flush) },
+        { "ZSTD_e_end", static_cast<double>(ZSTD_e_end) },
+        { "ZSTD_fast", static_cast<double>(ZSTD_fast) },
+        { "ZSTD_dfast", static_cast<double>(ZSTD_dfast) },
+        { "ZSTD_greedy", static_cast<double>(ZSTD_greedy) },
+        { "ZSTD_lazy", static_cast<double>(ZSTD_lazy) },
+        { "ZSTD_lazy2", static_cast<double>(ZSTD_lazy2) },
+        { "ZSTD_btlazy2", static_cast<double>(ZSTD_btlazy2) },
+        { "ZSTD_btopt", static_cast<double>(ZSTD_btopt) },
+        { "ZSTD_btultra", static_cast<double>(ZSTD_btultra) },
+        { "ZSTD_btultra2", static_cast<double>(ZSTD_btultra2) },
+        { "ZSTD_c_compressionLevel", static_cast<double>(ZSTD_c_compressionLevel) },
+        { "ZSTD_c_windowLog", static_cast<double>(ZSTD_c_windowLog) },
+        { "ZSTD_c_hashLog", static_cast<double>(ZSTD_c_hashLog) },
+        { "ZSTD_c_chainLog", static_cast<double>(ZSTD_c_chainLog) },
+        { "ZSTD_c_searchLog", static_cast<double>(ZSTD_c_searchLog) },
+        { "ZSTD_c_minMatch", static_cast<double>(ZSTD_c_minMatch) },
+        { "ZSTD_c_targetLength", static_cast<double>(ZSTD_c_targetLength) },
+        { "ZSTD_c_strategy", static_cast<double>(ZSTD_c_strategy) },
+        { "ZSTD_c_enableLongDistanceMatching", static_cast<double>(ZSTD_c_enableLongDistanceMatching) },
+        { "ZSTD_c_ldmHashLog", static_cast<double>(ZSTD_c_ldmHashLog) },
+        { "ZSTD_c_ldmMinMatch", static_cast<double>(ZSTD_c_ldmMinMatch) },
+        { "ZSTD_c_ldmBucketSizeLog", static_cast<double>(ZSTD_c_ldmBucketSizeLog) },
+        { "ZSTD_c_ldmHashRateLog", static_cast<double>(ZSTD_c_ldmHashRateLog) },
+        { "ZSTD_c_contentSizeFlag", static_cast<double>(ZSTD_c_contentSizeFlag) },
+        { "ZSTD_c_checksumFlag", static_cast<double>(ZSTD_c_checksumFlag) },
+        { "ZSTD_c_dictIDFlag", static_cast<double>(ZSTD_c_dictIDFlag) },
+        { "ZSTD_c_nbWorkers", static_cast<double>(ZSTD_c_nbWorkers) },
+        { "ZSTD_c_jobSize", static_cast<double>(ZSTD_c_jobSize) },
+        { "ZSTD_c_overlapLog", static_cast<double>(ZSTD_c_overlapLog) },
+        { "ZSTD_d_windowLogMax", static_cast<double>(ZSTD_d_windowLogMax) },
+        { "ZSTD_CLEVEL_DEFAULT", static_cast<double>(ZSTD_CLEVEL_DEFAULT) },
+        { "ZSTD_error_no_error", static_cast<double>(ZSTD_error_no_error) },
+        { "ZSTD_error_GENERIC", static_cast<double>(ZSTD_error_GENERIC) },
+        { "ZSTD_error_prefix_unknown", static_cast<double>(ZSTD_error_prefix_unknown) },
+        { "ZSTD_error_version_unsupported", static_cast<double>(ZSTD_error_version_unsupported) },
+        { "ZSTD_error_frameParameter_unsupported", static_cast<double>(ZSTD_error_frameParameter_unsupported) },
+        { "ZSTD_error_frameParameter_windowTooLarge", static_cast<double>(ZSTD_error_frameParameter_windowTooLarge) },
+        { "ZSTD_error_corruption_detected", static_cast<double>(ZSTD_error_corruption_detected) },
+        { "ZSTD_error_checksum_wrong", static_cast<double>(ZSTD_error_checksum_wrong) },
+        { "ZSTD_error_literals_headerWrong", static_cast<double>(ZSTD_error_literals_headerWrong) },
+        { "ZSTD_error_dictionary_corrupted", static_cast<double>(ZSTD_error_dictionary_corrupted) },
+        { "ZSTD_error_dictionary_wrong", static_cast<double>(ZSTD_error_dictionary_wrong) },
+        { "ZSTD_error_dictionaryCreation_failed", static_cast<double>(ZSTD_error_dictionaryCreation_failed) },
+        { "ZSTD_error_parameter_unsupported", static_cast<double>(ZSTD_error_parameter_unsupported) },
+        { "ZSTD_error_parameter_combination_unsupported", static_cast<double>(ZSTD_error_parameter_combination_unsupported) },
+        { "ZSTD_error_parameter_outOfBound", static_cast<double>(ZSTD_error_parameter_outOfBound) },
+        { "ZSTD_error_tableLog_tooLarge", static_cast<double>(ZSTD_error_tableLog_tooLarge) },
+        { "ZSTD_error_maxSymbolValue_tooLarge", static_cast<double>(ZSTD_error_maxSymbolValue_tooLarge) },
+        { "ZSTD_error_maxSymbolValue_tooSmall", static_cast<double>(ZSTD_error_maxSymbolValue_tooSmall) },
+        { "ZSTD_error_stabilityCondition_notRespected", static_cast<double>(ZSTD_error_stabilityCondition_notRespected) },
+        { "ZSTD_error_stage_wrong", static_cast<double>(ZSTD_error_stage_wrong) },
+        { "ZSTD_error_init_missing", static_cast<double>(ZSTD_error_init_missing) },
+        { "ZSTD_error_memory_allocation", static_cast<double>(ZSTD_error_memory_allocation) },
+        { "ZSTD_error_workSpace_tooSmall", static_cast<double>(ZSTD_error_workSpace_tooSmall) },
+        { "ZSTD_error_dstSize_tooSmall", static_cast<double>(ZSTD_error_dstSize_tooSmall) },
+        { "ZSTD_error_srcSize_wrong", static_cast<double>(ZSTD_error_srcSize_wrong) },
+        { "ZSTD_error_dstBuffer_null", static_cast<double>(ZSTD_error_dstBuffer_null) },
+        { "ZSTD_error_noForwardProgress_destFull", static_cast<double>(ZSTD_error_noForwardProgress_destFull) },
+        { "ZSTD_error_noForwardProgress_inputEmpty", static_cast<double>(ZSTD_error_noForwardProgress_inputEmpty) },
+        { nullptr, 0 },
+    };
+    putNumericConstants(vm, object, kConstants12);
 
     return object;
 }

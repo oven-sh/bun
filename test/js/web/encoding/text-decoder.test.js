@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, isASAN, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc as gcTrace,
+  isASAN,
+  normalizeBunSnapshot,
+  rss,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -288,10 +297,24 @@ describe("TextDecoder", () => {
     expect(decoder.ignoreBOM).toBe(false);
   });
 
-  it("should throw on invalid input", () => {
-    expect(() => {
-      const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
-    }).toThrow();
+  // WebIDL boolean conversion is ToBoolean: any value is valid.
+  // Minifiers emit `{ignoreBOM: 1}` for `{ignoreBOM: true}`. https://github.com/oven-sh/bun/issues/40758
+  it("constructor coerces fatal and ignoreBOM with ToBoolean", () => {
+    const truthy = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
+    expect({ fatal: truthy.fatal, ignoreBOM: truthy.ignoreBOM }).toEqual({ fatal: true, ignoreBOM: true });
+
+    const falsy = new TextDecoder("utf-8", { fatal: 0, ignoreBOM: "" });
+    expect({ fatal: falsy.fatal, ignoreBOM: falsy.ignoreBOM }).toEqual({ fatal: false, ignoreBOM: false });
+  });
+
+  it.each([
+    [1, true],
+    [0, false],
+  ])("ignoreBOM: %p coerces to %p and controls BOM stripping", (value, expected) => {
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: value });
+    expect(decoder.ignoreBOM).toBe(expected);
+    const withBOM = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x62, 0x63]);
+    expect(decoder.decode(withBOM)).toBe(expected ? "\uFEFFabc" : "abc");
   });
 
   it("should support undifined", () => {
@@ -303,6 +326,60 @@ describe("TextDecoder", () => {
     expect(() => {
       const decoder = new TextDecoder("utf-8", undefined);
     }).not.toThrow();
+  });
+
+  // https://webidl.spec.whatwg.org/#es-dictionary step 1:
+  // "If Type(V) is not Undefined, Null or Object, then throw a TypeError."
+  describe("options WebIDL dictionary conversion", () => {
+    const bytes = new Uint8Array([0x41, 0x42, 0x43]);
+
+    it.each([5, "x", true, 0n])("decode() rejects primitive options: %p", opt => {
+      const decoder = new TextDecoder();
+      expect(() => decoder.decode(bytes, opt)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it("decode() rejects symbol options", () => {
+      const decoder = new TextDecoder();
+      expect(() => decoder.decode(bytes, Symbol())).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it.each([[null], [undefined], [{}], [() => {}], [[]]])("decode() accepts %p options", opt => {
+      expect(new TextDecoder().decode(bytes, opt)).toBe("ABC");
+    });
+
+    it("decode() with bad options throws before touching stream state", () => {
+      const decoder = new TextDecoder();
+      decoder.decode(new Uint8Array([0xf0, 0x9f]), { stream: true });
+      expect(() => decoder.decode(new Uint8Array(), 5)).toThrow(TypeError);
+      // The streamed partial sequence is still buffered: the throw above did
+      // not flush it.
+      expect(decoder.decode(new Uint8Array([0x92, 0xa9]))).toBe("\u{1F4A9}");
+    });
+
+    it.each([5, "x", true, 0n])("constructor rejects primitive options: %p", opt => {
+      expect(() => new TextDecoder("utf-8", opt)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it("constructor rejects symbol options", () => {
+      expect(() => new TextDecoder("utf-8", Symbol())).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+
+    it.each([[null], [undefined], [{}], [() => {}], [[]]])("constructor accepts %p options", opt => {
+      const decoder = new TextDecoder("utf-8", opt);
+      expect({ encoding: decoder.encoding, fatal: decoder.fatal, ignoreBOM: decoder.ignoreBOM }).toEqual({
+        encoding: "utf-8",
+        fatal: false,
+        ignoreBOM: false,
+      });
+    });
   });
 });
 
@@ -772,6 +849,78 @@ it("sees writes made by the options.stream getter", () => {
   expect(result).toBe("BBBB");
 });
 
+it("decodes a stable snapshot of a Uint8Array over a SharedArrayBuffer while another thread writes to it", async () => {
+  using dir = tempDir("text-decoder-shared", {
+    "index.js": `
+      const N = 4096;
+      const dataSab = new SharedArrayBuffer(N);
+      const flagSab = new SharedArrayBuffer(4);
+      const data = new Uint8Array(dataSab);
+      const flag = new Int32Array(flagSab);
+      data.fill(0x61);
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      const ready = new Promise((resolve, reject) => {
+        worker.onmessage = resolve;
+        worker.onerror = reject;
+      });
+      worker.postMessage({ dataSab, flagSab });
+      await ready;
+      const decoder = new TextDecoder();
+      const allowed = new Set([0x61, 0x3042, 0xfffd]);
+      let bad = -1;
+      for (let i = 0; i < 10000 && bad < 0; i++) {
+        const out = decoder.decode(data);
+        const limit = Math.min(4, out.length);
+        for (let j = 0; j < limit; j++) {
+          const code = out.charCodeAt(j);
+          if (!allowed.has(code)) {
+            bad = code;
+            break;
+          }
+        }
+      }
+      Atomics.store(flag, 0, 1);
+      worker.terminate();
+      console.log(bad < 0 ? "consistent" : "unexpected code unit 0x" + bad.toString(16));
+      if (bad >= 0) process.exitCode = 1;
+    `,
+    "worker.js": `
+      self.onmessage = function (event) {
+        const data = new Uint8Array(event.data.dataSab);
+        const flag = new Int32Array(event.data.flagSab);
+        postMessage("ready");
+        let phase = 0;
+        while (Atomics.load(flag, 0) === 0) {
+          if (phase === 0) {
+            data[0] = 0xe3;
+            data[1] = 0x81;
+            data[2] = 0x82;
+            phase = 1;
+          } else {
+            data[0] = 0x61;
+            data[1] = 0x61;
+            data[2] = 0x61;
+            phase = 0;
+          }
+        }
+      };
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toBe("consistent");
+  expect(exitCode).toBe(0);
+});
+
 it.each(["utf-16le", "utf-16be"])(
   "TextDecoder(%s).decode() should not leak the output buffer",
   encoding => {
@@ -798,12 +947,12 @@ it.each(["utf-16le", "utf-16be"])(
 
     // Warm up so allocator arenas / JIT reach steady state, then snapshot RSS.
     run(2);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     // Prior to the fix each call leaked ~CODE_UNITS * 2 bytes = 32 KiB, so 3072
     // calls leaked ~96 MiB regardless of GC.
     run(24);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     const deltaMiB = (after - before) / 1024 / 1024;
     // ASAN's quarantine retains freed allocations (default 256 MB) so the delta

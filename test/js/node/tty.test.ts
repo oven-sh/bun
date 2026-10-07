@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { spawn } from "node:child_process";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -80,6 +81,163 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterFalse: false,
       returnsThis: true,
     });
+  });
+
+  // Raw mode is per-stream in libuv (each uv_tty_t holds its own mode and its
+  // own saved termios), so a second tty.ReadStream on the same fd must not be
+  // able to restore the terminal out from under the stream that raw'd it.
+  // Bun used to keep one process-wide mode + termios snapshot, which turned
+  // `setRawMode(false)` on a never-raw stream into a real tcsetattr.
+  test.skipIf(isWindows)("a second ReadStream's setRawMode does not disturb process.stdin", async () => {
+    const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+    const ECHO = 0x8;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const waiters: { marker: string; resolve: () => void }[] = [];
+
+    await using terminal = new Bun.Terminal({
+      data(_terminal, chunk: Uint8Array) {
+        buffer += decoder.decode(chunk, { stream: true });
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          if (buffer.includes(waiters[i].marker)) {
+            waiters[i].resolve();
+            waiters.splice(i, 1);
+          }
+        }
+      },
+    });
+
+    const isRaw = () => (terminal.localFlags & (ICANON | ECHO)) === 0;
+    const observed: Record<string, boolean> = { beforeSpawn: isRaw() };
+
+    // Each phase announces itself, then blocks on stdin so the parent can read
+    // termios while the child is still alive, and releases on the ack byte.
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tty = require("node:tty");
+          const { TTY } = process.binding("tty_wrap");
+          const say = s => process.stdout.write(s + "\\n");
+          const ack = () => new Promise(resolve => process.stdin.once("data", () => resolve()));
+          (async () => {
+            process.stdin.resume();
+            process.stdin.setRawMode(true);
+            say("P1"); await ack();
+
+            const second = new tty.ReadStream(0);
+            second.setRawMode(false); // never raw: must be a no-op
+            say("P2"); await ack();
+
+            second.setRawMode(true);
+            second.setRawMode(false); // restores its own snapshot, which was already raw
+            say("P3"); await ack();
+
+            new TTY(0).setRawMode(0); // same, through the tty_wrap binding
+            say("P4"); await ack();
+
+            process.stdin.setRawMode(false); // the stream that raw'd it restores cooked
+            say("P5"); await ack();
+            process.exit(0);
+          })();
+        `,
+      ],
+      env: bunEnv,
+      terminal,
+    });
+
+    // A child that dies early must reject the phase waits rather than hang them.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
+    });
+    exitedEarly.catch(() => {});
+
+    const phase = (marker: string) => {
+      const seen = buffer.includes(marker)
+        ? Promise.resolve()
+        : new Promise<void>(resolve => waiters.push({ marker, resolve }));
+      return Promise.race([seen, exitedEarly]);
+    };
+
+    await phase("P1");
+    observed.afterStdinRaw = isRaw();
+    terminal.write("\n");
+
+    await phase("P2");
+    observed.afterSecondStreamCooked = isRaw();
+    terminal.write("\n");
+
+    await phase("P3");
+    observed.afterSecondStreamRoundTrip = isRaw();
+    terminal.write("\n");
+
+    await phase("P4");
+    observed.afterTTYWrapCooked = isRaw();
+    terminal.write("\n");
+
+    await phase("P5");
+    observed.afterStdinCooked = isRaw();
+    terminal.write("\n");
+
+    expect(observed).toEqual({
+      beforeSpawn: false,
+      afterStdinRaw: true,
+      afterSecondStreamCooked: true,
+      afterSecondStreamRoundTrip: true,
+      afterTTYWrapCooked: true,
+      afterStdinCooked: false,
+    });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
+describe("WriteStream end()", () => {
+  // The parent does not read the child's stdout until the child has called
+  // end(), so most of the 1 MiB sits in the stream's sink at that point. The
+  // callback must wait for it, or process.exit truncates the output.
+  //
+  // Windows: a write to an inherited stdout pipe blocks until the reader
+  // drains it (every write() returns true), so the child never reaches end()
+  // while the parent waits, and there is no backlog to flush.
+  it.skipIf(isWindows)("fires the callback after the backlog is flushed", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `const { WriteStream } = require("node:tty");
+         const out = new WriteStream(1);
+         const chunk = Buffer.alloc(256 * 1024, 120);
+         for (let i = 0; i < 4; i++) out.write(chunk);
+         out.end(() => process.exit(0));
+         process.send("ending");`,
+      ],
+      { env: bunEnv, stdio: ["ignore", "pipe", "pipe", "ipc"] },
+    );
+    let received = 0;
+    let reading = false;
+    // 'exit' is the fallback for a child that dies before it sends "ending".
+    const read = () => {
+      if (reading) return;
+      reading = true;
+      child.stdout!.on("data", d => (received += d.length));
+    };
+    child.on("message", read);
+    child.on("exit", read);
+    const stderr = new Promise<string>(resolve => {
+      let err = "";
+      child.stderr!.on("data", d => (err += d));
+      child.stderr!.on("end", () => resolve(err));
+    });
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers<void>();
+    child.stdout!.on("end", onEnd);
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    await ended;
+    expect(await stderr).toBe("");
+    expect(received).toBe(4 * 256 * 1024);
+    expect(await exited).toBe(0);
   });
 });
 

@@ -7,6 +7,10 @@ pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
     fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyPostgresError>;
+    /// Discard every byte written at or after `offset`.
+    fn truncate(self, offset: usize);
+    /// Changes when another writer is handed out or the buffer is drained.
+    fn epoch(self) -> u32;
 }
 
 #[derive(Copy, Clone)]
@@ -16,8 +20,8 @@ pub struct NewWriter<C: WriterContext> {
 
 #[derive(Copy, Clone)]
 pub struct LengthWriter<C: WriterContext> {
-    pub index: usize,
-    pub context: NewWriter<C>,
+    pub(crate) index: usize,
+    pub(crate) context: NewWriter<C>,
 }
 
 impl<C: WriterContext> LengthWriter<C> {
@@ -51,13 +55,27 @@ impl<C: WriterContext> NewWriter<C> {
     }
 
     #[inline]
-    pub fn offset(self) -> usize {
+    pub(crate) fn offset(self) -> usize {
         C::offset(self.wrapped)
     }
 
     #[inline]
-    pub fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
+    pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         C::pwrite(self.wrapped, data, i)
+    }
+
+    /// Run `f`. If it fails and nothing else touched the buffer, discard what it wrote.
+    pub fn atomically(
+        self,
+        f: impl FnOnce(Self) -> Result<(), AnyPostgresError>,
+    ) -> Result<(), AnyPostgresError> {
+        let start = self.offset();
+        let epoch = C::epoch(self.wrapped);
+        let result = f(self);
+        if result.is_err() && C::epoch(self.wrapped) == epoch {
+            C::truncate(self.wrapped, start);
+        }
+        result
     }
 
     pub fn int4(self, value: PostgresInt32) -> Result<(), AnyPostgresError> {
@@ -68,15 +86,7 @@ impl<C: WriterContext> NewWriter<C> {
         self.write(&value.to_be_bytes())
     }
 
-    pub fn sint4(self, value: i32) -> Result<(), AnyPostgresError> {
-        self.write(&value.to_be_bytes())
-    }
-
     pub fn f64(self, value: f64) -> Result<(), AnyPostgresError> {
-        self.write(&value.to_bits().to_be_bytes())
-    }
-
-    pub fn f32(self, value: f32) -> Result<(), AnyPostgresError> {
         self.write(&value.to_bits().to_be_bytes())
     }
 
@@ -98,22 +108,6 @@ impl<C: WriterContext> NewWriter<C> {
         Ok(())
     }
 
-    pub fn bytes(self, value: &[u8]) -> Result<(), AnyPostgresError> {
-        self.write(value)?;
-        if value.is_empty() || value[value.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
-    }
-
-    pub fn r#bool(self, value: bool) -> Result<(), AnyPostgresError> {
-        self.write(if value { b"t" } else { b"f" })
-    }
-
-    pub fn null(self) -> Result<(), AnyPostgresError> {
-        self.int4(PostgresInt32::MAX)
-    }
-
     // Named `bun_string` (not `string`) to avoid colliding with `string(&[u8])` above.
     pub fn bun_string(self, value: &bun_core::String) -> Result<(), AnyPostgresError> {
         if value.is_empty() {
@@ -130,10 +124,4 @@ impl<C: WriterContext> NewWriter<C> {
         }
         Ok(())
     }
-}
-
-// Constructor helper for callsite convenience.
-#[inline]
-pub fn new_writer<C: WriterContext>(ctx: C) -> NewWriter<C> {
-    NewWriter { wrapped: ctx }
 }

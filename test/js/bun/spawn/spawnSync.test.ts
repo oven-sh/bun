@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isPosix } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
@@ -33,13 +34,143 @@ describe("spawnSync", () => {
     });
   }
 
-  it.skipIf(process.platform !== "linux")("should use memfd when possible", () => {
-    expect([join(import.meta.dir, "spawnSync-memfd-fixture.ts")]).toRun();
+  // https://github.com/oven-sh/bun/issues/33932
+  // Windows-only: the timeout timer lives on a cached libuv loop whose clock
+  // freezes between calls; the POSIX path compares against the real clock.
+  it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {
+    const echo = (s: string) => ["cmd", "/c", `echo ${s}`];
+    // Populate the cached isolated event loop, then let its clock go stale
+    // for longer than the next call's timeout.
+    const first = Bun.spawnSync({ cmd: echo("first"), stdout: "pipe", stderr: "pipe" });
+    expect(first.exitCode).toBe(0);
+
+    await Bun.sleep(2000);
+
+    const result = Bun.spawnSync({ cmd: echo("ok"), stdout: "pipe", stderr: "pipe", timeout: 1500 });
+    expect({
+      stdout: result.stdout.toString().trim(),
+      exitedDueToTimeout: result.exitedDueToTimeout,
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
   });
 
-  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", () => {
-    expect([join(import.meta.dir, "spawnSync-counters-fixture.ts")]).toRun();
+  it.skipIf(process.platform !== "linux")("should use memfd when possible", async () => {
+    expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
+
+  it.skipIf(!isPosix)("should use spawnSync optimizations when possible", async () => {
+    expect(await bunRun(join(import.meta.dir, "spawnSync-counters-fixture.ts"))).toSpawn();
+  });
+
+  describe.skipIf(!isPosix)("drains piped stdio to EOF after the direct child exits", () => {
+    // Grandchild inherits the pipe and writes after the direct child has exited.
+    const sh = (fd: number) => [
+      "/bin/sh",
+      "-c",
+      `printf A >&${fd}; ( sleep 0.3; printf B >&${fd}; sleep 0.1; printf C >&${fd} ) & exit 0`,
+    ];
+    for (const maxBuffer of [undefined, 1024 * 1024]) {
+      it(`stdout (maxBuffer=${maxBuffer})`, () => {
+        const { stdout, exitCode } = Bun.spawnSync({
+          cmd: sh(1),
+          stdio: ["ignore", "pipe", "ignore"],
+          maxBuffer,
+        });
+        expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "ABC", exitCode: 0 });
+      });
+      it(`stderr (maxBuffer=${maxBuffer})`, () => {
+        const { stderr, exitCode } = Bun.spawnSync({
+          cmd: sh(2),
+          stdio: ["ignore", "ignore", "pipe"],
+          maxBuffer,
+        });
+        expect({ stderr: stderr.toString(), exitCode }).toEqual({ stderr: "ABC", exitCode: 0 });
+      });
+    }
+
+    it("timeout still bounds the wait when a grandchild never closes the pipe", () => {
+      const { stdout, exitedDueToTimeout } = Bun.spawnSync({
+        cmd: ["/bin/sh", "-c", "printf A; sleep 5 & exit 0"],
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 500,
+      });
+      // The grandchild holds the pipe open and writes nothing; timeout must fire.
+      expect({ stdout: stdout.toString(), exitedDueToTimeout }).toEqual({ stdout: "A", exitedDueToTimeout: true });
+    });
+  });
+
+  // The result object is created from native code. It used to get a structure
+  // with zero inline capacity, which trips ASSERT(hasInlineStorage()) in JSC's
+  // object spread fast path on debug builds.
+  it("result object can be spread", async () => {
+    const fixture = `
+      const result = Bun.spawnSync({ cmd: [process.execPath, "--version"] });
+      const copy = { ...result };
+      console.log(JSON.stringify({ success: copy.success, exitCode: copy.exitCode, pid: copy.pid === result.pid }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: '{"success":true,"exitCode":0,"pid":true}',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// A Buffer holds at most kMaxLength (2^32) bytes. spawnSync hands the captured
+// output to JSC without a copy, and a larger output used to kill the process at
+// that hand-off instead of throwing the RangeError an allocation of that size
+// throws. An output of exactly 2^32 bytes used to die in a length cast on the
+// same path. Each case makes the child hold 4 GiB of zeros (the read buffer
+// doubles to 8 GiB on the way), so the cases run one at a time, in a child
+// process, with a long timeout, and only on machines with room.
+describe.skipIf(!isPosix || totalmem() < 16 * 1024 ** 3)("spawnSync output at the Buffer length limit", () => {
+  async function captureZeros(size: number) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let result;
+        try {
+          const { stdout, exitCode } = Bun.spawnSync({
+            cmd: ["head", "-c", ${JSON.stringify(String(size))}, "/dev/zero"],
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          result = { isBuffer: Buffer.isBuffer(stdout), length: stdout.length, exitCode };
+        } catch (e) {
+          result = { isRangeError: e instanceof RangeError, message: e.message };
+        }
+        console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it("an output of 2^32 + 1 bytes throws the RangeError that new ArrayBuffer(2 ** 32 + 1) throws", async () => {
+    expect(await captureZeros(2 ** 32 + 1)).toEqual({
+      result: { isRangeError: true, message: "Out of memory" },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 120_000);
+
+  it("an output of exactly 2^32 bytes is returned whole", async () => {
+    expect(await captureZeros(2 ** 32)).toEqual({
+      result: { isBuffer: true, length: 2 ** 32, exitCode: 0 },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }, 120_000);
 });
 
 describe("uid/gid", () => {
@@ -92,5 +223,61 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+// A writer that is finalized while spawnSync waits has to leave the epoll it registered with. Its EPOLL_CTL_DEL went to
+// the loop spawnSync waits on, and the kernel keeps an entry for as long as the open file lives, which for a dup of
+// stderr is the whole process: the next dup to get that number failed to register with EEXIST.
+// BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option spawnSync
+// reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free list empty,
+// so what it allocates from there on takes the slow path, whatever ran before.
+it.skipIf(!isLinux)("a writer finalized during spawnSync leaves its fd number usable", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      // On globalThis: a binding that is only written after the await is dead across it.
+      globalThis.writers = [];
+      const refs = [];
+      for (let i = 0; i < 4; i++) {
+        const writer = Bun.file(2).writer();
+        writer.write("");
+        globalThis.writers.push(writer);
+        refs.push(new WeakRef(writer));
+      }
+      // A WeakRef keeps its target alive until the job that made it ends.
+      await Bun.sleep(0);
+      // Through a child: loading node:fs under that GC setting takes a debug build many seconds.
+      const list = { cmd: ["ls", "-l", "/proc/" + process.pid + "/fd"], stdout: "pipe", stderr: "ignore" };
+      const dupsOfStderr = ({ stdout }) => {
+        const links = stdout.toString().split("\\n").map(line => line.match(/ (\\d+) -> (.+)$/)).filter(Boolean);
+        const stderr = links.find(([, fd]) => fd === "2")[2];
+        return links.filter(([, fd, target]) => fd !== "2" && target === stderr).length;
+      };
+      const heldBeforeCall = dupsOfStderr(Bun.spawnSync(list));
+      let listing = Bun.spawnSync({ ...list, get maxBuffer() { Bun.gc(true); globalThis.writers = null; } });
+      let collectedDuringCall = 0;
+      for (const ref of refs) if (ref.deref() === undefined) collectedDuringCall++;
+      // The fds are closed on the work pool. Once they are, dup() hands their numbers out again.
+      const deadline = performance.now() + 3000;
+      while (dupsOfStderr(listing) > 0 && performance.now() < deadline) listing = Bun.spawnSync(list);
+      const stillOpen = dupsOfStderr(listing);
+      const writer = Bun.file(2).writer();
+      writer.write("registered");
+      writer.flush();
+      console.log(JSON.stringify({ heldBeforeCall, collectedDuringCall, stillOpen }));
+    `,
+    ],
+    env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+    stdout: "pipe",
+    stderr: "pipe", // pollable, so a writer registers its dup
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ heldBeforeCall: 4, collectedDuringCall: 4, stillOpen: 0 }),
+    stderr: "registered",
+    exitCode: 0,
   });
 });

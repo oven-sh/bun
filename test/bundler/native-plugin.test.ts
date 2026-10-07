@@ -1,6 +1,6 @@
 import { BunFile, Loader } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isMusl, makeTree, tempDirWithFiles } from "harness";
 import path from "path";
 import bundlerPluginHeader from "../../packages/bun-native-bundler-plugin-api/bundler_plugin.h" with { type: "file" };
 import source from "./native_plugin.cc" with { type: "file" };
@@ -407,8 +407,11 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
-  // don't know how to reliably test this on windows
-  it.skipIf(process.platform === "win32")("prints name when plugin crashes", async () => {
+  // This test segfaults on purpose. Windows: never worked. ASAN: traps the SEGV
+  // and aborts before the crash handler can print the name. musl: the crash
+  // handler re-raises and the agent writes a core, which the runner counts as a
+  // failed job even though every test passed.
+  it.skipIf(process.platform === "win32" || isASAN || isMusl)("prints name when plugin crashes", async () => {
     const prelude = /* ts */ `import values from "./stuff.ts"
   const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;
@@ -450,7 +453,12 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     `;
 
     await Bun.$`echo ${build_code} > build.ts`;
-    const { stdout, stderr } = await Bun.$`BUN_TEST_TEMP_DIR=${tempdir} ${bunExe()} run build.ts`.throws(false);
+    // BUN_CRASH_REPORT_URL="": this segfault is deliberate; uploading it to
+    // CI's remap server pins a spurious "crash reported" error on the next
+    // unrelated failing test (runner only drains /traces on non-zero exit).
+    const { stdout, stderr } = await Bun.$`${bunExe()} run build.ts`
+      .env({ ...bunEnv, BUN_TEST_TEMP_DIR: tempdir, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" })
+      .throws(false);
     const errorString = stderr.toString();
     expect(errorString).toContain('\x1b[31m\x1b[2m"native_plugin_test"\x1b[0m');
   });
@@ -558,6 +566,71 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     }
   });
 
+  it("keeps the onBeforeParse external alive across GC when JS drops its reference", async () => {
+    // The external is passed inline with no other JS reference, and onLoad
+    // forces a full GC after defer(); the NapiExternal must survive the build.
+    const srcDir = path.join(tempdir, "gc_safe_src");
+    const files = Array.from({ length: 40 }, (_, i) => `src${i}.ts`);
+    await Promise.all(files.map(f => Bun.write(path.join(srcDir, f), `export const v = "foo foo foo";\n`)));
+    const imports = files.map((f, i) => `import { v as v${i} } from "./gc_safe_src/${f}";`).join("\n");
+    await Bun.write(
+      path.join(tempdir, "gc_safe_index.ts"),
+      `${imports}\nimport j from "./gc_safe_trigger.json";\nconsole.log(j, ${files.map((_, i) => `v${i}`).join("+")});\n`,
+    );
+    await Bun.write(path.join(tempdir, "gc_safe_trigger.json"), "{}");
+
+    const buildScript = /* ts */ `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR!;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+
+      let finalizedDuringBuild = -1;
+      const result = await Bun.build({
+        outdir: path.join(tempdir, "dist-gc-safe"),
+        entrypoints: [path.join(tempdir, "gc_safe_index.ts")],
+        plugins: [
+          {
+            name: "gc-safe",
+            setup(build) {
+              build.onBeforeParse(
+                { filter: /\\.ts$/ },
+                { napiModule, symbol: "plugin_impl", external: napiModule.createExternal() },
+              );
+              build.onLoad({ filter: /gc_safe_trigger\\.json$/ }, async ({ defer }) => {
+                await defer();
+                Bun.gc(true);
+                await Bun.sleep(0);
+                Bun.gc(true);
+                finalizedDuringBuild = napiModule.getExternalFinalizedCount();
+                return { contents: "{}", loader: "json" };
+              });
+            },
+          },
+        ],
+      });
+      console.log(JSON.stringify({
+        success: result.success,
+        finalizedDuringBuild,
+        finalizedAfterBuild: napiModule.getExternalFinalizedCount(),
+      }));
+    `;
+    await Bun.write(path.join(tempdir, "gc_safe_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "gc_safe_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"success"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    expect(parsed).toEqual({ success: true, finalizedDuringBuild: 0, finalizedAfterBuild: 0 });
+    expect(exitCode).toBe(0);
+  });
+
   it("should use result of the first plugin that runs and doesn't execute the others", async () => {
     const filter = /\.ts/;
 
@@ -615,6 +688,60 @@ console.log(JSON.stringify(json))
 
     const compilationCtxFreedCount = await napiModule.getCompilationCtxFreedCount(external);
     expect(compilationCtxFreedCount).toBe(2);
+  });
+
+  it("frees the plugin-provided source exactly once when the replaced contents fail to parse", async () => {
+    await Bun.write(path.join(tempdir, "needs_foo.json"), `{ "a": foo }`);
+    await Bun.write(
+      path.join(tempdir, "json_entry.ts"),
+      `import json from "./needs_foo.json";\nconsole.log(JSON.stringify(json));\n`,
+    );
+    await Bun.write(path.join(tempdir, "after_json_entry.ts"), `export const ok = 1;\n`);
+
+    const buildScript = `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+      const external = napiModule.createExternal();
+      let failed = false;
+      try {
+        await Bun.build({
+          outdir: path.join(tempdir, "dist-json-entry"),
+          entrypoints: [path.join(tempdir, "json_entry.ts")],
+          plugins: [
+            {
+              name: "xXx123_foo_counter_321xXx",
+              setup(build) {
+                build.onBeforeParse({ filter: /\\.json$/ }, { napiModule, symbol: "plugin_impl", external });
+              },
+            },
+          ],
+        });
+      } catch (e) {
+        failed = true;
+      }
+      await Bun.build({
+        outdir: path.join(tempdir, "dist-after-json-entry"),
+        entrypoints: [path.join(tempdir, "after_json_entry.ts")],
+      });
+      console.log(JSON.stringify({ failed, freed: napiModule.getCompilationCtxFreedCount(external) }));
+    `;
+    await Bun.write(path.join(tempdir, "json_entry_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "json_entry_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("Freed compilation ctx!").length - 1).toBe(1);
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"failed"'));
+    expect(resultLine).toBe('{"failed":true,"freed":1}');
+    expect(exitCode).toBe(0);
   });
 
   type AdditionalFile = {

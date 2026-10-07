@@ -18,21 +18,7 @@ use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-/// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
-/// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
-struct SliceBoxAdapter;
-impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
-    fn hash(&self, key: &[u8]) -> u32 {
-        // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
-        use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-        AutoContext.hash(key)
-    }
-    fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-        a == &**b
-    }
-}
-
-pub fn generate_code_for_lazy_export(
+pub(crate) fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
@@ -133,7 +119,7 @@ pub fn generate_code_for_lazy_export(
                 fn visit_name(&mut self, ast: &BundlerStyleSheet, ref_: CssRef, idx: IndexInt) {
                     debug_assert!(ref_.can_be_composed());
                     let real_ref = ref_.to_real_ref(idx);
-                    let from_this_file = ref_.source_index(idx) == self.source_index;
+                    let from_this_file = idx == self.source_index;
                     if (from_this_file && self.inner_visited.is_set(ref_.inner_index() as usize))
                         || (!from_this_file && self.composes_visited.contains_key(&real_ref))
                     {
@@ -168,15 +154,10 @@ pub fn generate_code_for_lazy_export(
                     compose_loc: Loc,
                 ) {
                     let _ = self.arena;
-                    let syms: &SymbolList<'_> =
-                        &self.all_symbols[css_ref.source_index(idx) as usize];
+                    let syms: &SymbolList<'_> = &self.all_symbols[idx as usize];
                     // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
-                    let loc = ast
-                        .local_scope
-                        .get_adapted(name, &SliceBoxAdapter)
-                        .unwrap()
-                        .loc;
+                    let loc = ast.local_scope.get(name).unwrap().loc;
 
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
@@ -236,9 +217,8 @@ pub fn generate_code_for_lazy_export(
                                         };
                                         for name in compose.names.slice() {
                                             let name_v = name.v();
-                                            let Some(other_name_entry) = other_file
-                                                .local_scope
-                                                .get_adapted(name_v, &SliceBoxAdapter)
+                                            let Some(other_name_entry) =
+                                                other_file.local_scope.get(name_v)
                                             else {
                                                 continue;
                                             };
@@ -280,9 +260,7 @@ pub fn generate_code_for_lazy_export(
                                     // it is from the current file
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
-                                        let Some(name_entry) =
-                                            ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                        else {
+                                        let Some(name_entry) = ast.local_scope.get(name_v) else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
                                                 compose.loc,
@@ -395,6 +373,12 @@ pub fn generate_code_for_lazy_export(
         loc: stmt.loc,
     };
 
+    // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
+    // output, so the part that holds the call must import it.
+    let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
+        if matches!(c.target.data, ExprData::ERequireCallTarget))
+        && this.options.output_format != crate::options::OutputFormat::Cjs;
+
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
             part.stmts.slice_mut()[0] = Stmt::assign(
@@ -417,12 +401,7 @@ pub fn generate_code_for_lazy_export(
                 Index::init(source_index),
             )?;
 
-            // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
-            if matches!(expr.data, ExprData::ECall(ref c)
-                if matches!(c.target.data, ExprData::ERequireCallTarget))
-                // if it's commonjs, use require()
-                && this.options.output_format != crate::options::OutputFormat::Cjs
-            {
+            if calls_runtime_require {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,
                     Index::part(1u32),
@@ -439,11 +418,8 @@ pub fn generate_code_for_lazy_export(
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
-                    // `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
-                    // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
-                    // the rope in-place via `DerefMut` into the arena slot.
                     let Some(key) = property.key else { continue };
-                    let ExprData::EString(mut key_str) = key.data else {
+                    let ExprData::EString(key_str) = key.data else {
                         continue;
                     };
                     let Some(value) = property.value else {
@@ -458,7 +434,7 @@ pub fn generate_code_for_lazy_export(
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
                         unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
-                    let name = key_str.slice(alloc);
+                    let name: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
 
                     // TODO: support non-identifier names
                     if !js_lexer::is_identifier(name) {
@@ -532,13 +508,18 @@ pub fn generate_code_for_lazy_export(
                     )));
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
+
+                if calls_runtime_require {
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(generated.1),
+                        b"__require",
+                        1,
+                    )?;
+                }
             }
         }
     }
 
     Ok(())
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

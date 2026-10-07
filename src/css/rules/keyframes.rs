@@ -1,5 +1,3 @@
-use core::hash::{Hash, Hasher};
-
 use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::ident::{CustomIdent, is_reserved_custom_ident};
@@ -22,32 +20,6 @@ pub enum KeyframesName {
     /// `<string>` of a `@keyframes` name.
     Custom(&'static [u8]),
 }
-
-// A generic type alias keyed by `KeyframesName` with the custom hash/eq below.
-pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
-
-impl Hash for KeyframesName {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash only the underlying string bytes; the variant tag does NOT participate.
-        match self {
-            KeyframesName::Ident(ident) => state.write(ident.v()),
-            KeyframesName::Custom(s) => state.write(s),
-        }
-    }
-}
-
-impl PartialEq for KeyframesName {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (KeyframesName::Ident(a), KeyframesName::Ident(b)) => {
-                bun_core::strings::eql(a.v(), b.v())
-            }
-            (KeyframesName::Custom(a), KeyframesName::Custom(b)) => bun_core::strings::eql(a, b),
-            _ => false,
-        }
-    }
-}
-impl Eq for KeyframesName {}
 
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -92,7 +64,7 @@ impl KeyframesName {
 }
 
 impl KeyframesName {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Custom(&'static [u8])` is an arena-owned slice → identity copy.
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
@@ -105,7 +77,7 @@ impl KeyframesName {
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
         use bun_core::strings;
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             css::Token::Ident(s) => {
                 // CSS-wide keywords without quotes throws an error.
@@ -139,7 +111,7 @@ pub enum KeyframeSelector {
 }
 
 impl KeyframeSelector {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             KeyframeSelector::Percentage(p) => {
                 if dest.minify && p.v == 1.0 {
@@ -164,7 +136,7 @@ impl KeyframeSelector {
 }
 
 impl KeyframeSelector {
-    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             Self::Percentage(p) => Self::Percentage(*p),
             Self::From => Self::From,
@@ -178,7 +150,7 @@ impl KeyframeSelector {
 impl KeyframeSelector {
     // Try the tuple variant (`Percentage`) first, then fall back to keyword
     // idents (`from`/`to`).
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
+    fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
             return Ok(KeyframeSelector::Percentage(p));
         }
@@ -203,21 +175,21 @@ impl KeyframeSelector {
 /// See [KeyframesRule](KeyframesRule).
 pub struct Keyframe {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
-    pub selectors: ArrayList<KeyframeSelector>,
+    pub(crate) selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
     // Lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
 }
 
 impl Keyframe {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_comma_separated(self.selectors.iter(), |d, sel| sel.to_css(d))?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }
 
 impl Keyframe {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -234,11 +206,11 @@ pub struct KeyframesRule {
     /// <keyframes-name> = <custom-ident> | <string>
     pub name: KeyframesName,
     /// A list of keyframes in the animation.
-    pub keyframes: ArrayList<Keyframe>,
+    pub(crate) keyframes: ArrayList<Keyframe>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl KeyframesRule {

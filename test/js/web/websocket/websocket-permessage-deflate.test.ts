@@ -1,4 +1,4 @@
-import { serve } from "bun";
+import { serve, type ServerWebSocket } from "bun";
 import { expect, test } from "bun:test";
 
 test("WebSocket client negotiates permessage-deflate", async () => {
@@ -247,6 +247,155 @@ test("WebSocket client handles context takeover options", async () => {
 test.skip("WebSocket client rejects compressed control frames", async () => {
   // This test would require a custom server that sends invalid compressed control frames
   // Skip for now as it requires low-level WebSocket frame manipulation
+});
+
+// Every WebSocket client on a thread inflates through one shared libdeflate
+// handle and one shared output buffer. Interleaving compressed messages across
+// clients must not let one client's payload leak into another's.
+test("clients on one thread share the inflater without mixing up their messages", async () => {
+  const clientCount = 6;
+  const messagesPerClient = 5;
+  const bodyFor = (client: number, index: number) =>
+    `client ${client} message ${index}: ` + Buffer.alloc(900 + 37 * index, String.fromCharCode(65 + client)).toString();
+
+  const serverSockets: ServerWebSocket<{ id: number }>[] = [];
+  const allOpen = Promise.withResolvers<void>();
+  using server = serve<{ id: number }>({
+    port: 0,
+    fetch(req, server) {
+      const id = Number(new URL(req.url).searchParams.get("id"));
+      if (server.upgrade(req, { data: { id } })) {
+        return;
+      }
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      open(ws) {
+        serverSockets[ws.data.id] = ws;
+        if (serverSockets.filter(Boolean).length === clientCount) allOpen.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const received: string[][] = Array.from({ length: clientCount }, () => []);
+  const allReceived = Promise.withResolvers<void>();
+  let remaining = clientCount * messagesPerClient;
+  const clients = Array.from({ length: clientCount }, (_, id) => {
+    const client = new WebSocket(`ws://localhost:${server.port}/?id=${id}`);
+    client.onmessage = event => {
+      received[id].push(event.data);
+      if (--remaining === 0) allReceived.resolve();
+    };
+    client.onclose = event =>
+      allReceived.reject(new Error(`client ${id} closed: code=${event.code} reason=${event.reason}`));
+    return client;
+  });
+  await Promise.all(
+    clients.map(
+      client =>
+        new Promise<void>((resolve, reject) => {
+          client.onopen = () => resolve();
+          client.onerror = () => reject(new Error("client errored"));
+        }),
+    ),
+  );
+  await allOpen.promise;
+  for (const client of clients) expect(client.extensions).toContain("permessage-deflate");
+
+  // Round-robin so consecutive inflates on the client side alternate between connections.
+  for (let index = 0; index < messagesPerClient; index++) {
+    for (let id = 0; id < clientCount; id++) {
+      serverSockets[id].send(bodyFor(id, index), true);
+    }
+  }
+  await allReceived.promise;
+
+  expect(received).toEqual(
+    Array.from({ length: clientCount }, (_, id) =>
+      Array.from({ length: messagesPerClient }, (_, index) => bodyFor(id, index)),
+    ),
+  );
+
+  for (const client of clients) {
+    client.onclose = null;
+    client.close();
+  }
+});
+
+// A payload too large for the one-shot libdeflate path is inflated by the
+// connection's zlib stream into the same shared buffer, growing it. Messages
+// after it, on this and on another connection, must still arrive intact.
+test("a message that outgrows the libdeflate buffer does not disturb later messages", async () => {
+  const large = Buffer.alloc(200 * 1024, "0123456789abcdef").toString();
+  const small = (tag: string) => `${tag}: ${Buffer.alloc(1000, tag).toString()}`;
+  const expected = {
+    first: [small("a"), large, small("b"), small("c")],
+    second: [small("x"), small("y")],
+  };
+
+  const serverSockets: Record<string, ServerWebSocket<{ name: string }>> = {};
+  const allOpen = Promise.withResolvers<void>();
+  using server = serve<{ name: string }>({
+    port: 0,
+    fetch(req, server) {
+      const name = new URL(req.url).searchParams.get("name")!;
+      if (server.upgrade(req, { data: { name } })) {
+        return;
+      }
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      open(ws) {
+        serverSockets[ws.data.name] = ws;
+        if (Object.keys(serverSockets).length === 2) allOpen.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const received: Record<string, string[]> = { first: [], second: [] };
+  const allReceived = Promise.withResolvers<void>();
+  let remaining = expected.first.length + expected.second.length;
+  const clients = Object.fromEntries(
+    ["first", "second"].map(name => {
+      const client = new WebSocket(`ws://localhost:${server.port}/?name=${name}`);
+      client.onmessage = event => {
+        received[name].push(event.data);
+        if (--remaining === 0) allReceived.resolve();
+      };
+      client.onclose = event =>
+        allReceived.reject(new Error(`client ${name} closed: code=${event.code} reason=${event.reason}`));
+      return [name, client];
+    }),
+  );
+  await Promise.all(
+    Object.values(clients).map(
+      client =>
+        new Promise<void>((resolve, reject) => {
+          client.onopen = () => resolve();
+          client.onerror = () => reject(new Error("client errored"));
+        }),
+    ),
+  );
+  await allOpen.promise;
+
+  serverSockets.first.send(expected.first[0], true);
+  serverSockets.first.send(expected.first[1], true);
+  serverSockets.second.send(expected.second[0], true);
+  serverSockets.first.send(expected.first[2], true);
+  serverSockets.second.send(expected.second[1], true);
+  serverSockets.first.send(expected.first[3], true);
+  await allReceived.promise;
+
+  expect(received).toEqual(expected);
+
+  for (const client of Object.values(clients)) {
+    client.onclose = null;
+    client.close();
+  }
 });
 
 // The "dedicated" decompressor is the only server mode whose handshake response

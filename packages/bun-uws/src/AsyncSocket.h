@@ -27,7 +27,6 @@
  * to signal error with -1 (which is how the entire UNIX syscalling is built). */
 
 #include <cstring>
-#include <iostream>
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"
@@ -141,6 +140,17 @@ public:
         return getLoopData()->findCorkSlot(this) != LoopData::INVALID_CORK_SLOT;
     }
 
+    /* Sends what the cork buffer holds for this socket. The socket stays corked. */
+    void sendCorked() {
+        LoopData *loopData = getLoopData();
+        int slot = loopData->findCorkSlot(this);
+        if (slot == LoopData::INVALID_CORK_SLOT || loopData->getCorkSlot(slot)->offset == 0) {
+            return;
+        }
+        uncork();
+        cork();
+    }
+
     /* Returns a suitable buffer for temporary assemblation of send data */
     std::pair<char *, SendBufferAttribute> getSendBuffer(size_t size) {
         LoopData *loopData = getLoopData();
@@ -183,8 +193,24 @@ public:
 
     /* Returns the user space backpressure. */
     size_t getBufferedAmount() {
-        /* We return the actual amount of bytes in backbuffer, including pendingRemoval */
-        return getAsyncSocketData()->buffer.totalLength();
+        /* Unsent bytes; already-written bytes sitting behind the head cursor
+         * are not backpressure (maxBackpressure checks, drain progress). */
+        return getAsyncSocketData()->buffer.length();
+    }
+
+    /* Whether every byte handed to us_socket_write() has reached the kernel.
+     * For TLS, us_socket_write() can report a batch as written while its
+     * ciphertext still sits in the loop's spill slot (openssl.c
+     * ssl_flush_write_batch); the close-after-drain gates in HttpResponse /
+     * HttpContext must wait for that too. Kept separate from
+     * getBufferedAmount() so WebSocket's maxBackpressure policy and the
+     * JS-exposed bufferedAmount stay a plaintext count. */
+    bool hasFullyDrained() {
+        if (getAsyncSocketData()->buffer.length()) return false;
+        if constexpr (SSL) {
+            return us_socket_ssl_spill_pending((us_socket_t *) this) == 0;
+        }
+        return true;
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */
@@ -253,7 +279,7 @@ public:
             /* Check if we couldn't write the entire buffer */
             if ((unsigned int) written < buffer_len) {
                 /* Remove the successfully written data from the buffer */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 /* If we wrote less than we attempted, the socket buffer is likely full
                 * likely is used as an optimization hint to the compiler
@@ -301,7 +327,7 @@ public:
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 if (optionally) {
                     /* Thankfully we can exit early here */
@@ -322,7 +348,7 @@ public:
             if (slot != LoopData::INVALID_CORK_SLOT) {
                 /* We are corked */
                 auto *s = loopData->getCorkSlot(slot);
-                if (LoopData::CORK_BUFFER_SIZE - s->offset >= (unsigned int) length) {
+                if ((unsigned int) length <= LoopData::CORK_COPY_MAX && LoopData::CORK_BUFFER_SIZE - s->offset >= (unsigned int) length) {
                     /* If the entire chunk fits in cork buffer */
                     memcpy(s->buffer + s->offset, src, (unsigned int) length);
                     s->offset += (unsigned int) length;
@@ -331,7 +357,7 @@ public:
                     /* Fall through to default return */
                 } else {
                     /* Chunk doesn't fit; flush cork + write the rest. */
-                    return uncork(src, length, optionally);
+                    return writeFramed({}, src, length, {}, optionally);
                 }
             } else {
                 /* We are not corked */
@@ -361,6 +387,65 @@ public:
 
         /* Default fall through return */
         return {length, false};
+    }
+
+    /* write(head), write(src), write(tail) in one writev when they do not fit the cork buffer. The framing is never optional, and tail follows only a complete src. Returns like write(src). */
+    std::pair<int, bool> writeFramed(std::string_view head, const char *src, int length, std::string_view tail, bool optionally = false) {
+        LoopData *loopData = getLoopData();
+        BackPressure &backpressure = getAsyncSocketData()->buffer;
+        int slot = loopData->findCorkSlot(this);
+        unsigned int corked = slot != LoopData::INVALID_CORK_SLOT ? loopData->getCorkSlot(slot)->offset : 0;
+        const bool fitsCork = slot != LoopData::INVALID_CORK_SLOT && (unsigned int) length <= LoopData::CORK_COPY_MAX
+            && LoopData::CORK_BUFFER_SIZE - corked >= head.length() + (size_t) length + tail.length();
+
+        /* macOS refuses a writev of more than INT_MAX bytes. */
+        const bool tooLong = (size_t) length > (size_t) INT_MAX - LoopData::CORK_BUFFER_SIZE - head.length() - tail.length();
+
+        if (fitsCork || tooLong || backpressure.length() || us_socket_is_closed((us_socket_t *) this)) {
+            if (head.length()) {
+                write(head.data(), (int) head.length());
+            }
+            /* write() sends a src that does not fit the cork buffer back here without framing. */
+            const bool fromWrite = head.empty() && tail.empty() && slot != LoopData::INVALID_CORK_SLOT && !fitsCork;
+            auto result = fromWrite ? uncork(src, length, optionally) : write(src, length, optionally);
+            if (tail.length() && result.first == length) {
+                result.second |= write(tail.data(), (int) tail.length()).second;
+            }
+            return result;
+        }
+
+        const char *corkBuffer = nullptr;
+        if (slot != LoopData::INVALID_CORK_SLOT) {
+            corkBuffer = loopData->getCorkSlot(slot)->buffer;
+            loopData->releaseCorkSlot(slot);
+        }
+
+        const std::string_view parts[4] = {{corkBuffer, corked}, head, {src, (size_t) length}, tail};
+        struct us_iovec_t iov[4];
+        int count = 0;
+        for (auto part : parts) {
+            if (part.length()) {
+                iov[count++] = {(void *) part.data(), part.length()};
+            }
+        }
+        size_t written = (size_t) us_socket_writev((us_socket_t *) this, iov, count);
+
+        bool failed = false;
+        for (int i = 0; i < 4; i++) {
+            std::string_view part = parts[i];
+            size_t sent = std::min(written, part.length());
+            written -= sent;
+            if (sent == part.length()) {
+                continue;
+            }
+            failed = true;
+            if (optionally && i == 2) {
+                /* The caller keeps the rest of src, and sends tail behind it. */
+                return {(int) sent, true};
+            }
+            backpressure.append(part.data() + sent, part.length() - sent);
+        }
+        return {length, failed};
     }
 
     /* Uncork this socket and flush or buffer any corked and/or passed data. It is essential to remember doing this. */

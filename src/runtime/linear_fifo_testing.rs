@@ -32,7 +32,10 @@ type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 ///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
 ///
 /// Any other scenario value returns an empty array.
-pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn ordered_remove_probe(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let scenario = frame.argument(0).to_int32();
 
     let mut fifo = ProbeFifo::init();

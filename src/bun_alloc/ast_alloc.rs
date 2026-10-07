@@ -274,14 +274,6 @@ impl ScopedAstAlloc {
         }
     }
 
-    /// Install a state with a lazily created owned spill heap.
-    #[inline]
-    pub fn new() -> Self {
-        Self {
-            prev: swap_state(Some(acquire_state())),
-        }
-    }
-
     /// Uninstall the scope's state and return it **without** bulk-freeing it,
     /// restoring the previous occupant exactly as `drop` would. For callers
     /// that hand the parsed AST to an async consumer: small `AstVec`s live in
@@ -296,11 +288,6 @@ impl ScopedAstAlloc {
             "ScopedAstAlloc state was uninstalled by someone else"
         );
         installed
-    }
-}
-impl Default for ScopedAstAlloc {
-    fn default() -> Self {
-        Self::new()
     }
 }
 impl Drop for ScopedAstAlloc {
@@ -500,7 +487,6 @@ unsafe impl Allocator for AstAlloc {
         // `old.align()` alignment, and `new.size() <= old.size()` per the
         // `Allocator::shrink` contract. No `mi_realloc`: see `grow` note.
         debug_assert!(new.align() <= old.align());
-        let _ = old;
         Ok(NonNull::slice_from_raw_parts(ptr, new.size()))
     }
 }

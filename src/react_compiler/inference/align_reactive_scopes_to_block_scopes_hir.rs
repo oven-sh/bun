@@ -88,7 +88,10 @@ struct BlockFallthroughRange {
 /// This pass updates reactive scope boundaries to align to control flow
 /// boundaries. For example, if a scope ends partway through an if consequent,
 /// the scope is extended to the end of the consequent block.
-pub fn align_reactive_scopes_to_block_scopes_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) {
     // Save original scope ranges BEFORE this pass modifies them.
     // In TS, identifier.mutableRange and scope.range may or may not be the same
     // JS object. Only identifiers whose mutableRange IS the scope's range object

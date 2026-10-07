@@ -13,9 +13,9 @@ export type ServiceName =
   | "mysql_plain"
   | "mysql_native_password"
   | "mysql_tls"
+  | "mariadb_plain"
   | "redis_plain"
   | "redis_unified"
-  | "minio"
   | "autobahn"
   | "squid";
 
@@ -50,6 +50,7 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
   },
   mysql_plain: { ports: [3306] },
   mysql_native_password: { ports: [3306] },
+  mariadb_plain: { ports: [3306] },
   mysql_tls: {
     ports: [3306],
     tls: {
@@ -72,7 +73,6 @@ const serviceMeta: Record<ServiceName, { ports: number[]; tls?: ServiceInfo["tls
       writeonly: "writeonly",
     },
   },
-  minio: { ports: [9000, 9001] },
   autobahn: { ports: [9002] },
   squid: { ports: [3128] },
 };
@@ -238,11 +238,13 @@ class DockerComposeHelper {
     }
 
     // Start the service and wait for it to be healthy.
-    // --wait-timeout: without it `--wait` blocks until the engine reports
-    // healthy, which with `interval: 1h` and an engine that doesn't honor the
-    // 5s start_interval default means "hang until the test's beforeAll times
-    // out with no error message". 60 covers cold mysql init on tmpfs.
-    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]);
+    // --wait-timeout bounds how long `--wait` blocks for a health transition.
+    // All services are expected to go healthy within a few seconds (mysql
+    // images bake a pre-initialized data dir so first boot is just `exec
+    // mysqld`); 180 is generous headroom so a slow host or a service whose
+    // init regresses surfaces as a single diagnosable failure here rather than
+    // cascading through every test file that asks for it.
+    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "180", service]);
 
     if (exitCode !== 0) {
       const ps = await this.exec(["ps", "-a", service]);
@@ -297,7 +299,7 @@ class DockerComposeHelper {
   }
 
   // Ask the shard's coordinator (test/docker/coordinator.ts, spawned by
-  // scripts/runner.node.mjs) to start the service, and wait for its ready
+  // scripts/runner.node.ts) to start the service, and wait for its ready
   // message with the port mapping. The coordinator owns every `compose up`
   // for the shard, so concurrent processes can't race duplicate invocations
   // into the daemon. Resolves null when no coordinator is configured or the
@@ -430,15 +432,6 @@ class DockerComposeHelper {
         if (info.socketPath) {
           env.REDIS_SOCKET = info.socketPath;
         }
-        break;
-
-      case "minio":
-        env.S3_ENDPOINT = `http://${info.host}:${info.ports[9000]}`;
-        env.S3_ACCESS_KEY_ID = "minioadmin";
-        env.S3_SECRET_ACCESS_KEY = "minioadmin";
-        env.AWS_ACCESS_KEY_ID = "minioadmin";
-        env.AWS_SECRET_ACCESS_KEY = "minioadmin";
-        env.AWS_ENDPOINT_URL_S3 = `http://${info.host}:${info.ports[9000]}`;
         break;
 
       case "autobahn":
@@ -622,23 +615,6 @@ export async function withRedis(
 
   try {
     await fn({ ...info, url, tlsUrl });
-  } finally {
-    // Services persist - no teardown
-  }
-}
-
-export async function withMinio(
-  fn: (info: ServiceInfo & { endpoint: string; accessKeyId: string; secretAccessKey: string }) => Promise<void>,
-): Promise<void> {
-  const info = await ensure("minio");
-
-  try {
-    await fn({
-      ...info,
-      endpoint: `http://${info.host}:${info.ports[9000]}`,
-      accessKeyId: "minioadmin",
-      secretAccessKey: "minioadmin",
-    });
   } finally {
     // Services persist - no teardown
   }

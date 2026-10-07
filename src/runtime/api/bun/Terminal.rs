@@ -614,7 +614,7 @@ impl Terminal {
     }
 
     /// Get the slave fd for subprocess to use
-    #[allow(dead_code)]
+    #[cfg(unix)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
         self.slave_fd.get()
     }
@@ -1798,7 +1798,6 @@ impl Terminal {
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = amount;
         match status {
             WriteStatus::Pending => {}
             // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX

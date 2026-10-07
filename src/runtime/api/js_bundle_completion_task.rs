@@ -1079,6 +1079,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
+        if let Some(compile) = &config.compile {
+            transpiler
+                .options
+                .bytecode_order
+                .clone_from(&compile.bytecode_order);
+        }
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {
@@ -1124,6 +1130,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
+        transpiler.options.type_check = config
+            .check
+            .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1308,6 +1317,18 @@ impl CompletionStruct for JSBundleCompletionTask {
             drop: config.drop.keys().to_vec(),
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
+            // Relative to where the entry points are relative to, as for `--tsconfig-override`.
+            tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
+                let cwd = match config.dir.list.is_empty() {
+                    true => bun_resolver::fs::FileSystem::instance().top_level_dir,
+                    false => config.dir.list.as_slice(),
+                };
+                let path = config.tsconfig_override.list.as_slice();
+                let mut spill = Vec::new();
+                Box::from(bun_paths::resolve_path::join_abs_string_spill::<
+                    bun_paths::platform::Auto,
+                >(cwd, &mut spill, &[path]))
+            }),
             ..Default::default()
         };
 
@@ -1375,23 +1396,13 @@ impl CompletionStruct for JSBundleCompletionTask {
             .map(|b| &**b)
             .collect();
 
-        let run = bv2.run_from_js_in_new_thread(&entry_points);
+        let run = bv2
+            .run_from_js_in_new_thread(&entry_points)
+            .map(|build| self.set_result(BundleV2Result::Value(Box::new(build))));
 
-        // The AST-allocator pop lives in `generate_in_new_thread`; the
-        // source-map wait-group waits run only on the error path.
-        match run {
-            Ok(build) => {
-                self.set_result(BundleV2Result::Value(Box::new(build)));
-                bv2.deinit_without_freeing_arena();
-                Ok(())
-            }
-            Err(err) => {
-                bv2.linker.source_maps.line_offset_wait_group.wait();
-                bv2.linker.source_maps.quoted_contents_wait_group.wait();
-                bv2.deinit_without_freeing_arena();
-                Err(err)
-            }
-        }
+        // The AST-allocator pop lives in `generate_in_new_thread`.
+        bv2.deinit_without_freeing_arena();
+        run
     }
 }
 

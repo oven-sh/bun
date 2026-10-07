@@ -28,8 +28,6 @@ import { writeIfChanged } from "./fs.ts";
 const ruleVars = {
   // bun.ts
   binary_verify: ["spec"],
-  bk_upload: ["paths"],
-  bk_upload_gz: ["paths"],
   copy_exe: [],
   dsymutil: [],
   duplicate_symbols: [],
@@ -48,7 +46,7 @@ const ruleVars = {
   cc: ["cflags"],
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
-  link: ["ldflags"],
+  link: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],
@@ -61,7 +59,6 @@ const ruleVars = {
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts
   host_tool_cc: [],
-  shim_crt_decompress: [],
   // source.ts
   dep_build: ["name", "builddir", "buildtype", "targets"],
   dep_cargo: ["name", "manifestdir", "env", "args"],
@@ -97,7 +94,7 @@ export type RuleName = keyof typeof ruleVars;
 type RuleVars<R extends RuleName> = { [K in (typeof ruleVars)[R][number]]: string };
 
 /** Every job pool: ninja's built-in `console`, and the ones the build declares. */
-export type PoolName = "bk_upload" | "bun_install" | "compile" | "console" | "dep";
+export type PoolName = "bun_install" | "compile" | "console" | "dep";
 
 /**
  * A ninja `rule` — a reusable command template.

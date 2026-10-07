@@ -299,7 +299,6 @@ impl S3HttpSimpleTask {
     //
     // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
     // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_response(this: *mut Self) -> bun_jsc::JsResult<()> {
         // The next request of a multipart upload, a retry, and the script this calls continue
         // what the requesting script started.
@@ -440,7 +439,6 @@ impl S3HttpSimpleTask {
     //
     // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
     // request pointers it captured at schedule time, both non-null by construction.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,

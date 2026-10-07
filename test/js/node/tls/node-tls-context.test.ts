@@ -6,8 +6,9 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { AddressInfo } from "node:net";
+import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
 import tls from "node:tls";
 
 function loadPEM(filename: string) {
@@ -356,6 +357,283 @@ describe("tls.Server", () => {
       true,
       "chain.example.com",
     );
+  });
+});
+
+// A resumed handshake skips client authentication, so the server may only
+// resume a session under a context configured like the one that verified the
+// client certificate. The refusal below is deliberate and must not be relaxed
+// for parity with another runtime: RFC 6066 section 3 lets a server resume only
+// a session established for the requested name, and BoringSSL tells servers to
+// partition sessions between SNI hosts this way
+// (vendor/boringssl/include/openssl/ssl.h:2199-2207).
+describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI contexts (%s)", maxVersion => {
+  type Seen = {
+    servername: string;
+    authorized: boolean;
+    error: string | null;
+    peer: string | null;
+    resumed: boolean;
+  };
+
+  // The default context trusts ca1 for client certificates.
+  async function listen(options: tls.TlsOptions = {}) {
+    const server = tls.createServer(
+      {
+        key: agent2Key,
+        cert: agent2Cert,
+        ca: [ca1],
+        requestCert: true,
+        rejectUnauthorized: false,
+        maxVersion,
+        ...options,
+      },
+      socket => {
+        socket.on("error", () => {});
+        const seen: Seen = {
+          //@ts-ignore
+          servername: socket.servername,
+          authorized: socket.authorized,
+          //@ts-ignore
+          error: socket.authorizationError ?? null,
+          peer: socket.getPeerCertificate()?.subject?.CN ?? null,
+          resumed: socket.isSessionReused(),
+        };
+        socket.end(JSON.stringify(seen));
+      },
+    );
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+    await promise;
+    return server;
+  }
+
+  // Connects with the client certificate ca1 issued. Resolves to what the
+  // server saw, and the session the client got for a later connection.
+  function connect(
+    server: tls.Server,
+    servername: string,
+    options: tls.ConnectionOptions = {},
+    onSocket?: (socket: tls.TLSSocket) => void,
+  ) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ seen: Seen; session: Buffer }>();
+    let body = "";
+    let session: Buffer | undefined;
+    const socket = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      servername,
+      key: agent1Key,
+      cert: agent1Cert,
+      rejectUnauthorized: false,
+      ...options,
+    });
+    onSocket?.(socket);
+    socket.on("session", s => (session = s));
+    socket.on("data", chunk => (body += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => {
+      try {
+        resolve({ seen: JSON.parse(body), session: session! });
+      } catch (e) {
+        reject(e);
+      }
+    });
+    return promise;
+  }
+
+  const accepted = (servername: string): Seen => ({
+    servername,
+    authorized: true,
+    error: null,
+    peer: "agent1",
+    resumed: false,
+  });
+  const refused = (servername: string): Seen => ({
+    servername,
+    authorized: false,
+    error: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    peer: "agent1",
+    resumed: false,
+  });
+
+  it("runs a full handshake under a context that trusts another CA", async () => {
+    const server = await listen();
+    try {
+      server.addContext("a.test", { key: agent1Key, cert: agent1Cert, ca: [ca1] });
+      server.addContext("b.test", { key: agent3Key, cert: agent3Cert, ca: [ca2] });
+
+      const atDefault = await connect(server, "default.test");
+      const atA = await connect(server, "a.test");
+      const atB = await connect(server, "b.test");
+      expect([atDefault.seen, atA.seen, atB.seen]).toEqual([
+        accepted("default.test"),
+        accepted("a.test"),
+        refused("b.test"),
+      ]);
+
+      // b.test verifies the certificate again, against ca2, whichever
+      // context's session the client offers.
+      const fromDefault = await connect(server, "b.test", { session: atDefault.session });
+      const fromA = await connect(server, "b.test", { session: atA.session });
+      expect([fromDefault.seen, fromA.seen]).toEqual([refused("b.test"), refused("b.test")]);
+
+      // Every context still resumes its own sessions.
+      const again = [
+        await connect(server, "default.test", { session: atDefault.session }),
+        await connect(server, "a.test", { session: atA.session }),
+        await connect(server, "b.test", { session: atB.session }),
+      ];
+      expect(again.map(c => c.seen)).toEqual([
+        { ...accepted("default.test"), resumed: true },
+        { ...accepted("a.test"), resumed: true },
+        { ...refused("b.test"), resumed: true },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // The same door with the default `rejectUnauthorized`, which is how an mTLS
+  // server is configured: the refused client must not reach the handler at all.
+  it("keeps a refused client out of the handler with the default rejectUnauthorized", async () => {
+    const handled: string[] = [];
+    const server = tls.createServer(
+      { key: agent2Key, cert: agent2Cert, ca: [ca1], requestCert: true, maxVersion },
+      socket => {
+        socket.on("error", () => {});
+        //@ts-ignore
+        handled.push(`${socket.servername}:${socket.authorized}:${socket.isSessionReused()}`);
+        socket.end("{}");
+      },
+    );
+    server.on("tlsClientError", () => {});
+    const listening = Promise.withResolvers<void>();
+    server.once("error", listening.reject);
+    server.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+    try {
+      server.addContext("a.test", { key: agent1Key, cert: agent1Cert, ca: [ca1] });
+      server.addContext("b.test", { key: agent3Key, cert: agent3Cert, ca: [ca2] });
+
+      const atA = await connect(server, "a.test").catch(() => ({ session: undefined }));
+      await connect(server, "b.test").catch(() => {});
+      await connect(server, "b.test", { session: atA.session }).catch(() => {});
+
+      // a.test only. b.test refuses the client before the handler, with or
+      // without a.test's session.
+      expect(handled).toEqual(["a.test:true:false"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("covers the contexts an SNICallback builds for each handshake", async () => {
+    const contexts = {
+      "a.test": { key: agent1Key, cert: agent1Cert, ca: [ca1] },
+      "b.test": { key: agent3Key, cert: agent3Cert, ca: [ca2] },
+    };
+    const server = await listen({
+      SNICallback: (servername, callback) => callback(null, tls.createSecureContext(contexts[servername])),
+    });
+    try {
+      const atA = await connect(server, "a.test");
+      expect(atA.seen).toEqual(accepted("a.test"));
+
+      const fromA = await connect(server, "b.test", { session: atA.session });
+      expect(fromA.seen).toEqual(refused("b.test"));
+
+      // The context for this handshake is a new object built from the same
+      // options as the one that issued the session, so the session resumes.
+      const again = await connect(server, "a.test", { session: atA.session });
+      expect(again.seen).toEqual({ ...accepted("a.test"), resumed: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("covers contexts that differ only by addCACert", async () => {
+    const trusting = (ca: string) => {
+      const context = tls.createSecureContext({ key: agent1Key, cert: agent1Cert });
+      //@ts-ignore
+      context.context.addCACert(ca);
+      return context;
+    };
+    const server = await listen();
+    try {
+      server.addContext("a.test", trusting(ca1));
+      server.addContext("b.test", trusting(ca2));
+
+      const atA = await connect(server, "a.test");
+      expect(atA.seen).toEqual(accepted("a.test"));
+
+      const fromA = await connect(server, "b.test", { session: atA.session });
+      expect(fromA.seen).toEqual(refused("b.test"));
+
+      const again = await connect(server, "a.test", { session: atA.session });
+      expect(again.seen).toEqual({ ...accepted("a.test"), resumed: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The session id context that separates a server's contexts must not reach
+  // client sockets: a client aborts a resumed handshake when the session's id
+  // differs from its own.
+  it("lets a client offer a session under other client options", async () => {
+    const server = await listen();
+    try {
+      const first = await connect(server, "default.test");
+      expect(first.seen).toEqual(accepted("default.test"));
+
+      // `ca` puts these connections on another client context than `first`.
+      const overTcp = await connect(server, "default.test", { session: first.session, ca: [ca2] });
+      expect(overTcp.seen).toEqual({ ...accepted("default.test"), resumed: true });
+
+      const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      const duplex = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          raw.write(chunk, encoding, callback);
+        },
+        final(callback) {
+          raw.end();
+          callback();
+        },
+      });
+      raw.on("data", chunk => duplex.push(chunk));
+      raw.on("end", () => duplex.push(null));
+      raw.on("close", () => duplex.destroy());
+      const overDuplex = await connect(server, "default.test", {
+        session: first.session,
+        ca: [ca2],
+        socket: duplex,
+      });
+      expect(overDuplex.seen).toEqual({ ...accepted("default.test"), resumed: true });
+    } finally {
+      server.close();
+    }
+  });
+
+  // `setKeyCert()` moves the connection to another context. On a client that
+  // must not take the context's session id context either.
+  it("lets a client that calls setKeyCert() still resume", async () => {
+    const other = tls.createSecureContext({ key: agent3Key, cert: agent3Cert });
+    const server = await listen();
+    try {
+      const first = await connect(server, "default.test");
+      expect(first.seen).toEqual(accepted("default.test"));
+
+      const again = await connect(server, "default.test", { session: first.session }, socket =>
+        socket.on("connect", () => socket.setKeyCert(other)),
+      );
+      // A resumed handshake sends no certificate, so the server still reports
+      // the one from the full handshake.
+      expect(again.seen).toEqual({ ...accepted("default.test"), resumed: true });
+    } finally {
+      server.close();
+    }
   });
 });
 

@@ -858,6 +858,11 @@ unsafe extern "C" {
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+    pub fn SSL_CTX_set_session_id_context(
+        ctx: *mut SSL_CTX,
+        sid_ctx: *const u8,
+        sid_ctx_len: usize,
+    ) -> c_int;
     pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
     pub fn SSL_CTX_set1_groups_list(ctx: *mut SSL_CTX, groups: *const c_char) -> c_int;
@@ -884,6 +889,11 @@ unsafe extern "C" {
     pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
     pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
     pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
+    pub fn SSL_set_session_id_context(
+        ssl: *mut SSL,
+        sid_ctx: *const u8,
+        sid_ctx_len: usize,
+    ) -> c_int;
     pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;

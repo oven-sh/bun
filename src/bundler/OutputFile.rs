@@ -42,6 +42,9 @@ pub struct OutputFile {
     /// This chunk's module index in the `OutputKind::PrelinkedModuleGraph` blob (see
     /// `prelinked_module_graph::build`); `u32::MAX` when it is not an ES module of that graph.
     pub prelinked_module_index: u32,
+    /// Of a `Bytecode` or `BuiltinBytecode` file of a link with an order file, which has no bytes of its own: where its
+    /// cache entry starts in the `BytecodePayload`.
+    pub bytecode_entry_offset: u32,
 }
 
 impl OutputFile {
@@ -70,6 +73,7 @@ impl OutputFile {
             load_order: u32::MAX,
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
+            bytecode_entry_offset: 0,
         }
     }
 }
@@ -220,6 +224,7 @@ impl OutputFile {
             load_order: u32::MAX,
             loads_at_startup: false,
             prelinked_module_index: u32::MAX,
+            bytecode_entry_offset: 0,
         }
     }
 

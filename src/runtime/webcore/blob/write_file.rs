@@ -303,7 +303,6 @@ impl WriteFile {
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::on_request_writable),
-            #[cfg(not(windows))]
             io_parking: super::IoParking::new(),
             state: AtomicU8::new(ClosingState::Running as u8),
             total_written: 0,

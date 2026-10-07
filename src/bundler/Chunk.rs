@@ -22,11 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
+#[cfg(debug_assertions)]
+use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -367,34 +368,6 @@ impl Chunk {
     #[inline]
     pub(crate) fn entry_bits(&self) -> &AutoBitSet {
         &self.entry_bits
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Order {
-    pub source_index: IndexInt,
-    pub distance: u32,
-    pub tie_breaker: u32,
-}
-
-impl Order {
-    fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
-        (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
-    }
-
-    /// Sort so files closest to an entry point come first. If two files are
-    /// equidistant to an entry point, then break the tie by sorting on the
-    /// stable source index derived from the DFS over all entry points.
-    pub(crate) fn sort(a: &mut [Order]) {
-        index_sort::sort_slice_unstable_by(a, |a, b| {
-            if Order::less_than(Order::default(), *a, *b) {
-                core::cmp::Ordering::Less
-            } else if Order::less_than(Order::default(), *b, *a) {
-                core::cmp::Ordering::Greater
-            } else {
-                core::cmp::Ordering::Equal
-            }
-        });
     }
 }
 
@@ -1519,7 +1492,7 @@ impl CssImportOrder {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(debug_assertions)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
         ctx: &'a LinkerContext<'ctx>,
@@ -1528,7 +1501,7 @@ impl CssImportOrder {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
     // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
@@ -1539,6 +1512,7 @@ pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     ctx: &'a LinkerContext<'ctx>,
 }
 
+#[cfg(debug_assertions)]
 impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;

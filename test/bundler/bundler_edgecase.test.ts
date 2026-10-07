@@ -4508,6 +4508,9 @@ describe("bundler", () => {
     run: {
       stdout: `r start`,
       exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toContain("error: E-r");
+      },
     },
   });
   // b runs inside a's first synchronous segment, where `init_a()` returns

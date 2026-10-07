@@ -270,32 +270,50 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
 // A failed listen throws the error of the call that failed. `errno` is the
 // negative libuv number that util.getSystemErrorName() takes, as in node.
 describe("Bun.serve() reports why the listen failed", () => {
-  function listenError(options: { hostname?: string; port: number }) {
+  function shape({ code, syscall, errno, message }: any) {
+    return {
+      code,
+      syscall,
+      errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+      message,
+    };
+  }
+  function listenError(options: object) {
     try {
-      serve({ ...options, fetch: () => new Response() }).stop(true);
-    } catch (e: any) {
-      const { code, syscall, errno, message } = e;
-      return {
-        code,
-        syscall,
-        errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
-        message,
-      };
+      serve({ ...options, fetch: () => new Response() } as any).stop(true);
+    } catch (e) {
+      return shape(e);
     }
   }
 
-  // With no hostname, Windows answers WSAEACCES and not WSAEADDRINUSE to the
-  // exclusive bind of a busy port.
-  test.skipIf(!hasIPv4).each([
-    ["127.0.0.1", { hostname: "127.0.0.1" }],
-    ["every address", {}],
-  ])("a port that is in use on %s throws EADDRINUSE", (_, address) => {
-    using occupant = serve({ ...address, port: 0, fetch: () => new Response() });
-    expect(listenError({ ...address, port: occupant.port! })).toEqual({
-      code: "EADDRINUSE",
-      syscall: "listen",
-      errno: "EADDRINUSE",
-      message: `Failed to start server. Is port ${occupant.port} in use?`,
+  describe.each([
+    ["http", {}],
+    ["https", { tls }],
+  ] as const)("%s", (_, protocol) => {
+    // Winsock answers WSAEACCES, not WSAEADDRINUSE, to some of these binds.
+    test.skipIf(!hasIPv4).each([
+      ["127.0.0.1", { hostname: "127.0.0.1" }, {}],
+      ["every address", {}, {}],
+      ["every address with reusePort", {}, { reusePort: true }],
+      ["every address in production mode", {}, { development: false }],
+    ])("a port that is in use on %s throws EADDRINUSE", (_, address, mode) => {
+      using occupant = serve({ ...protocol, ...address, port: 0, fetch: () => new Response() });
+      expect(listenError({ ...protocol, ...address, ...mode, port: occupant.port })).toEqual({
+        code: "EADDRINUSE",
+        syscall: "listen",
+        errno: "EADDRINUSE",
+        message: `Failed to start server. Is port ${occupant.port} in use?`,
+      });
+    });
+
+    test("a unix socket in a directory that does not exist throws ENOENT", () => {
+      const unix = isWindows ? "C:\\notfound\\listen.sock" : "/notfound/listen.sock";
+      expect(listenError({ ...protocol, unix })).toEqual({
+        code: "ENOENT",
+        syscall: "listen",
+        errno: "ENOENT",
+        message: `ENOENT: no such file or directory, listen '${unix}'`,
+      });
     });
   });
 
@@ -319,11 +337,93 @@ describe("Bun.serve() reports why the listen failed", () => {
     });
   });
 
+  // An IPv6 literal never reaches the resolver. What an unknown zone does is
+  // only known for Linux: getaddrinfo() refuses it.
+  test.skipIf(!isLinux).each(["fe80::1%nope0", "[fe80::1%nope0]"])(
+    "the IPv6 literal %p with a zone that names no interface throws EINVAL",
+    hostname => {
+      expect(listenError({ hostname, port: 0 })).toEqual({
+        code: "EINVAL",
+        syscall: "listen",
+        errno: "EINVAL",
+        message: "EINVAL: invalid argument, listen",
+      });
+    },
+  );
+
+  // The report in #30363: Bun.serve on 127.0.0.1:80 as a user that may not
+  // bind it. The kernel refuses this bind before it looks at who holds the port.
+  const isRoot = process.getuid?.() === 0;
+  // root may bind any port, so the fixture gives root up.
+  const asNobody = isRoot ? { uid: 65534, gid: 65534 } : {};
+  const refusesPort80 = (() => {
+    // Windows has no privileged ports.
+    if (isWindows) return false;
+    if (isLinux) {
+      // Linux lets every user bind a port at or above this one.
+      try {
+        if (Number(readFileSync("/proc/sys/net/ipv4/ip_unprivileged_port_start", "utf8")) <= 80) return false;
+      } catch {}
+    }
+    if (!isRoot) return true;
+    // The fixture needs a bun that the unprivileged user can execute.
+    try {
+      return Bun.spawnSync({ cmd: [bunExe(), "--version"], env: bunEnv, ...asNobody }).exitCode === 0;
+    } catch {
+      return false;
+    }
+  })();
+  test.skipIf(!refusesPort80)("a privileged port throws EACCES", async () => {
+    const fixture = /* js */ `
+      const { getSystemErrorName } = require("util");
+      const shape = ({ code, syscall, errno, message }) => ({ code, syscall, errno: errno < 0 ? getSystemErrorName(errno) : errno, message });
+      const out = {};
+      try {
+        Bun.serve({ hostname: "127.0.0.1", port: 80, fetch: () => new Response() }).stop(true);
+        out.serve = "listening";
+      } catch (e) {
+        out.serve = shape(e);
+      }
+      const server = require("http").createServer();
+      server.on("error", e => {
+        out.http = shape(e);
+        console.log(JSON.stringify(out));
+      });
+      server.listen(80, "127.0.0.1", () => {
+        out.http = "listening";
+        console.log(JSON.stringify(out));
+        server.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      ...asNobody,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const denied = {
+      code: "EACCES",
+      syscall: "listen",
+      errno: "EACCES",
+      message: "permission denied 127.0.0.1:80",
+    };
+    expect({ out: JSON.parse(stdout || "null"), stderr }).toEqual({ out: { serve: denied, http: denied }, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // At the descriptor limit socket() fails before there is anything to bind.
+  // The unix path is relative: an absolute temporary path can be longer than
+  // sun_path, and the long path code opens the directory first.
   test.skipIf(isWindows)("the file descriptor limit throws EMFILE", async () => {
     using dir = tempDir("serve-listen-emfile", {});
     const fixture = /* js */ `
       const fs = require("fs");
+      const addresses = { tcp: { hostname: "127.0.0.1", port: 0 }, unix: { unix: "emfile.sock" } };
+      if (process.env.HAS_IPV6) addresses.tcp6 = { hostname: "::1", port: 0 };
+      // glibc needs a descriptor to look a name up, and reports that through errno.
+      if (process.platform === "linux") addresses.localhost = { hostname: "localhost", port: 0 };
       const held = [];
       for (;;) {
         try {
@@ -333,13 +433,12 @@ describe("Bun.serve() reports why the listen failed", () => {
         }
       }
       const errors = {};
-      const addresses = { tcp: { hostname: "127.0.0.1", port: 0 }, unix: { unix: process.env.SOCKET_PATH } };
       for (const [name, address] of Object.entries(addresses)) {
         try {
           Bun.serve({ ...address, fetch: () => new Response() }).stop(true);
           errors[name] = "listening";
         } catch (e) {
-          errors[name] = { code: e.code, syscall: e.syscall };
+          errors[name] = { code: e.code, syscall: e.syscall, errno: e.errno };
         }
       }
       for (const fd of held) fs.closeSync(fd);
@@ -347,16 +446,24 @@ describe("Bun.serve() reports why the listen failed", () => {
     `;
     await using proc = Bun.spawn({
       cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "-e", fixture],
-      env: { ...bunEnv, SOCKET_PATH: join(String(dir), "emfile.sock") },
+      env: { ...bunEnv, HAS_IPV6: hasIPv6 ? "1" : "" },
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: JSON.stringify({
-        tcp: { code: "EMFILE", syscall: "listen" },
-        unix: { code: "EMFILE", syscall: "listen" },
-      }),
+    const errors = Object.entries(JSON.parse(stdout || "{}")).map(([name, error]) => [
+      name,
+      typeof error === "string" ? error : shape({ ...(error as object), message: undefined }),
+    ]);
+    const emfile = { code: "EMFILE", syscall: "listen", errno: "EMFILE", message: undefined };
+    expect({ errors: Object.fromEntries(errors), stderr }).toEqual({
+      errors: {
+        tcp: emfile,
+        unix: emfile,
+        ...(hasIPv6 ? { tcp6: emfile } : {}),
+        ...(isLinux ? { localhost: emfile } : {}),
+      },
       stderr: "",
     });
     expect(exitCode).toBe(0);

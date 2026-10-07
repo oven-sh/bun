@@ -398,12 +398,13 @@ void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
  * accepted sockets.
  *
  * On NULL, *error is the code of the call that failed: errno, or a WSA /
- * Win32 code on Windows. A host that does not resolve fails no call and
- * leaves *error as the caller set it, so callers zero it first. */
+ * Win32 code on Windows. When the lookup of `host` failed instead, *error is
+ * as the caller set it and *dns_error is what getaddrinfo() returned. The two
+ * number spaces overlap, so callers zero both first. */
 struct us_listen_socket_t *us_socket_group_listen(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-    const char *host, int port, int options, int socket_ext_size, int *error)
-    __attribute__((nonnull(1, 8)));  /* ssl_ctx, host nullable */
+    const char *host, int port, int options, int socket_ext_size, int *error, int *dns_error)
+    __attribute__((nonnull(1, 8, 9)));  /* ssl_ctx, host nullable */
 struct us_listen_socket_t *us_socket_group_listen_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *path, size_t pathlen, int options, int socket_ext_size, int *error)

@@ -423,52 +423,30 @@ extern "C"
     }
   }
 
-  void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
-                                  uint16_t port, int32_t options,
-                                  uws_listen_handler handler, void *user_data)
+  /* Both return the listen socket, or nullptr with the out-params as
+   * us_socket_group_listen leaves them. */
+  struct us_listen_socket_t *uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
+                                                        uint16_t port, int32_t options,
+                                                        int *error, int *dns_error)
   {
-    std::string hostname = host && host[0] ? std::string(host, strlen(host)) : "";
+    if (host && !host[0])
+    {
+      host = nullptr;
+    }
     if (ssl)
     {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(
-          hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket, int error)
-          {
-            handler((struct us_listen_socket_t *)listen_socket, error, user_data);
-          });
+      return ((uWS::SSLApp *)app)->listen(host, port, options, error, dns_error);
     }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen(
-          hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket, int error)
-          {
-            handler((struct us_listen_socket_t *)listen_socket, error, user_data);
-          });
-    }
+    return ((uWS::App *)app)->listen(host, port, options, error, dns_error);
   }
 
-  /* callback, path to unix domain socket */
-  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, size_t pathlen, int options, uws_listen_domain_handler handler, void *user_data)
+  struct us_listen_socket_t *uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, size_t pathlen, int options, int *error)
   {
     if (ssl)
     {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(
-          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket, int error)
-          { handler((struct us_listen_socket_t *)listen_socket, domain, options, error, user_data); },
-          {domain, pathlen});
+      return ((uWS::SSLApp *)app)->listen_unix({domain, pathlen}, options, error);
     }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen(
-          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket, int error)
-          { handler((struct us_listen_socket_t *)listen_socket, domain, options, error, user_data); },
-          {domain, pathlen});
-    }
+    return ((uWS::App *)app)->listen_unix({domain, pathlen}, options, error);
   }
 
   void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)

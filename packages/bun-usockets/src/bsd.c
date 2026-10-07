@@ -1197,14 +1197,6 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
 #endif
 
     if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
-#ifdef _WIN32
-        /* bind() can answer WSAEACCES, not WSAEADDRINUSE, to a socket with
-         * SO_EXCLUSIVEADDRUSE when another socket holds the port (Bun.serve
-         * twice on one port with no hostname). */
-        if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT) && *error == WSAEACCES) {
-            *error = WSAEADDRINUSE;
-        }
-#endif
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1367,7 +1359,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     return fd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error, int* dns_error) {
     bsd_winsock_ensure();
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
@@ -1379,7 +1371,29 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
+#ifndef _WIN32
+    errno = 0;
+#endif
+    int gai = getaddrinfo(host, port_string, &hints, &result);
+    if (gai != 0) {
+#ifndef _WIN32
+        /* At the descriptor limit glibc answers EAI_NONAME for its first lookup
+         * and EAI_SYSTEM after that. Both leave the cause in errno. */
+        if (errno != 0 && (gai == EAI_SYSTEM || errno == EMFILE || errno == ENFILE)) {
+            *error = errno;
+            return LIBUS_SOCKET_ERROR;
+        }
+#endif
+        if (host && strchr(host, ':')) {
+            /* An IPv6 literal needs no lookup. It fails when its %zone names no interface. */
+#ifdef _WIN32
+            *error = WSAEINVAL;
+#else
+            *error = EINVAL;
+#endif
+            return LIBUS_SOCKET_ERROR;
+        }
+        *dns_error = gai;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1387,9 +1401,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     struct addrinfo *listenAddr;
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
             if (listenFd == LIBUS_SOCKET_ERROR) {
-                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1405,9 +1418,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+            listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
             if (listenFd == LIBUS_SOCKET_ERROR) {
-                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1566,10 +1578,9 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
-    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
+    listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error);
 
     if (listenFd == LIBUS_SOCKET_ERROR) {
-        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 

@@ -149,6 +149,7 @@ impl SocketGroup {
         options: c_int,
         socket_ext_size: c_int,
         err: &mut c_int,
+        dns_err: &mut c_int,
     ) -> *mut ListenSocket {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
@@ -161,6 +162,7 @@ impl SocketGroup {
                 options,
                 socket_ext_size,
                 err,
+                dns_err,
             )
         }
     }
@@ -337,6 +339,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
+        dns_err: *mut c_int,
     ) -> *mut ListenSocket;
     fn us_socket_group_listen_unix(
         group: *mut SocketGroup,

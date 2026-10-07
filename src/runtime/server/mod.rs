@@ -2023,11 +2023,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub(crate) fn on_listen(
         &mut self,
-        socket: Option<*mut uws_sys::app::ListenSocket<SSL>>,
-        error: c_int,
+        listened: Result<*mut uws_sys::app::ListenSocket<SSL>, uws_sys::app::ListenError>,
     ) {
-        let Some(socket) = socket else {
-            return self.on_listen_failed(error);
+        let socket = match listened {
+            Ok(socket) => socket,
+            Err(failure) => return self.on_listen_failed(failure),
         };
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
@@ -2042,74 +2042,57 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// Build the bind/listen failure as a `SystemError` (so JS sees
-    /// `err.code`/`err.syscall`) and `globalThis.throwValue` it. The BoringSSL
-    /// error-stack drain is still TODO; the EADDRINUSE/
-    /// EACCES paths below cover the node:http `server.listen` error contract.
+    /// Throws the failed listen as a `SystemError`: the lookup error of the
+    /// hostname, or the error of the call that failed.
     #[cold]
-    pub(crate) fn on_listen_failed(&mut self, error: c_int) {
+    pub(crate) fn on_listen_failed(&mut self, failure: uws_sys::app::ListenError) {
         self.listener = None;
         let global = self.global_this();
-        // 0: the hostname did not resolve, so no system call failed.
-        let errno = (error != 0).then(|| {
-            uws_sys::SocketGroup::listen_errno(error).unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
-        });
 
+        let hostname = match &self.config.address {
+            server_config::Address::Tcp { hostname, .. } => hostname.as_ref().map(|h| h.as_bytes()),
+            server_config::Address::Unix(_) => None,
+        };
+        if let Some(err) =
+            crate::dns_jsc::cares_jsc::getaddrinfo_error(failure.dns_error, hostname.unwrap_or(b""))
+        {
+            let _ = global.throw_value(err.to_error_instance(global));
+            return;
+        }
+
+        let errno = uws_sys::SocketGroup::listen_errno(failure.error)
+            .unwrap_or(bun_sys::SystemErrno::EUNKNOWN);
         let err = match &self.config.address {
-            server_config::Address::Tcp { port, hostname } => {
-                let port_in_use = || {
-                    bun_core::String::create_format(format_args!(
+            server_config::Address::Tcp { port, .. } => {
+                // Winsock has no privileged ports: WSAEACCES means the port is held or in an excluded range.
+                #[cfg(windows)]
+                let errno = if errno == bun_sys::SystemErrno::EACCES {
+                    bun_sys::SystemErrno::EADDRINUSE
+                } else {
+                    errno
+                };
+                let mut err = jsc::SystemError::from(
+                    bun_sys::Error::new(errno, bun_sys::Tag::listen).to_system_error(),
+                );
+                if errno == bun_sys::SystemErrno::EADDRINUSE {
+                    err.message = bun_core::String::create_format(format_args!(
                         "Failed to start server. Is port {} in use?",
                         port
-                    ))
-                };
-                match errno {
-                    None => jsc::SystemError {
-                        message: port_in_use(),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    },
-                    Some(errno) => {
-                        let mut err = jsc::SystemError::from(
-                            bun_sys::Error::new(errno, bun_sys::Tag::listen).to_system_error(),
-                        );
-                        if errno == bun_sys::SystemErrno::EADDRINUSE {
-                            err.message = port_in_use();
-                        } else if errno == bun_sys::SystemErrno::EACCES {
-                            let host = hostname
-                                .as_ref()
-                                .map(|h| h.as_bytes())
-                                .unwrap_or(b"0.0.0.0");
-                            err.message = bun_core::String::create_format(format_args!(
-                                "permission denied {}:{}",
-                                bstr::BStr::new(host),
-                                port
-                            ));
-                        }
-                        err
-                    }
+                    ));
+                } else if errno == bun_sys::SystemErrno::EACCES {
+                    err.message = bun_core::String::create_format(format_args!(
+                        "permission denied {}:{}",
+                        bstr::BStr::new(hostname.unwrap_or(b"0.0.0.0")),
+                        port
+                    ));
                 }
+                err
             }
-            server_config::Address::Unix(unix) => {
-                let unix = unix.as_bytes();
-                match errno {
-                    None => jsc::SystemError {
-                        message: bun_core::String::create_format(format_args!(
-                            "Failed to listen on unix socket {}",
-                            bun_core::fmt::QuotedFormatter { text: unix }
-                        )),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
-                        ..Default::default()
-                    },
-                    Some(errno) => jsc::SystemError::from(
-                        bun_sys::Error::new(errno, bun_sys::Tag::listen)
-                            .with_path(unix)
-                            .to_system_error(),
-                    ),
-                }
-            }
+            server_config::Address::Unix(unix) => jsc::SystemError::from(
+                bun_sys::Error::new(errno, bun_sys::Tag::listen)
+                    .with_path(unix.as_bytes())
+                    .to_system_error(),
+            ),
         };
 
         let error_instance = err.to_error_instance(global);
@@ -3165,20 +3148,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 loop {
                     attempt += 1;
                     if tcp {
-                        // SAFETY: app is a live uws handle owned by this server. No
-                        // `&*this` is live across this call; the trampoline's
-                        // `&mut *this` is the sole borrow while it runs.
-                        unsafe {
-                            (*app).listen_with_config(
-                                Some(trampoline::on_listen::<SSL, DEBUG>),
-                                this.cast::<c_void>(),
-                                uws_app_c::uws_app_listen_config_t {
-                                    port: port as c_int,
-                                    host,
-                                    options,
-                                },
-                            );
-                        }
+                        // SAFETY: app is a live uws handle owned by this server.
+                        let listened = unsafe {
+                            (*app).listen_with_config(uws_app_c::uws_app_listen_config_t {
+                                port: port as c_int,
+                                host,
+                                options,
+                            })
+                        };
+                        // SAFETY: `this` is the live boxed server; no other borrow is live.
+                        unsafe { (*this).on_listen(listened) };
                     }
 
                     if Self::HAS_H3 {
@@ -3253,16 +3232,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
                 // sentinel at `ptr[len]` holds for ZStr::from_raw.
                 let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
-                // SAFETY: app is a live uws handle owned by this server. No
-                // `&*this` is live across this call.
-                unsafe {
-                    (*app).listen_on_unix_socket(
-                        trampoline::on_listen_unix::<SSL, DEBUG>,
-                        this.cast::<c_void>(),
-                        z,
-                        options,
-                    );
-                }
+                // SAFETY: app is a live uws handle owned by this server.
+                let listened = unsafe { (*app).listen_on_unix_socket(z, options) };
+                // SAFETY: `this` is the live boxed server; no other borrow is live.
+                unsafe { (*this).on_listen(listened) };
             }
         }
 
@@ -3420,32 +3393,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // the bodies downcast `user_data` and forward into the typed method.
 mod trampoline {
     use super::*;
-    use bun_uws_sys::{ListenSocket as UwsListenSocket, Request as UwsRequest, uws_res};
-
-    pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        error: c_int,
-        user_data: *mut c_void,
-    ) {
-        // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { bun_ptr::callback_ctx::<NewServer<SSL, DEBUG>>(user_data) };
-        let socket = if socket.is_null() {
-            None
-        } else {
-            Some(socket.cast::<uws_sys::app::ListenSocket<SSL>>())
-        };
-        server.on_listen(socket, error);
-    }
-
-    pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
-        socket: *mut UwsListenSocket,
-        _domain: *const c_char,
-        _flags: i32,
-        error: c_int,
-        user_data: *mut c_void,
-    ) {
-        on_listen::<SSL, DEBUG>(socket, error, user_data);
-    }
+    use bun_uws_sys::{Request as UwsRequest, uws_res};
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,

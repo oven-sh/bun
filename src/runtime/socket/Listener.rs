@@ -463,6 +463,7 @@ impl Listener {
             this_ref.secure_ctx.get().as_ref().map(|p| p.as_ptr());
 
         let mut errno: c_int = 0;
+        let mut dns_error: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
@@ -476,6 +477,7 @@ impl Listener {
                         socket_flags,
                         size_of::<*mut c_void>() as c_int,
                         &mut errno,
+                        &mut dns_error,
                     )
                 });
                 if !ls.is_null() {
@@ -518,13 +520,18 @@ impl Listener {
                 UnixOrHost::Unix(u) => u,
                 UnixOrHost::Fd(_) => b"",
             };
+            log!("Failed to listen {} {}", errno, dns_error);
+            if let Some(err) =
+                crate::dns_jsc::cares_jsc::getaddrinfo_error(dns_error, hostname_bytes)
+            {
+                return Err(cx.global().throw_value(err.to_error_instance(cx.global())));
+            }
             let err = cx.global().create_error_instance(format_args!(
                 "Failed to listen at {}",
                 bstr::BStr::new(hostname_bytes)
             ));
-            log!("Failed to listen {}", errno);
             let mapped = uws::SocketGroup::listen_errno(errno);
-            let (errno, mapped) = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
+            let mapped = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
                 || (matches!(connection, UnixOrHost::Fd(_))
                     && matches!(
                         mapped,
@@ -532,12 +539,9 @@ impl Listener {
                             | Some(bun_sys::SystemErrno::EBADF)
                             | Some(bun_sys::SystemErrno::EOPNOTSUPP)
                     )) {
-                (
-                    bun_sys::SystemErrno::EINVAL as c_int,
-                    Some(bun_sys::SystemErrno::EINVAL),
-                )
+                Some(bun_sys::SystemErrno::EINVAL)
             } else {
-                (errno, mapped)
+                mapped
             };
             if errno != 0 {
                 err.put(
@@ -545,7 +549,15 @@ impl Listener {
                     b"syscall",
                     BunString::static_("listen").to_js(cx.global())?,
                 );
-                err.put(cx.global(), b"errno", JSValue::js_number(errno as f64));
+                let js_errno = match mapped {
+                    Some(code) => {
+                        bun_sys::Error::new(code, bun_sys::Tag::listen)
+                            .to_system_error()
+                            .errno
+                    }
+                    None => errno,
+                };
+                err.put(cx.global(), b"errno", JSValue::js_number(js_errno as f64));
                 err.put(
                     cx.global(),
                     b"address",

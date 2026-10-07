@@ -237,6 +237,27 @@ describe("node:http", () => {
       });
     });
 
+    // An IPv6 literal is bound as it is, with no lookup. What a zone that names
+    // no interface does is only known for Linux: the bind is an invalid argument.
+    it.skipIf(process.platform !== "linux")(
+      "listen() on an IPv6 literal with an unknown zone emits EINVAL",
+      async () => {
+        const server = createServer();
+        server.listen(0, "fe80::1%nope0");
+        const [err] = (await once(server, "error")) as [NodeJS.ErrnoException];
+        const { code, syscall, errno } = err;
+        expect({
+          code,
+          syscall,
+          errno: typeof errno === "number" && errno < 0 ? getSystemErrorName(errno) : errno,
+        }).toEqual({
+          code: "EINVAL",
+          syscall: "listen",
+          errno: "EINVAL",
+        });
+      },
+    );
+
     // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
     // server, not to that attempt, so the retry from the 'error' handler calls it.
     it("calls the listen() callback after a retry from the EADDRINUSE 'error' handler", async () => {

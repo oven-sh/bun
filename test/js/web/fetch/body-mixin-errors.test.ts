@@ -235,13 +235,21 @@ describe("body-mixin-errors", () => {
     expect((err as any).code).toBe("ECONNRESET");
   }
 
-  it.concurrent("fetch: reading a stream that errored while idle rejects instead of ending cleanly", async () => {
+  type IdleBody = ReadableStream<Uint8Array>;
+  it.concurrent.each([
+    ["getReader().read()", (body: IdleBody) => body.getReader().read()],
+    [
+      "for await",
+      async (body: IdleBody) => {
+        for await (const _ of body);
+      },
+    ],
+    ["pipeTo()", (body: IdleBody) => body.pipeTo(new WritableStream())],
+    ["tee()", (body: IdleBody) => body.tee()[0].getReader().read()],
+  ] as const)("fetch: %s on a stream that errored while idle rejects instead of ending cleanly", async (_, read) => {
     await withIdleErroredBody(async body => {
       let err: unknown;
-      await body
-        .getReader()
-        .read()
-        .catch(e => (err = e));
+      await read(body).catch((e: unknown) => (err = e));
       expectTruncationError(err);
     });
   });

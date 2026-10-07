@@ -727,8 +727,7 @@ private:
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
-    /* Both return the listen socket, or nullptr with the out-params as
-     * us_socket_group_listen leaves them. host is nullptr for every address. */
+    /* host is nullptr for every address. The out-params are those of us_socket_group_listen. */
     us_listen_socket_t *listen(const char *host, int port, int options, int *error, int *dnsError) {
         return httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host, port, options, error, dnsError)) : nullptr;
     }

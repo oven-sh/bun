@@ -423,8 +423,6 @@ extern "C"
     }
   }
 
-  /* Both return the listen socket, or nullptr with the out-params as
-   * us_socket_group_listen leaves them. */
   struct us_listen_socket_t *uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                                         uint16_t port, int32_t options,
                                                         int *error, int *dns_error)

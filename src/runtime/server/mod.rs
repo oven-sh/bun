@@ -2042,8 +2042,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// Throws the failed listen as a `SystemError`: the lookup error of the
-    /// hostname, or the error of the call that failed.
     #[cold]
     pub(crate) fn on_listen_failed(&mut self, failure: uws_sys::app::ListenError) {
         self.listener = None;

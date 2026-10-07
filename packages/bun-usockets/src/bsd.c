@@ -1377,8 +1377,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     int gai = getaddrinfo(host, port_string, &hints, &result);
     if (gai != 0) {
 #ifndef _WIN32
-        /* At the descriptor limit glibc answers EAI_NONAME for its first lookup
-         * and EAI_SYSTEM after that. Both leave the cause in errno. */
+        /* At the descriptor limit glibc answers EAI_NONAME or EAI_SYSTEM, with the cause in errno. */
         if (errno != 0 && (gai == EAI_SYSTEM || errno == EMFILE || errno == ENFILE)) {
             *error = errno;
             return LIBUS_SOCKET_ERROR;

@@ -617,6 +617,39 @@ describe("bundler", () => {
       };
     });
   }
+  // The same match inside one namespace: late.js imports x.js by its absolute
+  // path, which is the path map's key for the bundled x.js. late.js is loaded
+  // only after the plugin declined entry.js's import of x.js, so x.js is in the
+  // map by then. The plugin's external answer for late.js must still win.
+  itBundled("plugin/ResolveExternalClearsModuleMatchedByAbsolutePath", ({ root }) => {
+    const declined = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import x from "./x.js";
+          import "./late.js";
+          console.log(x);
+        `,
+        "/x.js": `export default "bundled-x";`,
+        "/late.js": ``,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /x\.js$/ }, args => {
+          if (args.importer.endsWith("late.js")) return { path: args.path, external: true };
+          declined.resolve();
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await declined.promise;
+          return { contents: `import y from ${JSON.stringify(join(root, "x.js"))}; console.log(y);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`"bundled-x"`);
+        expect(contents).toMatch(/^import \w+ from "[^"]*x\.js";$/m);
+      },
+    };
+  });
   // A barrel's records are resolved and patched again each time a consumer
   // un-defers one of them. The rewritten external must survive both: it must
   // not be resolved as the vendored specifier, and its path must not be matched

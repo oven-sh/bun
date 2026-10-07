@@ -461,6 +461,8 @@ expectType(signal.aborted).is<boolean>();
 
 expectType(RegExp.escape("foo.bar")).is<string>();
 
+expectType(Bun.$`echo hello`.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+
 const controller = new AbortController();
 expectType(controller.signal).is<AbortSignal>();
 expectType(controller.abort()).is<void>();

@@ -43,6 +43,11 @@ impl FallbackHandler {
                 if let Property::$Variant(payload) = property {
                     let mut val = ($dc)(payload, arena);
 
+                    // Fallbacks are generated only when no earlier declaration of this
+                    // property exists, typed or unparsed (`var()`). An earlier one is the
+                    // author's own fallback: `color: var(--x); color: oklch(...)` keeps both,
+                    // and generating `color: #...` between them would override `var(--x)` in
+                    // every browser without `oklch()` (lightningcss#109 is that complaint).
                     if $self_field.is_none() {
                         // `has_fallbacks` is only consulted in the vendor-prefixed branch.
                         ($fb)(&mut val, arena, &context.targets, dest);

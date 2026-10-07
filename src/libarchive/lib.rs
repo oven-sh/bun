@@ -1069,8 +1069,15 @@ fn open_dir_with_stat(dir_fd: Fd, sub_path: &[u8]) -> Option<(Fd, bun_sys::Stat)
     }
 }
 
+/// Returns the number of symlinks it created. A name that is taken keeps what it has under both policies.
 #[cfg(unix)]
-pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
+pub fn create_deferred_symlinks(
+    dir_fd: Fd,
+    symlinks: &[DeferredSymlink],
+    log: bool,
+    uncreated_entry: UncreatedEntry,
+) -> crate::Result<u32> {
+    let fail = matches!(uncreated_entry, UncreatedEntry::Fail);
     let mut parents: Vec<Option<bun_sys::Stat>> = Vec::with_capacity(symlinks.len());
     for symlink in symlinks {
         let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
@@ -1106,6 +1113,9 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                     if let Some((parent, _)) = parent {
                         parent.close();
                     }
+                    if fail {
+                        return Err(crate::Error::Fail);
+                    }
                     if log {
                         bun_core::warn!(
                             "Skipping symlink whose parent directory changed during extraction: {}\n",
@@ -1118,7 +1128,10 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
         };
         match result {
             Ok(()) => created += 1,
-            Err(_) => {
+            Err(err) => {
+                if fail && err.get_errno() != bun_sys::E::EEXIST {
+                    return Err(err.into());
+                }
                 if log {
                     bun_core::warn!(
                         "Skipping symlink that could not be created: {} -> {}\n",
@@ -1129,7 +1142,7 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
             }
         }
     }
-    created
+    Ok(created)
 }
 
 /// Recursive mkdir over a WTF-16 path: component-iterates the
@@ -1191,6 +1204,16 @@ pub mod archiver {
         }
     }
 
+    /// What a POSIX extraction does with a directory or symlink entry that it cannot create.
+    /// A file entry that cannot be created or written fails the extraction under both.
+    /// So does a directory entry on Windows, where no symlink is created.
+    #[derive(Clone, Copy)]
+    pub enum UncreatedEntry {
+        /// Go to the next entry. The returned count includes the entry.
+        Skip,
+        Fail,
+    }
+
     #[derive(Clone, Copy)]
     pub struct ExtractOptions {
         pub depth_to_skip: usize,
@@ -1198,23 +1221,25 @@ pub mod archiver {
         pub log: bool,
         pub npm: bool,
         pub damaged_block: DamagedBlock,
+        pub uncreated_entry: UncreatedEntry,
     }
 
     impl ExtractOptions {
-        /// The other fields at their defaults. The policy has no default.
-        pub fn new(damaged_block: DamagedBlock) -> Self {
+        /// The other fields at their defaults. The two policies have no default.
+        pub fn new(damaged_block: DamagedBlock, uncreated_entry: UncreatedEntry) -> Self {
             Self {
                 depth_to_skip: 0,
                 close_handles: true,
                 log: false,
                 npm: false,
                 damaged_block,
+                uncreated_entry,
             }
         }
     }
 }
 
-pub use archiver::{Context, ExtractOptions, Plucker};
+pub use archiver::{Context, ExtractOptions, Plucker, UncreatedEntry};
 pub use lib::DamagedBlock;
 
 pub trait ArchiveAppender {
@@ -1580,11 +1605,14 @@ impl Archiver {
                                 match bun_sys::mkdirat_z(dir_fd, path_z, mode) {
                                     Ok(()) => {}
                                     Err(err) => {
+                                        let fail =
+                                            matches!(options.uncreated_entry, UncreatedEntry::Fail);
                                         // It's possible for some tarballs to return a directory twice, with and
                                         // without `./` in the beginning. So if it already exists, continue to the
                                         // next entry.
                                         match err.get_errno() {
-                                            bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
+                                            bun_sys::E::EEXIST => continue,
+                                            bun_sys::E::ENOTDIR if !fail => continue,
                                             _ => {}
                                         }
                                         let dirname = bun_paths::dirname_simple(path_slice);
@@ -1592,7 +1620,12 @@ impl Archiver {
                                             return Err(err.into());
                                         }
                                         let _ = dir.make_path_u8(dirname);
-                                        let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
+                                        if let Err(err) = bun_sys::mkdirat_z(dir_fd, path_z, 0o777)
+                                            && fail
+                                            && err.get_errno() != bun_sys::E::EEXIST
+                                        {
+                                            return Err(err.into());
+                                        }
                                     }
                                 }
                             }
@@ -1835,7 +1868,12 @@ impl Archiver {
         }
 
         #[cfg(unix)]
-        create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log);
+        create_deferred_symlinks(
+            dir_fd,
+            &deferred_symlinks,
+            options.log,
+            options.uncreated_entry,
+        )?;
 
         Ok(count)
     }

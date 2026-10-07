@@ -770,6 +770,7 @@ impl ExtractContext {
                 log: false,
                 npm: false,
                 damaged_block: libarchive::DamagedBlock::Fail,
+                uncreated_entry: libarchive::UncreatedEntry::Fail,
             },
         ) {
             Ok(c) => c,

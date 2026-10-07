@@ -234,6 +234,8 @@ Common error scenarios:
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
 
+`extract()` stops at the first entry that it cannot create or write, with or without a `glob`. The entries before that entry stay on disk. A symlink whose name already exists in the target directory is not an error: Bun leaves that name as it is.
+
 For additional security with untrusted archives, you can enumerate and validate paths before extraction:
 
 ```ts

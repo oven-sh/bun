@@ -10331,6 +10331,9 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * The promise rejects at the first entry that cannot be created or written, with or without
+     * `options.glob`. The entries before that entry stay on disk.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)

@@ -555,7 +555,10 @@ impl CreateCommand {
                     &mut (),
                     archiver::ExtractOptions {
                         depth_to_skip: 1,
-                        ..archiver::ExtractOptions::new(bun_libarchive::DamagedBlock::Skip)
+                        ..archiver::ExtractOptions::new(
+                            bun_libarchive::DamagedBlock::Skip,
+                            bun_libarchive::UncreatedEntry::Skip,
+                        )
                     },
                 )?;
 

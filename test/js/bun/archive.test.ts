@@ -2295,6 +2295,16 @@ describe("Bun.Archive", () => {
       },
     );
 
+    test.skipIf(isWindows).each(Object.entries(uncreatable))(
+      "extract() without a glob rejects at %s",
+      async (_, { entry }) => {
+        using dir = tempDir("archive-entry-uncreatable-plain", { "blocker": "a file" });
+        const archive = new Bun.Archive(Buffer.concat([a, entry, z, endOfArchive]));
+
+        expect(await outcome(archive.extract(String(dir)))).toEqual({ rejected: "ReadError" });
+      },
+    );
+
     // The second call finds what the first call made.
     const twice = async (archive: Bun.Archive, dest: string, options?: { glob: string }) => [
       await outcome(archive.extract(dest, options)),

@@ -569,8 +569,11 @@ impl TarballStream {
                                     let dest = (*this).dest.unwrap();
                                     let symlinks = core::mem::take(&mut (*this).deferred_symlinks);
                                     bun_libarchive::create_deferred_symlinks(
-                                        dest, &symlinks, false,
-                                    );
+                                        dest,
+                                        &symlinks,
+                                        false,
+                                        bun_libarchive::UncreatedEntry::Skip,
+                                    )?;
                                 }
                                 (*this).phase = Phase::Done;
                                 return Ok(());

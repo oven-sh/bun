@@ -389,6 +389,12 @@ describe("FormData", () => {
           [`form-data; name= \t k; filename=\t "x.txt"`, [{ key: "k", file: "x.txt", text: "v" }]],
           [`form-data; filename= x.txt; name= k`, [{ key: "k", file: "x.txt", text: "v" }]],
           [`form-data; name= " k "`, [{ key: " k ", string: "v" }]],
+          // A quoted value after the whitespace is one value: a `;` inside it
+          // does not start a parameter.
+          [`form-data; name= "x; name=admin"`, [{ key: "x; name=admin", string: "v" }]],
+          [`form-data; name= "x; filename=evil.sh"`, [{ key: "x; filename=evil.sh", string: "v" }]],
+          [`form-data; foo= "a;b"; name=k`, [{ key: "k", string: "v" }]],
+          [`form-data; name = "k"`, [{ key: "k", string: "v" }]],
         ] as const)("%s", async (disposition, expected) => {
           expect(await parse(C, disposition)).toEqual(expected);
         });

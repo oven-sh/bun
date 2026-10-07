@@ -314,8 +314,13 @@ pub(crate) fn for_each_multipart_entry<C>(
 
                 while let Some(eql_start) = strings::index_of(value, b"=") {
                     let eql_key = strings::trim(&value[..eql_start], b" \t;");
-                    value = strings::trim_left(&value[eql_start + 1..], b" \t");
-                    let quoted = value.starts_with(b"\"");
+                    value = &value[eql_start + 1..];
+                    let mut quoted = value.starts_with(b"\"");
+                    // RFC 822 §3.1.4 allows SP/HTAB after `=`: `name= "k"`. Serializers write none.
+                    if !quoted {
+                        value = strings::trim_left(value, b" \t");
+                        quoted = value.starts_with(b"\"");
+                    }
                     if quoted {
                         value = &value[1..];
                     }

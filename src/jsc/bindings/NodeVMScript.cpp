@@ -1,4 +1,5 @@
 #include "NodeVMScript.h"
+#include "CodeGenerationFromStrings.h"
 #include "BunClientData.h"
 
 #include "ErrorCode.h"
@@ -95,6 +96,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, {});
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
     String sourceString;

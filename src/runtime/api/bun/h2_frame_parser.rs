@@ -37,7 +37,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // (see `${TypeName}__fromJS` etc. in build/*/codegen/ZigGeneratedClasses.cpp);
 // replace with the macro-derived modules once the .rs codegen backend lands.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_snake_case, non_camel_case_types)]
+#[allow(non_snake_case)]
 pub(crate) mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
 
@@ -2981,9 +2981,7 @@ impl H2FrameParser {
     /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
     /// the session saw neither 'error' nor 'close' and callers waiting on the failure
     /// hung (grpc-js against a refused server). Not-yet-established sockets are left
-    /// alone entirely - the connect-error path owns their failure delivery, and closing
-    /// a semi-connected socket runs no terminal callback (stranding its refs, see the
-    /// close host_fn in socket_body).
+    /// alone entirely - the connect-error path owns their failure delivery.
     fn close_transport_after_fatal_write(&self) {
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {

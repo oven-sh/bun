@@ -12,9 +12,7 @@ use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, StrongOptional};
 use bun_paths::{self as paths, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
 
@@ -611,37 +609,20 @@ pub enum ParsedPatternKind {
     Extra,
 }
 
+#[derive(Copy, Clone)]
 pub(crate) enum Style {
     NextjsPages,
     NextjsAppUi,
     NextjsAppRoutes,
-    // The `Strong` is the GC root of the user's style function; nothing reads it back.
-    #[allow(dead_code)]
-    JavascriptDefined(Strong),
-}
-
-// The built-in styles are trivially copyable; the `JavascriptDefined` arm owns
-// a `Strong` (Drop type), so a shallow copy would double-free. That arm is an
-// unimplemented feature (`Style::from_js` never produces it), so cloning it is
-// unreachable today.
-impl Clone for Style {
-    fn clone(&self) -> Self {
-        match self {
-            Style::NextjsPages => Style::NextjsPages,
-            Style::NextjsAppUi => Style::NextjsAppUi,
-            Style::NextjsAppRoutes => Style::NextjsAppRoutes,
-            Style::JavascriptDefined(_) => {
-                panic!("TODO: customizable Style")
-            }
-        }
-    }
+    /// A `CustomFileSystemRouterFunction` (bake.d.ts). Not implemented, so the function is not kept.
+    JavascriptDefined,
 }
 
 bun_core::comptime_string_map! {
-    pub(crate) static STYLE_MAP: fn() -> Style = {
-        b"nextjs-pages" => || Style::NextjsPages,
-        b"nextjs-app-ui" => || Style::NextjsAppUi,
-        b"nextjs-app-routes" => || Style::NextjsAppRoutes,
+    pub(crate) static STYLE_MAP: Style = {
+        b"nextjs-pages" => Style::NextjsPages,
+        b"nextjs-app-ui" => Style::NextjsAppUi,
+        b"nextjs-app-routes" => Style::NextjsAppRoutes,
     };
 }
 
@@ -653,10 +634,10 @@ impl Style {
             let bun_string = value.to_bun_string(global)?;
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
-                return Ok(style());
+                return Ok(*style);
             }
         } else if value.is_callable() {
-            return Ok(Style::JavascriptDefined(Strong::create(value, global)));
+            return Ok(Style::JavascriptDefined);
         }
 
         Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))
@@ -677,7 +658,7 @@ enum NextRoutingConvention {
 
 impl Style {
     pub(crate) fn parse<'bump>(
-        &self,
+        self,
         file_path: &'bump [u8],
         ext: &[u8],
         log: &mut TinyLog,
@@ -708,7 +689,7 @@ impl Style {
             // The strategy for this should be to collect a list of candidates,
             // then batch-call the javascript handler and collect all results.
             // This will avoid most of the back-and-forth native<->js overhead.
-            Style::JavascriptDefined(_) => panic!("TODO: customizable Style"),
+            Style::JavascriptDefined => panic!("TODO: customizable Style"),
         }
     }
 
@@ -1795,8 +1776,6 @@ impl JSFrameworkRouter {
             opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
-        // `Style` owns a `Strong` (Drop type), so `?` on any error path below
-        // drops it automatically.
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
@@ -1994,7 +1973,6 @@ impl JSFrameworkRouter {
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
         let filepath = filepath_js.to_utf8(global)?;
         let style = Style::from_js(style_js, global)?;
-        // errdefer style.deinit() — Drop handles this
 
         let mut log = TinyLog::empty();
         let parsed = match style.parse(

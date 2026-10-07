@@ -1,5 +1,6 @@
 #include "NodeVMScriptFetcher.h"
 #include "NodeVMSourceTextModule.h"
+#include "CodeGenerationFromStrings.h"
 #include "NodeVMSyntheticModule.h"
 
 #include "ErrorCode.h"
@@ -25,6 +26,8 @@ using namespace NodeVM;
 NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* globalObject, ArgList args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSValue identifierValue = args.at(0);
     if (!identifierValue.isString()) {

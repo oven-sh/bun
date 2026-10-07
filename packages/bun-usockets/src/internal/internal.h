@@ -84,11 +84,14 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
+/* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
+#define LIBUS_ECANCELED WSAEINTR
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECANCELED ECANCELED
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */
@@ -191,6 +194,8 @@ void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
  * close_notify, may defer) when s->ssl. These are the underlying halves: the
  * SSL path calls _raw once it's actually time to drop the fd. */
 struct us_socket_t *us_internal_socket_close_raw(us_socket_r s, int code, void *reason);
+/* The connect `s` was made for failed with `error`. */
+void us_internal_socket_connect_failed(us_socket_r s, int error);
 struct us_socket_t *us_internal_ssl_close(us_socket_r s, int code, void *reason);
 int us_internal_loop_data_init(struct us_loop_t *loop,
                                void (*wakeup_cb)(us_loop_r loop),
@@ -356,6 +361,10 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code : 2;
+  /* us_socket_set_first_flight_before_fin: the first handshake step is still due, and a shutdown waits for it. */
+  unsigned char ssl_first_flight_before_fin : 1;
+  /* us_internal_ssl_shutdown held its FIN back for that step. */
+  unsigned char ssl_shutdown_after_first_flight : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.
@@ -374,6 +383,11 @@ struct us_socket_t {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+
+/* Whether a raw write can send: the fd is open and no FIN went out. */
+static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
+  return !s->flags.is_closed && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
+}
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
  * (is_closed + adopted, prev -> replacement; freed by the outermost tick's

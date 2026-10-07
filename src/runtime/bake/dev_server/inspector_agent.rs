@@ -51,7 +51,6 @@ impl BunFrontendDevServerAgent {
     /// C++ inspector backend (`frontend_dev_server_agent_set_enabled`) and
     /// stays live while the agent is enabled. Returns `None` when disabled.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
         let handle = self.0.agent_ptr();
         if handle.is_null() {

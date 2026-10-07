@@ -171,6 +171,7 @@ private:
 
             /* Call filter */
             httpResponseData->filteredOpen = true;
+            httpResponseData->isIdle = fromSocket(s)->isNodeHttp();
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -227,6 +228,8 @@ private:
         /* ...and open (TLS: once the handshake completes, in onHandshake) */
         if(!SSL) {
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
+            /* node:http: a connection that has received nothing is idle (nodejs/node 417aacbc365). */
+            ((AsyncSocketData<SSL> *) us_socket_ext(s))->isIdle = IsNodeHttp;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -259,7 +262,8 @@ private:
             if (httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
-            if(httpResponseData->inStream) {
+            /* node:http: the body of a tunnel that started has had its last chunk from the parser. This close can come from inside that call. */
+            if(httpResponseData->inStream && (!IsNodeHttp || nodeHttpTunnelAfterBody)) {
                 httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                 httpResponseData->inStream = nullptr;
             }
@@ -684,6 +688,12 @@ private:
 
                 /* We absolutely have to terminate parsing if shutdown */
                 if (us_socket_is_shut_down((us_socket_t *) user)) {
+                    /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
+                    if constexpr (IsNodeHttp) {
+                        if (fin) {
+                            httpResponseData->inStream = nullptr;
+                        }
+                    }
                     return nullptr;
                 }
 

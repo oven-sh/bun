@@ -1,4 +1,4 @@
-#![allow(non_camel_case_types, non_snake_case, clippy::missing_safety_doc)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_long, c_void};
 

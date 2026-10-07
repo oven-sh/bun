@@ -4,7 +4,6 @@
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
-#![allow(incomplete_features)]
 
 pub mod error;
 pub use error::{Error, Result};

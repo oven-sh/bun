@@ -216,9 +216,11 @@ pub(crate) enum RouteKind {
 
 #[derive(Copy, Clone)]
 pub(crate) enum InsertFailureKey<'a> {
-    AbsPath(&'a [u8]),
+    /// A file the graph may not hold yet, with the graph it was parsed for.
+    AbsPath(&'a [u8], bake::Graph),
     /// Raw file index into `bundled_files` (side is implied by the graph the
-    /// caller is invoking `insert_failure` on).
+    /// caller is invoking `insert_failure` on). `insert_stale` recorded which
+    /// graph the file is in when it handed out the index.
     Index(u32),
 }
 
@@ -1433,10 +1435,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         key: InsertFailureKey<'_>,
         log: &bun_ast::Log,
-        is_ssr_graph: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        let (idx, found_existing) = match key {
-            InsertFailureKey::AbsPath(abs_path) => {
+        let (idx, found_existing, parsed_for) = match key {
+            InsertFailureKey::AbsPath(abs_path, graph) => {
+                debug_assert!(match SIDE {
+                    Side::Client => graph == bake::Graph::Client,
+                    Side::Server => graph != bake::Graph::Client,
+                });
                 let gop = self.bundled_files.get_or_put(abs_path)?;
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(abs_path);
@@ -1445,9 +1450,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if !fe {
                     self.edge_lists.push(EdgeLists::default());
                 }
-                (i, fe)
+                (i, fe, Some(graph))
             }
-            InsertFailureKey::Index(i) => (i as usize, true),
+            InsertFailureKey::Index(i) => (i as usize, true, None),
         };
         self.ensure_stale_bit_capacity(true)?;
         self.stale_files.set(idx);
@@ -1470,21 +1475,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
             Side::Server => {
                 if !found_existing {
-                    self.bundled_files.values_mut()[idx] = File {
-                        failed: true,
-                        is_rsc: !is_ssr_graph,
-                        is_ssr: is_ssr_graph,
-                        ..Default::default()
-                    };
-                } else {
-                    let f = &mut self.bundled_files.values_mut()[idx];
-                    if is_ssr_graph {
-                        f.is_ssr = true;
-                    } else {
-                        f.is_rsc = true;
-                    }
-                    f.failed = true;
+                    self.bundled_files.values_mut()[idx] = File::default();
                 }
+                let f = &mut self.bundled_files.values_mut()[idx];
+                match parsed_for {
+                    Some(bake::Graph::Ssr) => f.is_ssr = true,
+                    Some(_) => f.is_rsc = true,
+                    None => {}
+                }
+                f.failed = true;
             }
         }
 

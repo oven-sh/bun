@@ -543,7 +543,12 @@ fn watched_inode_is_unlinked(this: &Watcher, index: WatchItemIndex, wd: EventLis
     use crate::watcher_impl::WatchItemColumns;
     let _guard = this.mutex.lock_guard();
     // `index` is from this cycle's snapshot; an eviction since then can have moved another item there.
-    if this.watchlist.items_eventlist_index().get(usize::from(index)) != Some(&wd) {
+    if this
+        .watchlist
+        .items_eventlist_index()
+        .get(usize::from(index))
+        != Some(&wd)
+    {
         return false;
     }
     let fd = this.watchlist.items_fd()[usize::from(index)];

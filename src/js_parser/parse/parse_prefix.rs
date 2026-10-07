@@ -16,52 +16,6 @@ use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, sco
 
 type PResult<T> = crate::CrateResult<T>;
 
-/// An array or object literal whose members are being parsed.
-struct Literal {
-    /// `ArrayLiteralMembers` or `ObjectLiteralMembers`
-    kind: ListKind,
-    loc: bun_ast::Loc,
-    is_single_line: bool,
-    self_errors: DeferredErrors,
-    comma_after_spread: bun_ast::Loc,
-    old_allow_in: bool,
-    /// What `enter_list` has returned.
-    saved_contexts: u32,
-    /// Of the member that is being parsed.
-    element_start: bun_ast::Loc,
-}
-
-impl Literal {
-    /// `kind` of the literal that `token` opens.
-    fn kind_at(token: T) -> Option<ListKind> {
-        match token {
-            T::TOpenBracket => Some(ListKind::ArrayLiteralMembers),
-            T::TOpenBrace => Some(ListKind::ObjectLiteralMembers),
-            _ => None,
-        }
-    }
-
-    #[inline]
-    fn closer(&self) -> T {
-        match self.kind {
-            ListKind::ArrayLiteralMembers => T::TCloseBracket,
-            _ => T::TCloseBrace,
-        }
-    }
-}
-
-/// What `parse_json_literal` has of a literal.
-struct JsonLiteral<'a> {
-    literal: Literal,
-    items: bun_alloc::ArenaVec<'a, Expr>,
-    properties: bun_alloc::ArenaVec<'a, G::Property>,
-    /// Of the property that is being parsed.
-    element_full_start: bun_ast::Loc,
-    modifiers_base: usize,
-    /// It, from `parse_property` on.
-    property: Option<G::Property>,
-}
-
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
@@ -1121,173 +1075,105 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(value)
     }
 
-    /// The bracket that opens an array literal, or the brace that opens an object literal.
-    #[inline]
-    fn pfx_open_literal(p: &mut Self, kind: ListKind) -> PResult<Literal> {
+    fn pfx_t_open_bracket(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        match kind {
-            ListKind::ArrayLiteralMembers => p.lexer.next()?,
-            _ => p.lexer.expect(T::TOpenBrace)?,
-        }
-        let is_single_line = !p.lexer.has_newline_before;
-        // Allow "in" inside arrays and object literals
+        p.lexer.next()?;
+        let mut is_single_line = !p.lexer.has_newline_before;
+        let mut items: smallvec::SmallVec<[Expr; 8]> = smallvec::SmallVec::new();
+        let mut self_errors = DeferredErrors::default();
+        let mut comma_after_spread = bun_ast::Loc::default();
+
+        // Allow "in" inside arrays
         let old_allow_in = p.allow_in;
         p.allow_in = true;
-        Ok(Literal {
-            kind,
-            loc,
-            is_single_line,
-            self_errors: DeferredErrors::default(),
-            comma_after_spread: bun_ast::Loc::default(),
-            old_allow_in,
-            saved_contexts: p.enter_list(kind),
-            element_start: loc,
-        })
-    }
+        let saved_contexts = p.enter_list(ListKind::ArrayLiteralMembers);
 
-    /// Whether a member of `literal` starts here. Otherwise its members end here.
-    #[inline]
-    fn pfx_is_at_member(p: &mut Self, literal: &mut Literal) -> PResult<bool> {
-        while p.lexer.token != literal.closer() {
-            match p.classify_list_token(literal.kind)? {
-                ListStep::Element => {
-                    literal.element_start = p.lexer.loc();
-                    return Ok(true);
-                }
-                ListStep::Skipped => {}
+        while p.lexer.token != T::TCloseBracket {
+            match p.classify_list_token(ListKind::ArrayLiteralMembers)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
                 ListStep::Over => break,
             }
-        }
-        Ok(false)
-    }
+            let element_start = p.lexer.loc();
+            match p.lexer.token {
+                T::TComma => {
+                    let mut hole = Expr {
+                        data: ExprData::EMissing(E::Missing {}),
+                        loc: p.lexer.loc(),
+                    };
+                    p.finish_expr(&mut hole);
+                    p.note_token_full_start(&mut hole.loc, crate::sema::Mark::OmittedExpression);
+                    items.push(hole);
+                }
+                T::TDotDotDot => {
+                    let dots_loc = p.lexer.loc();
+                    p.lexer.next()?;
+                    // Parse into a local then push.
+                    let mut value = Expr::EMPTY;
+                    p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                    items.push(p.new_expr(E::Spread { value }, dots_loc));
 
-    /// After a member of `literal`: whether its members go on.
-    #[inline]
-    fn pfx_continues_after_member(p: &mut Self, literal: &mut Literal) -> PResult<bool> {
-        if p.lexer.token != T::TComma {
-            return p.recover_missing_comma(literal.kind, literal.element_start);
-        }
-        if p.lexer.has_newline_before {
-            literal.is_single_line = false;
-        }
-        p.lexer.next()?;
-        if p.lexer.has_newline_before {
-            literal.is_single_line = false;
-        }
-        Ok(true)
-    }
+                    // Commas are not allowed here when destructuring
+                    if p.lexer.token == T::TComma {
+                        comma_after_spread = p.lexer.loc();
+                    }
+                }
+                _ => {
+                    let mut item = Expr::EMPTY;
+                    p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut item)?;
+                    items.push(item);
+                }
+            }
 
-    /// The bracket that closes `literal`. Returns where it is.
-    #[inline]
-    fn pfx_close_literal(
-        p: &mut Self,
-        literal: &mut Literal,
-        errors: Option<&mut DeferredErrors>,
-    ) -> PResult<bun_ast::Loc> {
-        if p.lexer.has_newline_before {
-            literal.is_single_line = false;
+            if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::ArrayLiteralMembers, element_start)? {
+                    continue;
+                }
+                break;
+            }
+
+            if p.lexer.has_newline_before {
+                is_single_line = false;
+            }
+
+            p.lexer.next()?;
+
+            if p.lexer.has_newline_before {
+                is_single_line = false;
+            }
         }
-        p.lexer.list_contexts = literal.saved_contexts;
-        let close_loc = p.lexer.loc();
-        p.note_literal_if_unclosed(literal.closer(), literal.loc);
-        p.lexer.expect_closing(literal.closer(), literal.loc)?;
-        p.allow_in = literal.old_allow_in;
-        match errors {
-            // Is this a binding pattern?
-            _ if p.will_need_binding_pattern() => {}
+
+        if p.lexer.has_newline_before {
+            is_single_line = false;
+        }
+
+        p.lexer.list_contexts = saved_contexts;
+        let close_bracket_loc = p.lexer.loc();
+        p.note_literal_if_unclosed(T::TCloseBracket, loc);
+        p.lexer.expect_closing(T::TCloseBracket, loc)?;
+        p.allow_in = old_allow_in;
+
+        // Is this a binding pattern?
+        if p.will_need_binding_pattern() {
+            // noop
+        } else if errors.is_none() {
             // Is this an expression?
-            None => p.log_expr_errors(&mut literal.self_errors),
+            p.log_expr_errors(&mut self_errors);
+        } else {
             // In this case, we can't distinguish between the two yet
-            Some(errors) => literal.self_errors.merge_into(errors),
+            self_errors.merge_into(errors.unwrap());
         }
-        Ok(close_loc)
-    }
-
-    #[inline]
-    fn pfx_close_array(
-        p: &mut Self,
-        literal: &mut Literal,
-        items: ExprNodeList,
-        errors: Option<&mut DeferredErrors>,
-    ) -> PResult<Expr> {
-        let close_bracket_loc = Self::pfx_close_literal(p, literal, errors)?;
+        let items_list = ExprNodeList::from_arena_slice(&items);
         Ok(p.new_expr(
             E::Array {
-                items,
-                comma_after_spread: literal.comma_after_spread,
-                is_single_line: literal.is_single_line,
+                items: items_list,
+                comma_after_spread,
+                is_single_line,
                 close_bracket_loc,
                 ..Default::default()
             },
-            literal.loc,
+            loc,
         ))
-    }
-
-    #[inline]
-    fn pfx_close_object(
-        p: &mut Self,
-        literal: &mut Literal,
-        properties: G::PropertyList,
-        errors: Option<&mut DeferredErrors>,
-    ) -> PResult<Expr> {
-        let close_brace_loc = Self::pfx_close_literal(p, literal, errors)?;
-        Ok(p.new_expr(
-            E::Object {
-                properties,
-                comma_after_spread: literal.comma_after_spread,
-                is_single_line: literal.is_single_line,
-                close_brace_loc,
-                ..Default::default()
-            },
-            literal.loc,
-        ))
-    }
-
-    /// `parseArgumentOrArrayLiteralElement`
-    #[inline]
-    fn pfx_array_element(p: &mut Self, literal: &mut Literal) -> PResult<Expr> {
-        match p.lexer.token {
-            T::TComma => {
-                let mut hole = Expr {
-                    data: ExprData::EMissing(E::Missing {}),
-                    loc: p.lexer.loc(),
-                };
-                p.finish_expr(&mut hole);
-                p.note_token_full_start(&mut hole.loc, crate::sema::Mark::OmittedExpression);
-                Ok(hole)
-            }
-            T::TDotDotDot => {
-                let dots_loc = p.lexer.loc();
-                p.lexer.next()?;
-                let mut value = Expr::EMPTY;
-                p.parse_expr_or_bindings(Level::Comma, Some(&mut literal.self_errors), &mut value)?;
-                let spread = p.new_expr(E::Spread { value }, dots_loc);
-
-                // Commas are not allowed here when destructuring
-                if p.lexer.token == T::TComma {
-                    literal.comma_after_spread = p.lexer.loc();
-                }
-                Ok(spread)
-            }
-            _ => {
-                let mut item = Expr::EMPTY;
-                p.parse_expr_or_bindings(Level::Comma, Some(&mut literal.self_errors), &mut item)?;
-                Ok(item)
-            }
-        }
-    }
-
-    fn pfx_t_open_bracket(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
-        let mut literal = Self::pfx_open_literal(p, ListKind::ArrayLiteralMembers)?;
-        let mut items: smallvec::SmallVec<[Expr; 8]> = smallvec::SmallVec::new();
-        while Self::pfx_is_at_member(p, &mut literal)? {
-            items.push(Self::pfx_array_element(p, &mut literal)?);
-            if !Self::pfx_continues_after_member(p, &mut literal)? {
-                break;
-            }
-        }
-        let items = ExprNodeList::from_arena_slice(&items);
-        Self::pfx_close_array(p, &mut literal, items, errors)
     }
 
     /// `parseJSONText`, except for `validateJsonValue`: the expression of its single statement.
@@ -1307,10 +1193,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 T::TNumericLiteral | T::TStringLiteral => p.look_ahead(is_no_name),
                 _ => false,
             };
-            expressions.push(match p.lexer.token {
-                T::TOpenBracket => p.parse_json_literal(ListKind::ArrayLiteralMembers)?,
-                _ if is_value => p.parse_prefix(Level::Lowest, None, EFlags::None)?,
-                _ => p.parse_json_literal(ListKind::ObjectLiteralMembers)?,
+            expressions.push(if is_value {
+                p.parse_prefix(Level::Lowest, None, EFlags::None)?
+            } else {
+                Self::pfx_t_open_brace(p, None)?
             });
             if expressions.len() == 1 && p.lexer.token != T::TEndOfFile {
                 let range = p.lexer.range();
@@ -1333,192 +1219,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         })
     }
 
-    /// `pfx_t_open_bracket` or `pfx_t_open_brace` for a JSON text. A literal that is a member of a
-    /// literal is parsed by the same call: the stack of typescript-go grows with the nesting.
-    #[cold]
-    fn parse_json_literal(&mut self, kind: ListKind) -> PResult<Expr> {
-        let p = self;
-        // The literals that `open` is in, the outermost first.
-        let mut around: Vec<JsonLiteral<'a>> = Vec::new();
-        let mut open = Self::open_json_literal(p, kind)?;
-        loop {
-            let nested = loop {
-                if !Self::pfx_is_at_member(p, &mut open.literal)? {
-                    break None;
-                }
-                if let Some(nested) = Self::parse_json_member(p, &mut open)? {
-                    break Some(nested);
-                }
-                if !Self::pfx_continues_after_member(p, &mut open.literal)? {
-                    break None;
-                }
-            };
-            if let Some(nested) = nested {
-                let inside = Self::open_json_literal(p, nested)?;
-                around.push(core::mem::replace(&mut open, inside));
-                continue;
-            }
-            // `open` ends here, and so does each literal around it whose last member it is.
-            loop {
-                let mut parent = around.pop();
-                let errors = parent.as_mut().map(|it| &mut it.literal.self_errors);
-                let JsonLiteral {
-                    mut literal,
-                    items,
-                    properties,
-                    ..
-                } = open;
-                let mut value = match literal.kind {
-                    ListKind::ArrayLiteralMembers => {
-                        let items = ExprNodeList::from_bump_vec(items);
-                        Self::pfx_close_array(p, &mut literal, items, errors)?
-                    }
-                    _ => {
-                        let properties = G::PropertyList::from_bump_vec(properties);
-                        Self::pfx_close_object(p, &mut literal, properties, errors)?
-                    }
-                };
-                let Some(parent) = parent else {
-                    return Ok(value);
-                };
-                open = parent;
-                // The rest of `parse_expr_common`, but for what only the printer reads.
-                let errors = Some(&mut open.literal.self_errors);
-                p.parse_suffix(&mut value, Level::Comma, errors, EFlags::None)?;
-                match &mut open.property {
-                    Some(property) => {
-                        property.value = Some(value);
-                        Self::add_json_property(p, &mut open);
-                    }
-                    None => open.items.push(value),
-                }
-                if Self::pfx_continues_after_member(p, &mut open.literal)? {
-                    break;
-                }
-            }
-        }
-    }
-
-    fn open_json_literal(p: &mut Self, kind: ListKind) -> PResult<JsonLiteral<'a>> {
-        let literal = Self::pfx_open_literal(p, kind)?;
-        Ok(JsonLiteral {
-            element_full_start: literal.loc,
-            literal,
-            items: bun_alloc::ArenaVec::new_in(p.arena),
-            properties: bun_alloc::ArenaVec::new_in(p.arena),
-            modifiers_base: 0,
-            property: None,
-        })
-    }
-
-    /// Parses the member of `open` that starts here. If it is a literal, or a property whose value
-    /// is one, it stops before the literal and returns the kind of it.
-    fn parse_json_member(p: &mut Self, open: &mut JsonLiteral<'a>) -> PResult<Option<ListKind>> {
-        if open.literal.kind == ListKind::ArrayLiteralMembers {
-            let nested = Literal::kind_at(p.lexer.token);
-            if nested.is_none() {
-                let item = Self::pfx_array_element(p, &mut open.literal)?;
-                open.items.push(item);
-            }
-            return Ok(nested);
-        }
-        open.element_full_start = p.pos_for_jsdoc();
-        if p.lexer.token == T::TDotDotDot {
-            let spread = Self::pfx_spread_assignment(p, &mut open.literal)?;
-            open.properties.push(spread);
-            return Ok(None);
-        }
-        let mut property_opts = PropertyOpts {
-            leaves_literal: true,
-            ..Default::default()
-        };
-        open.modifiers_base = p.pushed_modifiers();
-        open.property = p.parse_property(
-            PropertyKind::Normal,
-            &mut property_opts,
-            Some(&mut open.literal.self_errors),
-        )?;
-        if property_opts.leaves_literal {
-            return Ok(Literal::kind_at(p.lexer.token));
-        }
-        Self::add_json_property(p, open);
-        Ok(None)
-    }
-
-    /// `open.property` is complete.
-    fn add_json_property(p: &mut Self, open: &mut JsonLiteral<'a>) {
-        if let Some(mut prop) = open.property.take() {
-            Self::pfx_note_member(
-                p,
-                &mut prop,
-                open.modifiers_base,
-                open.literal.element_start,
-                open.element_full_start,
-            );
-            open.properties.push(prop);
-        }
-        p.drop_modifiers(open.modifiers_base);
-    }
-
-    /// `parseObjectLiteralElement`, at `...`.
-    #[inline]
-    fn pfx_spread_assignment(p: &mut Self, literal: &mut Literal) -> PResult<G::Property> {
-        p.lexer.next()?;
-        let mut value = Expr::EMPTY;
-        p.parse_expr_or_bindings(Level::Comma, Some(&mut literal.self_errors), &mut value)?;
-        p.note_loc(
-            &mut value.loc,
-            crate::sema::Mark::DotDotDot,
-            literal.element_start,
-        );
-        p.note_token_full_start(&mut value.loc, crate::sema::Mark::MemberEnd);
-
-        // Commas are not allowed here when destructuring
-        if p.lexer.token == T::TComma {
-            literal.comma_after_spread = p.lexer.loc();
-        }
-        Ok(G::Property {
-            kind: PropertyKind::Spread,
-            value: Some(value),
-            ..Default::default()
-        })
-    }
-
-    /// Notes where `prop` is, which `parse_property` has returned for an object literal and which
-    /// ends here.
-    #[inline]
-    fn pfx_note_member(
-        p: &mut Self,
-        prop: &mut G::Property,
-        modifiers_base: usize,
-        element_start: bun_ast::Loc,
-        element_full_start: bun_ast::Loc,
-    ) {
-        debug_assert!(prop.key.is_some() || prop.value.is_some());
-        if let Some(key) = &mut prop.key {
-            p.end_parameter_modifiers(modifiers_base, &mut key.loc);
-            if p.real_loc(key.loc) != element_start {
-                p.note_loc(&mut key.loc, crate::sema::Mark::MemberStart, element_start);
-            }
-            p.note_token_full_start(&mut key.loc, crate::sema::Mark::MemberEnd);
-            if p.has_comments_before(element_start, element_full_start) {
-                p.note_loc(
-                    &mut key.loc,
-                    crate::sema::Mark::MemberFullStart,
-                    element_full_start,
-                );
-            }
-        }
-    }
-
     fn pfx_t_open_brace(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
-        let mut literal = Self::pfx_open_literal(p, ListKind::ObjectLiteralMembers)?;
+        let loc = p.lexer.loc();
+        p.lexer.expect(T::TOpenBrace)?;
+        let mut is_single_line = !p.lexer.has_newline_before;
         let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
             bun_alloc::ArenaVec::new_in(p.arena);
-        while Self::pfx_is_at_member(p, &mut literal)? {
+        let mut self_errors = DeferredErrors::default();
+        let mut comma_after_spread: bun_ast::Loc = bun_ast::Loc::default();
+
+        // Allow "in" inside object literals
+        let old_allow_in = p.allow_in;
+        p.allow_in = true;
+        let saved_contexts = p.enter_list(ListKind::ObjectLiteralMembers);
+
+        while p.lexer.token != T::TCloseBrace {
+            match p.classify_list_token(ListKind::ObjectLiteralMembers)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            let element_start = p.lexer.loc();
             let element_full_start = p.pos_for_jsdoc();
             if p.lexer.token == T::TDotDotDot {
-                properties.push(Self::pfx_spread_assignment(p, &mut literal)?);
+                p.lexer.next()?;
+                let mut value = Expr::EMPTY;
+                p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                p.note_loc(&mut value.loc, crate::sema::Mark::DotDotDot, element_start);
+                p.note_token_full_start(&mut value.loc, crate::sema::Mark::MemberEnd);
+                properties.push(G::Property {
+                    kind: PropertyKind::Spread,
+                    value: Some(value),
+                    ..Default::default()
+                });
+
+                // Commas are not allowed here when destructuring
+                if p.lexer.token == T::TComma {
+                    comma_after_spread = p.lexer.loc();
+                }
             } else {
                 // This property may turn out to be a type in TypeScript, which should be ignored
                 let mut property_opts = PropertyOpts::default();
@@ -1526,25 +1264,78 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 if let Some(mut prop) = p.parse_property(
                     PropertyKind::Normal,
                     &mut property_opts,
-                    Some(&mut literal.self_errors),
+                    Some(&mut self_errors),
                 )? {
-                    Self::pfx_note_member(
-                        p,
-                        &mut prop,
-                        modifiers_base,
-                        literal.element_start,
-                        element_full_start,
-                    );
+                    debug_assert!(prop.key.is_some() || prop.value.is_some());
+                    if let Some(key) = &mut prop.key {
+                        p.end_parameter_modifiers(modifiers_base, &mut key.loc);
+                        if p.real_loc(key.loc) != element_start {
+                            p.note_loc(&mut key.loc, crate::sema::Mark::MemberStart, element_start);
+                        }
+                        p.note_token_full_start(&mut key.loc, crate::sema::Mark::MemberEnd);
+                        if p.has_comments_before(element_start, element_full_start) {
+                            p.note_loc(
+                                &mut key.loc,
+                                crate::sema::Mark::MemberFullStart,
+                                element_full_start,
+                            );
+                        }
+                    }
                     properties.push(prop);
                 }
                 p.drop_modifiers(modifiers_base);
             }
-            if !Self::pfx_continues_after_member(p, &mut literal)? {
+
+            if p.lexer.token != T::TComma {
+                if p.recover_missing_comma(ListKind::ObjectLiteralMembers, element_start)? {
+                    continue;
+                }
                 break;
             }
+
+            if p.lexer.has_newline_before {
+                is_single_line = false;
+            }
+
+            p.lexer.next()?;
+
+            if p.lexer.has_newline_before {
+                is_single_line = false;
+            }
         }
-        let properties = G::PropertyList::from_bump_vec(properties);
-        Self::pfx_close_object(p, &mut literal, properties, errors)
+
+        if p.lexer.has_newline_before {
+            is_single_line = false;
+        }
+
+        p.lexer.list_contexts = saved_contexts;
+        let close_brace_loc = p.lexer.loc();
+        p.note_literal_if_unclosed(T::TCloseBrace, loc);
+        p.lexer.expect_closing(T::TCloseBrace, loc)?;
+        p.allow_in = old_allow_in;
+
+        if p.will_need_binding_pattern() {
+            // Is this a binding pattern?
+        } else if errors.is_none() {
+            // Is this an expression?
+            p.log_expr_errors(&mut self_errors);
+        } else {
+            // In this case, we can't distinguish between the two yet
+            self_errors.merge_into(errors.unwrap());
+        }
+
+        // BumpVec → Vec via arena slice; see pfx_t_open_bracket.
+        let properties_list = G::PropertyList::from_bump_vec(properties);
+        Ok(p.new_expr(
+            E::Object {
+                properties: properties_list,
+                comma_after_spread,
+                is_single_line,
+                close_brace_loc,
+                ..Default::default()
+            },
+            loc,
+        ))
     }
 
     fn pfx_t_less_than(

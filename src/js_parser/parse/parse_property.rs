@@ -303,7 +303,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if !p.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
         }
-        let leaves_literal = SEMA && core::mem::take(&mut opts.leaves_literal);
         let mut kind = kind_;
         let mut errors = errors_;
         // `Lexer::escaped_word` of the word consumed last, until it is known to be a name.
@@ -1094,10 +1093,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }),
                 ..Default::default()
             };
-            if leaves_literal && matches!(p.lexer.token, T::TOpenBracket | T::TOpenBrace) {
-                opts.leaves_literal = true;
-                return Ok(Some(property));
-            }
 
             // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable
             p.parse_expr_or_bindings(

@@ -576,6 +576,7 @@ fn run(args: &[String]) {
         // signal that ended it.
         #[cfg(unix)]
         Some("each") => {
+            use bun_core::Fd;
             let option = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
             let out = option("--out=").expect("--out=");
             let jobs: usize = option("--jobs=").map_or(8, |n| n.parse().expect("--jobs="));
@@ -608,20 +609,16 @@ fn run(args: &[String]) {
                     continue;
                 }
                 let mut fields = bun_core::strings::split(line.as_bytes(), b"\t").map(text);
-                std::env::set_current_dir(fields.next().unwrap()).unwrap();
-                for (fd, extension) in [(1, "out"), (2, "err")] {
+                let directory = bun_core::ZBox::from_bytes(fields.next().unwrap());
+                let mut redirected = bun_sys::chdir(&directory);
+                for (fd, extension) in [(Fd::stdout(), "out"), (Fd::stderr(), "err")] {
                     let path = format!("{out}/{number}.{extension}");
-                    let path = std::ffi::CString::new(path).unwrap();
-                    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC;
-                    // SAFETY: `path` ends with a zero. The descriptors are open.
-                    unsafe {
-                        let file = libc::open(path.as_ptr(), flags, 0o644 as libc::c_uint);
-                        if file < 0 {
-                            libc::_exit(127);
-                        }
-                        libc::dup2(file, fd);
-                        libc::close(file);
-                    }
+                    redirected = redirected
+                        .and_then(|()| bun_sys::File::create(Fd::cwd(), path.as_bytes(), true))
+                        .and_then(|file| bun_sys::dup2(file.handle(), fd).map(|_| ()));
+                }
+                if redirected.is_err() {
+                    std::process::exit(127);
                 }
                 // SAFETY: no handler is installed, so the signal ends a program that hangs.
                 unsafe { libc::alarm(limit) };

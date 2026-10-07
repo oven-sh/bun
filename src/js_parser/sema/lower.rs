@@ -32,9 +32,6 @@ pub(crate) struct Lower<'p, 'a> {
     /// `TokenFullStart` of the end of the file.
     end_of_file_full_start: u32,
     stack_check: bun_core::StackCheck,
-    /// What `expr` returns for the literals that `lower_literals_far_inside` has lowered, by
-    /// `literal_address`, with `source_start` and `source_end`.
-    lowered_literals: bun_collections::HashMap<usize, (ExprId, u32, u32)>,
     /// The JSDoc comments of a JavaScript file. None for TypeScript.
     pub(super) jsdoc: std::rc::Rc<Comments>,
     /// Which of them are attached to a node.
@@ -90,7 +87,6 @@ impl<'p, 'a> Lower<'p, 'a> {
             list_props: Vec::new(),
             end_of_file_full_start,
             stack_check: bun_core::StackCheck::init(),
-            lowered_literals: Default::default(),
             jsdoc_is_attached: vec![false; jsdoc.list.len()],
             jsdoc: std::rc::Rc::new(jsdoc),
             reparsed: Vec::new(),
@@ -1026,10 +1022,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     _ => return self.stmt(inner),
                 },
             },
-            StmtData::SExportEquals(s) => {
-                self.lower_literals_far_inside(&s.value);
-                StmtKind::ExportAssign(self.expr(&s.value))
-            }
+            StmtData::SExportEquals(s) => StmtKind::ExportAssign(self.expr(&s.value)),
             StmtData::SEnum(s) => {
                 let mut members = Vec::with_capacity(s.values.slice().len());
                 for value in s.values.slice() {
@@ -1922,63 +1915,7 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
     }
 
-    /// The address of the AST node of an array or object literal.
-    fn literal_address(expr: &Expr) -> Option<usize> {
-        match &expr.data {
-            Data::EArray(e) => Some(e.as_ptr() as usize),
-            Data::EObject(e) => Some(e.as_ptr() as usize),
-            _ => None,
-        }
-    }
-
-    /// `expr` calls itself once for each level of nesting, and `parse_json_literal` has no limit.
-    /// Of the literals that are members of literals in `root`, this lowers each that is `LEVELS`
-    /// levels inside `root` or another such literal, the innermost first. So no call of `expr`
-    /// goes deeper than that.
-    fn lower_literals_far_inside(&mut self, root: &Expr) {
-        const LEVELS: u32 = 32;
-        // A tag is read with `object_literals_around`.
-        if !self.jsdoc.list.is_empty() {
-            return;
-        }
-        // Each comes after those that it is in.
-        let mut far_inside: Vec<&Expr> = Vec::new();
-        let mut pending: Vec<(&Expr, u32)> = vec![(root, 0)];
-        while let Some((literal, mut level)) = pending.pop() {
-            if level == LEVELS {
-                far_inside.push(literal);
-                level = 0;
-            }
-            let is_literal = |it: &&Expr| Self::literal_address(it).is_some();
-            match &literal.data {
-                Data::EArray(e) => {
-                    pending.extend(e.items.iter().filter(is_literal).map(|it| (it, level + 1)));
-                }
-                Data::EObject(e) => {
-                    let values = e.properties.iter().filter_map(|it| it.value.as_ref());
-                    pending.extend(values.filter(is_literal).map(|it| (it, level + 1)));
-                }
-                _ => {}
-            }
-        }
-        for literal in far_inside.into_iter().rev() {
-            let id = self.expr(literal);
-            if let Some(address) = Self::literal_address(literal) {
-                let lowered = (id, self.source_start, self.source_end);
-                self.lowered_literals.insert(address, lowered);
-            }
-        }
-    }
-
     pub(super) fn expr(&mut self, expr: &Expr) -> ExprId {
-        if !self.lowered_literals.is_empty()
-            && let Some(address) = Self::literal_address(expr)
-            && let Some((id, start, end)) = self.lowered_literals.remove(&address)
-        {
-            self.source_start = start;
-            self.source_end = end;
-            return id;
-        }
         if !self.stack_check.is_safe_to_recurse() {
             let pos = self.pos_of(expr.loc);
             self.b.file.syntax_errors += 1;

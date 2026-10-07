@@ -1544,9 +1544,6 @@ pub struct PropertyOpts {
     pub(crate) declare_range: bun_ast::Range,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
-    /// For `parse_json_literal`: `parse_property` returns before a value that is an array or
-    /// object literal. Afterwards: whether it has.
-    pub(crate) leaves_literal: bool,
 
     // Class-related options
     pub(crate) is_static: bool,
@@ -1565,7 +1562,6 @@ impl Default for PropertyOpts {
             declare_range: bun_ast::Range::NONE,
             is_async: false,
             is_generator: false,
-            leaves_literal: false,
             is_static: false,
             is_class: false,
             class_has_extends: false,

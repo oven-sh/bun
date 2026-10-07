@@ -15045,6 +15045,76 @@ describe.concurrent("--check", () => {
     });
   });
 
+  describe("the command line is read as tsc reads it", () => {
+    const assignment = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const parameter = `a.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
+    const strict = `${assignment}\n${parameter}`;
+    // What tsc 7.0.2 prints, except where it says otherwise.
+    const expected: Record<string, [string[], string][]> = {
+      "a response file": [
+        [["@args.txt"], assignment],
+        [["@quoted.txt"], assignment],
+        [["@outer.txt"], assignment],
+        [["@args.txt", "--strict"], strict],
+        [["@missing.txt"], `error TS5083: Cannot read file '<dir>/missing.txt'.`],
+        [["@open.txt"], `error TS6045: Unterminated quoted string in response file '<dir>/open.txt'.`],
+        // tsc reads past the end of a file that does not end in white space, and crashes.
+        [["@lines.txt"], assignment],
+        // tsc reads these until its stack overflows.
+        [["@self.txt"], `error TS5083: Cannot read file '<dir>/self.txt'.`],
+        [["@one.txt"], `error TS5083: Cannot read file '<dir>/one.txt'.`],
+      ],
+      "`null` unsets an option": [
+        [["--strict", "false"], assignment],
+        [["--strict", "null"], strict],
+        [["--strict", "false", "--strict", "null"], strict],
+      ],
+      "`--quiet` prints no diagnostic": [
+        [["--quiet"], ""],
+        [["-q"], ""],
+        [["--quiet", "false"], strict],
+        [["--quiet", "--quiet", "false"], strict],
+        [["--quiet", "false", "--quiet"], ""],
+      ],
+      "a project that is not there": [
+        [["-b", "nowhere"], `error TS6053: File '<dir>/nowhere/tsconfig.json' not found.`],
+        [["-p", "nowhere"], `error TS5058: The specified path does not exist: '<dir>/nowhere'.`],
+        [
+          ["-p", "empty"],
+          `error TS5081: Cannot find a tsconfig.json file at the current directory: <dir>/empty/tsconfig.json.`,
+        ],
+      ],
+    };
+    test.concurrent.each(Object.keys(expected))("%s", async kind => {
+      using dir = project({
+        "a.ts": `export const a: number = "";\nexport function f(x) {\n  return x;\n}\n`,
+        "args.txt": `--strict false\n`,
+        "quoted.txt": `  --strict   "false"  \n\n`,
+        "outer.txt": `@args.txt\n`,
+        "open.txt": `--strict "false\n`,
+        "lines.txt": `--strict\nfalse`,
+        "self.txt": `@self.txt\n`,
+        "one.txt": `@two.txt\n`,
+        "two.txt": `@one.txt\n`,
+        "empty/not-a-tsconfig.json": `{}\n`,
+      });
+      const results = await Promise.all(expected[kind].map(([args]) => check(dir, args)));
+      expect(results.map((it, index) => [expected[kind][index][0].join(" "), it.stdout, it.exitCode])).toEqual(
+        expected[kind].map(([args, stdout]) => [args.join(" "), stdout, 1]),
+      );
+    });
+
+    test("`--quiet` leaves the list of files", async () => {
+      using dir = project({ "a.ts": `export const a: number = "";\n` });
+      const { stdout, exitCode } = await check(dir, ["--quiet", "--listFilesOnly"]);
+      expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual([
+        "<dir>/a.ts",
+        "<dir>/console.d.ts",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("a page that is imported stands for its scripts", async () => {
     const html = `declare module "*.html" {\n  const page: unknown;\n  export default page;\n}\n`;
     const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;

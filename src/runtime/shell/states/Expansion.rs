@@ -6,7 +6,8 @@
 
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
+    Bufio, EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind,
+    log,
 };
 use crate::shell::io::{IO, OutKind};
 use crate::shell::states::base::Base;
@@ -43,7 +44,7 @@ pub(crate) struct Expansion {
     /// The atom is an assignment value (`A=v`, `export A=v`), so
     /// command-substitution output is not field split (POSIX 2.9.1).
     pub(crate) assign_ctx: bool,
-    /// Set when a `""`/`''` literal
+    /// Set when a `""`/`''` literal (or a quoted `$(...)` whose output was only NUL bytes)
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
@@ -598,7 +599,7 @@ impl Expansion {
         exit_code: ExitCode,
     ) -> Yield {
         // Child is a Script (command substitution). Its captured stdout lives
-        // in the duped `ShellExecEnv` it owns; read it before deinit.
+        // in the duped `ShellExecEnv` it owns; take it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
         if interp.failed() {
             // The script failed: the rest of the word is not expanded.
@@ -611,16 +612,22 @@ impl Expansion {
             let parent = interp.as_expansion(this).base.parent;
             return interp.child_done(parent, this, 1);
         }
-        // SAFETY: single trampoline frame; the child script's env (and its
-        // parent buffer in the `Borrowed` case) has no other live borrow.
-        let stdout = unsafe {
-            interp
-                .as_script_mut(child)
-                .base
-                .shell_mut()
-                .buffered_stdout_mut()
+        let mut stdout = match &mut interp
+            .as_script_mut(child)
+            .base
+            .shell_mut()
+            ._buffered_stdout
+        {
+            Bufio::Owned(buf) => core::mem::take(buf),
+            Bufio::Borrowed(_) => unreachable!(
+                "dupe_for_subshell gives a command substitution an owned stdout buffer"
+            ),
+        };
+        // NUL bytes are dropped as in bash and dash, before the trim and the field split.
+        let had_nul = bun_core::strings::contains_char(&stdout, 0);
+        if had_nul {
+            stdout.retain(|&b| b != 0);
         }
-        .clone();
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).
@@ -643,7 +650,16 @@ impl Expansion {
                 while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
                     hi -= 1;
                 }
-                me.current_out.extend_from_slice(&stdout[..hi]);
+                stdout.truncate(hi);
+                // A quoted substitution that printed only NUL bytes is one empty word, as in bash.
+                if had_nul && me.cmd_subst_quoted {
+                    me.has_quoted_empty = true;
+                }
+                if me.current_out.is_empty() {
+                    me.current_out = stdout;
+                } else {
+                    me.current_out.extend_from_slice(&stdout);
+                }
             } else {
                 Self::post_subshell_expansion(me, stdout);
             }

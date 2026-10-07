@@ -1497,6 +1497,70 @@ describe("deno_task", () => {
     TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
+
+    // bash and dash drop NUL bytes from the output of a command substitution.
+    // A NUL left in the word ends an argument, a builtin operand, an exported
+    // value and a redirect target there.
+    describe("drops NUL bytes from the output", () => {
+      const printArgs = /* ts */ `console.log(JSON.stringify(process.argv.slice(2)))`;
+
+      TestBuilder.command`echo "$(echo -e 'a\0b\0c')"`.stdout("abc\n").runAsTest("quoted");
+      TestBuilder.command`echo $(echo -e 'a\0b c\0d')`.stdout("ab cd\n").runAsTest("unquoted");
+      TestBuilder.command`echo x$(${BUN} -e ${"process.stdout.write('a\\0b')"})y`
+        .stdout("xaby\n")
+        .runAsTest("written by a subprocess");
+      TestBuilder.command`echo "$( (echo -e 'a\0b'; echo -e 'c\0d') | cat)"`
+        .stdout("ab\ncd\n")
+        .runAsTest("written by a subshell and a pipeline");
+      TestBuilder.command`echo "[$(echo -e 'a\n\0')]"`
+        .stdout("[a]\n")
+        .runAsTest("before the trailing newlines are trimmed");
+      TestBuilder.command`echo $(echo -e 'a\0b'){1,2}`.stdout("ab1 ab2\n").runAsTest("before brace expansion");
+
+      TestBuilder.command`${BUN} run ./code.ts x $(echo -e '\0') y $(echo -e 'a \0 b') "$(echo -e '\0')" z`
+        .ensureTempDir()
+        .file("code.ts", printArgs)
+        .stdout(out => expect(JSON.parse(out)).toEqual(["x", "y", "a", "b", "", "z"]))
+        .runAsTest("a NUL is not a field, and a quoted NUL is one empty argument");
+
+      // bash passes ["a", "", "b"]. Here an empty quoted variable is no word
+      // at all, and the NUL that hid this is gone.
+      TestBuilder.command`X=$(echo -e '\0'); ${BUN} run ./code.ts a "$X" b`
+        .ensureTempDir()
+        .file("code.ts", printArgs)
+        .stdout(out => expect(JSON.parse(out)).toEqual(["a", "", "b"]))
+        .todo("an empty quoted variable yields no word")
+        .runAsTest("a quoted variable assigned only NUL bytes is one empty argument");
+
+      TestBuilder.command`X=$(echo -e 'a\0b'); echo "$X"; export Y=$(echo -e 'c\0d'); ${BUN} -e ${"console.log(process.env.Y)"}`
+        .stdout("ab\ncd\n")
+        .runAsTest("assignment");
+
+      TestBuilder.command`[[ "$(echo -e 'a\0b')" == "ab" ]] && echo yes || echo no; [[ -z "$(echo -e '\0')" ]] && echo yes || echo no`
+        .stdout("yes\nyes\n")
+        .runAsTest("[[ ]] operands");
+
+      TestBuilder.command`touch rmf rmfzz; rm $(echo -e 'rmf\0zz'); ls`
+        .ensureTempDir()
+        .stdout("rmf\n")
+        .runAsTest("rm removes the file that the output names");
+
+      // A debug build aborted on these two words ("interior NUL would truncate
+      // the C view"). `bun exec` runs them in a child process.
+      TestBuilder.command`${BUN} exec ${`echo hi > "$(echo -e 'f\\0zz')"; touch t1; [[ -f $(echo -e 't1\\0zzz') ]] && echo yes || echo no`}`
+        .ensureTempDir()
+        .stdout("no\n")
+        .fileEquals("fzz", "hi\n")
+        .doesNotExist("f")
+        .runAsTest("redirect target and file test, through bun exec");
+
+      // Only the word loses the NUL bytes. The output that the shell itself
+      // captures keeps them, and a substitution takes nothing out of it.
+      TestBuilder.command`echo before; echo "$(echo -e 'm\0id')"; echo -e 'a\0b' | cat; echo -e 'c\0d'; echo after`
+        .quiet()
+        .stdout("before\nmid\na\0b\nc\0d\nafter\n")
+        .runAsTest("the captured output of the shell keeps its NUL bytes");
+    });
   });
 
   describe("shell variables", async () => {

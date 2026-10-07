@@ -1373,6 +1373,25 @@ describe("Transactions", () => {
     });
     expect(await sql`SELECT balance FROM accounts WHERE id = 1`).toEqual([{ balance: 1000 }]);
   });
+
+  // Here the callback returns while close({ timeout }) still waits, so begin() sends the
+  // ROLLBACK that fails and reports it. bun:test fails this test if close() reports the same
+  // failure a second time, as an unhandled rejection.
+  test("a ROLLBACK that fails for begin() is not reported again by a close({ timeout }) that still waits", async () => {
+    const outcome = await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+        await tx.unsafe("ROLLBACK");
+        tx`SELECT 1 AS x`;
+        tx.close({ timeout: 60 });
+      })
+      .then(
+        () => "committed",
+        error => error.message,
+      );
+
+    expect(outcome).toBe("cannot rollback - no transaction is active");
+  });
 });
 
 // Inside sql.begin() a row is inserted and the callback closes the transaction. close() with

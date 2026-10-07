@@ -279,6 +279,7 @@ const SQL = function SQL(
 
   /// Ends a closing transaction: cancels what is pending, then sends `before` (XA END) and `rollback`.
   /// Callers memoize it in state.rollback, so the wire sees one ROLLBACK.
+  /// Declared here and not in onTransactionConnected: one function per SQL instance, not one per transaction.
   async function rollbackTransaction(
     state: TransactionState,
     pooledConnection: PooledConnection,
@@ -288,16 +289,10 @@ const SQL = function SQL(
     for (const query of state.queries) {
       query.cancel();
     }
-    try {
-      if (before) {
-        await unsafeQueryFromTransaction(before, [], pooledConnection, state.queries);
-      }
-      await unsafeQueryFromTransaction(rollback, [], pooledConnection, state.queries);
-    } catch (err) {
-      // the next caller sends it again
-      state.rollback = null;
-      throw err;
+    if (before) {
+      await unsafeQueryFromTransaction(before, [], pooledConnection, state.queries);
     }
+    await unsafeQueryFromTransaction(rollback, [], pooledConnection, state.queries);
     state.connectionState |= ReservedConnectionState.closed;
   }
 
@@ -813,12 +808,18 @@ const SQL = function SQL(
         }
       }
       state.connectionState |= ReservedConnectionState.closing;
-      return (state.rollback ??= rollbackTransaction(
-        state,
-        pooledConnection,
-        BEFORE_COMMIT_OR_ROLLBACK_COMMAND,
-        ROLLBACK_COMMAND,
-      ));
+      try {
+        await (state.rollback ??= rollbackTransaction(
+          state,
+          pooledConnection,
+          BEFORE_COMMIT_OR_ROLLBACK_COMMAND,
+          ROLLBACK_COMMAND,
+        ));
+      } catch (err) {
+        // close() reports the failure, and the runner sends ROLLBACK again when the callback settles
+        state.rollback = null;
+        throw err;
+      }
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;

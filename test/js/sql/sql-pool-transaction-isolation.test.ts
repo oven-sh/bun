@@ -26,8 +26,9 @@ import {
 
 type Received = { conn: number; sql: string };
 // `onReceived` runs after each statement is recorded. `secure` makes the server accept the
-// client's TLS request and speak the protocol over TLS from there on.
-type MockOptions = { onReceived?: () => void; secure?: boolean };
+// client's TLS request and speak the protocol over TLS from there on. `failOnce` is a
+// statement that the server answers with an error the first time it arrives.
+type MockOptions = { onReceived?: () => void; secure?: boolean; failOnce?: string };
 type MockServer = (received: Received[], options?: MockOptions) => Promise<{ port: number; server: net.Server }>;
 
 function secureSocket(rawSocket: net.Socket): net.Socket {
@@ -37,11 +38,23 @@ function secureSocket(rawSocket: net.Socket): net.Socket {
   return socket;
 }
 
+// Whether a mock answers this statement with an error.
+function failureCheck(failOnce: string | undefined) {
+  return (sql: string) => {
+    if (sql === failOnce) {
+      failOnce = undefined;
+      return true;
+    }
+    return sql.includes("FAIL");
+  };
+}
+
 // Both mocks answer every statement at once, except for these markers in the query text:
 //   KILL destroys the socket without answering,
 //   FAIL answers with an error,
 //   HOLD never answers.
-const pgMockServer: MockServer = (received, { onReceived, secure } = {}) => {
+const pgMockServer: MockServer = (received, { onReceived, secure, failOnce } = {}) => {
+  const fails = failureCheck(failOnce);
   let nextConn = 0;
   return listeningServer(rawSocket => {
     const connId = nextConn++;
@@ -84,7 +97,7 @@ const pgMockServer: MockServer = (received, { onReceived, secure } = {}) => {
             return;
           }
           if (sql.includes("HOLD")) continue;
-          if (sql.includes("FAIL")) {
+          if (fails(sql)) {
             socket.write(
               Buffer.concat([pgErrorResponse({ S: "ERROR", C: "XX000", M: "mock failure" }), pgReadyForQuery()]),
             );
@@ -97,7 +110,8 @@ const pgMockServer: MockServer = (received, { onReceived, secure } = {}) => {
   });
 };
 
-const mysqlMockServer: MockServer = (received, { onReceived, secure } = {}) => {
+const mysqlMockServer: MockServer = (received, { onReceived, secure, failOnce } = {}) => {
+  const fails = failureCheck(failOnce);
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
   let nextConn = 0;
@@ -144,7 +158,7 @@ const mysqlMockServer: MockServer = (received, { onReceived, secure } = {}) => {
               return;
             }
             if (sql.includes("HOLD")) return;
-            if (sql.includes("FAIL")) {
+            if (fails(sql)) {
               socket.write(mysqlErrPacket(1, 1105, "HY000", "mock failure"));
               return;
             }
@@ -937,6 +951,28 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     expect(outcome).toBe("ERR_INVALID_ARG_VALUE");
     await expectConnectionKept(pool);
     expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'T1a'", "COMMIT"), ...afterTransaction(0)]);
+  });
+
+  // The server rejects the ROLLBACK of close(). close() reports that, and the transaction is
+  // still closing: when the callback returns, the runner sends ROLLBACK again and no COMMIT.
+  test("transaction.close() whose ROLLBACK fails leaves the rollback to the runner", async () => {
+    await using pool = await closeTestPool({ failOnce: "ROLLBACK" });
+    let closeError: unknown;
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        closeError = await tx.close().then(
+          () => null,
+          error => error.message,
+        );
+      }),
+    );
+    expect({ closeError, outcome }).toEqual({ closeError: "mock failure", outcome: connectionClosedCode });
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([
+      ...onConn0(beginCommand, "SELECT 'T1a'", "ROLLBACK", "ROLLBACK"),
+      ...afterTransaction(0),
+    ]);
   });
 
   // A savepoint whose callback parks until finish() is called.

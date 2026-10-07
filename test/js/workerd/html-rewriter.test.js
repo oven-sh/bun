@@ -788,6 +788,353 @@ describe("HTMLRewriter", () => {
       await expect(second.text()).rejects.toThrow("inner boom");
     });
 
+    // A handler that suspends the rewrite does not return to the event loop
+    // at once: the rewriter first delivers the output that precedes the
+    // handler's token, and the consumer of that output can run script. The
+    // token used to point into the parser call that had returned by then, so
+    // these run in a child.
+    describe("a token is usable while the output before it is delivered", () => {
+      async function run(fixture, env = bunEnv) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.split("\n"), stderr, exitCode };
+      }
+
+      const helpers = /* js */ `
+        const encoder = new TextEncoder();
+        let release = null;
+        // What a handler of the first rewriter waits on. The next turn
+        // settles it if no consumer does.
+        const gate = () =>
+          new Promise(resolve => {
+            release = resolve;
+            setImmediate(resolve);
+          });
+        const settle = () => {
+          if (!release) return false;
+          const resolve = release;
+          release = null;
+          resolve();
+          return true;
+        };
+        // The document arrives once both rewriters exist, so the first one
+        // hands its output straight to the second one. With cancel, the
+        // input stays open after the document.
+        function chained(html, first, second, cancel) {
+          const wired = Promise.withResolvers();
+          let sent = false;
+          const input = new ReadableStream({
+            async pull(controller) {
+              await wired.promise;
+              if (sent) return new Promise(() => {});
+              sent = true;
+              controller.enqueue(encoder.encode(html));
+              if (!cancel) controller.close();
+            },
+            cancel,
+          });
+          const out = second.transform(first.transform(new Response(input)));
+          wired.resolve();
+          return out.text().then(
+            text => text,
+            err => "rejected with " + err.message,
+          );
+        }
+        // A consumer whose handler settles the gate and then awaits once: the
+        // first rewriter's handler continues before the consumer returns.
+        const releasing = () =>
+          new HTMLRewriter().on("p", {
+            async element() {
+              if (settle()) await 0;
+            },
+          });
+      `;
+
+      it.concurrent("for each kind of token and each consumer, in write(), end() and resume()", async () => {
+        const fixture = /* js */ `
+          ${helpers}
+          const html = "<p>intro</p><b>one</b><p>tail</p>";
+          // A case is a document, where the suspending handler goes, and what
+          // is done to the handler's token.
+          const cases = {
+            "element": {
+              html,
+              on: (rewriter, suspend) => rewriter.on("b", { element: suspend }),
+              use: el => el.setAttribute("seen", "1"),
+            },
+            "text": {
+              html,
+              on: (rewriter, suspend) =>
+                rewriter.on("b", { text: chunk => (chunk.lastInTextNode ? undefined : suspend(chunk)) }),
+              use: chunk => chunk.replace("seen"),
+            },
+            "comment": {
+              html: "<p>intro</p><b><!--one--></b><p>tail</p>",
+              on: (rewriter, suspend) => rewriter.on("b", { comments: suspend }),
+              use: comment => comment.replace("<!--seen-->", { html: true }),
+            },
+            "end tag": {
+              html,
+              on: (rewriter, suspend) => rewriter.on("b", { element: el => void el.onEndTag(suspend) }),
+              use: endTag => endTag.before("!"),
+            },
+            "doctype": {
+              html: "<p>intro</p><!DOCTYPE html><p>tail</p>",
+              on: (rewriter, suspend) => rewriter.onDocument({ doctype: suspend }),
+              use: doctype => (doctype.name === "html" ? doctype.remove() : null),
+            },
+            // end() parses the "<" that write() held back, then the end of the text.
+            "last text chunk, in end()": {
+              html: "<p>intro</p><i>tail<",
+              on: (rewriter, suspend) =>
+                rewriter.on("i", {
+                  text(chunk) {
+                    if (chunk.text === "<") chunk.replace("<p>late</p>", { html: true });
+                    else if (chunk.lastInTextNode) return suspend(chunk);
+                  },
+                }),
+              use: chunk => chunk.after("<!--seen-->", { html: true }),
+              ends: true,
+            },
+            "document end, in end()": {
+              html: "<p>intro</p><i>tail",
+              on: (rewriter, suspend) =>
+                rewriter
+                  .on("i", {
+                    text(chunk) {
+                      if (chunk.lastInTextNode) chunk.after("<p>late</p>", { html: true });
+                    },
+                  })
+                  .onDocument({ end: suspend }),
+              use: end => end.append("<!--seen-->", { html: true }),
+              ends: true,
+            },
+            // The <i> handler suspends write(). resume() then reaches <b>.
+            "element, in resume()": {
+              html: "<i>zero</i>" + html,
+              on: (rewriter, suspend) =>
+                rewriter
+                  .on("i", {
+                    async element(el) {
+                      await new Promise(resolve => setImmediate(resolve));
+                      el.setAttribute("first", "1");
+                    },
+                  })
+                  .on("b", { element: suspend }),
+              use: el => el.setAttribute("seen", "1"),
+            },
+          };
+          // The token the suspended handler keeps, until something uses it.
+          let kept = null;
+          let usableInCancel;
+          // What the consumer of the first rewriter's output does in a delivery.
+          const consumers = {
+            "settles the handler's promise": () => ({ second: releasing() }),
+            "uses the kept token": use => ({
+              second: new HTMLRewriter().on("p", {
+                element() {
+                  if (!kept) return;
+                  use(kept);
+                  kept = null;
+                  settle();
+                },
+              }),
+            }),
+            "fails, and the cancel() of the open input uses the kept token": use => ({
+              second: new HTMLRewriter().on("p", {
+                element() {
+                  if (kept) throw new Error("consumer failed");
+                },
+              }),
+              cancel() {
+                usableInCancel = use(kept) === kept;
+                kept = null;
+              },
+            }),
+          };
+          for (const [consumer, make] of Object.entries(consumers)) {
+            console.log("# the consumer " + consumer);
+            for (const [name, { html, on, use, ends }] of Object.entries(cases)) {
+              const { second, cancel } = make(use);
+              // end() runs on a closed input, which nothing can cancel.
+              if (cancel && ends) continue;
+              const suspend = async token => {
+                kept = token;
+                await gate();
+                if (kept !== token) return;
+                kept = null;
+                use(token);
+              };
+              usableInCancel = undefined;
+              const result = await chained(html, on(new HTMLRewriter(), suspend), second, cancel);
+              console.log(name + ": " + result + (cancel ? ", token usable in cancel(): " + usableInCancel : ""));
+            }
+          }
+          {
+            // An iterator from before the await reads through the token.
+            const attributes = [];
+            const first = new HTMLRewriter().on("b", {
+              async element(el) {
+                const iterator = el.attributes;
+                attributes.push(iterator.next().value);
+                await gate();
+                attributes.push(...iterator);
+              },
+            });
+            await chained('<p>intro</p><b x="1" y="2">one</b><p>tail</p>', first, releasing());
+            console.log("attribute iterator: " + JSON.stringify(attributes));
+          }
+          {
+            const first = new HTMLRewriter().on("b", {
+              async element(el) {
+                await gate();
+                el.setAttribute("seen", "1");
+                throw new Error("handler failed");
+              },
+            });
+            console.log("handler that rejects: " + (await chained(html, first, releasing())));
+          }
+        `;
+        const documents = [
+          'element: <p>intro</p><b seen="1">one</b><p>tail</p>',
+          "text: <p>intro</p><b>seen</b><p>tail</p>",
+          "comment: <p>intro</p><b><!--seen--></b><p>tail</p>",
+          "end tag: <p>intro</p><b>one!</b><p>tail</p>",
+          "doctype: <p>intro</p><p>tail</p>",
+          "last text chunk, in end(): <p>intro</p><i>tail<p>late</p><!--seen-->",
+          "document end, in end(): <p>intro</p><i>tail<p>late</p><!--seen-->",
+          'element, in resume(): <i first="1">zero</i><p>intro</p><b seen="1">one</b><p>tail</p>',
+        ];
+        const cancelled = ": rejected with consumer failed, token usable in cancel(): true";
+        expect(await run(fixture)).toEqual({
+          stdout: [
+            "# the consumer settles the handler's promise",
+            ...documents,
+            "# the consumer uses the kept token",
+            ...documents,
+            "# the consumer fails, and the cancel() of the open input uses the kept token",
+            "element" + cancelled,
+            "text" + cancelled,
+            "comment" + cancelled,
+            "end tag" + cancelled,
+            "doctype" + cancelled,
+            "element, in resume()" + cancelled,
+            'attribute iterator: [["x","1"],["y","2"]]',
+            "handler that rejects: rejected with handler failed",
+            "",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // Another consumer that runs script inside the delivery: a read of the
+      // output that already waits, while the input comes from a pipe.
+      it.concurrent("when a waiting read of the output settles the handler's promise", async () => {
+        const fixture = /* js */ `
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", 'await Bun.write(Bun.stdout, "<p>intro</p><b>one</b><p>tail</p>");'],
+            stdout: "pipe",
+            stderr: "inherit",
+          });
+          let release = null;
+          const out = new HTMLRewriter()
+            .on("b", {
+              async element(el) {
+                await new Promise(resolve => {
+                  release = resolve;
+                  // For a platform where no read settles before the next turn.
+                  setImmediate(resolve);
+                });
+                el.setAttribute("seen", "1");
+              },
+            })
+            .transform(new Response(child.stdout));
+          const reader = out.body.getReader();
+          const decoder = new TextDecoder();
+          let document = "";
+          for (;;) {
+            // The first read waits before the child has written: the rewriter's output settles it.
+            const { done, value } = await reader.read();
+            if (done) break;
+            document += decoder.decode(value, { stream: true });
+            release?.();
+          }
+          console.log(document);
+        `;
+        expect(await run(fixture)).toEqual({
+          stdout: ['<p>intro</p><b seen="1">one</b><p>tail</p>', ""],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      // lol-html copies the unparsed rest of a chunk when a handler suspends,
+      // and that copy can exceed its memory limit. The call then fails with
+      // nothing parked, so the kept token has to read as detached. The chunk
+      // is never written past its head: it stays virtual, except on Windows.
+      // Not concurrent: the two fixtures above already start three processes.
+      it.skipIf(isWindows)("when the memory limit fails the call after the handler suspended", async () => {
+        const fixture = /* js */ `
+          let chunk;
+          try {
+            chunk = new Uint8Array(2 ** 32);
+          } catch {
+            console.log("SKIP");
+            process.exit(0);
+          }
+          chunk.set(new TextEncoder().encode("<p>intro</p><b>one</b>"));
+          let kept = null;
+          let seen = "the consumer did not run";
+          const wired = Promise.withResolvers();
+          const input = new ReadableStream({
+            async pull(controller) {
+              await wired.promise;
+              controller.enqueue(chunk);
+              controller.close();
+            },
+          });
+          const first = new HTMLRewriter().on("b", {
+            async element(el) {
+              kept = el;
+              await new Promise(() => {});
+            },
+          });
+          const second = new HTMLRewriter().on("p", {
+            element() {
+              if (kept) seen = "tagName " + kept.tagName + ", setAttribute() " + kept.setAttribute("seen", "1");
+            },
+          });
+          const out = second.transform(first.transform(new Response(input)));
+          wired.resolve();
+          const outcome = await out.text().then(
+            () => "resolved",
+            err => "rejected with " + err.message,
+          );
+          console.log(outcome + "; kept token in the consumer: " + seen);
+        `;
+        const { stdout, exitCode } = await run(fixture, {
+          ...bunEnv,
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+        });
+        // SKIP: the runner cannot reserve the address space of the chunk.
+        expect([
+          ["SKIP", ""],
+          [
+            "rejected with The memory limit has been exceeded.; " +
+              "kept token in the consumer: tagName undefined, setAttribute() undefined",
+            "",
+          ],
+        ]).toContainEqual(stdout);
+        expect(exitCode).toBe(0);
+      });
+    });
+
     // The resume path's own `handler_callback` sees a Fulfilled promise only
     // when a microtask-only handler follows a real-await one.
     it("a microtask-only handler after a suspending one", async () => {

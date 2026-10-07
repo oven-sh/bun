@@ -39,7 +39,7 @@ use lol_html::html_content::UserData as _;
 // returns). The `DetachablePtr` type invariant is discharged by
 // `handler_callback`: it parks the `&mut X` lol-html lends the closure
 // (`build_settings`, `EndTag::on_end_tag`), runs the JS callback, and its
-// scopeguard `detach()`s the slot before the closure returns to lol-html — so
+// scopeguard (or its suspend arm) nulls the slot before the closure returns — so
 // a non-null load means the pointee is still inside lol-html's exclusive
 // borrow, and a JS object retained past its handler reads `None`.
 type RawElement = lol_html::html_content::Element<'static, 'static>;
@@ -283,7 +283,7 @@ pub(crate) enum HandlerOutcome {
     /// The handler returned a promise that is still pending after one
     /// microtask drain: make lol-html park the current rewritable unit and
     /// return from `write()`/`end()`/`resume()` so the event loop can run.
-    /// See [`RewriterPipe::begin_suspension`].
+    /// See [`RewriterPipe::park_suspension`].
     Suspend,
 }
 
@@ -798,9 +798,10 @@ pub struct RewriterPipe {
     /// fails the whole rewrite instead.
     sync_only_noun: Cell<Option<&'static str>>,
     /// Handed from the suspending [`handler_callback`] to
-    /// [`Self::begin_suspension`] across the lol-html unwind. The promise
+    /// [`Self::park_suspension`] across the lol-html unwind. The promise
     /// itself is rooted in the cell's `suspensionPromise` WriteBarrier slot.
     pending_suspension: JsCell<Option<SuspendedWrapper>>,
+    /// The only slot whose wrapper points at a unit: the one lol-html parked.
     suspended_wrapper: JsCell<Option<SuspendedWrapper>>,
     /// `true` while a lol-html `write`/`end_mut`/`resume` call on this pipe's
     /// `rewriter` is on the stack. The output sink may re-enter the pipe via
@@ -1003,7 +1004,7 @@ impl RewriterPipe {
 
     #[inline]
     fn is_suspended(&self) -> bool {
-        self.suspended_wrapper.get().is_some() || self.pending_suspension.get().is_some()
+        self.suspended_wrapper.get().is_some()
     }
 
     /// Output emitted but not yet taken by a reader.
@@ -1591,7 +1592,10 @@ impl RewriterPipe {
     /// `SourceHandle` calls into this pipe check `driving` and defer, so the
     /// `with_mut` borrow on `rewriter` is never aliased. Returns `None` when
     /// the rewriter is unset.
-    fn drive_rewriter<R>(&self, f: impl FnOnce(&mut LolRewriter) -> R) -> Option<R> {
+    fn drive_rewriter(
+        &self,
+        f: impl FnOnce(&mut LolRewriter) -> Result<(), lol_html::errors::RewritingError>,
+    ) -> Option<Result<(), lol_html::errors::RewritingError>> {
         if self.rewriter.get().is_none() {
             return None;
         }
@@ -1599,7 +1603,14 @@ impl RewriterPipe {
         let cell = self.cell.get_or_undefined();
         let _active = ActiveSinkGuard::enter(self);
         self.driving.set(true);
-        let res = self.rewriter.with_mut(|r| r.as_deref_mut().map(f));
+        let res = self.rewriter.with_mut(|r| {
+            let r = r.as_deref_mut()?;
+            let res = f(r);
+            if let Err(e) = &res {
+                self.park_suspension(r, e);
+            }
+            Some(res)
+        });
         // Hand this call's output to the stream as one chunk: lol-html emits a
         // fragment per token piece, and each `on_data` may be a socket write
         // or a downstream rewriter's `write`. Still under `driving`, so the
@@ -1611,6 +1622,22 @@ impl RewriterPipe {
         }
         cell.ensure_still_alive();
         res
+    }
+
+    /// Attach the wrapper of the handler that suspended this lol-html call to the unit it parked.
+    #[cold]
+    #[inline(never)]
+    fn park_suspension(&self, rewriter: &mut LolRewriter, e: &lol_html::errors::RewritingError) {
+        let wrapper = self.pending_suspension.take();
+        if !matches!(e, lol_html::errors::RewritingError::Suspended) {
+            // The memory limit can fail the call after a handler suspended: nothing is parked.
+            return;
+        }
+        let wrapper =
+            wrapper.expect("lol-html suspended without a pending HTMLRewriter handler promise");
+        wrapper.retarget(rewriter);
+        let parked = self.suspended_wrapper.replace(Some(wrapper));
+        debug_assert!(parked.is_none());
     }
 
     /// `None` once the rewrite is over or the cell is collected.
@@ -1693,6 +1720,8 @@ impl RewriterPipe {
     }
 
     fn flush_output(&self) {
+        // `on_data` runs script: a handler's wrapper has to be parked by now.
+        debug_assert!(self.pending_suspension.get().is_none());
         let Some(out) = self.output.get() else {
             return;
         };
@@ -1834,12 +1863,6 @@ impl RewriterPipe {
         if matches!(e, lol_html::errors::RewritingError::Suspended) {
             return self.begin_suspension();
         }
-        let leftover = self.pending_suspension.take();
-        debug_assert!(
-            leftover.is_none(),
-            "lol-html returned a non-suspension error with a suspension armed"
-        );
-        drop(leftover);
 
         self.phase.set(RewritePhase::Done);
         let captured = self.take_handler_error();
@@ -1864,18 +1887,9 @@ impl RewriterPipe {
         self.fail(value_error);
     }
 
+    /// Wire the settle reaction for the handler [`Self::park_suspension`] parked.
     fn begin_suspension(&self) {
-        let wrapper = self
-            .pending_suspension
-            .take()
-            .expect("lol-html suspended without a pending HTMLRewriter handler promise");
-
-        self.rewriter.with_mut(|r| {
-            if let Some(r) = r.as_deref_mut() {
-                wrapper.retarget(r);
-            }
-        });
-        self.suspended_wrapper.set(Some(wrapper));
+        debug_assert!(self.suspended_wrapper.get().is_some());
 
         // The `.then()` context is a `NativePromiseContext` holding the
         // Transform cell: while the promise can settle, the reaction roots
@@ -2504,6 +2518,8 @@ where
             // Hand the wrapper to the suspension: it has to stay valid across
             // the handler's `await`, so disarm the guard here.
             let wrapper = scopeguard::ScopeGuard::into_inner(guard);
+            // lol-html moves the unit as it returns: `park_suspension` re-points the wrapper.
+            wrapper.retarget(core::ptr::null_mut());
             // The callback came out of the cell, and `drive_rewriter` keeps it alive.
             let cell = sink
                 .cell
@@ -3149,7 +3165,7 @@ impl Element {
             // SAFETY: lifetime erasure. `end_tag` only lives for this
             // synchronous call; `handler_callback`'s guard detaches the
             // `EndTag` JsClass slot before this closure returns (or, on a
-            // suspension, re-points it at the heap copy lol-html parks), so
+            // suspension, nulls it until lol-html has parked the heap copy), so
             // JS can never reach a dangling pointer.
             let raw: *mut RawEndTag = core::ptr::from_mut(end_tag).cast();
             handler_result(EndTagHandler::on_end_tag(

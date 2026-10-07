@@ -2906,7 +2906,8 @@ test.concurrent("hoisted: bun update does not look behind a workspace node_modul
   await using proc = spawn({ cmd: [bunExe(), "update"], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr.replaceAll("\\", "/")).toContain(
-    "warn: packages/pkg1/node_modules is a symlink, so the packages behind it were not checked",
+    "warn: packages/pkg1/node_modules is a symlink, so Bun did not look behind it\n" +
+      "note: to have Bun clean that folder, remove the link and run 'bun install'",
   );
   expect({
     "no-deps": await exists(join(rootModules, "no-deps", "package.json")),

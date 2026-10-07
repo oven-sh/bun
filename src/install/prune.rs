@@ -102,48 +102,6 @@ impl Plan {
         }
     }
 
-    /// Takes out of the plan a workspace folder that is the root `node_modules` under another path: it holds the root's packages.
-    fn spare_root_aliases(&mut self, quiet: bool) {
-        let id = |st: sys::Stat| (st.st_dev as u64, st.st_ino as u64);
-        let mut root: Option<Option<(u64, u64)>> = None;
-        let mut spared: Vec<usize> = Vec::new();
-        for (idx, folder) in self.folders.iter_mut().enumerate() {
-            let (FolderKind::NodeModules, Some(dir)) = (&folder.kind, &folder.dir) else {
-                continue;
-            };
-            if &*folder.path == ROOT_DIR {
-                continue;
-            }
-            let root = *root.get_or_insert_with(|| {
-                sys::stat(ZStr::from_slice_with_nul(&zname(ROOT_DIR)))
-                    .ok()
-                    .map(id)
-            });
-            if root.is_none() || sys::fstat(dir.fd()).ok().map(id) != root {
-                continue;
-            }
-            spared.push(idx);
-            folder.touched = false;
-            if !quiet {
-                bun_core::warn!(
-                    "{} is the root node_modules under another path, so nothing was removed from it",
-                    BStr::new(&folder.path)
-                );
-            }
-        }
-        if spared.is_empty() {
-            return;
-        }
-        let folders = &self.folders;
-        self.removals.retain(|removal| {
-            let folder = match folders[removal.folder].kind {
-                FolderKind::Scope { parent } => parent,
-                _ => removal.folder,
-            };
-            !spared.contains(&folder)
-        });
-    }
-
     fn scope_name(&self, scope: usize, parent: usize) -> &[u8] {
         &self.folders[scope].path[self.folders[parent].path.len() + 1..]
     }
@@ -338,7 +296,6 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
-    plan.spare_root_aliases(quiet);
     if !quiet {
         warn_linked_folders(&mut plan.linked_folders);
     }
@@ -1525,7 +1482,6 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         );
     }
 
-    plan.spare_root_aliases(quiet);
     if !quiet {
         warn_linked_folders(&mut plan.linked_folders);
     }
@@ -1594,16 +1550,12 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
 
 /// The one way to open a workspace's `node_modules`. It does not open a link: `linked_folders` gets the path.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
-    let is_link = || {
-        sys::lstat(ZStr::from_slice_with_nul(&zname(folder)))
-            .is_ok_and(|st| sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
-    };
     // On Windows `O::NOFOLLOW` opens the link itself, so ask first. POSIX refuses the link, so ask after a refusal.
-    if !(cfg!(windows) && is_link()) {
+    if !(cfg!(windows) && is_symlink(folder)) {
         match Dir::cwd().open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
             Ok(dir) => return Some(dir),
             Err(err) if err.get_errno() == E::ENOENT => return None,
-            Err(_) if !is_link() => return None,
+            Err(_) if !is_symlink(folder) => return None,
             Err(_) => {}
         }
     }
@@ -1611,7 +1563,13 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
     None
 }
 
-/// The root `node_modules` is the project's own folder, link or not. A workspace's goes through `open_workspace_folder`.
+/// `path` is relative to the project root, or absolute.
+fn is_symlink(path: &[u8]) -> bool {
+    sys::lstat(ZStr::from_slice_with_nul(&zname(path)))
+        .is_ok_and(|st| sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
+}
+
+/// A plain open for the root `node_modules`, `open_workspace_folder` for a workspace's.
 fn open_importer_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
     if folder == ROOT_DIR {
         return Dir::open(folder).ok();
@@ -1624,9 +1582,12 @@ fn warn_linked_folders(linked_folders: &mut Vec<Box<[u8]>>) {
     linked_folders.dedup();
     for folder in linked_folders.iter() {
         bun_core::warn!(
-            "{} is a symlink, so the packages behind it were not checked",
+            "{} is a symlink, so Bun did not look behind it",
             BStr::new(folder)
         );
+    }
+    if !linked_folders.is_empty() {
+        bun_core::note!("to have Bun clean that folder, remove the link and run 'bun install'");
     }
 }
 
@@ -1772,7 +1733,12 @@ fn importer_roots(manager: &PackageManager, keep: &dyn Fn(usize) -> bool) -> Vec
         .collect()
 }
 
-fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> DynamicBitSet {
+/// `kept_whole` are importers whose `node_modules` this run does not clean: the store keeps all they can load.
+fn wanted_packages(
+    manager: &PackageManager,
+    selection: Option<&Selection>,
+    kept_whole: &[PackageID],
+) -> DynamicBitSet {
     let lockfile: &Lockfile = &manager.lockfile;
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let options = reachable::Options::install(manager);
@@ -1782,20 +1748,21 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
         let roots = importer_roots(manager, &|_| true);
         reachable::packages_from(lockfile, resolutions, &roots, false, options)
     };
-    if let Some(sel) = selection {
-        let unselected = importer_roots(manager, &|id| !sel.selected.is_set(id));
-        if !unselected.is_empty() {
-            let full = reachable::Options {
-                dev: true,
-                optional: true,
-                peer: true,
-                optional_peer: true,
-                ..options
-            };
-            let protected =
-                reachable::packages_from(lockfile, resolutions, &unselected, false, full);
-            wanted.unmanaged.set_union(&protected.unmanaged);
-        }
+    let mut unmanaged: Vec<PackageID> = match selection {
+        Some(sel) => importer_roots(manager, &|id| !sel.selected.is_set(id)),
+        None => Vec::new(),
+    };
+    unmanaged.extend_from_slice(kept_whole);
+    if !unmanaged.is_empty() {
+        let full = reachable::Options {
+            dev: true,
+            optional: true,
+            peer: true,
+            optional_peer: true,
+            ..options
+        };
+        let protected = reachable::packages_from(lockfile, resolutions, &unmanaged, false, full);
+        wanted.unmanaged.set_union(&protected.unmanaged);
     }
     wanted
 }
@@ -1903,26 +1870,38 @@ fn plan_isolated(
     selection: Option<&Selection>,
     plan: &mut Plan,
 ) {
-    let wanted = wanted_packages(manager, selection);
+    let wanted = wanted_packages(manager, selection, &[]);
     let names = store_entry_names(manager, &wanted);
-    let manager: &PackageManager = manager;
 
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
     if let Ok(store) = Dir::open(STORE_DIR) {
         let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
+        let mut stale: Vec<(Box<[u8]>, EntryKind)> = Vec::new();
         for (name, kind) in read_entries(&store) {
             if &*name == b"node_modules" {
                 continue;
             }
             plan.checked += 1;
-            if contains(&names, &name) {
-                continue;
+            if !contains(&names, &name) {
+                stale.push((name, kind));
             }
+        }
+        if !stale.is_empty() {
+            // A workspace behind a link is not cleaned, so the store keeps all that its links can lead to.
+            let behind_links = workspaces_behind_links(manager, selection);
+            if !behind_links.is_empty() {
+                let wanted = wanted_packages(manager, selection, &behind_links);
+                let names = store_entry_names(manager, &wanted);
+                stale.retain(|(name, _)| !contains(&names, name));
+            }
+        }
+        for (name, kind) in stale {
             plan.remove(store_idx, &name, kind);
             removed_store.push(name);
         }
         plan.retain(store_idx, store);
     }
+    let manager: &PackageManager = manager;
     sort_names(&mut removed_store);
     let store_touched = !removed_store.is_empty();
 
@@ -1965,6 +1944,23 @@ fn plan_isolated(
         );
         plan.folders[folder_idx].direct = Some(direct);
     }
+}
+
+/// The selected workspaces whose `node_modules` is a link, the ones `open_workspace_folder` refuses.
+fn workspaces_behind_links(
+    manager: &PackageManager,
+    selection: Option<&Selection>,
+) -> Vec<PackageID> {
+    let lockfile: &Lockfile = &manager.lockfile;
+    (0..lockfile.packages.len())
+        .filter(|&id| {
+            selection.is_none_or(|sel| sel.selected.is_set(id))
+                && !is_pruned_workspace(manager, id)
+                && workspace_node_modules(lockfile, id as PackageID)
+                    .is_some_and(|folder| is_symlink(&folder))
+        })
+        .map(|id| id as PackageID)
+        .collect()
 }
 
 fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {

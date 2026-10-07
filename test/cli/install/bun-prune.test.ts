@@ -3218,12 +3218,29 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
 });
 
-const LINKED = (folder: string) => `warn: ${folder} is a symlink, so the packages behind it were not checked`;
+const LINKED = (...folders: string[]) =>
+  [
+    ...folders.map(folder => `warn: ${folder} is a symlink, so Bun did not look behind it`),
+    "note: to have Bun clean that folder, remove the link and run 'bun install'",
+  ].join("\n");
+
+// Puts a link at the workspace's `node_modules`. What the install wrote there moves to `storage`, which the link leads to.
+function linkToOwnStorage(dir: string, workspace: string) {
+  const workspaceModules = join(dir, "packages", workspace, "node_modules");
+  const storage = join(dir, "packages", workspace, "storage");
+  if (existsSync(workspaceModules)) renameSync(workspaceModules, storage);
+  else mkdirSync(storage);
+  symlinkSync(storage, workspaceModules, "junction");
+  return storage;
+}
 
 // Behind a workspace's `node_modules` that is a link are packages the workspace does not own: the root's here.
-test.concurrent.each(linkers)(
+test.concurrent.each([
+  ["hoisted", NOTHING(3, 1)],
+  ["isolated", NOTHING(3, 2)],
+] as [Linker, string][])(
   "%s: a workspace node_modules that is a link to the root's is not pruned",
-  async linker => {
+  async (linker, nothing) => {
     const dir = await setupWorkspaces(linker, {
       root: { dependencies: { "no-deps": "2.0.0" } },
       packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
@@ -3237,16 +3254,19 @@ test.concurrent.each(linkers)(
 
     const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker);
     expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
-    expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+    expect(lines(stdout).at(-1)).toBe(nothing);
     expect(readdirSync(nm).toSorted()).toEqual(installed);
     expect(exitCode).toBe(0);
   },
 );
 
 // The link can lead anywhere. These two folders are no part of the project.
-test.concurrent.each(linkers)(
-  "%s: a workspace node_modules that is a link out of the project is not pruned",
-  async linker => {
+test.concurrent.each([
+  ["hoisted", NOTHING(3, 1)],
+  ["isolated", NOTHING(3, 2)],
+] as [Linker, string][])(
+  "%s: a workspace node_modules that is a link to a folder elsewhere is not pruned",
+  async (linker, nothing) => {
     const dir = await setupWorkspaces(linker, {
       root: { dependencies: { "no-deps": "2.0.0" } },
       packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
@@ -3261,51 +3281,145 @@ test.concurrent.each(linkers)(
 
     const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker);
     expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
-    expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+    expect(lines(stdout).at(-1)).toBe(nothing);
     expect(readdirSync(String(elsewhere)).toSorted()).toEqual(["first", "second"]);
     expect(exitCode).toBe(0);
   },
 );
 
-// This workspace has a tree of its own, so the folder is also reached through the tree walk.
+// `a` has a tree of its own, and `one-dep` has a tree below it. Both walks reach the link, and it is reported once.
 test.concurrent("hoisted: a workspace with its own copies whose node_modules is a link is not pruned", async () => {
   const dir = await setupWorkspaces("hoisted", {
-    root: { dependencies: { "no-deps": "1.0.0" } },
-    packages: { a: { dependencies: { "no-deps": "2.0.0" } } },
+    root: { dependencies: { "one-dep": "npm:a-dep@1.0.1", "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.0" } } },
   });
-  const workspaceModules = join(dir, "packages", "a", "node_modules");
-  const storage = join(dir, "packages", "a", "storage");
-  renameSync(workspaceModules, storage);
-  symlinkSync(storage, workspaceModules, "junction");
+  const storage = linkToOwnStorage(dir, "a");
+  const version = async (...path: string[]) => (await file(join(storage, ...path, "package.json")).json()).version;
+  expect(await version("one-dep", "node_modules", "no-deps")).toBe("1.0.1");
   const stray = plant(dir, "packages/a/storage/stray");
 
   const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
   expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
-  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+  expect(lines(stdout).at(-1)).toBe(NOTHING(3, 1));
   expect(existsSync(stray)).toBeTrue();
-  expect(await file(join(storage, "no-deps", "package.json")).json()).toMatchObject({ version: "2.0.0" });
+  expect(await version("no-deps")).toBe("1.0.0");
   expect(exitCode).toBe(0);
 });
 
-// The root `node_modules` is a link into the workspace's folder, so that folder holds the root's packages.
-test.concurrent("hoisted: a workspace node_modules that the root node_modules links to is not pruned", async () => {
+// `b` has a tree and is reached first. `a` has none and is reached last. The warnings come sorted.
+test.concurrent("hoisted: two workspaces behind links get one warning each and one note", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } }, b: { dependencies: { "no-deps": "2.0.0" } } },
+  });
+  linkToOwnStorage(dir, "a");
+  linkToOwnStorage(dir, "b");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(LINKED("packages/a/node_modules", "packages/b/node_modules"));
+  expect(lines(stdout).at(-1)).toBe(NOTHING(4, 1));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("hoisted: a file at a workspace's node_modules gets no warning", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "2.0.0" } },
     packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
   });
-  const nm = join(dir, "node_modules");
-  const workspaceModules = join(dir, "packages", "a", "node_modules");
-  renameSync(nm, workspaceModules);
-  symlinkSync(workspaceModules, nm, "junction");
-  const installed = readdirSync(workspaceModules).toSorted();
-  expect(installed).toContain("a-dep");
+  writeFileSync(join(dir, "packages", "a", "node_modules"), "");
 
   const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
-  expect(out(stderr)).toBe(
-    "warn: packages/a/node_modules is the root node_modules under another path, so nothing was removed from it",
-  );
-  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
-  expect(readdirSync(workspaceModules).toSorted()).toEqual(installed);
+  expect(stderr).toBe("");
+  expect(lines(stdout).at(-1)).toBe(NOTHING(3, 1));
+  expect(exitCode).toBe(0);
+});
+
+// The folder behind the link is skipped alone. The rest of the run goes on: strays in the root and in `b` go.
+test.concurrent.each([
+  ["hoisted", "node_modules/b/node_modules"],
+  ["isolated", "packages/b/node_modules"],
+] as [Linker, string][])(
+  "%s: a run that removes entries skips only the workspace behind a link",
+  async (linker, folder) => {
+    const dir = await setupWorkspaces(linker, {
+      root: { dependencies: { "no-deps": "1.0.0" } },
+      packages: {
+        a: { dependencies: { "a-dep": "1.0.1" } },
+        b: { dependencies: { "no-deps": "2.0.0" } },
+        c: { dependencies: { "a-dep": "1.0.1" } },
+      },
+    });
+    const nm = join(dir, "node_modules");
+    const installed = readdirSync(nm).toSorted();
+    const storage = linkToOwnStorage(dir, "a");
+    const kept = plant(dir, "packages/a/storage/stray-a");
+    const strays = [plant(dir, "node_modules/stray-root"), plant(dir, "packages/b/node_modules/stray-b")];
+    const rows = [`- stray-b (${folder})`, "- stray-root"];
+
+    const dryRun = await prune(dir, "--linker", linker, "--dry-run");
+    expect(out(dryRun.stderr)).toBe(LINKED("packages/a/node_modules"));
+    expect(lines(dryRun.stdout).slice(2, 5)).toEqual([...rows, CAN_BE_REMOVED(2, 8)]);
+    expect(strays.map(stray => existsSync(stray))).toEqual([true, true]);
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker);
+    expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
+    expect(lines(stdout).slice(2)).toEqual([...rows, REMOVED(2, 8)]);
+    expect(strays.map(stray => existsSync(stray))).toEqual([false, false]);
+    expect(existsSync(kept)).toBeTrue();
+    expect(readdirSync(storage).includes("stray-a")).toBeTrue();
+    expect(readdirSync(nm).toSorted()).toEqual(installed);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("hoisted: --silent prints no warning for a workspace behind a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  linkToOwnStorage(dir, "a");
+  const stray = plant(dir, "node_modules/stray-root");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted", "--silent");
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+  expect(existsSync(stray)).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+// A link that looks like one of the isolated linker's, in a folder behind the link, must not pick the planner.
+test.concurrent("hoisted: the layout is not read from behind a workspace node_modules that is a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  using elsewhere = tempDir("prune-elsewhere", {
+    ".bun/x@1.0.0/node_modules/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+  });
+  const storeLink = join(String(elsewhere), "x");
+  symlinkSync(join(String(elsewhere), ".bun", "x@1.0.0", "node_modules", "x"), storeLink, "junction");
+  symlinkSync(String(elsewhere), join(dir, "packages", "a", "node_modules"), "junction");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
+  expect(lines(stdout).at(-1)).toBe(NOTHING(3, 1));
+  expect(existsSync(join(dir, "node_modules", "a-dep", "package.json"))).toBeTrue();
+  expect(isSymlink(storeLink)).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+// The store entry of a dev dependency stays, because the link to it behind the refused folder stays.
+test.concurrent("isolated: --production keeps what a workspace behind a link can load", async () => {
+  const dir = await setupWorkspaces("isolated", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { devDependencies: { "a-dep": "1.0.1" } } },
+  });
+  const storage = linkToOwnStorage(dir, "a");
+  expect(isSymlink(join(storage, "a-dep"))).toBeTrue();
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated", "--production");
+  expect(out(stderr)).toBe(LINKED("packages/a/node_modules"));
+  expect(lines(stdout).at(-1)).toBe(NOTHING(3, 2));
+  expect(await file(join(storage, "a-dep", "package.json")).json()).toMatchObject({ version: "1.0.1" });
   expect(exitCode).toBe(0);
 });
 

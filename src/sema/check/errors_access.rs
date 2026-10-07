@@ -1382,6 +1382,18 @@ impl<'p> Checker<'p, '_> {
         {
             return true;
         }
+        // `markPropertyAsReferenced` comes before every `checkPropertyAccessibility`. Only an `a.b`
+        // can be a write-only access.
+        if error_node.is_some()
+            && first.flags.contains(PropFlags::PRIVATE)
+            && matches!(first.source, PropSource::Symbol(symbol) if symbol.file != file)
+        {
+            let node_for_check_write_only = match self.hir(file).data(location) {
+                NodeData::Expr(e) => Some(e),
+                _ => None,
+            };
+            self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
+        }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
         // If all of them share one declaration, its modifiers are used
         // (`createUnionOrIntersectionProperty`).

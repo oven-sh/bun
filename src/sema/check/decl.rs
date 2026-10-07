@@ -23,6 +23,9 @@ impl Predicate {
     pub const NO_PARAMETER: usize = usize::MAX;
 }
 
+/// `signature.thisParameter` in `Checker::resolved_parameter_types`.
+const THIS_PARAMETER: u32 = u32::MAX;
+
 /// The enclosing type parameters that a piece of type syntax may reference.
 #[derive(Default)]
 struct Mentioned {
@@ -1379,9 +1382,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeNodeKind::Fn(func) => self.collect_fn_mentions(file, func, out),
             TypeNodeKind::Object(members) => {
                 for m in members.iter() {
-                    self.collect_mentions(file, hir[m].ty, out);
+                    // The type of an index signature is the return type of its function, the same
+                    // node.
                     if hir[m].func.is_some() {
                         self.collect_fn_mentions(file, hir[m].func, out);
+                    } else {
+                        self.collect_mentions(file, hir[m].ty, out);
                     }
                 }
             }
@@ -2215,6 +2221,13 @@ impl<'p, 's> Checker<'p, 's> {
                 .0;
         }
         match left {
+            // `getDeclaredTypeOfEnum` assigns `links.declaredType` whatever a nested call has
+            // assigned.
+            Ok(stored) if self.files().flags(sym).intersects(SymFlags::ENUM) => {
+                self.p
+                    .declared_types
+                    .rewrite(&self.task, sym, (ty, false), stored);
+            }
             Ok(stored) => {
                 self.p
                     .declared_types
@@ -2315,6 +2328,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let union = self.union(&members);
         if self.is_union(union) {
+            // `getUnionKey`
+            self.get_symbol_id(sym);
             self.with_alias(union, sym, &[])
         } else {
             union
@@ -2392,20 +2407,60 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.enum_values.get(&self.task, &(file, member)) {
             return known;
         }
-        if !self.enter(Query::Enum(file, member)) {
-            return Evaluated::default();
+        let en = self.bound(file).enum_member_owner[member.idx()];
+        let at = (member.0 - self.hir(file)[en].members.start) as usize;
+        let mut in_progress = self.enum_values_in_progress.iter().rev();
+        if let Some((_, so_far)) = in_progress.find(|it| it.0 == (file, en)) {
+            return so_far.get(at).copied().unwrap_or_default();
         }
-        let value = self.compute_enum_member_value(file, member);
-        if let Ok(stored) = self.leave(Query::Enum(file, member)) {
-            self.p
-                .enum_values
-                .insert(&self.task, (file, member), value, stored);
-        }
-        value
+        let values = self.compute_enum_member_values(file, en);
+        values.get(at).copied().unwrap_or_default()
     }
 
-    /// `computeEnumMemberValue`. `autoValue` and `previous` are computed on demand, not passed in.
-    fn compute_enum_member_value(&mut self, file: FileId, member: EnumMemberId) -> Evaluated {
+    /// `computeEnumMemberValues`, where `NodeCheckFlagsEnumValuesComputed` is not set. Returns the
+    /// values of the members. One that depends on a query in progress is not stored, and the next
+    /// request computes it again.
+    fn compute_enum_member_values(&mut self, file: FileId, en: EnumId) -> Vec<Evaluated> {
+        let members = self.hir(file)[en].members;
+        let run = self.enum_values_in_progress.len();
+        self.enum_values_in_progress
+            .push(((file, en), Vec::with_capacity(members.len())));
+        let mut auto_value = Some(0.0);
+        let mut previous = None;
+        for member in members.iter() {
+            let known = self.p.enum_values.get(&self.task, &(file, member));
+            let result = match known {
+                Some(known) => known,
+                None if self.enter(Query::Enum(file, member)) => {
+                    let result = self.compute_enum_member_value(file, member, auto_value, previous);
+                    if let Ok(stored) = self.leave(Query::Enum(file, member)) {
+                        self.p
+                            .enum_values
+                            .insert(&self.task, (file, member), result, stored);
+                    }
+                    result
+                }
+                None => Evaluated::default(),
+            };
+            self.enum_values_in_progress[run].1.push(result);
+            auto_value = match result.value {
+                Some(EnumValue::Number(bits)) => Some(f64::from_bits(bits) + 1.0),
+                _ => None,
+            };
+            previous = Some((member, result));
+        }
+        let finished = self.enum_values_in_progress.pop();
+        finished.map_or_else(Vec::new, |it| it.1)
+    }
+
+    /// `computeEnumMemberValue`. `previous`: with its value.
+    fn compute_enum_member_value(
+        &mut self,
+        file: FileId,
+        member: EnumMemberId,
+        auto_value: Option<f64>,
+        previous: Option<(EnumMemberId, Evaluated)>,
+    ) -> Evaluated {
         let hir = self.hir(file);
         let (name, pos) = (hir[member].name, hir[member].pos);
         let at = (file, pos, self.end_of_name_at(file, pos));
@@ -2429,22 +2484,18 @@ impl<'p, 's> Checker<'p, 's> {
         if is_ambient_enum(hir, en) && !hir[en].flags.contains(Flags::CONST) {
             return Evaluated::default();
         }
-        if hir[en].members.start == member.0 {
-            return Evaluated::number(0.0);
-        }
-        let previous = EnumMemberId(member.0 - 1);
-        let before = self.get_enum_member_value(file, previous);
-        let Some(EnumValue::Number(bits)) = before.value else {
+        let Some(auto_value) = auto_value else {
             self.error_at(at, 1061, &[]);
             return Evaluated::default();
         };
         if self.p.files.options.isolated_modules
+            && let Some((previous, before)) = previous
             && hir[previous].init.is_some()
-            && before.resolved_other_files
+            && (!matches!(before.value, Some(EnumValue::Number(_))) || before.resolved_other_files)
         {
             self.error_at(at, 18056, &[]);
         }
-        Evaluated::number(f64::from_bits(bits) + 1.0)
+        Evaluated::number(auto_value)
     }
 
     /// `computeConstantEnumMemberValue`
@@ -3076,8 +3127,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let mode = files.mode_of_import(file, mode);
         let inner_module_symbol = files.module_of_specifier_as(file, spec, mode)?;
-        // `resolveExternalModuleSymbol`
-        let module_symbol = self.resolve_symbol(files.module_value(inner_module_symbol));
+        let module_symbol = self.resolve_external_module_symbol(inner_module_symbol);
         if name.is_empty() {
             let flags = match module_symbol {
                 AliasTarget::Symbol(symbol) => self.get_symbol_flags(symbol),
@@ -3413,7 +3463,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => self.unique_symbol_declaration(file, m, name),
                 };
-                self.intern(TypeData::UniqueSymbol { symbol, name })
+                self.new_unique_es_symbol_type(symbol, name)
             }
             _ => TypeId::SYMBOL,
         }
@@ -3791,8 +3841,12 @@ impl<'p, 's> Checker<'p, 's> {
             let declared = self.declared_type(sym);
             let mapper = self.mapper_from(&params, &args);
             return match alias {
-                Some(alias) => self.instantiate_with_alias(declared, mapper, alias),
-                None => self.instantiate(declared, mapper),
+                Some(alias) => {
+                    // `getTypeAliasInstantiationKey`
+                    self.get_symbol_id(alias.0);
+                    self.instantiate_with_alias(declared, mapper, alias)
+                }
+                None => self.type_alias_instantiation(declared, mapper),
             };
         }
         if flags.intersects(SymFlags::TYPE) {
@@ -4151,7 +4205,98 @@ impl<'p, 's> Checker<'p, 's> {
                 self.type_of_param(file, p);
             }
         }
-        self.sig_params(sig)
+        let params = self.sig_params(sig);
+        self.note_parameter_types_resolved(sig, &params, count);
+        params
+    }
+
+    /// tsgo has assigned `links.resolvedType` of the first `count` of `params`, the parameters of
+    /// `sig`. Recorded for those about which `is_parameter_type_resolved` is asked: `sig` is an
+    /// instantiation that has type parameters, and its mapper has left no type variable in a type
+    /// that is declared with some.
+    pub(super) fn note_parameter_types_resolved(
+        &mut self,
+        sig: SigId,
+        params: &[SigParam],
+        count: usize,
+    ) {
+        let (file, func, mapper) = match *self.types().sig(sig) {
+            SigData::Decl { file, func, mapper }
+                if !self.hir(file)[func].type_params.is_empty() =>
+            {
+                (file, func, mapper)
+            }
+            SigData::Construct {
+                file, func, mapper, ..
+            } => (file, func, mapper),
+            _ => return,
+        };
+        if !self.is_instantiating(mapper) || self.sig_type_params(sig).is_empty() {
+            return;
+        }
+        for (i, param) in params.iter().enumerate().take(count) {
+            if !self.could_contain_type_variables(param.ty)
+                && let Some((of, declaration)) = param.declaration
+                && let declared = self.type_of_param(of, declaration)
+                && self.has_type_variables(declared)
+            {
+                self.resolved_parameter_types.insert((sig, i as u32));
+            }
+        }
+        // The callers ask for `getThisTypeOfSignature` too.
+        if self.hir(file)[func].this_param.is_some()
+            && let Some(this_type) = self.sig_this_type(sig)
+            && !self.could_contain_type_variables(this_type)
+            && let declared = self.type_of_this_parameter(file, func)
+            && self.has_type_variables(declared)
+        {
+            self.resolved_parameter_types.insert((sig, THIS_PARAMETER));
+        }
+    }
+
+    /// `signature.target`, if that is an instantiation too: `sig` has the type arguments for a
+    /// signature whose outer type parameters are instantiated.
+    fn instantiated_target(&self, sig: SigId) -> Option<SigId> {
+        let target = match *self.types().sig(sig) {
+            SigData::Decl { file, func, mapper } => {
+                let (mapper, _) = self.steps_of_sig_mapper(file, func, mapper)?;
+                SigData::Decl { file, func, mapper }
+            }
+            SigData::Construct {
+                class,
+                file,
+                func,
+                mapper,
+            } if mapper != MapperId::IDENTITY => {
+                let mapper = self.without_type_arguments_of_class(class, mapper)?;
+                if !self.is_instantiating(mapper) {
+                    return None;
+                }
+                SigData::Construct {
+                    class,
+                    file,
+                    func,
+                    mapper,
+                }
+            }
+            _ => return None,
+        };
+        Some(self.types().intern_sig(target))
+    }
+
+    /// `links.resolvedType != nil` for the parameter of `sig` at `index`, when `instantiateSymbol`
+    /// gets to it. `params`: the parameters of `sig`. `hasCorrectArity` comes before
+    /// `getSignatureInstantiation`, and `getMinArgumentCount` asks for the type of a rest parameter
+    /// and of the required parameters, from the last one down to one that does not accept `void`.
+    fn is_parameter_type_resolved(
+        &mut self,
+        sig: SigId,
+        params: &[SigParam],
+        index: usize,
+    ) -> bool {
+        self.resolved_parameter_types.contains(&(sig, index as u32))
+            || params[index].rest
+            || index < Self::min_args(params) && index + 1 >= self.min_argument_count(params)
     }
 
     /// `kept` is the stored result of `sig_params(sig)`.
@@ -4181,7 +4326,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.cached_sig_params(sig, kept);
         }
         let scope = self.begin_scope();
-        let params = self.sig_params_of_declaration(file, func, mapper);
+        let target = self.instantiated_target(sig);
+        let params = self.sig_params_of_declaration(file, func, mapper, target);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
             return self.cached_sig_params(sig, kept.1);
@@ -4189,12 +4335,14 @@ impl<'p, 's> Checker<'p, 's> {
         List::Own(params.to_vec())
     }
 
+    /// `target`: see `instantiated_target`.
     #[inline(never)]
     fn sig_params_of_declaration(
         &mut self,
         file: FileId,
         func: FnId,
         mapper: MapperId,
+        target: Option<SigId>,
     ) -> Vec<SigParam, &'s Arena> {
         let hir = self.hir(file);
         let mut out = Vec::with_capacity_in(hir[func].params.len(), self.arena);
@@ -4211,6 +4359,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.types().mapping(mapper),
             &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
         );
+        // `instantiateSignatureEx` instantiates the parameters of `signature.target`.
+        let target = target.map(|target| (target, self.sig_params(target)));
         for (i, p) in hir[func].params.iter().enumerate() {
             let param = &hir[p];
             let name = match hir[param.pat].kind {
@@ -4248,17 +4398,28 @@ impl<'p, 's> Checker<'p, 's> {
                     true => super::errors_unused::is_thisless_type(hir, param.ty),
                     false => param.default.is_none(),
                 };
+            let mut ty = if is_kept {
+                declared
+            } else {
+                self.instantiate(declared, mapper)
+            };
+            // And one whose type is resolved and cannot contain type variables. Of any other it
+            // goes back to the declared parameter and combines the mappers.
+            if let Some((target, of_target)) = &target
+                && let Some(open) = of_target.get(i).map(|open| open.ty)
+                && open != ty
+                && !self.could_contain_type_variables(open)
+                && self.is_parameter_type_resolved(*target, of_target, i)
+            {
+                ty = open;
+            }
             out.push(SigParam {
                 name,
-                ty: if is_kept {
-                    declared
-                } else {
-                    self.instantiate(declared, mapper)
-                },
+                ty,
                 optional: optional || is_untyped_in_js && !param.flags.contains(Flags::REST),
                 rest: param.flags.contains(Flags::REST),
                 is_required_rest: false,
-                declaration: Some((file, param.pos)),
+                declaration: Some((file, p)),
             });
         }
         out
@@ -4371,7 +4532,17 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if self.hir(file)[func].this_param.is_some() {
             let declared = self.type_of_this_parameter(file, func);
-            return Some((self.instantiate(declared, mapper), sig));
+            let ty = self.instantiate(declared, mapper);
+            // `instantiateSymbol(sig.thisParameter, m)`, as for the parameters.
+            if let Some(target) = self.instantiated_target(sig)
+                && let Some(open) = self.sig_this_type(target)
+                && open != ty
+                && !self.could_contain_type_variables(open)
+                && (self.resolved_parameter_types).contains(&(target, THIS_PARAMETER))
+            {
+                return Some((open, sig));
+            }
+            return Some((ty, sig));
         }
         // `getSignatureFromDeclaration`: "If only one accessor includes a this-type annotation, the
         // other behaves as if it had the same type annotation"
@@ -4502,20 +4673,32 @@ impl<'p, 's> Checker<'p, 's> {
             .map_or(0, |i| i + 1)
     }
 
-    /// The parameter type for the argument at `index`, indexing into the rest parameter if `index`
-    /// reaches it.
+    /// `getTypeOfParameter`, and `getTypeOfSymbol` of a rest parameter. `sig_params` has computed
+    /// the type, and has not asked for the type of a symbol that `is_resolved_on_request`.
+    #[inline]
+    pub(super) fn get_type_of_parameter(&mut self, parameter: &SigParam) -> TypeId {
+        if parameter.name.is_none()
+            && let Some((file, p)) = parameter.declaration
+        {
+            self.resolve_parameter_symbol_on_request(file, p);
+        }
+        parameter.ty
+    }
+
+    /// `tryGetTypeAtPosition`: the parameter type for the argument at `index`, indexing into the
+    /// rest parameter if `index` reaches it.
     pub fn param_type_at(&mut self, params: &[SigParam], index: usize) -> Option<TypeId> {
         let last = params.last()?;
         if index < params.len() - usize::from(last.rest) {
-            let p = &params[index];
-            return Some(p.ty);
+            return Some(self.get_type_of_parameter(&params[index]));
         }
         if !last.rest {
             return None;
         }
+        let rest = self.get_type_of_parameter(last);
         let offset = index - (params.len() - 1);
-        // `tryGetTypeAtPosition`: past the end of a tuple of fixed length there is no parameter.
-        if let TypeData::Tuple { flags, .. } = self.data(last.ty)
+        // Past the end of a tuple of fixed length there is no parameter.
+        if let TypeData::Tuple { flags, .. } = self.data(rest)
             && offset >= flags.len()
             && !flags
                 .iter()
@@ -4523,7 +4706,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        Some(self.rest_element_type(last.ty, offset))
+        Some(self.rest_element_type(rest, offset))
     }
 
     /// The type of element `offset` of the array or tuple type a rest parameter is declared with.

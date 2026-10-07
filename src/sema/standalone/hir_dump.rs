@@ -1367,6 +1367,7 @@ impl Dump<'_, '_> {
     fn export(&mut self, depth: usize, label: &str, id: ExportId) {
         let Export {
             spec,
+            has_module_specifier: _,
             items,
             type_only,
             mode,

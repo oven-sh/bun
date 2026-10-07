@@ -6,6 +6,7 @@ use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
+use crate::parse::lists::{ListKind, ListStep};
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
@@ -582,46 +583,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         ))
     }
 
-    /// Error recovery at a token that is neither a clause of a `switch` (`code` 1130) nor a
-    /// statement of one (1129). `abortParsingListOrMoveToNextToken`, as far as possible without
-    /// tracking the open parsing contexts: a token that cannot start a statement is skipped, and
-    /// the list ends at any other token. `true`: the list ends here, and the token is not consumed.
-    #[cold]
-    #[inline(never)]
-    fn stray_in_switch(p: &mut Self, code: u32) -> Result<bool> {
-        match p.lexer.token {
-            // `isListTerminator`: the end of the file terminates every list.
-            T::TEndOfFile => return Ok(true),
-            // The word starts a clause, escaped or not.
-            T::TEscapedKeyword if matches!(p.lexer.identifier, b"case" | b"default") => {
-                p.lexer.unescape_keyword();
-                return Ok(false);
-            }
-            _ => {}
-        }
-        let range = p.lexer.range();
-        p.lexer.ts_error(range, code);
-        if matches!(
-            p.lexer.token,
-            // `isListElement`: during error recovery, `;` is not a statement.
-            T::TSemicolon
-                | T::TCloseParen
-                | T::TCloseBracket
-                | T::TComma
-                | T::TColon
-                | T::TEqualsGreaterThan
-                | T::TEquals
-                | T::TDot
-                | T::TQuestion
-                | T::TQuestionDot
-                | T::TDotDotDot
-        ) {
-            p.lexer.next()?;
-            return Ok(false);
-        }
-        Ok(true)
-    }
-
     #[inline(never)]
     fn t_switch(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
@@ -639,7 +600,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let mut cases = bun_alloc::ArenaVec::<js_ast::Case>::new_in(p.arena);
             let mut found_default = false;
             let mut said_default = false;
+            // `parseCaseBlock`
+            let saved_clauses = p.enter_list(ListKind::SwitchClauses);
             while p.lexer.token != T::TCloseBrace {
+                match p.classify_list_token(ListKind::SwitchClauses)? {
+                    ListStep::Element => {}
+                    ListStep::Skipped => continue,
+                    ListStep::Over => break,
+                }
                 let mut body = StmtList::new_in(p.arena);
                 // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
@@ -647,7 +615,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let clause_start = p.lexer.loc();
                 let mut clause_loc = clause_start;
                 p.mark_comments_before(&mut clause_loc, clause_start, p.pos_for_jsdoc());
-                if p.lexer.token == T::TDefault {
+                if p.lexer.is_keyword(T::TDefault) {
                     if found_default {
                         if !p.is_tolerant() {
                             p.log().add_range_error(
@@ -658,7 +626,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             return Err(crate::Error::SyntaxError);
                         }
                     }
-                    p.lexer.next()?;
+                    p.lexer.next_token()?;
                     p.lexer.expect(T::TColon)?;
                     // `checkSwitchStatement` reports the second one, once for each `switch`.
                     // `GetErrorRangeForNode`: up to its `:`.
@@ -669,58 +637,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                     found_default = true;
                 } else {
-                    // `parseCaseBlock`
-                    if p.lexer.token != T::TCase && p.is_tolerant() && !p.lexer.is_log_disabled {
-                        if Self::stray_in_switch(p, 1130)? {
-                            break;
-                        }
-                        continue;
-                    }
                     p.lexer.expect(T::TCase)?;
                     value = Some(p.parse_expr(Level::Lowest)?);
                     p.lexer.expect(T::TColon)?;
                 }
 
-                'case_body: loop {
-                    match p.lexer.token {
-                        T::TCloseBrace | T::TCase | T::TDefault => {
-                            break 'case_body;
-                        }
-                        // They terminate the statement list of a clause, escaped or not.
-                        T::TEscapedKeyword
-                            if p.is_tolerant()
-                                && !p.lexer.is_log_disabled
-                                && matches!(p.lexer.identifier, b"case" | b"default") =>
-                        {
-                            p.lexer.unescape_keyword();
-                        }
-                        // `parseCaseClause`, `parseDefaultClause`
-                        T::TEndOfFile
-                        | T::TCloseParen
-                        | T::TCloseBracket
-                        | T::TComma
-                        | T::TColon
-                        | T::TEqualsGreaterThan
-                        | T::TEquals
-                        | T::TDot
-                        | T::TQuestion
-                        | T::TQuestionDot
-                        | T::TDotDotDot
-                            if p.is_tolerant() && !p.lexer.is_log_disabled =>
-                        {
-                            if Self::stray_in_switch(p, 1129)? {
-                                break 'case_body;
-                            }
-                        }
-                        _ => {
-                            let mut stmt_opts = ParseStatementOptions {
-                                lexical_decl: LexicalDecl::AllowAll,
-                                ..Default::default()
-                            };
-                            body.push(Self::parse_embedded_stmt(p, &mut stmt_opts)?);
-                        }
+                // `parseCaseClause`, `parseDefaultClause`
+                let saved_statements = p.enter_list(ListKind::SwitchClauseStatements);
+                while !matches!(p.lexer.token, T::TCloseBrace | T::TCase | T::TDefault) {
+                    match p.classify_list_token(ListKind::SwitchClauseStatements)? {
+                        ListStep::Element => {}
+                        ListStep::Skipped => continue,
+                        ListStep::Over => break,
                     }
+                    let mut stmt_opts = ParseStatementOptions {
+                        lexical_decl: LexicalDecl::AllowAll,
+                        ..Default::default()
+                    };
+                    body.push(Self::parse_embedded_stmt(p, &mut stmt_opts)?);
                 }
+                p.lexer.list_contexts = saved_statements;
                 p.note_end(&mut clause_loc, p.lexer.full_start());
                 cases.push(js_ast::Case {
                     value,
@@ -728,6 +664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     loc: clause_loc,
                 });
             }
+            p.lexer.list_contexts = saved_clauses;
             p.lexer.expect(T::TCloseBrace)?;
             Ok(p.s(
                 S::Switch {
@@ -2150,9 +2087,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if import_clause.had_type_only_imports && import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
-                        if p.is_tolerant() && !Self::is_at_string_specifier(p) {
-                            return Self::import_with_expression_specifier(p, loc);
-                        }
                         let _ = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;
                         return Ok(p.s(S::TypeScript::default(), loc));
@@ -2238,9 +2172,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.expect_identifier()?;
                     p.lexer.expect_contextual_keyword(b"from")?;
 
-                    if p.is_tolerant() && !Self::is_at_string_specifier(p) {
-                        return Self::import_with_expression_specifier(p, loc);
-                    }
                     let path = p.parse_path()?;
                     p.lexer.expect_or_insert_semicolon()?;
                     return p.process_import_statement(stmt, path, loc, false);
@@ -2298,9 +2229,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             Self::bindings_after_type_only_name(p)?;
                                         }
                                         p.lexer.expect_contextual_keyword(b"from")?;
-                                        if p.is_tolerant() && !Self::is_at_string_specifier(p) {
-                                            return Self::import_with_expression_specifier(p, loc);
-                                        }
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
                                         return Ok(p.s(S::TypeScript::default(), loc));
@@ -2316,9 +2244,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 p.note_namespace_import_name();
                                 p.expect_identifier()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                if p.is_tolerant() && !Self::is_at_string_specifier(p) {
-                                    return Self::import_with_expression_specifier(p, loc);
-                                }
                                 let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
                                 return Ok(p.s(S::TypeScript::default(), loc));
@@ -2329,9 +2254,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 p.note_type_only_import();
                                 let _ = p.parse_import_clause()?;
                                 p.lexer.expect_contextual_keyword(b"from")?;
-                                if p.is_tolerant() && !Self::is_at_string_specifier(p) {
-                                    return Self::import_with_expression_specifier(p, loc);
-                                }
                                 let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
                                 return Ok(p.s(S::TypeScript::default(), loc));
@@ -2403,9 +2325,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        if p.is_tolerant() && !Self::is_at_string_specifier(p) {
-            return Self::import_with_expression_specifier(p, loc);
-        }
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
 
@@ -2445,33 +2364,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.lexer.expect(T::TIdentifier)?;
         }
         Ok(())
-    }
-
-    /// Whether `parse_path` can parse the module specifier at the current token.
-    #[inline]
-    fn is_at_string_specifier(p: &Self) -> bool {
-        matches!(
-            p.lexer.token,
-            T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
-        )
-    }
-
-    /// `parseModuleSpecifier` at a token that is not a string, and the rest of the import
-    /// declaration. Any expression is accepted.
-    /// `checkExternalImportOrExportDeclaration` reports 1141 unless the expression is missing, and
-    /// checks nothing else.
-    /// Tolerant mode only.
-    #[cold]
-    #[inline(never)]
-    fn import_with_expression_specifier(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
-        let specifier = p.parse_expr(Level::Lowest)?;
-        if !matches!(specifier.data, js_ast::ExprData::EMissing(_)) {
-            let start = p.real_loc(specifier.loc);
-            p.ts_checker_error(p.lexer.range_from(start), 1141);
-        }
-        p.keep_module_specifier(None, Some(specifier), p.real_loc(specifier.loc));
-        p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::TypeScript::default(), loc))
     }
 
     /// `parseImportDeclarationOrImportEqualsDeclaration`, at the token after `import defer`: whether `defer` is a modifier and not
@@ -2534,9 +2426,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
             p.lexer.expect_contextual_keyword(b"from")?;
-        }
-        if !Self::is_at_string_specifier(p) {
-            return Self::import_with_expression_specifier(p, loc);
         }
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
@@ -2628,6 +2517,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.lexer.keyword_was_taken(escaped_async);
             }
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+        } else if Self::IS_TYPESCRIPT_ENABLED
+            && is_identifier
+            && p.is_tolerant()
+            && matches!(name, b"interface" | b"type" | b"module" | b"namespace")
+            && p.is_start_of_declaration()
+        {
+            // `parseStatement`: the next word is the name, also `as` and `satisfies`, no operator.
+            expr = p.parse_expr(Level::Compare)?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
             match expr_or_let.stmt_or_expr {
@@ -2754,9 +2651,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         let before = p.lexer.prev_error_loc;
         let here = p.lexer.range();
+        // Up to `node.End()`: an escape is longer than the character of `word` that it spells.
+        let name_end = bun_core::lexer::scan_identifier_parts(p.lexer.contents, at.to_usize());
         let name = bun_ast::Range {
             loc: at,
-            len: word.len() as i32,
+            len: name_end as i32 - at.start,
         };
         let token = p.lexer.token;
         let mut suggestion = None;
@@ -2785,9 +2684,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         };
         match suggestion {
             Some(suggestion) => p.lexer.ts_error_about(range, code, &suggestion),
-            // `parseErrorForInvalidName`
+            // `parseErrorForInvalidName`. At most a `?` or `!` is between the name and this token.
             None if matches!(code, 2427 | 2457 | 2819) => {
-                let value = p.lexer.token_value()?;
+                let value = p.lexer.token_value(word)?;
                 p.lexer.ts_error_about(range, code, &value);
             }
             None => p.lexer.ts_error(range, code),
@@ -2829,7 +2728,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         if p.is_tolerant() && !p.lexer.is_log_disabled {
-            Self::unescape_keyword_of_statement(p);
+            match js_lexer::keyword(p.lexer.identifier) {
+                // The missing expression is reported before the word is consumed.
+                Some(word) if !p.is_start_of_statement() => p.lexer.token = word,
+                _ => Self::unescape_keyword_of_statement(p),
+            }
             return p.parse_stmt(opts);
         }
         Self::parse_stmt_fallthrough(p, opts, loc)
@@ -2844,9 +2747,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             return;
         }
         match js_lexer::keyword(p.lexer.identifier) {
-            // Another error is reported at these before they are consumed: a missing `try` or a
-            // missing expression.
-            Some(word @ (T::TCatch | T::TFinally | T::TIn | T::TInstanceof)) => {
+            // Another error is reported at these before they are consumed: a missing `try`, a
+            // missing expression or a missing declaration.
+            Some(
+                word @ (T::TCase
+                | T::TCatch
+                | T::TElse
+                | T::TExtends
+                | T::TFinally
+                | T::TIn
+                | T::TInstanceof),
+            ) => {
                 p.lexer.token = word;
             }
             _ => p.lexer.unescape_keyword(),
@@ -3025,7 +2936,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
-                    let body = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    // `parseModuleBlock`, wherever the declaration is.
+                    let mut body_opts = *opts;
+                    if p.is_tolerant() && body_opts.scope == StatementScope::Nested {
+                        body_opts.scope = StatementScope::Namespace;
+                    }
+                    let body = p.parse_stmts_up_to(T::TCloseBrace, &mut body_opts)?;
                     p.lexer.expect(T::TCloseBrace)?;
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.

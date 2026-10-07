@@ -10,7 +10,7 @@ use super::errors_declaration_emit::{EndOfChain, Meaning};
 
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
-use crate::resolve::remove_file_extension;
+use crate::resolve::{displayed_path, remove_file_extension};
 use bun_core::fmt::{ItoaBuf, VecWriter, digit_count, itoa};
 use bun_core::lexer::is_identifier;
 use bun_core::strings::{CodepointIterator, Cursor};
@@ -249,7 +249,8 @@ impl Checker<'_, '_> {
         let files = self.files();
         let decls = files.decls(symbol);
         if let Some(&(file, _)) = decls.iter().find(|d| d.1 == Decl::File) {
-            return remove_file_extension(files.module(file).file_name()).to_owned();
+            let file_name = displayed_path(files.module(file).file_name());
+            return remove_file_extension(&file_name).to_owned();
         }
         let ambient_name = |&(file, decl): &(FileId, Decl)| match decl {
             Decl::Module(m) => match self.hir(file)[m].name {
@@ -261,7 +262,7 @@ impl Checker<'_, '_> {
         // `GetSourceFileOfModule(symbol).FileName()`: what `export =` names, with what
         // `declare module "m"` adds to the module (`getCommonJSExportEquals`), has its own name.
         if let Some(&(file, _)) = decls.iter().find(|it| ambient_name(it).is_none()) {
-            return files.module(file).file_name().to_owned();
+            return displayed_path(files.module(file).file_name()).into_owned();
         }
         match decls.iter().find_map(ambient_name) {
             Some(name) => self.atom_text(name),
@@ -628,10 +629,22 @@ fn type_to_string_with(
 
 /// `strings.ToValidUTF8(text, "\uFFFD")` for text that leaves the checker.
 pub(super) fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
-    match bstr::ByteSlice::to_str_lossy(&text[..]) {
-        std::borrow::Cow::Borrowed(_) => text,
-        std::borrow::Cow::Owned(valid) => valid.into_bytes(),
+    if std::str::from_utf8(&text).is_ok() {
+        return text;
     }
+    let mut valid = Vec::with_capacity(text.len());
+    // Whether the previous byte was invalid: a run of them is replaced once.
+    let mut invalid = false;
+    for chunk in text.utf8_chunks() {
+        if !chunk.valid().is_empty() {
+            valid.extend_from_slice(chunk.valid().as_bytes());
+            invalid = false;
+        }
+        if !chunk.invalid().is_empty() && !std::mem::replace(&mut invalid, true) {
+            valid.extend_from_slice("\u{FFFD}".as_bytes());
+        }
+    }
+    valid
 }
 
 /// Printing resolves the types it encounters. A cycle through here is not an error, and the state
@@ -1775,6 +1788,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         ty: TypeId,
         identity: Option<Identity>,
     ) -> ControlFlow<Node, TypeVisit> {
+        match identity {
+            Some(Identity::Origin(origin)) => self.c.get_symbol_id_of_origin(origin),
+            Some(Identity::Instance(symbol)) => self.c.get_symbol_id(symbol),
+            Some(Identity::Function(file, function)) => {
+                self.c.get_symbol_id_of_function(file, function);
+            }
+            Some(Identity::Node(..) | Identity::Type(_)) | None => {}
+        }
         let key = self
             .enclosing_declaration
             .map(|at| (at, self.enclosing_expression, ty, self.flags));
@@ -2034,6 +2055,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten`. `is_initial`: `FlagsInInitialEntityName`.
     fn name_of_symbol_as_written(&mut self, symbol: Sym, is_initial: bool) -> Vec<u8> {
+        // `remappedSymbolReferences`
+        self.c.get_symbol_id(symbol);
         let files = self.c.files();
         let decls = files.decls(symbol);
         let name = files.symbol(symbol).name;
@@ -2072,7 +2095,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             }
             Some(&(file, Decl::ObjectLiteral(e))) => return self.c.name_of_object_literal(file, e),
             Some(&(file, Decl::File)) => {
-                return cat! { b"\"", remove_file_extension(files.module(file).file_name()), b"\"" };
+                let file_name = displayed_path(files.module(file).file_name());
+                return cat! { b"\"", remove_file_extension(&file_name), b"\"" };
             }
             _ => {}
         }
@@ -2089,7 +2113,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `EscapeInternalSymbolName`. The text of most internal names ends with `=` here, where the
     /// original starts with `InternalSymbolNamePrefix`.
     fn escape_internal_symbol_name(&self, name: Atom) -> Vec<u8> {
-        let text = self.c.atoms().bytes(name);
+        let text = self.c.symbol_name_with_id(name);
+        let text = &text[..];
         let rest = match name {
             known::anonymous_function
             | known::object_literal
@@ -2247,6 +2272,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `lookupTypeParameterNodes`, as they are printed. No symbol of a chain is instantiated
     /// (`lookupInstantiatedTypeArgumentNodes`).
     fn lookup_type_parameter_nodes(&mut self, chain: &[Sym], index: usize) -> Vec<u8> {
+        self.c.get_symbol_id(chain[index]);
         if self.type_parameter_symbol_list.contains(&chain[index]) {
             return Vec::new();
         }
@@ -2939,6 +2965,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten(typeParameter.symbol)`
     fn name_of_type_parameter(&self, parameter: TypeId) -> Vec<u8> {
+        self.c.get_symbol_id_of_type_parameter(parameter);
         if let TypeData::TypeParam(file, tp, _) = *self.c.data(parameter)
             && !self.c.is_renamed_type_param(parameter)
         {
@@ -4391,6 +4418,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `getNameOfSymbolAsWritten` for a property.
     fn name_of_property_as_written(&mut self, whole: &Prop) -> Vec<u8> {
+        self.c.get_symbol_id_of_property(whole);
         let prop = first_declared(whole).unwrap_or(whole);
         match &prop.source {
             PropSource::Literal(file, property) => {
@@ -4618,19 +4646,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         }
     }
 
-    /// `len(ast.SymbolName(propertySymbol))`. The name of a property that a `unique symbol` names ends
-    /// with the id of the symbol. typescript-go assigns ids on first use, in the order of the check:
-    /// four digits in a large program. Ours says where the symbol is declared, and is longer.
-    fn length_of_symbol_name(&self, name: Atom) -> usize {
-        let text = self.c.written_name(name);
-        if !self.c.atoms().is_symbol_name(name) {
-            return text.len();
-        }
-        match bun_core::strings::last_index_of_char(text, b'@') {
-            Some(at) if at >= crate::atom::SYMBOL_NAME_PREFIX.len() => at + 1 + 4,
-            // Here the name of `[Symbol.iterator]` has no id.
-            _ => text.len() + 1 + 4,
-        }
+    /// `len(ast.SymbolName(propertySymbol))`
+    fn length_of_symbol_name(&mut self, name: Atom) -> usize {
+        let length = self.c.length_of_late_bound_name(name);
+        length.unwrap_or_else(|| self.c.written_name(name).len())
     }
 
     /// `addPropertyToElementList`
@@ -5129,6 +5148,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `serializeReturnTypeForSignature`
     fn return_type_node(&mut self, signature: SigId, try_reuse: bool) -> Node {
         let declaration = self.c.sig_decl(signature).map(|of| (of.0, of.1));
+        if let Some((file, function)) = declaration {
+            self.c.get_symbol_id_of_function(file, function);
+        }
         let enclosing = self.enclosing_symbol_types.iter().rev();
         let enclosing = enclosing
             .map(|entry| (Some(entry.0), entry.1))

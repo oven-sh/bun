@@ -542,8 +542,7 @@ impl<'p> Checker<'p, '_> {
 
     /// `isValidSpreadType`
     pub(super) fn is_valid_spread_type(&mut self, ty: TypeId) -> bool {
-        // `getBaseConstraintOrType`
-        let ty = self.map_type(ty, |c, m| c.base_constraint_if_any(m, 0).unwrap_or(m));
+        let ty = self.map_type(ty, |c, m| c.base_constraint_or_type(m));
         // `removeDefinitelyFalsyTypes`: a definitely falsy value spreads no properties.
         let ty = self.remove_definitely_falsy(ty);
         match self.data(ty) {
@@ -558,72 +557,6 @@ impl<'p> Checker<'p, '_> {
                     || self.is_object_type(ty)
                     || self.is_deferred(ty)
             }
-        }
-    }
-
-    /// `getNextBaseConstraint`. `None`: `noConstraintType` or `circularConstraintType`, which
-    /// `base_constraint` does not tell from the constraint `unknown`. A type without a constraint
-    /// may turn out to be an object. A type constrained to `unknown` can be anything.
-    pub(super) fn base_constraint_if_any(&mut self, ty: TypeId, depth: u32) -> Option<TypeId> {
-        let constraint = self.base_constraint(ty);
-        if constraint != TypeId::UNKNOWN || !self.has_type_variables(ty) {
-            return Some(constraint);
-        }
-        // A cycle.
-        if depth > 16 {
-            return None;
-        }
-        // `computeBaseConstraint`, for the kinds of types whose constraint can be `unknown`.
-        let simplified = self.simplified(ty, false);
-        match *self.data(simplified) {
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => {
-                let constraint = self.constraint_of_type_param(simplified)?;
-                self.base_constraint_if_any(constraint, depth + 1)
-            }
-            // Built from the members that have a constraint.
-            TypeData::Intersection(ref parts) => {
-                let mut constraints = Vec::with_capacity(parts.len());
-                for &part in parts.iter() {
-                    constraints.extend(self.base_constraint_if_any(part, depth + 1));
-                }
-                if constraints.is_empty() {
-                    None
-                } else {
-                    Some(self.intersection(&constraints))
-                }
-            }
-            // Every member must have a constraint.
-            TypeData::Union(ref parts) => {
-                let mut constraints = Vec::with_capacity(parts.len());
-                for &part in parts.iter() {
-                    constraints.push(self.base_constraint_if_any(part, depth + 1)?);
-                }
-                Some(self.union(&constraints))
-            }
-            TypeData::IndexedAccess {
-                obj,
-                index,
-                undefined,
-            } => {
-                let access = match self.substitute_indexed_mapped(obj, index) {
-                    Some(template) => template,
-                    None => {
-                        let base_object = self.base_constraint_if_any(obj, depth + 1)?;
-                        let base_index = self.base_constraint_if_any(index, depth + 1)?;
-                        self.indexed_access_flagged(base_object, base_index, undefined, None)?
-                    }
-                };
-                self.base_constraint_if_any(access, depth + 1)
-            }
-            TypeData::Cond { .. } => {
-                let constraint = self.get_constraint_of_conditional_type(simplified);
-                self.base_constraint_if_any(constraint, depth + 1)
-            }
-            TypeData::Substitution { base, constraint } => {
-                let both = self.substitution_intersection(base, constraint);
-                self.base_constraint_if_any(both, depth + 1)
-            }
-            _ => None,
         }
     }
 

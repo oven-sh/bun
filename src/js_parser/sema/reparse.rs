@@ -822,6 +822,19 @@ impl<'p, 'a> Lower<'p, 'a> {
         doc: &JsDoc,
         tag: &Tag,
     ) -> FnId {
+        // `checkNonIdentifierName(fun.Name())`: of the identifiers that the main parser accepts as
+        // the name of a function or a method, only a missing one is not valid.
+        if let Some(like) = like {
+            let like = self.b.file[like];
+            if matches!(like.kind, FnKind::Decl | FnKind::Method)
+                && like.name == known::empty
+                && !like
+                    .flags
+                    .intersects(Flags::COMPUTED_NAME | Flags::LITERAL_NAME)
+            {
+                self.check_non_identifier_name(Name::missing(like.name_pos));
+            }
+        }
         let type_params = match like {
             Some(_) => self.gather_type_parameters(doc, false),
             None => Span::EMPTY,

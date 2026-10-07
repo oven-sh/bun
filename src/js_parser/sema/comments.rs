@@ -186,7 +186,8 @@ fn single_line_pragma(text: &[u8], comment_pos: usize, atoms: &dyn Intern, file:
             b"import" => ResolutionMode::Import,
             b"require" => ResolutionMode::Require,
             _ => {
-                file.error(DiagnosticKind::Parse, (comment_pos + from) as u32, 0, 1453);
+                let (start, end) = ((comment_pos + from) as u32, (comment_pos + to) as u32);
+                file.error(DiagnosticKind::Parse, start, end, 1453);
                 ResolutionMode::None
             }
         },

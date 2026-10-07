@@ -669,11 +669,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.next()?;
             let path = if p.lexer.token != T::TStringLiteral && p.is_tolerant() {
                 // `parseModuleSpecifier`: any expression. `checkExternalImportOrExportDeclaration` reports 1141 unless it is
-                // missing. `checkGrammarModuleElementContext` returns first in a block or a function.
+                // missing. `checkGrammarModuleElementContext` returns first.
                 let at = p.lexer.loc();
                 let specifier = p.parse_expr(Level::Lowest)?;
                 let is_written = !specifier.is_missing();
-                if is_written && p.current_scope().kind == ScopeKind::Entry {
+                if is_written && p.is_in_appropriate_context() {
                     p.ts_checker_error(p.lexer.range_from(at), 1141);
                 }
                 external = Some(crate::sema::ts_syntax::ModuleReference::External {

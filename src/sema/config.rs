@@ -5,10 +5,10 @@
 use crate::config_options::{Declaration, In, converted, is_enum, is_file_path, is_list};
 use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
-    Host, Options, ancestors, combine_paths, contains_path, equate_string_case_insensitive,
-    extra_supported_extensions, file_extension_is_one_of, get_base_file_name,
-    get_relative_path_from_directory, inside, is_rooted_disk_path, join, known_extension,
-    remove_file_extension, supported_extensions, to_path,
+    Host, Options, ancestors, combine_paths, contains_path, displayed_path,
+    equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
+    get_base_file_name, get_relative_path_from_directory, inside, is_rooted_disk_path,
+    is_same_path, join, known_extension, remove_file_extension, supported_extensions, to_path,
 };
 use crate::session::Session;
 use crate::verify::{Place, Problem};
@@ -29,9 +29,9 @@ pub struct ConfigError {
     /// `GetProgramDiagnostics`, not `GetConfigFileParsingDiagnostics`: the file could be read, but
     /// its options are inconsistent.
     pub is_about_options: bool,
-    /// `RelatedInformation`, all of it in the configuration file: the span, and the code of a
-    /// message without arguments.
-    pub related: Vec<(u32, u32, u32)>,
+    /// `RelatedInformation`: the span, the code and the message arguments. It is in the file of
+    /// `at`, or else in the configuration file of the project.
+    pub related: Vec<(u32, u32, u32, Vec<Vec<u8>>)>,
 }
 
 impl ConfigError {
@@ -69,7 +69,7 @@ impl ConfigError {
             // What is in a file of the program is where the problem itself is reported.
             related: (problem.related.iter())
                 .filter(|it| it.0 == crate::program::IN_CONFIGURATION)
-                .map(|&(_, from, to, code)| (from, to, code))
+                .map(|&(_, from, to, code)| (from, to, code, Vec::new()))
                 .collect(),
         }
     }
@@ -275,6 +275,7 @@ fn parse_compiler_options(key: &[u8], value: Option<Json>, all_options: &mut Vec
 /// `mergeCompilerOptions`: the values of `source` take precedence. `""` is the zero value of its
 /// field, which is to every reader an option that is not specified, and is not copied.
 /// `explicit_null_fields`: the options that are `null` in `rawSource`, which unsets them.
+/// The options of a command line are their own `rawSource`.
 pub fn merge_compiler_options(
     target: &mut Vec<(Vec<u8>, Json)>,
     source: Vec<(Vec<u8>, Json)>,
@@ -286,7 +287,9 @@ pub fn merge_compiler_options(
             continue;
         }
         target.retain(|(k, _)| *k != key);
-        target.push((key, value));
+        if value != Json::Null {
+            target.push((key, value));
+        }
     }
 }
 
@@ -298,23 +301,30 @@ fn parse_config(
     path: &[u8],
     stack: &mut Vec<Vec<u8>>,
     errors: &mut Vec<ConfigError>,
-    as_typescript_does: bool,
 ) -> Option<Raw> {
     let text = host.read(path);
     let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, session, text)) else {
-        errors.push(ConfigError::new(5083, &[path]));
+        errors.push(ConfigError::new(5083, &[&displayed_path(path)]));
         return None;
     };
     let at = |(from, to): (u32, u32)| (path.to_vec(), from, to);
     let reported = errors.len();
-    errors.extend(
-        file.diagnostics()
-            .map(|(code, args, from, to)| ConfigError {
-                args,
-                at: Some(at((from, to))),
-                ..ConfigError::new(code, &[])
-            }),
-    );
+    let args_of = |d: &crate::hir::Diagnostic| -> Vec<Vec<u8>> {
+        d.args.iter().map(|arg| arg.to_vec()).collect()
+    };
+    errors.extend(file.diagnostics().map(|d| {
+        ConfigError {
+            args: args_of(d),
+            at: Some(at(file.diagnostic_span(d))),
+            related: (d.related.iter())
+                .map(|related| {
+                    let (from, to) = file.diagnostic_span(related);
+                    (from, to, related.code, args_of(related))
+                })
+                .collect(),
+            ..ConfigError::new(d.code, &[])
+        }
+    }));
     // `ParseExtendedConfig`: an extended file that does not parse is ignored.
     if !stack.is_empty() && errors.len() > reported {
         return None;
@@ -373,8 +383,7 @@ fn parse_config(
         }
     }
     for written in values_of(b"compilerOptions") {
-        let within = In::CompilerOptions { as_typescript_does };
-        let problems = crate::config_options::problems(&file, written, within);
+        let problems = crate::config_options::problems(&file, written, In::CompilerOptions);
         // `convertJsonOption`: an invalid value is treated as unspecified. So is an invalid element
         // of a list.
         let omitted: Vec<_> = (problems.iter())
@@ -465,15 +474,7 @@ fn parse_config(
     stack.push(resolved_path);
     let mut inherited = Raw::default();
     for extended_path in &extended_config_path {
-        let extended = parse_config(
-            host,
-            session,
-            extended_path,
-            stack,
-            errors,
-            as_typescript_does,
-        );
-        let Some(extended) = extended else {
+        let Some(extended) = parse_config(host, session, extended_path, stack, errors) else {
             continue;
         };
         // A property the extending file does not specify itself takes the value from the last of
@@ -633,29 +634,13 @@ pub fn load_overriding(
     over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
 ) -> Project {
     let mut errors = Vec::new();
-    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors, false);
+    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors);
     let mut raw = raw.unwrap_or_default();
     let base = dirname::<Posix>(path);
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, over(has_references), &[]);
     project_from_raw(host, session, path, base, raw, errors)
-}
-
-/// The same, following TypeScript 7 only: an option that only older versions accepted is as invalid
-/// as an unknown one, and an invalid option is treated as unspecified.
-#[cfg(feature = "baselines")]
-pub fn load_as_typescript_does(
-    host: &dyn Host,
-    session: &Session,
-    path: &[u8],
-    over: Vec<(Vec<u8>, Json)>,
-) -> Project {
-    let mut errors = Vec::new();
-    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors, true);
-    let mut raw = raw.unwrap_or_default();
-    merge_compiler_options(&mut raw.compiler, over, &[]);
-    project_from_raw(host, session, path, dirname::<Posix>(path), raw, errors)
 }
 
 /// The project consisting of `files` only, or of everything under `dir` if `files` is empty, with
@@ -721,10 +706,11 @@ fn project_from_raw(
                 for (_, targets) in patterns {
                     if let Json::Array(targets) = targets {
                         for target in targets {
+                            // A substitution is text, which messages quote.
                             if let Json::String(s) = target
                                 && let Some(substituted) = substitute_if_template(s, base)
                             {
-                                *s = substituted;
+                                *s = displayed_path(&substituted).into_owned();
                             }
                         }
                     }
@@ -749,7 +735,12 @@ fn project_from_raw(
     let mut problems = Vec::new();
     let has_empty_files = raw.files.items.as_ref().is_some_and(Vec::is_empty);
     if has_empty_files && has_no_references && !raw.has_extends {
-        problems.push(Problem::new(18002, &[config_path], Place::Top(b"files")));
+        let config_file_name = displayed_path(config_path);
+        problems.push(Problem::new(
+            18002,
+            &[&config_file_name],
+            Place::Top(b"files"),
+        ));
     }
     // Emitted files are not read back in as input.
     if !raw.exclude.is_array {
@@ -757,7 +748,7 @@ fn project_from_raw(
             .iter()
             .filter_map(|key| compiler.get(key).and_then(Json::as_str))
             .filter(|dir| !dir.is_empty())
-            .map(|dir| Json::String(dir.to_vec()))
+            .map(|dir| Json::String(displayed_path(dir).into_owned()))
             .collect();
         if !written.is_empty() {
             raw.exclude.items = Some(written);
@@ -790,16 +781,18 @@ fn project_from_raw(
         is_about_options: false,
         ..ConfigError::of_problem(host, session, config_path, problem)
     }));
-    let literal = substitute_all(raw.files.strings());
-    // `getMatchedFileSpec` returns the spec as it is written, and `""` is no match to its callers.
-    let written = literal.iter().filter(|name| !name.is_empty());
-    options.file_specs = written.map(|name| join(base, name)).collect();
+    let validated_files = raw.files.strings();
+    let literal = substitute_all(validated_files.clone());
+    options.file_specs = validated_files
+        .into_iter()
+        .zip(literal.iter().map(|name| join(base, name)))
+        .collect();
     let files = file_names_from_specs(host, base, &options, &literal, &include, &exclude);
     if files.is_empty() && can_report_no_inputs && !config_path.is_empty() {
         errors.push(ConfigError::new(
             18003,
             &[
-                config_path,
+                &displayed_path(config_path),
                 &raw.include.stringify(),
                 &raw.exclude.stringify(),
             ],
@@ -856,6 +849,20 @@ pub fn matched_include_spec<'s>(
             GlobPattern::compile(&spec.1, base, Usage::Files, case_sensitive)
                 .is_some_and(|pattern| pattern.matches(path, b""))
         })
+        .map(|spec| spec.0.as_slice())
+        .filter(|spec| !spec.is_empty())
+}
+
+/// `getMatchedFileSpec`: the first of `specs` (source text, path) that names the file at `path`, as
+/// its source text. `""` is no match to its callers.
+pub fn matched_file_spec<'s>(
+    specs: &'s [(Vec<u8>, Vec<u8>)],
+    path: &[u8],
+    case_sensitive: bool,
+) -> Option<&'s [u8]> {
+    specs
+        .iter()
+        .find(|spec| is_same_path(&spec.1, path, case_sensitive))
         .map(|spec| spec.0.as_slice())
         .filter(|spec| !spec.is_empty())
 }

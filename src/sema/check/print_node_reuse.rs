@@ -285,6 +285,8 @@ impl<'p> Printer<'_, 'p, '_> {
         if accessor.is_none() && (requires_widening || !self.c.iso_has_inferred_type(file, node)) {
             return self.type_to_node(ty);
         }
+        // `addSymbolTypeToContext`
+        self.c.get_symbol_id_of_node(file, node);
         let pt = match accessor {
             Some(func) => self.c.iso_pseudo_of_accessor(file, func),
             None => self.c.iso_pseudo_of_declaration(file, node),
@@ -549,6 +551,8 @@ impl<'p> Printer<'_, 'p, '_> {
         declaration: hir::Node,
         try_reuse: bool,
     ) -> Node {
+        // `enclosingSymbolTypes`
+        self.c.get_symbol_id_of_node(file, declaration);
         let Some(ty) = self.c.iso_type_of_declared(file, declaration) else {
             return Node::simple(b"any");
         };

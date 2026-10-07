@@ -10,7 +10,8 @@ use bun_core::{Global, Output, UnwrapOrOom, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
-    Category, CompilerOption, Diagnostic, FlagError, Progress, Report, Request, ScriptKind,
+    Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
+    Request, ScriptKind,
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
@@ -19,17 +20,13 @@ pub(crate) struct CheckCommand;
 
 #[derive(Default)]
 struct Options {
-    project: Option<Vec<u8>>,
-    paths: Vec<Vec<u8>>,
+    /// The paths, `--project`, `--build`, `--strict`, `--target es2022` and so on.
+    command_line: CommandLine,
     threads: usize,
     /// `--pretty`, `--no-pretty`. If neither is given, it depends on the output destination.
     pretty: Option<bool>,
     /// `--all`: never group identical errors.
     all: bool,
-    /// `--strict`, `--target es2022` and so on.
-    compiler_options: Vec<CompilerOption>,
-    /// `-b`, `--build`: the argument names the project, which is checked as `tsc -b` builds it.
-    build: bool,
     timing: bool,
 }
 
@@ -48,6 +45,9 @@ const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
 )];
 const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
+        "-b, --build        Check the projects in <b>references<r> too, like <b>tsc -b<r>"
+    ),
+    clap::param!(
         "--no-pretty        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>"
     ),
     clap::param!(
@@ -59,7 +59,6 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
     clap::param!("--no-emit"),
-    clap::param!("-b, --build"),
     clap::param!("<POS>..."),
 ];
 pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
@@ -88,6 +87,7 @@ fn parse(args: &[&ZStr]) -> Options {
         TABLE,
         clap::ParseOptions {
             diagnostic: Some(&mut diagnostic),
+            short_aliases: bun_sema_driver::SHORT_OPTION_NAMES,
             unknown_long_flags_are_positional: true,
             ..Default::default()
         },
@@ -117,10 +117,7 @@ fn parse(args: &[&ZStr]) -> Options {
         }
     }
     let mut options = Options {
-        project: parsed.option(b"--project").map(<[u8]>::to_vec),
         all: parsed.flag(b"--all"),
-        // Before `check`, `-b` is `--bun`.
-        build: parsed.flag(b"--build") && names_build(args),
         timing: parsed.flag(b"--timing"),
         ..Default::default()
     };
@@ -141,77 +138,42 @@ fn parse(args: &[&ZStr]) -> Options {
     // What follows `--` is a path, whatever it looks like.
     let after_dashes =
         (args.iter().position(|arg| arg.as_bytes() == b"--")).map_or(0, |at| args.len() - at - 1);
-    let flags_end = positionals.len().saturating_sub(after_dashes);
-    let mut rest = positionals.iter();
-    while let Some(&arg) = rest.next() {
-        let at = positionals.len() - rest.len() - 1;
-        match arg.strip_prefix(b"--") {
-            Some(flag) if at < flags_end => match name_and_value(flag, &mut rest) {
-                (b"pretty", None) => options.pretty = Some(true),
-                (b"pretty", Some(value)) if value.eq_ignore_ascii_case(b"true") => {
-                    options.pretty = Some(true);
-                }
-                (b"pretty", Some(value)) if value.eq_ignore_ascii_case(b"false") => {
-                    options.pretty = Some(false);
-                }
-                (b"pretty", Some(value)) => usage_error(format_args!(
-                    "--pretty does not take \"{}\"",
-                    BStr::new(value)
-                )),
-                (name, value) => options.compiler_options.push(compiler_option(name, value)),
-            },
-            _ => options.paths.push(arg.to_vec()),
-        }
+    let (flags, paths) = positionals.split_at(positionals.len().saturating_sub(after_dashes));
+    let mut command_line = bun_sema_driver::parse_command_line(flags, &working_directory());
+    if let Some(rejected) = command_line.rejected.first() {
+        reject(rejected);
     }
-    if parsed.flag(b"--no-pretty") {
-        options.pretty = Some(false);
+    command_line
+        .paths
+        .extend(paths.iter().map(|path| path.to_vec()));
+    if let Some(project) = parsed.option(b"--project") {
+        command_line.project = Some(project.to_vec());
     }
-    if options.build {
-        match (options.project.is_some(), options.paths.len()) {
-            (_, 0) => {}
-            (false, 1) => options.project = options.paths.pop(),
-            _ => usage_error(format_args!("--build takes one project")),
-        }
+    // Before `check`, `-b` is `--bun`.
+    command_line.build |= parsed.flag(b"--build") && names_build(args);
+    let projects = usize::from(command_line.project.is_some()) + command_line.paths.len();
+    if command_line.build && projects > 1 {
+        usage_error(format_args!("--build takes one project"));
     }
+    options.pretty = match parsed.flag(b"--no-pretty") {
+        true => Some(false),
+        false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
+    };
+    options.command_line = command_line;
     options
 }
 
-/// `flag` is what follows `--`: `strict`, `target` with the value in the next argument, or `target=es2022`.
-fn name_and_value<'a>(
-    flag: &'a [u8],
-    rest: &mut core::slice::Iter<'_, &'a [u8]>,
-) -> (&'a [u8], Option<&'a [u8]>) {
-    if let Some(at) = bun_core::strings::index_of_char_usize(flag, b'=') {
-        return (&flag[..at], Some(&flag[at + 1..]));
-    }
-    let next = rest.as_slice().first().copied();
-    let takes_next = match next {
-        // `--strict false`, but not `--strict src/index.ts`.
-        Some(next) if flag == b"pretty" || bun_sema_driver::is_boolean_compiler_option(flag) => {
-            next.eq_ignore_ascii_case(b"true") || next.eq_ignore_ascii_case(b"false")
-        }
-        Some(next) => !next.starts_with(b"-"),
-        None => false,
-    };
-    if takes_next {
-        rest.next();
-    }
-    (flag, next.filter(|_| takes_next))
-}
-
-fn compiler_option(name: &[u8], value: Option<&[u8]>) -> CompilerOption {
-    let option = bun_sema_driver::compiler_option_from_flag(name, value);
-    let name = BStr::new(name);
-    match option {
-        Ok(option) => option,
-        Err(FlagError::Unknown) => usage_error(format_args!("Unknown flag \"--{name}\"")),
-        Err(FlagError::NeedsValue) => usage_error(format_args!("--{name} needs a value")),
-        Err(FlagError::BadValue(allowed)) if allowed.is_empty() => usage_error(format_args!(
-            "--{name} does not take \"{}\"",
-            BStr::new(value.unwrap_or_default())
+fn reject(rejected: &RejectedFlag) -> ! {
+    let flag = BStr::new(&rejected.flag);
+    match &rejected.error {
+        FlagError::Unknown => usage_error(format_args!("Unknown flag \"{flag}\"")),
+        FlagError::NeedsValue => usage_error(format_args!("{flag} needs a value")),
+        FlagError::BadValue(allowed) if allowed.is_empty() => usage_error(format_args!(
+            "{flag} does not take \"{}\"",
+            BStr::new(rejected.value.as_deref().unwrap_or_default())
         )),
-        Err(FlagError::BadValue(allowed)) => usage_error(format_args!(
-            "--{name} must be one of: {}",
+        FlagError::BadValue(allowed) => usage_error(format_args!(
+            "{flag} must be one of: {}",
             BStr::new(&allowed.join(&b", "[..]))
         )),
     }
@@ -411,9 +373,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
 #[derive(Clone, Copy)]
 enum Paths<'a> {
     /// The arguments of `bun check`.
-    Arguments(&'a [Vec<u8>]),
-    /// `bun check -b`, whose argument is the project. See `Request::build`.
-    Build,
+    Arguments(&'a CommandLine),
     /// See `Request::are_entry_points`.
     EntryPoints(Entries<'a>),
 }
@@ -511,23 +471,23 @@ fn request<'a>(
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
-    let (entries, are_entry_points) = match *paths {
-        Paths::Arguments(paths) => {
+    let (entries, command_line) = match *paths {
+        Paths::Arguments(command_line) => {
             let paths = Entries {
-                paths,
+                paths: &command_line.paths,
                 ..Default::default()
             };
-            (paths, false)
+            (paths, Some(command_line))
         }
-        Paths::Build => (Entries::default(), false),
-        Paths::EntryPoints(entries) => (entries, true),
+        Paths::EntryPoints(entries) => (entries, None),
     };
     Request {
         cwd,
         project,
-        build: matches!(paths, Paths::Build),
+        build: command_line.is_some_and(|it| it.build),
+        errors: command_line.map_or(&[][..], |it| &it.errors[..]),
         paths: entries.paths,
-        are_entry_points,
+        are_entry_points: command_line.is_none(),
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
@@ -627,21 +587,21 @@ impl CheckCommand {
     /// those of `bun`, which has read them.
     pub(crate) fn exec_without_arguments() -> ! {
         Self::exec_with(&Options {
-            project: tsconfig_override().map(<[u8]>::to_vec),
+            command_line: CommandLine {
+                project: tsconfig_override().map(<[u8]>::to_vec),
+                ..Default::default()
+            },
             ..Default::default()
         })
     }
 
     fn exec_with(options: &Options) -> ! {
-        let cwd = working_directory();
+        let (cwd, command_line) = (working_directory(), &options.command_line);
         let report = run(
             &cwd,
-            options.project.as_deref(),
-            &match options.build {
-                true => Paths::Build,
-                false => Paths::Arguments(&options.paths),
-            },
-            &options.compiler_options,
+            command_line.project.as_deref(),
+            &Paths::Arguments(command_line),
+            &command_line.compiler_options,
             options.threads,
             Provided::default(),
             // The process exits without freeing what was loaded. Under leak detection, everything
@@ -660,21 +620,19 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     let shown_from = bun_sema_driver::host::from_native(cwd);
     // The errors are the output, as with `tsc`. The summary is printed separately.
     let mut out = Vec::new();
-    if !bun_sema_driver::is_quiet(&options.compiler_options) {
-        format::write_diagnostics(
-            &mut out,
-            report,
-            &Style {
-                is_case_sensitive: report.is_case_sensitive,
-                ..style_for(
-                    &shown_from,
-                    options.pretty,
-                    Destination::stdout(),
-                    options.all,
-                )
-            },
-        );
-    }
+    format::write_diagnostics(
+        &mut out,
+        report,
+        &Style {
+            is_case_sensitive: report.is_case_sensitive,
+            ..style_for(
+                &shown_from,
+                options.pretty,
+                Destination::stdout(),
+                options.all,
+            )
+        },
+    );
     let _ = Output::writer().write_all(&out);
     let mut summary = Vec::new();
     format::write_summary(

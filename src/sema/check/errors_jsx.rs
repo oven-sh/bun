@@ -133,7 +133,7 @@ impl Checker<'_, '_> {
                     match self.files().module(file).imported_file(spec) {
                         Some(found) => {
                             let path = self.files().module(found).file_name();
-                            self.error_at((file, start, end), 2306, &[Arg::Bytes(path)])
+                            self.error_at((file, start, end), 2306, &[Arg::Path(path)])
                         }
                         None => self.error_at((file, start, end), 2875, &[Arg::Atom(spec)]),
                     };
@@ -508,10 +508,6 @@ impl Checker<'_, '_> {
         file: FileId,
         e: ExprId,
     ) -> Option<TypeId> {
-        let pushed = self.contextual.iter().rev();
-        if let Some(&(.., ty)) = pushed.clone().find(|c| c.0 == file && c.1 == e) {
-            return Some(ty);
-        }
         // `getContextualTypeForJsxExpression`: a child of a fragment has no contextual type.
         let hir = self.hir(file);
         let ExprKind::Jsx(j) = hir[e].kind else {
@@ -519,6 +515,9 @@ impl Checker<'_, '_> {
         };
         if hir[j].tag.is_none() {
             return None;
+        }
+        if let Some(info) = self.find_contextual_node(file, e, true) {
+            return info.t;
         }
         // `getContextualTypeForArgumentAtIndex`: `resolvingSignature` is not resolved again. That state belongs to this checker, so it
         // is read from its own query stack. Like `anySignature` and `unknownSignature`, it has no parameters.
@@ -596,7 +595,7 @@ impl Checker<'_, '_> {
         check_mode: CheckMode,
         is_checked_once: bool,
     ) -> TypeId {
-        self.contextual.push((file, e, contextual_type));
+        self.push_contextual_type(file, e, Some(contextual_type), false);
         let ty = if is_checked_once {
             self.inference_contexts.push(InferenceContextInfo {
                 file,
@@ -628,7 +627,7 @@ impl Checker<'_, '_> {
                 |c, _| c.jsx_attributes_type(file, e),
             )
         };
-        self.contextual.pop();
+        self.pop_contextual_type();
         ty
     }
 

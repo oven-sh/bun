@@ -290,6 +290,20 @@ impl ThreadPool {
         // Wake all the threads to check for idle events.
         self.idle_event.wake_all();
     }
+
+    /// Queues a task from `new_task` for every thread the pool has spawned, to run on that thread
+    /// when it is next idle, and wakes them. Does not wait for any of them.
+    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> *mut Task) {
+        let mut next = self.threads.load(Ordering::Acquire);
+        while let Some(thread) = NonNull::new(next) {
+            // A registered worker stays in the list, and alive, until the pool shuts down:
+            // `Thread::pop` walks the same links.
+            let thread = bun_ptr::BackRef::from(thread);
+            thread.push_idle_task(new_task());
+            next = thread.next;
+        }
+        self.wake_for_idle_events();
+    }
 }
 
 /// Shut down the thread pool and stop the worker threads.

@@ -3606,7 +3606,9 @@ pub fn process_fetch_log(
 
     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
         take(match msg.metadata {
-            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
+                BuildMessage::create(global_this, msg)
+            }
             bun_ast::Metadata::Resolve(_) => {
                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
             }
@@ -4504,11 +4506,13 @@ impl VirtualMachine {
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
     pub fn add_main_to_watcher_if_needed(&mut self) {
-        if !self.is_watcher_enabled() {
-            return;
-        }
-        let main = self.main();
-        if main.is_empty() {
+        self.add_to_watcher_if_needed(self.main());
+    }
+
+    /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
+    /// enabled.
+    pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
+        if !self.is_watcher_enabled() || path.is_empty() {
             return;
         }
         let watcher = self.bun_watcher_ptr();
@@ -4520,8 +4524,34 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
         }
+    }
+
+    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
+    /// enabled.
+    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
+        struct Shared {
+            watcher: *mut crate::hot_reloader::ImportWatcher,
+            _ticket: crate::Ticket,
+        }
+        // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
+        // shared with other threads (see `bun_watcher_ptr`).
+        unsafe impl Send for Shared {}
+        if !self.is_watcher_enabled() {
+            return None;
+        }
+        // One of these threads at a time has the `&mut`.
+        let shared = bun_threading::Guarded::new(Shared {
+            watcher: self.bun_watcher_ptr(),
+            _ticket: self.ticket(),
+        });
+        Some(move |path: &[u8]| {
+            let shared = shared.lock();
+            let watcher = shared.watcher;
+            // SAFETY: as in `add_to_watcher_if_needed`.
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
+        })
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot

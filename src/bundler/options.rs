@@ -1193,6 +1193,27 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// What `BundleOptions::type_check` checks.
+pub struct TypeChecked<'a, 'i> {
+    pub cwd: &'a [u8],
+    /// `tsconfig_override`, which the resolver reads in place of every other.
+    pub tsconfig: Option<&'a [u8]>,
+    /// `custom_conditions`
+    pub conditions: &'a [Box<[u8]>],
+    /// `loaders`. A file that only has types is not in the bundle, so not among `sources`.
+    pub loaders: &'a LoaderHashTable,
+    /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
+    /// page imports.
+    pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
+    /// bundle, which the type checker takes instead of reading the file again.
+    pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+}
+
+/// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
+/// whether the build goes on.
+pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
+
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1326,6 +1347,12 @@ pub struct BundleOptions<'a> {
     pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
+    /// `--check`, `check: true`: type checks the program when every file is parsed, before
+    /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
+    /// checker.
+    pub type_check: Option<TypeCheck>,
+    /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
+    pub custom_conditions: Vec<Box<[u8]>>,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1537,6 +1564,8 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
+            type_check: self.type_check,
+            custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1720,6 +1749,8 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: None,
             fold_chunks: true,
             module_preload: true,
+            type_check: None,
+            custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

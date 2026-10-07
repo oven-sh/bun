@@ -3409,8 +3409,7 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
-        // Before the preloads, because one of them can import the entry. The request stays
-        // after this load returns: a patched `Module.runMain` can run the entry later.
+        // Before the preloads: one of them can import the entry.
         crate::debugger::Debugger::cancel_pause_at_entry(self);
         crate::debugger::Debugger::schedule_pause_at_entry(self);
 

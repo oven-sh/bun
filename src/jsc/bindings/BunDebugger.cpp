@@ -1017,7 +1017,6 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
 
-// --inspect-brk: the debugger pauses when the code of the entry at `url` starts to run.
 // False when no frontend enabled the debugger with breakpoints active: nothing can pause then.
 extern "C" bool Debugger__schedulePauseAtEntry(JSGlobalObject* globalObject, const BunString* url, bool programCode)
 {

@@ -121,8 +121,7 @@ pub struct Debugger {
     pub poll_ref: KeepAlive,
     pub wait_for_connection: Wait,
     // wait_for_connection: bool = false,
-    /// `--inspect-brk` / `BUN_INSPECT=…?break=1`. The first entry load of the
-    /// process takes it (`schedule_pause_at_entry`).
+    /// Taken by the first entry load of the process (`schedule_pause_at_entry`).
     pub set_breakpoint_on_first_line: bool,
     /// JSC holds a request to pause when the entry starts to run.
     pub pause_at_entry_scheduled: bool,
@@ -197,10 +196,7 @@ struct DebuggerThreadInit {
 }
 
 impl Debugger {
-    /// `--inspect-brk` / `BUN_INSPECT=…?break=1`: an entry load starts.
-    /// Asks JSC to pause when the code of `vm.main()` starts to run, whoever
-    /// runs it and whenever. Only the first entry load of the process asks: a
-    /// hot reload and the next test file do not pause.
+    /// Asks JSC to pause when the top-level code of `vm.main()` starts to run.
     pub(crate) fn schedule_pause_at_entry(vm: &VirtualMachine) {
         let asked = vm
             .debugger_mut()

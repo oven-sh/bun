@@ -2781,23 +2781,31 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
-    // The frames of a build that is not optimised are larger: there the check itself runs out of stack.
-    test.skipIf(isDebug || isASAN)("a type that is nested too deeply to be printed whole loses no error", async () => {
+    test("a type that is nested too deeply to be printed whole loses no error", async () => {
+      // The frames of a build that is not optimised are larger: at 1,000 levels the check itself runs out of stack there.
+      const depth = isDebug || isASAN ? 100 : 1000;
       using dir = project({
-        "a.ts": `declare const x: ${repeat("{ a: ", 1000)}1${repeat(" }", 1000)};
+        "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
 export const wrong: number = x;
 `,
       });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
-      expect(stdout.slice(0, 60)).toBe("a.ts(2,14): error TS2322: Type '{ a: { a: { a: { a: { a: { a:");
-      expect(stdout.slice(-40)).toBe("}; }' is not assignable to type 'number'.");
-      expect(stderr.split("\n")[0]).toMatch(/^Found 1 error in 1 file, checked \d+ files \[time\]$/);
+      expect(stdout).toStartWith("a.ts(2,14): error TS2322: Type '{ a: { a: { a: { a: { a: { a: ");
+      expect(stdout).toEndWith(" }; }; }' is not assignable to type 'number'.");
+      expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
     });
 
-    test.each(["overload", "callback"])("a JSDoc comment of 20,000 @%s tags, each nested in the last", async tag => {
+    test.each([
+      "@overload",
+      "@callback",
+      "@param {Object} a",
+      "@param {object[]} a",
+      "@template T @param {Object} a",
+      "@callback @param {Object} a",
+    ])("a JSDoc comment of 20,000 times %j, each nested in the last", async tags => {
       using dir = project({
-        "a.ts": `/** {@link f} ${repeat(`@${tag} `, 20_000)}*/
+        "a.ts": `/** {@link f} ${repeat(`${tags} `, 20_000)}*/
 export function f() {}
 const wrong: number = "";
 `,

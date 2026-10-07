@@ -1407,9 +1407,9 @@ fn jsdoc_links<'a>(
 
 /// The part of jsdoc.go, of TypeScript's parser, that finds the links in a JSDoc comment.
 struct JSDocParser<'a> {
-    /// `Checker::is_stack_low`: a tag in the signature of `@overload` or `@callback` is one level of recursion.
+    /// `Checker::is_stack_low`
     is_stack_low: &'a dyn Fn() -> bool,
-    /// It has been. Each tag of the comment would get as deep again.
+    /// See `is_too_deep`.
     is_out_of_stack: bool,
     /// The source, up to the `*/` of the comment.
     text: &'a [u8],
@@ -1420,6 +1420,14 @@ struct JSDocParser<'a> {
 }
 
 impl<'a> JSDocParser<'a> {
+    /// Whether a tag is not to be parsed inside another one. Every cycle of calls in this parser goes through
+    /// `parse_jsdoc_signature` or `try_parse_child_tag`, one level for each tag of a run of `@overload`, `@callback` or
+    /// `@param {Object} a`. Once the stack has been low, each further tag of the comment would get as deep again.
+    fn is_too_deep(&mut self) -> bool {
+        self.is_out_of_stack |= (self.is_stack_low)();
+        self.is_out_of_stack
+    }
+
     /// `nextTokenJSDoc`, `ScanJSDocToken`
     fn next_token_jsdoc(&mut self) -> JSDocToken {
         let (text, start) = (self.text, self.scanner.pos);
@@ -1908,8 +1916,7 @@ impl<'a> JSDocParser<'a> {
             .parse_child_parameter_or_property_tag(CALLBACK_PARAMETER, indent, None)
             .is_some()
         {}
-        self.is_out_of_stack |= (self.is_stack_low)();
-        if self.is_out_of_stack {
+        if self.is_too_deep() {
             return;
         }
         let state = self.mark();
@@ -1984,6 +1991,9 @@ impl<'a> JSDocParser<'a> {
 
     /// `tryParseChildTag`
     fn try_parse_child_tag(&mut self, target: u8, indent: usize) -> Option<JSDocChildTag<'a>> {
+        if self.is_too_deep() {
+            return None;
+        }
         let start = self.scanner.full_start;
         self.next_token_jsdoc();
         let tag_name = self.parse_jsdoc_identifier_name();

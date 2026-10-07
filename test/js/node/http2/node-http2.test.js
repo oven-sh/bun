@@ -6876,15 +6876,19 @@ describe("http2 a header call that throws leaves the HPACK encoder in sync with 
       error: "ERR_HTTP2_INVALID_HEADER_VALUE",
     },
     "invalid name": { headers: { "x-a": "AAAA", "x-b": "BBBB", "bad name": "v" }, error: "ERR_INVALID_HTTP_TOKEN" },
+    "undefined value": {
+      headers: { "x-a": "AAAA", "x-b": "BBBB", "x-u": undefined },
+      error: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    },
     "null value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-n": null }, error: "ERR_HTTP2_INVALID_HEADER_VALUE" },
     "symbol value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-s": Symbol("s") }, error: "TypeError" },
     "throwing toString": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-t": throwingToString }, error: "BOOM" },
   };
   const kinds = Object.keys(poisons);
   // respond() drops a string value with CR/LF/NUL instead of throwing, so those two kinds do not
-  // apply to it. pushStream() skips a null value (node's mapToHeaders does the same).
+  // apply to it. pushStream() skips an undefined or null value (node's mapToHeaders does the same).
   const respondKinds = kinds.filter(k => k !== "invalid value" && k !== "invalid array element");
-  const pushKinds = kinds.filter(k => k !== "null value");
+  const pushKinds = kinds.filter(k => k !== "undefined value" && k !== "null value");
   const errorOf = err => err.code ?? err.constructor.name;
   const cleanResponse = { ":status": 200, "x-clean": "clean-value", "content-type": "text/plain" };
 
@@ -7170,5 +7174,344 @@ describe("http2 a header call that throws leaves the HPACK encoder in sync with 
         expect(sessionErrors).toEqual([]);
       },
     );
+  });
+});
+
+// The encoder takes a field whose name plus value is at most 65536 bytes. A header call with a
+// longer field does not throw: the session error (code 9) arrives from the event loop. The
+// fields of that block that came before the long one used to stay in the HPACK table, so every
+// header block written in the same tick reached the peer with its indices shifted.
+describe("http2 a header block the encoder refuses does not reach the HPACK table", () => {
+  const oversized = name => Buffer.alloc(65537 - name.length, "x").toString();
+  const PAGE = { ":status": 200, "x-app": "shop", "x-build": "7", "cache-control": "public, max-age=60" };
+  const listen = server => new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  // One GET: the response headers without date, or the error code.
+  function get(session, path, headers = {}) {
+    const { promise, resolve } = Promise.withResolvers();
+    let result;
+    let req;
+    try {
+      req = session.request({ ":path": path, ...headers });
+    } catch (err) {
+      return Promise.resolve({ error: err.code });
+    }
+    req.on("response", received => {
+      delete received.date;
+      result = Object.fromEntries(Object.entries(received));
+    });
+    req.on("error", err => (result ??= { error: err.code }));
+    req.on("close", () => resolve(result ?? { error: "closed without a response" }));
+    req.resume();
+    return promise;
+  }
+
+  // Each act makes one header call whose block has a fresh field and then the long one.
+  const serverActs = {
+    "additionalHeaders()": stream => {
+      stream.additionalHeaders({ ":status": 103, "x-fresh": "fresh-value", link: oversized("link") });
+    },
+    "respond()": stream => {
+      stream.respond({ ":status": 200, "x-fresh": "fresh-value", "x-big": oversized("x-big") });
+    },
+    "respond() with a raw header array": stream => {
+      stream.respond([":status", "200", "x-fresh", "fresh-value", "x-big", oversized("x-big")]);
+    },
+    "pushStream()": stream => {
+      // The pushed stream exists until the session error ends it.
+      stream.pushStream({ ":path": "/pushed", "x-fresh": "fresh-value", "x-big": oversized("x-big") }, (err, pushed) =>
+        pushed?.on("error", () => {}),
+      );
+    },
+    "compat writeHead()": (stream, res) => {
+      res.writeHead(200, { "x-fresh": "fresh-value", "x-big": oversized("x-big") });
+      res.end();
+    },
+    "compat writeEarlyHints()": (stream, res) => {
+      // "</" + path + ">; rel=preload" is 65533 bytes: with the name "link" that is 65537.
+      const link = `</${Buffer.alloc(65533 - 16, "x").toString()}>; rel=preload`;
+      res.writeEarlyHints({ "x-fresh": "fresh-value", link });
+    },
+  };
+
+  // One connection for several users. Three streams are held. The act runs on a fourth stream,
+  // and the held streams are answered in the same tick.
+  it.each(Object.keys(serverActs))("%s: streams answered in the same tick decode right", async name => {
+    const held = [];
+    const allHeld = Promise.withResolvers();
+    const sessionError = Promise.withResolvers();
+    const route = (stream, headers, res) => {
+      stream.on("error", () => {});
+      const path = headers[":path"];
+      if (path === "/health") {
+        stream.respond({ ":status": 200, "x-health": "ok", "x-region": "eu-1", server: "shop/1" });
+        return stream.end("ok");
+      }
+      if (path === "/login") {
+        stream.respond({ ":status": 200, "x-app": "shop", "set-cookie": "sid=ALICE-SESSION; HttpOnly" });
+        return stream.end("in");
+      }
+      if (path === "/page") {
+        stream.respond({ ...PAGE });
+        return stream.end("page");
+      }
+      if (path === "/hold") {
+        held.push(stream);
+        if (held.length === 3) allHeld.resolve();
+        return;
+      }
+      serverActs[name](stream, res);
+      for (const waiting of held.splice(0)) {
+        waiting.respond({ ...PAGE });
+        waiting.end("page");
+      }
+    };
+    const server = http2.createServer();
+    if (name.startsWith("compat")) server.on("request", (req, res) => route(req.stream, req.headers, res));
+    else server.on("stream", (stream, headers) => route(stream, headers));
+    server.on("sessionError", err => sessionError.resolve({ code: err.code, message: err.message }));
+    await listen(server);
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const primed = [await get(client, "/health"), await get(client, "/login"), await get(client, "/page")];
+      const holds = [get(client, "/hold"), get(client, "/hold"), get(client, "/hold")];
+      await allHeld.promise;
+      get(client, "/act");
+      expect({ primed, held: await Promise.all(holds) }).toEqual({
+        primed: [
+          { ":status": 200, "x-health": "ok", "x-region": "eu-1", server: "shop/1" },
+          { ":status": 200, "x-app": "shop", "set-cookie": ["sid=ALICE-SESSION; HttpOnly"] },
+          PAGE,
+        ],
+        held: [PAGE, PAGE, PAGE],
+      });
+      // The refused block still ends the session, from the event loop, as before.
+      expect(await sessionError.promise).toEqual({
+        code: "ERR_HTTP2_SESSION_ERROR",
+        message: "Session closed with error code 9",
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // The refused block ends the client session from the event loop, so requests made in the same
+  // tick fail on the client. Some of them are on the wire by then. The peer must decode those
+  // right, and not see a malformed block.
+  it("client request(): requests made in the same tick decode right at the peer", async () => {
+    const seen = {};
+    const sessionErrors = [];
+    const sessionClosed = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("session", session => session.on("close", sessionClosed.resolve));
+    server.on("sessionError", err => sessionErrors.push(err.code));
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      seen[headers[":path"]] = { app: headers["x-app"], build: headers["x-build"], user: headers["x-user"] };
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await listen(server);
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      await get(client, "/prime", { "x-app": "shop", "x-build": "7", "x-user": "alice-cookie" });
+      const act = get(client, "/act", { "x-fresh": "fresh-value", "x-big": oversized("x-big") });
+      get(client, "/next1", { "x-app": "shop", "x-build": "7" });
+      get(client, "/next2", { "x-app": "shop", "x-build": "7" });
+      expect(await act).toEqual({ error: "ERR_HTTP2_SESSION_ERROR" });
+      await sessionClosed.promise;
+      const { "/prime": prime, ...sameTick } = seen;
+      expect({
+        prime,
+        sameTick: Object.values(sameTick),
+        malformed: sessionErrors.includes("ERR_HTTP2_ERROR"),
+      }).toEqual({
+        prime: { app: "shop", build: "7", user: "alice-cookie" },
+        sameTick: Object.values(sameTick).map(() => ({ app: "shop", build: "7", user: undefined })),
+        malformed: false,
+      });
+      expect(Object.keys(sameTick)).toContain("/next1");
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // bun's own decoder stops at a smaller field, so the peer here reads raw frames. The first
+  // response has a field of exactly 65536 bytes, then a fresh field. The long field empties the
+  // dynamic table when it goes in, so the fresh field is the only entry: index 62.
+  it("a field of exactly 65536 bytes is sent, and the next block is indexed against it", async () => {
+    let streams = 0;
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++streams === 1) {
+        const longest = Buffer.alloc(65536 - "x-max".length, "x").toString();
+        stream.respond({ ":status": 200, "x-max": longest, "x-fresh": "fresh-value" }, { sendDate: false });
+      } else {
+        stream.respond({ ":status": 200, "x-fresh": "fresh-value" }, { sendDate: false });
+      }
+      stream.end();
+    });
+    await listen(server);
+    const frame = (type, flags, streamId, payload = Buffer.alloc(0)) => {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(payload.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, payload]);
+    };
+    const HEADERS = 1;
+    const SETTINGS = 4;
+    const CONTINUATION = 9;
+    const END_STREAM = 0x1;
+    const END_HEADERS = 0x4;
+    // :method GET, :scheme http, :path /, :authority localhost
+    const request = Buffer.from([0x82, 0x86, 0x84, 0x41, 0x09, ...Buffer.from("localhost")]);
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    const blocks = { 1: [], 3: [] };
+    const bothBlocks = Promise.withResolvers();
+    let buffered = Buffer.alloc(0);
+    socket.on("error", bothBlocks.reject);
+    socket.on("close", () => bothBlocks.reject(new Error("the server closed the connection")));
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+        const length = buffered.readUIntBE(0, 3);
+        const type = buffered[3];
+        const flags = buffered[4];
+        const streamId = buffered.readUInt32BE(5) & 0x7fffffff;
+        const payload = buffered.subarray(9, 9 + length);
+        buffered = buffered.subarray(9 + length);
+        if (type !== HEADERS && type !== CONTINUATION) continue;
+        blocks[streamId].push(payload);
+        if (!(flags & END_HEADERS)) continue;
+        if (streamId === 1) socket.write(frame(HEADERS, END_HEADERS | END_STREAM, 3, request));
+        else bothBlocks.resolve();
+      }
+    });
+    try {
+      socket.write(
+        Buffer.concat([
+          Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+          frame(SETTINGS, 0, 0),
+          frame(HEADERS, END_HEADERS | END_STREAM, 1, request),
+        ]),
+      );
+      await bothBlocks.promise;
+      const first = Buffer.concat(blocks[1]);
+      // 0x88 is ":status: 200". The 65531 'x' of the long value are Huffman-coded at 7 bits each.
+      expect({ status: first[0], frames: blocks[1].length, longEnough: first.length > 57000 }).toEqual({
+        status: 0x88,
+        frames: 4,
+        longEnough: true,
+      });
+      // ":status: 200", then dynamic index 62.
+      expect(Buffer.concat(blocks[3]).toString("hex")).toBe("88be");
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+});
+
+// node checks maxSendHeaderBlockLength on nghttp2's bound for the uncompressed block:
+// 12 + 12 per field + the name and value bytes + 5. For respond({ ":status": 200, "x-a": value })
+// without a date field that is 54 + value.length. The check runs before the encoder, so a
+// refused block leaves the HPACK table alone and the session goes on.
+describe("http2 maxSendHeaderBlockLength on a server response", () => {
+  const PAGE = { ":status": 200, "x-app": "shop", "x-build": "7" };
+  function get(session, path, informational = []) {
+    const { promise, resolve } = Promise.withResolvers();
+    let result;
+    const req = session.request({ ":path": path });
+    req.on("headers", received => informational.push(received[":status"]));
+    req.on("response", received => {
+      delete received.date;
+      result = Object.fromEntries(Object.entries(received));
+    });
+    req.on("error", err => (result ??= { error: err.code, message: err.message }));
+    req.on("close", () => resolve(result ?? { error: "closed without a response" }));
+    req.resume();
+    return promise;
+  }
+
+  it("sends a block at the limit, resets the stream for a block over it, and keeps the session", async () => {
+    const held = [];
+    const allHeld = Promise.withResolvers();
+    const events = [];
+    const server = http2.createServer({ maxSendHeaderBlockLength: 300 });
+    server.on("sessionError", err => events.push("sessionError " + err.code));
+    server.on("stream", (stream, headers) => {
+      const path = headers[":path"];
+      stream.on("error", err => events.push(`${path} error ${err.message}`));
+      stream.on("frameError", (type, code) => events.push(`${path} frameError type=${type} code=${code}`));
+      if (path === "/page") {
+        stream.respond({ ...PAGE });
+        return stream.end("page");
+      }
+      if (path === "/hold") {
+        held.push(stream);
+        if (held.length === 3) allHeld.resolve();
+        return;
+      }
+      if (path.startsWith("/hint/")) {
+        // A refused 1xx block leaves the stream open for the final response.
+        const length = Number(path.slice("/hint/".length));
+        stream.additionalHeaders({ ":status": 103, "x-a": Buffer.alloc(length, "a").toString() });
+        stream.respond({ ...PAGE });
+        return stream.end("page");
+      }
+      const length = Number(path.slice("/value/".length));
+      stream.respond({ ":status": 200, "x-a": Buffer.alloc(length, "a").toString() }, { sendDate: false });
+      for (const waiting of held.splice(0)) {
+        waiting.respond({ ...PAGE });
+        waiting.end("page");
+      }
+      stream.end();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", err => events.push("client session error " + err.code));
+    try {
+      const primed = await get(client, "/page");
+      const atTheLimit = await get(client, "/value/246");
+      const holds = [get(client, "/hold"), get(client, "/hold"), get(client, "/hold")];
+      await allHeld.promise;
+      const overTheLimit = await get(client, "/value/247");
+      const informational = [];
+      expect({
+        primed,
+        atTheLimit: { status: atTheLimit[":status"], length: atTheLimit["x-a"]?.length },
+        overTheLimit,
+        held: await Promise.all(holds),
+        later: await get(client, "/page"),
+        afterRefusedHint: await get(client, "/hint/247", informational),
+        informational,
+        events,
+      }).toEqual({
+        primed: PAGE,
+        atTheLimit: { status: 200, length: 246 },
+        overTheLimit: {
+          error: "ERR_HTTP2_STREAM_ERROR",
+          message: "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+        },
+        held: [PAGE, PAGE, PAGE],
+        later: PAGE,
+        afterRefusedHint: PAGE,
+        informational: [],
+        events: [
+          "/value/247 frameError type=1 code=6",
+          "/value/247 error Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+          "/hint/247 frameError type=1 code=6",
+        ],
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
   });
 });

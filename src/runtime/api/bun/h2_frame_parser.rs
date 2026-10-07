@@ -23,6 +23,7 @@ use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
 use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::rare_data::H2HeaderScratch;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
@@ -242,9 +243,6 @@ const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 // the JS caller (Http2Stream._write/_writev) completes it asynchronously. Mirrored in
 // src/js/node/http2.ts (kWriteFlushedWithoutCallback).
 const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
-// RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
-// for the HPACK dynamic table entry structure
-const HPACK_ENTRY_OVERHEAD: usize = 32;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
@@ -1967,59 +1965,53 @@ impl Stream {
     }
 }
 
-/// Validated outbound header fields, collected before any of them reach the HPACK encoder.
-/// An encoded field that is never sent desyncs the peer's dynamic table for the rest of the
-/// connection, so a validation throw must happen before the first `encode()`.
-#[derive(Default)]
-struct HeaderList {
-    bytes: Vec<u8>,
-    fields: Vec<HeaderField>,
+/// The per-VM header scratch, held for one outbound header call. The walk stages its validated
+/// fields in `block`. Nothing reaches the HPACK encoder before `encode_header_list`.
+struct HeaderScratch<'a> {
+    global: &'a JSGlobalObject,
+    scratch: H2HeaderScratch,
 }
 
-struct HeaderField {
-    name_len: usize,
-    value_len: usize,
-    never_index: bool,
+impl<'a> HeaderScratch<'a> {
+    fn take(global: &'a JSGlobalObject) -> Self {
+        Self {
+            global,
+            scratch: global
+                .bun_vm()
+                .as_mut()
+                .rare_data()
+                .take_h2_header_scratch(),
+        }
+    }
+
+    /// A 1xx `:status`: the final response still follows on the same stream.
+    fn is_informational(&self) -> bool {
+        self.block
+            .iter()
+            .any(|(name, value, _)| name == b":status" && value.len() == 3 && value[0] == b'1')
+    }
 }
 
-impl HeaderList {
-    fn push(
-        &mut self,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.bytes
-            .try_reserve(name.len() + value.len())
-            .map_err(|_| bun_alloc::AllocError)?;
-        self.fields
-            .try_reserve(1)
-            .map_err(|_| bun_alloc::AllocError)?;
-        self.bytes.extend_from_slice(name);
-        self.bytes.extend_from_slice(value);
-        self.fields.push(HeaderField {
-            name_len: name.len(),
-            value_len: value.len(),
-            never_index,
-        });
-        Ok(())
+impl Drop for HeaderScratch<'_> {
+    fn drop(&mut self) {
+        self.global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .put_back_h2_header_scratch(core::mem::take(&mut self.scratch));
     }
+}
 
-    /// Same formula as nghttp2_hd_deflate_bound.
-    fn deflate_bound(&self) -> usize {
-        12 + self.fields.len() * 12 + self.bytes.len()
+impl core::ops::Deref for HeaderScratch<'_> {
+    type Target = H2HeaderScratch;
+    fn deref(&self) -> &H2HeaderScratch {
+        &self.scratch
     }
+}
 
-    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
-        let mut offset = 0usize;
-        self.fields.iter().map(move |field| {
-            let name_end = offset + field.name_len;
-            let value_end = name_end + field.value_len;
-            let name = &self.bytes[offset..name_end];
-            let value = &self.bytes[name_end..value_end];
-            offset = value_end;
-            (name, value, field.never_index)
-        })
+impl core::ops::DerefMut for HeaderScratch<'_> {
+    fn deref_mut(&mut self) -> &mut H2HeaderScratch {
+        &mut self.scratch
     }
 }
 
@@ -2028,82 +2020,28 @@ impl HeaderList {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    /// Encodes every field of a fully validated header list into `encoded_headers`.
-    fn encode_header_list(
-        &self,
-        encoded_headers: &mut Vec<u8>,
-        headers: &HeaderList,
-    ) -> crate::Result<()> {
-        // Taking the cork slot can flush another session through transport JS, which can make
-        // a header call on this session. Take it before the encode: the caller's writes then
-        // find the slot owned, and no JS runs between the encode and the block's last byte.
+    /// The only call into the HPACK encoder: every field of `scratch.block` into
+    /// `scratch.encoded`, or none. `Err` leaves the dynamic table as it was.
+    fn encode_header_list(&self, scratch: &mut H2HeaderScratch) -> crate::Result<()> {
+        scratch.encoded.clear();
+        // The 256 is room for the pad-length byte and the padding of a PADDED HEADERS frame.
+        scratch
+            .encoded
+            .try_reserve(scratch.block.encode_bound() + 256)
+            .map_err(|_| bun_alloc::AllocError)?;
+        // Taking the cork can flush another session through transport JS. Take it before the
+        // encode, so that JS cannot run between the encode and the block's last write.
         if ENABLE_AUTO_CORK {
             self.cork();
         }
-        for (name, value, never_index) in headers.iter() {
-            bun_output::scoped_log!(
-                H2FrameParser,
-                "encode header {} {}",
-                BStr::new(name),
-                BStr::new(value)
-            );
-            self.encode_header_into_list(encoded_headers, name, value, never_index)?;
-        }
-        Ok(())
-    }
-
-    /// Encodes a single header into the ArrayList, growing if needed.
-    /// Returns the number of bytes written, or error on failure.
-    ///
-    /// Capacity estimation: name.len + value.len + HPACK_ENTRY_OVERHEAD
-    fn encode_header_into_list(
-        &self,
-        encoded_headers: &mut Vec<u8>,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-    ) -> crate::Result<usize> {
-        let old_len = encoded_headers.len();
-        let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
-        // hpack.encode() needs `&mut [u8]` (not `&mut [MaybeUninit<u8>]`), so zero-extend to
-        // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
-        // bytes.
-        encoded_headers.resize(required, 0);
-        match self.encode(
-            encoded_headers.as_mut_slice(),
-            old_len,
-            name,
-            value,
-            never_index,
-        ) {
-            Ok(bytes_written) => {
-                encoded_headers.truncate(old_len + bytes_written);
-                Ok(bytes_written)
-            }
-            Err(e) => {
-                encoded_headers.truncate(old_len);
-                Err(e)
-            }
-        }
-    }
-
-    pub(crate) fn encode(
-        &self,
-        dst_buffer: &mut [u8],
-        dst_offset: usize,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-    ) -> crate::Result<usize> {
-        self.hpack.with_mut(|hpack| {
-            if let Some(hpack) = hpack.as_mut() {
-                // lets make sure the name is lowercase
-                return hpack
-                    .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(crate::Error::from);
-            }
-            Err(crate::Error::UnableToEncode)
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "encode header block: {} fields",
+            scratch.block.len()
+        );
+        self.hpack.with_mut(|hpack| match hpack.as_mut() {
+            Some(hpack) => Ok(hpack.encode_block(&scratch.block, &mut scratch.encoded)?),
+            None => Err(crate::Error::UnableToEncode),
         })
     }
 
@@ -2580,8 +2518,8 @@ impl H2FrameParser {
     }
 
     fn cork(&self) {
-        // The slot is read again after every forced uncork: that write can run transport JS,
-        // which can cork any parser. Frames this parser corked there stay in the buffer.
+        // Read the slot again after each forced uncork: its transport JS can cork any parser,
+        // this one too, and those frames must stay in the buffer.
         while let Some(corked) = Self::corked() {
             if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
@@ -5660,7 +5598,7 @@ impl H2FrameParser {
             );
         }
 
-        let mut pending = HeaderList::default();
+        let mut scratch = HeaderScratch::take(global_object);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
@@ -5724,7 +5662,8 @@ impl H2FrameParser {
                     );
                     return Err(global_object.throw_value(exception));
                 }
-                pending
+                scratch
+                    .block
                     .push(validated_name, value, never_index)
                     .map_err(|_| {
                         global_object.throw(format_args!("Failed to allocate header buffer"))
@@ -5808,8 +5747,7 @@ impl H2FrameParser {
             }
         }
 
-        let mut encoded_headers: Vec<u8> = Vec::new();
-        match this.encode_header_list(&mut encoded_headers, &pending) {
+        match this.encode_header_list(&mut scratch) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -5836,7 +5774,7 @@ impl H2FrameParser {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        let encoded_data = encoded_headers.as_slice();
+        let encoded_data = scratch.encoded.as_slice();
         let encoded_size = encoded_data.len();
 
         // RFC 7540 Section 8.1: Trailers are sent as a HEADERS frame with END_STREAM flag
@@ -6108,7 +6046,7 @@ impl H2FrameParser {
         };
 
         let mut name_buffer = [0u8; 4096];
-        let mut pending = HeaderList::default();
+        let mut scratch = HeaderScratch::take(global_object);
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
@@ -6188,7 +6126,8 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    pending
+                    scratch
+                        .block
                         .push(validated_name, value, never_index)
                         .map_err(|_| {
                             global_object.throw(format_args!("Failed to allocate header buffer"))
@@ -6244,15 +6183,18 @@ impl H2FrameParser {
             }
         }
 
-        let mut encoded_headers: Vec<u8> = Vec::new();
-        if this
-            .encode_header_list(&mut encoded_headers, &pending)
-            .is_err()
-        {
-            // node never surfaces this through the pushStream callback.
-            this.schedule_header_compression_session_error();
-            return Ok(JSValue::js_number(-1.0));
+        match this.encode_header_list(&mut scratch) {
+            Ok(()) => {}
+            Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
+                return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
+            }
+            Err(_) => {
+                // node never surfaces this through the pushStream callback.
+                this.schedule_header_compression_session_error();
+                return Ok(JSValue::js_number(-1.0));
+            }
         }
+        let encoded_headers = scratch.encoded.as_slice();
 
         let max_frame =
             this.remote_settings
@@ -6274,7 +6216,7 @@ impl H2FrameParser {
             let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
             let _ = ws.write_all(&promised_be.to_ne_bytes());
             let _ = this.write(&hdr_buf);
-            let _ = this.write(&encoded_headers);
+            let _ = this.write(encoded_headers);
         } else {
             // §6.6/§6.10: an oversized block is split - the PUSH_PROMISE (without END_HEADERS)
             // carries the promised id + the first fragment, then CONTINUATION frames on the
@@ -6537,7 +6479,7 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        let mut pending = HeaderList::default();
+        let mut scratch = HeaderScratch::take(global_object);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
@@ -6651,7 +6593,11 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    if pending.push(validated_name, value, never_index).is_err() {
+                    if scratch
+                        .block
+                        .push(validated_name, value, never_index)
+                        .is_err()
+                    {
                         return Err(
                             global_object.throw(format_args!("Failed to allocate header buffer"))
                         );
@@ -6796,7 +6742,11 @@ impl H2FrameParser {
                                 )
                                 .throw());
                         }
-                        if pending.push(validated_name, value, never_index).is_err() {
+                        if scratch
+                            .block
+                            .push(validated_name, value, never_index)
+                            .is_err()
+                        {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -6840,7 +6790,11 @@ impl H2FrameParser {
                             )
                             .throw());
                     }
-                    if pending.push(validated_name, value, never_index).is_err() {
+                    if scratch
+                        .block
+                        .push(validated_name, value, never_index)
+                        .is_err()
+                    {
                         return Err(
                             global_object.throw(format_args!("Failed to allocate header buffer"))
                         );
@@ -7058,9 +7012,26 @@ impl H2FrameParser {
         // Checked against the pre-compression bound like nghttp2 (which always counts the
         // priority fields for HEADERS), before the encoder is touched.
         if this.max_send_header_block_length.get() != 0
-            && pending.deflate_bound() + StreamPriority::BYTE_SIZE
+            && scratch.block.deflate_bound() + StreamPriority::BYTE_SIZE
                 > this.max_send_header_block_length.get() as usize
         {
+            if this.is_server.get() {
+                let identifier = stream.get_identifier();
+                identifier.ensure_still_alive();
+                this.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onFrameError,
+                    identifier,
+                    JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                    JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                );
+                // The peer waits for this response: reset the stream, as node does. A refused
+                // 1xx block leaves the stream open for the final response.
+                if !scratch.is_informational() {
+                    this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                }
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
 
@@ -7079,14 +7050,16 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        let mut encoded_headers: Vec<u8> = Vec::new();
-        if let Err(err) = this.encode_header_list(&mut encoded_headers, &pending) {
+        // From here to the last write of the block nothing returns, throws or runs JS: a block
+        // that is in the encoder's table goes on the wire.
+        if let Err(err) = this.encode_header_list(&mut scratch) {
             if matches!(err, crate::Error::Alloc(_)) {
                 return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
             }
             this.schedule_header_compression_session_error();
             return Ok(JSValue::js_number(stream_id as f64));
         }
+        let encoded_headers = &mut scratch.encoded;
         let encoded_size = encoded_headers.len();
         bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
 
@@ -7130,17 +7103,6 @@ impl H2FrameParser {
 
             if padding != 0 {
                 flags |= HeadersFrameFlags::PADDED as u8;
-                // Grow before any frame byte is written: failing after the header went out
-                // would abandon the frame mid-serialization (the JS-transport tracker would
-                // hold the stream mid-frame and the wire would owe a payload).
-                if encoded_headers
-                    .try_reserve(encoded_size + padding_overhead - encoded_headers.len())
-                    .is_err()
-                {
-                    return Err(
-                        global_object.throw(format_args!("Failed to allocate padding buffer"))
-                    );
-                }
             }
 
             let frame = FrameHeader {
@@ -7166,7 +7128,7 @@ impl H2FrameParser {
             if padding != 0 {
                 // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
                 // ensure the slice we hand to writer covers only initialized bytes. Cannot
-                // allocate: the capacity was reserved above, before the frame header went out.
+                // allocate: encode_header_list reserved the room before the encode.
                 encoded_headers.resize(encoded_size + padding_overhead, 0);
                 let buffer = encoded_headers.as_mut_slice();
                 // memmove: shift right by 1 to make room for the pad-length byte
@@ -7174,7 +7136,7 @@ impl H2FrameParser {
                 buffer[0] = padding;
                 let _ = writer.write_all(buffer);
             } else {
-                let _ = writer.write_all(&encoded_headers);
+                let _ = writer.write_all(encoded_headers);
             }
         } else {
             bun_output::scoped_log!(

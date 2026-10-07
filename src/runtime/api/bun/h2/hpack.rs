@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
+use bun_http::lshpack::{DecodeResult, HeaderBlock, HpackError, HpackHandle};
 
 /// RFC 7541 §6.3: a Dynamic Table Size Update integer never needs more than 6 bytes for a u32.
 pub(crate) const MAX_SIZE_UPDATE_BYTES: usize = 6;
@@ -50,16 +50,25 @@ impl Coder {
         write_table_size_update(dst, offset, cap)
     }
 
-    #[inline]
-    pub(crate) fn encode(
+    /// Append one header block to `dst`: the pending §6.3 size update, then every field of `block`
+    /// or none. On `Err` nothing was appended and the size update stays pending.
+    pub(crate) fn encode_block(
         &mut self,
-        name: &[u8],
-        value: &[u8],
-        never_index: bool,
-        dst: &mut [u8],
-        offset: usize,
-    ) -> Result<usize, HpackError> {
-        self.hpack.encode(name, value, never_index, dst, offset)
+        block: &HeaderBlock,
+        dst: &mut Vec<u8>,
+    ) -> Result<(), HpackError> {
+        let start = dst.len();
+        let pending = self.pending_enc_capacity;
+        let mut update = [0u8; MAX_SIZE_UPDATE_BYTES];
+        let n = self.take_pending_size_update(&mut update, 0);
+        dst.extend_from_slice(&update[..n]);
+        dst.reserve(block.encode_bound());
+        let result = self.hpack.encode_block(block, dst);
+        if result.is_err() {
+            dst.truncate(start);
+            self.pending_enc_capacity = pending;
+        }
+        result
     }
 
     /// Decode one header. Result aliases a shared buffer; copy before the next call.

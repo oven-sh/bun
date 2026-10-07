@@ -12,6 +12,7 @@ use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
+use bun_http::lshpack::HeaderBlock;
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
 
@@ -346,6 +347,8 @@ pub(crate) struct Connection {
     /// A bucket ran dry mid-frame; receive() tears the session down between frames.
     reset_flood: bool,
 
+    /// The fields of the outbound header block being built (`begin_header_block`/`add_header`).
+    enc_block: HeaderBlock,
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
     /// Reusable scratch for end-of-batch window replenishment (stream id, increment).
@@ -389,6 +392,7 @@ impl Connection {
             ),
             sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
             reset_flood: false,
+            enc_block: HeaderBlock::default(),
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -1907,37 +1911,44 @@ impl Connection {
 
     // ---- Outbound stream API (called by the embedder) ------------------
 
-    /// Begin a new outbound header block. Emits any pending §6.3 dynamic-table size update first.
+    /// Begin a new outbound header block.
     pub(crate) fn begin_header_block(&mut self) {
-        self.enc_buf.clear();
-        let mut tmp = [0u8; hpack::MAX_SIZE_UPDATE_BYTES];
-        let n = self.hpack.take_pending_size_update(&mut tmp, 0);
-        self.enc_buf.extend_from_slice(&tmp[..n]);
+        self.enc_block.clear();
     }
 
-    /// HPACK-encode one header field into the current block. Returns false on encode failure.
-    pub(crate) fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
-        let old = self.enc_buf.len();
-        self.enc_buf.resize(old + name.len() + value.len() + 16, 0);
-        match self
+    /// Add one header field to the current block. Returns false when it cannot be stored.
+    pub(crate) fn add_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
+        self.enc_block.push(name, value, never_index).is_ok()
+    }
+
+    /// HPACK-encode the current block, every field or none. `None` when the encoder refuses the
+    /// block: its table is as it was, and nothing may be sent for this block.
+    fn encode_header_block(&mut self) -> Option<Vec<u8>> {
+        let mut block = std::mem::take(&mut self.enc_buf);
+        block.clear();
+        if self
             .hpack
-            .encode(name, value, never_index, &mut self.enc_buf, old)
+            .encode_block(&self.enc_block, &mut block)
+            .is_err()
         {
-            Ok(n) => {
-                self.enc_buf.truncate(old + n);
-                true
-            }
-            Err(_) => {
-                self.enc_buf.truncate(old);
-                false
-            }
+            self.enc_buf = block;
+            return None;
         }
+        Some(block)
     }
 
-    /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
-    /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
-    pub(crate) fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
-        let block = std::mem::take(&mut self.enc_buf);
+    /// Encode the accumulated header block and emit it as a HEADERS frame, splitting into
+    /// CONTINUATION frames when it exceeds the peer's max frame size (§4.3/§6.10), and advance the
+    /// send-side stream state. Returns false, with nothing sent, when the encoder refuses the block.
+    pub(crate) fn send_header_block(
+        &mut self,
+        sink: &impl Sink,
+        stream_id: u32,
+        end_stream: bool,
+    ) -> bool {
+        let Some(block) = self.encode_header_block() else {
+            return false;
+        };
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
 
@@ -1993,6 +2004,7 @@ impl Connection {
         if stream_id > self.last_stream_id {
             self.last_stream_id = stream_id;
         }
+        true
     }
 
     /// Send DATA honoring connection + stream send windows and the max frame size. Returns the
@@ -2066,9 +2078,17 @@ impl Connection {
     }
 
     /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
-    /// promised request headers staged via begin_header_block/encode_header (RFC 9113 §6.6).
-    pub(crate) fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
-        let block = std::mem::take(&mut self.enc_buf);
+    /// promised request headers staged via begin_header_block/add_header (RFC 9113 §6.6).
+    /// Returns false, with nothing sent, when the encoder refuses the block.
+    pub(crate) fn send_push_promise(
+        &mut self,
+        sink: &impl Sink,
+        parent_id: u32,
+        promised_id: u32,
+    ) -> bool {
+        let Some(block) = self.encode_header_block() else {
+            return false;
+        };
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 
         // First frame: PUSH_PROMISE = 4-byte promised id + (head of) the header block.
@@ -2114,6 +2134,7 @@ impl Connection {
         if promised_id > self.last_stream_id {
             self.last_stream_id = promised_id;
         }
+        true
     }
 }
 
@@ -2198,12 +2219,12 @@ mod tests {
     /// Encode a header block with a standalone coder (mirrors a real peer's encoder).
     fn encode_block(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
         let mut coder = hpack::Coder::new(4096);
-        let mut buf = vec![0u8; 4096];
-        let mut off = 0usize;
+        let mut block = HeaderBlock::default();
         for (name, value) in pairs {
-            off += coder.encode(name, value, false, &mut buf, off).unwrap();
+            block.push(name, value, false).unwrap();
         }
-        buf.truncate(off);
+        let mut buf = Vec::new();
+        coder.encode_block(&block, &mut buf).unwrap();
         buf
     }
 
@@ -2352,10 +2373,10 @@ mod tests {
         let csink = CaptureSink::default();
         let mut client = Connection::new(false, Settings::default());
         client.begin_header_block();
-        assert!(client.encode_header(b":method", b"GET", false));
-        assert!(client.encode_header(b":scheme", b"http", false));
-        assert!(client.encode_header(b":path", b"/x", false));
-        assert!(client.encode_header(b":authority", b"localhost", false));
+        assert!(client.add_header(b":method", b"GET", false));
+        assert!(client.add_header(b":scheme", b"http", false));
+        assert!(client.add_header(b":path", b"/x", false));
+        assert!(client.add_header(b":authority", b"localhost", false));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
@@ -2393,10 +2414,10 @@ mod tests {
         let ssink = CaptureSink::default();
         let mut server = Connection::new(true, Settings::default());
         server.begin_header_block();
-        assert!(server.encode_header(b":method", b"GET", false));
-        assert!(server.encode_header(b":scheme", b"http", false));
-        assert!(server.encode_header(b":path", b"/pushed", false));
-        assert!(server.encode_header(b":authority", b"localhost", false));
+        assert!(server.add_header(b":method", b"GET", false));
+        assert!(server.add_header(b":scheme", b"http", false));
+        assert!(server.add_header(b":path", b"/pushed", false));
+        assert!(server.add_header(b":authority", b"localhost", false));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
@@ -2448,7 +2469,7 @@ mod tests {
         let mut c = Connection::new(false, Settings::default());
         // Open a stream (send side) with a tiny peer window.
         c.begin_header_block();
-        assert!(c.encode_header(b":method", b"POST", false));
+        assert!(c.add_header(b":method", b"POST", false));
         c.send_header_block(&sink, 1, false);
         sink.out.borrow_mut().clear();
         if let Some(s) = c.streams.get_mut(&1) {

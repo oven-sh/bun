@@ -941,9 +941,7 @@ devTest("a render() that does not return a Response is reported as that", {
   },
 });
 
-// The transpiler lowers a TC39-decorated class into calls to the runtime helpers
-// (`__decoratorStart`, `__decorateElement`, `__privateAdd`, ...). In the dev
-// server those calls go through the synthetic `bun:wrap` module of the HMR runtime.
+// TC39 decorator lowering calls runtime helpers through the HMR runtime's synthetic `bun:wrap` module.
 const tc39DecoratorFiles = {
   "tsconfig.json": JSON.stringify({
     compilerOptions: { experimentalDecorators: false, emitDecoratorMetadata: false },

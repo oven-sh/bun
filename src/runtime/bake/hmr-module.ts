@@ -898,11 +898,7 @@ declare global {
 
 // bun:bake/server, bun:bake/client, and bun:wrap are
 // provided by this file instead of the bundler.
-//
-// The transpiler can reference any export of runtime.js through `bun:wrap`
-// (see `Imports::ALL` in src/ast/runtime.rs). Register the whole namespace so
-// the list cannot drift. The spread turns the namespace's getters into data
-// properties, so a helper read through `toCommonJS` stays a single hop.
+// The transpiler can emit any name in `Imports::ALL` (src/ast/runtime.rs) through `bun:wrap`.
 registerSynthetic("bun:wrap", { ...runtimeHelpers });
 
 if (side === "server") {

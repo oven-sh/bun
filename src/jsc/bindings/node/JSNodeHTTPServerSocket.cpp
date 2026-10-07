@@ -21,10 +21,8 @@ extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
-extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
 
@@ -375,24 +373,23 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool destroySoon)
     return deferShutdownUntilResponseDrains<false>(socket, destroySoon);
 }
 
-JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globalObject)
+void JSNodeHTTPServerSocket::halfClose()
 {
     // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
     // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
     // re-add), without which macOS 26 does not deliver the peer's close.
     // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
     const bool cycleReads = !upgraded && !tunnelReadsPaused();
-    if (socket && cycleReads) {
+    if (cycleReads) {
         us_socket_pause(socket);
     }
-    auto result = us_socket_buffered_js_write(socket, is_ssl, ended, hasUnsentResponseBytes(), flushesStreamBufferOnDrain(), &streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    us_socket_shutdown(socket);
     // Undo the pause above after the shutdown so the unread body drains
     // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
     // SHUT_WR) is not deleted by a W -> R|W -> R step.
-    if (socket && cycleReads) {
+    if (cycleReads) {
         us_socket_resume(socket);
     }
-    return result;
 }
 
 template<bool SSL>
@@ -541,7 +538,6 @@ JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
             clearSocketData<false>(this->upgraded, socket);
         }
     }
-    us_socket_free_stream_buffer(&streamBuffer);
 }
 
 JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
@@ -857,20 +853,13 @@ void JSNodeHTTPServerSocket::flushResponseBytesAhead()
     }
 }
 
-bool JSNodeHTTPServerSocket::hasUnsentResponseBytes() const
-{
-    if (upgraded || isClosed()) {
-        return false;
-    }
-    if (is_ssl) {
-        return reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->getBufferedAmount() > 0;
-    }
-    return reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->getBufferedAmount() > 0;
-}
-
 template<bool SSL>
 static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t length)
 {
+    /* The caller made these bytes from a JS value, and that can run JavaScript that closes the socket. */
+    if (us_socket_is_closed(socket)) {
+        return false;
+    }
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
     while (length > 0) {
         const int chunk = static_cast<int>(std::min(length, static_cast<size_t>(INT_MAX)));
@@ -881,7 +870,7 @@ static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t le
     return asyncSocket->getBufferedAmount() > 0;
 }
 
-/* A raw socket.write() takes the path of a 1xx line (HttpResponse::writeRawInformational). Returns whether uWS still holds bytes. */
+/* A raw socket.write() takes the path of a 1xx line (HttpResponse::writeRawInformational): what the kernel does not take waits in the uWS buffer, behind the response bytes already there. Returns whether uWS still holds bytes. */
 extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* socket, bool is_ssl, const char* data, size_t length)
 {
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
@@ -892,11 +881,10 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
     if (!tunnelReadEnded || upgraded || isClosed()) {
         return;
     }
-    const bool sent = streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
     }
 }
 
@@ -908,30 +896,13 @@ void JSNodeHTTPServerSocket::onDrain()
         return;
     }
 
+    updateTunnelIdle();
     // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
-    if (this->streamBuffer.bufferedSize() == 0 && !heldWriteAwaitsDrain) {
-        updateTunnelIdle();
+    if (!heldWriteAwaitsDrain) {
         return;
     }
     // uWS calls this with its own buffer empty, so the write it held has left.
     heldWriteAwaitsDrain = false;
-    if (this->streamBuffer.bufferedSize() > 0) {
-        auto* globalObject = defaultGlobalObject(this->globalObject());
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, this->hasUnsentResponseBytes(), this->flushesStreamBufferOnDrain(), &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        if (auto* exception = scope.exception()) {
-            (void)scope.tryClearException();
-            globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-
-        if (this->streamBuffer.bufferedSize() > 0) {
-            // need to drain more
-            return;
-        }
-    }
-    updateTunnelIdle();
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
     if (scriptExecutionContext) {

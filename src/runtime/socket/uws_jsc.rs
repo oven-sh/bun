@@ -3,43 +3,9 @@
 //! sites do not change.
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
-};
+use bun_uws::{AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_t};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
-
-// ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
-// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
-trait StreamBufferExt {
-    fn is_not_empty(&self) -> bool;
-    fn slice(&self) -> &[u8];
-    fn wrote(&mut self, amount: usize);
-    fn write(&mut self, buffer: &[u8]);
-}
-impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
-    #[inline]
-    fn is_not_empty(&self) -> bool {
-        self.list.len() > self.cursor
-    }
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        &self.list[self.cursor..]
-    }
-    #[inline]
-    fn wrote(&mut self, amount: usize) {
-        self.cursor += amount;
-    }
-    #[inline]
-    fn write(&mut self, buffer: &[u8]) {
-        // Same rule as `bun_io::StreamBuffer::compact`.
-        if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
-            self.list.drain(..self.cursor);
-            self.cursor = 0;
-        }
-        self.list.extend_from_slice(buffer);
-    }
-}
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
 pub(crate) fn create_bun_socket_error_to_js(
@@ -134,37 +100,26 @@ unsafe extern "C" {
     ) -> bool;
 }
 
-// ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
+// ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocketPrototype.cpp) ──
+/// The write of a node:http server socket handle. What the kernel does not take waits in the uWS
+/// buffer of the connection, behind the bytes already there. Returns `true` when uWS holds no
+/// bytes after the call, `false` when it does, and an empty value when it threw.
+///
 /// # Safety
-/// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
-/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
+/// `socket` and `total_bytes_written` must be valid, non-null pointers for the duration of the call
+/// (guaranteed by the C++ caller).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     ssl: bool,
-    ended: bool,
-    // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
-    hold: bool,
-    // A drain call flushes `buffer` (a tunnel). On any other socket the uWS buffer takes what the kernel does not.
-    flushes_buffer_on_drain: bool,
-    buffer: *mut us_socket_stream_buffer_t,
+    total_bytes_written: *mut usize,
     global_object: &JSGlobalObject,
     data: JSValue,
     encoding: JSValue,
 ) -> JSValue {
-    // NOTE: `socket`/`buffer` are kept as raw `*mut` for the function lifetime and only
-    // dereferenced to `&mut` at each point of use. The JS calls below
-    // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
-    // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
-    // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
-    // no uniqueness assertion are used throughout.
-
-    // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
-    // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
-    // Request/Response body coercion) which can re-enter this function on the same
-    // socket. Taking the buffer first would leave two owning `Vec`s over the same
-    // `list_ptr`; the inner call's realloc would free the allocation out from under
-    // the outer frame (use-after-free).
+    // The conversion can run arbitrary JS (toString/Symbol.toPrimitive, Request/Response body
+    // coercion), which can re-enter this function on the same socket or close it. `socket` and
+    // `total_bytes_written` stay raw pointers, and the callee checks that the socket is open.
     let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
     } else {
@@ -198,74 +153,12 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         }
     }
 
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call.
-    // No JS executes between here and the `update()` below, so this owning `Vec` is the
-    // sole owner of `list_ptr` for the remainder of the function.
-    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
-    let mut total_written: usize = 0;
-
-    // Labeled block + post-block cleanup so the `buffer.update` / `buffer.wrote`
-    // side effects run on every
-    // exit path without a scopeguard borrow conflict.
-    let result: JSValue = 'body: {
-        let data_slice = node_buffer.slice();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
-        // single `&mut` does not alias the re-entrant write path documented at
-        // the top of this fn (raw `socket` is still kept for that reason).
-        let socket_ref = us_socket_t::opaque_mut(socket);
-        // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
-        let write_behind_response = |bytes: &[u8]| unsafe {
-            Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
-        };
-        if hold {
-            // What an earlier write still owes goes first.
-            let owed = stream_buffer.slice().len();
-            write_behind_response(stream_buffer.slice());
-            let still_held = write_behind_response(data_slice);
-            stream_buffer.wrote(owed);
-            total_written = owed.saturating_add(data_slice.len());
-            break 'body JSValue::js_boolean(!still_held);
-        }
-        if stream_buffer.is_not_empty() {
-            let to_flush = stream_buffer.slice();
-            let to_flush_len = to_flush.len();
-            let written: u32 = u32::try_from(socket_ref.write(to_flush).max(0)).unwrap();
-            stream_buffer.wrote(written as usize);
-            total_written = total_written.saturating_add(written as usize);
-            if (written as usize) < to_flush_len {
-                if !data_slice.is_empty() {
-                    stream_buffer.write(data_slice);
-                }
-                break 'body JSValue::FALSE;
-            }
-        }
-
-        if !data_slice.is_empty() {
-            let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
-            total_written = total_written.saturating_add(written as usize);
-            if (written as usize) < data_slice.len() {
-                let rest = &data_slice[written as usize..];
-                if flushes_buffer_on_drain {
-                    stream_buffer.write(rest);
-                } else {
-                    write_behind_response(rest);
-                    total_written = total_written.saturating_add(rest.len());
-                }
-                break 'body JSValue::FALSE;
-            }
-        }
-        if ended {
-            socket_ref.shutdown();
-        }
-        JSValue::TRUE
+    let bytes = node_buffer.slice();
+    // SAFETY: the caller guarantees `socket` and `total_bytes_written` for the call; `bytes` is
+    // valid for its length and no JS runs between here and the return.
+    let still_held = unsafe {
+        *total_bytes_written = (*total_bytes_written).saturating_add(bytes.len());
+        Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
     };
-
-    // SAFETY: caller guarantees `buffer` is valid for the call; no JS executes between here
-    // and return, so no re-entrancy aliasing.
-    unsafe {
-        (*buffer).update(stream_buffer);
-        (*buffer).wrote(total_written);
-    }
-    result
+    JSValue::js_boolean(!still_held)
 }

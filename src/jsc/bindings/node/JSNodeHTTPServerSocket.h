@@ -10,23 +10,6 @@
 #include <wtf/text/StringView.h>
 
 extern "C" {
-struct us_socket_stream_buffer_t {
-    char* list_ptr = nullptr;
-    size_t list_cap = 0;
-    size_t listLen = 0;
-    size_t total_bytes_written = 0;
-    size_t cursor = 0;
-
-    size_t bufferedSize() const
-    {
-        return listLen - cursor;
-    }
-    size_t totalBytesWritten() const
-    {
-        return total_bytes_written;
-    }
-};
-
 struct us_socket_t;
 
 void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSValue jsValue, bool adopted);
@@ -47,8 +30,9 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    us_socket_stream_buffer_t streamBuffer = {};
     us_socket_t* socket = nullptr;
+    /* Bytes that write() took: each one is in the kernel or in the uWS buffer of the connection. */
+    size_t bytesWritten = 0;
     unsigned is_ssl : 1 = 0;
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
@@ -59,7 +43,7 @@ public:
     unsigned tunnelReadsQueuedFull : 1 = 0;
     /* onData() got the end of the stream. The task that tells JS can still be queued. */
     unsigned tunnelReadEnded : 1 = 0;
-    /* write() returned false for bytes that went into the uWS buffer, and JS waits for ondrain. streamBuffer does not show them. */
+    /* write() returned false, and JS waits for ondrain. */
     unsigned heldWriteAwaitsDrain : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
@@ -128,7 +112,7 @@ public:
     /* socket.end(): true when uWS will shut down later, after the buffered response. destroySoon also waits for the body parse and closes behind the FIN. */
     bool shutdownAfterResponseDrains(bool destroySoon);
     /* socket.end() with nothing left to send: the FIN goes out now and the reads stay armed, so that the peer's FIN closes the socket. */
-    JSC::EncodedJSValue halfClose(JSC::JSGlobalObject*);
+    void halfClose();
 
     /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
     void closeWhenDrained();
@@ -148,12 +132,8 @@ public:
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
     /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
     void updateTunnelIdle();
-    /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
-    bool hasUnsentResponseBytes() const;
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
     void flushResponseBytesAhead();
-    /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
-    bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();
 

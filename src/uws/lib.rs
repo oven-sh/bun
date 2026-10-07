@@ -21,7 +21,7 @@ use bun_core::ZStr;
 pub use bun_uws_sys::Timer;
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, NewApp, RawWebSocket, Request,
-    WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
+    WebSocketBehavior, us_socket_t, uws_res,
 };
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`

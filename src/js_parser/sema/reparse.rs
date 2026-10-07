@@ -8,6 +8,7 @@
 
 use std::rc::Rc;
 
+use crate::lexer::{PragmaArg, end_of_run, is_white_space_single_line};
 use crate::sema::ts_syntax as ts;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -50,6 +51,8 @@ struct Attached {
     /// From the start of the first of all the JSDoc comments to the end of the last. `None`: there
     /// is none.
     range: Option<TextRange>,
+    /// `jsdocScannerInfoHasSeeOrLink`
+    has_see_or_link: bool,
 }
 
 /// The modifier flags in `flags`, which an overload signature shares with the implementation.
@@ -78,6 +81,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             docs: SmallVec::new(),
             last_has_tags: false,
             range: None,
+            has_see_or_link: false,
         };
         // `GetLeadingCommentRanges`: the comments after the first line break, or after the start of
         // the file.
@@ -87,6 +91,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             .zip(&lexer.comment_flags[first..])
             .take_while(|(comment, _)| (comment.loc.start as u32) < token);
         for (comment, &reported) in comments {
+            attached.has_see_or_link |= reported & flags::SEE_OR_LINK != 0;
             is_collecting |= reported & flags::LINE_BREAK_BEFORE != 0;
             if !is_collecting || reported & flags::JSDOC_LIKE == 0 {
                 // A line comment ends with its line.
@@ -113,6 +118,24 @@ impl<'p, 'a> Lower<'p, 'a> {
         attached
     }
 
+    /// The start of the first comment in the trivia before the token at `token`. As a full start it
+    /// selects the same comments as `TokenFullStart`, unless that is the start of the file.
+    pub(super) fn first_comment_before(&self, token: u32) -> Option<u32> {
+        let lexer = &self.p.lexer;
+        let is_blank = |c| is_white_space_single_line(c) || PragmaArg::is_newline(c);
+        let before = lexer
+            .all_comments
+            .partition_point(|comment| (comment.loc.start as u32) < token);
+        let mut first = token as usize;
+        for comment in lexer.all_comments[..before].iter().rev() {
+            if end_of_run(lexer.contents, comment.end_i(), is_blank) < first {
+                break;
+            }
+            first = comment.loc.to_usize();
+        }
+        (first < token as usize).then_some(first as u32)
+    }
+
     /// `withJSDoc` for the node `host` whose first token is at `token`, with full start
     /// `full_start`.
     pub(super) fn with_jsdoc(
@@ -126,7 +149,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             return;
         }
         let attached = self.jsdoc_before(token, full_start, with_trailing);
-        if let Some(comments) = attached.range {
+        if self.b.is_js
+            && let Some(comments) = attached.range
+        {
             let docs = attached.docs.iter();
             let mut tags = docs.flat_map(|&doc| &self.jsdoc.list[doc as usize].tags);
             let first_satisfies_tag = tags.find(|tag| matches!(tag.kind, TagKind::Satisfies(_)));
@@ -176,7 +201,12 @@ impl<'p, 'a> Lower<'p, 'a> {
     /// Called once everything is lowered: stores the information collected about the comments in
     /// the file.
     pub(super) fn finish_jsdoc(&mut self) {
+        // `parseJSDocComment`: "move jsdoc diagnostics to jsdocDiagnostics -- for JS files only"
+        if !self.b.is_js {
+            return;
+        }
         let file = &mut self.b.file;
+        file.jsdoc_asterisks.clone_from(&self.jsdoc.asterisks);
         for (doc, &is_attached) in self.jsdoc.list.iter().zip(&self.jsdoc_is_attached) {
             file.jsdoc_comments.push((doc.start, doc.end));
             if is_attached {
@@ -599,17 +629,23 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     // ───────────────────────────── tags ─────────────────────────────
 
-    /// `reparseTags`
+    /// `reparseTags`, which `withJSDoc` calls in JavaScript only, and what the checker reads from
+    /// the tags of `host` in every file.
     fn reparse_tags(&mut self, host: &mut Host, attached: &Attached) {
         let comments = Rc::clone(&self.jsdoc);
-        if let Host::Class(class) = *host {
+        let is_js = self.b.is_js;
+        // `EagerJSDoc`: in TypeScript `withJSDoc` parses the comments only if one has a link.
+        if let Host::Class(class) = *host
+            && (is_js || attached.has_see_or_link)
+        {
             self.check_grammar_augments_tags(class, attached);
         }
         for (i, &index) in attached.docs.iter().enumerate() {
             self.jsdoc_is_attached[index as usize] = true;
             let doc = &comments.list[index as usize];
             let is_last = attached.last_has_tags && i + 1 == attached.docs.len();
-            for tag in &doc.tags {
+            let reparsed: &[Tag] = if is_js { &doc.tags } else { &[] };
+            for tag in reparsed {
                 self.reparse_unhosted(tag, host, doc);
                 if is_last {
                     self.reparse_hosted(tag, host, doc);
@@ -706,7 +742,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if !import.has_clause {
                     return;
                 }
-                self.note_checker_errors(tag.pos, import.end);
+                // `checkImportDeclaration` returns after `checkGrammarModuleElementContext`.
+                if self.is_in_appropriate_context {
+                    self.note_checker_errors(tag.pos, import.end);
+                }
                 if let Some(module) = import.module {
                     self.unchecked_parts_of_module_specifier(module);
                 }
@@ -757,6 +796,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     clause_end: import.clause_end,
                     namespace_start: import.namespace_start,
                     named: self.b.file.add_import_specs(&named),
+                    has_named_imports: import.has_named_imports,
                     type_only: true,
                     is_deferred: false,
                     mode,
@@ -1131,7 +1171,8 @@ impl<'p, 'a> Lower<'p, 'a> {
 
     /// `checkGrammarClassDeclarationHeritageClauses`: the last name of an `@augments` or `@extends`
     /// tag, in any comment of the class, is the last name of the `extends` clause. It returns at the
-    /// first error.
+    /// first error. The checker decides between this error and the other errors of that function
+    /// (`Checker::check_grammar_augments_tags`).
     fn check_grammar_augments_tags(&mut self, class: ClassId, attached: &Attached) {
         let extends = self.b.file[class].extends;
         if extends.is_none() || self.paren_of(extends).is_some() {
@@ -1155,6 +1196,8 @@ impl<'p, 'a> Lower<'p, 'a> {
                 let at = (source.start, source.end);
                 let diagnostic = Diagnostic::new(DiagnosticKind::Grammar, at, 8023, &names);
                 self.b.file.diagnostics.push(diagnostic);
+                let file = &mut self.b.file;
+                file.unmatched_augments_tags.push((class, source.start));
                 return;
             }
         }
@@ -1464,6 +1507,10 @@ impl<'p, 'a> Lower<'p, 'a> {
             return;
         };
         self.b.file.functions_with_param_tags.push(func);
+        // `isJs`
+        if !self.b.is_js {
+            return;
+        }
         let mut names = Vec::new();
         let mut is_pattern = Vec::new();
         for param in self.b.file[func].params.iter() {

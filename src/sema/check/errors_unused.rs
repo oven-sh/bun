@@ -135,7 +135,23 @@ impl Checker<'_, '_> {
             |s| matches!(s.kind, StmtKind::Return(e) if e.is_some() && u.is_in_unchecked_return(e)),
         );
         let index = self.exprs_by_kind(file);
-        u.note_references(&index);
+        self.note_identifiers(file, &index, &mut u);
+        u.note_references();
+        self.note_module_references(file, &mut u);
+        self.note_unresolved_type_references(file, &mut u);
+        self.note_untyped_signature_parameters(file, &mut u);
+        for &(of, scope, name, meaning) in &self.tracked_names {
+            if of == file {
+                let bit = if meaning == SymFlags::TYPE {
+                    TYPE
+                } else if meaning == SymFlags::NAMESPACE {
+                    NAMESPACE
+                } else {
+                    VALUE
+                };
+                u.note_name(scope, name, meaning, bit);
+            }
+        }
         let links = &self.p.symbol_reference_links;
         for (i, kinds) in u.referenced.iter_mut().enumerate() {
             let id = SymbolId(i as u32);
@@ -181,6 +197,183 @@ impl Checker<'_, '_> {
             }
         }
         self.check_unused_identifiers(&u);
+    }
+
+    /// `getResolvedSymbol` of every identifier that is checked: `Resolve` with `isUse`.
+    fn note_identifiers(&mut self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for &e in index.of(ExprTag::Ident) {
+            let i = e.idx();
+            let symbol = bound.expr_symbol[i];
+            if symbol.is_none()
+                || u.referenced[symbol.idx()] & VALUE != 0
+                || bound.is_unchecked(i)
+                || u.is_unchecked(e)
+                || u.is_write_only(e)
+                || u.is_inside_declaration_of(e, symbol)
+            {
+                continue;
+            }
+            // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It does not check the
+            // initializer, so it does not resolve the callee.
+            if let Parent::Expr(call) = bound.expr_parent[i]
+                && call.is_some()
+                && let Parent::VarInit(d) = bound.expr_parent[call.idx()]
+                && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
+                && bound.required_by(hir, hir[d].pat).is_some()
+            {
+                continue;
+            }
+            if bound.symbols[symbol.idx()]
+                .flags
+                .intersects(SymFlags::VALUE)
+            {
+                u.referenced[symbol.idx()] |= VALUE;
+                continue;
+            }
+            // `getSymbol` finds an alias only if its target has the meaning. Otherwise the search
+            // goes on in the outer scopes.
+            let ExprKind::Ident(name) = hir[e].kind else {
+                continue;
+            };
+            let Ok(at) = bound.alias_idents.binary_search_by_key(&e, |alias| alias.0) else {
+                continue;
+            };
+            let found = u.resolve_use_with(
+                bound.alias_idents[at].1,
+                name,
+                SymFlags::VALUE | SymFlags::EXPORT_VALUE,
+                &mut |held, meaning| self.get_symbol(held, meaning),
+            );
+            if let Some(found) = found {
+                u.note_use(found, VALUE);
+            }
+        }
+        // `containsArgumentsReference` passes the name of a declaration to it too, and no such
+        // name is a write (`IsWriteOnlyAccess`).
+        for &(_, scope, local) in bound.names_resolved_for_arguments.iter() {
+            if local.is_some() {
+                let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+                u.note_name(scope, known::arguments, meaning, VALUE);
+            }
+        }
+    }
+
+    /// `resolveQualifiedName` where it reports that `names` do not resolve. Unless it suggests
+    /// another spelling (2724), it asks `tryGetQualifiedNameAsValue`, which resolves the first name
+    /// as a value with `isUse`.
+    fn note_qualified_name_as_value(
+        &mut self,
+        file: FileId,
+        u: &mut Unused,
+        scope: ScopeId,
+        names: Span<NameId>,
+        meaning: SymFlags,
+    ) {
+        let hir = self.hir(file);
+        if hir.kind(hir.node(names)) != Kind::QualifiedName
+            || self
+                .resolve_entity_name(file, scope, names, meaning, true)
+                .is_some()
+        {
+            return;
+        }
+        let reported = self.reported.len();
+        self.check_qualified_name(file, scope, names, meaning);
+        if self.reported.drain(reported..).any(|d| d.code != 2724) {
+            u.note_name(scope, hir[names.at(0)].text, SymFlags::VALUE, VALUE);
+        }
+    }
+
+    /// `note_qualified_name_as_value` for the type references `a.b` whose type is the error type.
+    fn note_unresolved_type_references(&mut self, file: FileId, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for (i, node) in hir.types.iter().enumerate() {
+            let TypeNodeKind::Ref { name, .. } = node.kind else {
+                continue;
+            };
+            if name.len() < 2 || bound.is_unchecked_type(i) {
+                continue;
+            }
+            let known = self
+                .p
+                .type_node_types
+                .get(&self.task, &(file, TypeNodeId(i as u32)));
+            if known.is_some_and(|ty| self.is_error_type(ty)) {
+                let scope = bound.type_scope[i];
+                self.note_qualified_name_as_value(file, u, scope, name, SymFlags::TYPE);
+            }
+        }
+    }
+
+    /// The lookups of the `a` of every `import x = a.b`.
+    fn note_module_references(&mut self, file: FileId, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // `canCollectSymbolAliasAccessibilityData`
+        let marks_aliases = !self.p.files.options.verbatim_module_syntax;
+        let mut aliases = None;
+        for (i, import) in hir.import_equals.iter().enumerate() {
+            let ImportEqualsTarget::Entity(names) = import.target else {
+                continue;
+            };
+            if matches!(bound.stmt_parent[import.stmt.idx()], Parent::None) {
+                continue;
+            }
+            let scope = bound.import_equals_scope[i];
+            if !u.note_module_reference(scope, names) {
+                continue;
+            }
+            let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
+            self.note_qualified_name_as_value(file, u, scope, names, any);
+            // `markAliasSymbolAsReferenced`: `getResolvedSymbol(a)` if the target is a value, which
+            // `unknownSymbol` is. Any other is exported by a namespace that is a value itself, and
+            // `note_module_reference` has looked that up as a value.
+            if !marks_aliases || hir[names.at(0)].text == known::empty {
+                continue;
+            }
+            let aliases = aliases.get_or_insert_with(|| self.symbols_of_alias_declarations(file));
+            let x = ImportEqualsId(i as u32);
+            if self.modules_is_marked_as_referenced(file, aliases, x, &mut Vec::new()) {
+                let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+                u.note_name(scope, hir[names.at(0)].text, meaning, VALUE);
+            }
+        }
+    }
+
+    /// `reportImplicitAny`, `case KindParameter`: `resolveName` of the name as a type, with `isUse`,
+    /// also where the message is only a suggestion. `checkParameter` requests the type of every
+    /// parameter, and `getTypeForVariableLikeDeclaration` has none for one of a signature that has
+    /// neither an annotation nor an initializer.
+    fn note_untyped_signature_parameters(&self, file: FileId, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.is_js && !self.is_check_js(file) {
+            return;
+        }
+        for (i, param) in hir.params.iter().enumerate() {
+            if param.ty.is_some() || param.default.is_some() {
+                continue;
+            }
+            let Some(name) = self.identifier_of_signature_parameter(file, ParamId(i as u32)) else {
+                continue;
+            };
+            let signature = &bound.fns[bound.param_fn[i].idx()];
+            let within = match signature.owner {
+                FnOwner::Type(node) => node,
+                FnOwner::Member(m) => match bound.member_owner[m.idx()] {
+                    MemberOwner::TypeLiteral(node) => node,
+                    _ => TypeNodeId::NONE,
+                },
+                _ => TypeNodeId::NONE,
+            };
+            if signature.scope.is_none()
+                || self.is_type_node_keyword(name)
+                || within.is_some() && bound.is_unchecked_type(within.idx())
+                || u.is_never_checked(param.pos)
+            {
+                continue;
+            }
+            u.note_name(signature.scope, name, SymFlags::TYPE, TYPE);
+        }
     }
 
     /// `RuntimeSyntaxTransformer` writes `x || (x = {})` for an enum or a namespace `x`. In a file
@@ -339,59 +532,66 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The names that `evaluate(e, location)` resolves. It visits what `evaluate` visits.
+    /// The names that `evaluate(e, location)` resolves. It visits what `evaluate` visits, but the
+    /// initializer of a constant only once.
     fn note_evaluated(&mut self, file: FileId, u: &mut Unused, e: ExprId, location: Location) {
-        if self.is_stack_low() {
-            return;
-        }
         let hir = self.hir(file);
-        match hir[e].kind {
-            ExprKind::Unary {
-                op:
-                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::PreInc | UnOp::PreDec,
-                operand,
-            } => self.note_evaluated(file, u, operand, location),
-            ExprKind::Binary { left, right, .. }
-            | ExprKind::Assign {
-                target: left,
-                value: right,
-                ..
-            } => {
-                self.note_evaluated(file, u, left, location);
-                self.note_evaluated(file, u, right, location);
-            }
-            // `evaluateTemplateExpression` stops at the first span without a value.
-            ExprKind::Template { exprs } => {
-                for span in hir.ids(exprs) {
-                    self.note_evaluated(file, u, span, location);
-                    if self.evaluate(file, span, location).value.is_none() {
-                        break;
+        let mut constants = smallvec::SmallVec::<[VarDeclId; 4]>::new();
+        let mut operands = smallvec::SmallVec::<[(ExprId, Location); 8]>::new();
+        operands.push((e, location));
+        while let Some((e, location)) = operands.pop() {
+            match hir[e].kind {
+                ExprKind::Unary {
+                    op:
+                        UnOp::Plus
+                        | UnOp::Minus
+                        | UnOp::BitNot
+                        | UnOp::Not
+                        | UnOp::PreInc
+                        | UnOp::PreDec,
+                    operand,
+                } => operands.push((operand, location)),
+                ExprKind::Binary { left, right, .. }
+                | ExprKind::Assign {
+                    target: left,
+                    value: right,
+                    ..
+                } => operands.extend([(left, location), (right, location)]),
+                // `evaluateTemplateExpression` stops at the first span without a value.
+                ExprKind::Template { exprs } => {
+                    for span in hir.ids(exprs) {
+                        operands.push((span, location));
+                        if self.evaluate(file, span, location).value.is_none() {
+                            break;
+                        }
                     }
                 }
-            }
-            ExprKind::Index { obj, index, .. } => {
-                if is_string_literal_like(hir, index)
-                    && !is_parenthesized(hir, index)
-                    && !is_parenthesized(hir, obj)
-                    && is_property_access_entity_name_expression(hir, obj)
-                {
-                    self.note_qualified_name(file, u, obj);
+                ExprKind::Index { obj, index, .. } => {
+                    if is_string_literal_like(hir, index)
+                        && !is_parenthesized(hir, index)
+                        && !is_parenthesized(hir, obj)
+                        && is_property_access_entity_name_expression(hir, obj)
+                    {
+                        self.note_qualified_name(file, u, obj);
+                    }
                 }
-            }
-            ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
-                self.note_qualified_name(file, u, e);
-            }
-            // The initializer of a constant.
-            ExprKind::Ident(_) => {
-                if let Some(symbol) = self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
-                    && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
-                    && of == file
-                {
-                    let location = Location::Variable(of, d);
-                    self.note_evaluated(file, u, hir[d].init, location);
+                ExprKind::Dot { .. } if is_property_access_entity_name_expression(hir, e) => {
+                    self.note_qualified_name(file, u, e);
                 }
+                // The initializer of a constant.
+                ExprKind::Ident(_) => {
+                    if let Some(symbol) =
+                        self.resolve_entity_name_expression(file, e, SymFlags::VALUE)
+                        && let Some((of, d)) = self.constant_variable_declaration(symbol, location)
+                        && of == file
+                        && !constants.contains(&d)
+                    {
+                        constants.push(d);
+                        operands.push((hir[d].init, Location::Variable(of, d)));
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -464,10 +664,22 @@ impl Checker<'_, '_> {
                 continue;
             };
             from = host.start as usize;
-            let scope = host.scope;
             let comments = jsdoc_comment_ranges(text, &host, hir.is_js);
-            let links = (comments.iter()).flat_map(|&(start, end)| jsdoc_links(text, start, end));
-            for names in links {
+            let is_stack_low = || self.is_stack_low();
+            let links = (comments.iter())
+                .flat_map(|&(start, end)| jsdoc_links(text, start, end, &is_stack_low));
+            // `checkSourceElementWorker` visits the comments of `jsdoc` and of `jsdoc.Tags`.
+            let mut names_of_links = Vec::new();
+            for link in links {
+                match link.nested_tag {
+                    None => names_of_links.push((host.scope, link.name)),
+                    Some(tag) => {
+                        let scopes = u.scopes_of_reparsed_tag(tag as u32).into_iter();
+                        names_of_links.extend(scopes.map(|scope| (scope, link.name.clone())));
+                    }
+                }
+            }
+            for (scope, names) in names_of_links {
                 let Some(first) = atoms.lookup(&names[0]) else {
                     continue;
                 };
@@ -583,7 +795,7 @@ impl Checker<'_, '_> {
                 ..
             } = s.kind
                 && !matches!(bound.stmt_parent[i], Parent::None)
-                && !hir.is_in_with(s.start)
+                && !u.is_never_checked(s.start)
                 && let StmtKind::Expr(target) = hir[left].kind
                 && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
             {
@@ -592,41 +804,51 @@ impl Checker<'_, '_> {
                 self.note_destructured(file, u, target, source, None);
             }
         }
-        // `const { x } = o`: `checkVariableLikeDeclaration`. The name of every binding element is
-        // looked up in the destructured type, even the name of a rest element or of an array
-        // pattern element.
+        // `const { x } = o`: `checkVariableLikeDeclaration`. `PropertyNameOrName` of every binding
+        // element is looked up in the destructured type, even that of a rest element or of an
+        // array pattern element.
         let unchecked = self.unchecked_jsdoc_types(file);
         for i in 0..hir.pats.len() {
-            if hir.is_in_with(hir.pats[i].pos)
+            if u.is_never_checked(hir.pats[i].pos)
                 || matches!(bound.pat_parent[i], PatParent::None)
                 || unchecked.contain(hir.pats[i].pos)
             {
                 continue;
             }
+            let mut read = Vec::new();
             match hir.pats[i].kind {
                 PatKind::Object(props) => {
-                    let whole = self.type_of_pat(file, PatId(i as u32));
                     for p in props.iter() {
-                        let name = match hir[hir[p].value].kind {
-                            PatKind::Ident(name) if hir[p].is_rest => Some(name),
-                            _ => self.member_name(file, hir[p].key),
-                        };
-                        if let Some(name) = name.filter(|&n| is_private(n)) {
-                            self.note_property(file, u, whole, name, None, None);
+                        // "variable renaming in function type notation is confusing": it returns
+                        // before it asks for the type of the parent.
+                        if self.is_renamed_binding_element(file, p)
+                            && self.returns_before_type_of_symbol(file, hir[p].value)
+                        {
+                            continue;
                         }
+                        let name = match (hir[p].key, hir[hir[p].value].kind) {
+                            (PropKey::None, PatKind::Ident(name)) => Some(name),
+                            (key, _) => self.member_name(file, key),
+                        };
+                        read.extend(name.filter(|&n| is_private(n)));
                     }
                 }
                 PatKind::Array(elems) => {
-                    let whole = self.type_of_pat(file, PatId(i as u32));
                     for element in elems.iter() {
                         if let PatKind::Ident(name) = hir[hir[element].pat].kind
                             && is_private(name)
                         {
-                            self.note_property(file, u, whole, name, None, None);
+                            read.push(name);
                         }
                     }
                 }
                 _ => {}
+            }
+            if !read.is_empty() {
+                let whole = self.type_of_pat(file, PatId(i as u32));
+                for name in read {
+                    self.note_property(file, u, whole, name, None, None);
+                }
             }
         }
     }
@@ -672,7 +894,8 @@ impl Checker<'_, '_> {
                     if !matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) {
                         continue;
                     }
-                    let Some(name) = self.member_name(file, hir[p].key) else {
+                    let (key, pos) = (hir[p].key, hir[p].pos);
+                    let Some(name) = self.try_get_name_from_property_name(file, key, pos) else {
                         continue;
                     };
                     self.note_property(file, u, source, name, None, from_this);
@@ -1015,14 +1238,10 @@ fn jsdoc_tag_takes_brace(name: &[u8]) -> bool {
             | b"augments"
             | b"extends"
             | b"this"
-            | b"arg"
-            | b"argument"
-            | b"param"
             | b"return"
             | b"returns"
             | b"template"
             | b"type"
-            | b"typedef"
             | b"satisfies"
             | b"exception"
             | b"throws"
@@ -1042,6 +1261,9 @@ enum JSDocToken {
     Asterisk,
     OpenBrace,
     CloseBrace,
+    OpenBracket,
+    CloseBracket,
+    Equals,
     Dot,
     Backtick,
     /// `tokenIsIdentifierOrKeyword`
@@ -1095,11 +1317,79 @@ struct JSDocScannerState {
     has_preceding_line_break: bool,
 }
 
-/// `parseJSDocComment` for the comment of `source` from `start` to `end`: the names of each
-/// `{@link a.b}`, `{@linkcode a.b}` and `{@linkplain a.b}` that has a name. A missing name is
-/// empty.
-fn jsdoc_links(source: &[u8], start: usize, end: usize) -> Vec<Vec<Cow<'_, [u8]>>> {
+/// A `JSDocLink`, `JSDocLinkCode` or `JSDocLinkPlain` that has a name.
+struct JSDocLink<'a> {
+    /// `a.b`. A missing name is empty.
+    name: Vec<Cow<'a, [u8]>>,
+    /// The position of the tag whose comment it is in, if that tag is nested in another tag and so
+    /// is not among `jsdoc.Tags`.
+    nested_tag: Option<usize>,
+}
+
+/// What is kept of a `JSDocTypeExpression`.
+#[derive(Copy, Clone)]
+struct JSDocTypeExpression {
+    /// `isObjectOrObjectArrayTypeReference(node.Type())`
+    is_object_or_object_array: bool,
+    /// `node.End()`
+    end: usize,
+}
+
+/// What `tryParseChildTag` returns.
+enum JSDocChildTag<'a> {
+    /// `JSDocParameterTag`, `JSDocPropertyTag`: `node.Name()`.
+    ParameterOrProperty(Vec<Cow<'a, [u8]>>),
+    /// `JSDocTypeTag`: its type, if that is in braces.
+    Type(Option<JSDocTypeExpression>),
+    /// `JSDocTemplateTag`, `JSDocThisTag`
+    Other,
+}
+
+/// `propertyLikeParse`
+const PROPERTY: u8 = 1;
+const PARAMETER: u8 = 2;
+const CALLBACK_PARAMETER: u8 = 4;
+
+/// `isObjectOrObjectArrayTypeReference` for the type that `text` starts with: the source after the
+/// `{` of a type expression.
+fn is_object_or_object_array_type_reference(text: &[u8]) -> bool {
+    // `Scan` with `skipJSDocLeadingAsterisks`: the start and the end of the token after `at`.
+    let token_after = |at: usize| {
+        let mut start = skip_trivia(text, at);
+        if text.get(start) == Some(&b'*')
+            && (at..start).any(|i| super::spans::line_break_len(text, i) != 0)
+        {
+            start = skip_trivia(text, start + 1);
+        }
+        (start, token_end(text, start, false))
+    };
+    let (start, mut end) = token_after(0);
+    if !matches!(&text[start..end], b"Object" | b"object") {
+        return false;
+    }
+    // `parsePostfixTypeOrHigher`
+    loop {
+        let (open, after_open) = token_after(end);
+        let (close, after_close) = token_after(after_open);
+        match (text.get(open), text.get(close)) {
+            (None | Some(b'}'), _) => return true,
+            (Some(b'['), Some(b']')) => end = after_close,
+            _ => return false,
+        }
+    }
+}
+
+/// `parseJSDocComment` for the comment of `source` from `start` to `end`: each `{@link a.b}`,
+/// `{@linkcode a.b}` and `{@linkplain a.b}` that has a name.
+fn jsdoc_links<'a>(
+    source: &'a [u8],
+    start: usize,
+    end: usize,
+    is_stack_low: &'a dyn Fn() -> bool,
+) -> Vec<JSDocLink<'a>> {
     let mut parser = JSDocParser {
+        is_stack_low,
+        is_out_of_stack: false,
         text: &source[..end - 2],
         scanner: JSDocScannerState {
             token: JSDocToken::Other,
@@ -1109,6 +1399,7 @@ fn jsdoc_links(source: &[u8], start: usize, end: usize) -> Vec<Vec<Cow<'_, [u8]>
             has_preceding_line_break: false,
         },
         links: Vec::new(),
+        nested_tag: None,
     };
     parser.parse_jsdoc_comment_worker(start);
     parser.links
@@ -1116,13 +1407,27 @@ fn jsdoc_links(source: &[u8], start: usize, end: usize) -> Vec<Vec<Cow<'_, [u8]>
 
 /// The part of jsdoc.go, of TypeScript's parser, that finds the links in a JSDoc comment.
 struct JSDocParser<'a> {
+    /// `Checker::is_stack_low`
+    is_stack_low: &'a dyn Fn() -> bool,
+    /// See `is_too_deep`.
+    is_out_of_stack: bool,
     /// The source, up to the `*/` of the comment.
     text: &'a [u8],
     scanner: JSDocScannerState,
-    links: Vec<Vec<Cow<'a, [u8]>>>,
+    links: Vec<JSDocLink<'a>>,
+    /// `JSDocLink::nested_tag` of the links in the comment of the tag that is being parsed.
+    nested_tag: Option<usize>,
 }
 
 impl<'a> JSDocParser<'a> {
+    /// Whether a tag is not to be parsed inside another one. Every cycle of calls in this parser goes through
+    /// `parse_jsdoc_signature` or `try_parse_child_tag`, one level for each tag of a run of `@overload`, `@callback` or
+    /// `@param {Object} a`. Once the stack has been low, each further tag of the comment would get as deep again.
+    fn is_too_deep(&mut self) -> bool {
+        self.is_out_of_stack |= (self.is_stack_low)();
+        self.is_out_of_stack
+    }
+
     /// `nextTokenJSDoc`, `ScanJSDocToken`
     fn next_token_jsdoc(&mut self) -> JSDocToken {
         let (text, start) = (self.text, self.scanner.pos);
@@ -1145,6 +1450,9 @@ impl<'a> JSDocParser<'a> {
             Some(b'*') => JSDocToken::Asterisk,
             Some(b'{') => JSDocToken::OpenBrace,
             Some(b'}') => JSDocToken::CloseBrace,
+            Some(b'[') => JSDocToken::OpenBracket,
+            Some(b']') => JSDocToken::CloseBracket,
+            Some(b'=') => JSDocToken::Equals,
             Some(b'.') => JSDocToken::Dot,
             Some(b'`') => JSDocToken::Backtick,
             Some(b'\\') => match lexer::peek_unicode_escape(text, start) {
@@ -1232,7 +1540,13 @@ impl<'a> JSDocParser<'a> {
         let pos = token_end(text, start, false);
         let token = match text.get(start) {
             None => JSDocToken::EndOfFile,
+            Some(b'@') => JSDocToken::At,
+            Some(b'{') => JSDocToken::OpenBrace,
             Some(b'}') => JSDocToken::CloseBrace,
+            Some(b'[') => JSDocToken::OpenBracket,
+            Some(b']') => JSDocToken::CloseBracket,
+            Some(b'*') if pos == start + 1 => JSDocToken::Asterisk,
+            Some(b'=') if pos == start + 1 => JSDocToken::Equals,
             Some(b'.') if pos == start + 1 => JSDocToken::Dot,
             Some(b'#') if text.get(start + 1) != Some(&b'!') => JSDocToken::PrivateIdentifier,
             Some(b'0'..=b'9') => JSDocToken::Other,
@@ -1260,6 +1574,26 @@ impl<'a> JSDocParser<'a> {
     /// `TokenValue` of an identifier.
     fn token_value(&self) -> Cow<'a, [u8]> {
         super::spans::unescaped_identifier(&self.text[self.scanner.start..self.scanner.pos])
+    }
+
+    /// `mark`
+    fn mark(&self) -> (JSDocScannerState, usize) {
+        (self.scanner, self.links.len())
+    }
+
+    /// `rewind`
+    fn rewind(&mut self, state: (JSDocScannerState, usize)) {
+        self.scanner = state.0;
+        self.links.truncate(state.1);
+    }
+
+    /// `parseOptional`
+    fn parse_optional(&mut self, token: JSDocToken) -> bool {
+        let is_next = self.scanner.token == token;
+        if is_next {
+            self.next_token();
+        }
+        is_next
     }
 
     /// `parseOptionalJsdoc`
@@ -1398,29 +1732,294 @@ impl<'a> JSDocParser<'a> {
         if seen_line_break { indent } else { 0 }
     }
 
-    /// `parseTag`. Of the syntax of a tag, only a type in braces right after its name is passed
-    /// over. The rest is read as its comment.
-    fn parse_tag(&mut self, margin: usize) {
+    /// `parseTag`. Returns whether it is a `JSDocReturnTag`.
+    fn parse_tag(&mut self, margin: usize) -> bool {
         let start = self.scanner.start;
         self.next_token_jsdoc();
-        // `parseJSDocIdentifierName`
-        let mut tag_name = Cow::default();
-        if self.scanner.token == JSDocToken::Identifier {
-            tag_name = self.token_value();
-            self.next_token_jsdoc();
-        }
+        let tag_name = self.parse_jsdoc_identifier_name();
         let indent_text = self.skip_whitespace_or_asterisk();
-        if self.scanner.token == JSDocToken::OpenBrace && jsdoc_tag_takes_brace(&tag_name) {
-            let inside = self.scanner.pos;
-            // No type starts with `@`, and `parseTagComments` ends at it: it starts a tag.
-            let after = match self.text.get(inside) {
-                Some(b'@') => inside,
-                _ => closing_bracket_after(self.text, inside) as usize + 1,
-            };
-            self.reset_pos(after.min(self.text.len()));
-            self.next_token_jsdoc();
+        match &*tag_name {
+            b"arg" | b"argument" | b"param" => {
+                self.parse_parameter_or_property_tag(start, PARAMETER, margin);
+            }
+            b"typedef" => self.parse_typedef_tag(start, margin, indent_text),
+            b"callback" => self.parse_callback_tag(start, margin, indent_text),
+            b"overload" => self.parse_overload_tag(start, margin, indent_text),
+            _ => self.parse_tag_without_children(start, &tag_name, margin, indent_text),
+        }
+        matches!(&*tag_name, b"return" | b"returns")
+    }
+
+    /// The parsers of the tags that have no tags nested in them. Of their syntax, only a type in
+    /// braces right after the name is passed over. The rest is read as the comment.
+    fn parse_tag_without_children(
+        &mut self,
+        start: usize,
+        tag_name: &[u8],
+        margin: usize,
+        indent_text: usize,
+    ) {
+        if self.scanner.token == JSDocToken::OpenBrace && jsdoc_tag_takes_brace(tag_name) {
+            self.parse_jsdoc_type_expression();
         }
         self.parse_trailing_tag_comments(start, self.scanner.full_start, margin, indent_text);
+    }
+
+    /// `parseJSDocIdentifierName`. A missing name is empty.
+    fn parse_jsdoc_identifier_name(&mut self) -> Cow<'a, [u8]> {
+        if self.scanner.token != JSDocToken::Identifier {
+            return Cow::default();
+        }
+        let text = self.token_value();
+        self.next_token_jsdoc();
+        text
+    }
+
+    /// `parseJSDocEntityName`
+    fn parse_jsdoc_entity_name(&mut self) -> Vec<Cow<'a, [u8]>> {
+        let mut entity = Vec::new();
+        loop {
+            entity.push(self.parse_jsdoc_identifier_name());
+            // "Note that y[] is accepted as an entity name"
+            if self.parse_optional(JSDocToken::OpenBracket) {
+                self.parse_optional(JSDocToken::CloseBracket);
+            }
+            if !self.parse_optional(JSDocToken::Dot) {
+                return entity;
+            }
+        }
+    }
+
+    /// `parseJSDocTypeExpression` at a `{`. The type is passed over, not parsed.
+    fn parse_jsdoc_type_expression(&mut self) -> JSDocTypeExpression {
+        let inside = self.scanner.pos;
+        // No type starts with `@`, and `parseTagComments` ends at it: it starts a tag.
+        let end = match self.text.get(inside) {
+            Some(b'@') => inside,
+            _ => (closing_bracket_after(self.text, inside) as usize + 1).min(self.text.len()),
+        };
+        self.reset_pos(end);
+        self.next_token_jsdoc();
+        let written = &self.text[inside..];
+        JSDocTypeExpression {
+            is_object_or_object_array: is_object_or_object_array_type_reference(written),
+            end,
+        }
+    }
+
+    /// `tryParseTypeExpression`
+    fn try_parse_type_expression(&mut self) -> Option<JSDocTypeExpression> {
+        self.skip_whitespace_or_asterisk();
+        (self.scanner.token == JSDocToken::OpenBrace).then(|| self.parse_jsdoc_type_expression())
+    }
+
+    /// `parseBracketNameInPropertyAndParamTag`
+    fn parse_bracket_name_in_property_and_param_tag(&mut self) -> Vec<Cow<'a, [u8]>> {
+        let open = self.scanner.start;
+        let is_bracketed = self.parse_optional_jsdoc(JSDocToken::OpenBracket);
+        if is_bracketed {
+            self.skip_whitespace();
+        }
+        let is_backquoted = self.parse_optional_jsdoc(JSDocToken::Backtick);
+        let name = self.parse_jsdoc_entity_name();
+        if is_backquoted {
+            self.parse_optional(JSDocToken::Backtick);
+        }
+        if is_bracketed {
+            self.skip_whitespace();
+            // "May have an optional default, e.g. '[foo = 42]'". It is passed over, not parsed.
+            if self.scanner.token == JSDocToken::Equals {
+                let after = end_of_brackets(self.text, open);
+                self.reset_pos(after.map_or(self.text.len(), |after| after - 1));
+                self.next_token();
+            }
+            self.parse_optional(JSDocToken::CloseBracket);
+        }
+        name
+    }
+
+    /// `parseParameterOrPropertyTag`, `parseNestedTypeLiteral`. Returns `node.Name()`.
+    fn parse_parameter_or_property_tag(
+        &mut self,
+        start: usize,
+        target: u8,
+        indent: usize,
+    ) -> Vec<Cow<'a, [u8]>> {
+        let mut type_expression = self.try_parse_type_expression();
+        self.skip_whitespace_or_asterisk();
+        let name = self.parse_bracket_name_in_property_and_param_tag();
+        let indent_text = self.skip_whitespace_or_asterisk();
+        if type_expression.is_none() {
+            let state = self.scanner;
+            let is_at_link = self.parse_jsdoc_link_prefix();
+            self.scanner = state;
+            if !is_at_link {
+                type_expression = self.try_parse_type_expression();
+            }
+        }
+        self.parse_trailing_tag_comments(start, self.scanner.full_start, indent, indent_text);
+        if type_expression.is_some_and(|it| it.is_object_or_object_array) {
+            while self
+                .parse_child_parameter_or_property_tag(target, indent, Some(&name))
+                .is_some()
+            {}
+        }
+        name
+    }
+
+    /// `parseJSDocTypeNameWithNamespace`, or a missing name.
+    fn parse_jsdoc_type_name_with_namespace(&mut self) {
+        while self.scanner.token == JSDocToken::Identifier {
+            self.next_token_jsdoc();
+            if !self.parse_optional_jsdoc(JSDocToken::Dot) {
+                break;
+            }
+        }
+    }
+
+    /// `parseTypedefTag`
+    fn parse_typedef_tag(&mut self, start: usize, indent: usize, indent_text: usize) {
+        let type_expression = self.try_parse_type_expression();
+        self.skip_whitespace_or_asterisk();
+        self.parse_jsdoc_type_name_with_namespace();
+        // `fullName.End()`
+        let mut end = self.scanner.full_start;
+        self.skip_whitespace();
+        let has_comment = self.parse_tag_comments(indent, None);
+        if type_expression.is_none_or(|it| it.is_object_or_object_array) {
+            let mut has_children = false;
+            let mut child_type_tag = None;
+            while let Some(child) =
+                self.parse_child_parameter_or_property_tag(PROPERTY, indent, None)
+            {
+                has_children = true;
+                if let JSDocChildTag::Type(Some(written)) = child {
+                    child_type_tag.get_or_insert(written);
+                }
+            }
+            // `typeExpression.End()`
+            if has_children {
+                end = match child_type_tag {
+                    Some(written) if !written.is_object_or_object_array => written.end,
+                    _ => self.scanner.full_start,
+                };
+            }
+        }
+        if !has_comment {
+            self.parse_trailing_tag_comments(start, end, indent, indent_text);
+        }
+    }
+
+    /// `parseJSDocSignature`, `parseCallbackTagParameters`
+    fn parse_jsdoc_signature(&mut self, indent: usize) {
+        while self
+            .parse_child_parameter_or_property_tag(CALLBACK_PARAMETER, indent, None)
+            .is_some()
+        {}
+        if self.is_too_deep() {
+            return;
+        }
+        let state = self.mark();
+        let outer = self.nested_tag.replace(self.scanner.start);
+        if !(self.parse_optional_jsdoc(JSDocToken::At)
+            && self.scanner.token == JSDocToken::At
+            && self.parse_tag(indent))
+        {
+            self.rewind(state);
+        }
+        self.nested_tag = outer;
+    }
+
+    /// `parseCallbackTag`, which goes on like `parseOverloadTag` after the name.
+    fn parse_callback_tag(&mut self, start: usize, indent: usize, indent_text: usize) {
+        self.parse_jsdoc_type_name_with_namespace();
+        self.parse_overload_tag(start, indent, indent_text);
+    }
+
+    /// `parseOverloadTag`
+    fn parse_overload_tag(&mut self, start: usize, indent: usize, indent_text: usize) {
+        self.skip_whitespace();
+        let has_comment = self.parse_tag_comments(indent, None);
+        self.parse_jsdoc_signature(indent);
+        if !has_comment {
+            self.parse_trailing_tag_comments(start, self.scanner.full_start, indent, indent_text);
+        }
+    }
+
+    /// `parseChildParameterOrPropertyTag`, and the `rewind` of its callers if there is none.
+    /// `name`: of the tag that a `@param` or a `@property` has to name a property of.
+    fn parse_child_parameter_or_property_tag(
+        &mut self,
+        target: u8,
+        indent: usize,
+        name: Option<&[Cow<'a, [u8]>]>,
+    ) -> Option<JSDocChildTag<'a>> {
+        let state = self.mark();
+        let mut can_parse_tag = true;
+        let mut seen_asterisk = false;
+        let child = loop {
+            match self.next_token_jsdoc() {
+                JSDocToken::At if can_parse_tag && self.can_follow_jsdoc_at() => {
+                    break self.try_parse_child_tag(target, indent);
+                }
+                JSDocToken::At => seen_asterisk = false,
+                JSDocToken::NewLineTrivia => {
+                    can_parse_tag = true;
+                    seen_asterisk = false;
+                }
+                JSDocToken::Asterisk => {
+                    can_parse_tag &= !seen_asterisk;
+                    seen_asterisk = true;
+                }
+                JSDocToken::Identifier => can_parse_tag = false,
+                JSDocToken::EndOfFile => break None,
+                _ => {}
+            }
+        };
+        // `textsEqual(name, child.Name().AsQualifiedName().Left)`
+        let child = child.filter(|child| match (child, name) {
+            (JSDocChildTag::ParameterOrProperty(child), Some(name)) => {
+                child.split_last().is_some_and(|(_, left)| left == name)
+            }
+            _ => true,
+        });
+        if child.is_none() {
+            self.rewind(state);
+        }
+        child
+    }
+
+    /// `tryParseChildTag`
+    fn try_parse_child_tag(&mut self, target: u8, indent: usize) -> Option<JSDocChildTag<'a>> {
+        if self.is_too_deep() {
+            return None;
+        }
+        let start = self.scanner.full_start;
+        self.next_token_jsdoc();
+        let tag_name = self.parse_jsdoc_identifier_name();
+        let indent_text = self.skip_whitespace_or_asterisk();
+        let fits = match &*tag_name {
+            b"prop" | b"property" => PROPERTY,
+            b"arg" | b"argument" | b"param" => PARAMETER | CALLBACK_PARAMETER,
+            _ => 0,
+        };
+        let outer = self.nested_tag.replace(start);
+        let child = match &*tag_name {
+            // `parseTypeTag` without an indent leaves the comment to the `@typedef`.
+            b"type" if target == PROPERTY => {
+                Some(JSDocChildTag::Type(self.try_parse_type_expression()))
+            }
+            b"template" | b"this" => {
+                self.parse_tag_without_children(start, &tag_name, indent, indent_text);
+                Some(JSDocChildTag::Other)
+            }
+            _ if target & fits != 0 => Some(JSDocChildTag::ParameterOrProperty(
+                self.parse_parameter_or_property_tag(start, target, indent),
+            )),
+            _ => None,
+        };
+        self.nested_tag = outer;
+        child
     }
 
     /// `parseTrailingTagComments` for the tag that starts at `start`. `indent_text`: the length of
@@ -1435,16 +2034,21 @@ impl<'a> JSDocParser<'a> {
         if indent_text == 0 {
             margin += end - start;
         }
-        self.parse_tag_comments(margin, indent_text.saturating_sub(margin));
+        self.parse_tag_comments(margin, Some(indent_text.saturating_sub(margin)));
     }
 
-    /// `parseTagComments`. `initial_margin`: the length of that text.
-    fn parse_tag_comments(&mut self, mut indent: usize, initial_margin: usize) {
-        let mut state = JSDocState::SawAsterisk;
+    /// `parseTagComments`. `initial_margin`: the length of that text. Returns whether there is a
+    /// comment.
+    fn parse_tag_comments(&mut self, mut indent: usize, initial_margin: Option<usize>) -> bool {
+        let mut state = match initial_margin {
+            Some(_) => JSDocState::SawAsterisk,
+            None => JSDocState::BeginningOfLine,
+        };
         let mut backtick_count = 0;
         let mut in_fenced_code_block = false;
         let mut margin = None;
-        if initial_margin != 0 {
+        let mut has_comment = false;
+        if let Some(initial_margin @ 1..) = initial_margin {
             margin = Some(indent);
             indent += initial_margin;
         }
@@ -1479,6 +2083,7 @@ impl<'a> JSDocParser<'a> {
                 JSDocToken::OpenBrace if !in_fenced_code_block => {
                     state = JSDocState::SavingComments;
                     is_pushed = !self.parse_jsdoc_link();
+                    has_comment |= !is_pushed;
                 }
                 JSDocToken::At | JSDocToken::OpenBrace => {
                     state = JSDocState::saving(in_fenced_code_block);
@@ -1502,6 +2107,10 @@ impl<'a> JSDocParser<'a> {
             if is_pushed {
                 margin.get_or_insert(indent);
                 indent += token_len;
+                // `removeTrailingWhitespace`
+                let is_white_space = lexer::is_white_space_single_line;
+                has_comment |= lexer::end_of_run(self.text, self.scanner.start, is_white_space)
+                    < self.scanner.pos;
             }
             if state.is_saving() {
                 self.next_jsdoc_comment_text_token(state == JSDocState::SavingBackticks);
@@ -1509,6 +2118,7 @@ impl<'a> JSDocParser<'a> {
                 self.next_token_jsdoc();
             }
         }
+        has_comment
     }
 
     /// `parseJSDocLink`. Returns whether there is a link at the current token, a `{`.
@@ -1522,7 +2132,8 @@ impl<'a> JSDocParser<'a> {
         self.skip_whitespace();
         let name = self.parse_jsdoc_link_name();
         if !name.is_empty() {
-            self.links.push(name);
+            let nested_tag = self.nested_tag;
+            self.links.push(JSDocLink { name, nested_tag });
         }
         while !matches!(
             self.scanner.token,
@@ -1550,9 +2161,20 @@ impl<'a> JSDocParser<'a> {
             // `ReScanHashToken`
             self.scanner.pos = self.scanner.start + 1;
             self.next_token_jsdoc();
-            name.push(self.parse_identifier_name());
+            name.push(self.parse_identifier());
         }
         name
+    }
+
+    /// `parseIdentifier`, outside a `yield` and an `await` context. A reserved word is left where
+    /// it is, and the name is missing.
+    fn parse_identifier(&mut self) -> Cow<'a, [u8]> {
+        if self.scanner.token == JSDocToken::Identifier
+            && super::errors_declaration_emit::is_reserved_word(&self.token_value())
+        {
+            return Cow::default();
+        }
+        self.parse_identifier_name()
     }
 
     /// `parseIdentifierName`
@@ -1642,41 +2264,14 @@ pub(super) fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
 impl Unused<'_, '_> {
     // ───────────────────────────── references ─────────────────────────────
 
-    fn note_references(&mut self, index: &ExprsByKind) {
+    fn note_references(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
-        for &e in index.of(ExprTag::Ident) {
-            let i = e.idx();
-            let symbol = bound.expr_symbol[i];
-            if symbol.is_none()
-                || self.referenced[symbol.idx()] & VALUE != 0
-                || bound.is_unchecked(i)
-                || self.is_unchecked(e)
-                || self.is_write_only(e)
-                || self.is_inside_declaration_of(e, symbol)
-            {
-                continue;
-            }
-            // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It does not check the
-            // initializer, so it does not resolve the callee.
-            if let Parent::Expr(call) = bound.expr_parent[i]
-                && call.is_some()
-                && let Parent::VarInit(d) = bound.expr_parent[call.idx()]
-                && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
-                && bound.required_by(hir, hir[d].pat).is_some()
-            {
-                continue;
-            }
-            self.referenced[symbol.idx()] |= VALUE;
-        }
         for i in 0..hir.types.len() {
             let scope = bound.type_scope[i];
             let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
                 continue;
             };
-            if bound.is_unchecked_type(i)
-                || hir.is_in_with(hir.types[i].pos)
-                || self.is_never_checked(hir.types[i].pos)
-            {
+            if bound.is_unchecked_type(i) || self.is_never_checked(hir.types[i].pos) {
                 continue;
             }
             let Some(first) = hir.texts(name).next() else {
@@ -1697,20 +2292,16 @@ impl Unused<'_, '_> {
             if matches!(bound.stmt_parent[i], Parent::None) {
                 continue;
             }
-            match s.kind {
-                // `export { a }` references `a` with any meaning.
-                StmtKind::ExportNamed(id) if !hir[id].has_module_specifier => {
-                    let scope = bound.export_scope[id.idx()];
-                    for item in hir[id].items.iter() {
-                        self.note_name(scope, hir[item].local, SymFlags::all(), ALL);
-                    }
+            // `export { a }` references `a` with any meaning, past
+            // `checkGrammarModuleElementContext`.
+            if let StmtKind::ExportNamed(id) = s.kind
+                && !hir[id].has_module_specifier
+                && matches!(bound.stmt_parent[i], Parent::File | Parent::Module(_))
+            {
+                let scope = bound.export_scope[id.idx()];
+                for item in hir[id].items.iter() {
+                    self.note_name(scope, hir[item].local, SymFlags::all(), ALL);
                 }
-                StmtKind::ImportEquals(id) => {
-                    if let ImportEqualsTarget::Entity(names) = hir[id].target {
-                        self.note_module_reference(bound.import_equals_scope[id.idx()], names);
-                    }
-                }
-                _ => {}
             }
         }
         // `export default I`, `export = I`: a type is accepted too.
@@ -1721,6 +2312,7 @@ impl Unused<'_, '_> {
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
                 )
                 && let ExprKind::Ident(name) = hir[e].kind
+                && !self.is_never_checked(hir[e].pos)
             {
                 self.note_name(scope, name, SymFlags::all(), ALL);
             }
@@ -1779,15 +2371,17 @@ impl Unused<'_, '_> {
         scope
     }
 
-    /// The statement, member, parameter, function type or variable declaration that has `at` in
-    /// the trivia before its first token, where its JSDoc comments are (`withJSDoc`). Those are the
-    /// nodes with comments that are passed to `checkSourceElement`.
+    /// The statement, member, parameter, function type, named tuple member or variable declaration
+    /// that has `at` in the trivia before its first token, where its JSDoc comments are
+    /// (`withJSDoc`). Those are the nodes with comments that are passed to `checkSourceElement`.
     fn jsdoc_host_at(&self, at: u32) -> Option<JSDocHost> {
         let (hir, bound) = (self.hir, self.bound);
         // The range of a node is empty if the parser did not record it.
         let follows = |loc: TextRange, start: u32| loc.end != 0 && (loc.pos..start).contains(&at);
+        // A query visits a declared name without its declaration.
+        let is_visited = |start: u32| !self.is_never_checked(at) && !self.is_never_checked(start);
         let host = |loc: TextRange, start: u32, scope: ScopeId, owns_trailing_comments: bool| {
-            (scope.is_some() && !hir.is_in_with(start)).then_some(JSDocHost {
+            (scope.is_some() && is_visited(start)).then_some(JSDocHost {
                 loc,
                 start,
                 scope,
@@ -1797,6 +2391,18 @@ impl Unused<'_, '_> {
         let is_checked = |i: usize| !matches!(bound.stmt_parent[i], Parent::None);
         let mut statements = hir.stmts.iter().enumerate();
         if let Some((i, s)) = statements.find(|&(i, s)| follows(s.loc, s.start) && is_checked(i)) {
+            let is_host = match s.kind {
+                // `parseExpressionOrLabeledStatement`, `hasParen`: the comments belong to the
+                // `ParenthesizedExpression` alone, which `checkSourceElement` never visits.
+                StmtKind::Expr(_) => hir.text.get(s.start as usize) != Some(&b'('),
+                // `checkTryStatement` and `checkCatchClause` call `checkBlock` themselves.
+                StmtKind::Block(_) => !matches!(bound.stmt_parent[i], Parent::Stmt(outer)
+                    if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. })),
+                _ => true,
+            };
+            if !is_host {
+                return None;
+            }
             return host(
                 s.loc,
                 s.start,
@@ -1813,6 +2419,34 @@ impl Unused<'_, '_> {
                 false,
             );
         }
+        // `parseClassElement`: a `;` is a member of the class too, for which the HIR has nothing.
+        // Any other `;` in a class ends a member or a statement that starts in the class.
+        let text: &[u8] = &hir.text;
+        let next_token = bun_core::strings::index_of(&text[at as usize..], b"*/")
+            .map(|end| skip_trivia(text, at as usize + end + 2) as u32);
+        if let Some(semicolon) = next_token.filter(|&it| text.get(it as usize) == Some(&b';')) {
+            let loc = TextRange {
+                pos: skip_trivia_back(text, semicolon as usize) as u32,
+                end: semicolon + 1,
+            };
+            let classes = hir.classes.iter().zip(bound.class_owner.iter());
+            let innermost = classes
+                .enumerate()
+                .filter(|(_, (class, owner))| (class.start..owner.end(hir)).contains(&semicolon))
+                .max_by_key(|(_, (class, _))| class.start);
+            if let Some((i, (class, _))) = innermost
+                && follows(loc, semicolon)
+            {
+                let ends_with_it = |start: u32, loc: TextRange| {
+                    start > class.start && (loc.pos..loc.end).contains(&semicolon)
+                };
+                if !hir.members.iter().any(|m| ends_with_it(m.start, m.loc))
+                    && !hir.stmts.iter().any(|s| ends_with_it(s.start, s.loc))
+                {
+                    return host(loc, semicolon, bound.class_scope[i], false);
+                }
+            }
+        }
         let mut enum_members = hir.enum_members.iter().enumerate();
         if let Some((i, m)) = enum_members.find(|(_, m)| follows(m.loc, m.pos)) {
             let scope = bound.enum_scope.get(bound.enum_member_owner[i].idx());
@@ -1820,25 +2454,43 @@ impl Unused<'_, '_> {
         }
         let mut parameters = hir.params.iter().enumerate();
         if let Some((i, p)) = parameters.find(|(_, p)| follows(p.loc, p.pos)) {
-            let function = bound.param_fn[i];
-            let scope = if function.is_some() {
-                bound.fns[function.idx()].scope
-            } else {
-                ScopeId::NONE
-            };
-            return host(p.loc, p.pos, scope, true);
+            // `parseSimpleArrowFunctionExpression`: the comments belong to the `ArrowFunction`
+            // alone, which `checkSourceElement` never visits.
+            let parameter = hir.node(ParamId(i as u32));
+            let function = hir.parent(parameter);
+            if hir.kind(function) == Kind::ArrowFunction
+                && hir.is_parameter_without_parentheses(function, parameter)
+            {
+                return None;
+            }
+            return host(
+                p.loc,
+                p.pos,
+                self.scope_of_parameter(ParamId(i as u32)),
+                true,
+            );
         }
-        // `parseFunctionOrConstructorType`. `node.Pos()` of a type is not stored.
+        // `parseFunctionOrConstructorType`, `parseTupleElementNameOrTupleElementType`: the first
+        // token, `node.End()`, a type that is checked if the node is, and the scope. `node.Pos()`
+        // is stored for neither.
         let function_types = (hir.types.iter().enumerate()).filter_map(|(i, t)| match t.kind {
-            TypeNodeKind::Fn(f) if t.pos > at => Some((i, t, f)),
+            TypeNodeKind::Fn(f) => Some((t.pos, t.end, i, bound.fns[f.idx()].scope)),
             _ => None,
         });
-        if let Some((i, t, f)) = function_types.min_by_key(|it| it.1.pos) {
-            let pos = skip_trivia_back(&hir.text, t.pos as usize) as u32;
+        let named_tuple_members = (hir.tuple_elems.iter())
+            .filter(|member| member.name.is_some() && member.written.is_some())
+            .map(|member| {
+                let written = member.written.idx();
+                (member.start, member.end, written, bound.type_scope[written])
+            });
+        let after = function_types
+            .chain(named_tuple_members)
+            .filter(|node| node.0 > at);
+        if let Some((start, end, ty, scope)) = after.min_by_key(|node| node.0) {
+            let pos = skip_trivia_back(&hir.text, start as usize) as u32;
             if pos <= at {
-                let is_checked = !bound.is_unchecked_type(i) && !self.is_never_checked(t.pos);
-                let loc = TextRange { pos, end: t.end };
-                return host(loc, t.pos, bound.fns[f.idx()].scope, false).filter(|_| is_checked);
+                let is_checked = !bound.is_unchecked_type(ty);
+                return host(TextRange { pos, end }, start, scope, false).filter(|_| is_checked);
             }
         }
         let mut declarations = hir.var_decls.iter().enumerate();
@@ -1848,42 +2500,73 @@ impl Unused<'_, '_> {
         if s.is_none() || !matches!(hir[s].kind, StmtKind::Var(_)) {
             return None;
         }
-        let scope = match bound.stmt_scope[s.idx()] {
-            ScopeId::NONE => self.scope_of_statement(s),
-            scope => scope,
-        };
-        host(d.loc, hir[d.pat].pos, scope, true)
+        host(d.loc, hir[d.pat].pos, bound.stmt_scope[s.idx()], true)
     }
 
-    /// The scope of the declaration that `s` is. For any other statement, the scope of the
-    /// innermost enclosing function or namespace.
-    fn scope_of_statement(&self, mut s: StmtId) -> ScopeId {
+    /// `Resolve` from a child of `s` that is not a statement: the scope that `s` creates, or else
+    /// the scope it is in.
+    fn scope_of_statement(&self, s: StmtId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
-        match hir[s].kind {
+        let inside = match hir[s].kind {
             StmtKind::Fn(f) => return bound.fns[f.idx()].scope,
             StmtKind::Class(class) => return bound.class_scope[class.idx()],
             StmtKind::Interface(id) => return bound.interface_scope[id.idx()],
             StmtKind::TypeAlias(alias) => return bound.alias_scope[alias.idx()],
             StmtKind::Enum(e) => return bound.enum_scope[e.idx()],
             StmtKind::Module(m) => return bound.module_scope[m.idx()],
-            _ => {}
-        }
-        loop {
-            match bound.stmt_parent[s.idx()] {
-                Parent::Stmt(outer) if outer.is_some() => s = outer,
-                Parent::Case(case) if bound.case_stmt[case.idx()].is_some() => {
-                    s = bound.case_stmt[case.idx()]
-                }
-                Parent::FnBody(f) => return bound.fns[f.idx()].scope,
-                Parent::Module(m) => return bound.module_scope[m.idx()],
-                Parent::File => return ScopeId(0),
-                _ => return ScopeId::NONE,
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+                if body.is_some() =>
+            {
+                body
             }
+            // An empty block declares nothing.
+            StmtKind::Block(list) => hir.ids(list).next().unwrap_or(s),
+            _ => s,
+        };
+        bound.stmt_scope[inside.idx()]
+    }
+
+    /// `reparseJSDocComment`: in JavaScript the comment of a `@param`, `@property` or `@this` tag
+    /// that is nested in another tag is the JSDoc of each parameter and property signature made
+    /// from the tag. Where the names in the comment of the tag at `tag` are resolved from.
+    fn scopes_of_reparsed_tag(&self, tag: u32) -> Vec<ScopeId> {
+        let hir = self.hir;
+        if !hir.is_js {
+            return Vec::new();
         }
+        let is_made_from_it =
+            |flags: Flags, loc: TextRange| flags.contains(Flags::REPARSED) && loc.pos == tag;
+        let members = (hir.members.iter().enumerate())
+            .filter(|(_, m)| is_made_from_it(m.flags, m.loc))
+            .map(|(i, _)| self.scope_of_member(MemberId(i as u32)));
+        let parameters = (hir.params.iter().enumerate())
+            .filter(|(_, p)| is_made_from_it(p.flags, p.loc))
+            .map(|(i, _)| self.scope_of_parameter(ParamId(i as u32)));
+        let scopes = members.chain(parameters);
+        scopes.filter(|scope| scope.is_some()).collect()
+    }
+
+    /// `Resolve` from a child of `p`, so that `lastLocation` is a parameter where the locals of the
+    /// function are searched.
+    fn scope_of_parameter(&self, p: ParamId) -> ScopeId {
+        let bound = self.bound;
+        let function = bound.param_fn[p.idx()];
+        if function.is_none() {
+            return ScopeId::NONE;
+        }
+        let scope = bound.fns[function.idx()].scope;
+        // The scopes inside a function follow its own.
+        let mut inside = (bound.scopes.iter().enumerate().skip(scope.idx() + 1))
+            .take_while(|(_, inner)| inner.parent >= scope);
+        inside
+            .find(|(_, inner)| inner.kind == ScopeKind::Param(function))
+            .map_or(scope, |(i, _)| ScopeId(i as u32))
     }
 
     /// `GetHostSignatureFromJSDoc`: the scope of the signature that `m` is, or that is the type of
-    /// `m` if it is a property signature. Otherwise the scope `m` is declared in.
+    /// `m` if it is a property signature. Otherwise the scope that encloses `m`.
     fn scope_of_member(&self, m: MemberId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
         let (member, owner) = (&hir[m], bound.member_owner[m.idx()]);
@@ -1902,19 +2585,15 @@ impl Unused<'_, '_> {
         {
             return bound.fns[f.idx()].scope;
         }
-        match owner {
-            MemberOwner::Class(class) => bound.class_scope[class.idx()],
-            MemberOwner::Interface(id) => bound.interface_scope[id.idx()],
-            MemberOwner::TypeLiteral(t) => bound.type_scope[t.idx()],
-            MemberOwner::None => ScopeId::NONE,
-        }
+        bound.member_scope[m.idx()]
     }
 
-    /// The lookups of the first of `names`, the `a.b` of `import x = a.b`.
-    fn note_module_reference(&mut self, scope: ScopeId, names: Span<NameId>) {
+    /// The lookups of the first of `names`, the `a.b` of `import x = a.b`, that are made whether or
+    /// not `x` is referenced. Returns whether the target of `x` is `unknownSymbol`.
+    fn note_module_reference(&mut self, scope: ScopeId, names: Span<NameId>) -> bool {
         let names: Vec<Atom> = self.hir.texts(names).collect();
         let Some(&first) = names.first() else {
-            return;
+            return false;
         };
         let any = SymFlags::VALUE | SymFlags::TYPE | SymFlags::NAMESPACE;
         // `getSymbolOfPartOfRightHandSideOfImportEquals`
@@ -1936,6 +2615,7 @@ impl Unused<'_, '_> {
             let meaning = SymFlags::VALUE | SymFlags::NAMESPACE;
             self.note_name(scope, first, meaning, VALUE | NAMESPACE);
         }
+        target.is_none()
     }
 
     /// `resolveEntityName(name, SymbolFlagsNamespace)`: a name that does not resolve to a namespace
@@ -1968,13 +2648,27 @@ impl Unused<'_, '_> {
     /// `Resolve`: what the name resolves to, if that is declared in the file.
     fn resolve_use(&self, from: ScopeId, name: Atom, meaning: SymFlags) -> Option<Use> {
         let files = self.files;
+        self.resolve_use_with(from, name, meaning, &mut |held, meaning| {
+            held.filter(|&sym| files.means(sym, meaning))
+        })
+    }
+
+    /// The same. `get_symbol`: `getSymbol`, given the entry of a table for the name.
+    fn resolve_use_with(
+        &self,
+        from: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        get_symbol: &mut dyn FnMut(Option<Sym>, SymFlags) -> Option<Sym>,
+    ) -> Option<Use> {
+        let files = self.files;
         // The most recently searched scope.
         let mut found_in = ScopeId::NONE;
         let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             if let SymbolTable::Locals(_, scope) = table {
                 found_in = scope;
             }
-            held.filter(|&sym| files.means(sym, meaning))
+            get_symbol(held, meaning)
         };
         let start = self.bound.scope_to_resolve_from(from, name);
         let found = files
@@ -1990,10 +2684,18 @@ impl Unused<'_, '_> {
         let mut inside = SymbolId::NONE;
         let mut scope = from;
         while scope != found_in {
+            let s = &self.bound.scopes[scope.idx()];
+            // The name of a method or an accessor is a child of it, but its scope is not inside
+            // that of the function.
+            if let ScopeKind::FunctionName(f) = s.kind
+                && self.bound.fns[f.idx()].scope == found_in
+            {
+                break;
+            }
             if self.owner_of_scope[scope.idx()].is_some() {
                 inside = self.owner_of_scope[scope.idx()];
             }
-            scope = self.bound.scopes[scope.idx()].parent;
+            scope = s.parent;
         }
         Some(Use {
             symbol: found,
@@ -2036,17 +2738,33 @@ impl Unused<'_, '_> {
         }
     }
 
-    /// Whether the checker never visits `e`, so that nothing in `e` counts as a reference. `checkWithStatement` does not check the body
-    /// of a `with` statement.
+    /// Whether the checker never visits `e`, so that nothing in `e` counts as a reference.
     fn is_unchecked(&self, e: ExprId) -> bool {
-        self.hir.is_in_with(self.hir[e].pos)
-            || self.has_unchecked_returns && self.is_in_unchecked_return(e)
+        self.has_unchecked_returns && self.is_in_unchecked_return(e)
             || self.is_never_checked(self.hir[e].pos)
     }
 
     fn is_never_checked(&self, pos: u32) -> bool {
         let mut never_checked = self.never_checked.iter();
         never_checked.any(|&(from, to)| (from..to).contains(&pos))
+    }
+
+    /// Not `is_never_checked` for the node of `scope`, a `ScopeKind::Block`. The scope does not
+    /// store the node: it is `GetEnclosingBlockScopeContainer` of every declaration among its
+    /// locals (`bindBlockScopedDeclaration`).
+    fn is_block_scope_checked(&self, scope: ScopeId) -> bool {
+        if self.never_checked.is_empty() {
+            return true;
+        }
+        let (hir, bound) = (self.hir, self.bound);
+        let first = bound.table(bound.scopes[scope.idx()].locals).first();
+        let Some(&declaration) = first.and_then(|it| bound.symbols[it.1.idx()].decls.first())
+        else {
+            return true;
+        };
+        let container = hir.get_enclosing_block_scope_container(hir.node(declaration));
+        // A `CaseBlock` is a part of its statement.
+        container.is_none() || !self.is_never_checked(hir.start(container.row()))
     }
 
     /// Whether `e` is in the expression of a `return` that is outside a function or directly in a class static block.
@@ -2303,7 +3021,8 @@ impl Unused<'_, '_> {
 
 impl Checker<'_, '_> {
     /// `checkUnusedIdentifiers`. The nodes `registerForUnusedIdentifiersCheck` collects there are
-    /// iterated by kind here.
+    /// iterated by kind here. The check of a node collects it, so one that is never checked is not
+    /// among them, wherever the declarations of its locals are.
     fn check_unused_identifiers(&mut self, u: &Unused<'_, '_>) {
         let (hir, bound) = (u.hir, u.bound);
         let unchecked = self.unchecked_jsdoc_types(u.file);
@@ -2312,12 +3031,15 @@ impl Checker<'_, '_> {
                 // `checkSourceFile`: `IsExternalOrCommonJSModule`
                 ScopeKind::File => hir.has_module_syntax || bound.commonjs_indicator.is_some(),
                 // `checkModuleDeclaration`: `!IsGlobalScopeAugmentation(node)`
-                ScopeKind::Module(m) => hir[m].name != ModuleName::Global,
-                ScopeKind::Block => true,
+                ScopeKind::Module(m) => {
+                    hir[m].name != ModuleName::Global && !u.is_never_checked(hir[m].name_pos)
+                }
+                ScopeKind::Block => u.is_block_scope_checked(ScopeId(i as u32)),
                 // Among overloads, only the implementation.
                 ScopeKind::Fn(f) => {
                     !matches!(hir[f].body, FnBody::None)
                         && hir.kind(hir.node(f)).is_function_like_declaration()
+                        && !u.is_never_checked(hir[f].start)
                 }
                 _ => false,
             };
@@ -2357,6 +3079,7 @@ impl Checker<'_, '_> {
                 if let TypeNodeKind::Infer(param) = t.kind
                     && hir[param].name != known::empty
                     && !unchecked.contain(t.pos)
+                    && !u.is_never_checked(t.pos)
                     && u.is_unreferenced_type_parameter(param)
                 {
                     let at = self.place_of_token(u.file, hir[param].pos);
@@ -2382,7 +3105,7 @@ impl Checker<'_, '_> {
     ) {
         let is_error = if is_parameter { u.parameters } else { u.locals };
         if is_error && !u.hir.is_ambient(location) && !u.has_syntax_error(location) {
-            self.error_at(at, code, args);
+            self.error_at(at, code, args).by_another_node = true;
         }
     }
 
@@ -2425,7 +3148,11 @@ impl Checker<'_, '_> {
                                 .push((hir.find_ancestor(declaration, is_clause), declaration));
                         }
                     }
-                    // `export default function f() {}`. `IsAmbientModule`
+                    // `IsAmbientModule`
+                    Kind::ModuleDeclaration
+                        if matches!(decl, Decl::Module(m)
+                            if !matches!(hir[m].name, ModuleName::Ident(_))) => {}
+                    // `export default function f() {}`
                     Kind::FunctionDeclaration
                     | Kind::ClassDeclaration
                     | Kind::InterfaceDeclaration
@@ -2434,6 +3161,7 @@ impl Checker<'_, '_> {
                     | Kind::EnumDeclaration
                     | Kind::ModuleDeclaration
                     | Kind::ImportEqualsDeclaration
+                    | Kind::ExportSpecifier
                         if !hir
                             .flags(declaration)
                             .intersects(Flags::EXPORT | Flags::DEFAULT)
@@ -2521,6 +3249,9 @@ impl Checker<'_, '_> {
                 matches!(hir.data(hir.find_ancestor(node, is_statement)), NodeData::Stmt(s)
                     if matches!(hir[s].kind, StmtKind::Import(i) if hir[i].type_only))
             }
+            Kind::ExportSpecifier => {
+                matches!(hir.data(node), NodeData::ExportSpec(s) if hir[hir[s].export].type_only)
+            }
             _ => false,
         };
         let at = self.place_of_token(u.file, hir.start(hir.name(node)));
@@ -2578,6 +3309,9 @@ impl Checker<'_, '_> {
             return;
         }
         let node = hir.node(declaration);
+        if u.is_never_checked(hir.start(node)) {
+            return;
+        }
         if params.len() > 1 && params.iter().all(|p| u.is_unreferenced_type_parameter(p)) {
             // `rangeOfTypeParameters`: starts at the `<`. A list synthesized from `@template` tags
             // begins at the `@` of the first tag (`gatherTypeParameters`), so the range starts one
@@ -2614,6 +3348,9 @@ impl Checker<'_, '_> {
             let MemberOwner::Class(_) = bound.member_owner[i] else {
                 continue;
             };
+            if u.is_never_checked(member.start) {
+                continue;
+            }
             match member.kind {
                 MemberKind::Property
                 | MemberKind::Method

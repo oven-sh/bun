@@ -29,6 +29,8 @@ struct LateBoundSymbol {
     declarations: Vec<(FileId, Decl)>,
     /// `symbol.ValueDeclaration`
     value_declaration: Option<(FileId, Decl)>,
+    /// `getMergedSymbol(symbol).CheckFlags&CheckFlagsLate != 0`: `cloneSymbol` does not copy it.
+    is_late: bool,
 }
 
 /// What `getResolvedMembersOrExportsOfSymbol` adds to the binder's table of one side of a container.
@@ -95,7 +97,16 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        let late = self.late_bound_members(files.sym(file, parent), is_static)?;
+        let side = (files.sym(file, parent), is_static);
+        let asks_by_itself = name == known::computed && matches!(declaration, Decl::Member(_));
+        if asks_by_itself {
+            self.late_binding_by_symbol.push(side);
+        }
+        let late = self.late_bound_members(side.0, is_static);
+        if asks_by_itself {
+            self.late_binding_by_symbol.pop();
+        }
+        let late = late?;
         let symbol = *late.symbol_of.get(&(file, declaration))?;
         Some((late, symbol as usize))
     }
@@ -128,6 +139,14 @@ impl<'p, 's> Checker<'p, 's> {
         match self.late_bound_symbol(file, declaration) {
             Some((late, symbol)) => List::Own(late.symbols[symbol].declarations.clone()),
             None => self.declarations_of_early_bound_symbol(file, declaration),
+        }
+    }
+
+    /// `EmitResolver.IsLateBound`
+    pub(super) fn is_late_bound(&mut self, file: FileId, m: MemberId) -> bool {
+        match self.late_bound_symbol(file, Decl::Member(m)) {
+            Some((late, symbol)) => late.symbols[symbol].is_late,
+            None => self.is_late_bound_by_another_call(file, m),
         }
     }
 
@@ -176,6 +195,27 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         self.declarations_of_member(file, declaration)
+    }
+
+    /// The same while `declaration` is checked. `checkIndexConstraints` has resolved the members of
+    /// a class or an interface before they are checked, and `checkObjectLiteral` has asked for the
+    /// symbol of every member. `checkTypeLiteral` checks the members first.
+    pub(super) fn declarations_of_symbol_of_checked_declaration(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+    ) -> List<'p, (FileId, Decl)> {
+        match declaration {
+            Decl::Member(m)
+                if matches!(
+                    self.bound(file).member_owner[m.idx()],
+                    crate::bind::MemberOwner::TypeLiteral(_)
+                ) =>
+            {
+                self.declarations_of_symbol_of_declaration(file, declaration)
+            }
+            _ => self.declarations_of_member(file, declaration),
+        }
     }
 
     /// `getExportsOfSymbol(container)[name]`, where the binder's table has the alias `early`.
@@ -340,6 +380,7 @@ impl<'p, 's> Checker<'p, 's> {
                     flags: SymFlags::empty(),
                     declarations: Vec::new(),
                     value_declaration: None,
+                    is_late: true,
                 });
             }
             // `addDeclarationToLateBoundSymbol`
@@ -390,6 +431,7 @@ impl<'p, 's> Checker<'p, 's> {
             match resolved_target {
                 AliasTarget::Symbol(resolved) if resolved == target => {
                     let merged = &mut late[index];
+                    merged.is_late = false;
                     merged.flags |= target_flags;
                     merged.declarations.splice(0..0, files.decls(target));
                     let of_target = files.value_declaration(target);
@@ -399,6 +441,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                 }
                 AliasTarget::Symbol(resolved) if !is_excluded(files.flags(resolved)) => {
+                    late[index].is_late = false;
                     replaced_aliases.push((name, Some(resolved)));
                 }
                 // "return source"

@@ -219,11 +219,15 @@ impl<'p> Checker<'p, '_> {
             });
         let members = (hir.members.iter().zip(bound.member_owner.iter()))
             .map(|(member, owner)| (member.name_pos, !matches!(owner, MemberOwner::None)));
-        // The name of `{ a }` is an expression, and `{ ...a }` has none.
+        // The name of `{ a }` is an expression, and `{ ...a }` has none. `parseIdentifierName` makes
+        // an `Identifier` of any token that names a `JsxAttribute` or an `ImportAttribute`.
         let properties =
-            (hir.props.iter().zip(bound.prop_owner.iter())).map(|(property, owner)| {
+            (hir.props.iter().zip(bound.prop_owner.iter())).map(|(property, &owner)| {
                 let has_name = !matches!(property.kind, PropKind::Shorthand | PropKind::Spread);
-                (property.pos, has_name && owner.is_some())
+                let is_in_object_literal = owner.is_some()
+                    && matches!(hir[owner].kind, ExprKind::Object(_))
+                    && !hir.import_attributes.iter().any(|kept| kept.1 == owner);
+                (property.pos, has_name && is_in_object_literal)
             });
         let elements = hir.pat_props.iter().map(|element| {
             let is_bound = !matches!(bound.pat_parent[element.value.idx()], PatParent::None);
@@ -501,11 +505,7 @@ impl<'p> Checker<'p, '_> {
         let ExprKind::Ident(name) = hir[index].kind else {
             return false;
         };
-        // `getResolvedSymbol`
-        let symbol = self
-            .symbol_of_identifier(file, index, name)
-            .and_then(|found| self.value_symbol_of_identifier(file, index, name, found));
-        let Some(symbol) = symbol else {
+        let Some(symbol) = self.symbol_of_identifier(file, index, name) else {
             return false;
         };
         if !self.files().flags(symbol).intersects(SymFlags::VARIABLE) {
@@ -549,9 +549,7 @@ impl<'p> Checker<'p, '_> {
                 let ExprKind::Ident(name) = hir[e].kind else {
                     return None;
                 };
-                // `getResolvedSymbol`
                 self.symbol_of_identifier(file, e, name)
-                    .and_then(|found| self.value_symbol_of_identifier(file, e, name, found))
             }
             _ => None,
         }
@@ -720,8 +718,17 @@ impl<'p> Checker<'p, '_> {
         file: FileId,
         written: PropId,
     ) -> u32 {
+        let hir = self.hir(file);
+        // `bindThisPropertyAssignment`: `this.name = value` in a member of the literal declares `name` among its members.
+        if hir.is_js
+            && let Some(&(_, Decl::ThisProperty(first))) = self
+                .declarations_of_member(file, Decl::Property(written))
+                .first()
+        {
+            return hir[first].pos;
+        }
         let first = self.first_declaration_of_literal_member(file, written);
-        self.hir(file)[first].pos
+        hir[first].pos
     }
 
     /// `declareSymbol`: the type parameters of a class or an interface are among its `members`, so
@@ -842,9 +849,9 @@ impl<'p> Checker<'p, '_> {
             _ => None,
         };
         let name = match bound.pat_parent[element.idx()] {
-            PatParent::Prop(_, p) if !hir[p].is_rest => self
-                .literal_type_from_property_name(file, hir[p].key, hir[p].name_kind)
-                .map(|key| (key, hir[p].pos)),
+            PatParent::Prop(_, p) if hir[p].key_pos != hir[element].pos => self
+                .literal_type_from_property_name(file, hir[p].key, hir[p].name_kind, hir[p].key_pos)
+                .map(|key| (key, hir[p].key_pos)),
             _ => own_name,
         };
         let Some((expr_type, at_name)) = name else {
@@ -1337,7 +1344,7 @@ impl<'p> Checker<'p, '_> {
         name_pos: u32,
     ) {
         let (at, writing) = (Parent::Expr(e), self.is_write_access(file, e));
-        let error_node = |c: &Self| c.place_of_token(file, name_pos);
+        let error_node = |c: &Self| c.place_of_right(file, name, name_pos);
         self.check_property_accessibility_at_location(
             file,
             self.hir(file).node(e),

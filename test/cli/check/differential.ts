@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // `bun check` follows TypeScript 7, which is a native program next to its `lib.*.d.ts`: `typescript7` in
@@ -41,7 +42,7 @@ export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-/** `deep`: nested too deeply for the stack of a build that is not optimised. */
+/** `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one. */
 type Case = { files: Record<string, string>; build?: true; deep?: true };
 
 /**
@@ -55,17 +56,28 @@ export function programsThatOnceDiffered(part: number, parts: number) {
       `programs about which the two once differed, ${part * tests + nth + 1} of ${parts * tests}`,
       async () => {
         const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
+        using dir = tempDir("bun-check-differential", {});
+        const root = String(dir);
         const cases = Object.entries(all)
           .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
           // A debug build checks a sample. It is always the same sample.
           .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
           .filter((_, index) => index % (parts * tests) === part * tests + nth)
-          // Windows cannot create a directory named `c:`.
-          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => path.includes(":")));
-        const files: Record<string, string> = {};
-        for (const [name, it] of cases) for (const path in it.files) files[`${name}/${path}`] = it.files[path];
-        using dir = tempDir("bun-check-differential", files);
-        const root = String(dir);
+          // Windows cannot create a directory named `c:` or `w*d`.
+          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)))
+          .filter(([name, it]) => {
+            try {
+              for (const path in it.files) {
+                mkdirSync(dirname(join(root, name, path)), { recursive: true });
+                writeFileSync(join(root, name, path), it.files[path]);
+              }
+              return true;
+            } catch (error) {
+              // APFS refuses a character that is newer than the Unicode tables of the system.
+              if ((error as NodeJS.ErrnoException).code === "EILSEQ") return false;
+              throw error;
+            }
+          });
         const different: Record<string, object> = {};
         await inTurns(cases, async ([name, it]) => {
           const cwd = join(root, name);

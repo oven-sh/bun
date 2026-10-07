@@ -252,6 +252,13 @@ impl MaybeLocal for FileId {
     }
 }
 
+impl MaybeLocal for Sym {
+    #[inline]
+    fn is_local(&self) -> bool {
+        false
+    }
+}
+
 impl MaybeLocal for crate::hir::TypeNodeId {
     #[inline]
     fn is_local(&self) -> bool {

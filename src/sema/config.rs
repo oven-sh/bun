@@ -7,8 +7,9 @@ use crate::json::{Json, TsConfigSourceFile};
 use crate::resolve::{
     Host, Options, ancestors, combine_paths, contains_path, displayed_path,
     equate_string_case_insensitive, extra_supported_extensions, file_extension_is_one_of,
-    get_base_file_name, get_relative_path_from_directory, inside, is_rooted_disk_path,
-    is_same_path, join, known_extension, remove_file_extension, supported_extensions, to_path,
+    get_base_file_name, get_path_components, get_relative_path_from_directory, inside,
+    is_rooted_disk_path, is_same_path, join, known_extension, remove_file_extension,
+    supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
 use crate::verify::{Place, Problem};
@@ -624,23 +625,27 @@ fn validate_specs(
         .collect()
 }
 
-/// The same, with `over` applied after everything in the configuration file: the options a command
-/// line adds to it, which may depend on whether the file has `references`. The result owns its
-/// memory: `session` only holds what is of no use afterwards.
+/// `GetParsedCommandLineOfConfigFilePath`. `over` is applied after everything in the configuration
+/// file: the options a command line adds to it, which may depend on whether the file has
+/// `references`. `Err`: the file cannot be read, and there is no project. A file that the parser
+/// gives up on is an empty one, with the error. The result owns its memory: `session` only holds
+/// what is of no use afterwards.
 pub fn load_overriding(
     host: &dyn Host,
     session: &Session,
     path: &[u8],
     over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
-) -> Project {
+) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
     let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors);
-    let mut raw = raw.unwrap_or_default();
+    let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
+        return Err(errors);
+    };
     let base = dirname::<Posix>(path);
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, over(has_references), &[]);
-    project_from_raw(host, session, path, base, raw, errors)
+    Ok(project_from_raw(host, session, path, base, raw, errors))
 }
 
 /// The project consisting of `files` only, or of everything under `dir` if `files` is empty, with
@@ -817,7 +822,7 @@ fn project_from_raw(
 }
 
 /// `ChangeExtension`
-fn change_extension(path: &[u8], extension: &[u8]) -> Vec<u8> {
+pub(crate) fn change_extension(path: &[u8], extension: &[u8]) -> Vec<u8> {
     match known_extension(path) {
         b"" => path.to_vec(),
         _ => [remove_file_extension(path), extension].concat(),
@@ -847,7 +852,7 @@ pub fn matched_include_spec<'s>(
         .iter()
         .find(|spec| {
             GlobPattern::compile(&spec.1, base, Usage::Files, case_sensitive)
-                .is_some_and(|pattern| pattern.matches(path, b""))
+                .is_some_and(|pattern| pattern.matches(typescript_path(path), b""))
         })
         .map(|spec| spec.0.as_slice())
         .filter(|spec| !spec.is_empty())
@@ -905,7 +910,10 @@ fn file_names_from_specs(
                         })
                         .collect()
                 });
-                if patterns.iter().any(|p| p.matches(&file, b"")) {
+                if patterns
+                    .iter()
+                    .any(|p| p.matches(typescript_path(&file), b""))
+                {
                     let key = key(&file);
                     if !literal_files.contains_key(&key) && !wildcard_json_files.contains_key(&key)
                     {
@@ -1001,8 +1009,8 @@ fn is_package_folder(name: &[u8]) -> bool {
         || name.eq_ignore_ascii_case(b"bower_components")
 }
 
-/// The path components of `prefix` followed by `suffix`, which is a single component or empty. The
-/// root comes first, as `""`.
+/// `nextPathPartParts`: the path components of `prefix` followed by `suffix`, which is a single
+/// component or empty. `prefix` is a `typescript_path`. A `/` at its start comes first, as `""`.
 fn path_parts<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + Clone {
     let root = prefix.starts_with(b"/").then_some(&b""[..]);
     root.into_iter()
@@ -1019,15 +1027,16 @@ impl GlobPattern {
         case_sensitive: bool,
     ) -> Option<GlobPattern> {
         let absolute = join(base, spec);
-        let mut parts: Vec<&[u8]> = std::iter::once(&b""[..])
-            .chain(strings::split(&absolute, b"/").filter(|p| !p.is_empty()))
-            .collect();
+        let mut parts = get_path_components(typescript_path(&absolute));
         if usage != Usage::Exclude && parts.last() == Some(&&b"**"[..]) {
             return None;
         }
+        // No path part has a `/` in it, so nothing matches below `//server` or `http://host`.
+        let root = parts[0];
+        parts[0] = root.strip_suffix(b"/").unwrap_or(root);
         if is_implicit_glob(parts.last().copied().unwrap_or(b"")) {
-            parts.push(b"**");
-            parts.push(b"*");
+            parts.push(&b"**"[..]);
+            parts.push(&b"*"[..]);
         }
         Some(GlobPattern {
             components: parts
@@ -1189,11 +1198,11 @@ impl GlobPattern {
 
 /// `unicode.ToLower`: not the two characters that `char::to_lowercase` makes of U+0130.
 fn to_lower(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
+    to_lowercase_unicode_15(c).next().unwrap_or(c)
 }
 
 /// `strings.ToLower`
-fn strings_to_lower(text: &[u8]) -> Vec<u8> {
+pub(crate) fn strings_to_lower(text: &[u8]) -> Vec<u8> {
     let mut lower = Vec::with_capacity(text.len());
     for c in text.chars().map(to_lower) {
         lower.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
@@ -1361,18 +1370,19 @@ fn match_files(
             } else {
                 [path, b"/"].concat()
             };
+            let absolute = typescript_path(&prefix);
             Listed {
                 files: files
                     .into_iter()
                     .filter(|file| file_extension_is_one_of(file, self.extensions))
                     .filter_map(|file| {
-                        let index = self.files.matches_file(&prefix, &file)?;
+                        let index = self.files.matches_file(absolute, &file)?;
                         Some((index, [&prefix[..], &file[..]].concat()))
                     })
                     .collect(),
                 directories: directories
                     .into_iter()
-                    .filter(|directory| self.directories.matches_directory(&prefix, directory))
+                    .filter(|directory| self.directories.matches_directory(absolute, directory))
                     .map(|directory| [&prefix[..], &directory[..]].concat())
                     .collect(),
             }

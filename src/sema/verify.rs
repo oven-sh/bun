@@ -39,7 +39,7 @@ fn parsed_list(value: &Json) -> Option<&[Json]> {
 }
 
 /// `IsIdentifierText`
-fn is_identifier_text(text: &[u8]) -> bool {
+pub(crate) fn is_identifier_text(text: &[u8]) -> bool {
     let (first, size) = lexer::char_and_size(text, 0);
     lexer::is_identifier_start(first as u32)
         && lexer::end_of_run(text, size, lexer::is_type_script_identifier_part) == text.len()
@@ -272,7 +272,7 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool
 /// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
 /// transitively, each with the configuration file that references it. `resolved`:
 /// `configToProjectReference`, the project of the configuration file with a `tspath.Path`, if the
-/// file exists.
+/// file can be read.
 pub fn verify_project_references<'a>(
     root: &'a Project,
     resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,

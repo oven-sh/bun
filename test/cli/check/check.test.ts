@@ -42,6 +42,9 @@ const withResolveJsonModule = JSON.stringify({
   compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, resolveJsonModule: true },
 });
 
+// `"".repeat` is slow in debug builds of JavaScriptCore.
+const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+
 function project(files: Record<string, string>) {
   return tempDir("bun-check", {
     "tsconfig.json": tsconfig,
@@ -2776,6 +2779,46 @@ export const wrong: number = { ...tool, kind: 1 };
       expect(stdout.split("\n")[0]).toBe(
         `a.ts(6,14): error TS2322: Type '{ execute: () => void; type: "dynamic"; kind: number; } | { execute?: undefined; type: "dynamic"; kind: number; } | { execute: () => void; type?: "function" | undefined; kind: number; } | { execute?: undefined; type?: "function" | undefined; kind: number; }' is not assignable to type 'number'.`,
       );
+    });
+
+    test("a type that is nested too deeply to be printed whole loses no error", async () => {
+      // The frames of a build that is not optimised are larger: at 1,000 levels the check itself runs out of stack there.
+      const depth = isDebug || isASAN ? 100 : 1000;
+      using dir = project({
+        "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
+export const wrong: number = x;
+`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
+      expect(stdout).toStartWith("a.ts(2,14): error TS2322: Type '{ a: { a: { a: { a: { a: { a: ");
+      expect(stdout).toEndWith(" }; }; }' is not assignable to type 'number'.");
+      expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      "@overload",
+      "@callback",
+      "@param {Object} a",
+      "@param {object[]} a",
+      "@template T @param {Object} a",
+      "@callback @param {Object} a",
+    ])("a JSDoc comment of 20,000 times %j, each nested in the last", async tags => {
+      using dir = project({
+        "a.ts": `/** {@link f} ${repeat(`${tags} `, 20_000)}*/
+export function f() {}
+const wrong: number = "";
+`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(3,7): error TS6133: 'wrong' is declared but its value is never read."
+      `);
+      expect(stderr.split("\n")[0]).toBe(
+        "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
     });
 
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
@@ -13766,7 +13809,7 @@ export const deferred: Deferred<"a"> = 1;
       });
       const { stdout, exitCode } = await check(dir);
       // The type has a level for every round up to the limit.
-      expect(stdout.replace("x".repeat(99), "<99 x>")).toMatchInlineSnapshot(`
+      expect(stdout.replace(repeat("x", 99), "<99 x>")).toMatchInlineSnapshot(`
         "a.ts(2,43): error TS2589: Type instantiation is excessively deep and possibly infinite.
         a.ts(3,40): error TS2589: Type instantiation is excessively deep and possibly infinite.
         a.ts(4,54): error TS2589: Type instantiation is excessively deep and possibly infinite.
@@ -14365,6 +14408,53 @@ export function f<T>(rest: T) {
         runs.map(() => ["a/a.ts", "b/secret.ts", "b/b.ts", "c/c.ts", "d/d.ts", "e/secret.ts", "e/e.ts", "f/f.ts"]),
       );
     });
+
+    // As in tsc: without its options nothing can be checked. To a build the file is not there.
+    test.skipIf(canReadEverything).each([
+      [[], "error TS5083: Cannot read file '<dir>/tsconfig.json'."],
+      [["-p", "."], "error TS5083: Cannot read file '<dir>/tsconfig.json'."],
+      [["-b"], "error TS6053: File '<dir>/tsconfig.json' not found."],
+    ])("a tsconfig.json that cannot be read stops the check: %j", async (args, expected) => {
+      using dir = project({ "tsconfig.json": `{}`, "a.ts": `export const wrong: number = "";\n` });
+      chmodSync(join(String(dir), "tsconfig.json"), 0o000);
+      const { stdout, exitCode } = await check(dir, args);
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(canReadEverything).each([
+      [[], []],
+      [["-b"], ["error TS6053: File '<dir>/lib/tsconfig.json' not found."]],
+    ])("a referenced tsconfig.json that cannot be read is not found: %j", async (args, first) => {
+      const compilerOptions = { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] };
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"], references: [{ path: "./lib" }] }),
+        "a.ts": `export const a = 1;\n`,
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions }),
+        "lib/l.ts": `export const wrong: number = "";\n`,
+      });
+      chmodSync(join(String(dir), "lib/tsconfig.json"), 0o000);
+      const { stdout, exitCode } = await check(dir, args);
+      const lines = stdout.split("\n").map(line => line.replace(/^tsconfig\.json\(\d+,\d+\): /, "tsconfig.json: "));
+      expect(lines).toEqual([...first, "tsconfig.json: error TS6053: File '<dir>/lib' not found."]);
+      expect(exitCode).toBe(1);
+    });
+
+    // How deep the parser goes depends on the stack of the platform. Whatever it says, the file can be read.
+    test.each([[[]], [["-b"]]])(
+      "the files of a tsconfig.json that is nested too deeply are checked: %j",
+      async args => {
+        const depth = 100_000;
+        using dir = project({
+          "tsconfig.json": `{ "a": ${repeat("[", depth)}${repeat("]", depth)} }`,
+          "a.ts": `export const wrong: number = "";\n`,
+        });
+        const { stdout, exitCode } = await check(dir, args);
+        expect(stdout).toContain("a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.");
+        expect(stdout).not.toContain("not found");
+        expect(exitCode).toBe(1);
+      },
+    );
 
     test("-p with a path that does not exist", async () => {
       using dir = project({});
@@ -16239,7 +16329,7 @@ describe.concurrent("--check", () => {
       "const x = [[[[[[[[[[[[[[[[[[",
       "declare function f(a: any): any;\nconst x = f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(",
       "declare function f(a: any): any;\nconst x = (f([(f([(f([(f([(f([(f([",
-      `const x = ${"{ a: ".repeat(18)}`,
+      `const x = ${repeat("{ a: ", 18)}`,
       "const x = ((((((((((((((((((",
       "interface I { m(export= x: string): any; }",
       "interface I { n(,): any; }",
@@ -16372,7 +16462,7 @@ describe.concurrent("--check", () => {
             n,
           )
             .map(() => "while (c) { x = h(x);")
-            .join(" ")} ${"}".repeat(n)} return x; }`,
+            .join(" ")} ${repeat("}", n)} return x; }`,
       ],
       [
         "a chain of `&&`",
@@ -16393,7 +16483,7 @@ describe.concurrent("--check", () => {
       [
         "a chain of method calls",
         size,
-        n => `declare const a: { m(): typeof a };\nexport const r = a${".m()".repeat(n)};`,
+        n => `declare const a: { m(): typeof a };\nexport const r = a${repeat(".m()", n)};`,
       ],
       [
         // TypeScript needs seconds for 400 members too.
@@ -16432,11 +16522,11 @@ describe.concurrent("--check", () => {
             .map(i => `export function f${i}() { return f${i + 1}(); }`)
             .join("\n")}\nexport function f${n}() { return 1; }`,
       ],
-      ["nested object literals", size, n => `export const r = ${"{ a: ".repeat(n)}1${" }".repeat(n)};`],
+      ["nested object literals", size, n => `export const r = ${repeat("{ a: ", n)}1${repeat(" }", n)};`],
       [
         "nested array types",
         size,
-        n => `export type T = ${"Array<".repeat(n)}number${">".repeat(n)};\nexport declare const t: T;`,
+        n => `export type T = ${repeat("Array<", n)}number${repeat(">", n)};\nexport declare const t: T;`,
       ],
       [
         "a recursive conditional type",

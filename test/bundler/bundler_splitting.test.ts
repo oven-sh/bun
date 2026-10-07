@@ -1999,7 +1999,242 @@ describe("bundler", () => {
       format: "esm",
       run: { file: "/out/entry.js", stdout: "first\nsecond\na,z" },
     });
+
+    // The namespace object of lib.js names data.json. The file still goes where its import statement is, after side.js.
+    itBundled("splitting/NamespaceExportKeepsImportOrderOfJSON" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import * as lib from "./lib.js"; console.log(Object.keys(lib).join(), lib[["data"][0]].a);`,
+        "/lib.js": `import "./side.js"; export { default as data } from "./data.json";`,
+        "/side.js": `console.log("side");`,
+        "/data.json": `{ "a": "from json" }`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        const code = api.readFile("/out/entry.js");
+        expect(code.indexOf(`"side"`)).toBeLessThan(code.indexOf(`"from json"`));
+      },
+      run: { file: "/out/entry.js", stdout: "side\ndata from json" },
+    });
+
+    // A function of first.js names data.json, which the barrel imports later. The file does not go inside first.js.
+    itBundled("splitting/BarrelCycleKeepsImportOrderOfJSON" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import { read } from "./index.js"; console.log(read());`,
+        "/index.js": `export * from "./first.js"; export { default as data } from "./data.json";`,
+        "/first.js": /* js */ `
+          import { data } from "./index.js";
+          export function read() { return data.a; }
+          console.log("first");
+        `,
+        "/data.json": `{ "a": "from json" }`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        const code = api.readFile("/out/entry.js");
+        expect(code.indexOf(`"first"`)).toBeLessThan(code.indexOf(`"from json"`));
+      },
+      run: { file: "/out/entry.js", stdout: "first\nfrom json" },
+    });
+
+    // first.js runs ahead of second.js and holds the namespace object of second.js, which exists before any file runs.
+    itBundled("splitting/NamespaceObjectExistsBeforeItsFileRuns" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": /* js */ `
+          import { held } from "./index.js";
+          console.log(typeof held.second, Object.keys(held.second).join(), held.second.two());
+        `,
+        "/entry2.js": `import { held } from "./index.js"; console.log(typeof held.second);`,
+        "/index.js": `export * from "./first.js"; export * as second from "./second.js";`,
+        "/first.js": `import { second } from "./index.js"; console.log("first", typeof second); export const held = { second };`,
+        "/second.js": `console.log("second"); export function two() { return 2; }`,
+      },
+      entryPoints: ["/entry.js", "/entry2.js"],
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/entry.js", stdout: "first object\nsecond\nobject two 2" },
+        { file: "/out/entry2.js", stdout: "first object\nsecond\nobject" },
+      ],
+    });
   });
+
+  // theme.js is in the chunk that the entry points share. Each chunk that names the class-name object has its own copy.
+  for (const [name, [entry, stdout]] of Object.entries({
+    Import: [`import { styles } from "./theme.js"; console.log(typeof styles.button);`, "string"],
+    EntryExport: [`export { styles } from "./theme.js"; console.log("loaded");`, "loaded"],
+    NamespaceObject: [`import * as all from "./again.js"; console.log(typeof all[["styles"][0]].button);`, "string"],
+    ImportCall: [
+      `import { styles } from "./theme.js"; console.log((await import("./page.js")).page === styles.button);`,
+      "true",
+    ],
+  })) {
+    itBundled("splitting/CssModuleObjectNamedThroughReExport" + name, {
+      files: {
+        "/entry.js": entry,
+        "/entry2.js": `import { styles } from "./theme.js"; console.log("entry2", typeof styles.button);`,
+        "/theme.js": `export { default as styles } from "./theme.module.css";`,
+        "/again.js": `export { styles } from "./theme.js";`,
+        "/page.js": `import { styles } from "./theme.js"; export const page = styles.button;`,
+        "/theme.module.css": `.button { color: red; }`,
+      },
+      entryPoints: ["/entry.js", "/entry2.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/entry.js", stdout },
+        { file: "/out/entry2.js", stdout: "entry2 string" },
+      ],
+    });
+  }
+
+  // first.ts imports from the barrel that is importing it. It runs ahead of the files that the barrel imports later,
+  // whatever it names from them. Each graph runs unbundled and bundled; the output must match.
+  const barrel = `export * from "./first.ts"; export * from "./second.ts";`;
+  const barrelCycleGraphs: Record<string, Record<string, string>> = {
+    "a function names a later file": {
+      "main.ts": `import { atLoad, viaSecond } from "./index.ts"; console.log(atLoad, viaSecond());`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { two } from "./index.ts";
+        export function viaSecond() { return two(); }
+        const table = { a: 1 };
+        export function lookup(key: "a") { return table[key]; }
+      `,
+      "second.ts": `
+        import { lookup } from "./index.ts";
+        export function two() { return 2; }
+        export const atLoad = lookup("a");
+      `,
+    },
+    "a default export names a later file": {
+      "main.ts": `import { atLoad } from "./index.ts"; import viaSecond from "./first.ts"; console.log(atLoad, viaSecond());`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { two } from "./index.ts";
+        export default function () { return two(); }
+        export const table = { a: 1 };
+      `,
+      "second.ts": `
+        import { table } from "./index.ts";
+        export function two() { return 2; }
+        export const atLoad = table.a;
+      `,
+    },
+    "a method names a later file": {
+      "main.ts": `import { made } from "./index.ts"; console.log(made.viaSecond());`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { two } from "./index.ts";
+        export class First { viaSecond() { return two(); } }
+      `,
+      "second.ts": `
+        import { First } from "./index.ts";
+        export function two() { return 2; }
+        export const made = new First();
+      `,
+    },
+    "a function of a later file runs at load": {
+      "main.ts": `import { early, late } from "./index.ts"; console.log(early, late());`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { late } from "./index.ts";
+        export const early = String(late());
+      `,
+      "second.ts": `
+        export var state = ["set"].join();
+        export function late() { return state; }
+      `,
+    },
+    "a var of a later file is read at load": {
+      "main.ts": `import { early, state } from "./index.ts"; console.log(early, state);`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { state } from "./index.ts";
+        export const early = typeof state;
+      `,
+      "second.ts": `export var state = ["set"].join();`,
+    },
+    "a static initializer reads a later file": {
+      "main.ts": `import { First, state } from "./index.ts"; console.log(First.early, state);`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { state } from "./index.ts";
+        export class First { static early = typeof state; }
+      `,
+      "second.ts": `export var state = ["set"].join();`,
+    },
+    "the file between the two keeps its place": {
+      "main.ts": `import { viaThird } from "./index.ts"; console.log("main", viaThird());`,
+      "index.ts": `export * from "./first.ts"; import "./second.ts"; export * from "./third.ts";`,
+      "first.ts": `
+        import { three } from "./index.ts";
+        export function viaThird() { return three(); }
+        console.log("first");
+      `,
+      "second.ts": `console.log("second");`,
+      "third.ts": `console.log("third"); export function three() { return 3; }`,
+    },
+    "a namespace object names a later file": {
+      "main.ts": `import "./index.ts"; import * as first from "./first.ts"; console.log(Object.keys(first).join());`,
+      "index.ts": `import "./first.ts"; import "./second.ts"; export * from "./third.ts";`,
+      "first.ts": `export { three } from "./index.ts"; console.log("first");`,
+      "second.ts": `console.log("second");`,
+      "third.ts": `console.log("third"); export const three = 3;`,
+    },
+    "a function of a later file reads a namespace object": {
+      "main.ts": `import { early } from "./index.ts"; console.log(early);`,
+      "index.ts": barrel,
+      "first.ts": `
+        import { pick } from "./index.ts";
+        console.log("first");
+        export const early = pick("three");
+      `,
+      "second.ts": `
+        import * as third from "./third.ts";
+        console.log("second");
+        export function pick(key: "three") { return third[key](); }
+      `,
+      "third.ts": `console.log("third"); export function three() { return 3; }`,
+    },
+  };
+  for (const [name, files] of Object.entries(barrelCycleGraphs)) {
+    // With two entry points, the cycle is in the chunk that they share.
+    for (const splitting of [true, false]) {
+      test.concurrent(
+        `splitting/BarrelCycleKeepsImportOrder${splitting ? "" : "WithoutSplitting"}: ${name}`,
+        async () => {
+          const entries = splitting ? ["main", "main2"] : ["main"];
+          using dir = tempDir("splitting-barrel-cycle", splitting ? { ...files, "main2.ts": files["main.ts"] } : files);
+          const cwd = String(dir);
+          const [unbundled, build] = await Promise.all([
+            run([bunExe(), "main.ts"], cwd, env),
+            Bun.build({
+              entrypoints: entries.map(entry => join(cwd, entry + ".ts")),
+              outdir: join(cwd, "out"),
+              splitting,
+              target: "bun",
+              format: "esm",
+            }),
+          ]);
+          expect(unbundled.stdout).not.toBe("");
+          expect(unbundled.exitCode).toBe(0);
+          expect(build.logs).toEqual([]);
+          expect(build.outputs.map(output => output.kind).sort()).toEqual(
+            splitting ? ["chunk", "entry-point", "entry-point"] : ["entry-point"],
+          );
+          for (const entry of entries) {
+            expect(await run([bunExe(), join("out", entry + ".js")], cwd, env)).toEqual(unbundled);
+          }
+        },
+      );
+    }
+  }
 
   // entry.ts loads the shared chunk and enters the A/B cycle at A, so B must
   // initialize first. page.ts enters the cycle at B, and its import() comes

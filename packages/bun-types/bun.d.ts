@@ -6449,7 +6449,8 @@ declare module "bun" {
      * keeps the `import` or `require()` and uses `path` as its specifier.
      * Without a `path`, the output keeps the specifier from the source file.
      *
-     * The build fails when an entry point is external.
+     * An entry point cannot be external. With a `path`, the build fails.
+     * Without a `path`, the result does not apply to the entry point.
      *
      * A runtime plugin ignores `external`.
      *

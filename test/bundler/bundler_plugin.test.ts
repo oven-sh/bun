@@ -557,6 +557,62 @@ describe("bundler", () => {
       expect(contents).toContain(`from "lodash"`);
     },
   });
+  // A filter that also matches the entry point: the entry point is still bundled.
+  itBundled("plugin/ResolveExternalWithoutPathSkipsEntryPoint", () => {
+    const kinds: string[] = [];
+    return {
+      files: {
+        "/index.ts": /* ts */ `
+          import lodash from "lodash";
+          import { local } from "./local.ts";
+          console.log(lodash, local);
+        `,
+        "/local.ts": `export const local = "bundled-local";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          kinds.push(args.kind);
+          return { external: true };
+        });
+      },
+      onAfterBundle(api) {
+        expect(kinds).toContain("entry-point-build");
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`from "lodash"`);
+        expect(contents).toContain(`from "./local.ts"`);
+        expect(contents).not.toContain("bundled-local");
+      },
+    };
+  });
+  // Without a path, only `external: true` is an answer. Any other value falls through.
+  itBundled("plugin/ResolveExternalWithoutPathNotTrueFallsThrough", {
+    files: {
+      "/index.ts": /* ts */ `
+        import a from "./a.ts";
+        import b from "./b.ts";
+        import c from "./c.ts";
+        import d from "./d.ts";
+        console.log(a, b, c, d);
+      `,
+      "/a.ts": `export default "bundled-a";`,
+      "/b.ts": `export default "bundled-b";`,
+      "/c.ts": `export default "bundled-c";`,
+      "/d.ts": `export default "bundled-d";`,
+    },
+    plugins(builder) {
+      const answers: Record<string, unknown> = { a: false, b: null, c: 1, d: "yes" };
+      builder.onResolve({ filter: /\/[abcd]\.ts$/ }, args => {
+        return { external: answers[args.path.at(-4)!] } as never;
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      for (const name of ["a", "b", "c", "d"]) {
+        expect(contents).toContain(`"bundled-${name}"`);
+      }
+      expect(contents).not.toContain("import ");
+    },
+  });
   itBundled("plugin/ResolveExternalSamePath", {
     files: {
       "index.ts": /* ts */ `

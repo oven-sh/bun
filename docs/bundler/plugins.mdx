@@ -229,7 +229,7 @@ await Bun.build({
 });
 ```
 
-The build fails when a plugin marks an entry point as external.
+An entry point cannot be external. For an entry point, Bun ignores `external: true` without a `path`. With a `path`, the build fails.
 
 ### onLoad
 

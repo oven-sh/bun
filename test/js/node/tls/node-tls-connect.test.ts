@@ -6639,28 +6639,6 @@ describe("a write on a TLS socket over a Duplex completes when the Duplex has co
     },
   );
 
-  // Node completes a write in a setImmediate(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L218
-  it.todo("writes that each wait for the one before let a timer fire", async () => {
-    const pair = makePair("client");
-    using sockets = await connectPair(pair, "client");
-    const { writer, reader } = sockets;
-    reader.resume();
-    const limit = 2000;
-    let writes = 0;
-    let fired = false;
-    const timer = setTimeout(() => (fired = true), 1);
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    writer.on("error", reject);
-    (function pump(err?: Error | null) {
-      if (err) reject(err);
-      else if (fired || ++writes > limit) resolve();
-      else writer.write("x", pump);
-    })();
-    await promise;
-    clearTimeout(timer);
-    expect(fired).toBe(true);
-  });
-
   describe.each(["client", "server"] as const)("a %s write in flight", side => {
     it.each(["destroy()", "destroy(err)", "the destroy() of the Duplex"])(
       "fails at %s, and a Duplex that completes it afterwards changes nothing",

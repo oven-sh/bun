@@ -1,7 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("ModuleNotFound")]
-    ModuleNotFound,
     #[error("BuildFailed")]
     BuildFailed,
     #[error("CompilationFailed")]
@@ -30,8 +28,6 @@ pub enum Error {
     MinifyError,
     #[error("InvalidNativePlugin")]
     InvalidNativePlugin,
-    #[error("EmptyAST")]
-    EmptyAST,
     #[error("FormatError")]
     FormatError,
     #[error("ResolveMessage")]
@@ -102,7 +98,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::ModuleNotFound => "ModuleNotFound",
             Self::BuildFailed => "BuildFailed",
             Self::CompilationFailed => "CompilationFailed",
             Self::Plugin => "Plugin",
@@ -117,7 +112,6 @@ impl Error {
             Self::SyntaxError => "SyntaxError",
             Self::MinifyError => "MinifyError",
             Self::InvalidNativePlugin => "InvalidNativePlugin",
-            Self::EmptyAST => "EmptyAST",
             Self::FormatError => "FormatError",
             Self::ResolveMessage => "ResolveMessage",
             Self::Js(bun_core::JsError::OutOfMemory) => "OutOfMemory",

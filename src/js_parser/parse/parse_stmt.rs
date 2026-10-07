@@ -762,7 +762,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             value = Some(p.parse_expr(Level::Lowest)?);
         }
-        p.latest_return_had_semicolon = p.lexer.token == T::TSemicolon;
         p.lexer.expect_or_insert_semicolon()?;
 
         Ok(p.s(S::Return { value }, loc))

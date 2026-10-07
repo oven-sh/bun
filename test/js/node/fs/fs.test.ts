@@ -6520,6 +6520,26 @@ it.skipIf(!isWindows)("writeFile fails when another process maps the file and th
   expect(fs.statSync(file).size).toBe(4027);
 });
 
+// Every API that replaces a file, under two real failures of the final
+// ftruncate: an EIO injected by strace, and a Landlock sandbox (Linux 6.2+)
+// that refuses truncation. The fixture exits 86 when any API reports success
+// over a file that still holds the old tail. It also runs on node (exit 0).
+it.skipIf(!isLinux || !Bun.which("strace") || !Bun.which("python3"))(
+  "no file API reports success when the final ftruncate fails (#42598)",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "failed-ftruncate-keeps-the-old-tail-fixture.cjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n").pop()).toBe("RESULT: holds: every API fails or leaves exactly the new bytes");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);
+
 it("fs.Stat constructor", () => {
   expect(new Stats()).toMatchObject({
     "atimeMs": undefined,

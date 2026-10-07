@@ -15126,6 +15126,24 @@ describe.concurrent("--check", () => {
       },
     );
 
+    // The list proposes commands that run nothing.
+    test.concurrent.each([
+      ["export const s = 1;\n", 0],
+      [wrong("s"), 1],
+    ])("there, `bun run --check` checks what is below and then runs the script: %j", async (source, code) => {
+      using dir = project({
+        "package.json": JSON.stringify({ scripts: { build: "echo the script ran" } }),
+        "packages/server/tsconfig.json": tsconfig,
+        "packages/server/s.ts": source,
+      });
+      rmSync(join(String(dir), "tsconfig.json"));
+      const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--check", "build"]);
+      expect(stderr).not.toContain("No tsconfig.json");
+      expect(stderr.includes(error("packages/server/s.ts"))).toBe(code === 1);
+      expect(stdout.includes("the script ran")).toBe(code === 0);
+      expect(exitCode).toBe(code);
+    });
+
     test.concurrent.each([
       [["."], [error("loose.ts"), error("packages/server/s.ts"), error("packages/web/w.ts")]],
       [["-p", "packages/server/tsconfig.json"], [error("packages/server/s.ts")]],

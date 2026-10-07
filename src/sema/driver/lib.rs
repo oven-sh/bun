@@ -1493,8 +1493,12 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             }
             None => {
                 // `tsc` prints its help. Which of them is meant is not for a guess: they are
-                // fixtures and examples as often as packages.
-                let below = nested_configs(disk, &cwd);
+                // fixtures and examples as often as packages. Before something runs (`--check`),
+                // a list of commands that run nothing is of no use.
+                let below = match request.are_entry_points {
+                    true => Vec::new(),
+                    false => nested_configs(disk, &cwd),
+                };
                 if !below.is_empty() {
                     report.diagnostics.push(no_project_here(&cwd, &below));
                     return report;
@@ -2396,10 +2400,13 @@ fn check_with_references(
     let mut not_found = not_found.into_iter().peekable();
     for (index, mut checked) in reports.into_iter().enumerate() {
         while let Some((_, d)) = not_found.next_if(|it| it.0 <= index) {
-            report.report_task(Report {
-                diagnostics: vec![d],
-                ..Default::default()
-            });
+            // Of the build. A plain `tsc` has only what the project says at its reference.
+            if reports_references {
+                report.report_task(Report {
+                    diagnostics: vec![d],
+                    ..Default::default()
+                });
+            }
         }
         if let Some(mut checked) = checked.get_mut().take()
             // A project that is only read, with no file in the directory that was named, is not asked about.

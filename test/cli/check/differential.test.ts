@@ -1940,6 +1940,12 @@ differential("the files that are checked, by layout of the project and by comman
       },
     ],
     "references, which are built": ["app", "src/main.ts", ["-b", "../lib"], library],
+    "a reference that is not there": [
+      "app",
+      "src/main.ts",
+      [],
+      { "app/tsconfig.json": library["app/tsconfig.json"], "app/src/main.ts": wrong("main") },
+    ],
     "no configuration file": [".", "a.ts", [], { "a.ts": wrong("a") }],
     "configuration files below, none here": [
       ".",

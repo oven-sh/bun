@@ -30,6 +30,7 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs, slash } from "./shell.ts";
 import { streamPath } from "./stream.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -436,10 +437,41 @@ export interface Provides {
 }
 
 /**
+ * Every vendored dependency (scripts/build/deps/<name>.ts). A dependency refers to another by name (`fetchDeps`),
+ * and its ninja targets are built from its name (`<name>`, `clone-<name>`, `configure-<name>`), so a misspelled
+ * one is a type error here rather than a missing target later.
+ */
+export type DepName =
+  | "WebKit"
+  | "boringssl"
+  | "brotli"
+  | "cares"
+  | "hdrhistogram"
+  | "highway"
+  | "libarchive"
+  | "libdeflate"
+  | "libjpeg-turbo"
+  | "libspng"
+  | "libuv"
+  | "libwebp"
+  | "lolhtml"
+  | "lshpack"
+  | "lsqpack"
+  | "lsquic"
+  | "mimalloc"
+  | "nodejs"
+  | "picohttpparser"
+  | "rust-argon2"
+  | "sqlite"
+  | "tinycc"
+  | "zlib"
+  | "zstd";
+
+/**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
  */
 export interface Dependency {
-  name: string;
+  name: DepName;
 
   /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
@@ -469,7 +501,7 @@ export interface Dependency {
    * source stamp for header-only). Order-only on configure, implicit on
    * build. Does NOT link the other dep's libs (that's `provides.libs`).
    */
-  fetchDeps?: string[];
+  fetchDeps?: DepName[];
 
   /** How to build. */
   build: (cfg: Config) => BuildSpec;
@@ -500,7 +532,7 @@ export interface Dependency {
  * Resolved dependency — absolute paths ready for link()/cxx() calls.
  */
 export interface ResolvedDep {
-  name: string;
+  name: DepName;
   /**
    * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
    * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
@@ -510,7 +542,7 @@ export interface ResolvedDep {
    * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
    * when `cfg.archiveDeps` is off (the default) — the dep's sources are
    * compiled in our graph and the resulting objects go straight into bun's
-   * link line / cpp-only archive instead of an intermediate `.a`.
+   * link line (or CI's object archive) instead of an intermediate `.a`.
    */
   objects: string[];
   /** Absolute include paths for -I flags. */
@@ -547,9 +579,7 @@ export interface ResolvedDep {
 export function registerDepRules(n: Ninja, cfg: Config): void {
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
-  // unchanged so there's no cost on the common case. Host shell syntax
-  // (dep rules don't run in rust-only cross-compile, so host == target,
-  // but use host.os for consistency with other modules).
+  // unchanged so there's no cost on the common case. Host shell syntax.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const cmake = q(cfg.cmake);
@@ -727,7 +757,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
  * NOT handle in-tree sources or WebKit's $BUN_WEBKIT_PATH — use the per-dep
  * `srcDir` computed in resolveDep() for those.
  */
-export function depSourceDir(cfg: Config, name: string): string {
+export function depSourceDir(cfg: Config, name: DepName): string {
   return cfg.localDeps[name] ?? resolve(cfg.vendorDir, name);
 }
 
@@ -735,7 +765,7 @@ export function depSourceDir(cfg: Config, name: string): string {
  * Path to a dep's cmake build output. Separate from source so multiple
  * profiles (debug/release) don't clash.
  */
-export function depBuildDir(cfg: Config, name: string): string {
+export function depBuildDir(cfg: Config, name: DepName): string {
   return resolve(cfg.buildDir, "deps", name);
 }
 
@@ -772,7 +802,7 @@ export function resolveDep(
   n: Ninja,
   cfg: Config,
   dep: Dependency,
-  resolved: ReadonlyMap<string, ResolvedDep>,
+  resolved: ReadonlyMap<DepName, ResolvedDep>,
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
@@ -954,70 +984,6 @@ export function resolveDep(
 }
 
 /**
- * Compute the lib paths a dep produces WITHOUT emitting ninja rules.
- *
- * Used by link-only mode: artifacts (the .a/.lib files) are downloaded
- * from cpp-only's buildkite upload into the SAME paths this returns.
- * Ninja sees them as source files (no build rule) — errors cleanly if
- * download failed.
- *
- * Must stay in sync with the path computation inside emitNestedCmake /
- * emitCargo / emitPrebuilt — that's the contract between cpp-only
- * (producer) and link-only (consumer). If those emit-side paths change,
- * change this too.
- */
-export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
-  if (dep.enabled && !dep.enabled(cfg)) {
-    return [];
-  }
-
-  const source = dep.source(cfg);
-  const buildSpec = dep.build(cfg);
-  const provides = dep.provides(cfg);
-
-  // Prebuilt: provides.libs are paths relative to destDir.
-  if (source.kind === "prebuilt") {
-    const destDir = source.destDir ?? depSourceDir(cfg, dep.name);
-    return provides.libs.map(lib => resolve(destDir, lib));
-  }
-
-  // nested-cmake: provides.libs are bare names (prefix/suffix added) or
-  // paths with "." (used as-is), relative to buildDir/libSubdir.
-  // preBuild outputs (ICU) are absolute paths already — appended.
-  if (buildSpec.kind === "nested-cmake") {
-    const buildDir = depBuildDir(cfg, dep.name);
-    const libDir = buildSpec.libSubdir ? resolve(buildDir, buildSpec.libSubdir) : buildDir;
-    const libs = provides.libs.map(lib =>
-      lib.includes(".") ? resolve(libDir, lib) : resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`),
-    );
-    if (buildSpec.preBuild !== undefined) {
-      libs.push(...buildSpec.preBuild.outputs);
-    }
-    return libs;
-  }
-
-  // cargo: single lib in targetDir/<triple?>/<profile>/.
-  if (buildSpec.kind === "cargo") {
-    const targetDir = depBuildDir(cfg, dep.name);
-    const profile = cfg.release ? "release" : "debug";
-    const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
-    return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
-  }
-
-  // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
-  // files are folded into libbun.a in cpp-only and there's no separate
-  // artifact for link-only to fetch.
-  if (buildSpec.kind === "direct") {
-    if (!cfg.archiveDeps) return [];
-    const buildDir = depBuildDir(cfg, dep.name);
-    return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
-  }
-
-  // none: no libs (header-only or directly-compiled sources).
-  return [];
-}
-
-/**
  * Emit a ninja fetch rule. Returns absolute path to the .ref stamp.
  *
  * The .ref stamp contains the "source identity": hash(commit + patch contents).
@@ -1027,7 +993,7 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 function emitFetch(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "github-archive" }>,
   patches: string[],
   compiledSources: string[],
@@ -1091,7 +1057,7 @@ function emitFetch(
 function emitPrebuilt(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "prebuilt" }>,
   provides: Provides,
 ): ResolvedDep {
@@ -1175,7 +1141,7 @@ interface EmitNestedCmakeInput {
 function emitNestedCmake(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: NestedCmakeBuild,
   input: EmitNestedCmakeInput,
 ): { libs: string[] } {
@@ -1235,9 +1201,7 @@ function emitNestedCmake(
     args.push(`-DCMAKE_C_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
     args.push(`-DCMAKE_CXX_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
   }
-  // Both may be undefined in rust-only cross-compile (no xcode on the linux
-  // CI box); that's fine — the cmake rules are emitted but never pulled.
-  // If pulled without an SDK, cmake fails with its own clear error.
+  // Both may be undefined; if the rules are pulled without an SDK, cmake fails with its own clear error.
   if (cfg.darwin && cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined) {
     args.push(`-DCMAKE_OSX_DEPLOYMENT_TARGET=${cfg.osxDeploymentTarget}`);
     args.push(`-DCMAKE_OSX_SYSROOT=${cfg.osxSysroot}`);
@@ -1413,7 +1377,7 @@ interface EmitCargoInput {
  * everything. Its own incremental build is reliable, so restat=1 on the
  * rule keeps our downstream no-ops fast.
  */
-function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
+function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
   const hostWin = cfg.host.os === "windows";
   assert(cfg.cargo !== undefined, `dep "${name}" requires cargo but no rust toolchain was found`, {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
@@ -1502,9 +1466,8 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
   // fail — they use plain dep_cargo with -Zbuild-std instead.
   const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
-  n.build({
+  const node = {
     outputs: [lib],
-    rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
     // Rebuild if source changed, cargo binary changed, or the pinned
     // toolchain changed. Cargo's own dependency tracking handles file-level
@@ -1514,19 +1477,20 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     // mismatched std hashes and both get pulled into the link, colliding on
     // unmangled symbols like `rust_eh_personality`.
     implicitInputs: [sourceStamp, cfg.cargo, resolve(cfg.cwd, "rust-toolchain.toml")],
-    vars: {
-      name,
-      manifestdir: manifestDir,
-      args: quoteArgs(args, hostWin),
-      ...(cross ? { rust_target: spec.rustTarget! } : {}),
-      // stream.ts's --env=K=V format. Values platform-quoted since ninja
-      // passes the command line through the host's argv parser; stream.ts
-      // receives them as proper argv entries.
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-    },
-  });
+  };
+  const vars = {
+    name,
+    manifestdir: manifestDir,
+    args: quoteArgs(args, hostWin),
+    // stream.ts's --env=K=V format. Values platform-quoted since ninja
+    // passes the command line through the host's argv parser; stream.ts
+    // receives them as proper argv entries.
+    env: Object.entries(env)
+      .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+      .join(" "),
+  };
+  if (cross) n.build({ ...node, rule: "dep_cargo_cross", vars: { ...vars, rust_target: spec.rustTarget! } });
+  else n.build({ ...node, rule: "dep_cargo", vars });
   n.phony(name, [lib]);
 
   return { libs: [lib] };
@@ -1559,7 +1523,7 @@ interface EmitDirectInput {
 function emitDirect(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: DirectBuild,
   input: EmitDirectInput,
 ): { libs: string[]; objects: string[]; headerOutputs: string[]; checks: string[] } {
@@ -1652,6 +1616,7 @@ function emitDirect(
       outputs: [toolOut],
       rule: "dep_host_cc",
       inputs: [toolSrc],
+      implicitInputs: [toolIdentityFile(cfg, "hostCc")],
       orderOnlyInputs: orderOnly,
       vars: { flags: ["-w", ...toolDefs].join(" ") },
     });
@@ -1742,7 +1707,7 @@ function emitDirect(
 function emitForbidUndefined(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: DirectBuild,
   objects: string[],
   buildDir: string,

@@ -53,7 +53,7 @@ type DebugHTTPSServerMuxRequestContext =
 /// storage beyond the JSCell header.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     HTTPServerRequestContext,
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
@@ -73,7 +73,7 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub const COUNT: usize = 12;
+    pub(crate) const COUNT: usize = 12;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {

@@ -29,7 +29,7 @@ let MessageChannel: typeof globalThis.MessageChannel;
 // Only populated on the main thread (the hub); always empty elsewhere.
 // SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
 // cross-thread routing table can't be broken by user code replacing Map.prototype.
-const threadsPorts = new SafeMap<number, any>();
+const threadsPorts: Map<number, import("node:worker_threads").MessagePort> = new SafeMap();
 
 // Only populated on child threads; always undefined on the main thread.
 let mainThreadPort: any;

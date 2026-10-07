@@ -133,7 +133,7 @@ const files = {
       },
       jsonParse: () => JSON.parse("2"),
       regexp: () => /(\\d)/.exec("a2")[1],
-      webAssembly: () => WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
+      webAssembly: () => typeof WebAssembly === "undefined" ? "not in this build" : WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
       importComputedSpecifier: async () => Object.keys(await import("./emp" + "ty.mjs")).length,
       requireBuiltin: () => typeof require("node:fs").readFileSync,
     };
@@ -232,7 +232,8 @@ const notScriptFromAString = {
   pluginModuleExports: 2,
   jsonParse: 2,
   regexp: "2",
-  webAssembly: true,
+  // A build of Bun configured with webAssembly off has no WebAssembly global.
+  webAssembly: typeof WebAssembly === "undefined" ? "not in this build" : true,
   importComputedSpecifier: 0,
   requireBuiltin: "function",
 };

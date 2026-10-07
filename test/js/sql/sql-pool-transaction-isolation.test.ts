@@ -180,18 +180,22 @@ const adapters: Array<{
   mockServer: MockServer;
   beginCommand: string;
   connectionClosedCode: string;
+  // What sql.beginDistributed("dtx", fn) sends to start the transaction, and to roll it back once.
+  distributed: { begin: string; rollback: string[] };
 }> = [
   {
     adapter: "postgres",
     mockServer: pgMockServer,
     beginCommand: "BEGIN",
     connectionClosedCode: "ERR_POSTGRES_CONNECTION_CLOSED",
+    distributed: { begin: "BEGIN", rollback: ["ROLLBACK"] },
   },
   {
     adapter: "mysql",
     mockServer: mysqlMockServer,
     beginCommand: "START TRANSACTION",
     connectionClosedCode: "ERR_MYSQL_CONNECTION_CLOSED",
+    distributed: { begin: "XA START 'dtx'", rollback: ["XA END 'dtx'", "XA ROLLBACK 'dtx'"] },
   },
 ];
 
@@ -223,7 +227,7 @@ const rejectedBeforeBegin = [
   },
 ];
 
-describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connectionClosedCode }) => {
+describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connectionClosedCode, distributed }) => {
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -333,8 +337,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
         return "t1";
       });
       expect(t1).toBe("t1");
-      // A graceful close waits for pending work. It hangs if the pool still counts the reservation.
-      await sql.close();
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
@@ -432,6 +434,63 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     },
   );
 
+  test("reserved.close({ timeout }) waits for a transaction started on the reservation", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const t1 = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        return "t1";
+      });
+      // The timeout is in seconds. close() resolves as soon as t1 settles; without the
+      // transaction being tracked it would close the connection under t1 instead.
+      const closed = reserved.close({ timeout: 60 });
+      expect(await t1).toBe("t1");
+      await closed;
+      reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // Same overlap with a transaction that fails. close() must wait for the ROLLBACK, and
+  // the failure is the caller's to handle: bun:test fails this test if close()'s wait
+  // reports it as an unhandled rejection as well.
+  test("reserved.close({ timeout }) waits for a failing transaction without reporting its handled error", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const failing = reserved
+        .begin(async tx => {
+          await tx.unsafe("SELECT 'T1a'");
+          throw new Error("t1-app-error");
+        })
+        .catch(err => err.message);
+      const closed = reserved.close({ timeout: 60 });
+      expect(await failing).toBe("t1-app-error");
+      await closed;
+      reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "ROLLBACK" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // reserved.close({ timeout }) waits, up to the timeout (in seconds), for the queries and
   // transactions that are pending on the reservation, then closes the connection. The
   // connection's close handler returns the pool slot. The tests below use a pool whose
@@ -498,20 +557,19 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     await pool.sql.close();
   }
 
-  test("reserved.close({ timeout }) waits for a transaction started on the reservation", async () => {
+  // The two cases above end with release(). These two check the slot before it: close() alone
+  // closes the connection and returns the slot, so the release() after it is a no-op.
+  // `await using reserved` ends the same way.
+  test("reserved.close({ timeout }) returns the pool slot once a transaction on the reservation commits", async () => {
     await using pool = await closeTestPool();
     const reserved = await pool.sql.reserve();
     const t1 = reserved.begin(async tx => {
       await tx.unsafe("SELECT 'T1a'");
       return "t1";
     });
-    // close() resolves as soon as t1 settles; without the transaction being tracked it
-    // would close the connection under t1 instead.
     const closed = reserved.close({ timeout: 60 });
     expect(await t1).toBe("t1");
     await closed;
-    // The slot already went back when close() closed the connection, so this is a no-op.
-    // `await using reserved` ends the same way.
     reserved.release();
     await expectSlotReturned(pool);
     expect(pool.received).toEqual([
@@ -522,10 +580,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     ]);
   });
 
-  // Same overlap with a transaction that fails. close() must wait for the ROLLBACK, and
-  // the failure is the caller's to handle: bun:test fails this test if close()'s wait
-  // reports it as an unhandled rejection as well.
-  test("reserved.close({ timeout }) waits for a failing transaction without reporting its handled error", async () => {
+  test("reserved.close({ timeout }) returns the pool slot once a transaction on the reservation fails", async () => {
     await using pool = await closeTestPool();
     const reserved = await pool.sql.reserve();
     const failing = reserved
@@ -545,6 +600,17 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
       { conn: 0, sql: "ROLLBACK" },
       ...afterTransaction(1),
     ]);
+  });
+
+  // A graceful sql.close() waits for the pool's pending work. It hangs if the pool still
+  // counts the reservation.
+  test("a graceful sql.close() resolves after sql.reserve() is closed explicitly", async () => {
+    await using pool = await closeTestPool();
+    const reserved = await pool.sql.reserve();
+    await reserved.unsafe("SELECT 'inside'");
+    await reserved.close();
+    await expectSlotReturned(pool);
+    expect(pool.received).toEqual([{ conn: 0, sql: "SELECT 'inside'" }, ...afterTransaction(1)]);
   });
 
   test("reserved.close({ timeout }) closes the connection once the pending query finishes", async () => {
@@ -715,6 +781,281 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
       await pool.sql.close();
     },
   );
+
+  // transaction.close() ends a transaction in a rollback. With { timeout } it first waits, up
+  // to the timeout, for the queries and savepoints that are pending on the transaction. Once
+  // close() has accepted its arguments, the runner behind begin() and beginDistributed() does
+  // not commit, whether or not the callback awaited close(). The connection stays open and
+  // goes back to the pool, so the transaction that expectConnectionKept runs lands on conn 0.
+  type TransactionCallback = (tx: Bun.TransactionSQL) => Promise<unknown>;
+  const transactionKinds = [
+    {
+      kind: "begin()",
+      begin: (sql: SQL, callback: TransactionCallback) => sql.begin(callback),
+      started: beginCommand,
+      rolledBack: ["ROLLBACK"],
+    },
+    {
+      kind: "beginDistributed()",
+      begin: (sql: SQL, callback: TransactionCallback) => sql.beginDistributed("dtx", callback),
+      started: distributed.begin,
+      rolledBack: distributed.rollback,
+    },
+  ];
+  const onConn0 = (...statements: string[]): Received[] => statements.map(sql => ({ conn: 0, sql }));
+  const settledCode = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "committed",
+      error => error.code,
+    );
+
+  test.each(transactionKinds)(
+    "transaction.close({ timeout }) rolls $kind back once the pending query finishes",
+    async ({ begin, started, rolledBack }) => {
+      await using pool = await closeTestPool();
+      let late: unknown;
+      const outcome = await settledCode(
+        begin(pool.sql, async tx => {
+          const inFlight = tx.unsafe("SELECT 'in flight'").execute();
+          await tx.close({ timeout: 60 });
+          await inFlight;
+          // The closed transaction takes no more statements, and a second close() is a no-op.
+          late = await tx`SELECT 'late'`.then(
+            () => "sent",
+            error => error.code,
+          );
+          await tx.close();
+        }),
+      );
+      expect({ outcome, late }).toEqual({ outcome: connectionClosedCode, late: connectionClosedCode });
+      await expectConnectionKept(pool);
+      expect(pool.received).toEqual([...onConn0(started, "SELECT 'in flight'", ...rolledBack), ...afterTransaction(0)]);
+    },
+  );
+
+  // The callback returns while close({ timeout }) still waits for the query. The runner rolls
+  // back at once, and close() resolves when its wait ends.
+  test.each(transactionKinds)(
+    "transaction.close({ timeout }) that the callback does not await rolls $kind back",
+    async ({ begin, started, rolledBack }) => {
+      await using pool = await closeTestPool();
+      let closed: Promise<unknown> | undefined;
+      const outcome = await settledCode(
+        begin(pool.sql, async tx => {
+          tx.unsafe("SELECT 'pending'").execute();
+          closed = tx.close({ timeout: 60 });
+        }),
+      );
+      expect(outcome).toBe(connectionClosedCode);
+      await closed;
+      await expectConnectionKept(pool);
+      expect(pool.received).toEqual([...onConn0(started, "SELECT 'pending'", ...rolledBack), ...afterTransaction(0)]);
+    },
+  );
+
+  test("transaction.close() that the callback does not await rolls back, and nothing commits after it", async () => {
+    await using pool = await closeTestPool();
+    let closed: Promise<unknown> | undefined;
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        closed = tx.close();
+      }),
+    );
+    expect(outcome).toBe(connectionClosedCode);
+    await closed;
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'T1a'", "ROLLBACK"), ...afterTransaction(0)]);
+  });
+
+  // A second close() resolves at once. The first one still waits when the callback returns.
+  test("a second transaction.close() behind a waiting close({ timeout }) does not let the transaction commit", async () => {
+    await using pool = await closeTestPool();
+    let first: Promise<unknown> | undefined;
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        tx.unsafe("SELECT 'pending'").execute();
+        first = tx.close({ timeout: 60 });
+        await tx.close();
+      }),
+    );
+    expect(outcome).toBe(connectionClosedCode);
+    await first;
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'pending'", "ROLLBACK"), ...afterTransaction(0)]);
+  });
+
+  // The callback's own error reaches begin(), and the runner and close() share one rollback.
+  test("a callback that throws while transaction.close({ timeout }) waits keeps its error", async () => {
+    await using pool = await closeTestPool();
+    let closed: Promise<unknown> | undefined;
+    const outcome = await pool.sql
+      .begin(async tx => {
+        tx.unsafe("SELECT 'pending'").execute();
+        closed = tx.close({ timeout: 60 });
+        throw new Error("callback error");
+      })
+      .then(
+        () => "committed",
+        error => error.message,
+      );
+    expect(outcome).toBe("callback error");
+    await closed;
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'pending'", "ROLLBACK"), ...afterTransaction(0)]);
+  });
+
+  // close() has its rollback in flight when the failing query rejects the callback. The runner
+  // joins that rollback and sends no second one. A second XA END is an error on a real server.
+  test.each(transactionKinds)(
+    "transaction.close() awaited together with a failing query sends one rollback in $kind",
+    async ({ begin, started, rolledBack }) => {
+      await using pool = await closeTestPool();
+      const outcome = await begin(pool.sql, async tx => {
+        const failing = tx.unsafe("SELECT 'FAIL'").execute();
+        await Promise.all([tx.close(), failing]);
+      }).then(
+        () => "committed",
+        error => error.message,
+      );
+      expect(outcome).toBe("mock failure");
+      await expectConnectionKept(pool);
+      expect(pool.received).toEqual([...onConn0(started, "SELECT 'FAIL'", ...rolledBack), ...afterTransaction(0)]);
+    },
+  );
+
+  // close() throws before it accepts its arguments, so this transaction is not closing.
+  test("transaction.close({ timeout: -1 }) throws and leaves the transaction to commit", async () => {
+    await using pool = await closeTestPool();
+    const outcome = await pool.sql.begin(async tx => {
+      await tx.unsafe("SELECT 'T1a'");
+      return await tx.close({ timeout: -1 }).then(
+        () => "closed",
+        error => error.code,
+      );
+    });
+    expect(outcome).toBe("ERR_INVALID_ARG_VALUE");
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'T1a'", "COMMIT"), ...afterTransaction(0)]);
+  });
+
+  // A savepoint whose callback parks until finish() is called.
+  function parkedSavepoint(tx: Bun.TransactionSQL) {
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const promise = tx.savepoint(async () => {
+      entered.resolve();
+      await gate.promise;
+      return "saved";
+    });
+    return { promise, entered: entered.promise, finish: gate.resolve };
+  }
+
+  test("transaction.close({ timeout }) waits for a pending savepoint, its RELEASE included", async () => {
+    await using pool = await closeTestPool();
+    let saved: unknown;
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        const savepoint = parkedSavepoint(tx);
+        await savepoint.entered;
+        const closed = tx.close({ timeout: 60 });
+        savepoint.finish();
+        saved = await savepoint.promise;
+        await closed;
+      }),
+    );
+    expect({ outcome, saved }).toEqual({ outcome: connectionClosedCode, saved: "saved" });
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([
+      ...onConn0(beginCommand, "SAVEPOINT s0", "RELEASE SAVEPOINT s0", "ROLLBACK"),
+      ...afterTransaction(0),
+    ]);
+  });
+
+  // The savepoint stays open, so only the timer can end the wait. The rollback closes the
+  // transaction, and the savepoint's RELEASE is refused after it.
+  test("transaction.close({ timeout }) rolls back when the timeout ends the wait", async () => {
+    await using pool = await closeTestPool();
+    let savepointCode: unknown;
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        const savepoint = parkedSavepoint(tx);
+        const released = savepoint.promise.then(
+          () => null,
+          error => error.code,
+        );
+        await savepoint.entered;
+        await tx.close({ timeout: 0.05 });
+        savepoint.finish();
+        savepointCode = await released;
+      }),
+    );
+    expect({ outcome, savepointCode }).toEqual({ outcome: connectionClosedCode, savepointCode: connectionClosedCode });
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SAVEPOINT s0", "ROLLBACK"), ...afterTransaction(0)]);
+  });
+
+  // bun:test also fails this test if close()'s wait reports the handled failure as unhandled.
+  test("transaction.close({ timeout }) rolls back after a pending query fails, without reporting its handled error", async () => {
+    await using pool = await closeTestPool();
+    let failure: unknown;
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        const failed = tx.unsafe("SELECT 'FAIL'").then(
+          () => null,
+          error => error.message,
+        );
+        await tx.close({ timeout: 60 });
+        failure = await failed;
+      }),
+    );
+    expect({ outcome, failure }).toEqual({ outcome: connectionClosedCode, failure: "mock failure" });
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'FAIL'", "ROLLBACK"), ...afterTransaction(0)]);
+  });
+
+  // The disconnect ends the transaction and rejects begin() while the callback still runs, so
+  // close() has nothing left to do but resolve. bun:test also fails this test if the wait
+  // reports the query the server took down as unhandled.
+  test("transaction.close({ timeout }) resolves when the server drops the connection while it waits", async () => {
+    await using pool = await closeTestPool();
+    const dropped = Promise.withResolvers<unknown>();
+    const outcome = await settledCode(
+      pool.sql.begin(async tx => {
+        const query = tx.unsafe("SELECT 'KILL'").then(
+          () => null,
+          error => error.code,
+        );
+        await tx.close({ timeout: 60 }).then(() => dropped.resolve(query), dropped.reject);
+      }),
+    );
+    expect({ outcome, dropped: await dropped.promise }).toEqual({
+      outcome: connectionClosedCode,
+      dropped: connectionClosedCode,
+    });
+    await expectSlotReturned(pool);
+    expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'KILL'"), ...afterTransaction(1)]);
+  });
+
+  test("transaction.close({ timeout }) inside reserved.begin() rolls back and keeps the reservation", async () => {
+    await using pool = await closeTestPool();
+    const reserved = await pool.sql.reserve();
+    const outcome = await settledCode(
+      reserved.begin(async tx => {
+        const inFlight = tx.unsafe("SELECT 'in flight'").execute();
+        await tx.close({ timeout: 60 });
+        await inFlight;
+      }),
+    );
+    expect(outcome).toBe(connectionClosedCode);
+    await reserved.unsafe("SELECT 'still reserved'");
+    reserved.release();
+    await expectConnectionKept(pool);
+    expect(pool.received).toEqual([
+      ...onConn0(beginCommand, "SELECT 'in flight'", "ROLLBACK", "SELECT 'still reserved'"),
+      ...afterTransaction(0),
+    ]);
+  });
 
   // Runs in a child process: bun:test would turn any unhandled rejection into a test
   // failure, and the second half of this contract is that one rejection IS reported.

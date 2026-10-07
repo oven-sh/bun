@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -997,23 +997,6 @@ describe("Query Execution", () => {
     expect(await db`SELECT count(*) AS n FROM cancel_in_transaction`).toEqual([{ n: 0 }]);
   });
 
-  test("a query cancelled before it runs leaves its transaction scope when it rejects", async () => {
-    await using db = new SQL(":memory:");
-    await db`CREATE TABLE cancel_then_close (id INTEGER)`;
-    const transaction = db.begin(async tx => {
-      await tx`INSERT INTO cancel_then_close VALUES (1)`;
-      const query = tx`SELECT 1 AS x`;
-      query.cancel();
-      await settle(query);
-      // close({ timeout }) waits on every query that is still in the scope. A rejected
-      // query that stays there ends that wait at once, and close() then skips the ROLLBACK.
-      await tx.close({ timeout: 1 });
-    });
-
-    expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" });
-    expect(await db`SELECT count(*) AS n FROM cancel_then_close`).toEqual([{ n: 0 }]);
-  });
-
   test("a query that tx.close() cancels before it runs rejects when awaited", async () => {
     await using db = new SQL(":memory:");
     let lazy: Promise<unknown> | undefined;
@@ -1365,57 +1348,118 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  // The callback ends the transaction by hand, so the ROLLBACK of close() fails. The
+  // transaction is closing all the same: begin() sends ROLLBACK again and never COMMIT.
+  test("a transaction whose close() failed is rolled back again, not committed", async () => {
+    let closeError: unknown;
+    const outcome = await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+        await tx.unsafe("ROLLBACK");
+        closeError = await tx.close().then(
+          () => null,
+          error => error.message,
+        );
+      })
+      .then(
+        () => "committed",
+        error => error.message,
+      );
+
+    expect({ closeError, outcome }).toEqual({
+      closeError: "cannot rollback - no transaction is active",
+      outcome: "cannot rollback - no transaction is active",
+    });
+    expect(await sql`SELECT balance FROM accounts WHERE id = 1`).toEqual([{ balance: 1000 }]);
+  });
 });
 
-// Inside sql.begin() a row is inserted, a second query is made, and the callback closes the
-// transaction with a timeout. close() waits for the second query, for at most the timeout,
-// and then rolls back. The timeout is far longer than the test, so only the second query can
-// end the wait.
+// Inside sql.begin() a row is inserted and the callback closes the transaction. close() with
+// a timeout first waits, for at most the timeout, for the queries that are pending on the
+// transaction. The timeout here is far longer than the test, so only those queries can end
+// the wait. However the callback calls close(), the row must not be committed.
 //
-// Each shape runs in its own process: a rejection that close() leaves unhandled then shows on
-// stderr and in the exit code. The row count comes from a second connection, which sees
-// committed rows only.
-describe("tx.close({ timeout }) rolls the transaction back", () => {
-  const fixture = `
-    const [file, shape] = process.argv.slice(1);
-    const sql = new Bun.SQL("sqlite://" + file);
-    await sql\`CREATE TABLE t (v INTEGER)\`;
-    const begin = await sql
-      .begin(async tx => {
-        await tx\`INSERT INTO t VALUES (1)\`;
-        if (shape !== "no second query") {
-          const query = tx\`SELECT 1 AS x\`;
-          if (shape !== "a second query that nothing awaits") query.cancel();
-          if (shape === "a second query that is cancelled before it runs, then awaited") await query.catch(() => {});
-        }
+// The row count comes from a second connection, which sees committed rows only. bun:test
+// also fails these tests if close() leaves a rejection unhandled.
+describe("tx.close() rolls the transaction back", () => {
+  const connectionClosed = "ERR_SQLITE_CONNECTION_CLOSED";
+  const orders: Array<[string, (tx: Bun.TransactionSQL) => Promise<void>, string]> = [
+    [
+      "close({ timeout }) with no second query",
+      async tx => {
         await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) after a second query that nothing awaits",
+      async tx => {
+        tx`SELECT 1 AS x`;
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) after a second query that is cancelled before it runs",
+      async tx => {
+        tx`SELECT 1 AS x`.cancel();
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) after a cancelled second query that the callback awaited",
+      async tx => {
+        await tx`SELECT 1 AS x`.cancel().catch(() => {});
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) that the callback does not await",
+      async tx => {
+        tx`SELECT 1 AS x`;
+        tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close() that the callback does not await",
+      async tx => {
+        tx.close();
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) that still waits when the callback throws",
+      async tx => {
+        tx`SELECT 1 AS x`;
+        tx.close({ timeout: 60 });
+        throw new Error("callback error");
+      },
+      "callback error",
+    ],
+  ];
+
+  test.each(orders)("%s", async (_, close, expected) => {
+    await using dir = tempDir("sqlite-tx-close", {});
+    const url = `sqlite://${join(String(dir), "db.sqlite")}`;
+    await using db = new SQL(url);
+    await db`CREATE TABLE t (v INTEGER)`;
+    const begin = await db
+      .begin(async tx => {
+        await tx`INSERT INTO t VALUES (1)`;
+        await close(tx);
       })
-      .then(() => "resolved", error => error.code);
-    const [{ rows }] = await new Bun.SQL("sqlite://" + file)\`SELECT count(*) AS rows FROM t\`;
-    console.log(JSON.stringify({ begin, rows }));
-  `;
+      .then(
+        () => "committed",
+        error => error.code ?? error.message,
+      );
 
-  test.concurrent.each([
-    "no second query",
-    "a second query that nothing awaits",
-    "a second query that is cancelled before it runs",
-    "a second query that is cancelled before it runs, then awaited",
-  ])("with %s", async shape => {
-    using dir = tempDir("sqlite-tx-close-timeout", {});
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture, join(String(dir), "db.sqlite"), shape],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: JSON.stringify({ begin: "ERR_SQLITE_CONNECTION_CLOSED", rows: 0 }),
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    await using reader = new SQL(url);
+    const [{ rows }] = await reader`SELECT count(*) AS rows FROM t`;
+    expect({ begin, rows }).toEqual({ begin: expected, rows: 0 });
   });
 });
 

@@ -2034,6 +2034,12 @@ impl H2FrameParser {
         encoded_headers: &mut Vec<u8>,
         headers: &HeaderList,
     ) -> crate::Result<()> {
+        // Taking the cork slot can flush another session through transport JS, which can make
+        // a header call on this session. Take it before the encode: the caller's writes then
+        // find the slot owned, and no JS runs between the encode and the block's last byte.
+        if ENABLE_AUTO_CORK {
+            self.cork();
+        }
         for (name, value, never_index) in headers.iter() {
             bun_output::scoped_log!(
                 H2FrameParser,
@@ -2574,7 +2580,9 @@ impl H2FrameParser {
     }
 
     fn cork(&self) {
-        if let Some(corked) = Self::corked() {
+        // The slot is read again after every forced uncork: that write can run transport JS,
+        // which can cork any parser. Frames this parser corked there stay in the buffer.
+        while let Some(corked) = Self::corked() {
             if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
                 return;
@@ -3271,7 +3279,7 @@ impl H2FrameParser {
             return self._write(bytes);
         }
         self.cork();
-        if matches!(self.native_socket.get(), BunSocket::None) {
+        if self.transport_write_runs_js() {
             return self.write_to_js_transport(bytes);
         }
         let mut ok = true;
@@ -3307,8 +3315,9 @@ impl H2FrameParser {
         }
     }
 
-    /// `write()` for a session with no native socket, whose bytes reach the wire through the
-    /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
+    /// `write()` for a session whose transport write runs user JS (`transport_write_runs_js`):
+    /// the `onWrite` handler (`socket.write()` on a JS stream), or a native socket layered on
+    /// a JS Duplex. That call runs the transport's
     /// `_write` synchronously, and user code there can serialize another frame (ping(),
     /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
     /// handed over where another frame may legally follow: at a frame boundary outside a header

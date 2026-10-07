@@ -6567,6 +6567,264 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
   );
 });
 
+// The cork buffer is shared by every session on the thread. A session that writes while another
+// session's frames are corked flushes those first, through that session's transport. When that
+// transport is a JS Duplex, its _write can make a header call on the writing session. The frames
+// of that call used to be dropped while its fields stayed in the HPACK table, and a block that
+// was already encoded went out behind them.
+describe("http2 header calls made from another session's transport _write during a cork hand-over", () => {
+  const listen = server => new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  // One GET: the response headers without date, or the error code.
+  function get(session, path, headers = {}) {
+    const { promise, resolve } = Promise.withResolvers();
+    let result;
+    const req = session.request({ ":path": path, ...headers });
+    req.on("response", received => {
+      delete received.date;
+      result = Object.fromEntries(Object.entries(received));
+    });
+    req.on("error", err => (result ??= { error: err.code }));
+    req.on("close", () => resolve(result ?? { error: "closed without a response" }));
+    req.resume();
+    return promise;
+  }
+
+  it("a client request made from that _write reaches the peer", async () => {
+    const seen = [];
+    const errors = [];
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      seen.push({ path: headers[":path"], outer: headers["x-outer"], nested: headers["x-nested"] });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.on("sessionError", err => errors.push("server " + err.code));
+    await listen(server);
+    let armed = false;
+    let nested;
+    let B;
+    // Session A has no peer: its transport takes the bytes and drops them.
+    const transportA = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (armed) {
+          armed = false;
+          nested = get(B, "/nested", { "x-nested": "nested-value" });
+        }
+        callback();
+      },
+    });
+    const A = http2.connect("http://localhost:1", { createConnection: () => transportA });
+    A.on("error", () => {});
+    B = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    B.on("error", err => errors.push("client " + err.code));
+    try {
+      await Promise.all([new Promise(resolve => A.once("connect", resolve)), get(B, "/warm")]);
+      // A now owns the cork slot with an unflushed PING. B's request takes the slot over.
+      A.ping(Buffer.from("AAAAAAAA"), () => {});
+      armed = true;
+      const outer = get(B, "/outer", { "x-outer": "outer-value" });
+      const ranInsideTheOuterCall = !armed;
+      expect({
+        outer: await outer,
+        nested: await nested,
+        third: await get(B, "/third", { "x-outer": "outer-value", "x-nested": "nested-value" }),
+      }).toEqual({ outer: { ":status": 200 }, nested: { ":status": 200 }, third: { ":status": 200 } });
+      expect(seen.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
+        { path: "/nested", outer: undefined, nested: "nested-value" },
+        { path: "/outer", outer: "outer-value", nested: undefined },
+        { path: "/third", outer: "outer-value", nested: "nested-value" },
+        { path: "/warm", outer: undefined, nested: undefined },
+      ]);
+      expect(ranInsideTheOuterCall).toBe(true);
+      expect(errors).toEqual([]);
+    } finally {
+      A.destroy();
+      B.destroy();
+      server.close();
+    }
+  });
+
+  // Session A is a server on a TCP socket. Session B is a client on a JS Duplex. The "/act"
+  // handler corks a PING on B, then writes on A. That write flushes B through the Duplex, whose
+  // _write answers a second held stream of A.
+  it.each(["respond", "data", "ping"])(
+    "a respond() made from that _write during an outer %s stays in step with the HPACK table",
+    async outer => {
+      const upstream = http2.createServer();
+      upstream.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("u");
+      });
+      await listen(upstream);
+      const raw = net.connect(upstream.address().port, "127.0.0.1");
+      raw.on("error", () => {});
+      await new Promise(resolve => raw.once("connect", resolve));
+      let hook = null;
+      const transportB = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          if (hook) {
+            const run = hook;
+            hook = null;
+            run();
+          }
+          raw.write(chunk);
+          callback();
+        },
+      });
+      transportB.on("error", () => {});
+      raw.on("data", chunk => transportB.push(chunk));
+      const B = http2.connect(`http://127.0.0.1:${upstream.address().port}`, { createConnection: () => transportB });
+      B.on("error", () => {});
+
+      const errors = [];
+      const held = [];
+      const bothHeld = Promise.withResolvers();
+      let sessionA;
+      let ranInsideTheOuterCall = false;
+      const outerHeaders = { ":status": 200, "x-outer": "outer-value", "x-app": "shop" };
+      const nestedHeaders = { ":status": 200, "x-nested": "nested-value", "x-app": "shop" };
+      const A = http2.createServer();
+      A.on("session", session => {
+        sessionA = session;
+        session.on("error", err => errors.push("server " + err.code));
+      });
+      A.on("stream", (stream, headers) => {
+        stream.on("error", err => errors.push("server stream " + err.code));
+        const path = headers[":path"];
+        if (path === "/warm") {
+          stream.respond({ ":status": 200, "x-app": "shop", "x-secret": "alice-cookie" });
+          return stream.end("w");
+        }
+        if (path === "/page") {
+          stream.respond({ ":status": 200, "x-app": "shop", "x-page": "page-value" });
+          return stream.end("p");
+        }
+        if (path === "/hold1" || path === "/hold2") {
+          held[path === "/hold1" ? 0 : 1] = stream;
+          // For the data and ping faces the outer write is not a header block.
+          if (path === "/hold1" && outer !== "respond") stream.respond({ ...outerHeaders });
+          if (held[0] && held[1]) bothHeld.resolve();
+          return;
+        }
+        const [first, second] = held;
+        B.ping(() => {});
+        hook = () => {
+          second.respond({ ...nestedHeaders });
+          second.end("n");
+        };
+        if (outer === "respond") first.respond({ ...outerHeaders });
+        else if (outer === "data") first.write("o");
+        else sessionA.ping(() => {});
+        ranInsideTheOuterCall = hook === null;
+        first.end();
+        stream.respond({ ":status": 200, "x-act": "done" });
+        stream.end("a");
+      });
+      await listen(A);
+      const client = http2.connect(`http://127.0.0.1:${A.address().port}`);
+      client.on("error", err => errors.push("client " + err.code));
+      try {
+        // Once B answered a request its writes reach the Duplex synchronously.
+        await get(B, "/");
+        const page = { ":status": 200, "x-app": "shop", "x-page": "page-value" };
+        const warm = await get(client, "/warm");
+        const hold1 = get(client, "/hold1");
+        const hold2 = get(client, "/hold2");
+        await bothHeld.promise;
+        expect({
+          warm,
+          act: await get(client, "/act"),
+          hold1: await hold1,
+          page: await get(client, "/page"),
+          pageAgain: await get(client, "/page"),
+          hold2: await hold2,
+        }).toEqual({
+          warm: { ":status": 200, "x-app": "shop", "x-secret": "alice-cookie" },
+          act: { ":status": 200, "x-act": "done" },
+          hold1: outerHeaders,
+          page,
+          pageAgain: page,
+          hold2: nestedHeaders,
+        });
+        expect(ranInsideTheOuterCall).toBe(true);
+        expect(errors).toEqual([]);
+      } finally {
+        client.destroy();
+        B.destroy();
+        raw.destroy();
+        A.close();
+        upstream.close();
+      }
+    },
+  );
+
+  // A native TLS socket on top of a JS Duplex writes its records through that Duplex, so its
+  // write runs user JS too. A header block larger than the cork used to be handed over in
+  // pieces, and a frame made from that _write landed inside the block.
+  it("a header block over the cork size reaches a TLS-over-Duplex transport whole", async () => {
+    const seen = [];
+    const errors = [];
+    const server = http2.createSecureServer({ ...TLS_CERT });
+    server.on("stream", (stream, headers) => {
+      seen.push({ path: headers[":path"], pad: headers["x-pad"]?.length, nested: headers["x-nested"] });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.on("sessionError", err => errors.push("server " + err.code));
+    await listen(server);
+    const raw = net.connect(server.address().port, "127.0.0.1");
+    raw.on("error", () => {});
+    await new Promise(resolve => raw.once("connect", resolve));
+    let armed = false;
+    let nested;
+    let session;
+    const proxy = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (armed) {
+          armed = false;
+          nested = get(session, "/nested", { "x-nested": "nested-value" });
+        }
+        raw.write(chunk, callback);
+      },
+      final(callback) {
+        raw.end();
+        callback();
+      },
+    });
+    raw.on("data", chunk => proxy.push(chunk));
+    raw.on("end", () => proxy.push(null));
+    const socket = tls.connect({ socket: proxy, ALPNProtocols: ["h2"], ...TLS_OPTIONS });
+    socket.on("error", err => errors.push("tls " + err.code));
+    await new Promise(resolve => socket.once("secureConnect", resolve));
+    session = http2.connect(`https://localhost:${server.address().port}`, { createConnection: () => socket });
+    session.on("error", err => errors.push("client " + err.code));
+    try {
+      const warm = await get(session, "/warm");
+      armed = true;
+      // 30000 'p's HPACK-encode to about 22 KiB: a full 16384-byte HEADERS frame and a CONTINUATION.
+      const outer = await get(session, "/outer", { "x-pad": Buffer.alloc(30000, "p").toString() });
+      expect({ warm, outer, nested: await nested }).toEqual({
+        warm: { ":status": 200 },
+        outer: { ":status": 200 },
+        nested: { ":status": 200 },
+      });
+      expect(seen.toSorted((a, b) => a.path.localeCompare(b.path))).toEqual([
+        { path: "/nested", pad: undefined, nested: "nested-value" },
+        { path: "/outer", pad: 30000, nested: undefined },
+        { path: "/warm", pad: undefined, nested: undefined },
+      ]);
+      expect(errors).toEqual([]);
+    } finally {
+      session.destroy();
+      raw.destroy();
+      server.close();
+    }
+  });
+});
+
 it("originSet is undefined on a destroyed TLS session that never read it", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
   const { promise: listening, resolve: onListening } = Promise.withResolvers();

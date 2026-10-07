@@ -422,7 +422,7 @@ export function runOnResolvePlugins(
   // Must be kept in sync with ImportRecord.label
   const kind = $ImportKindIdToLabel[kindId];
 
-  var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
+  var promiseResult: any = (async (inputPath: string, inputNamespace, importer, kind) => {
     var { onResolve, onLoad } = this;
     var results = onResolve.$get(inputNamespace);
     if (!results) {
@@ -463,8 +463,7 @@ export function runOnResolvePlugins(
         }
 
         if (!path) {
-          // `{ external: true }` keeps an import under its own specifier. An entry point
-          // cannot be external, and the dev server cannot load an external import.
+          // An entry point cannot be external. The dev server cannot load an external import.
           if (external !== true || kind === "entry-point-build" || isDevServer) continue;
           path = inputPath;
         }

@@ -696,6 +696,50 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(exitCode).toBe(0);
 });
 
+// A timer id comes from one counter per thread. Node.js counts in a double and
+// never repeats an id. A 32-bit counter gives negative ids after 2^31 timers and
+// the id of a live timer after 2^32. The fixture moves the counter of its own
+// thread with timerInternals.setNextTimerId, so it runs in a child.
+it.concurrent("timer ids past 2^31 and 2^32 are positive and name one timer", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "timer-id-fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    // The string key of an id clears its timer. So do the number and the object.
+    pastInt32: {
+      ids: [2147483647, 2147483648, 2147483649, 2147483650, 2147483651],
+      keys: ["2147483647", "2147483648"],
+      fired: ["kept"],
+      inspect: "Timeout (#2147483651)",
+      immediateIds: [2147483652, 2147483653, 2147483655],
+      inspectImmediate: "Immediate (#2147483655)",
+      ran: ["immediate", "lastImmediate"],
+    },
+    // No timer gets -1 or 0, and refresh() runs both timers again.
+    pastUint32: { ids: [4294967295, 4294967296], fires: [2, 2] },
+    // clearInterval(<id of the first>) stops the first interval and only it.
+    intervalAfter2To32Timers: { idDistance: 2 ** 32, firstStopped: true, secondStillTicks: true },
+    // The freed timer left no entry, and took none away.
+    freedPromotedTimeout: {
+      collected: true,
+      idDistance: 2 ** 32,
+      otherAliveAfterClearOfFreedId: true,
+      otherClearedByItsId: true,
+    },
+    clearByIdPastUint32: { id: 2 ** 40, keptIsAlive: true, isUtf16: true, destroyed: [true, true, true] },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async () => {
   // Subprocess so no other in-process work has raised the Windows tick
   // resolution; median of 50 so a single scheduler hiccup on a busy CI

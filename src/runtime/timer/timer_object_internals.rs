@@ -29,15 +29,23 @@ use super::{
 #[repr(C)]
 pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
-    pub(crate) id: i32,
-    pub(crate) interval: Cell<u32>,
+    /// From [`All::next_id`](super::All::next_id): positive and never repeated.
+    pub(crate) id: u64,
     pub this_value: JsCell<JsRef>,
+    pub(crate) interval: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
     /// The context whose script created the timer.
     pub(crate) context: bun_jsc::ContextId,
     /// `VirtualMachine::test_isolation_generation` when it did.
     pub(crate) generation: u32,
 }
+
+// Field order: `interval` between `id` and `this_value` pads this to 48 bytes and a timer past 96.
+const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 40);
+#[cfg(not(debug_assertions))] // `RefCount` has debug-only fields
+const _: () = assert!(
+    core::mem::size_of::<TimeoutObject>() <= 96 && core::mem::size_of::<ImmediateObject>() <= 96
+);
 
 impl TimerObjectInternals {
     /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is
@@ -54,9 +62,9 @@ impl TimerObjectInternals {
 impl Default for TimerObjectInternals {
     fn default() -> Self {
         Self {
-            id: -1,
-            interval: Cell::new(0),
+            id: 0,
             this_value: JsCell::new(JsRef::empty()),
+            interval: Cell::new(0),
             flags: Cell::new(Flags::default()),
             context: bun_jsc::ContextId::default(),
             generation: 0,
@@ -280,7 +288,7 @@ impl TimerObjectInternals {
         &mut self,
         timer: JSValue,
         cx: &bun_jsc::JsThread<'_>,
-        id: i32,
+        id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,
@@ -848,7 +856,7 @@ impl TimerObjectInternals {
         }
 
         // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
-        //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
+        //     `has_accessed_primitive` — drops the id→*mut EventLoopTimer
         //     entry minted by `to_primitive`. Swap-remove: the id map is only
         //     ever keyed into, never iterated in order, and `deinit` runs for
         //     every id-accessed timer a GC sweep collects, so the ordered
@@ -859,11 +867,9 @@ impl TimerObjectInternals {
             let map = unsafe { (*state).timer.maps.get(kind) };
             if map.swap_remove(&self.id) {
                 // If this map got
-                // large, shrink it back down. Keys are i32, values are one
-                // pointer (~12 bytes per entry), so 21,000 timers accessed by
-                // ID ≈ 252 KiB; reclaim once the slack exceeds 256 KiB.
+                // large, shrink it back down: reclaim once the slack exceeds 256 KiB.
                 const ENTRY_SIZE: usize =
-                    core::mem::size_of::<i32>() + core::mem::size_of::<*mut EventLoopTimer>();
+                    core::mem::size_of::<u64>() + core::mem::size_of::<*mut EventLoopTimer>();
                 let allocated_bytes = map.capacity() * ENTRY_SIZE;
                 let used_bytes = map.count() * ENTRY_SIZE;
                 if allocated_bytes - used_bytes > 256 * 1024 {
@@ -998,10 +1004,7 @@ impl TimerObjectInternals {
         debug_assert!(self.flags.get().kind() != Kind::SetImmediate);
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if self.id == -1
-            || self.flags.get().kind() == Kind::SetImmediate
-            || self.flags.get().has_cleared_timer()
-        {
+        if self.flags.get().kind() == Kind::SetImmediate || self.flags.get().has_cleared_timer() {
             return Ok(this_value);
         }
 
@@ -1042,10 +1045,10 @@ impl TimerObjectInternals {
                     .timer
                     .maps
                     .get(self.flags.get().kind())
-                    .put(self.id, elt)
+                    .put_no_clobber(self.id, elt)
             }?;
         }
-        Ok(JSValue::js_number(f64::from(self.id)))
+        Ok(JSValue::js_number_from_uint64(self.id))
     }
 
     /// Getter for `_destroyed`

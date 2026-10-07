@@ -119,7 +119,7 @@ macro_rules! impl_timer_object {
             /// picks `kind`/`interval` and forwards here.
             pub(crate) fn init_with(
                 cx: &bun_jsc::JsThread<'_>,
-                id: i32,
+                id: u64,
                 kind: super::Kind,
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
@@ -315,8 +315,8 @@ impl TimerHeap {
     }
 }
 
-/// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
-pub(crate) type TimeoutMap = ArrayHashMap<i32, *mut EventLoopTimer>;
+/// Keyed by the id that `+timer` gives to JavaScript.
+pub(crate) type TimeoutMap = ArrayHashMap<u64, *mut EventLoopTimer>;
 
 #[derive(Default)]
 pub(crate) struct Maps {
@@ -582,7 +582,8 @@ pub(crate) use wtf_timer::WTFTimer;
 // ─── All ─────────────────────────────────────────────────────────────────────
 
 pub(crate) struct All {
-    pub(crate) last_id: i32,
+    /// The id the next timer gets. Only [`All::next_id`] hands it out.
+    pub(crate) last_id: u64,
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
@@ -626,6 +627,14 @@ impl All {
             date_header_timer: DateHeaderTimer::default(),
             wtf_timers: Guarded::init(TimerHeap::default()),
         }
+    }
+
+    /// The one place that hands out a timer id: positive, never repeated (64 bits do not wrap).
+    #[inline]
+    pub(crate) fn next_id(&mut self) -> u64 {
+        let id = self.last_id;
+        self.last_id = id.wrapping_add(1);
+        id
     }
 
     #[inline]
@@ -1314,23 +1323,16 @@ pub(crate) enum CountdownOverflowBehavior {
 // type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
 pub(crate) use bun_event_loop::EventLoopTimer::{Kind, KindBig};
 
-/// Sized to be the same as one pointer.
-#[repr(C)]
 #[derive(Copy, Clone)]
 pub(crate) struct ID {
-    pub id: i32,
+    pub id: u64,
     pub kind: KindBig,
 }
 impl ID {
+    /// The inspector's key for this timer: the kind in the two low bits, the id above them.
     #[inline]
     fn async_id(self) -> u64 {
-        // Layout: 8 bytes, `id` (i32) then `kind` (u32). Reassemble via
-        // native-endian byte concat so the value is stable on every supported
-        // target without relying on struct-layout reinterpretation.
-        let mut bytes = [0u8; 8];
-        bytes[..4].copy_from_slice(&self.id.to_ne_bytes());
-        bytes[4..].copy_from_slice(&(self.kind as u32).to_ne_bytes());
-        u64::from_ne_bytes(bytes)
+        (self.id << 2) | self.kind as u64
     }
 }
 

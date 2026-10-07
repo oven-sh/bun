@@ -2266,3 +2266,127 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     });
   });
 });
+
+// In Node the tunnel and the response of the request before it share the stream of one socket, so
+// the wire has their bytes in the order of the calls, also when the kernel took only a part of a write.
+describe("a tunnel write that waits for the client", () => {
+  // More than a loopback socket takes from a peer that reads nothing.
+  const large = Buffer.alloc(8 * 1024 * 1024, "a");
+  const connect = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+
+  async function listen(proto: string, listener?: http.RequestListener) {
+    const server: http.Server =
+      proto === "https"
+        ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, listener)
+        : http.createServer(listener);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client: Duplex =
+      proto === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    await once(client, proto === "https" ? "secureConnect" : "connect");
+    client.pause();
+    client.on("error", () => {});
+    return {
+      server,
+      client,
+      // Reads the connection until it closes.
+      async read() {
+        const chunks: Buffer[] = [];
+        client.on("data", chunk => chunks.push(chunk));
+        const closed = once(client, "close");
+        client.resume();
+        await closed;
+        return Buffer.concat(chunks);
+      },
+      close() {
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      },
+    };
+  }
+
+  test.each(["http", "https"])("%s: a response that ends behind it arrives behind it", async proto => {
+    let pending: http.ServerResponse;
+    const wrote = Promise.withResolvers<boolean>();
+    const { server, client, read, close } = await listen(proto, (req, res) => void (pending = res));
+    server.on("connect", (req, socket) => {
+      socket.on("error", () => {});
+      const returned = socket.write(large);
+      pending.end("response");
+      socket.end("tunnel tail");
+      wrote.resolve(returned);
+    });
+    try {
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n" + connect);
+      const returned = await wrote.promise;
+      const wire = await read();
+      expect({
+        returned,
+        tunnelBytesAhead: wire.indexOf("HTTP/1.1 200 OK"),
+        response: wire.subarray(wire.indexOf("\r\n\r\n", large.length) + 4, -"tunnel tail".length).toString(),
+        tail: wire.subarray(-"tunnel tail".length).toString(),
+      }).toEqual({
+        returned: false,
+        tunnelBytesAhead: large.length,
+        response: "response",
+        tail: "tunnel tail",
+      });
+    } finally {
+      close();
+    }
+  });
+
+  test.each(["http", "https"])("%s: the tunnel still reads", async proto => {
+    const wrote = Promise.withResolvers<boolean>();
+    const got = Promise.withResolvers<string>();
+    const { server, client, close } = await listen(proto);
+    server.on("connect", (req, socket) => {
+      socket.on("error", () => {});
+      socket.once("data", chunk => got.resolve(chunk.toString()));
+      wrote.resolve(socket.write(large));
+    });
+    try {
+      client.write(connect);
+      const returned = await wrote.promise;
+      // After the listener: bytes in the read of the CONNECT head would be its `head` argument.
+      client.write("from the client");
+      expect({ returned, data: await got.promise }).toEqual({ returned: false, data: "from the client" });
+    } finally {
+      close();
+    }
+  });
+
+  test.each(["http", "https"])("%s: server.close() leaves the tunnel to deliver it", async proto => {
+    const callbacks: string[] = [];
+    const wrote = Promise.withResolvers<boolean>();
+    const { server, client, read, close } = await listen(proto);
+    server.on("connect", (req, socket) => {
+      socket.on("error", () => {});
+      const returned = socket.write(large, err => callbacks.push(err ? "write: error" : "write"));
+      socket.end("tunnel tail", () => callbacks.push("end"));
+      server.close();
+      wrote.resolve(returned);
+    });
+    try {
+      client.write(connect);
+      const returned = await wrote.promise;
+      const wire = await read();
+      expect({
+        returned,
+        bytes: wire.length,
+        tail: wire.subarray(-"tunnel tail".length).toString(),
+        callbacks,
+      }).toEqual({
+        returned: false,
+        bytes: large.length + "tunnel tail".length,
+        tail: "tunnel tail",
+        callbacks: ["write", "end"],
+      });
+    } finally {
+      close();
+    }
+  });
+});

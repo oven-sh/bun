@@ -131,3 +131,81 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
     }).toEqual({ statusLine: "HTTP/1.1 200 OK", body });
   });
 });
+
+// In Node the bytes of res.write() wait in the stream of the socket, so end() on that socket
+// finishes the stream behind them.
+describe.each(["http", "https"] as const)(
+  "%s: res.socket.end() behind response bytes that wait for the client",
+  protocol => {
+    // More than a loopback socket takes from a peer that reads nothing.
+    const body = Buffer.alloc(8 * 1024 * 1024, "a");
+
+    test("the end() callback and 'finish' wait until the client has read them", async () => {
+      const events: string[] = [];
+      const ended = Promise.withResolvers<net.Socket>();
+      const finished = Promise.withResolvers<void>();
+      const onRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
+        if (req.url === "/turn") return void res.end();
+        res.writeHead(200, { "Content-Length": body.length });
+        res.write(body);
+        const socket = res.socket!;
+        socket.on("finish", () => events.push("finish"));
+        socket.end(() => {
+          events.push("end callback");
+          finished.resolve();
+        });
+        ended.resolve(socket);
+      };
+      const server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as net.AddressInfo;
+      // One exchange on a second connection: at least one whole turn of the server's event loop.
+      const turn = () =>
+        new Promise<void>((resolve, reject) => {
+          (protocol === "https" ? https : http)
+            .get({ port, host: "127.0.0.1", path: "/turn", agent: false, rejectUnauthorized: false }, res =>
+              res.resume().on("end", () => resolve()),
+            )
+            .on("error", reject);
+        });
+
+      const client =
+        protocol === "https"
+          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : net.connect(port, "127.0.0.1");
+      try {
+        await once(client, protocol === "https" ? "secureConnect" : "connect");
+        client.pause();
+        client.on("error", () => {});
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        const socket = await ended.promise;
+        await turn();
+        await turn();
+        const before = { events: [...events], writableFinished: socket.writableFinished };
+
+        // The whole body arrives, and then the stream finishes.
+        let received = 0;
+        let head = -1;
+        const read = Promise.withResolvers<void>();
+        client.on("data", chunk => {
+          if (head === -1 && (head = chunk.indexOf("\r\n\r\n")) !== -1) head += received + 4;
+          received += chunk.length;
+          if (head !== -1 && received - head === body.length) read.resolve();
+        });
+        client.resume();
+        await read.promise;
+        await finished.promise;
+        await turn();
+        expect({ before, events, writableFinished: socket.writableFinished }).toEqual({
+          before: { events: [], writableFinished: false },
+          events: ["end callback", "finish"],
+          writableFinished: true,
+        });
+      } finally {
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+  },
+);

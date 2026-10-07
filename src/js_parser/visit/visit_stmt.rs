@@ -859,13 +859,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // Emit any prefix statements before the export default
                         stmts.extend_from_slice(&class_stmts[0..class_stmt_idx]);
 
+                        let after_class = &class_stmts[class_stmt_idx + 1..];
+                        if p.options.features.server_components.wraps_exports()
+                            && !after_class.is_empty()
+                        {
+                            // Decorator lowering assigns to the class by name after it, so
+                            // the class stays a declaration and the export wraps its binding.
+                            let name = class
+                                .class
+                                .class_name
+                                .expect("decorator lowering names the class");
+                            stmts.push(class_stmts[class_stmt_idx]);
+                            stmts.extend_from_slice(after_class);
+                            p.record_usage(name.ref_);
+                            data.value = js_ast::StmtOrExpr::Expr(
+                                p.wrap_value_for_server_component_reference(
+                                    Expr::init_identifier(name.ref_, name.loc),
+                                    b"default",
+                                ),
+                            );
+                            stmts.push(*stmt);
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
+                        }
+
                         data.value = js_ast::StmtOrExpr::Stmt(class_stmts[class_stmt_idx]);
                         stmts.push(*stmt);
 
                         // Emit any suffix statements after the export default
-                        if class_stmt_idx + 1 < class_stmts.len() {
-                            stmts.extend_from_slice(&class_stmts[class_stmt_idx + 1..]);
-                        }
+                        stmts.extend_from_slice(after_class);
 
                         if p.options.features.server_components.wraps_exports() {
                             // `data.value` is mutated *after* pushing `stmt`; the pushed

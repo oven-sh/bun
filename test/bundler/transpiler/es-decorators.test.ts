@@ -973,7 +973,26 @@ describe("ES Decorators", () => {
     test("Bun.Transpiler prints export default @dec class as a class declaration", () => {
       const transpiler = new Bun.Transpiler({ loader: "js" });
       const source = "function dec() {}\nexport default @dec class Df {}";
-      expect(transpiler.transformSync(source)).toContain("export default class Df {");
+      // The runtime helpers are imported under names that end in a hash.
+      const output = transpiler.transformSync(source).replace(/\b(__\w+?)_[a-z0-9]{8}\b/g, "$1");
+      expect(output.slice(output.indexOf("function dec"))).toBe(
+        [
+          "function dec() {}",
+          "var _init$1, _dec$2, _Df$3;",
+          "_dec$2 = [",
+          "  dec",
+          "];",
+          "export default class Df {",
+          "  static {",
+          "    _init$1 = __decoratorStart(undefined);",
+          '    _Df$3 = __decorateElement(_init$1, 0, "Df", _dec$2, this);',
+          "  }",
+          "}",
+          "Df = _Df$3;",
+          "__runInitializers(_init$1, 1, _Df$3);",
+          "",
+        ].join("\n"),
+      );
       expect(transpiler.scan(source).exports).toEqual(["default"]);
     });
 

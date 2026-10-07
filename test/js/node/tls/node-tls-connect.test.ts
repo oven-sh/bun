@@ -2146,9 +2146,10 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     const nativeSockets = () => heapStats().objectTypeCounts.TLSSocket || 0;
     Bun.gc(true);
     const baseline = nativeSockets();
-    const count = 20;
-    // Well under the 10 of each kind, so a leak of every client or of every server wrap fails.
-    const bound = 2;
+    const count = 40;
+    // Up to 3 of the latest sockets stay reachable for a while, however many were made (3 of 1,200). Well under
+    // the 20 of each kind, so a leak of every client or of every server wrap fails.
+    const bound = 5;
     await (async () => {
       const closes: Promise<void>[] = [];
       for (let i = 0; i < count; i++) {

@@ -5,10 +5,8 @@
     non_upper_case_globals,
     deprecated
 )]
-// bun_ptr is a T0 foundation crate that bun_threading and bun_collections
-// depend on; importing either to satisfy disallowed-types would create a
-// dependency cycle.
-#![allow(clippy::disallowed_types)]
+// Tests lock std's Mutex: bun_threading depends on this crate.
+#![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
@@ -449,7 +447,7 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 // inherited via auto-traits (no `unsafe impl` needed).
 //
 // This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
-// `FileReader::pending_view`, `Decompressor::seat` output, `CmdHandle::cmd_mut`)
+// `Decompressor::seat` output, `CmdHandle::cmd_mut`)
 // — those are tracked under the sibling `static-widen-mut` pattern and want a
 // raw-pointer field or a future `RawSliceMut<T>`.
 // ─────────────────────────────────────────────────────────────────────────────

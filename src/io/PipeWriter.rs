@@ -61,24 +61,55 @@ pub trait PosixPipeWriter {
 
     fn handle(&self) -> &PollOrFd;
 
+    /// Set once `pwritev2(RWF_NOWAIT)` said this fd's file type does not support it, so we stop asking.
+    fn rwf_unsupported(&self) -> &core::cell::Cell<bool>;
+
     /// Only reads `get_file_type()` / `get_fd()` from `self`; takes `&self` so
     /// callers may pass a `buf` that borrows from a field of `self` (e.g.
     /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF: try_write_with_write_fn is not monomorphized per FileType —
         // profile if hot.
-        let ft = if !force_sync {
-            self.get_file_type()
-        } else {
-            FileType::File
-        };
-        match ft {
-            FileType::NonblockingPipe | FileType::File => {
-                self.try_write_with_write_fn(buf, sys::write)
+        let ft = self.get_file_type();
+        // Linux: RWF_NOWAIT is a free per-call nonblocking write, so a pipe stays async even after a spawn cleared O_NONBLOCK on it.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if matches!(ft, FileType::Pipe | FileType::NonblockingPipe) && !self.rwf_unsupported().get()
+        {
+            match self.try_write_nowait(buf) {
+                Some(rc) => return rc,
+                // Not a pipe as far as pwritev2 is concerned (tty, pty master, old kernel): remember, use the plain path.
+                None => self.rwf_unsupported().set(true),
             }
-            FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
-            FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
         }
+        match ft {
+            // send(MSG_DONTWAIT | MSG_NBIO) is nonblocking per call on every Unix, whatever the fd's flags.
+            FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
+            FileType::Pipe if !force_sync => {
+                self.try_write_with_write_fn(buf, write_to_blocking_pipe)
+            }
+            _ => self.try_write_with_write_fn(buf, sys::write),
+        }
+    }
+
+    /// `None` if `RWF_NOWAIT` is not usable on this fd (nothing was written).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn try_write_nowait(&self, buf: &[u8]) -> Option<WriteResult> {
+        let fd = self.get_fd();
+        if fd == Fd::INVALID {
+            return Some(WriteResult::Done(0));
+        }
+        let mut offset: usize = 0;
+        while offset < buf.len() {
+            match sys::write_nowait(fd, &buf[offset..]) {
+                Ok(None) if offset == 0 => return None,
+                Ok(None) => return Some(WriteResult::Pending(offset)),
+                Ok(Some(0)) => return Some(WriteResult::Done(offset)),
+                Ok(Some(wrote)) => offset += wrote,
+                Err(err) if err.is_retry() => return Some(WriteResult::Pending(offset)),
+                Err(err) => return Some(WriteResult::Err(err)),
+            }
+        }
+        Some(WriteResult::Wrote(offset))
     }
 
     fn try_write_with_write_fn(
@@ -219,13 +250,6 @@ pub trait PosixPipeWriter {
 /// Free fn for the blocking-pipe path; the other file types are handled
 /// inline in `try_write` above.
 fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        if bun_sys::linux::RWFFlagSupport::is_maybe_supported() {
-            return sys::write_nonblocking(fd, buf);
-        }
-    }
-
     match bun_core::is_writable(fd) {
         bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
         bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
@@ -237,6 +261,12 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     sys::send_non_block(fd, buf).map_err(|err| sys::Error {
         syscall: sys::Tag::write,
+        // XNU's send() says ENOTCONN once a stream peer is fully gone; write(2) on the same fd (and Node) say EPIPE.
+        errno: if err.get_errno() == sys::E::ENOTCONN {
+            sys::E::EPIPE as _
+        } else {
+            err.errno
+        },
         ..err
     })
 }
@@ -285,6 +315,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
     pub(crate) pollable: bool,
     pub(crate) closed_without_reporting: bool,
     pub close_fd: bool,
+    rwf_unsupported: core::cell::Cell<bool>,
 }
 
 impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
@@ -296,6 +327,7 @@ impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> 
             pollable: false,
             closed_without_reporting: false,
             close_fd: true,
+            rwf_unsupported: core::cell::Cell::new(false),
         }
     }
 }
@@ -324,6 +356,9 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
     }
     fn handle(&self) -> &PollOrFd {
         &self.handle
+    }
+    fn rwf_unsupported(&self) -> &core::cell::Cell<bool> {
+        &self.rwf_unsupported
     }
 }
 
@@ -610,6 +645,7 @@ pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
     pub force_sync: bool,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: core::cell::Cell<bool>,
+    rwf_unsupported: core::cell::Cell<bool>,
 }
 
 impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent> {
@@ -622,6 +658,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
             closed_without_reporting: false,
             force_sync: false,
             backed_up: core::cell::Cell::new(false),
+            rwf_unsupported: core::cell::Cell::new(false),
         }
     }
 }
@@ -650,6 +687,9 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
     }
     fn handle(&self) -> &PollOrFd {
         &self.handle
+    }
+    fn rwf_unsupported(&self) -> &core::cell::Cell<bool> {
+        &self.rwf_unsupported
     }
 }
 

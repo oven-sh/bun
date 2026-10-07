@@ -925,6 +925,8 @@ pub(crate) fn run_scripts_with_filter(
         selected.error_script_not_found(&*ctx, &quoted);
     }
 
+    this_transpiler.env_mut().set_init_cwd()?;
+
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
     let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
     let event_loop = MiniEventLoopMod::init_global(

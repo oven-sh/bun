@@ -794,7 +794,11 @@ impl BunxCommand {
         // Cloned to drop the borrow on `env_loader.map` before mutating it.
 
         if !ignore_cwd.is_empty() {
+            // Only the lifecycle scripts of `bun install` have this variable, for the
+            // node-gyp shim that runs `bun x`: the `INIT_CWD` of the install stays.
             env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
+        } else {
+            env_loader.set_init_cwd()?;
         }
 
         let mut path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();

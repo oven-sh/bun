@@ -41,6 +41,22 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
+static LAUNCH_DIR: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
+
+/// Records the working directory from before a `chdir` (`--cwd`, or the
+/// package manager going to the project root). The first call wins.
+#[inline]
+pub fn set_launch_dir(dir: &'static [u8]) {
+    let _ = LAUNCH_DIR.set(dir);
+}
+
+/// The directory the process was started in, when a `chdir` left it.
+/// `None`: the process is still where it started.
+#[inline]
+pub fn launch_dir() -> Option<&'static [u8]> {
+    LAUNCH_DIR.get().copied()
+}
+
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.

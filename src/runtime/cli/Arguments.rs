@@ -875,12 +875,24 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = bun_paths::path_buffer_pool::get();
+        // A script or a bin gets the directory bun was started in as `INIT_CWD`,
+        // not the one `--cwd` names.
+        let spawns_scripts = matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand);
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+            if spawns_scripts {
+                if let Ok(launch_dir) = bun_core::getcwd(&mut outbuf) {
+                    bun_core::set_launch_dir(crate::cli::cli_dupe(launch_dir.as_bytes()));
+                }
+            }
             b"/"
         } else {
-            bun_core::getcwd(&mut outbuf)?.as_bytes()
+            let launch_dir = bun_core::getcwd(&mut outbuf)?.as_bytes();
+            if spawns_scripts {
+                bun_core::set_launch_dir(crate::cli::cli_dupe(launch_dir));
+            }
+            launch_dir
         };
         let mut spill = Vec::new();
         let out =

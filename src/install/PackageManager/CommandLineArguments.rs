@@ -1608,6 +1608,16 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut buf2 = bun_paths::path_buffer_pool::get();
 
+            // The pack, version and publish hooks get the directory bun was started
+            // in as `INIT_CWD`, not the one `--cwd` names.
+            if matches!(subcommand, Subcommand::Pm | Subcommand::Publish) {
+                if let Ok(len) = bun_sys::getcwd(&mut buf[..]) {
+                    bun_core::set_launch_dir(
+                        bun_resolver::fs::DirnameStore::instance().append(&buf[..len])?,
+                    );
+                }
+            }
+
             let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd_len = bun_sys::getcwd(&mut buf[..])?;
                 let cwd = &buf[..cwd_len];

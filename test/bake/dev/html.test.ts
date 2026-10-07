@@ -189,6 +189,64 @@ devTest("a file whose import failed to resolve is imported by a second file", {
     await c.expectMessage("value");
   },
 });
+devTest("a client script with a bunBakeGraph import reports it, then runs once repaired", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./other.ts" with { bunBakeGraph: "ssr" };
+      console.log(value);
+    `,
+    "other.ts": `
+      export default "other";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["index.ts:1:19: error: Framework does not have a separate SSR graph to put this import into"],
+    });
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("repaired");`);
+    });
+    await c.expectMessage("repaired");
+  },
+});
+// A script that starts with a Bun shebang is parsed for the server when it is hot-reloaded.
+devTest("a shebang script with a failed import reports it, then clears it", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      #!/usr/bin/env bun
+      console.log("loaded");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("loaded");
+    await dev.write(
+      "index.ts",
+      `
+        #!/usr/bin/env bun
+        import "./missing";
+        import.meta.hot.accept();
+      `,
+      { errors: ['index.ts:2:8: error: Could not resolve: "./missing"'] },
+    );
+    await dev.write(
+      "index.ts",
+      `
+        #!/usr/bin/env bun
+        import.meta.hot.accept();
+        export {};
+      `,
+    );
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
 devTest("external links", {
   files: {
     "index.html": `

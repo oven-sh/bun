@@ -48,8 +48,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
         writableUserData = nullptr;
-        /* Ignore data after this point */
-        inStream = nullptr;
+        /* Ignore data after this point. node:http clears its own slot: a request body outlives its response there. */
+        if (!HttpContext<SSL>::fromSocket((us_socket_t *) uwsRes)->isNodeHttp()) {
+            inStream = nullptr;
+        }
 
         // Ensure we don't call a timeout callback
         onTimeout = nullptr;
@@ -73,6 +75,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
+
+        /* The callback runs application code; if it closed the socket, this object is destructed. */
+        if (us_socket_is_closed((us_socket_t *) response)) {
+            return ret;
+        }
 
         /* If we still have onWritable (the placeholder) then move back the real one */
         if (onWritable) {
@@ -150,13 +157,29 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * shutdown sweep; the shouldCloseConnection() gates act on it once the
          * in-flight work completes. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
+        /* Bun.serve handed this request to user JavaScript. The response is sent
+         * when it completes, also on the socket onData is parsing: JavaScript
+         * that runs after it (microtasks, the request body callback) can block,
+         * reset the connection or end the process. */
+        HTTP_SEND_WHEN_COMPLETE = 1 << 18,
+        /* node:http: JavaScript destroyed this socket during its parse. Closed at the current message's last body chunk, or when the read is consumed, like Node's parser. */
+        HTTP_NODE_CLOSE_AFTER_MESSAGE = 1 << 20,
+        /* node:http socket.destroySoon() with outgoing bytes still queued: close when they have flushed, whether or not the response in flight has ended. */
+        HTTP_NODE_CLOSE_AFTER_DRAIN = 1 << 21,
+        /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
+         * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
+        HTTP_NODE_PEER_ENDED = 1 << 22,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
+        /* node:http: call Bun__NodeHTTP__onReadParsed once the read being parsed is consumed. */
+        HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
+
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
+            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -228,9 +251,18 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & HTTP_CONNECTION_CLOSE)
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
+    }
+
+    /* The response that closes this connection (Connection: close, HTTP/1.0, a
+     * close-delimited body) is complete; the socket only stays open until its
+     * buffered bytes drain. Nothing received from here on is a request this
+     * connection may answer (RFC 9112 9.6), and after a close-delimited body the
+     * peer would read whatever we send as more body. */
+    bool isDrainingBeforeClose() const {
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
     }
 };
 
@@ -267,6 +299,8 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * as a nullable pointer (see HttpParser::consumePostPadded). */
     std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
+    /* Timeout sweep already reported this message; reset when it completes. */
+    bool requestTimeoutReported = false;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

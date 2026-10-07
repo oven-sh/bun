@@ -2508,6 +2508,60 @@ test.skipIf(process.platform !== "darwin")("setCustomSQLite() sees a library nod
   void stderr;
 });
 
+test.skipIf(process.platform !== "darwin")("setCustomSQLite() accepts the selected path from a worker", async () => {
+  const workerSource = `
+    const { parentPort, workerData } = require("node:worker_threads");
+    try {
+      const { Database } = require("bun:sqlite");
+      Database.setCustomSQLite(workerData);
+      const db = new Database(":memory:");
+      const version = db.query("SELECT sqlite_version() AS version").get().version;
+      db.close();
+      let differentPathRejected = false;
+      try {
+        Database.setCustomSQLite("libsqlite3.dylib");
+      } catch (error) {
+        differentPathRejected = /already loaded/.test(String(error));
+      }
+      parentPort.postMessage({ version, differentPathRejected });
+    } catch (error) {
+      parentPort.postMessage({ error: String(error) });
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker } = require("node:worker_threads");
+        const path = "/usr/lib/libsqlite3.dylib";
+        const { Database } = require("bun:sqlite");
+        Database.setCustomSQLite(path);
+        const db = new Database(":memory:");
+        const parentVersion = db.query("SELECT sqlite_version() AS version").get().version;
+        db.close();
+        const worker = new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: path });
+        const message = await new Promise((resolve, reject) => {
+          worker.once("message", resolve);
+          worker.once("error", reject);
+          worker.once("exit", code => {
+            if (code !== 0) reject(new Error("worker exited with " + code));
+          });
+        });
+        if (message.error) throw new Error(message.error);
+        if (message.version !== parentVersion) throw new Error("worker loaded a different SQLite library");
+        if (!message.differentPathRejected) throw new Error("worker accepted a different SQLite path");
+        console.log("idempotent");
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "idempotent", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 // process.versions.sqlite must not force-dlopen the system SQLite: that
 // would defeat setCustomSQLite() for anyone whose imports read
 // process.versions before opening a database.

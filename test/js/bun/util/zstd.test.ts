@@ -9,7 +9,8 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, rss } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
+import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "path";
 
@@ -680,6 +681,47 @@ describe("sync compression argument handling", () => {
     });
     expect(exitCode).toBe(0);
   }, 60_000);
+});
+
+// x64 builds target nehalem, so zstd picks its BMI2 kernels at run time. It used to ask CPUID in
+// every CCtx and DCtx init. CPUID is a VM exit under a hypervisor, about 2 us each, two per init.
+// arch_prctl(ARCH_SET_CPUID, 0) makes CPUID raise SIGSEGV on the calling thread, so a context that
+// still probes the CPU kills the child. The first context of each kind is allowed to probe.
+describe("zstd context setup", () => {
+  const canFaultOnCpuid =
+    isLinux && process.arch === "x64" && /^flags\s*:.*\bcpuid_fault\b/m.test(readFileSync("/proc/cpuinfo", "utf8"));
+
+  it.skipIf(!canFaultOnCpuid)("asks CPUID once, not for each context", async () => {
+    const script = `
+      const { dlopen } = require("bun:ffi");
+      const zlib = require("node:zlib");
+      const { symbols: { syscall } } = dlopen(process.argv[1], {
+        syscall: { args: ["i64", "i32", "u64"], returns: "i64" },
+      });
+      const SYS_arch_prctl = 158n, ARCH_SET_CPUID = 0x1012;
+      const input = Buffer.alloc(1024, "a");
+      function roundtrip() {
+        const native = Bun.zstdDecompressSync(Bun.zstdCompressSync(input));
+        const node = zlib.zstdDecompressSync(zlib.zstdCompressSync(input));
+        if (!input.equals(native) || !input.equals(node)) throw new Error("roundtrip mismatch");
+      }
+      roundtrip();
+      if (syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0n) !== 0n) throw new Error("ARCH_SET_CPUID failed");
+      for (let i = 0; i < 20; i++) roundtrip();
+      syscall(SYS_arch_prctl, ARCH_SET_CPUID, 1n);
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, libcPathForDlopen()],
+      // JSC runs CPUID as a serializing instruction each time it installs JIT code.
+      env: { ...bunEnv, BUN_JSC_useBaselineJIT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr: stderr.slice(0, 2000) }).toEqual({ stdout: "ok\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The async functions read the input on a pool thread. The unfixed build segfaults there, so each

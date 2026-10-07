@@ -5,7 +5,12 @@
 // Creates normalized byte stream iterables from various input types.
 // Handles recursive flattening of nested iterables and protocol conversions.
 
-const { isAnyArrayBuffer, isPromise, isTypedArray, isUint8Array } = require("node:util/types");
+const {
+  isAnyArrayBuffer,
+  isPromise,
+  isTypedArray,
+  isUint8Array,
+}: typeof import("node:util/types") = require("node:util/types");
 
 const { kValidatedSource, toStreamable, toAsyncStreamable } = require("internal/streams/iter/types");
 
@@ -32,7 +37,7 @@ function isPrimitiveChunk(value) {
  * Check if value is a sync iterable (has Symbol.iterator).
  * @returns {boolean}
  */
-function isSyncIterable(value) {
+function isSyncIterable(value): value is Iterable<unknown> {
   // We do not consider regular strings to be sync iterables in this context.
   // We don't care about boxed strings (String objects) since they are uncommon.
   return typeof value !== "string" && typeof value?.[Symbol.iterator] === "function";
@@ -42,7 +47,7 @@ function isSyncIterable(value) {
  * Check if value is an async iterable (has Symbol.asyncIterator).
  * @returns {boolean}
  */
-function isAsyncIterable(value) {
+function isAsyncIterable(value): value is AsyncIterable<unknown> {
   return typeof value?.[Symbol.asyncIterator] === "function";
 }
 
@@ -126,7 +131,7 @@ function* normalizeSyncValue(value) {
  * Check if value is already a Uint8Array[] batch (fast path).
  * @returns {boolean}
  */
-function isUint8ArrayBatch(value) {
+function isUint8ArrayBatch(value): value is Uint8Array[] {
   if (!Array.isArray(value)) return false;
   const len = value.length;
   if (len === 0) return true;
@@ -160,7 +165,7 @@ function* yieldBoundedBatch(batch) {
  * @yields {Uint8Array[]}
  */
 function* normalizeSyncSource(source) {
-  let batch = [];
+  let batch: Uint8Array[] = [];
 
   for (const value of source) {
     // Fast path 1: value is already a Uint8Array[] batch
@@ -186,7 +191,7 @@ function* normalizeSyncSource(source) {
       yield batch;
       batch = [];
     }
-    let valueBatch = [];
+    let valueBatch: Uint8Array[] = [];
     for (const chunk of normalizeSyncValue(value)) {
       valueBatch.push(chunk);
       if (valueBatch.length === FROM_BATCH_SIZE) {
@@ -301,7 +306,7 @@ async function* normalizeAsyncSource(source) {
         continue;
       }
       // Slow path: normalize the value
-      const batch = [];
+      const batch: Uint8Array[] = [];
       for await (const chunk of normalizeAsyncValue(value)) {
         batch.push(chunk);
       }
@@ -314,7 +319,7 @@ async function* normalizeAsyncSource(source) {
 
   // Fall back to sync iteration - batch sync values together with a bound.
   if (isSyncIterable(source)) {
-    let batch = [];
+    let batch: Uint8Array[] = [];
 
     for (const value of source) {
       // Fast path 1: value is already a Uint8Array[] batch
@@ -341,7 +346,7 @@ async function* normalizeAsyncSource(source) {
         yield batch;
         batch = [];
       }
-      let asyncBatch = [];
+      let asyncBatch: Uint8Array[] = [];
       for await (const chunk of normalizeAsyncValue(value)) {
         asyncBatch.push(chunk);
         if (asyncBatch.length === FROM_BATCH_SIZE) {

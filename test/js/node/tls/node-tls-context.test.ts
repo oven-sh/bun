@@ -1393,6 +1393,27 @@ it("validates crl the same way on both createSecureContext and Server.setSecureC
   }
 });
 
+it("only tls.Server counts a falsy crl as absent", () => {
+  // tls.Server#setSecureContext() stores undefined for a falsy crl. configSecureContext(),
+  // behind every other entry point, only skips null and undefined:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1471-L1474
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L261-L271
+  const server = tls.createServer({ key: agent1Key, cert: agent1Cert });
+  for (const [crl, code] of [
+    ["", "ERR_CRYPTO_OPERATION_FAILED"],
+    [false, "ERR_INVALID_ARG_TYPE"],
+    [0, "ERR_INVALID_ARG_TYPE"],
+  ] as [never, string][]) {
+    const rejected = expect.objectContaining({ code });
+    expect(() => tls.createSecureContext({ crl })).toThrow(rejected);
+    expect(() => server.addContext("example.com", { crl })).toThrow(rejected);
+    expect(() => tls.connect({ socket: new Duplex({ read() {} }), crl })).toThrow(rejected);
+    expect((tls.createServer({ crl }) as any).crl).toBeUndefined();
+  }
+  // An empty array is truthy. tls.Server keeps it, and it names no CRL.
+  expect((tls.createServer({ crl: [] }) as any).crl).toEqual([]);
+});
+
 it("accepts BoringSSL kCipherAliases selectors that are not literal suite names", () => {
   // vendor/boringssl/ssl/ssl_cipher.cc kCipherAliases: AES128, AES256, kPSK,
   // aPSK, FIPS all match a non-empty cipher list. Node built against BoringSSL

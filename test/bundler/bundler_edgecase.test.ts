@@ -4356,8 +4356,11 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      // Both start before the wrapper suspends, in import order.
-      expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain("await Promise.all([ init_a(), init_b() ])");
+      // Both start before the wrapper suspends, in import order. b is not
+      // async, so it can throw: the list is a generator.
+      expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain(
+        "await Promise.all(function* () { yield init_a(); init_b(); }());",
+      );
     },
   });
   itBundled("edgecase/UnwrappedEntryAsyncDependencyKeepsImportOrder", {
@@ -4511,6 +4514,41 @@ describe("bundler", () => {
       validate({ stderr }) {
         expect(stderr).toContain("error: E-r");
       },
+    },
+  });
+  // b throws after a started. The import fails with b's error, d does not
+  // start, and the later rejection of a has a handler: no unhandled rejection.
+  itBundled("edgecase/SyncDependencyThrowsAfterAsyncDependencyStarted", {
+    files: {
+      "/entry.js": /* js */ `
+        import("./x.js").catch(e => console.log("caught", e.message));
+      `,
+      "/x.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        import "./d.js";
+        export const x = 1;
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await Promise.reject(new Error("a failed"));
+      `,
+      "/b.js": /* js */ `
+        console.log("b start");
+        throw new Error("b failed");
+      `,
+      "/d.js": /* js */ `
+        console.log("d start");
+        await 0;
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a start
+        b start
+        caught b failed
+      `,
     },
   });
   // b runs inside a's first synchronous segment, where `init_a()` returns

@@ -2772,7 +2772,11 @@ pub(crate) mod __gated_printer {
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     self.print(b"(");
                     self.print_symbol(meta.wrapper_ref);
-                    self.print(b"() || Promise.resolve()");
+                    self.print(b"()");
+                    self.print_space();
+                    self.print(b"||");
+                    self.print_space();
+                    self.print(b"Promise.resolve()");
                     let _ = self.print_dot_then_prefix();
                     self.print_space_before_identifier();
                     self.print_symbol(meta.wrapper_ref);

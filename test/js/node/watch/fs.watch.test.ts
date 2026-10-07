@@ -808,27 +808,37 @@ describe("fs.watch", () => {
         },
       );
 
-      test.each(["file", "directory", "recursive directory"] as const)(
-        "a %s below an ancestor that was renamed aside and recreated",
-        async kind => {
-          using dir = tempDir("fs-watch-rebound-ancestor", { "parent": { "x": kind === "file" ? "1" : {} } });
-          const parent = path.join(String(dir), "parent");
-          const aside = path.join(String(dir), "aside");
-          const target = path.join(parent, "x");
-          const recursive = kind === "recursive directory";
-          using stale = observe(target, recursive);
-          // The old inode moved with its parent. Its watcher is told nothing.
-          fs.renameSync(parent, aside);
-          fs.mkdirSync(parent);
-          if (kind === "file") fs.writeFileSync(target, "2");
-          else fs.mkdirSync(target);
-          using fresh = observe(target, recursive);
-          fs.renameSync(path.join(aside, "x"), path.join(aside, "y"));
-          await stale.saw("rename");
-          if (kind === "file") fs.appendFileSync(target, "x");
-          else fs.writeFileSync(path.join(target, "new.txt"), "x");
-          await fresh.saw();
-          expect(fresh.events[0]).toEqual(kind === "file" ? ["change", "x"] : ["rename", "new.txt"]);
+      describe.each(["the path itself", "its parent directory"] as const)(
+        "%s renamed aside, the path recreated",
+        moved => {
+          test.each(["file", "directory", "recursive directory"] as const)("a %s", async kind => {
+            using dir = tempDir("fs-watch-rebound-moved", { "parent": { "x": kind === "file" ? "1" : {} } });
+            const parent = path.join(String(dir), "parent");
+            const aside = path.join(String(dir), "aside");
+            const target = path.join(parent, "x");
+            const recursive = kind === "recursive directory";
+            using stale = observe(target, recursive);
+            // Where the old inode is after the move. A move of the parent tells
+            // the old inode's watcher nothing.
+            let old = aside;
+            if (moved === "the path itself") {
+              fs.renameSync(target, aside);
+            } else {
+              fs.renameSync(parent, aside);
+              fs.mkdirSync(parent);
+              old = path.join(aside, "x");
+            }
+            if (kind === "file") fs.writeFileSync(target, "2");
+            else fs.mkdirSync(target);
+            using fresh = observe(target, recursive);
+            // Only the old inode reports this move.
+            fs.renameSync(old, old + ".again");
+            await stale.saw("rename");
+            if (kind === "file") fs.appendFileSync(target, "x");
+            else fs.writeFileSync(path.join(target, "new.txt"), "x");
+            await fresh.saw();
+            expect(fresh.events[0]).toEqual(kind === "file" ? ["change", "x"] : ["rename", "new.txt"]);
+          });
         },
       );
 

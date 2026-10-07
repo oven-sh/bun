@@ -185,6 +185,12 @@ impl StaticRoute {
                                 return Err(global_this
                                     .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                             }
+                            // The object is not in memory: served as is, it would be an empty body.
+                            if b.is_s3() {
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "An S3 file body cannot be used in a static route. Consider calling new Response(await response.bytes()) to buffer the body."
+                                )));
+                            }
                         }
                         let blob = body_value.use_();
                         blob.global_this

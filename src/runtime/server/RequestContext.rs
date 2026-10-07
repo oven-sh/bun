@@ -98,7 +98,7 @@ pub(crate) enum UpgradeState {
     Upgraded,
 }
 
-/// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
+/// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file, S3 or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
 #[derive(Default)]
 pub(crate) struct ResponseRoot(JsCell<bun_jsc::strong::Optional>);
 
@@ -155,7 +155,7 @@ pub(crate) struct RequestContext<
     /// not protected (hot path), so GC may finalize it while we're parked
     /// on tryEnd() backpressure. onAbort / handleResolveStream /
     /// handleRejectStream only use this for best-effort readable-stream
-    /// cleanup and safely observe null instead of UAF. File/.Locked
+    /// cleanup and safely observe null instead of UAF. File/S3/.Locked
     /// bodies still root it through `response_root`, so the pointer stays
     /// valid for renderMetadata() on those paths.
     pub(crate) response_weakref: JsCell<response::WeakRef>,
@@ -281,7 +281,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
-use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
+use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
@@ -392,6 +392,33 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     }
 }
 
+/// Start the download of an S3-backed `blob` as a byte stream. The blob's own
+/// offset and size select the range. `Err` is the value for the server's
+/// `error()`: a request that cannot be signed fails before this returns, and
+/// nothing is attached to the stream yet to see that. Non-generic and out of
+/// line, like [`release_body_stream`].
+#[inline(never)]
+fn s3_blob_download_stream(
+    blob: &Blob,
+    cx: &bun_jsc::JsThread<'_>,
+) -> Result<(ReadableStream, NonNull<ByteStream>), JSValue> {
+    let global_this = cx.global();
+    let value = match ReadableStream::from_blob_copy_ref(cx, blob, blob.size.get()) {
+        Ok(value) => value,
+        Err(err) => return Err(global_this.take_exception(err)),
+    };
+    let stream = ReadableStream::from_js_direct(value).expect("an S3 download is a native stream");
+    let readable_stream::Source::Bytes(bytes) = stream.ptr else {
+        unreachable!("an S3 download is a byte stream");
+    };
+    let bytes = NonNull::new(bytes).expect("Source::Bytes payload is non-null");
+    // Taken here, not by `to_blob_if_possible`: that turns a failed stream into an empty body.
+    if let Some(err) = bun_ptr::BackRef::from(bytes).take_pending_error() {
+        return Err(err.to_js(global_this));
+    }
+    Ok((stream, bytes))
+}
+
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
@@ -452,6 +479,22 @@ mod shim {
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
+    }
+    /// A `Bun.file()` or an S3 object: the bytes are not in memory, so the
+    /// body is sent after the frame that returned the Response.
+    #[inline]
+    pub(super) fn blob_is_sent_after_return(b: &Blob) -> bool {
+        b.store
+            .get()
+            .as_ref()
+            .is_some_and(|s| !matches!(s.data, crate::webcore::blob::store::Data::Bytes(_)))
+    }
+    /// An S3 object that GET proxies as a stream of unknown length. An empty
+    /// window has nothing to download (a `Range` of `0-0` would fetch one
+    /// byte), so it is sent like in-memory bytes.
+    #[inline]
+    pub(super) fn blob_streams_from_s3(b: &Blob) -> bool {
+        blob_is_s3(b) && b.size.get() != 0
     }
     /// The response is done with its natively piped body. A body still mid-stream is
     /// cancelled: it stayed locked to this response, so nothing else can read it.
@@ -2055,18 +2098,46 @@ where
             return;
         }
 
-        if self.blob.get().needs_to_read_file() {
-            if !self.flags.has_sendfile_ctx() {
-                if let AnyBlob::Blob(b) =
-                    self.blob.replace(AnyBlob::InternalBlob(Default::default()))
-                {
-                    self.do_sendfile(b);
+        // In-memory bytes pass one test and are sent from this frame. A file
+        // or an S3 object is read first.
+        if let AnyBlob::Blob(blob) = self.blob.get()
+            && shim::blob_is_sent_after_return(blob)
+        {
+            if shim::blob_needs_to_read_file(blob) {
+                if !self.flags.has_sendfile_ctx() {
+                    if let AnyBlob::Blob(b) =
+                        self.blob.replace(AnyBlob::InternalBlob(Default::default()))
+                    {
+                        self.do_sendfile(b);
+                    }
                 }
+                return;
             }
-            return;
+            if shim::blob_streams_from_s3(blob) {
+                if let AnyBlob::Blob(b) = self.blob.replace(AnyBlob::Blob(Blob::default())) {
+                    self.render_s3_blob(&b);
+                }
+                return;
+            }
         }
 
         self.do_render_blob();
+    }
+
+    /// Proxy an S3-backed Blob body through its download stream. The status
+    /// and headers wait for the first chunk, so a download that fails before
+    /// it reaches the server's `error()`.
+    #[cold]
+    fn render_s3_blob(&self, blob: &Blob) {
+        let global_this = self.server().global_this();
+        let (stream, bytes) =
+            match s3_blob_download_stream(blob, &global_this.js_thread(self.script_context())) {
+                Ok(download) => download,
+                Err(js_err) => return self.run_error_handler(js_err),
+            };
+        self.response_body_readable_stream_ref
+            .set(readable_stream::Strong::init(stream, global_this));
+        self.pipe_byte_stream(stream, bytes, PipeHead::WithFirstChunk);
     }
 
     fn handle_first_stream_write(&self) {
@@ -2492,46 +2563,13 @@ where
             || self.server().terminated()
     }
 
-    fn do_render_head_response_after_s3_size_resolved(
-        pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
-    ) {
-        // SAFETY: `pair` is the live stack-local threaded through the
-        // synchronous cork call.
-        let pair = unsafe { &*pair };
-        let this = pair.this;
-        this.render_metadata();
-
-        if let Some(resp) = this.resp.get() {
-            // SAFETY: FFI handle
-            resp.write_header_int(b"content-length", pair.size as u64);
-        }
-        this.end_without_body(this.should_close_connection());
-        // `end_without_body` released the base ref; the caller
-        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
-    }
-
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
-    fn on_s3_size_resolved_thunk(
-        result: S3::simple_request::S3StatResult<'_>,
-        this: *mut c_void,
-    ) -> JsResult<()> {
-        let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
-        stat_ref.ctx().on_s3_size_resolved(result);
-        Ok(())
-    }
-
-    pub(crate) fn on_s3_size_resolved(&self, result: S3::simple_request::S3StatResult<'_>) {
-        if let Some(resp) = self.resp.get() {
-            let size = match result {
-                S3::simple_request::S3StatResult::Failure(_)
-                | S3::simple_request::S3StatResult::NotFound(_) => 0,
-                S3::simple_request::S3StatResult::Success(stat) => stat.size,
-            };
-            let mut pair = HeaderResponseSizePair { this: self, size };
-            resp.run_corked_with_type(
-                |p| Self::do_render_head_response_after_s3_size_resolved(p),
-                &raw mut pair,
-            );
+    /// The HEAD framing of a body that GET sends as a stream: the status and
+    /// headers, and no length.
+    #[inline]
+    fn render_metadata_without_length(&self, resp: uws::AnyResponse) {
+        self.render_metadata();
+        if !MUX {
+            resp.write_header(b"transfer-encoding", b"chunked");
         }
     }
 
@@ -2640,28 +2678,12 @@ where
             }
 
             Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
-                    // we need to read the size asynchronously
-                    // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
-                    this.ref_();
-
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
-                    else {
-                        unreachable!()
-                    };
-                    let credentials = s3.get_credentials();
-                    let path = s3.path();
-                    let _ = S3::client::stat(
-                        credentials,
-                        this.script_context(),
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
+                if shim::blob_streams_from_s3(blob) {
+                    // GET proxies the object as a stream of unknown length, so
+                    // HEAD states none and asks S3 nothing. The blob stays on
+                    // the Response, unused.
+                    this.render_metadata_without_length(resp);
+                    this.end_without_body(this.should_close_connection());
                     return;
                 }
                 // Size the blob *before* `render_metadata()`: it re-fetches the
@@ -2680,11 +2702,7 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Locked(_) => {
-                this.render_metadata();
-                if !MUX {
-                    // SAFETY: FFI handle
-                    resp.write_header(b"transfer-encoding", b"chunked");
-                }
+                this.render_metadata_without_length(resp);
                 // HEAD never transmits the body.
                 if let Some(response) = this.response_mut() {
                     Self::cancel_unread_body(response, global_this);
@@ -3205,84 +3223,9 @@ where
                         }
 
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
-                            // BACKREF: `Source::Bytes` stores a live non-null
-                            // `*mut ByteStream` (the JS wrapper's `m_ctx` heap
-                            // payload, kept alive by `stream`). R-2: all touched
-                            // ByteStream methods/fields are `&self`/interior-mutable.
-                            let byte_stream_nn = NonNull::new(byte_stream_ptr)
+                            let byte_stream = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
-                            let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
-                            debug_assert!(byte_stream.sink.get().is_none());
-                            debug_assert!(this.byte_stream.get().is_none());
-                            if this.resp.get().is_none() {
-                                // we don't have a response, so we can discard the stream
-                                stream.done();
-                                this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
-                                return;
-                            }
-                            let resp = this.resp.get().expect("infallible: resp bound");
-                            // If we've received the complete body by the time this function is called
-                            // we can avoid streaming it and just send it all at once.
-                            if byte_stream.has_received_last_chunk.get() {
-                                let mut byte_list = byte_stream.drain();
-                                this.blob.set(AnyBlob::from_array_list(
-                                    byte_list.move_to_list_managed(),
-                                ));
-                                this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
-                                this.do_render_blob();
-                                return;
-                            }
-                            this.ref_();
-                            // Same as do_render_stream's Pending branch: the
-                            // body is in flight, so `handle_reject` must not
-                            // fall through to render_missing() and end it.
-                            this.flags.set_has_marked_pending(true);
-                            byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
-                                AnyRequestContext::init(this.as_ctx_ptr()),
-                            ));
-                            stream.lock_native(global_this);
-                            byte_stream.signal_consumer_attached();
-                            // Deinit the old Strong reference before creating a new one
-                            // to avoid leaking the Strong.Impl memory
-                            this.response_body_readable_stream_ref
-                                .with_mut(|s| s.deinit());
-                            this.response_body_readable_stream_ref
-                                .set(readable_stream::Strong::init(stream, global_this));
-
-                            this.byte_stream.set(Some(byte_stream_nn));
-                            let mut response_buf = byte_stream.take_buffer();
-                            let buffer = response_buf.move_to_list();
-                            let has_body_bytes = !buffer.is_empty();
-                            this.response_buf_owned.set(buffer);
-
-                            // we don't set size here because even if we have a hint
-                            // uWebSockets won't let us partially write streaming content
-                            this.blob.with_mut(|b| b.detach());
-
-                            // if we've received metadata and part of the body, send everything we can and drain
-                            if has_body_bytes {
-                                resp.run_corked_with_type(
-                                    Self::drain_response_buffer_and_metadata_corked,
-                                    this.as_ctx_ptr(),
-                                );
-                            } else if matches!(
-                                byte_stream.parent_const().producer.get(),
-                                WebCore::streams::SourceHandle::HTMLRewriter(_)
-                            ) {
-                                // Defer status/headers to the first chunk/end
-                                // so a pre-first-byte handler failure can
-                                // still reach `error()`.
-                            } else {
-                                // if we only have metadata to send, send it now
-                                resp.run_corked_with_type(
-                                    Self::render_metadata_corked,
-                                    this.as_ctx_ptr(),
-                                );
-                            }
-                            // Wake the producer after the older bytes are queued.
-                            byte_stream.signal_drained();
+                            this.pipe_byte_stream(stream, byte_stream, PipeHead::AtAttach);
                             return;
                         }
                     }
@@ -3323,6 +3266,93 @@ where
         }
 
         this.do_render_blob();
+    }
+
+    /// Pipe `stream`'s native byte source into the response. The caller holds
+    /// `stream` in `response_body_readable_stream_ref`.
+    #[inline]
+    fn pipe_byte_stream(
+        &self,
+        stream: WebCore::ReadableStream,
+        byte_stream_nn: NonNull<ByteStream>,
+        head: PipeHead,
+    ) {
+        let this = self;
+        // BACKREF: `Source::Bytes` stores a live non-null
+        // `*mut ByteStream` (the JS wrapper's `m_ctx` heap
+        // payload, kept alive by `stream`). R-2: all touched
+        // ByteStream methods/fields are `&self`/interior-mutable.
+        let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
+        debug_assert!(byte_stream.sink.get().is_none());
+        debug_assert!(this.byte_stream.get().is_none());
+        if this.resp.get().is_none() {
+            // we don't have a response, so we can discard the stream
+            stream.done();
+            this.response_body_readable_stream_ref
+                .with_mut(|s| s.deinit());
+            return;
+        }
+        let resp = this.resp.get().expect("infallible: resp bound");
+        // If we've received the complete body by the time this function is called
+        // we can avoid streaming it and just send it all at once.
+        if byte_stream.has_received_last_chunk.get() {
+            let mut byte_list = byte_stream.drain();
+            this.blob
+                .set(AnyBlob::from_array_list(byte_list.move_to_list_managed()));
+            this.response_body_readable_stream_ref
+                .with_mut(|s| s.deinit());
+            this.do_render_blob();
+            return;
+        }
+        let global_this = this.server().global_this();
+        this.ref_();
+        // Same as do_render_stream's Pending branch: the
+        // body is in flight, so `handle_reject` must not
+        // fall through to render_missing() and end it.
+        this.flags.set_has_marked_pending(true);
+        byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
+            AnyRequestContext::init(this.as_ctx_ptr()),
+        ));
+        stream.lock_native(global_this);
+        byte_stream.signal_consumer_attached();
+        // Deinit the old Strong reference before creating a new one
+        // to avoid leaking the Strong.Impl memory
+        this.response_body_readable_stream_ref
+            .with_mut(|s| s.deinit());
+        this.response_body_readable_stream_ref
+            .set(readable_stream::Strong::init(stream, global_this));
+
+        this.byte_stream.set(Some(byte_stream_nn));
+        let mut response_buf = byte_stream.take_buffer();
+        let buffer = response_buf.move_to_list();
+        let has_body_bytes = !buffer.is_empty();
+        this.response_buf_owned.set(buffer);
+
+        // we don't set size here because even if we have a hint
+        // uWebSockets won't let us partially write streaming content
+        this.blob.with_mut(|b| b.detach());
+
+        // if we've received metadata and part of the body, send everything we can and drain
+        if has_body_bytes {
+            resp.run_corked_with_type(
+                Self::drain_response_buffer_and_metadata_corked,
+                this.as_ctx_ptr(),
+            );
+        } else if head == PipeHead::WithFirstChunk
+            || matches!(
+                byte_stream.parent_const().producer.get(),
+                WebCore::streams::SourceHandle::HTMLRewriter(_)
+            )
+        {
+            // Defer status/headers to the first chunk/end
+            // so a pre-first-byte handler failure can
+            // still reach `error()`.
+        } else {
+            // if we only have metadata to send, send it now
+            resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
+        }
+        // Wake the producer after the older bytes are queued.
+        byte_stream.signal_drained();
     }
 
     pub(crate) fn write_chunk(
@@ -3776,7 +3806,7 @@ where
 
         // For plain in-memory bodies this runs synchronously from
         // render() before any backpressure gap, so the Response is
-        // always live here. File / stream bodies that call this after
+        // always live here. File / S3 / stream bodies that call this after
         // an async hop keep the Response rooted via `response_root`.
         let response: &mut Response = self.response_mut().unwrap();
         let sendfile = self.sendfile.get();
@@ -4012,8 +4042,8 @@ where
         self.do_render();
     }
 
-    /// [`Self::render`] for the Response a handler just returned. A file or
-    /// streaming body is still being sent after this frame returns, so for
+    /// [`Self::render`] for the Response a handler just returned. A file, S3
+    /// or streaming body is still being sent after this frame returns, so for
     /// those `response_root` roots the wrapper first; in-memory bodies leave
     /// it unrooted.
     ///
@@ -4025,7 +4055,7 @@ where
         let body_value = unsafe { (*response).get_body_value() };
         body_value.to_blob_if_possible();
         let sent_after_return = match body_value {
-            Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
+            Body::Value::Blob(blob) => shim::blob_is_sent_after_return(blob),
             Body::Value::Locked(_) => true,
             _ => false,
         };
@@ -4596,9 +4626,15 @@ struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: b
     pub stream: WebCore::ReadableStream,
 }
 
-struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
-    pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
-    pub(crate) size: usize,
+/// When the status and headers of a piped byte stream are written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PipeHead {
+    /// At the attach, before the first byte of the body. An `HTMLRewriter`
+    /// producer still gets [`Self::WithFirstChunk`].
+    AtAttach,
+    /// With the first chunk or the end, so a producer that fails before its
+    /// first byte can still reach the server's `error()`.
+    WithFirstChunk,
 }
 
 struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {

@@ -345,3 +345,46 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
     });
   });
 });
+
+// An S3 object is not in memory, so a static route has no bytes to store for it.
+describe("static route with an S3 file body", () => {
+  const s3 = new Bun.S3Client({
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my-bucket",
+    // Registration asks S3 nothing.
+    endpoint: "http://127.0.0.1:1",
+  });
+  const message = "An S3 file body cannot be used in a static route";
+
+  test("Bun.serve() rejects the route", () => {
+    let server: Server | undefined;
+    try {
+      expect(() => {
+        server = Bun.serve({
+          port: 0,
+          routes: { "/object": new Response([s3.file("object.txt")]) },
+          fetch: () => new Response("nf", { status: 404 }),
+        });
+      }).toThrow(message);
+    } finally {
+      server?.stop(true);
+    }
+  });
+
+  test("server.reload() rejects the route and keeps the routes it had", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/object": new Response("in memory") },
+      fetch: () => new Response("nf", { status: 404 }),
+    });
+
+    expect(() =>
+      server.reload({
+        routes: { "/object": new Response([s3.file("object.txt")]) },
+        fetch: () => new Response("nf", { status: 404 }),
+      }),
+    ).toThrow(message);
+    expect(await (await fetch(new URL("/object", server.url))).text()).toBe("in memory");
+  });
+});

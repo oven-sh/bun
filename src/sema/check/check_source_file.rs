@@ -1954,8 +1954,10 @@ impl<'s> Checker<'_, 's> {
             ExprKind::Unary { op: UnOp::Void, .. } => self.check_node_deferred(file, e),
             ExprKind::Dot { obj: x, .. }
             | ExprKind::Unary { operand: x, .. }
-            | ExprKind::Spread(x)
-            | ExprKind::NonNull(x) => self.check_expression(file, x),
+            | ExprKind::Spread(x) => self.check_expression(file, x),
+            ExprKind::NonNull(x) => {
+                self.check_expression(file, crate::hir::skip_non_null_assertions(hir, x))
+            }
             // `checkAssertion`
             ExprKind::AsConst(x) => {
                 self.check_erasable_type_assertion(file, e, x);

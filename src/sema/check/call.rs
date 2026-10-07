@@ -1487,9 +1487,11 @@ impl<'p, 's> Checker<'p, 's> {
                         })
                 }
             }
-            ExprKind::Spread(operand) | ExprKind::NonNull(operand) => {
-                self.is_checked_without_flow_analysis(file, operand)
-            }
+            ExprKind::Spread(operand) | ExprKind::NonNull(operand) => self
+                .is_checked_without_flow_analysis(
+                    file,
+                    crate::hir::skip_non_null_assertions(hir, operand),
+                ),
             ExprKind::Assign {
                 op: None,
                 target,

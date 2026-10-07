@@ -2793,6 +2793,7 @@ export const wrong: number = x;
       });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
       const levels = stdout.split("{ a: ").length - 1;
+      expect(levels).toBeGreaterThanOrEqual(50);
       if (isOptimised) expect(levels).toBeLessThan(depth);
       const innermost = levels < depth ? "any" : "1";
       expect(stdout).toBe(
@@ -2821,6 +2822,25 @@ const wrong: number = "";
         "a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.
         a.ts(3,7): error TS6133: 'wrong' is declared but its value is never read."
       `);
+      expect(stderr.split("\n")[0]).toBe(
+        "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      ["an initializer", (run: string) => `export const y = x${run};`],
+      ["an argument", (run: string) => `f(x${run});`],
+      ["before a property access", (run: string) => `f(x${run}.a);`],
+      ["in an optional chain", (run: string) => `f(x?.a${run}.toFixed());`],
+    ])("60,000 non-null assertions in a row, %s", async (_where, statement) => {
+      using dir = project({
+        "a.ts": `declare const x: { a: number } | undefined;
+declare function f(a: unknown): void;
+${statement(repeat("!", 60_000))}
+`,
+      });
+      const { stderr, exitCode } = await check(dir);
       expect(stderr.split("\n")[0]).toBe(
         "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
       );

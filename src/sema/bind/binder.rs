@@ -907,7 +907,9 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 matches!(self.f[call.callee].kind, ExprKind::Dot { obj, .. } if self.contains_narrowable_reference(obj))
             }
-            ExprKind::NonNull(x) => self.is_narrowing_expression(x),
+            ExprKind::NonNull(x) => {
+                self.is_narrowing_expression(crate::hir::skip_non_null_assertions(self.f, x))
+            }
             ExprKind::Unary {
                 op: UnOp::Typeof | UnOp::Not,
                 operand,
@@ -4768,10 +4770,18 @@ impl<'f, 's> Binder<'f, 's> {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             ExprKind::Call(c) => (self.f[c].callee, self.f[c].chain),
             ExprKind::NonNull(x) => {
-                let Parent::Expr(parent) = self.b.expr_parent[e.idx()] else {
-                    return None;
-                };
-                return (self.chain_of(parent) == Some((e, false))).then_some((x, false));
+                // In a run of `!`, each is a link if the one around it is.
+                let mut last = e;
+                loop {
+                    let Parent::Expr(parent) = self.b.expr_parent[last.idx()] else {
+                        return None;
+                    };
+                    if !matches!(self.f[parent].kind, ExprKind::NonNull(_)) {
+                        return (self.chain_of(parent) == Some((last, false)))
+                            .then_some((x, false));
+                    }
+                    last = parent;
+                }
             }
             _ => return None,
         };

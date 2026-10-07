@@ -4576,13 +4576,17 @@ impl<'p, 's> Checker<'p, 's> {
             return self.intersection(&[left, right]);
         }
         // `getPropertiesOfType`, `getIndexInfosOfType`: `null`, `undefined` and `void` have no members, so spreading one of them
-        // copies the other side without its index signatures.
+        // copies the other side without its index signatures. Nor has `never`, which the apparent type can be reduced to.
         let members_of = |c: &mut Self, ty: TypeId| {
             let ty = match c.is_nullish(ty) {
                 true => TypeId::EMPTY_OBJECT,
                 false => c.reduced_apparent_type_as_object(ty),
             };
-            c.members(ty)
+            c.members(if ty.is_never() {
+                TypeId::EMPTY_OBJECT
+            } else {
+                ty
+            })
         };
         let (Some(l), Some(r)) = (members_of(self, left), members_of(self, right)) else {
             return TypeId::UNRESOLVED;

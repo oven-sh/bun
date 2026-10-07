@@ -877,7 +877,9 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[e].kind {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain != Chain::No,
             ExprKind::Call(c) => hir[c].chain != Chain::No,
-            ExprKind::NonNull(x) => self.is_in_optional_chain(file, x),
+            ExprKind::NonNull(x) => {
+                self.is_in_optional_chain(file, crate::hir::skip_non_null_assertions(hir, x))
+            }
             _ => false,
         }
     }
@@ -1674,6 +1676,8 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkNonNullChain`: the nullability of the previous link itself is removed, but the
             // possibility that the chain short-circuited is preserved.
             ExprKind::NonNull(x) if self.is_in_optional_chain(file, x) => {
+                // `getNonNullableType` of its own result is that result: a run of `!` is taken at once.
+                let x = crate::hir::skip_non_null_assertions(self.hir(file), x);
                 let (ty, stops) = self.type_of_link(file, x);
                 (self.non_nullable(ty), stops)
             }
@@ -1858,7 +1862,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let (ty, stops) = self.type_of_link(file, e);
                     return if stops { self.optional(ty) } else { ty };
                 }
-                let ty = self.type_of_expr(file, x);
+                // No `!` of a run is a link if the outermost is none. See `type_of_link`.
+                let ty = self.type_of_expr(file, crate::hir::skip_non_null_assertions(hir, x));
                 self.non_nullable(ty)
             }
             // `checkExpressionWithTypeArguments`

@@ -2553,6 +2553,15 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
     }
 }
 
+/// `SkipOuterExpressions(e, OEKNonNullAssertions)`. The parser builds a run of `!` in a loop, so nothing bounds its length: a
+/// function that looks through `!` takes the whole run at once and does not recurse for each.
+pub fn skip_non_null_assertions(hir: &File, mut e: ExprId) -> ExprId {
+    while let ExprKind::NonNull(x) = hir[e].kind {
+        e = x;
+    }
+    e
+}
+
 /// `isNarrowableReference`
 pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
     match hir[e].kind {
@@ -2562,7 +2571,7 @@ pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
         | ExprKind::NewTarget(_)
         | ExprKind::ImportMeta => true,
         ExprKind::Dot { obj, .. } => is_narrowable_reference(hir, obj),
-        ExprKind::NonNull(x) => is_narrowable_reference(hir, x),
+        ExprKind::NonNull(x) => is_narrowable_reference(hir, skip_non_null_assertions(hir, x)),
         // With a literal key the object is not checked.
         ExprKind::Index { obj, index, .. } => {
             is_string_or_numeric_literal_like(hir, index)

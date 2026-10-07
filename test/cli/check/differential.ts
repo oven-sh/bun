@@ -60,8 +60,8 @@ export function programsThatOnceDiffered(part: number, parts: number) {
           // A debug build checks a sample. It is always the same sample.
           .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
           .filter((_, index) => index % (parts * tests) === part * tests + nth)
-          // Windows cannot create a directory named `c:`.
-          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => path.includes(":")));
+          // Windows cannot create a directory named `c:` or `w*d`.
+          .filter(([, it]) => !isWindows || !Object.keys(it.files).some(path => /[:*?"<>|]/.test(path)));
         const files: Record<string, string> = {};
         for (const [name, it] of cases) for (const path in it.files) files[`${name}/${path}`] = it.files[path];
         using dir = tempDir("bun-check-differential", files);

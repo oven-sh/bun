@@ -11,7 +11,6 @@
 //! Only those test entry points are returned.
 
 use bun_bundler::mal_prelude::*;
-use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
@@ -31,7 +30,7 @@ use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -362,7 +361,7 @@ pub(crate) fn init_watch_trigger() {
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
-                setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
+                libc::setenv(TRIGGER_FILE_ENV_VAR_Z.as_ptr(), fresh.as_ptr(), 1);
             }
             fresh
         };
@@ -378,11 +377,6 @@ pub(crate) fn init_watch_trigger() {
         let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
             .set(jsc::hot_reloader::WatchChangedPaths::new(set));
     }
-}
-
-unsafe extern "C" {
-    #[allow(dead_code)]
-    pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 
 /// If the previous process's watcher recorded which files triggered
@@ -414,13 +408,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
         let _ = sys::unlink(&trigger_path);
 
         let mut set = StringSet::new();
-        for path in contents
-            .split(|b| *b == b'\r' || *b == b'\n')
-            .filter(|s| !s.is_empty())
-        {
-            if path.is_empty() {
-                continue;
-            }
+        for path in strings::tokenize_any(&contents, b"\r\n") {
             // The watcher may see a file disappear (delete/rename). A path
             // that no longer exists cannot appear in the module graph this
             // run, so drop it; its importers will still be picked up if the
@@ -472,23 +460,22 @@ fn get_changed_files(
     // Find the git repository root so we can make the paths git prints
     // absolute (git prints paths relative to the repo toplevel with these
     // commands).
-    let git_root: Box<[u8]> = 'blk: {
-        let result = run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]);
-        if !result.ok {
-            if result.spawn_failed {
-                // run_git already printed the spawn error.
-            } else if !result.stderr.is_empty() {
-                Output::err_generic(
-                    "--changed: {s}",
-                    (BStr::new(strings::trim(&result.stderr, b" \r\n\t")),),
-                );
-            } else {
-                Output::err_generic("--changed requires running inside a git repository", ());
+    let git_root: Box<[u8]> =
+        match run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::ExitError { stderr } => {
+                if !stderr.is_empty() {
+                    Output::err_generic(
+                        "--changed: {s}",
+                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                    );
+                } else {
+                    Output::err_generic("--changed requires running inside a git repository", ());
+                }
+                return Err(GitError::GitFailed);
             }
-            return Err(GitError::GitFailed);
-        }
-        break 'blk Box::<[u8]>::from(strings::trim(&result.stdout, b" \r\n\t"));
-    };
+            GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
+        };
 
     let mut set = StringSet::new();
 
@@ -496,60 +483,54 @@ fn get_changed_files(
         // Uncommitted (unstaged + staged). `git diff HEAD` covers both.
         // On a repo with no commits, `HEAD` is unresolved; fall back to just
         // `git diff` (unstaged) + staged.
-        let diff = run_git(
+        match run_git(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", b"HEAD", b"--"],
-        );
-        if diff.spawn_failed {
-            return Err(GitError::GitFailed);
-        }
-        if diff.ok {
-            append_paths(&mut set, &git_root, &diff.stdout);
-        } else {
-            let unstaged = run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]);
-            if unstaged.spawn_failed {
-                return Err(GitError::GitFailed);
-            }
-            if unstaged.ok {
-                append_paths(&mut set, &git_root, &unstaged.stdout);
-            }
+        ) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+            GitResult::ExitError { .. } => {
+                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
+                    GitResult::SpawnFailed => return Err(GitError::GitFailed),
+                    GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+                    GitResult::ExitError { .. } => {}
+                }
 
-            let staged = run_git(
-                git_path,
-                top_level_dir,
-                &[b"diff", b"--name-only", b"--cached", b"--"],
-            );
-            if staged.spawn_failed {
-                return Err(GitError::GitFailed);
-            }
-            if staged.ok {
-                append_paths(&mut set, &git_root, &staged.stdout);
+                match run_git(
+                    git_path,
+                    top_level_dir,
+                    &[b"diff", b"--name-only", b"--cached", b"--"],
+                ) {
+                    GitResult::SpawnFailed => return Err(GitError::GitFailed),
+                    GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+                    GitResult::ExitError { .. } => {}
+                }
             }
         }
     } else {
-        let diff = run_git(
+        match run_git(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", since, b"--"],
-        );
-        if !diff.ok {
-            if diff.spawn_failed {
-                // run_git already printed the spawn error.
-            } else if !diff.stderr.is_empty() {
-                Output::err_generic(
-                    "--changed: {s}",
-                    (BStr::new(strings::trim(&diff.stderr, b" \r\n\t")),),
-                );
-            } else {
-                Output::err_generic(
-                    "--changed: git diff against {f} failed",
-                    (bun_fmt::quote(since),),
-                );
+        ) {
+            GitResult::SpawnFailed => return Err(GitError::GitFailed),
+            GitResult::ExitError { stderr } => {
+                if !stderr.is_empty() {
+                    Output::err_generic(
+                        "--changed: {s}",
+                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                    );
+                } else {
+                    Output::err_generic(
+                        "--changed: git diff against {f} failed",
+                        (bun_fmt::quote(since),),
+                    );
+                }
+                return Err(GitError::GitFailed);
             }
-            return Err(GitError::GitFailed);
+            GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
         }
-        append_paths(&mut set, &git_root, &diff.stdout);
     }
 
     // Untracked files are always considered changed — a brand-new file
@@ -558,37 +539,33 @@ fn get_changed_files(
     // supplement with ls-files in both branches above. `--full-name`
     // forces repo-root-relative output regardless of our cwd, matching
     // `git diff --name-only`.
-    {
-        let untracked = run_git(
-            git_path,
-            top_level_dir,
-            &[
-                b"ls-files",
-                b"--others",
-                b"--exclude-standard",
-                b"--full-name",
-            ],
-        );
-        if untracked.spawn_failed {
-            return Err(GitError::GitFailed);
-        }
-        if untracked.ok {
-            append_paths(&mut set, &git_root, &untracked.stdout);
-        }
+    match run_git(
+        git_path,
+        top_level_dir,
+        &[
+            b"ls-files",
+            b"--others",
+            b"--exclude-standard",
+            b"--full-name",
+        ],
+    ) {
+        GitResult::SpawnFailed => return Err(GitError::GitFailed),
+        GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
+        GitResult::ExitError { .. } => {}
     }
 
     Ok(set)
 }
 
-#[derive(Default)]
-pub(crate) struct GitResult {
-    pub ok: bool,
-    /// Set when the git process could not be spawned at all. The failure
-    /// has already been reported; callers should not print a second
-    /// "not a git repo" style message.
-    pub spawn_failed: bool,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+pub(crate) enum GitResult {
+    /// `run_git` has already reported the spawn error.
+    SpawnFailed,
+    ExitError {
+        stderr: Vec<u8>,
+    },
+    Ok {
+        stdout: Vec<u8>,
+    },
 }
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
@@ -622,12 +599,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         Ok(p) => p,
         Err(err) => {
             Output::err_generic("--changed: failed to spawn git: {s}", (err.name(),));
-            return GitResult {
-                ok: false,
-                spawn_failed: true,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            };
+            return GitResult::SpawnFailed;
         }
     };
 
@@ -637,30 +609,27 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
                 "--changed: failed to spawn git: {f}",
                 format_args!("{}", err),
             );
-            GitResult {
-                ok: false,
-                spawn_failed: true,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
+            GitResult::SpawnFailed
+        }
+        sys::Result::Ok(result) => {
+            if result.is_ok() {
+                GitResult::Ok {
+                    stdout: result.stdout,
+                }
+            } else {
+                GitResult::ExitError {
+                    stderr: result.stderr,
+                }
             }
         }
-        sys::Result::Ok(result) => GitResult {
-            ok: result.is_ok(),
-            spawn_failed: false,
-            stdout: result.stdout,
-            stderr: result.stderr,
-        },
     }
 }
 
 /// Parse newline-delimited repo-relative paths from git output, join each
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
-    let mut buf = PathBuffer::uninit();
-    for line in stdout
-        .split(|b| *b == b'\r' || *b == b'\n')
-        .filter(|s| !s.is_empty())
-    {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    for line in strings::tokenize_any(stdout, b"\r\n") {
         let rel = strings::trim(line, b" \t");
         if rel.is_empty() {
             continue;

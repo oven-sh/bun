@@ -13,9 +13,14 @@ use bun_ast::{
 
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
-fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+fn try_optimize_typeof_undefined<
+    'a,
+    const TYPESCRIPT: bool,
+    const SCAN_ONLY: bool,
+    const SEMA: bool,
+>(
     e_: &mut E::Binary,
-    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
     // Check if this is a typeof comparison with "undefined"
@@ -77,10 +82,16 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
 // canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
 // the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
 #[inline]
-fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+fn data_eql<
+    'a,
+    const STRICT: bool,
+    const TYPESCRIPT: bool,
+    const SCAN_ONLY: bool,
+    const SEMA: bool,
+>(
     left: &ExprData,
     right: &ExprData,
-    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>,
 ) -> Equality {
     if STRICT {
         ExprData::eql::<_, StrictEql>(left, right, p)
@@ -102,9 +113,14 @@ pub struct BinaryExpressionVisitor {
 }
 
 impl BinaryExpressionVisitor {
-    pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn visit_right_and_finish<
+        'a,
+        const TYPESCRIPT: bool,
+        const SCAN_ONLY: bool,
+        const SEMA: bool,
+    >(
         v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>,
     ) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
@@ -134,8 +150,7 @@ impl BinaryExpressionVisitor {
         // Mark the control flow as dead if the branch is never taken
         match e_.op {
             Op::Code::BinLogicalOr => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && side_effects.value {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| k.value) {
                     // "true || dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -146,8 +161,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLogicalAnd => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && !side_effects.value {
+                if SideEffects::to_boolean(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "false && dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -158,8 +172,7 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinNullishCoalescing => {
-                let side_effects = SideEffects::to_null_or_undefined(p, &e_.left.data);
-                if side_effects.ok && !side_effects.value {
+                if SideEffects::to_null_or_undefined(p, &e_.left.data).is_some_and(|k| !k.value) {
                     // "notNullOrUndefined ?? dead"
                     let old = p.is_control_flow_dead;
                     p.is_control_flow_dead = true;
@@ -174,6 +187,23 @@ impl BinaryExpressionVisitor {
             }
         }
         p.decorator_class_name = prev_decorator_class_name;
+
+        // `ns && …` never yields the namespace (it is truthy); `ns == null` /
+        // `ns !== undefined` only test it.
+        match e_.op {
+            Op::Code::BinLogicalAnd => p.ignore_namespace_local_test_use(&e_.left),
+            Op::Code::BinLooseEq
+            | Op::Code::BinLooseNe
+            | Op::Code::BinStrictEq
+            | Op::Code::BinStrictNe => {
+                if matches!(e_.right.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+                    p.ignore_namespace_local_test_use(&e_.left);
+                } else if matches!(e_.left.data, ExprData::ENull(_) | ExprData::EUndefined(_)) {
+                    p.ignore_namespace_local_test_use(&e_.right);
+                }
+            }
+            _ => {}
+        }
 
         // Always put constants on the right for equality comparisons to help
         // reduce the number of cases we have to check during pattern matching. We
@@ -238,21 +268,19 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLooseEq => {
-                let equality =
-                    data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<false, TYPESCRIPT, SCAN_ONLY, SEMA>(
+                    &e_.left.data,
+                    &e_.right.data,
+                    p,
+                ) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage_of_runtime_require();
                         p.ignore_usage(p.module_ref);
                         return p.value_for_import_meta_main(false, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -274,21 +302,19 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinStrictEq => {
-                let equality =
-                    data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<true, TYPESCRIPT, SCAN_ONLY, SEMA>(
+                    &e_.left.data,
+                    &e_.right.data,
+                    p,
+                ) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(false, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -303,21 +329,19 @@ impl BinaryExpressionVisitor {
                 // TODO: warn about typeof string
             }
             Op::Code::BinLooseNe => {
-                let equality =
-                    data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<false, TYPESCRIPT, SCAN_ONLY, SEMA>(
+                    &e_.left.data,
+                    &e_.right.data,
+                    p,
+                ) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: !equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::Unknown => {}
                 }
                 if p.options.features.minify_syntax {
                     // "typeof x != 'undefined'" => "typeof x < 'u'"
@@ -336,21 +360,19 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinStrictNe => {
-                let equality =
-                    data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p);
-                if equality.ok {
-                    if equality.is_require_main_and_module {
+                match data_eql::<true, TYPESCRIPT, SCAN_ONLY, SEMA>(
+                    &e_.left.data,
+                    &e_.right.data,
+                    p,
+                ) {
+                    Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
                         return p.value_for_import_meta_main(true, v.loc);
                     }
-
-                    return p.new_expr(
-                        E::Boolean {
-                            value: !equality.equal,
-                        },
-                        v.loc,
-                    );
+                    Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
+                    Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
+                    Equality::Unknown => {}
                 }
 
                 if p.options.features.minify_syntax {
@@ -361,8 +383,8 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinNullishCoalescing => {
-                let null_or_undefined = SideEffects::to_null_or_undefined(p, &e_.left.data);
-                if null_or_undefined.ok {
+                if let Some(null_or_undefined) = SideEffects::to_null_or_undefined(p, &e_.left.data)
+                {
                     if !null_or_undefined.value {
                         return e_.left;
                     } else if null_or_undefined.side_effects == SideEffects::NoSideEffects {
@@ -384,30 +406,29 @@ impl BinaryExpressionVisitor {
                 }
             }
             Op::Code::BinLogicalOr => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok && side_effects.value {
-                    return e_.left;
-                } else if side_effects.ok && side_effects.side_effects == SideEffects::NoSideEffects
-                {
-                    // "(0 || fn)()" => "fn()"
-                    // "(0 || this.fn)" => "this.fn"
-                    // "(0 || this.fn)()" => "(0, this.fn)()"
-                    if is_call_target && e_.right.has_value_for_this_in_call() {
-                        return Expr::join_with_comma(
-                            Expr {
-                                data: prefill::data::ZERO,
-                                loc: e_.left.loc,
-                            },
-                            e_.right,
-                        );
-                    }
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
+                    if side_effects.value {
+                        return e_.left;
+                    } else if side_effects.side_effects == SideEffects::NoSideEffects {
+                        // "(0 || fn)()" => "fn()"
+                        // "(0 || this.fn)" => "this.fn"
+                        // "(0 || this.fn)()" => "(0, this.fn)()"
+                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                            return Expr::join_with_comma(
+                                Expr {
+                                    data: prefill::data::ZERO,
+                                    loc: e_.left.loc,
+                                },
+                                e_.right,
+                            );
+                        }
 
-                    return e_.right;
+                        return e_.right;
+                    }
                 }
             }
             Op::Code::BinLogicalAnd => {
-                let side_effects = SideEffects::to_boolean(p, &e_.left.data);
-                if side_effects.ok {
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.left.data) {
                     if !side_effects.value {
                         return e_.left;
                     } else if side_effects.side_effects == SideEffects::NoSideEffects {
@@ -727,9 +748,14 @@ impl BinaryExpressionVisitor {
         }
     }
 
-    pub(crate) fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn check_and_prepare<
+        'a,
+        const TYPESCRIPT: bool,
+        const SCAN_ONLY: bool,
+        const SEMA: bool,
+    >(
         v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>,
     ) -> Option<Expr> {
         // Snapshot the `Copy` arena handle before taking the working `&mut`
         // via `StoreRef::DerefMut`, so the early-return re-wrap below does not

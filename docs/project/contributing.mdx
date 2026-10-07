@@ -37,7 +37,7 @@ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config py
 ```
 
 ```bash Fedora
-sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+sudo dnf install clang23 llvm23 lld23 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash openSUSE Tumbleweed
@@ -96,17 +96,17 @@ The build scripts detect and use `ccache` automatically if it's available. Check
 
 ## Install LLVM
 
-Bun requires LLVM 21.1.8 (`clang` is part of LLVM). The build system enforces this version: a mismatched version causes memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 23.1.1 (`clang` is part of LLVM). The build system enforces this version: a mismatched version causes memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 <CodeGroup>
 
 ```bash macOS (Homebrew)
-brew install llvm@21
+brew install llvm@23
 ```
 
 ```bash Ubuntu/Debian
 # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
+wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 23 all
 ```
 
 ```bash Arch
@@ -118,17 +118,17 @@ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash openSUSE Tumbleweed
-sudo zypper install clang21 lld21 llvm21
+sudo zypper install clang23 lld23 llvm23
 ```
 
 </CodeGroup>
 
-If none of these work, install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
+If none of these work, install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.1).
 
-Make sure Clang/LLVM 21 is in your path:
+Make sure Clang/LLVM 23 is in your path:
 
 ```bash
-which clang-21
+which clang-23
 ```
 
 If not, add it manually:
@@ -137,13 +137,13 @@ If not, add it manually:
 
 ```bash macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
-export PATH="$(brew --prefix llvm@21)/bin:$PATH"
+# use path+="$(brew --prefix llvm@23)/bin" if you are using zsh
+export PATH="$(brew --prefix llvm@23)/bin:$PATH"
 ```
 
 ```bash Arch
 # use fish_add_path if you're using fish
-export PATH="$PATH:/usr/lib/llvm21/bin"
+export PATH="$PATH:/usr/lib/llvm23/bin"
 ```
 
 </CodeGroup>
@@ -285,7 +285,7 @@ bun sync-webkit-source
 bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC rebuilds incrementally if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and builds both Bun and JSC.
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC rebuilds incrementally if any WebKit sources changed.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
@@ -322,7 +322,7 @@ The issue may also surface when first running `bun run build`, with Clang unable
 ```txt
 The C++ compiler
 
-  "/usr/bin/clang++-21"
+  "/usr/bin/clang++-23"
 
 is not able to compile a simple test program.
 ```
@@ -377,3 +377,23 @@ The built version of Bun may not work on other systems if compiled this way.
 - Disable logging: `BUN_DEBUG_QUIET_LOGS=1 bun-debug ...` (to disable all debug logging)
 - Enable logging for a specific scope: `BUN_DEBUG_EventLoop=1 bun-debug ...` (to enable `scoped_log!(EventLoop, ...)` output)
 - Bun transpiles every file it runs. To see the actual executed source in a debug build, find it in `/tmp/bun-debug-src/...path/to/file`. For example, the transpiled version of `/home/bun/index.ts` is in `/tmp/bun-debug-src/home/bun/index.ts`
+
+## Contributing to the docs
+
+The docs are the MDX files in `docs/` in the Bun repository. [bun.com/docs](https://bun.com/docs) is built from them.
+
+### Voice
+
+A docs page describes what Bun does and what you can do with it. Write it so that a developer who is new to Bun can read the page once and act on it. These guidelines are adapted from the [Next.js docs contribution guide](https://nextjs.org/docs/community/contribution-guide#voice):
+
+- Write short sentences that each make one point. If a sentence needs several commas or a parenthetical, split it up or turn it into a list.
+- Use plain words: "use" rather than "utilize", "to" rather than "in order to". Cut filler such as "Note that" and "Please".
+- Use the active voice and name the actor: "Bun reads `bunfig.toml`", rather than "`bunfig.toml` is read". A sentence built around "is" and "by" is usually passive.
+- Describe current behavior in the present tense: "Bun installs the package", rather than "Bun will install the package".
+- Name the subject when "this" or "it" could refer to more than one thing: "`--isolate` is how Jest behaves by default", rather than "This is how Jest behaves by default".
+- Address the reader as "you", and make Bun (or the specific tool) the other actor: "Bun caches the tarball", rather than "we cache the tarball" or "let's cache the tarball".
+- Leave out "easy", "simple", "just", and "quick". They add nothing when a task is easy and discourage readers when it is not. State the concrete property instead: "one command", "no configuration".
+- Say what to do rather than what to avoid: "use `port: 0` so the operating system picks a free port", rather than "don't hardcode ports". State limitations plainly; a limitation is a fact, not a warning to the reader.
+- Use gender-neutral language: "developers", "users", "they".
+- Make link text name its destination: "see [`bun install`](/pm/cli/install)", rather than "see here".
+- Run every code example before you publish it, and check option names and defaults against the implementation on `main`.

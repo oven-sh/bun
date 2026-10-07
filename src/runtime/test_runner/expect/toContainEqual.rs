@@ -63,8 +63,8 @@ pub(crate) fn to_contain_equal(
         if expected_type.is_string_object_like() && value_type.is_string() {
             pass = false;
         } else {
-            let value_string = value.to_slice_or_null(global)?;
-            let expected_string = expected.to_slice_or_null(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
 
             // jest does not have a `typeof === "string"` check for `toContainEqual`.
             // it immediately spreads the value into an array.

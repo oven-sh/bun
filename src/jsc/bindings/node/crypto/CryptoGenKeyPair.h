@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "ncrypto.h"
 #include "KeyObject.h"
 
@@ -23,8 +24,7 @@ public:
     }
 
     void runTask(JSC::JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPointer& ctx);
-    void runFromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
-    void deinit();
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject* globalObject);
 
     int err() const { return m_opensslError; };
 

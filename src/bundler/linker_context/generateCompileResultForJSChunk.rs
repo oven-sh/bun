@@ -5,6 +5,7 @@ use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_threading::thread_pool as ThreadPoolLib;
 
+use crate::analyze_transpiled_module::ModuleInfo;
 use crate::linker_context_mod::LinkerContext;
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
@@ -125,6 +126,13 @@ fn generate_compile_result_for_js_chunk_impl(
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
     let worker_alloc = worker.arena.get();
+    // Collects what the printer emits for this part range; `post_process_js_chunk`
+    // appends it to the chunk's ModuleInfo, which is the one that gets finalized,
+    // so the `is_typescript` flag of this accumulator is never read.
+    let mut module_info: Option<Box<ModuleInfo>> = c
+        .options
+        .generates_module_info()
+        .then(|| ModuleInfo::create(false));
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter; take a raw-ptr view so borrowck doesn't
     // see two overlapping `&mut chunk` borrows.
@@ -144,6 +152,7 @@ fn generate_compile_result_for_js_chunk_impl(
         stmt_list,
         worker_alloc,
         &**arena,
+        module_info.as_deref_mut(),
     );
 
     // Update bytesInOutput for this source in the chunk (for metafile)
@@ -168,5 +177,6 @@ fn generate_compile_result_for_js_chunk_impl(
     CompileResult::Javascript {
         source_index: part_range.source_index.get(),
         result,
+        module_info,
     }
 }

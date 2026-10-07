@@ -25,22 +25,9 @@ extern "C" void Bun__EcKeyPairJobCtx__runTask(EcKeyPairJobCtx* ctx, JSGlobalObje
     ctx->runTask(globalObject, keyCtx);
 }
 
-extern "C" void Bun__EcKeyPairJobCtx__runFromJS(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__EcKeyPairJobCtx__runFromJS(EcKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
-}
-
-extern "C" EcKeyPairJob* Bun__EcKeyPairJob__create(JSGlobalObject* globalObject, EcKeyPairJobCtx* ctx, EncodedJSValue callback);
-EcKeyPairJob* EcKeyPairJob::create(JSGlobalObject* globalObject, EcKeyPairJobCtx&& ctx, JSValue callback)
-{
-    EcKeyPairJobCtx* ctxCopy = new EcKeyPairJobCtx(WTF::move(ctx));
-    return Bun__EcKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__EcKeyPairJob__schedule(EcKeyPairJob* job);
-void EcKeyPairJob::schedule()
-{
-    Bun__EcKeyPairJob__schedule(this);
+    *out = ctx->runFromJS(globalObject);
 }
 
 extern "C" void Bun__EcKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, EcKeyPairJobCtx* ctx, EncodedJSValue callback);
@@ -128,9 +115,9 @@ std::optional<EcKeyPairJobCtx> EcKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
     GCOwnedDataScope<WTF::StringView> namedCurveView = namedCurveString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    CString curveName = namedCurveView->utf8();
+    UTF8CString curveName = namedCurveView->utf8();
 
-    int curveNid = ncrypto::Ec::GetCurveIdFromName(curveName.data());
+    int curveNid = ncrypto::Ec::GetCurveIdFromName(curveName.legacyCStringPointer());
     if (curveNid == NID_undef) {
         ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
         return std::nullopt;

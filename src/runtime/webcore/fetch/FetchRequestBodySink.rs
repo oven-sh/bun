@@ -5,7 +5,6 @@ use bun_sys::Error as SysError;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
-use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
     SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
@@ -16,7 +15,7 @@ bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 /// directly into the locked stream buffer so no intermediate UTF-8 buffer is
 /// allocated.
 #[derive(Clone, Copy)]
-pub enum RequestBodyChunk<'a> {
+pub(crate) enum RequestBodyChunk<'a> {
     Bytes(&'a [u8]),
     Latin1(&'a [u8]),
     Utf16(&'a [u16]),
@@ -24,7 +23,7 @@ pub enum RequestBodyChunk<'a> {
 
 impl<'a> RequestBodyChunk<'a> {
     #[inline]
-    pub fn utf8_len(&self) -> usize {
+    pub(crate) fn utf8_len(&self) -> usize {
         match *self {
             Self::Bytes(b) => b.len(),
             Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
@@ -35,7 +34,7 @@ impl<'a> RequestBodyChunk<'a> {
     }
 
     #[inline]
-    pub fn append_utf8_into(&self, out: &mut Vec<u8>) {
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
         match *self {
             Self::Bytes(b) => out.extend_from_slice(b),
             Self::Latin1(b) => {
@@ -57,7 +56,7 @@ pub struct FetchRequestBodySink {
     /// `on_reject_request_stream` / synchronous branches), which clears this to
     /// `None` first. `finalize` releases it as a fallback if that path never
     /// ran.
-    pub task: Option<BackRef<FetchTasklet>>,
+    pub task: Option<BackRef<FetchTasklet, bun_ptr::Mut>>,
     pub source: SourceHandle,
     pub high_water_mark: BlobSizeType,
     /// Shared pending drain promise for `write()` and `flush(true)`; resolved
@@ -107,7 +106,6 @@ impl FetchRequestBodySink {
                 self.high_water_mark = chunk_size;
             }
         }
-        self.ended = false;
         self.source.start();
         bun_sys::Result::Ok(())
     }
@@ -172,18 +170,16 @@ impl FetchRequestBodySink {
 
     pub fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
         if self.pending.state == PendingState::Pending {
-            return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this)).to_js(),
-            );
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
         if self.done || self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
@@ -191,12 +187,10 @@ impl FetchRequestBodySink {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
             self.pending.result = Writable::Owned(self.pending_bytes);
-            return bun_sys::Result::Ok(
-                JSPromise::opaque_ref(self.pending.promise(global_this)).to_js(),
-            );
+            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             JSValue::js_number(0.0),
         ))
     }
@@ -240,13 +234,19 @@ impl FetchRequestBodySink {
         self.source.close(sys_err);
     }
 
-    pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    pub fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn finalize(&mut self) {
-        if let Some(task) = self.task.take() {
+    /// # Safety
+    /// `this` must be live and must not be used after the call: the tasklet
+    /// owns this allocation, and if the ref released here was its last one,
+    /// its `deinit` → `clear_sink` frees `*this`.
+    pub unsafe fn finalize(this: *mut Self) {
+        // SAFETY: caller contract; `this` is not touched again after this line.
+        let task = unsafe { (*this).task.take() };
+        if let Some(task) = task {
             // Balances the `ref_()` taken in `start_request_stream` when the
             // assign_to_stream-result handler never ran to release it.
             FetchTasklet::deref(task.as_ptr());
@@ -278,42 +278,16 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(StartTag::FetchRequestBodySink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
+    crate::impl_js_sink_forwarders!();
+
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: same contract, forwarded.
+        unsafe { Self::finalize(this) }
     }
-    fn finalize(&mut self) {
-        Self::finalize(self)
-    }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
-    }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)
     }
-    fn done(&self) -> bool {
-        self.done
-    }
 }
-
-pub type FetchRequestBodySinkJSSink = JSSink<FetchRequestBodySink>;

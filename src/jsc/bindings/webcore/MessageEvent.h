@@ -31,10 +31,6 @@
 #include "JSValueInWrappedObject.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
-#include "MessagePort.h"
-// #include "JSMessageEvent.h"
-// #include "ServiceWorker.h"
-// #include "WindowProxy.h"
 #include <variant>
 
 namespace WebCore {
@@ -51,8 +47,6 @@ public:
     static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
     static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    static Ref<MessageEvent> createForBindings();
-
     struct Init : EventInit {
         JSC::JSValue data;
         String origin;
@@ -67,9 +61,11 @@ public:
         JSC::Strong<JSC::JSObject> strongWrapper; // Keep the wrapper alive until the event is fired, since it is what keeps `data` alive.
     };
 
-    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    // Deserializes `data` in the target realm. Throws what deserialization throws (nullopt then); the dispatching
+    // task turns that into a `messageerror` event (message port post message steps, 7.3).
+    static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    static MessageEventWithStrongData create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
+    static std::optional<MessageEventWithStrongData> create(JSC::JSGlobalObject&, Ref<SerializedScriptValue>&&, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
     virtual ~MessageEvent();
 
@@ -89,7 +85,6 @@ public:
     size_t memoryCost() const;
 
 private:
-    MessageEvent();
     MessageEvent(const AtomString& type, Init&&, IsTrusted);
     MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 

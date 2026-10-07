@@ -9,7 +9,7 @@ pub fn source_map_mode_from_js(
     value: JSValue,
 ) -> JsResult<Option<SourceMapMode>> {
     if value.is_string() {
-        let str = value.to_slice_or_null(global)?;
+        let str = value.to_utf8(global)?;
         let utf8 = str.slice();
         if utf8 == b"none" {
             return Ok(Some(SourceMapMode::None));

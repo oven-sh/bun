@@ -211,7 +211,7 @@ impl Scripts {
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
             #[cfg(windows)]
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
             #[cfg(not(windows))]
             let cwd: &[u8] = cwd_.slice();
@@ -402,7 +402,6 @@ impl Scripts {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PrintFormat {
     Completed,
-    Info,
     Untrusted,
 }
 
@@ -456,11 +455,6 @@ impl List {
                     ),
                     PrintFormat::Untrusted => bun_core::pretty!(
                         " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
-                        BStr::new(name),
-                        BStr::new(script),
-                    ),
-                    PrintFormat::Info => bun_core::pretty!(
-                        " [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
                         BStr::new(script),
                     ),

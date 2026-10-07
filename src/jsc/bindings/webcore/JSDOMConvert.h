@@ -29,7 +29,6 @@
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMConvertCallbacks.h"
-#include "JSDOMConvertDate.h"
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMConvertEventListener.h"
@@ -41,7 +40,6 @@
 #include "JSDOMConvertOptional.h"
 #include "JSDOMConvertRecord.h"
 #include "JSDOMConvertSequences.h"
-#include "JSDOMConvertSerializedScriptValue.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
 

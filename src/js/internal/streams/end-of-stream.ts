@@ -27,6 +27,7 @@ const PromisePrototypeThen = $Promise.prototype.$then;
 
 let addAbortListener;
 let AsyncResource;
+let enabledHooksExist;
 
 function isRequest(stream) {
   return stream.setHeader && typeof stream.abort === "function";
@@ -42,11 +43,13 @@ function bindAsyncResource(fn, type) {
   };
 }
 
-// Returns true when an AsyncLocalStorage context is currently active, in
-// which case eos() must snapshot it so the callback observes the context
-// from registration time (matching Node's AsyncContextFrame.current()).
+// True when an AsyncLocalStorage context is active (node's
+// AsyncContextFrame.current()) or createHook() hooks are enabled: eos() then
+// binds an AsyncResource so hooks see STREAM_END_OF_STREAM events.
 function hasAsyncContext() {
-  return $getInternalField($asyncContext, 0) !== undefined;
+  if ($getInternalField($asyncContext, 0) !== undefined) return true;
+  enabledHooksExist ??= require("internal/async_hooks").enabledHooksExist;
+  return enabledHooksExist();
 }
 
 /**
@@ -85,7 +88,7 @@ function getEosOnCloseError(stream, readable, readableFinished, writable, writab
 // returning cleanup. Callers must tolerate cleanup yet to be assigned.
 const kEosNodeSynchronousCallback = Symbol("kEosNodeSynchronousCallback");
 
-function eos(stream, options, callback) {
+function eos(stream, options, callback?) {
   if (arguments.length === 2) {
     callback = options;
     options = kEmptyObject;
@@ -353,7 +356,7 @@ function eosWeb(stream, options, callback) {
   return nop;
 }
 
-function finished(stream, opts) {
+function finished(stream, opts?) {
   let autoCleanup = false;
   if (opts === null) {
     opts = kEmptyObject;

@@ -34,6 +34,9 @@ const cases: string[] = [
   "0",
   "0.123456789012345",
   "12345678.000000009",
+  // --- zero: the server sends ndigits = 0 and keeps the scale in dscale ----
+  "0.0000",
+  "0.00000000000000000000",
 ];
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {

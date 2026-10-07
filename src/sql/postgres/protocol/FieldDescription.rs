@@ -11,16 +11,6 @@ pub struct FieldDescription {
     pub binary: bool,
 }
 
-impl Default for FieldDescription {
-    fn default() -> Self {
-        Self {
-            name_or_index: ColumnIdentifier::Name(Default::default()),
-            type_oid: 0,
-            binary: false,
-        }
-    }
-}
-
 impl FieldDescription {
     pub fn type_tag(&self) -> types::Tag {
         // `types::Tag` is a `#[repr(transparent)] struct(Short)` newtype over

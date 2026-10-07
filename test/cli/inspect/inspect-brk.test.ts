@@ -451,6 +451,56 @@ describe.concurrent("--inspect-brk", () => {
     expect(session.pauses).toHaveLength(1);
   });
 
+  test("a preload that imports the entry does not lose the pause", async () => {
+    await using session = await Session.start(
+      {
+        "preload.mjs": `await import("./entry.mjs");\n`,
+        "entry.mjs": `globalThis.ran = 1;\nconsole.log("done");\n`,
+      },
+      [brk, "--preload", "./preload.mjs", "entry.mjs"],
+    );
+    const pause = await session.paused();
+    expect(where(pause)).toEqual({ reason: start, file: "entry.mjs", line: 1, column: 1 });
+    expect(await session.evaluate(pause, "typeof globalThis.ran")).toBe("undefined");
+    expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(1);
+  });
+
+  test("a patched Module.runMain that loads the entry later does not lose the pause", async () => {
+    await using session = await Session.start(
+      {
+        "preload.cjs": `require("module").runMain = () => {\n  setImmediate(() => require(process.argv[1]));\n};\n`,
+        "entry.cjs": `globalThis.ran = 1;\nconsole.log("done");\n`,
+      },
+      [brk, "--preload", "./preload.cjs", "entry.cjs"],
+    );
+    const pause = await session.paused();
+    expect({ reason: pause.reason, file: pause.file, line: pause.line }).toEqual({
+      reason: start,
+      file: "entry.cjs",
+      line: 1,
+    });
+    expect(await session.evaluate(pause, "typeof globalThis.ran")).toBe("undefined");
+    expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(1);
+  });
+
+  test("a dependency that calls a function of the entry first does not take the pause", async () => {
+    await using session = await Session.start(
+      {
+        "dep.mjs": `import { early } from "./entry.mjs";\nglobalThis.fromDep = early();\n`,
+        "entry.mjs": `import "./dep.mjs";\nexport function early() {\n  return 41;\n}\nconsole.log(globalThis.fromDep + 1);\n`,
+      },
+      [brk, "entry.mjs"],
+    );
+    // The import cycle runs `early` before the module code of the entry. The pause is for the module code.
+    const pause = await session.paused();
+    expect(where(pause)).toEqual({ reason: start, file: "entry.mjs", line: 1, column: 1 });
+    expect(await session.evaluate(pause, "globalThis.fromDep")).toBe("41");
+    expect(await session.finish()).toMatchObject({ stdout: "42\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(1);
+  });
+
   test("bun test pauses in the first test file only", async () => {
     const testFile = `import { expect, test } from "bun:test";\nglobalThis.ran = 1;\ntest("t", () => {\n  expect(1).toBe(1);\n});\n`;
     await using session = await Session.start({ "a.test.js": testFile, "b.test.js": testFile }, [
@@ -550,19 +600,41 @@ describe.concurrent("--inspect-brk", () => {
       expect(await session.finish()).toMatchObject({ stdout: "3\n", exitCode: 0 });
     });
 
-    test("a breakpoint on the first line is the same pause", async () => {
+    // A client that puts a breakpoint at the start of a script (the VS Code extension does, to
+    // hold the script until its breakpoints are in place) can still tell the pause it asked for.
+    test("a breakpoint on the first line is the same pause, with the reason of the start pause", async () => {
       await using session = await Session.start(files, [brk, "entry.mjs"], {
         handshake: { breakpoints: [{ file: "entry.mjs", line: 1 }] },
       });
       const pause = await session.paused();
-      expect({ file: pause.file, line: pause.line, column: pause.column }).toEqual({
-        file: "entry.mjs",
-        line: 1,
-        column: 1,
-      });
+      expect(where(pause)).toEqual({ reason: start, file: "entry.mjs", line: 1, column: 1 });
       expect(await session.evaluate(pause, "typeof a")).toBe("ReferenceError");
       expect(await session.finish()).toMatchObject({ stdout: "3\n", exitCode: 0 });
       expect(session.pauses).toHaveLength(1);
+    });
+
+    test("a breakpoint on the line of a CommonJS module's function does not rename the pause", async () => {
+      await using session = await Session.start(
+        { "entry.cjs": `globalThis.ran = 1;\nconsole.log("done");\n` },
+        [brk, "entry.cjs"],
+        { handshake: { breakpoints: [{ file: "entry.cjs", line: 1 }] } },
+      );
+      // The program that makes the module's function is on that line too, and it is not the entry's code.
+      const program = await session.paused();
+      expect({ reason: program.reason, file: program.file, line: program.line }).toEqual({
+        reason: "Breakpoint",
+        file: "entry.cjs",
+        line: 1,
+      });
+      const pause = await session.resumeToPause();
+      expect({ reason: pause.reason, file: pause.file, line: pause.line }).toEqual({
+        reason: start,
+        file: "entry.cjs",
+        line: 1,
+      });
+      expect(await session.evaluate(pause, "[typeof module, typeof globalThis.ran]")).toBe("object,undefined");
+      expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
+      expect(session.pauses).toHaveLength(2);
     });
 
     test("the program runs on when the debugger disconnects", async () => {

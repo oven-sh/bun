@@ -12678,6 +12678,16 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
+  "97-J1": {
+    "files": {
+      "App.TSX": "export const e = <div />;\n",
+      "b.Tsx": "export const e = <div />;\n",
+      "c.tsx": "export const e = <div />;\n",
+      "s.ts": "export const sentinel: number = \"\";\n",
+      "tsconfig.json": "{\n \"compilerOptions\": {\n  \"strict\": true,\n  \"noEmit\": true,\n  \"target\": \"esnext\",\n  \"module\": \"esnext\",\n  \"moduleResolution\": \"bundler\",\n  \"lib\": [\n   \"esnext\"\n  ],\n  \"types\": [],\n  \"skipLibCheck\": true,\n  \"jsx\": \"react-jsx\",\n  \"allowJs\": true,\n  \"checkJs\": true\n },\n \"files\": [\n  \"App.TSX\",\n  \"b.Tsx\",\n  \"z.JSX\",\n  \"c.tsx\",\n  \"s.ts\"\n ]\n}",
+      "z.JSX": "export const e = <div />;\n"
+    }
+  },
   "97-M1": {
     "files": {
       "a.ts": "import { I } from \"./lib\";\nexport const v = 1 & I;\n",

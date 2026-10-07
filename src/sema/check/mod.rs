@@ -112,7 +112,7 @@ use spans::token_end;
 use spans::{is_word_at, word_at, word_end, word_start};
 use spans::{skip_trivia_back, trim_trivia_end};
 use std::sync::atomic::AtomicBool;
-use symbols::AliasTarget;
+use symbols::{AliasTarget, ExcludedMeanings};
 use task::{Open, OrderDependent, Stored, Task};
 
 pub use call::ResolvedCall;

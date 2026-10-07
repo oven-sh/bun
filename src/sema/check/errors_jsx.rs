@@ -34,7 +34,7 @@ impl Checker<'_, '_> {
         let path = self.files().module(file).file_name();
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
-            .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
+            .filter(|_| crate::resolve::is_jsx_file_name(path))
             .map(|spec| atoms.intern(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the JSX runtime module is imported
         // implicitly, and must exist.

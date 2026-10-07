@@ -14366,6 +14366,53 @@ export function f<T>(rest: T) {
       );
     });
 
+    // As in tsc: without its options nothing can be checked. To a build the file is not there.
+    test.skipIf(canReadEverything).each([
+      [[], "error TS5083: Cannot read file '<dir>/tsconfig.json'."],
+      [["-p", "."], "error TS5083: Cannot read file '<dir>/tsconfig.json'."],
+      [["-b"], "error TS6053: File '<dir>/tsconfig.json' not found."],
+    ])("a tsconfig.json that cannot be read stops the check: %j", async (args, expected) => {
+      using dir = project({ "tsconfig.json": `{}`, "a.ts": `export const wrong: number = "";\n` });
+      chmodSync(join(String(dir), "tsconfig.json"), 0o000);
+      const { stdout, exitCode } = await check(dir, args);
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(canReadEverything).each([
+      [[], []],
+      [["-b"], ["error TS6053: File '<dir>/lib/tsconfig.json' not found."]],
+    ])("a referenced tsconfig.json that cannot be read is not found: %j", async (args, first) => {
+      const compilerOptions = { composite: true, emitDeclarationOnly: true, outDir: "out", lib: ["es5"], types: [] };
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions, files: ["a.ts"], references: [{ path: "./lib" }] }),
+        "a.ts": `export const a = 1;\n`,
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions }),
+        "lib/l.ts": `export const wrong: number = "";\n`,
+      });
+      chmodSync(join(String(dir), "lib/tsconfig.json"), 0o000);
+      const { stdout, exitCode } = await check(dir, args);
+      const lines = stdout.split("\n").map(line => line.replace(/^tsconfig\.json\(\d+,\d+\): /, "tsconfig.json: "));
+      expect(lines).toEqual([...first, "tsconfig.json: error TS6053: File '<dir>/lib' not found."]);
+      expect(exitCode).toBe(1);
+    });
+
+    // How deep the parser goes depends on the stack of the platform. Whatever it says, the file can be read.
+    test.each([[[]], [["-b"]]])(
+      "the files of a tsconfig.json that is nested too deeply are checked: %j",
+      async args => {
+        const depth = 100_000;
+        using dir = project({
+          "tsconfig.json": `{ "a": ${"[".repeat(depth)}${"]".repeat(depth)} }`,
+          "a.ts": `export const wrong: number = "";\n`,
+        });
+        const { stdout, exitCode } = await check(dir, args);
+        expect(stdout).toContain("a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.");
+        expect(stdout).not.toContain("not found");
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("-p with a path that does not exist", async () => {
       using dir = project({});
       const { stdout, stderr, exitCode } = await check(dir, ["-p", "nowhere"]);

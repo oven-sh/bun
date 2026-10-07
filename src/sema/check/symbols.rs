@@ -22,6 +22,15 @@ pub(super) struct WideningContext<'p> {
     widened_types: FxHashMap<TypeId, TypeId>,
 }
 
+/// The arguments of `getSymbolFlagsEx`.
+#[derive(Copy, Clone, Default)]
+pub(super) struct ExcludedMeanings {
+    /// `excludeTypeOnlyMeanings`
+    pub(super) type_only: bool,
+    /// `excludeLocalMeanings`
+    pub(super) local: bool,
+}
+
 /// What `resolveAlias` gives.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AliasTarget {
@@ -1074,19 +1083,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getSymbolFlags`
     pub(super) fn get_symbol_flags(&mut self, sym: Sym) -> SymFlags {
         let kept = self.files().symbol_flags(sym);
-        self.symbol_flags_by_types(sym, kept, false, false)
+        self.symbol_flags_by_types(sym, kept, ExcludedMeanings::default())
     }
 
     /// `getSymbolFlagsEx`
     pub(super) fn get_symbol_flags_ex(
         &mut self,
         symbol: Sym,
-        exclude_type_only_meanings: bool,
-        exclude_local_meanings: bool,
+        excluded: ExcludedMeanings,
     ) -> SymFlags {
-        let (type_only, local) = (exclude_type_only_meanings, exclude_local_meanings);
-        let kept = self.files().symbol_flags_ex(symbol, type_only, local);
-        self.symbol_flags_by_types(symbol, kept, type_only, local)
+        let files = self.files();
+        let kept = files.symbol_flags_ex(symbol, excluded.type_only, excluded.local);
+        self.symbol_flags_by_types(symbol, kept, excluded)
     }
 
     /// `getSymbolFlagsEx`. `kept`: what the symbol tables compute and cache. That is the result,
@@ -1096,8 +1104,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         mut symbol: Sym,
         kept: SymFlags,
-        exclude_type_only_meanings: bool,
-        exclude_local_meanings: bool,
+        excluded: ExcludedMeanings,
     ) -> SymFlags {
         let files = self.files();
         if kept != SymFlags::all()
@@ -1105,14 +1112,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return kept;
         }
-        let mut flags = match exclude_local_meanings {
+        let mut flags = match excluded.local {
             true => SymFlags::empty(),
             false => files.flags(symbol),
         };
         let mut seen_symbols: SmallVec<[Sym; 4]> = SmallVec::new();
         while files.flags(symbol).contains(SymFlags::ALIAS)
-            && !(exclude_type_only_meanings
-                && files.alias_links(symbol).type_only_declaration.is_some())
+            && !(excluded.type_only && files.alias_links(symbol).type_only_declaration.is_some())
         {
             seen_symbols.push(symbol);
             match self.symbol_of_alias_target(symbol) {

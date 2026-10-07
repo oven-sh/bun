@@ -1206,14 +1206,32 @@ impl Projects {
         request: &Request,
         config: &[u8],
     ) -> Option<&config::Project> {
+        let loaded = (self.loaded.entry(config.to_vec()))
+            .or_insert_with(|| Self::load_from_disk(disk, request, config));
+        loaded.as_ref().ok()
+    }
+
+    /// `load`, and the project is handed over.
+    fn take(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Result<config::Project, Vec<ConfigError>> {
+        let loaded = self.loaded.remove(config);
+        loaded.unwrap_or_else(|| Self::load_from_disk(disk, request, config))
+    }
+
+    fn load_from_disk(
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Result<config::Project, Vec<ConfigError>> {
         // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
         // `tsc -b` has no such option.
-        let loaded = self.loaded.entry(config.to_vec()).or_insert_with(|| {
-            config::load_overriding(disk, &Session::new(), config, &|_| {
-                overriding_options(request, false)
-            })
-        });
-        loaded.as_ref().ok()
+        config::load_overriding(disk, &Session::new(), config, &|_| {
+            overriding_options(request, false)
+        })
     }
 
     /// `config`, or else the first of the projects that it references, directly or not, that has
@@ -1682,25 +1700,22 @@ fn check_project_of(
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
-        Some(config) => {
-            projects.load(disk, request, config);
-            match projects.loaded.remove(config).expect("loaded above") {
-                Ok(project) => project,
-                // `tscCompilation`: "these are unrecoverable errors--exit to report them as
-                // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
-                Err(errors) => {
-                    let errors = errors.iter().map(|it| of_config_error(disk, config, it));
-                    match request.build {
-                        true => report
-                            .diagnostics
-                            .push(global(6053, &[displayed_path(config)])),
-                        false => report.diagnostics.extend(errors),
-                    }
-                    report.load_time = started.elapsed();
-                    return report;
+        Some(config) => match projects.take(disk, request, config) {
+            Ok(project) => project,
+            // `tscCompilation`: "these are unrecoverable errors--exit to report them as
+            // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
+            Err(errors) => {
+                let errors = errors.iter().map(|it| of_config_error(disk, config, it));
+                match request.build {
+                    true => report
+                        .diagnostics
+                        .push(global(6053, &[displayed_path(config)])),
+                    false => report.diagnostics.extend(errors),
                 }
+                report.load_time = started.elapsed();
+                return report;
             }
-        }
+        },
         None => {
             let cwd = host::from_native(request.cwd);
             let files = of.named.map(|it| it.1).unwrap_or_default();

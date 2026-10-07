@@ -271,7 +271,7 @@ impl Checker<'_, '_> {
         // `getJsxNamespaceContainerForImplicitImport`
         let path = files.module(file).file_name();
         let implicit_import = crate::program::jsx_runtime_of(options, hir, &files.atoms)
-            .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
+            .filter(|_| crate::resolve::is_jsx_file_name(path))
             .and_then(|spec| files.module_of_specifier(file, self.atoms().intern(&spec)));
         if implicit_import.is_some() {
             return;

@@ -2179,8 +2179,15 @@ fn merges_module_augmentation(bound: &Bound, collected: &[ModuleId], symbol: Sym
     )
 }
 
-/// `getLibraryNameFromLibFileName` and `getInferredLibraryNameResolveFrom`
-fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec<u8>) {
+/// What `resolveLibrary` is called with.
+struct LibraryName {
+    /// `getLibraryNameFromLibFileName`
+    name: Vec<u8>,
+    /// `getInferredLibraryNameResolveFrom`
+    from: Vec<u8>,
+}
+
+fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> LibraryName {
     // `dom.iterable` is `@typescript/lib-dom/iterable`, `es2015.symbol.wellknown` is
     // `@typescript/lib-es2015/symbol-wellknown`.
     let mut name = b"@typescript/lib-".to_vec();
@@ -2199,7 +2206,7 @@ fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec
         b".d.ts__.ts",
     ]
     .concat();
-    (name, from)
+    LibraryName { name, from }
 }
 
 /// `pathForLibFile`: the path `lib.<lib>.d.ts` is read from. The task for it has a `libFile`,
@@ -2207,7 +2214,7 @@ fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec
 fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> Vec<u8> {
     // `name != "lib.d.ts"`
     if options.lib_replacement && !lib.is_empty() {
-        let (name, from) = library_name_and_resolve_from(options, lib);
+        let LibraryName { name, from } = library_name_and_resolve_from(options, lib);
         // `resolveLibrary`: always resolved the way `require` resolves.
         if let Some(found) = resolver.resolve_module_name(&name, &from, ResolutionMode::Require) {
             return found.file_name.to_vec();
@@ -2231,7 +2238,7 @@ fn trace_path_for_lib_file(
     if !options.lib_replacement || lib.is_empty() {
         return;
     }
-    let (name, from) = library_name_and_resolve_from(options, lib);
+    let LibraryName { name, from } = library_name_and_resolve_from(options, lib);
     let key = to_path(&from, host.is_case_sensitive()).into_owned();
     let Err(at) = resolutions.binary_search_by(|known| known.0.cmp(&key)) else {
         return;

@@ -10176,6 +10176,7 @@ declare module "bun" {
      *
      * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
      * regardless of the host operating system. Always write patterns using `/` as the separator.
+     * A leading `./` in a pattern is ignored.
      *
      * - Positive patterns: Only entries matching at least one pattern are extracted.
      * - Negative patterns (prefixed with `!`): Entries matching these patterns are excluded.
@@ -10331,6 +10332,9 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * With `options.glob`, the promise rejects when a system call refuses a file, a directory, or a
+     * symlink of the archive. The error has the `code`, `syscall`, and `path` of that call.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
@@ -10424,9 +10428,10 @@ declare module "bun" {
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
-     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
-     *   to use forward slashes (`/`).
-     * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
+     *   including negation patterns (prefixed with `!`). A pattern is matched against the path that
+     *   `extract()` writes for the entry: forward slashes (`/`), no leading `./`. A leading `./` in a
+     *   pattern is ignored.
+     * @returns A promise that resolves with a Map where keys are the entry names (decoded as UTF-8, not normalized) and values are File objects
      *
      * @example
      * **Get all files:**

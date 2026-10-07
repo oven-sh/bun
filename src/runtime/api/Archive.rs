@@ -545,8 +545,7 @@ fn parse_pattern_arg(
         if str_slice.slice().is_empty() {
             return Ok(None);
         }
-        let pattern: Box<[u8]> = Box::from(str_slice.slice());
-        let patterns = vec![pattern];
+        let patterns = vec![pattern_for_entry_names(str_slice.slice())];
         return Ok(Some(patterns));
     }
 
@@ -579,8 +578,7 @@ fn parse_pattern_arg(
                 i += 1;
                 continue;
             }
-            let pattern: Box<[u8]> = Box::from(str_slice.slice());
-            patterns.push(pattern);
+            patterns.push(pattern_for_entry_names(str_slice.slice()));
             i += 1;
         }
 
@@ -600,6 +598,18 @@ fn parse_pattern_arg(
 }
 
 // freePatterns deleted — Vec<Box<[u8]>> drops elements then itself.
+
+/// `pattern` without a leading "./", after the "!" of a negation: a pattern sees entry names without one.
+fn pattern_for_entry_names(pattern: &[u8]) -> Box<[u8]> {
+    let (negation, mut rest) = match pattern {
+        [b'!', rest @ ..] => (&pattern[..1], rest),
+        _ => (&pattern[..0], pattern),
+    };
+    while rest.len() > 2 && rest.starts_with(b"./") {
+        rest = &rest[2..];
+    }
+    [negation, rest].concat().into_boxed_slice()
+}
 
 impl Archive {
     /// Instance method: archive.blob()
@@ -714,6 +724,22 @@ pub enum ExtractError {
 pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
+    /// A system call for one entry failed.
+    SysErr(Box<bun_sys::Error>),
+}
+
+// Every `extract()` job holds one. The boxed error keeps the job in mimalloc's 160-byte class.
+const _: () = assert!(core::mem::size_of::<ExtractResult>() <= 16);
+
+impl ExtractResult {
+    /// `err` with the path that the failed call was given: `entry`, a name below `root`.
+    fn entry_error(err: &bun_sys::Error, root: &[u8], entry: &[u8]) -> ExtractResult {
+        let mut path =
+            bun_paths::join_sep_maybe_z::<false>(&[root, strings::without_trailing_slash(entry)])
+                .into_vec();
+        bun_paths::resolve_path::posix_to_platform_in_place(&mut path[root.len()..]);
+        ExtractResult::SysErr(Box::new(err.with_path(&path)))
+    }
 }
 
 pub(crate) struct ExtractContext {
@@ -736,6 +762,7 @@ impl TaskContext for ExtractContext {
             ExtractResult::Err(e) => PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
             ),
+            ExtractResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
         })
     }
 }
@@ -744,15 +771,11 @@ impl ExtractContext {
     fn do_run(&mut self) -> ExtractResult {
         // If we have glob patterns, use filtered extraction
         if self.glob_patterns.is_some() {
-            let count = match extract_to_disk_filtered(
+            return extract_to_disk_filtered(
                 self.store.shared_view(),
                 &self.path,
                 self.glob_patterns.as_deref(),
-            ) {
-                Ok(c) => c,
-                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
-            };
-            return ExtractResult::Success(count);
+            );
         }
 
         // Otherwise use the fast path without filtering
@@ -1045,6 +1068,12 @@ impl FilesContext {
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
+        let mut name_buf = self
+            .glob_patterns
+            .as_ref()
+            .map(|_| bun_paths::path_buffer_pool::get());
+        let mut long_name_buf: Vec<u8> = Vec::new();
+
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
         while archive.read_next_header(&mut entry).succeeded() {
             let entry_ref = lib::Entry::opaque_ref(entry);
@@ -1062,8 +1091,10 @@ impl FilesContext {
             #[cfg(windows)]
             let pathname: &[u8] = &pathname_owned;
             // Apply glob pattern filtering (supports both positive and negative patterns)
-            if let Some(patterns) = &self.glob_patterns {
-                if !match_glob_patterns(patterns, pathname) {
+            if let (Some(patterns), Some(name_buf)) = (&self.glob_patterns, &mut name_buf) {
+                let name =
+                    NormalizedName::new_spilling(pathname, &mut name_buf[..], &mut long_name_buf);
+                if !match_glob_patterns(patterns, &name) {
                     continue;
                 }
             }
@@ -1255,11 +1286,40 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     true
 }
 
+/// The only name of an entry that a glob pattern sees: the path that `extract()` writes, with no "./", "//" or "\\".
+pub(crate) struct NormalizedName<'a>(&'a bun_core::ZStr);
+
+impl<'a> NormalizedName<'a> {
+    /// `None` for a stored name that does not fit `buf`.
+    fn new(stored: &[u8], buf: &'a mut [u8]) -> Option<Self> {
+        if stored.len() >= buf.len() {
+            return None;
+        }
+        Some(Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, buf)))
+    }
+
+    /// For a caller with no limit on the length of a name: one that does not fit `buf` goes to `spill`.
+    fn new_spilling(stored: &[u8], buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
+        if stored.len() < buf.len() {
+            return Self(bun_paths::resolve_path::normalize_buf_z::<
+                bun_paths::platform::Posix,
+            >(stored, buf));
+        }
+        spill.resize(stored.len() + 1, 0);
+        Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, &mut spill[..]))
+    }
+}
+
 /// Match a path against multiple glob patterns with support for negative patterns.
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], name: &NormalizedName<'_>) -> bool {
+    let pathname = name.0.as_bytes();
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
@@ -1287,17 +1347,18 @@ pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bo
 
 /// Extract archive to disk with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
+/// Stops at the first directory or file that a system call refuses.
 fn extract_to_disk_filtered(
     file_buffer: &[u8],
     root: &[u8],
     glob_patterns: Option<&[Box<[u8]>]>,
-) -> crate::Result<u32> {
+) -> ExtractResult {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
+        return ExtractResult::Err(ExtractError::ReadError);
     }
 
     // Open/create target directory using bun.sys
@@ -1307,7 +1368,7 @@ fn extract_to_disk_filtered(
         if bun_paths::is_absolute(root) {
             break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
+                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
             };
         } else {
             break 'brk match bun_sys::openat_a(
@@ -1317,7 +1378,7 @@ fn extract_to_disk_filtered(
                 0,
             ) {
                 Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
+                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
             };
         }
     };
@@ -1328,28 +1389,28 @@ fn extract_to_disk_filtered(
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
+    // A symlink that cannot be made does not stop the other entries. The first one is the rejection.
+    #[cfg(unix)]
+    let mut refused_symlink: Option<ExtractResult> = None;
 
     while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let raw_pathname_z = entry_ref.pathname();
+        let raw_pathname = entry_ref.pathname().as_bytes();
         #[cfg(windows)]
-        let raw_pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
-        );
+        let raw_pathname_owned = match entry_pathname_utf8(entry_ref) {
+            Ok(name) => name,
+            Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+        };
         #[cfg(windows)]
-        let raw_pathname_z = raw_pathname_zbox.as_zstr();
-        let raw_pathname = raw_pathname_z.as_bytes();
+        let raw_pathname: &[u8] = &raw_pathname_owned;
 
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        if raw_pathname.len() >= normalized_buf.len() {
+        let Some(name) = NormalizedName::new(raw_pathname, &mut normalized_buf[..]) else {
             continue;
-        }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        };
+        let pathname_z = name.0;
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
@@ -1361,7 +1422,7 @@ fn extract_to_disk_filtered(
         // Positive patterns: at least one must match
         // Negative patterns: if any matches, the file is excluded
         if let Some(patterns) = glob_patterns {
-            if !match_glob_patterns(patterns, pathname) {
+            if !match_glob_patterns(patterns, &name) {
                 continue;
             }
         }
@@ -1371,11 +1432,8 @@ fn extract_to_disk_filtered(
 
         match kind {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
-                    // Directory already exists - don't count as extracted
-                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
-                    Err(_) => continue,
-                    Ok(()) => {}
+                if let Err(err) = dir_fd.make_path(pathname) {
+                    return ExtractResult::entry_error(&err, root, pathname);
                 }
                 count += 1;
             }
@@ -1388,32 +1446,39 @@ fn extract_to_disk_filtered(
                 } else {
                     0o644
                 };
+                // Windows refuses the open of a second extract for a file that it created read-only.
+                #[cfg(windows)]
+                let mode: Mode = mode | 0o200;
 
-                // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
-                        // Expected: directory already exists
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
-                        // Permission errors: skip this file, will fail at openat
-                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
-                        // Other errors: skip, will fail at openat
-                        Err(_) => {}
-                        Ok(()) => {}
-                    }
-                }
+                // Create parent directories if needed
+                let parent = bun_core::dirname(pathname)
+                    .map(|parent_dir| (parent_dir, dir_fd.make_path(parent_dir)));
 
                 // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                    mode,
-                ) {
+                let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                let mut opened = bun_sys::openat(dir_fd, pathname_z, flags, mode);
+                // A file that cannot be written, such as an earlier read-only entry of the same name, is replaced.
+                if let Err(err) = &opened
+                    && err.get_errno() == bun_sys::E::EACCES
+                    && bun_sys::unlinkat(dir_fd, pathname_z).is_ok()
+                {
+                    opened = bun_sys::openat(dir_fd, pathname_z, flags, mode);
+                }
+                let file_fd: Fd = match opened {
                     Ok(fd) => fd,
-                    Err(_) => continue,
+                    Err(err) => {
+                        return match parent {
+                            // The open fails because this mkdir failed.
+                            Some((parent_dir, Err(mkdir_err))) => {
+                                ExtractResult::entry_error(&mkdir_err, root, parent_dir)
+                            }
+                            _ => ExtractResult::entry_error(&err, root, pathname),
+                        };
+                    }
                 };
 
                 let mut write_success = true;
+                let mut rejection: Option<ExtractResult> = None;
                 if size > 0 {
                     // Read archive data and write to file
                     let mut remaining = size;
@@ -1428,18 +1493,21 @@ fn extract_to_disk_filtered(
                         // Write all bytes, handling partial writes
                         let mut written: usize = 0;
                         while written < bytes_read {
-                            let w = match bun_sys::write(file_fd, &buf[written..bytes_read]) {
-                                Ok(w) => w,
-                                Err(_) => {
-                                    write_success = false;
-                                    break;
+                            match bun_sys::write(file_fd, &buf[written..bytes_read]) {
+                                Ok(0) => {
+                                    rejection = Some(ExtractResult::Err(ExtractError::ReadError));
                                 }
-                            };
-                            if w == 0 {
-                                write_success = false;
-                                break;
+                                Ok(w) => {
+                                    written += w;
+                                    continue;
+                                }
+                                Err(err) => {
+                                    rejection =
+                                        Some(ExtractResult::entry_error(&err, root, pathname));
+                                }
                             }
-                            written += w;
+                            write_success = false;
+                            break;
                         }
                         if !write_success {
                             break;
@@ -1454,6 +1522,9 @@ fn extract_to_disk_filtered(
                 } else {
                     // Remove partial file on failure
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    if let Some(rejection) = rejection {
+                        return rejection;
+                    }
                 }
             }
             bun_sys::FileKind::SymLink => {
@@ -1466,27 +1537,38 @@ fn extract_to_disk_filtered(
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
-                                }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        Ok(()) => {}
+                    let mut created = bun_sys::symlinkat(link_target_z, dir_fd, pathname_z);
+                    let mut parent = None;
+                    if let Err(err) = &created
+                        && matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT)
+                    {
+                        parent = bun_core::dirname(pathname)
+                            .map(|parent_dir| (parent_dir, dir_fd.make_path(parent_dir)));
+                        created = bun_sys::symlinkat(link_target_z, dir_fd, pathname_z);
                     }
-                    count += 1;
+                    match created {
+                        Ok(()) => count += 1,
+                        // The name is taken. It keeps what it has, and the entry is not counted.
+                        Err(err) if err.get_errno() == bun_sys::E::EEXIST => {}
+                        Err(err) => {
+                            refused_symlink.get_or_insert_with(|| match parent {
+                                // The symlink fails because this mkdir failed.
+                                Some((parent_dir, Err(mkdir_err))) => {
+                                    ExtractResult::entry_error(&mkdir_err, root, parent_dir)
+                                }
+                                _ => ExtractResult::entry_error(&err, root, pathname),
+                            });
+                        }
+                    }
                 }
             }
             _ => {}
         }
     }
 
-    Ok(count)
+    #[cfg(unix)]
+    if let Some(rejection) = refused_symlink {
+        return rejection;
+    }
+    ExtractResult::Success(count)
 }

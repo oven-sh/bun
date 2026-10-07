@@ -5474,7 +5474,8 @@ class ClientHttp2Session extends Http2Session {
     // Node's socketOnClose does nothing once the session is destroyed.
     if (this.destroyed) return;
     const parser = this.#parser;
-    const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
+    // Like #onError, a session that close() already shut down does not report the lost socket.
+    const err = this.connecting && !this.#closed ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);

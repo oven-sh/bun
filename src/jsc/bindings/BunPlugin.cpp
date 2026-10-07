@@ -42,7 +42,9 @@ static bool isValidNamespaceString(String& namespaceString)
     if (!namespaceRegex) {
         namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
     }
-    return namespaceRegex->match(namespaceString) > -1;
+    int position;
+    int matchLength;
+    return namespaceRegex->match(namespaceString, 0, position, matchLength) == JSC::Yarr::MatchStatus::Match;
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)

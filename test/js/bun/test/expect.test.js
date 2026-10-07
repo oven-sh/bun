@@ -3715,6 +3715,22 @@ describe("expect()", () => {
     for (const { label, value, matched } of tests) {
       test(label, () => expect(value).toMatch(matched));
     }
+
+    // The search for this match takes more steps than the RegExp engine allows, so it is
+    // abandoned. It has no answer: it used to count as "does not match".
+    const abandoned = {
+      value: Buffer.alloc(35, "a").toString() + "c",
+      matched: /(?:a|aa)+b|c/,
+      error: new RangeError("Regular expression backtracking limit exceeded"),
+    };
+    test_skipIf(isJest)("a search the RegExp engine abandons throws", () => {
+      expect(() => expect(abandoned.value).not.toMatch(abandoned.matched)).toThrow(abandoned.error);
+    });
+    test_skipIf(isJest)("a search the RegExp engine abandons throws from stringMatching", () => {
+      expect(() => expect(abandoned.value).not.toEqual(expect.stringMatching(abandoned.matched))).toThrow(
+        abandoned.error,
+      );
+    });
   });
 
   test_skipIf(isJest)("toBeNaN()", () => {

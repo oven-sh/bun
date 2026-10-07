@@ -938,7 +938,15 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, deflate)
+        step(
+            &mut self.strm,
+            input,
+            out,
+            reserve,
+            usize::MAX,
+            flush,
+            deflate,
+        )
     }
 }
 
@@ -1003,6 +1011,11 @@ impl InflateDecoder {
         rc
     }
 
+    #[inline]
+    pub fn is_inflating(&self) -> bool {
+        matches!(self.state, State::Inflating)
+    }
+
     /// One `inflate()` call writing into `out`'s spare capacity. Same
     /// contract as [`DeflateEncoder::step`].
     pub fn step(
@@ -1012,12 +1025,21 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, inflate)
+        step(
+            &mut self.strm,
+            input,
+            out,
+            reserve,
+            usize::MAX,
+            flush,
+            inflate,
+        )
     }
 
-    /// Consume all of `input`, appending decompressed output to `out`
-    /// (growing by 4096-byte steps, capped at `max_output_size`). Returns
-    /// `ShortRead` when more input is required and `is_done` is false.
+    /// Append decompressed output to `out` (growing by 4096-byte steps, capped at
+    /// `max_output_size`) until `input` is consumed or `out.len()` reaches `max_output`.
+    /// Returns the input bytes consumed. Returns `ShortRead` when more input is required and
+    /// `is_done` is false.
     ///
     /// The stream state persists across calls so this can be driven one
     /// body chunk at a time.
@@ -1025,10 +1047,12 @@ impl InflateDecoder {
         &mut self,
         mut input: &[u8],
         out: &mut Vec<u8>,
+        max_output: usize,
         is_done: bool,
-    ) -> Result<(), ZlibError> {
+    ) -> Result<usize, ZlibError> {
+        let input_len = input.len();
         if matches!(self.state, State::Error) {
-            return Ok(());
+            return Ok(input_len);
         }
         if matches!(self.state, State::End) {
             // A prior call completed a gzip member at the chunk boundary.
@@ -1041,17 +1065,29 @@ impl InflateDecoder {
                     return Err(ZlibError::ZlibError);
                 }
             } else {
-                return Ok(());
+                return Ok(input_len);
             }
         }
         loop {
+            if out.len() >= max_output {
+                return Ok(input_len - input.len());
+            }
             let remaining = self.max_output_size.saturating_sub(out.len());
             if remaining == 0 {
                 self.state = State::Error;
                 return Err(ZlibError::ZlibError);
             }
-            let reserve = remaining.min(4096);
-            let (consumed, rc) = self.step(input, out, reserve, FlushValue::NoFlush);
+            let budget = max_output - out.len();
+            let reserve = remaining.min(4096).min(budget);
+            let (consumed, rc) = step(
+                &mut self.strm,
+                input,
+                out,
+                reserve,
+                budget,
+                FlushValue::NoFlush,
+                inflate,
+            );
             input = &input[consumed..];
             self.state = State::Inflating;
             if out.len() > self.max_output_size {
@@ -1072,7 +1108,7 @@ impl InflateDecoder {
                         }
                         continue;
                     }
-                    return Ok(());
+                    return Ok(input_len);
                 }
                 ReturnCode::MemError => {
                     self.state = State::Error;
@@ -1141,6 +1177,7 @@ fn step(
     input: &[u8],
     out: &mut Vec<u8>,
     reserve: usize,
+    limit: usize,
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
@@ -1153,7 +1190,7 @@ fn step(
     strm.avail_in = in_len as uInt;
 
     let spare = out.spare_capacity_mut();
-    let out_len = spare.len().min(u32::MAX as usize);
+    let out_len = spare.len().min(limit).min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();
     strm.avail_out = out_len as uInt;
 

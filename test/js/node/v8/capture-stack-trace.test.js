@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -551,6 +552,270 @@ test("CallFrame.p.isNative", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
+// getFunction() must report undefined for a callee that user code could never
+// have called: a host function, a builtin, an async or generator body function,
+// a wasm frame, a program frame. A call to a body function crashed the process.
+// `...Caller=self` rows: a frame below one of those keeps its own function.
+// `...IsToplevel=false` rows: hiding a callee does not change isToplevel().
+// The fixture is CommonJS because a strict frame already reports undefined.
+test.concurrent("CallFrame.p.getFunction hides internal callees from sloppy code", async () => {
+  using dir = tempDir("callsite-internal-callee", {
+    "internal-callee-fixture.cjs": `
+      const { nativeFrameForTesting } = require("bun:internal-for-testing");
+      Error.prepareStackTrace = (e, sites) => sites;
+
+      const out = [];
+      const show = v => (typeof v === "function" ? "function/" + v.length : typeof v === "object" && v !== null ? "object" : String(v));
+      const named = (sites, name) => sites.find(s => s.getFunctionName() === name);
+
+      function sloppy() {
+        out.push("sloppy=" + (new Error().stack[0].getFunction() === sloppy ? "self" : "?"));
+      }
+      sloppy();
+
+      nativeFrameForTesting(function underNativeFrame() {
+        const sites = new Error().stack;
+        out.push("nativeIsNative=" + sites[1].isNative());
+        out.push("native=" + show(sites[1].getFunction()));
+        return 0;
+      });
+
+      function hostCaller() {
+        [0].map(function underHostFunction() {
+          const sites = new Error().stack;
+          const host = named(sites, "map");
+          out.push("hostFound=" + !!host);
+          out.push("host=" + show(host && host.getFunction()));
+          out.push("hostIsToplevel=" + (host && host.isToplevel()));
+          const caller = named(sites, "hostCaller");
+          out.push("hostCaller=" + (caller && caller.getFunction() === hostCaller ? "self" : show(caller && caller.getFunction())));
+        });
+      }
+      hostCaller();
+
+      // A program frame's callee is a JSCallee, not a function at all. Stock bun
+      // handed the JSCallee object itself to getFunction().
+      out.push("evalProgram=" + show(eval("new Error().stack")[0].getFunction()));
+
+      // A wasm frame has no JSFunction callee either, and merely reading
+      // getFunction() on one crashed stock bun.
+      const wasmBytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,4,1,0x60,0,0, 2,7,1,1,0x65,1,0x66,0,0, 3,2,1,0, 7,7,1,3,0x72,0x75,0x6e,0,1, 10,6,1,4,0,0x10,0,0x0b]);
+      function wasmCaller() {
+        const instance = new WebAssembly.Instance(new WebAssembly.Module(wasmBytes), {
+          e: {
+            f() {
+              const sites = new Error().stack;
+              const wasmFrames = sites.filter(s => s.getFileName() === "[wasm code]");
+              out.push("wasmFrames=" + (wasmFrames.length > 0));
+              out.push("wasm=" + [...new Set(wasmFrames.map(s => show(s.getFunction())))].join(","));
+              const caller = named(sites, "wasmCaller");
+              out.push("wasmCaller=" + (caller && caller.getFunction() === wasmCaller ? "self" : show(caller && caller.getFunction())));
+            },
+          },
+        });
+        instance.exports.run();
+      }
+      wasmCaller();
+
+      function asyncPrefixCaller() {
+        // Read the stack before the first await: JSC runs even the synchronous
+        // prefix of an async function in the body function.
+        return (async function af() {
+          const sites = new Error().stack;
+          out.push("asyncPrefix=" + show(sites[0].getFunction()));
+          out.push("asyncPrefixIsToplevel=" + sites[0].isToplevel());
+          const caller = named(sites, "asyncPrefixCaller");
+          out.push("asyncPrefixCaller=" + (caller && caller.getFunction() === asyncPrefixCaller ? "self" : show(caller && caller.getFunction())));
+          await 1;
+
+          const asyncBodySite = new Error().stack[0];
+          const asyncBody = asyncBodySite.getFunction();
+          out.push("asyncBody=" + show(asyncBody));
+          out.push("asyncBodyIsToplevel=" + asyncBodySite.isToplevel());
+          if (typeof asyncBody === "function") asyncBody();
+
+          function* gen() {
+            yield 1;
+            const generatorBodySite = new Error().stack[0];
+            const generatorBody = generatorBodySite.getFunction();
+            out.push("generatorBody=" + show(generatorBody));
+            out.push("generatorBodyIsToplevel=" + generatorBodySite.isToplevel());
+            if (typeof generatorBody === "function") generatorBody();
+          }
+          const it = gen();
+          it.next();
+          it.next();
+
+          console.log(out.join("\\n"));
+        })();
+      }
+      asyncPrefixCaller();
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "internal-callee-fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual([
+    "sloppy=self",
+    "nativeIsNative=true",
+    "native=undefined",
+    "hostFound=true",
+    "host=undefined",
+    "hostIsToplevel=false",
+    "hostCaller=self",
+    "evalProgram=undefined",
+    "wasmFrames=true",
+    "wasm=undefined",
+    "wasmCaller=self",
+    "asyncPrefix=undefined",
+    "asyncPrefixIsToplevel=false",
+    "asyncPrefixCaller=self",
+    "asyncBody=undefined",
+    "asyncBodyIsToplevel=false",
+    "generatorBody=undefined",
+    "generatorBodyIsToplevel=false",
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Bun installs native promise reactions so that a pending user promise can
+// resume native work. Each reaction reads its trailing argument as a native
+// context, so each of the three below crashed the process when user code got
+// hold of it and called it. Every fixture keeps the nameless native function
+// that getFunction() reports and then calls it.
+const grabNativeReaction = `
+  let leaked;
+  let namelessNativeSites = 0;
+  function grabNativeReaction() {
+    const previous = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, sites) => sites;
+    for (const site of new Error().stack) {
+      if (site.isNative() && !site.getFunctionName()) namelessNativeSites++;
+      let fn;
+      try {
+        fn = site.getFunction();
+      } catch {}
+      if (typeof fn === "function" && site.isNative() && !fn.name) leaked = fn;
+    }
+    Error.prepareStackTrace = previous;
+  }
+  function reportAndCallLeaked() {
+    // The reaction frame has to be on the stack, or "leaked=undefined" would
+    // hold for a reason that has nothing to do with getFunction().
+    console.log("reactionFrameSeen=" + (namelessNativeSites > 0));
+    console.log("leaked=" + typeof leaked);
+    if (typeof leaked === "function") leaked({}, undefined);
+    console.log("survived");
+  }
+`;
+
+async function runNativeReactionFixture(prefix, files) {
+  using dir = tempDir(prefix, files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(["reactionFrameSeen=true", "leaked=undefined", "survived"]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}
+
+test.concurrent("CallFrame.p.getFunction does not expose the HTMLRewriter reaction", async () => {
+  await runNativeReactionFixture("callsite-rewriter-reaction", {
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      new HTMLRewriter()
+        .on("p", {
+          element() {
+            grabNativeReaction();
+            // The rewriter suspends only while this promise is pending. The
+            // suspension installs the reaction whose frame the handler for the
+            // second <p> can see.
+            return new Promise(resolve => setTimeout(resolve, 1));
+          },
+        })
+        .transform(new Response("<p>a</p><p>b</p>"))
+        .text()
+        .then(reportAndCallLeaked);
+    `,
+  });
+});
+
+test.concurrent("CallFrame.p.getFunction does not expose the serve reject reaction", async () => {
+  await runNativeReactionFixture("callsite-serve-reaction", {
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      // error() runs under the reaction that rejected the fetch() promise.
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Promise((resolve, reject) => setTimeout(() => reject(new Error("x")), 1)),
+        error() {
+          grabNativeReaction();
+          return new Response("e");
+        },
+      });
+
+      fetch(server.url)
+        .then(response => response.text())
+        .then(async () => {
+          await server.stop(true);
+          reportAndCallLeaked();
+        });
+    `,
+  });
+});
+
+test.concurrent("CallFrame.p.getFunction does not expose the module loader reaction", async () => {
+  await runNativeReactionFixture("callsite-module-loader-reaction", {
+    "mod.xyzzy": "",
+    "fixture.cjs": `
+      ${grabNativeReaction}
+
+      // The reaction reads the plugin result object, so this getter runs under
+      // its frame.
+      Bun.plugin({
+        name: "x",
+        setup(build) {
+          build.onLoad({ filter: /\\.xyzzy$/ }, () =>
+            new Promise(resolve =>
+              setTimeout(
+                () =>
+                  resolve({
+                    get contents() {
+                      grabNativeReaction();
+                      return "export default 1";
+                    },
+                    loader: "js",
+                  }),
+                1,
+              ),
+            ),
+          );
+        },
+      });
+
+      import(require("path").join(__dirname, "mod.xyzzy")).then(reportAndCallLeaked);
+    `,
+  });
+});
+
 test("return non-strings from Error.prepareStackTrace", () => {
   // This behavior is allowed by V8 and used by the node-depd npm package.
   let prevPrepareStackTrace = Error.prepareStackTrace;
@@ -785,6 +1050,138 @@ test("Error.prepareStackTrace propagates exceptions", () => {
   ).toThrow("hi");
 });
 
+// The header of the default formatter is Error.prototype.toString() of the error, as in V8: code that
+// wraps the default (source-map-support, depd) calls it by hand, and error.stack inside a
+// prepareStackTrace callback is what it returns.
+test("the default Error.prepareStackTrace heads the stack with the error's name and message", () => {
+  class Custom extends Error {}
+  class Named extends Error {}
+  Named.prototype.name = "Named";
+  const shapes = {
+    "TypeError: boom": () => new TypeError("boom"),
+    "RangeError": () => new RangeError(),
+    "Renamed: boom": () => Object.assign(new Error("boom"), { name: "Renamed" }),
+    "boom": () => Object.assign(new Error("boom"), { name: "" }),
+    "": () => Object.assign(new Error(""), { name: "" }),
+    "Error: boom": () => new Custom("boom"),
+    "Named: boom": () => new Named("boom"),
+    "FromGetter: boom": () => Object.defineProperty(new Error("boom"), "name", { get: () => "FromGetter" }),
+    "Error: undefined name": () => Object.assign(new Error("undefined name"), { name: undefined }),
+    "7: boom": () => Object.assign(new Error("boom"), { name: 7 }),
+    "Error: 42.5": () => Object.assign(new Error(), { message: 42.5 }),
+    "Error": () => Object.assign(new Error("x"), { message: undefined }),
+  };
+  const byHand = {};
+  const insideACallback = {};
+  for (const [header, make] of Object.entries(shapes)) {
+    Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+    byHand[header] = make().stack.split("\n")[0];
+    let seen;
+    Error.prepareStackTrace = error => ((seen = error.stack), "");
+    void make().stack;
+    insideACallback[header] = seen.split("\n")[0];
+  }
+  const expected = Object.fromEntries(Object.keys(shapes).map(header => [header, header]));
+  expect({ byHand, insideACallback }).toEqual({ byHand: expected, insideACallback: expected });
+});
+
+// As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace
+// callback sees describes it, so reading .stack does not throw because a callback is installed.
+// A message that throws is read lazily here (V8 captured it at construction) and still throws.
+test("a name that throws: the default Error.prepareStackTrace throws, error.stack inside a callback says so", () => {
+  const shapes = {
+    "name getter throws": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw new RangeError("from name");
+        },
+      }),
+    "name is a Symbol": () => Object.assign(new Error("boom"), { name: Symbol("s") }),
+    "name.toString throws": () =>
+      Object.assign(new Error("boom"), {
+        name: {
+          toString() {
+            throw new RangeError("from toString");
+          },
+        },
+      }),
+    "message getter throws": () =>
+      Object.defineProperty(new Error("boom"), "message", {
+        get() {
+          throw new RangeError("from message");
+        },
+      }),
+    // What was thrown is described with Error.prototype.toString(), which does not call its toString().
+    "name getter throws an object": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw {
+            message: "thrown object",
+            toString() {
+              throw 1;
+            },
+          };
+        },
+      }),
+    "name getter throws a string": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw "thrown string";
+        },
+      }),
+    "describing the throw throws": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw {
+            get name() {
+              throw 1;
+            },
+          };
+        },
+      }),
+  };
+  const byHand = {};
+  const insideACallback = {};
+  for (const [shape, make] of Object.entries(shapes)) {
+    Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+    try {
+      void make().stack;
+      byHand[shape] = "did not throw";
+    } catch (thrown) {
+      byHand[shape] = String(thrown?.message ?? typeof thrown);
+    }
+    let seen;
+    Error.prepareStackTrace = error => ((seen = error.stack), "");
+    try {
+      void make().stack;
+      insideACallback[shape] = seen.split("\n")[0];
+      expect(seen.split("\n")[1]).toStartWith("    at ");
+    } catch (thrown) {
+      insideACallback[shape] = "threw " + thrown.message;
+    }
+  }
+  expect({ byHand, insideACallback }).toEqual({
+    byHand: {
+      "name getter throws": "from name",
+      "name is a Symbol": "Cannot convert a symbol to a string",
+      "name.toString throws": "from toString",
+      "message getter throws": "from message",
+      "name getter throws an object": "thrown object",
+      "name getter throws a string": "string",
+      "describing the throw throws": "object",
+    },
+    insideACallback: {
+      "name getter throws": "<error: RangeError: from name>",
+      "name is a Symbol": "<error: TypeError: Cannot convert a symbol to a string>",
+      "name.toString throws": "<error: RangeError: from toString>",
+      "message getter throws": "threw from message",
+      "name getter throws an object": "<error: Error: thrown object>",
+      "name getter throws a string": "<error>",
+      "describing the throw throws": "<error>",
+    },
+  });
+});
+
 test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const prepare = mock((e, s) => {
@@ -993,6 +1390,28 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
+test.concurrent.each([
+  ["NaN", `Error.stackTraceLimit = NaN;`],
+  ["a string", `Error.stackTraceLimit = "foo";`],
+  ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
+  ["deleted", `delete Error.stackTraceLimit;`],
+])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
+  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  const src = `${setup}
+    const source = new Error("source"), destination = new Error("destination");
+    Error.appendStackTrace(source, destination);
+    console.log(typeof destination.stack);`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
   // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
   const src = `
@@ -1122,6 +1541,412 @@ test("lazy error-info materialization does not store an empty stack value when t
   expect(exitCode).toBe(0);
 });
 
+// A collection that finds a frame of an unread trace dead turns the frames into a string before they are
+// lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
+// is materialized on access. Known exceptions: an installed Error.prepareStackTrace (it needs the
+// trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+//
+// Whether the collection materializes a given stack is not up to the test, so each shape makes several
+// errors, each under its own functions that are garbage once they return, and each with a twin: a plain
+// Error made in the same frames, so a collection that materializes the twin's stack (its frames are
+// among the error's) materializes the error's too. A prepareStackTrace installed for a read is consulted
+// only if the stack is not a string yet, which the twin tells whatever the error's name, message or
+// realm is. The errors whose twin was materialized are the ones compared, and there must be one.
+const materializedByACollection = `
+  const SAMPLES = 8;
+  const twins = new WeakMap();
+  // The finally blocks keep every return out of tail position.
+  const capture = make => {
+    const [error, twin] = new Function(
+      "make",
+      '"use strict"; function thrower() { try { return [make(), new Error("twin")]; } finally {} } try { return thrower(); } finally {}',
+    )(make);
+    twins.set(error, twin);
+    return error;
+  };
+  // One on-access error and SAMPLES more from one call site, so every trace reads the same to the column.
+  const captureAll = make => Array.from({ length: 1 + SAMPLES }, () => capture(make));
+  const collect = async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+  };
+  const materialized = error => {
+    let consulted = false;
+    const builtin = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => ((consulted = true), "");
+    void twins.get(error).stack;
+    Error.prepareStackTrace = builtin;
+    return !consulted;
+  };
+  // read(error) for each sample the collection materialized.
+  const readMaterialized = (samples, read) => samples.filter(materialized).map(read);
+`;
+
+test.concurrent("a stack that a collection materializes reads the same as one materialized on access", async () => {
+  const src = `
+    import vm from "node:vm";
+    ${materializedByACollection}
+    const shapes = {
+      // How the name and the message are joined.
+      "TypeError with a message": () => new TypeError("boom"),
+      "no message": () => new Error(),
+      "empty own name": () => Object.assign(new Error("boom"), { name: "" }),
+      // They are read when the stack is first read, whichever way the frames were formatted.
+      "message is a Symbol": () => Object.assign(new Error(), { message: Symbol("m") }),
+      "message changed before the first read": () => new Error("boom"),
+      "name is a Symbol": () => Object.assign(new Error("boom"), { name: Symbol("n") }),
+      "name changed before the first read": () => new Error("boom"),
+      "AggregateError": () => new AggregateError([new Error("inner")], "boom"),
+      "with a cause": () => new RangeError("boom", { cause: new Error("why") }),
+      "from a node:vm context": () => vm.runInNewContext("new TypeError('boom')"),
+      // Frames whose text says more than a function name and a position.
+      "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+      "created by eval code": () => (0, eval)("new Error('boom')"),
+      "created under a builtin": () => [0].map(() => { try { return new Error("boom"); } finally {} })[0],
+      // How a frame's function is named.
+      "created in a function whose name was redefined": () => {
+        function original() { try { return new Error("boom"); } finally {} }
+        Object.defineProperty(original, "name", { value: "renamed" });
+        try { return original(); } finally {}
+      },
+      "created in a nameless function with a displayName": () => {
+        const nameless = (() => function () { try { return new Error("boom"); } finally {} })();
+        nameless.displayName = "Shown";
+        try { return nameless(); } finally {}
+      },
+      "created in a function whose name is a getter": () => {
+        function original() { try { return new Error("boom"); } finally {} }
+        Object.defineProperty(original, "name", { get: () => "fromGetter" });
+        try { return original(); } finally {}
+      },
+      "created in a bound function": () => {
+        function target() { try { return new Error("boom"); } finally {} }
+        const bound = target.bind(null);
+        try { return bound(); } finally {}
+      },
+      "created in a method": () => {
+        const holder = { method() { try { return new Error("boom"); } finally {} } };
+        try { return holder.method(); } finally {}
+      },
+      "created in a static method": () => {
+        class Factory { static make() { try { return new Error("boom"); } finally {} } }
+        try { return Factory.make(); } finally {}
+      },
+      "created in an arrow function": () => {
+        const arrow = () => { try { return new Error("boom"); } finally {} };
+        try { return arrow(); } finally {}
+      },
+    };
+    // The frames, from the top, whose text the test spells out.
+    const framesToShow = {
+      "created in a constructor": 1,
+      "created by eval code": 1,
+      "created under a builtin": 2,
+      "created in a function whose name was redefined": 1,
+      "created in a nameless function with a displayName": 1,
+      "created in a function whose name is a getter": 1,
+      "created in a bound function": 1,
+      "created in a method": 1,
+      "created in a static method": 1,
+      "created in an arrow function": 1,
+    };
+    const beforeTheFirstRead = {
+      "message changed before the first read": error => void (error.message = "changed"),
+      "name changed before the first read": error => void (error.name = "Renamed"),
+    };
+    const read = shape => error => {
+      beforeTheFirstRead[shape]?.(error);
+      try {
+        return error.stack;
+      } catch (thrown) {
+        return "throws " + thrown.message;
+      }
+    };
+    const cases = Object.entries(shapes).map(([shape, make]) => {
+      const [onAccess, ...samples] = captureAll(make);
+      return { shape, expected: read(shape)(onAccess), samples };
+    });
+    await collect();
+    const rows = {};
+    for (const { shape, expected, samples } of cases) {
+      const texts = readMaterialized(samples, read(shape));
+      const lines = (texts[0] ?? "").split("\\n");
+      const frames = lines.slice(1, 1 + (framesToShow[shape] ?? 0)).map(line => line.trim().replace(/ ?\\(.*$/, ""));
+      rows[shape] = { materializedByACollection: texts.length > 0, header: lines[0], frames, sameText: texts.every(text => text === expected) };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const row = (header, frames = []) => ({ materializedByACollection: true, header, frames, sameText: true });
+  const expectedRows = {
+    "TypeError with a message": row("TypeError: boom"),
+    "no message": row("Error"),
+    "empty own name": row("boom"),
+    "message is a Symbol": row("throws Cannot convert a symbol to a string"),
+    "message changed before the first read": row("Error: changed"),
+    "name is a Symbol": row("throws Cannot convert a symbol to a string"),
+    "name changed before the first read": row("Renamed: boom"),
+    "AggregateError": row("AggregateError: boom"),
+    "with a cause": row("RangeError: boom"),
+    "from a node:vm context": row("TypeError: boom"),
+    "created in a constructor": row("Error: boom", ["at new Widget"]),
+    "created by eval code": row("Error: boom", ["at <anonymous>"]),
+    "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),
+    "created in a function whose name was redefined": row("Error: boom", ["at renamed"]),
+    "created in a nameless function with a displayName": row("Error: boom", ["at Shown"]),
+    "created in a function whose name is a getter": row("Error: boom", ["at original"]),
+    "created in a bound function": row("Error: boom", ["at target"]),
+    "created in a method": row("Error: boom", ["at method"]),
+    "created in a static method": row("Error: boom", ["at make"]),
+    "created in an arrow function": row("Error: boom", ["at arrow"]),
+  };
+  expect(JSON.parse(stdout)).toEqual(expectedRows);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "an error whose stack a collection materialized behaves as one whose stack is materialized on access",
+  async () => {
+    const src = `
+    ${materializedByACollection}
+    const operations = {
+      "line, column, sourceURL": error => [error.line, error.column, typeof error.sourceURL],
+      "assign stack": error => ((error.stack = "assigned"), error.stack),
+      "delete stack": error => [delete error.stack, error.stack ?? null],
+      "define stack": error => (Object.defineProperty(error, "stack", { value: "defined" }), error.stack),
+      // A clone is made from the complete string: it must not get a second first line.
+      "structuredClone": error => structuredClone(error).stack.split("\\n").filter(line => line.includes("boom")),
+      "Bun.inspect": error => Bun.inspect(error).split("\\n").filter(line => line.includes("boom")).map(line => line.trim()),
+      "JSON.stringify": error => JSON.stringify(error),
+    };
+    const rows = {};
+    for (const [name, operation] of Object.entries(operations)) {
+      const [onAccess, ...samples] = captureAll(() => new TypeError("boom"));
+      const expected = JSON.stringify(operation(onAccess));
+      await collect();
+      const results = readMaterialized(samples, error => JSON.stringify(operation(error)));
+      rows[name] = { materializedByACollection: results.length > 0, same: results.every(result => result === expected), onAccess: JSON.parse(expected) };
+    }
+    console.log(JSON.stringify(rows));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const row = onAccess => ({ materializedByACollection: true, same: true, onAccess });
+    expect(JSON.parse(stdout)).toEqual({
+      "line, column, sourceURL": row([expect.any(Number), expect.any(Number), "string"]),
+      "assign stack": row("assigned"),
+      "delete stack": row([true, null]),
+      "define stack": row("defined"),
+      "structuredClone": row(["TypeError: boom"]),
+      "Bun.inspect": row([expect.stringContaining("TypeError: boom")]),
+      "JSON.stringify": row(expect.any(String)),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("a stack that a collection materializes reads the same in a Worker", async () => {
+  const src = `
+    import { Worker, isMainThread, parentPort } from "node:worker_threads";
+    ${materializedByACollection}
+    if (isMainThread) {
+      const worker = new Worker(new URL(import.meta.url));
+      const rows = await new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+      });
+      await worker.terminate();
+      console.log(JSON.stringify(rows));
+    } else {
+      const shapes = {
+        "TypeError with a message": () => new TypeError("boom"),
+        "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
+      };
+      const rows = {};
+      for (const [shape, make] of Object.entries(shapes)) {
+        const [onAccess, ...samples] = captureAll(make);
+        const expected = onAccess.stack;
+        await collect();
+        const texts = readMaterialized(samples, error => error.stack);
+        rows[shape] = { materializedByACollection: texts.length > 0, firstTwoLines: (texts[0] ?? "").split("\\n").slice(0, 2).map(line => line.trim().replace(/ ?\\(.*$/, "")), sameText: texts.every(text => text === expected) };
+      }
+      parentPort.postMessage(rows);
+    }
+  `;
+  using dir = tempDir("stack-materialized-in-worker", { "main.mjs": src });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "TypeError with a message": {
+      materializedByACollection: true,
+      firstTwoLines: ["TypeError: boom", expect.any(String)],
+      sameText: true,
+    },
+    "created in a constructor": {
+      materializedByACollection: true,
+      firstTwoLines: ["Error: boom", "at new Widget"],
+      sameText: true,
+    },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Materializing the stack can throw (a Symbol message). Asking for the property's descriptor must throw
+// that, not report the property found with the exception still pending, however the stack is materialized.
+test.concurrent(
+  "Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing the stack threw",
+  async () => {
+    const src = `
+    ${materializedByACollection}
+    const describe = error => {
+      try {
+        Object.getOwnPropertyDescriptor(error, "stack");
+        return ["did not throw", typeof error.stack];
+      } catch (thrown) {
+        return [thrown.message, typeof error.stack];
+      }
+    };
+    const [onAccess, ...samples] = captureAll(() => Object.assign(new Error(), { message: Symbol("m") }));
+    const rows = { onAccess: describe(onAccess) };
+    await collect();
+    rows.afterACollection = [...new Set(readMaterialized(samples, describe).map(result => JSON.stringify(result)))];
+    console.log(JSON.stringify(rows));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      onAccess: ["Cannot convert a symbol to a string", "undefined"],
+      afterACollection: [JSON.stringify(["Cannot convert a symbol to a string", "undefined"])],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Error.captureStackTrace() replaces the trace. With no frames left after the constructor it names,
+// the stack is the header alone, also for an error whose old frames a collection had already formatted.
+test.concurrent("Error.captureStackTrace replaces a stack that a collection materialized", async () => {
+  const src = `
+    ${materializedByACollection}
+    function notOnTheStack() {}
+    const errors = captureAll(() => new TypeError("boom"));
+    await collect();
+    const stacks = new Set();
+    for (const error of errors) {
+      Error.captureStackTrace(error, notOnTheStack);
+      stacks.add(error.stack);
+    }
+    // With frames left, they are the new ones.
+    const recaptured = new Set();
+    function recapture(error) {
+      Error.captureStackTrace(error);
+      const lines = error.stack.split("\\n");
+      recaptured.add(JSON.stringify([lines[0], lines[1].trim().replace(/ ?\\(.*$/, ""), lines.some(line => line.includes("thrower"))]));
+    }
+    const more = captureAll(() => new TypeError("boom"));
+    await collect();
+    for (const error of more) recapture(error);
+    console.log(JSON.stringify({ noFramesLeft: [...stacks], framesLeft: [...recaptured].map(row => JSON.parse(row)) }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    noFramesLeft: ["TypeError: boom"],
+    framesLeft: [["TypeError: boom", "at recapture", false]],
+  });
+  expect(exitCode).toBe(0);
+});
+
+// An error holds the functions in its trace weakly. These functions are strict, so the call sites do
+// not retain them either, and they are garbage by the time `.stack` is first read. The `finally`
+// blocks keep each `return` out of tail position, so every frame stays in the trace.
+const errorWithDeadFrames = `new Function('"use strict"; function inner() { try { return new Error("x"); } finally {} } try { return inner(); } finally {}')()`;
+test.concurrent.each([
+  [
+    "Bun.gc(true) in Error.prepareStackTrace",
+    `const e = ${errorWithDeadFrames};
+     Error.prepareStackTrace = (err, callSites) => { Bun.gc(true); return "formatted " + callSites[0].getFunctionName(); };
+     console.log(e.stack);`,
+    "formatted inner",
+  ],
+  [
+    "v8.getHeapStatistics() in Error.prepareStackTrace, error from an arrow that has returned",
+    `import v8 from "node:v8";
+     Error.prepareStackTrace = (err, callSites) => { v8.getHeapStatistics(); return "formatted " + callSites[1].getFunctionName(); };
+     async function handler() {
+       const e = (() => { try { return new Error("request failed"); } finally {} })();
+       await 1;
+       return e.stack;
+     }
+     console.log(await handler());`,
+    "formatted handler",
+  ],
+  [
+    "Bun.gc(true) in a message getter",
+    `const e = ${errorWithDeadFrames};
+     Object.defineProperty(e, "message", { get() { Bun.gc(true); return "from getter"; } });
+     Error.prepareStackTrace = (err, callSites) => err.stack.split("\\n")[0] + " | " + callSites[0].getFunctionName();
+     console.log(e.stack);`,
+    "Error: from getter | inner",
+  ],
+  [
+    "Bun.gc(true) in a node:vm Error.prepareStackTrace getter",
+    `import vm from "node:vm";
+     const context = vm.createContext({ collect: () => Bun.gc(true) });
+     const e = vm.runInContext(${JSON.stringify(errorWithDeadFrames)}, context);
+     vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { collect(); } })', context);
+     console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)[1]);`,
+    "Error: x | inner",
+  ],
+  [
+    "Error.appendStackTrace onto the error being formatted, then Bun.gc(true)",
+    `const e = ${errorWithDeadFrames};
+     const other = ${errorWithDeadFrames};
+     Error.prepareStackTrace = (err, callSites) => { Error.appendStackTrace(other, err); Bun.gc(true); return "formatted " + callSites[0].getFunctionName(); };
+     console.log(e.stack);
+     Error.prepareStackTrace = undefined;
+     console.log(/at (\\w+)/.exec(other.stack)[1]);`,
+    "formatted inner\ninner",
+  ],
+  [
+    "a node:vm Error.prepareStackTrace getter reads the lazy .stack accessor of the same error",
+    `import vm from "node:vm";
+     let e, entered = false;
+     const context = vm.createContext({ readStack() { if (entered) return; entered = true; return e.stack; } });
+     e = vm.runInContext('new Error("x")', context);
+     (function capture() { Error.captureStackTrace(e); })();
+     vm.runInContext('Object.defineProperty(Error, "prepareStackTrace", { get() { readStack(); } })', context);
+     console.log(e.stack.split("\\n")[0] + " | " + /at (\\w+)/.exec(e.stack)?.[1]);`,
+    "Error: x | capture",
+  ],
+])("user JS that runs while .stack is being formatted cannot invalidate the trace: %s", async (_, source, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: expected, signalCode: null });
+  expect(exitCode).toBe(0);
+});
+
 test("Error.prepareStackTrace call sites keep their own file when a hidden frame is on the stack", async () => {
   // A bound function call is a frame with private implementation visibility. JSC omits it from the
   // trace unless showPrivateScriptsInStackTraces is on (debug builds turn it on); Bun then has to
@@ -1222,4 +2047,44 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(stdout.trim()).toEndWith("[eval]:5:14)"); // 2:18 when the lexer resumed on the template literal's first line
     expect(exitCode).toBe(0);
   },
+);
+
+// The message and the frames of a stack trace come from JS. A trace past
+// `WTF::String::MaxLength` (2**31 - 1 characters) aborted the process (exit code
+// 134) while it was formatted. It now keeps the "name: message" header and drops
+// the frames. The length is what is under test, so the child needs a string of
+// about 2 GiB, and the test skips on small machines. The child touches about
+// 6 GB of pages, which takes longer than the default limit in a debug build.
+// `repeat` and not `Buffer.alloc(n, fill).toString()`: for one character at this
+// size it is faster in a debug build (1.6 s against 3.3 s), and it does not hold
+// a second 2 GiB.
+test.skipIf(totalmem() < 10 * 1024 ** 3)(
+  "a stack trace past the string length limit drops its frames instead of aborting the process",
+  async () => {
+    const length = 2 ** 31 - 10;
+    const src = `
+      const long = "q".repeat(${length});
+      const describe = stack => typeof stack + " " + stack.length + " " + JSON.stringify(stack.slice(0, 9));
+      console.log(".stack: " + describe(new Error(long).stack));
+      Bun.gc(true);
+      const frames = [{ toString: () => "frame" }];
+      console.log("default Error.prepareStackTrace: " + describe(Error.prepareStackTrace(new Error(long), frames)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        `.stack: string ${"Error: ".length + length} "Error: qq"`,
+        `default Error.prepareStackTrace: string ${"Error: ".length + length} "Error: qq"`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  30_000,
 );

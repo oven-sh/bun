@@ -173,12 +173,15 @@ impl FallbackHandler {
 
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
-            let (mut unparsed, index): (UnparsedProperty, &mut Option<usize>) = 'unparsed_and_index: {
+            // `filter` and `backdrop-filter` were never tracked before they were typed,
+            // so an earlier declaration survived an unparsed `filter: var(--x)`. Keep it:
+            // a target without custom properties drops the `var()` one and reads it.
+            let (mut unparsed, index, keep_earlier): (UnparsedProperty, &mut Option<usize>, bool) = 'unparsed_and_index: {
                 macro_rules! match_unparsed_unprefixed {
                     ($self_field:ident, $Variant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
                             let newval = val.deep_clone(arena);
-                            break 'unparsed_and_index (newval, $self_field);
+                            break 'unparsed_and_index (newval, $self_field, false);
                         }
                     };
                 }
@@ -196,7 +199,7 @@ impl FallbackHandler {
                                 } else {
                                     val.deep_clone(arena)
                                 };
-                            break 'unparsed_and_index (newval, $self_field);
+                            break 'unparsed_and_index (newval, $self_field, true);
                         }
                     };
                 }
@@ -210,7 +213,7 @@ impl FallbackHandler {
             };
 
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
+            if let (Some(i), false) = (*index, keep_earlier) {
                 dest[i] = Property::Unparsed(unparsed);
             } else {
                 *index = Some(dest.len());

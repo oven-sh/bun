@@ -2092,6 +2092,30 @@ describe("css tests", () => {
       `,
       { chrome: Some(20 << 16) },
     );
+
+    // A later var() value must not erase the earlier declaration either: browsers
+    // without custom properties drop the var() one and read it.
+    prefix_test(
+      ".foo { filter: blur(1px); filter: var(--x) }",
+      `.foo {
+          -webkit-filter: blur(1px);
+          filter: blur(1px);
+          -webkit-filter: var(--x);
+          filter: var(--x);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: blur(1px); backdrop-filter: var(--x) }",
+      `.foo {
+          backdrop-filter: blur(1px);
+          backdrop-filter: var(--x);
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
   });
 
   describe("margin", () => {

@@ -92,11 +92,18 @@ fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
     tags
 }
 
-/// Main entry point. Returns the set of identifier IDs that are fbt/macro operands.
+pub(crate) struct MacroOperands {
+    /// The identifier IDs that are fbt/macro operands. TS: the returned `macroValues`.
+    pub(crate) values: HashSet<IdentifierId>,
+    /// Not in upstream: operands that must print inside the macro call, not `fbt.param()` values.
+    pub(crate) inline: HashSet<IdentifierId>,
+}
+
+/// Main entry point.
 pub(crate) fn memoize_fbt_and_macro_operands_in_same_scope(
     func: &HirFunction,
     env: &mut Environment,
-) -> HashSet<IdentifierId> {
+) -> MacroOperands {
     // Phase 1: Build macro kinds map from built-in FBT tags + custom macros
     let mut macro_kinds: HashMap<Vec<u8>, MacroDefinition> = fbt_tags();
     if let Some(ref custom_macros) = env.config.custom_macros {
@@ -111,7 +118,10 @@ pub(crate) fn memoize_fbt_and_macro_operands_in_same_scope(
     // Phase 3: Reverse data-flow to merge arguments of macro invocations
     let macro_values = merge_macro_arguments(func, env, &mut macro_tags, &macro_kinds);
 
-    macro_values
+    MacroOperands {
+        values: macro_values,
+        inline: macro_tags.iter().map(|(id, _)| id).collect(),
+    }
 }
 
 /// Forward data-flow analysis to identify all macro tags, including

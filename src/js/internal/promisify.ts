@@ -19,6 +19,11 @@ function defineCustomPromisifyArgs(target, args) {
   return args;
 }
 
+interface Promisify {
+  (original: any): any;
+  custom: typeof kCustomPromisifiedSymbol;
+}
+
 var promisify = function promisify(original) {
   validateFunction(original, "original");
   const custom = original[kCustomPromisifiedSymbol];
@@ -67,7 +72,7 @@ var promisify = function promisify(original) {
   Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
   defineCustomPromisify(fn, fn);
   return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
-};
+} as Promisify;
 promisify.custom = kCustomPromisifiedSymbol;
 
 export default {

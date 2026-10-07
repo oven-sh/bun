@@ -4,7 +4,7 @@
 //!   • `bun_runtime` (node:http2 bindings)   — `pub use`d into its
 //!     `h2_frame_parser` module, which layers `WireWriter`-based `write()`
 //!     and `to_js()` on top as local extension traits.
-#![allow(non_camel_case_types, non_upper_case_globals)]
+#![allow(non_camel_case_types)]
 
 // ─── connection / sizing constants ──────────────
 

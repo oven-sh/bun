@@ -1,6 +1,6 @@
 # Regenerates test/expected-durations.json from recent Buildkite runs and
 # uploads it as a build artifact. Attach a weekly schedule to this pipeline in
-# the Buildkite UI (it is not wired into ci.mjs so it never runs on PRs).
+# the Buildkite UI (it is not wired into ci.ts so it never runs on PRs).
 #
 # The runner uses the checked-in copy for sharding; refresh that copy by
 # downloading this artifact and committing it when the shard balance drifts.

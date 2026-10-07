@@ -6,24 +6,24 @@
 #![allow(dead_code)]
 
 /// RFC 9113 §3.4: the 24-octet client connection preface.
-pub const CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+pub(crate) const CONNECTION_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// §4.1: fixed 9-octet frame header.
-pub const FRAME_HEADER_SIZE: usize = 9;
+pub(crate) const FRAME_HEADER_SIZE: usize = 9;
 
 /// §4.2 SETTINGS_MAX_FRAME_SIZE bounds and default.
-pub const MAX_FRAME_SIZE_DEFAULT: u32 = 16_384; // 2^14
-pub const MAX_FRAME_SIZE_LOWER: u32 = 16_384; // 2^14
-pub const MAX_FRAME_SIZE_UPPER: u32 = 16_777_215; // 2^24 - 1
+pub(crate) const MAX_FRAME_SIZE_DEFAULT: u32 = 16_384; // 2^14
+pub(crate) const MAX_FRAME_SIZE_LOWER: u32 = 16_384; // 2^14
+pub(crate) const MAX_FRAME_SIZE_UPPER: u32 = 16_777_215; // 2^24 - 1
 
 /// §6.9.1 flow-control window bounds.
-pub const DEFAULT_WINDOW_SIZE: u32 = 65_535; // 2^16 - 1
-pub const MAX_WINDOW_SIZE: u32 = 2_147_483_647; // 2^31 - 1
+pub(crate) const DEFAULT_WINDOW_SIZE: u32 = 65_535; // 2^16 - 1
+pub(crate) const MAX_WINDOW_SIZE: u32 = 2_147_483_647; // 2^31 - 1
 
 /// RFC 9113 §6 frame type registry (+ RFC 7838 ALTSVC, RFC 8336 ORIGIN).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum FrameType {
+pub(crate) enum FrameType {
     Data = 0x00,
     Headers = 0x01,
     Priority = 0x02,
@@ -39,7 +39,7 @@ pub enum FrameType {
 }
 
 impl FrameType {
-    pub fn from_u8(v: u8) -> Option<FrameType> {
+    pub(crate) fn from_u8(v: u8) -> Option<FrameType> {
         Some(match v {
             0x00 => FrameType::Data,
             0x01 => FrameType::Headers,
@@ -59,15 +59,15 @@ impl FrameType {
 }
 
 /// §6 frame flag bits. Bits are reused across frame types, so they are named generically.
-pub mod flags {
-    pub const ACK: u8 = 0x01; // SETTINGS, PING
-    pub const END_STREAM: u8 = 0x01; // DATA, HEADERS
-    pub const END_HEADERS: u8 = 0x04; // HEADERS, PUSH_PROMISE, CONTINUATION
-    pub const PADDED: u8 = 0x08; // DATA, HEADERS, PUSH_PROMISE
-    pub const PRIORITY: u8 = 0x20; // HEADERS
+pub(crate) mod flags {
+    pub(crate) const ACK: u8 = 0x01; // SETTINGS, PING
+    pub(crate) const END_STREAM: u8 = 0x01; // DATA, HEADERS
+    pub(crate) const END_HEADERS: u8 = 0x04; // HEADERS, PUSH_PROMISE, CONTINUATION
+    pub(crate) const PADDED: u8 = 0x08; // DATA, HEADERS, PUSH_PROMISE
+    pub(crate) const PRIORITY: u8 = 0x20; // HEADERS
 
     #[inline]
-    pub fn has(flags: u8, mask: u8) -> bool {
+    pub(crate) fn has(flags: u8, mask: u8) -> bool {
         flags & mask != 0
     }
 }
@@ -75,7 +75,7 @@ pub mod flags {
 /// RFC 9113 §7 error codes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u32)]
-pub enum ErrorCode {
+pub(crate) enum ErrorCode {
     NoError = 0x0,
     ProtocolError = 0x1,
     InternalError = 0x2,
@@ -94,7 +94,7 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     #[inline]
-    pub fn as_u32(self) -> u32 {
+    pub(crate) fn as_u32(self) -> u32 {
         self as u32
     }
 }
@@ -103,21 +103,21 @@ impl ErrorCode {
 /// errors to JS with one of these so node's `NghttpError` shape (code `ERR_HTTP2_ERROR`, message
 /// `nghttp2_strerror(code)`) can be reproduced exactly.
 /// https://github.com/nghttp2/nghttp2/blob/master/lib/includes/nghttp2/nghttp2.h (nghttp2_error)
-pub mod lib_error {
+pub(crate) mod lib_error {
     /// NGHTTP2_ERR_PROTO — "Protocol error"
-    pub const PROTO: i32 = -505;
+    pub(crate) const PROTO: i32 = -505;
     /// NGHTTP2_ERR_STREAM_CLOSED — "Stream was already closed or invalid"
-    pub const STREAM_CLOSED: i32 = -510;
+    pub(crate) const STREAM_CLOSED: i32 = -510;
     /// NGHTTP2_ERR_BAD_CLIENT_MAGIC — "Received bad client magic byte string"
-    pub const BAD_CLIENT_MAGIC: i32 = -903;
+    pub(crate) const BAD_CLIENT_MAGIC: i32 = -903;
     /// NGHTTP2_ERR_FLOODED — "Flooding was detected in this HTTP/2 session, and it must be closed"
-    pub const FLOODED: i32 = -904;
+    pub(crate) const FLOODED: i32 = -904;
 }
 
 /// RFC 9113 §6.5.2 SETTINGS parameter registry (+ RFC 8441, RFC 9218).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]
-pub enum SettingId {
+pub(crate) enum SettingId {
     HeaderTableSize = 0x1,
     EnablePush = 0x2,
     MaxConcurrentStreams = 0x3,
@@ -129,7 +129,7 @@ pub enum SettingId {
 }
 
 impl SettingId {
-    pub fn from_u16(v: u16) -> Option<SettingId> {
+    pub(crate) fn from_u16(v: u16) -> Option<SettingId> {
         Some(match v {
             0x1 => SettingId::HeaderTableSize,
             0x2 => SettingId::EnablePush,
@@ -146,7 +146,7 @@ impl SettingId {
 
 /// RFC 9113 §4.1 frame header (9 octets, big-endian on the wire).
 #[derive(Clone, Copy, Debug)]
-pub struct FrameHeader {
+pub(crate) struct FrameHeader {
     /// 24-bit payload length.
     pub length: u32,
     pub frame_type: u8,
@@ -157,7 +157,7 @@ pub struct FrameHeader {
 
 impl FrameHeader {
     /// Parse a 9-byte header from `buf` (must be >= 9 bytes), big-endian → host, reserved bit cleared.
-    pub fn parse(buf: &[u8]) -> FrameHeader {
+    pub(crate) fn parse(buf: &[u8]) -> FrameHeader {
         debug_assert!(buf.len() >= FRAME_HEADER_SIZE);
         let length = (buf[0] as u32) << 16 | (buf[1] as u32) << 8 | (buf[2] as u32);
         let frame_type = buf[3];
@@ -172,7 +172,7 @@ impl FrameHeader {
     }
 
     /// Serialize this header into a 9-byte big-endian buffer.
-    pub fn write(&self, out: &mut [u8; FRAME_HEADER_SIZE]) {
+    pub(crate) fn write(&self, out: &mut [u8; FRAME_HEADER_SIZE]) {
         out[0] = (self.length >> 16) as u8;
         out[1] = (self.length >> 8) as u8;
         out[2] = self.length as u8;
@@ -182,7 +182,7 @@ impl FrameHeader {
     }
 
     #[inline]
-    pub fn typ(&self) -> Option<FrameType> {
+    pub(crate) fn typ(&self) -> Option<FrameType> {
         FrameType::from_u8(self.frame_type)
     }
 }
@@ -190,7 +190,7 @@ impl FrameHeader {
 /// Outcome of validating an inbound frame header against §4.2/§6 structural rules
 /// (independent of stream state, which the state machine checks separately).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum HeaderValidation {
+pub(crate) enum HeaderValidation {
     Ok,
     /// Send GOAWAY with this code and close the connection.
     ConnectionError(ErrorCode),
@@ -226,7 +226,7 @@ enum StreamScope {
 /// §4.2 + §6 structural validation of a frame header given the negotiated max frame size:
 /// length bounds, the stream-id 0-vs-nonzero rule, and the fixed-length frame rules.
 /// Does NOT check stream state.
-pub fn validate_header(hdr: &FrameHeader, local_max_frame_size: u32) -> HeaderValidation {
+pub(crate) fn validate_header(hdr: &FrameHeader, local_max_frame_size: u32) -> HeaderValidation {
     let Some(t) = hdr.typ() else {
         // Unknown frame type: caller discards it (§4.1); not an error here.
         return HeaderValidation::Ok;

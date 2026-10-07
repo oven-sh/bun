@@ -32,6 +32,11 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     }
     #[inline]
     fn write(&mut self, buffer: &[u8]) {
+        // Same rule as `bun_io::StreamBuffer::compact`.
+        if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
+            self.list.drain(..self.cursor);
+            self.cursor = 0;
+        }
         self.list.extend_from_slice(buffer);
     }
 }
@@ -89,7 +94,7 @@ pub(crate) fn create_bun_socket_error_to_js(
 // LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
 // crate depends on) shares the single canonical impl instead of carrying a
 // verbatim copy.
-pub use bun_jsc::system_error::verify_error_to_js;
+pub(crate) use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // Declared inline; migrate into `bun_uws_sys` with the rest of the
@@ -119,6 +124,16 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
     uws_ws_get_topics_as_js_array(ssl, ws, global_object)
 }
 
+unsafe extern "C" {
+    /// JSNodeHTTPServerSocket.cpp. Writes through the uWS buffer of the connection and returns whether uWS still holds bytes.
+    fn Bun__NodeHTTPServerSocket__writeBehindResponse(
+        socket: *mut us_socket_t,
+        ssl: bool,
+        data: *const u8,
+        length: usize,
+    ) -> bool;
+}
+
 // ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
 /// # Safety
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
@@ -126,9 +141,12 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
-    // kept for ABI parity with the C++ caller; TLS is now per-socket
-    _ssl: bool,
+    ssl: bool,
     ended: bool,
+    // uWS still holds response bytes: write through its buffer. The caller defers a shutdown (`shutdownAfterResponseDrains`).
+    hold: bool,
+    // A drain call flushes `buffer` (a tunnel). On any other socket the uWS buffer takes what the kernel does not.
+    flushes_buffer_on_drain: bool,
     buffer: *mut us_socket_stream_buffer_t,
     global_object: &JSGlobalObject,
     data: JSValue,
@@ -196,6 +214,19 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
+        // SAFETY: the caller guarantees `socket` is live for the call; the slice is valid for its length.
+        let write_behind_response = |bytes: &[u8]| unsafe {
+            Bun__NodeHTTPServerSocket__writeBehindResponse(socket, ssl, bytes.as_ptr(), bytes.len())
+        };
+        if hold {
+            // What an earlier write still owes goes first.
+            let owed = stream_buffer.slice().len();
+            write_behind_response(stream_buffer.slice());
+            let still_held = write_behind_response(data_slice);
+            stream_buffer.wrote(owed);
+            total_written = owed.saturating_add(data_slice.len());
+            break 'body JSValue::js_boolean(!still_held);
+        }
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
@@ -214,7 +245,13 @@ unsafe extern "C" fn us_socket_buffered_js_write(
             let written: u32 = u32::try_from(socket_ref.write(data_slice).max(0)).unwrap();
             total_written = total_written.saturating_add(written as usize);
             if (written as usize) < data_slice.len() {
-                stream_buffer.write(&data_slice[written as usize..]);
+                let rest = &data_slice[written as usize..];
+                if flushes_buffer_on_drain {
+                    stream_buffer.write(rest);
+                } else {
+                    write_behind_response(rest);
+                    total_written = total_written.saturating_add(rest.len());
+                }
                 break 'body JSValue::FALSE;
             }
         }

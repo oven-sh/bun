@@ -1,8 +1,10 @@
 use core::ffi::c_void;
 
-use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdExt};
+#[cfg(not(windows))]
+use bun_sys::FdExt;
+use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
@@ -14,10 +16,11 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
-pub enum Writable<'a> {
+pub(crate) enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Inherit,
     Ignore,
@@ -96,7 +99,7 @@ impl<'a> Writable<'a> {
     //
     // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
     // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
-    pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
+    pub(crate) fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
@@ -117,13 +120,27 @@ impl<'a> Writable<'a> {
         process.on_stdin_destroyed();
     }
 
+    /// Pumps `stream` into `pipe`, which `init` has just made `subprocess`'s stdin. That is undone if it throws.
+    fn attach_stream(
+        pipe: &mut FileSink,
+        stream: &mut crate::webcore::ReadableStream,
+        subprocess: &Subprocess<'a>,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        pipe.assign_to_stream(stream, global).inspect_err(|_| {
+            subprocess.weak_file_sink_stdin_ptr.set(None);
+            subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
+            subprocess.deref();
+        })
+    }
+
     pub(crate) fn init(
         stdio: &mut Stdio,
         event_loop: &EventLoop,
         subprocess: &mut Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
-    ) -> crate::Result<Writable<'a>> {
+    ) -> JsResult<Writable<'a>> {
         super::assert_stdio_result!(result);
 
         let global = event_loop.global_ref();
@@ -153,11 +170,11 @@ impl<'a> Writable<'a> {
 
                         match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(_err) => {
+                            bun_sys::Result::Err(err) => {
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global)?;
                                 }
-                                return Err(crate::Error::UnexpectedCreatingStdin);
+                                return Err(global.throw_value(err.to_js(global)));
                             }
                         }
                         pipe.writer.with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
@@ -171,17 +188,8 @@ impl<'a> Writable<'a> {
                         });
 
                         if let Stdio::ReadableStream(rs) = stdio {
-                            let assign_result = pipe.assign_to_stream(rs, global);
-                            if let Some(err_val) = assign_result.to_error() {
-                                subprocess.weak_file_sink_stdin_ptr.set(None);
-                                subprocess.update_flags(|f| {
-                                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
-                                });
-                                subprocess.deref();
-                                let _ = global.throw_value(err_val);
-                                return Err(crate::Error::JSError);
-                            }
-                            *promise_for_stream = assign_result;
+                            *promise_for_stream =
+                                Self::attach_stream(pipe, rs, subprocess, global)?;
                         }
 
                         return Ok(Writable::Pipe(pipe_ref));
@@ -215,7 +223,7 @@ impl<'a> Writable<'a> {
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
                 }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
+                Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
@@ -243,13 +251,13 @@ impl<'a> Writable<'a> {
 
                 match pipe.writer.with_mut(|w| w.start(fd, true)) {
                     bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(_err) => {
+                    bun_sys::Result::Err(err) => {
                         // The writer did not take `fd`; nothing else closes it.
                         fd.close();
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
-                        return Err(crate::Error::UnexpectedCreatingStdin);
+                        return Err(global.throw_value(err.to_js(global)));
                     }
                 }
 
@@ -271,15 +279,7 @@ impl<'a> Writable<'a> {
                 });
 
                 if let Stdio::ReadableStream(rs) = stdio {
-                    let assign_result = pipe.assign_to_stream(rs, global);
-                    if let Some(err_val) = assign_result.to_error() {
-                        subprocess.weak_file_sink_stdin_ptr.set(None);
-                        subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-                        subprocess.deref();
-                        let _ = global.throw_value(err_val);
-                        return Err(crate::Error::JSError);
-                    }
-                    *promise_for_stream = assign_result;
+                    *promise_for_stream = Self::attach_stream(pipe, rs, subprocess, global)?;
                 }
 
                 Ok(Writable::Pipe(pipe_ref))
@@ -303,6 +303,7 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)
@@ -324,7 +325,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
         // Take only the parent and project `stdin` here so no two `&mut`
         // overlap at any point.
         match subprocess.stdin.replace(Writable::Ignore) {
@@ -332,6 +333,7 @@ impl<'a> Writable<'a> {
                 subprocess.stdin.set(Writable::Fd(fd));
                 fd.to_js(global_this)
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 subprocess.stdin.set(Writable::Memfd(fd));
                 JSValue::UNDEFINED
@@ -408,7 +410,7 @@ impl<'a> Writable<'a> {
 
     // Note: see `on_close` — the caller passes the parent; deriving it from
     // `&mut self` on `Writable` would be out-of-provenance.
-    pub fn finalize(subprocess: &Subprocess<'a>) {
+    pub(crate) fn finalize(subprocess: &Subprocess<'a>) {
         if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
@@ -427,6 +429,7 @@ impl<'a> Writable<'a> {
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
             }
@@ -440,11 +443,12 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
                 let _ = pipe.end(None);
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;

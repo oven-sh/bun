@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -174,6 +174,123 @@ describe("heapStats() mimalloc integration", () => {
       expect(released, stdout).toBeGreaterThanOrEqual(336);
       expect(purged, stdout).toBeGreaterThanOrEqual(336);
       expect(exitCode).toBe(0);
+    },
+  );
+
+  // Buffers of 96 to 512 KiB live in the allocator's 4 MiB pages, and the free blocks of such a page are only handed back
+  // by an idle sweep of the thread that owns it, two sweeps or more after the page was last allocated from. A work pool
+  // thread swept once, 100 ms after it ran out of work, and then slept for good: what `readFile` had allocated on it and
+  // the collector freed stayed resident for as long as one buffer of the page was alive. It now leaves its heaps to the
+  // allocator's scavenger thread while it sleeps, which comes back for them. Linux only: reads RssAnon. Not ASAN: malloc is
+  // not mimalloc there.
+  test.skipIf(!isLinux || isASAN)(
+    "an idle work pool thread hands back the free blocks of its large pages",
+    async () => {
+      using dir = tempDir("pool-large-pages", {
+        "index.js": `
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { readFile } from "node:fs/promises";
+          const rssAnon = () => Number(/RssAnon:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))[1]) / 1024;
+          // one file for each block size of a 4 MiB page
+          const files = [96, 128, 160, 192, 224, 256, 320, 384, 448, 512].map((kib, i) => {
+            writeFileSync("file" + i, Buffer.alloc(kib * 1024 - 64, 1 + i));
+            return "file" + i;
+          });
+          const start = rssAnon();
+          const kept = [];
+          for (let round = 0; round < 6; round++) {
+            const reads = [];
+            for (const file of files) for (let i = 0; i < 8; i++) reads.push(readFile(file));
+            const buffers = await Promise.all(reads);
+            // one in twelve stays, so that the pages do not become free as a whole
+            for (let i = round; i < buffers.length; i += 12) kept.push(buffers[i]);
+            // the rest is garbage now: neither array keeps it for the collector to find
+            reads.length = buffers.length = 0;
+          }
+          const loaded = rssAnon();
+          Bun.gc(true);
+          const keptMB = kept.reduce((sum, buffer) => sum + buffer.byteLength, 0) / 1048576;
+          const aliveMB = process.memoryUsage().arrayBuffers / 1048576;
+          // Nothing here gives the pool anything to do: a thread that runs a task sweeps again after it.
+          const deadline = performance.now() + 2500;
+          let freeResident;
+          do {
+            await Bun.sleep(50);
+            freeResident = rssAnon() - start - keptMB;
+          } while (freeResident > 12 && performance.now() < deadline);
+          console.log(JSON.stringify({ start, loaded, keptMB, aliveMB, freeResident }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        // enough threads for the reads of a round to be spread over several heaps, whatever the machine
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { loaded, start, keptMB, aliveMB, freeResident } = JSON.parse(stdout);
+      // 480 buffers of 300 KB on average were read, 42 of them are alive, and the collector freed the others
+      expect(loaded - start, stdout).toBeGreaterThan(60);
+      expect(keptMB, stdout).toBeGreaterThan(8);
+      expect(aliveMB, stdout).toBeLessThan(keptMB + 2);
+      // 38 MB and more without the handoff
+      expect(freeResident, stdout).toBeLessThanOrEqual(12);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The idle sweep hands the free blocks of the allocator's 4 MiB pages back two sweeps after the page was last allocated
+  // from, and a server sits idle between two requests for far longer than that: it took the buffers of every request out
+  // of discarded memory again, a page fault for each 4 KiB of them. Most of those buffers are in pages with no other
+  // block in use, which were freed outright and made anew. A few MB of the pages that were used last now stay.
+  // Linux only: reads the minor faults of the server from /proc. Not ASAN: malloc is not mimalloc there.
+  test.skipIf(!isLinux || isASAN)(
+    "a server that gets a request now and then does not fault its buffers in again for every request",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const server = Bun.serve({ port: 0, fetch: async req => new Response(await req.arrayBuffer()) });
+          console.log(server.port);
+          `,
+        ],
+        // An epoch of the sweep lasts 10 ms here instead of 100, so that the 50 ms between two requests are what half a
+        // second is by default: the two epochs for which free blocks stay in any case are long over. And the collector
+        // looks every 100 ms instead of every second: until it has freed the buffers of the first requests, every
+        // request gets new ones, which no allocator has in memory yet.
+        env: { ...bunEnv, MIMALLOC_PURGE_HOLES_MIN_INTERVAL: "10", BUN_GC_TIMER_INTERVAL: "100" },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = proc.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      const port = Number(new TextDecoder().decode(value).trim());
+      expect(port).toBeGreaterThan(0);
+      // the minor faults of the server so far: the tenth field, and the second one can have spaces in it
+      const faults = async () => {
+        const stat = await Bun.file(`/proc/${proc.pid}/stat`).text();
+        return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[7]);
+      };
+      const body = new Uint8Array(256 * 1024).fill(7);
+      const request = async () => {
+        const response = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body });
+        expect((await response.arrayBuffer()).byteLength).toBe(body.byteLength);
+        // The pause is the input of this test and not a wait for something: the server is to go idle and be swept.
+        await Bun.sleep(50);
+      };
+      for (let i = 0; i < 6; i++) await request();
+      const before = await faults();
+      const requests = 12;
+      for (let i = 0; i < requests; i++) await request();
+      const perRequest = ((await faults()) - before) / requests;
+      // The two 256 KiB buffers of a request are 128 pages of 4 KiB: about a hundred faults for every request when the
+      // sweeps in between give the buffers back, one or two when they leave them.
+      expect(perRequest).toBeLessThan(20);
     },
   );
 });

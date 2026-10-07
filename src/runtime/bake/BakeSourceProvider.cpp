@@ -19,6 +19,11 @@
 namespace Bake {
 
   
+extern "C" void* BakeSourceProvider__getBunVM(SourceProvider* provider)
+{
+    return provider->bunVM();
+}
+
 extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider)
 {
     return Bun::toStringView(provider->source());

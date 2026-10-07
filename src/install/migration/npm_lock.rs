@@ -107,6 +107,8 @@ struct Migrator<'a> {
     link_entries: DynamicBitSet,
     shadowed: DynamicBitSet,
     skipped_external: DynamicBitSet,
+    /// Targets the root or a workspace depends on directly.
+    local_declared: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -141,6 +143,7 @@ pub(super) fn migrate_packages(
         link_entries: DynamicBitSet::init_empty(entry_count)?,
         shadowed: DynamicBitSet::init_empty(entry_count)?,
         skipped_external: DynamicBitSet::init_empty(entry_count)?,
+        local_declared: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -724,9 +727,20 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
+                // Trust a `file:` spec only in a `file:` package the root or a workspace
+                // declares, not in a folder a registry package ships (`is_trusted_folder_dependency`).
+                let declares_folder = res_tag == resolution::Tag::Folder
+                    && version_tag == DepTag::Folder
+                    && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                if let Some((t, _)) = found
+                    && is_local
+                {
+                    self.local_declared.set(t as usize);
+                }
                 if let Some((t, through_link)) = found
                     && !is_local
+                    && !declares_folder
                     && self.is_external_folder(t, through_link)
                 {
                     self.skip_external(t, name);

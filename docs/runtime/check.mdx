@@ -130,6 +130,8 @@ See [TypeScript 6 and 7](/typescript-6) for the `tsconfig.json` that Bun recomme
 
 Install your dependencies, then run `bun check`. A type error fails the job.
 
+If your projects are connected by `references`, run [`bun check -b`](#every-project) to check all of them.
+
 ### GitHub Actions
 
 ```yaml .github/workflows/typecheck.yml icon="file-code"
@@ -618,7 +620,7 @@ If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bu
 
 ## Compiler options as flags
 
-Every compiler option works as a flag, as it does for `tsc`. A flag overrides `tsconfig.json`, including in referenced projects. Use a flag to try a stricter option before you commit to it.
+Every compiler option works as a flag, as it does for `tsc`. A flag overrides `tsconfig.json`. Use a flag to try a stricter option before you commit to it.
 
 ```bash terminal icon="terminal"
 bun check --noUncheckedIndexedAccess
@@ -627,6 +629,12 @@ bun check --target es2022
 ```
 
 Option names are not case-sensitive. `--target=es2022` is the same as `--target es2022`.
+
+A flag applies to the projects that `bun check` reports. With [`-b`](#every-project), that includes every referenced project.
+
+```bash terminal icon="terminal"
+bun check -b --strict
+```
 
 ## Differences from `tsc`
 
@@ -640,6 +648,7 @@ These differences are intentional:
 
 - **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files.
 - **Referenced projects don't have to be built.** `tsc` without `-b` reads the `.d.ts` files that an earlier build wrote, and reports TS6305 if there are none. `bun check` reads the source files.
+- **Compiler options work with `-b`.** `tsc -b --strict` reports TS5094. `bun check -b --strict` applies the option to every project.
 - **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.
 - **Paths work next to a `tsconfig.json`.** `tsc src/index.ts` reports TS5112 if there is a `tsconfig.json`. `bun check src/index.ts` [checks the file with it](#some-files-or-directories).
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).

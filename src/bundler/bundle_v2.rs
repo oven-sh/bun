@@ -6721,8 +6721,8 @@ pub mod bv2_impl {
                 // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
                 // deref once, so the `&mut self` borrow doesn't span the rest of the loop
                 // body.
-                // `import_graph` is where the import goes. A failure is filed under the importer's graph.
-                let (transpiler_ptr, import_graph, target): (
+                // `bake_graph` is where the import goes. A failure is filed under the importer's graph.
+                let (transpiler_ptr, bake_graph, target): (
                     *mut Transpiler<'a>,
                     bake::Graph,
                     options::Target,
@@ -7093,7 +7093,7 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        if let Some(entry) = dev_server.is_file_cached(path.text, import_graph) {
+                        if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
                             let rel = bun_paths::resolve_path::relative_platform::<
                                 bun_paths::resolve_path::platform::Loose,
                                 false,

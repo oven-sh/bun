@@ -136,6 +136,17 @@ impl File {
         self.kind
     }
 
+    /// The server-side graphs that a re-bundle of this file goes to. The server
+    /// parse of a client component boundary queues its SSR copy itself.
+    fn server_graphs(&self) -> impl Iterator<Item = bake::Graph> {
+        [
+            self.is_rsc.then_some(bake::Graph::Server),
+            (self.is_ssr && !self.is_client_component_boundary).then_some(bake::Graph::Ssr),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
     /// `ServerFile.stopsDependencyTrace` / `ClientFile.stopsDependencyTrace`.
     #[inline]
     fn stops_dependency_trace(&self, side: Side) -> bool {
@@ -216,11 +227,10 @@ pub(crate) enum RouteKind {
 
 #[derive(Copy, Clone)]
 pub(crate) enum InsertFailureKey<'a> {
-    /// A file the graph may not hold yet, with the graph it was parsed for.
+    /// A file the graph may not hold yet, with the graph the failed task was queued for.
     AbsPath(&'a [u8], bake::Graph),
     /// Raw file index into `bundled_files` (side is implied by the graph the
-    /// caller is invoking `insert_failure` on). `insert_stale` recorded which
-    /// graph the file is in when it handed out the index.
+    /// caller is invoking `insert_failure` on). The record keeps its graph flags.
     Index(u32),
 }
 
@@ -1553,25 +1563,35 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // Rebuild all dependencies.
-        let target = match SIDE {
-            Side::Client => bun_ast::Target::Browser,
-            Side::Server => bun_ast::Target::Bun,
-        };
         let mut it = self.edge_lists[index.get() as usize].first_dep;
         while let Some(edge_index) = it {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
-            let loader = self.bundled_files.values()[dep.dependency.get() as usize]
+            let file = &self.bundled_files.values()[dep.dependency.get() as usize];
+            let loader = file
                 .html_route_bundle_index
                 .is_some()
                 .then_some(bun_ast::Loader::Html);
-            bun_core::handle_oom(
-                bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
-                    key, target, loader,
-                ),
-            );
+            let mut enqueue = |target| {
+                bun_core::handle_oom(
+                    bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
+                        key, target, loader,
+                    ),
+                )
+            };
+            match SIDE {
+                Side::Client => enqueue(bun_ast::Target::Browser),
+                Side::Server => {
+                    for graph in file.server_graphs() {
+                        enqueue(match graph {
+                            bake::Graph::Ssr => bun_ast::Target::ServerComponentsSsr,
+                            _ => bun_ast::Target::Bun,
+                        });
+                    }
+                }
+            }
         }
 
         // Bust the resolution cache of the dir containing this file.
@@ -1677,12 +1697,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 },
                 Side::Server => {
-                    let f = &self.bundled_files.values()[index];
-                    if f.is_rsc {
-                        entry_points.append_js(owned_path, bake::Graph::Server)?;
-                    }
-                    if f.is_ssr && !f.is_client_component_boundary {
-                        entry_points.append_js(owned_path, bake::Graph::Ssr)?;
+                    for graph in self.bundled_files.values()[index].server_graphs() {
+                        entry_points.append_js(owned_path, graph)?;
                     }
                 }
             }

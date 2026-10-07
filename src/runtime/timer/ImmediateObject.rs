@@ -13,7 +13,7 @@ super::impl_timer_object!(ImmediateObject, ImmediateObject, "Immediate");
 impl ImmediateObject {
     pub(crate) fn init(
         cx: &bun_jsc::JsThread<'_>,
-        id: i32,
+        id: u64,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {

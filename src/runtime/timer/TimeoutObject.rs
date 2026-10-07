@@ -12,7 +12,7 @@ super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
 impl TimeoutObject {
     pub(crate) fn init(
         cx: &bun_jsc::JsThread<'_>,
-        id: i32,
+        id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,

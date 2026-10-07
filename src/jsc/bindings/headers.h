@@ -658,7 +658,6 @@ extern "C" SYSV_ABI void Bun__ConsoleObject__timeStamp(void* arg0, JSC::JSGlobal
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearImmediate(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearInterval(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__clearTimeout(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-ZIG_DECL int32_t Bun__Timer__getNextID();
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setInterval(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__setTimeout(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue callback, JSC::EncodedJSValue arguments, JSC::EncodedJSValue countdown);
 ZIG_DECL JSC::EncodedJSValue Bun__Timer__sleep(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue promise, JSC::EncodedJSValue countdown);

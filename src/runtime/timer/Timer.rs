@@ -17,26 +17,13 @@ use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
     EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
-use crate::jsc_hooks::{timer_all, timer_all_mut};
+use crate::jsc_hooks::timer_all_mut;
 
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
 // ════════════════════════════════════════════════════════════════════════════
 
 impl All {
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__Timer__getNextID() -> i32 {
-        let all = timer_all();
-        if all.is_null() {
-            return 0;
-        }
-        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
-        unsafe {
-            (*all).last_id = (*all).last_id.wrapping_add(1);
-            (*all).last_id
-        }
-    }
-
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
@@ -193,8 +180,7 @@ impl All {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
-        let id = all.last_id;
-        all.last_id = all.last_id.wrapping_add(1);
+        let id = all.next_id();
 
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
@@ -221,8 +207,7 @@ impl All {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
         let all = timer_all_mut();
-        let id = all.last_id;
-        all.last_id = all.last_id.wrapping_add(1);
+        let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         Ok(ImmediateObject::init(cx, id, wrapped_callback, arguments))
@@ -237,8 +222,7 @@ impl All {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
-        let id = all.last_id;
-        all.last_id = all.last_id.wrapping_add(1);
+        let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         let countdown_int = all.js_value_to_countdown(
@@ -266,8 +250,7 @@ impl All {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
-        let id = all.last_id;
-        all.last_id = all.last_id.wrapping_add(1);
+        let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         let countdown_int = all.js_value_to_countdown(
@@ -287,11 +270,11 @@ impl All {
     }
 
     /// The id a JS number names, whether JSC holds it as an int32 or as a double.
-    fn timer_id_from_number(value: JSValue) -> Option<i32> {
+    fn timer_id_from_number(value: JSValue) -> Option<u64> {
         let number = value.as_number();
-        // `as` saturates and maps NaN to 0; the round trip rejects those and fractions.
-        let id = number as i32;
-        (f64::from(id) == number).then_some(id)
+        // `as` saturates and maps NaN to 0: the range and round trip reject those and fractions.
+        let id = number as i64;
+        ((1..=bun_jsc::MAX_SAFE_INTEGER).contains(&id) && id as f64 == number).then_some(id as u64)
     }
 
     /// The timer `id` names for the running script, removed from the map
@@ -300,7 +283,7 @@ impl All {
         &mut self,
         vm: &VirtualMachine,
         context: &bun_jsc::ScriptExecutionContext,
-        id: i32,
+        id: u64,
     ) -> Option<*mut TimeoutObject> {
         let (map, idx) = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             (&mut self.maps.set_timeout, idx)
@@ -359,8 +342,8 @@ impl All {
                 //
                 // The reason is that in Node.js this function's parameter is used for an array
                 // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
-                let parsed: i32 = {
-                    let mut accumulator: i32 = 0;
+                let parsed: u64 = {
+                    let mut accumulator: u64 = 0;
                     // We can handle all encodings the same way since the only permitted characters
                     // are ASCII.
                     macro_rules! parse_slice {
@@ -380,12 +363,11 @@ impl All {
                                     Some(v) => v,
                                     None => return Ok(()),
                                 };
-                                accumulator = match accumulator
-                                    .checked_add(i32::try_from(c - '0' as u32).expect("int cast"))
-                                {
-                                    Some(v) => v,
-                                    None => return Ok(()),
-                                };
+                                accumulator =
+                                    match accumulator.checked_add(u64::from(c - '0' as u32)) {
+                                        Some(v) => v,
+                                        None => return Ok(()),
+                                    };
                             }
                         }};
                     }
@@ -598,5 +580,26 @@ pub(crate) mod internal_bindings {
         // bun_jsc::JSValue has no `js_number_from_int64`; route via
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
+    }
+
+    /// `timerInternals.setNextTimerId(id)`. Forward only: an id must not repeat.
+    #[bun_jsc::host_fn]
+    pub(crate) fn set_next_timer_id(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let current = timer_all_mut().last_id;
+        let id = global_this.validate_integer_range::<u64>(
+            call_frame.argument(0),
+            current,
+            bun_jsc::IntegerRange {
+                min: i128::from(current),
+                max: i128::from(bun_jsc::MAX_SAFE_INTEGER),
+                field_name: b"id",
+                always_allow_zero: false,
+            },
+        )?;
+        timer_all_mut().last_id = id;
+        Ok(JSValue::UNDEFINED)
     }
 }

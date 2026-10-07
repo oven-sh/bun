@@ -102,6 +102,48 @@ impl Plan {
         }
     }
 
+    /// Takes out of the plan a folder that a refused link leads to: it also holds the entries of the workspace behind the link.
+    fn spare_link_targets(&mut self) {
+        if self.linked_folders.is_empty() {
+            return;
+        }
+        let id = |st: sys::Stat| (st.st_dev as u64, st.st_ino as u64);
+        let targets: Vec<(u64, u64)> = self
+            .linked_folders
+            .iter()
+            .filter_map(|link| {
+                sys::stat(ZStr::from_slice_with_nul(&zname(link)))
+                    .ok()
+                    .map(id)
+            })
+            .collect();
+        let mut spared: Vec<usize> = Vec::new();
+        for (idx, folder) in self.folders.iter_mut().enumerate() {
+            let (FolderKind::NodeModules, Some(dir)) = (&folder.kind, &folder.dir) else {
+                continue;
+            };
+            if sys::fstat(dir.fd())
+                .ok()
+                .map(id)
+                .is_some_and(|folder_id| targets.contains(&folder_id))
+            {
+                spared.push(idx);
+                folder.touched = false;
+            }
+        }
+        if spared.is_empty() {
+            return;
+        }
+        let folders = &self.folders;
+        self.removals.retain(|removal| {
+            let folder = match folders[removal.folder].kind {
+                FolderKind::Scope { parent } => parent,
+                _ => removal.folder,
+            };
+            !spared.contains(&folder)
+        });
+    }
+
     fn sorted_linked_folders(&mut self) -> &[Box<[u8]>] {
         sort_names(&mut self.linked_folders);
         self.linked_folders.dedup();
@@ -302,6 +344,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
+    plan.spare_link_targets();
     // A folder the command was asked to prune and did not: the rest is pruned, and the exit code is 1.
     let refused = !plan.linked_folders.is_empty();
     if refused && !quiet {
@@ -1512,6 +1555,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         );
     }
 
+    plan.spare_link_targets();
     if !quiet && !plan.linked_folders.is_empty() {
         for folder in plan.sorted_linked_folders() {
             bun_core::warn!(

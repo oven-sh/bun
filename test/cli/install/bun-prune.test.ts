@@ -3446,6 +3446,54 @@ test.concurrent("isolated: the store keeps an entry bun.lock dropped while a wor
   expect(exitCode).toBe(1);
 });
 
+// An install writes a workspace's entries through the link. The folder the link leads to is then not pruned either.
+test.concurrent("isolated: the root keeps what an install wrote into it through a workspace's link", async () => {
+  const dir = await setupWorkspaces("isolated", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  const nm = join(dir, "node_modules");
+  const workspaceModules = join(dir, "packages", "a", "node_modules");
+  rmSync(workspaceModules, { recursive: true, force: true });
+  symlinkSync(nm, workspaceModules, "junction");
+  await install(dir, "--linker", "isolated");
+  expect(isSymlink(join(nm, "a-dep"))).toBeTrue();
+  plant(dir, "node_modules/stray-root");
+  const installed = readdirSync(nm).toSorted();
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+  expect(lines(stdout).at(-1)).toBe(NOTHING_ELSE(5, 2));
+  expect(readdirSync(nm).toSorted()).toEqual(installed);
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent(
+  "hoisted: a sibling's folder keeps what an install wrote into it through a workspace's link",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } },
+      packages: { a: { dependencies: { "what-bin": "1.5.0" } }, b: { dependencies: { "no-deps": "2.0.0" } } },
+    });
+    const siblingModules = join(dir, "packages", "b", "node_modules");
+    const workspaceModules = join(dir, "packages", "a", "node_modules");
+    rmSync(workspaceModules, { recursive: true, force: true });
+    symlinkSync(siblingModules, workspaceModules, "junction");
+    await install(dir, "--linker", "hoisted");
+    const versions = async () => ({
+      "no-deps": (await file(join(siblingModules, "no-deps", "package.json")).json()).version,
+      "what-bin": (await file(join(siblingModules, "what-bin", "package.json")).json()).version,
+    });
+    expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+    expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+    expect(lines(stdout).at(-1)).toBe(NOTHING_ELSE(6, 2));
+    expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+    expect(exitCode).toBe(1);
+  },
+);
+
 test.concurrent("hoisted: a nested copy left behind by an override to a tarball is removed", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
   const nm = join(dir, "node_modules");

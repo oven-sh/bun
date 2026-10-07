@@ -79,6 +79,10 @@ impl FallbackHandler {
                         .targets
                         .prefixes(*prefix, css::prefixes::Feature::$feature);
 
+                    // Fallbacks are generated only when no earlier declaration of this
+                    // property exists, typed or unparsed (`var()`). An earlier one is the
+                    // author's own fallback: generating one after it would override it in
+                    // every browser without the newer color (lightningcss#109).
                     if $self_field.is_none() {
                         let fallbacks = val.get_fallbacks(arena, &context.targets);
                         let has_fallbacks = fallbacks.len() > 0;

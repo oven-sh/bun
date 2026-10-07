@@ -118,7 +118,7 @@ impl Plan {
             })
             .collect();
         let mut spared: Vec<usize> = Vec::new();
-        for (idx, folder) in self.folders.iter_mut().enumerate() {
+        for (idx, folder) in self.folders.iter().enumerate() {
             let (FolderKind::NodeModules, Some(dir)) = (&folder.kind, &folder.dir) else {
                 continue;
             };
@@ -128,11 +128,29 @@ impl Plan {
                 .is_some_and(|folder_id| targets.contains(&folder_id))
             {
                 spared.push(idx);
-                folder.touched = false;
             }
         }
         if spared.is_empty() {
             return;
+        }
+        // The folders of the packages in a spared folder go with it.
+        let led_to = spared.len();
+        for (idx, folder) in self.folders.iter().enumerate() {
+            let is_below = |above: &[u8]| {
+                folder.path.len() > above.len()
+                    && folder.path.starts_with(above)
+                    && folder.path[above.len()] == SEP
+            };
+            if matches!(folder.kind, FolderKind::NodeModules)
+                && spared[..led_to]
+                    .iter()
+                    .any(|&at| is_below(&self.folders[at].path))
+            {
+                spared.push(idx);
+            }
+        }
+        for &idx in &spared {
+            self.folders[idx].touched = false;
         }
         let folders = &self.folders;
         self.removals.retain(|removal| {

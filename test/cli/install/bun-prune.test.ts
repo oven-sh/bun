@@ -3459,14 +3459,46 @@ test.concurrent("isolated: the root keeps what an install wrote into it through 
   await install(dir, "--linker", "isolated");
   expect(isSymlink(join(nm, "a-dep"))).toBeTrue();
   plant(dir, "node_modules/stray-root");
+  const scopedStray = plant(dir, "node_modules/@stray/scoped");
   const installed = readdirSync(nm).toSorted();
 
   const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
   expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
-  expect(lines(stdout).at(-1)).toBe(NOTHING_ELSE(5, 2));
+  expect(lines(stdout).at(-1)).toBe(NOTHING_ELSE(6, 2));
   expect(readdirSync(nm).toSorted()).toEqual(installed);
+  expect(existsSync(scopedStray)).toBeTrue();
   expect(exitCode).toBe(1);
 });
+
+// `a`'s one-dep has its own no-deps below it. Through the link that copy lands below `b`'s one-dep, in a folder of its own.
+test.concurrent(
+  "hoisted: a folder below a sibling's package keeps what an install wrote into it through a link",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "one-dep": "npm:a-dep@1.0.1", "no-deps": "1.0.1" } },
+      packages: {
+        a: { dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } },
+        b: { dependencies: { "one-dep": "1.0.0" } },
+      },
+    });
+    const siblingModules = join(dir, "packages", "b", "node_modules");
+    const workspaceModules = join(dir, "packages", "a", "node_modules");
+    rmSync(workspaceModules, { recursive: true, force: true });
+    symlinkSync(siblingModules, workspaceModules, "junction");
+    await install(dir, "--linker", "hoisted");
+    const versions = async () => ({
+      "no-deps": (await file(join(siblingModules, "no-deps", "package.json")).json()).version,
+      "one-dep/no-deps": (await file(join(siblingModules, "one-dep", "node_modules", "no-deps", "package.json")).json())
+        .version,
+    });
+    expect(await versions()).toEqual({ "no-deps": "2.0.0", "one-dep/no-deps": "1.0.1" });
+
+    const { stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+    expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+    expect(await versions()).toEqual({ "no-deps": "2.0.0", "one-dep/no-deps": "1.0.1" });
+    expect(exitCode).toBe(1);
+  },
+);
 
 test.concurrent(
   "hoisted: a sibling's folder keeps what an install wrote into it through a workspace's link",

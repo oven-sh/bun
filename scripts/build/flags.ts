@@ -822,6 +822,11 @@ export const defines: Flag[] = [
     desc: "--disallow-code-generation-from-strings=strict as a compile-time constant",
   },
   {
+    flag: "BUN_DISABLE_WEBASSEMBLY=1",
+    when: c => !c.webAssembly,
+    desc: "No WebAssembly global: JSC's useWasm option is always false",
+  },
+  {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
     flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
     when: c => c.debug && !c.ci,

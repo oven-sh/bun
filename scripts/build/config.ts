@@ -144,6 +144,11 @@ export interface Config {
    * binary lowers it, and what it guards is compiled out.
    */
   disallowCodeGenerationFromStrings: boolean;
+  /**
+   * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
+   * false whatever `BUN_JSC_useWasm` says.
+   */
+  webAssembly: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -360,6 +365,7 @@ export interface PartialConfig {
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
   disallowCodeGenerationFromStrings?: boolean;
+  webAssembly?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -1295,6 +1301,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     fuzzilli,
     socketFaultInjection,
     disallowCodeGenerationFromStrings: partial.disallowCodeGenerationFromStrings ?? false,
+    webAssembly: partial.webAssembly ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1668,6 +1675,7 @@ export function formatConfig(cfg: Config, exe: string): string {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
   if (cfg.disallowCodeGenerationFromStrings) features.push("disallow-code-generation-from-strings");
+  if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

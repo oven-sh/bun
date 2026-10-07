@@ -452,6 +452,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   fuzzilli: "boolean",
   socketFaultInjection: "boolean",
   disallowCodeGenerationFromStrings: "boolean",
+  webAssembly: "boolean",
   unifiedSources: "boolean",
   archiveDeps: "boolean",
   timeTrace: "boolean",

@@ -728,8 +728,8 @@ impl DirEntry {
         }
     }
 
-    /// For a "not found" diagnostic: the on-disk name that `base` (or `base`
-    /// plus a common source extension) would have matched if case folded.
+    /// Error path: the listed name that `base`, or `base` plus a source
+    /// extension, differs from only in case.
     pub fn case_near_miss(&self, base: &[u8]) -> Option<&'static [u8]> {
         Self::debug_assert_entries_mutex_held();
         if self.case_verdict() != CaseVerdict::Exact {

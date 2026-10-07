@@ -1862,12 +1862,9 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
-    /// Logs resolver errors that `resolve()` returns without writing to any
-    /// log so `has_errors()` actually fires. Returns `true` when `err` is one
-    /// of those; shared by `run_resolver` and `resolve_import_records`.
+    /// Error-path suffix naming the listed file that differs from
+    /// `specifier` only in case, or empty.
     #[cold]
-    /// Suffix for a "Could not resolve" error when the cached listing holds
-    /// a file that differs from the specifier only in case. Empty otherwise.
     fn case_near_miss_hint(specifier: &[u8], source: Option<&bun_ast::Source>) -> Vec<u8> {
         source
             .and_then(|source| bun_paths::dirname(source.path.text))
@@ -1882,6 +1879,10 @@ pub mod bv2_impl {
             .unwrap_or_default()
     }
 
+    /// Logs resolver errors that `resolve()` returns without writing to any
+    /// log so `has_errors()` actually fires. Returns `true` when `err` is one
+    /// of those; shared by `run_resolver` and `resolve_import_records`.
+    #[cold]
     pub(crate) fn log_unhandled_resolve_error(
         log: &mut bun_ast::Log,
         source: Option<&bun_ast::Source>,

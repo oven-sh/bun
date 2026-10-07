@@ -2454,9 +2454,8 @@ pub mod cache {
 
 pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
-/// For a relative or absolute `specifier` that did not resolve from
-/// `source_dir`: the same specifier respelled with the on-disk name, when the
-/// cached listing holds a file that differs from it only in case. Cold path.
+/// Error path: `specifier` respelled with the listed name it differs from
+/// only in case, if the cached listing of its directory holds one.
 pub fn case_near_miss(specifier: &[u8], source_dir: &[u8]) -> Option<Vec<u8>> {
     if !(specifier.starts_with(b"./")
         || specifier.starts_with(b"../")

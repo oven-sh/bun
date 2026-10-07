@@ -1064,6 +1064,22 @@ public:
         httpResponseData->onTimeout = nullptr;
         return this;
     }
+
+    /* Remove the handlers that were attached with this user data. A handler that another owner attached since stays. */
+    void clearHandlersOf(void* userData) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        if (httpResponseData->writableUserData == userData) {
+            httpResponseData->onWritable = nullptr;
+            httpResponseData->writableUserData = nullptr;
+        }
+        if (httpResponseData->userData == userData) {
+            httpResponseData->onAborted = nullptr;
+            httpResponseData->onTimeout = nullptr;
+            httpResponseData->inStream = nullptr;
+            httpResponseData->userData = nullptr;
+        }
+    }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
     void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) {
         HttpResponseData<SSL> *data = getHttpResponseData();

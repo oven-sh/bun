@@ -1479,7 +1479,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                 };
 
-                // A pipelined response stays queued: `raw_response` describes the one ahead of it.
+                // A pipelined response stays queued: the connection's state describes the one ahead of it.
                 let threw_while_queued = !node_http_response.is_null()
                     // SAFETY: see `nhr` above.
                     && unsafe { &*node_http_response }.mark_dispatch_threw_if_queued();
@@ -1490,7 +1490,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let nhr_flags = nhr.flags.get();
                     if !nhr_flags.contains(NhrFlags::UPGRADED) && !nhr.is_socket_closed_or_closing()
                     {
-                        if let Some(raw) = nhr.raw_response.get() {
+                        if let Some(raw) = nhr.writer() {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
@@ -1525,7 +1525,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let nhr = unsafe { &*node_http_response };
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
-                if let Some(raw) = nhr.raw_response.get() {
+                if let Some(raw) = nhr.reader() {
                     if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                         && raw.state().is_response_pending()
                     {
@@ -1545,7 +1545,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the
-                // handler; `raw_response` is gone and no further uws abort/end
+                // handler; the connection is gone and no further uws abort/end
                 // callback will fire on it, so the IS_REQUEST_PENDING ref
                 // (one of the initial 3) would otherwise strand and leak the
                 // box. Release it now and balance the server's

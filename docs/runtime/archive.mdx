@@ -194,7 +194,7 @@ for (const [path, file] of files) {
 
 Each `File` object includes:
 
-- `name` - The file path within the archive (always uses forward slashes `/` as separators)
+- `name` - The file path as the archive stores it
 - `size` - File size in bytes
 - `lastModified` - Modification timestamp
 - Standard `Blob` methods such as `text()`, `arrayBuffer()`, and `stream()`
@@ -269,7 +269,7 @@ if (matches.size === 0) {
 
 ### Filtering with Glob Patterns
 
-Pass a glob pattern to filter which files are returned:
+Pass a glob pattern to filter which files are returned. Bun matches patterns against the normalized path of each entry, which is the path that `extract()` writes: forward slashes, no leading `./`. The keys of the `Map` are the paths as the archive stores them:
 
 ```ts
 // Get only TypeScript files

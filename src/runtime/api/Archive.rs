@@ -1052,6 +1052,11 @@ impl FilesContext {
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
+        let mut name_buf = self
+            .glob_patterns
+            .as_ref()
+            .map(|_| bun_paths::path_buffer_pool::get());
+
         loop {
             let entry_ref = match archive.next_entry() {
                 Ok(Some(entry)) => entry,
@@ -1072,9 +1077,10 @@ impl FilesContext {
             #[cfg(windows)]
             let pathname: &[u8] = &pathname_owned;
             // Apply glob pattern filtering (supports both positive and negative patterns)
-            if let Some(patterns) = &self.glob_patterns {
-                if !match_glob_patterns(patterns, pathname) {
-                    continue;
+            if let (Some(patterns), Some(name_buf)) = (&self.glob_patterns, &mut name_buf) {
+                match NormalizedName::new(pathname, &mut name_buf[..]) {
+                    Some(name) if match_glob_patterns(patterns, &name) => {}
+                    _ => continue,
                 }
             }
 
@@ -1259,11 +1265,28 @@ pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     true
 }
 
+/// The name of an entry as `extract()` writes it: no "./", no repeated separator, no backslash.
+/// A glob pattern sees this name only, so `files(glob)` and `extract(dir, { glob })` select the same entries.
+pub(crate) struct NormalizedName<'a>(&'a bun_core::ZStr);
+
+impl<'a> NormalizedName<'a> {
+    /// `None` for a stored name that does not fit `buf`.
+    fn new(stored: &[u8], buf: &'a mut [u8]) -> Option<Self> {
+        if stored.len() >= buf.len() {
+            return None;
+        }
+        Some(Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, buf)))
+    }
+}
+
 /// Match a path against multiple glob patterns with support for negative patterns.
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], name: &NormalizedName<'_>) -> bool {
+    let pathname = name.0.as_bytes();
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
@@ -1330,6 +1353,7 @@ fn extract_to_disk_filtered(
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
     loop {
         let entry_ref = match archive.next_entry() {
@@ -1339,23 +1363,19 @@ fn extract_to_disk_filtered(
         };
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let raw_pathname_z = entry_ref.pathname();
+        let raw_pathname = entry_ref.pathname().as_bytes();
         #[cfg(windows)]
-        let raw_pathname_zbox = match entry_pathname_utf8(entry_ref) {
-            Ok(name) => ZBox::from_vec_with_nul(name),
+        let raw_pathname_owned = match entry_pathname_utf8(entry_ref) {
+            Ok(name) => name,
             Err(_) => return ExtractResult::Err(ExtractError::ReadError),
         };
         #[cfg(windows)]
-        let raw_pathname_z = raw_pathname_zbox.as_zstr();
-        let raw_pathname = raw_pathname_z.as_bytes();
+        let raw_pathname: &[u8] = &raw_pathname_owned;
 
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        if raw_pathname.len() >= normalized_buf.len() {
+        let Some(name) = NormalizedName::new(raw_pathname, &mut normalized_buf[..]) else {
             continue;
-        }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        };
+        let pathname_z = name.0;
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
@@ -1367,7 +1387,7 @@ fn extract_to_disk_filtered(
         // Positive patterns: at least one must match
         // Negative patterns: if any matches, the file is excluded
         if let Some(patterns) = glob_patterns {
-            if !match_glob_patterns(patterns, pathname) {
+            if !match_glob_patterns(patterns, &name) {
                 continue;
             }
         }

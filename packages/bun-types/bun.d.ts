@@ -10427,9 +10427,9 @@ declare module "bun" {
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
-     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
-     *   to use forward slashes (`/`).
-     * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
+     *   including negation patterns (prefixed with `!`). Patterns are matched against the normalized path
+     *   of each entry, which is the path that `extract()` writes: forward slashes (`/`), no leading `./`.
+     * @returns A promise that resolves with a Map where keys are file paths as the archive stores them and values are File objects
      *
      * @example
      * **Get all files:**

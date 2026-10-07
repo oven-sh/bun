@@ -1874,6 +1874,79 @@ describe("Bun.Archive", () => {
       expect(files.size).toBe(1);
       expect(await files.get("test.txt")!.text()).toBe("GC test content");
     });
+
+    test("a glob pattern selects the same entries as in extract()", async () => {
+      // `tar -cf x.tar -C dir .` stores every entry with a leading "./".
+      const archive = new Bun.Archive(
+        buildTarball([
+          { name: "./src/a.ts", data: "a" },
+          { name: "./src/a.test.ts", data: "t" },
+          { name: "./node_modules/x/i.js", data: "x" },
+          { name: "./secret.env", data: "s" },
+          { name: "lib//b.ts", data: "b" },
+        ]),
+      );
+      const globs: Record<string, string | string[]> = {
+        "src/*": "src/*",
+        "src/**, lib/**": ["src/**", "lib/**"],
+        "**, !node_modules/**": ["**", "!node_modules/**"],
+        "src/**, !**/*.test.ts": ["src/**", "!**/*.test.ts"],
+        "!secret.env": ["!secret.env"],
+      };
+
+      using dir = tempDir("archive-files-glob-names", {});
+      const selected: Record<string, { files: string[]; extracted: string[] }> = {};
+      for (const [label, glob] of Object.entries(globs)) {
+        const dest = join(String(dir), String(Object.keys(selected).length));
+        await archive.extract(dest, { glob });
+        selected[label] = {
+          // The keys are the names as the archive stores them.
+          files: [...(await archive.files(glob)).keys()].sort(),
+          extracted: tree(dest).filter(name => !name.endsWith("/")),
+        };
+      }
+
+      expect(selected).toEqual({
+        "src/*": {
+          files: ["./src/a.test.ts", "./src/a.ts"],
+          extracted: ["src/a.test.ts", "src/a.ts"],
+        },
+        "src/**, lib/**": {
+          files: ["./src/a.test.ts", "./src/a.ts", "lib//b.ts"],
+          extracted: ["lib/b.ts", "src/a.test.ts", "src/a.ts"],
+        },
+        "**, !node_modules/**": {
+          files: ["./secret.env", "./src/a.test.ts", "./src/a.ts", "lib//b.ts"],
+          extracted: ["lib/b.ts", "secret.env", "src/a.test.ts", "src/a.ts"],
+        },
+        "src/**, !**/*.test.ts": {
+          files: ["./src/a.ts"],
+          extracted: ["src/a.ts"],
+        },
+        "!secret.env": {
+          files: ["./node_modules/x/i.js", "./src/a.test.ts", "./src/a.ts", "lib//b.ts"],
+          extracted: ["lib/b.ts", "node_modules/x/i.js", "src/a.test.ts", "src/a.ts"],
+        },
+      });
+    });
+
+    test.skipIf(isWindows)("a glob pattern sees a backslash in a stored name as a separator", async () => {
+      // extract() writes this entry as the file "i.txt" in the directory "h".
+      const archive = new Bun.Archive(
+        buildTarball([
+          { name: "top.txt", data: "t" },
+          { name: "h\\i.txt", data: "i" },
+        ]),
+      );
+
+      expect({
+        "*": [...(await archive.files("*")).keys()],
+        "h/*": [...(await archive.files("h/*")).keys()],
+      }).toEqual({
+        "*": ["top.txt"],
+        "h/*": ["h\\i.txt"],
+      });
+    });
   });
 
   describe("sparse files", () => {

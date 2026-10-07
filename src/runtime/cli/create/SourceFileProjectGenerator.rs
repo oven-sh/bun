@@ -117,15 +117,51 @@ pub(crate) fn generate(
     Global::exit(0);
 }
 
-// Create a file with given contents, returns if file was newly created
-fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
-    // Check if file exists and has same contents
-    if let Ok(source_contents) = bun_sys::File::read_from(Fd::cwd(), filename) {
-        // `source_contents` is a Vec<u8>; freed on drop.
-        if strings::eql_long(&source_contents, contents, true) {
-            return bun_sys::Result::Ok(false);
+// Writes one template file as `existing` allows. Returns whether it wrote.
+fn create_file(
+    filename: &[u8],
+    existing: Existing,
+    render: impl FnOnce() -> Vec<u8>,
+) -> bun_sys::Result<bool> {
+    const CREATE_NEW: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL;
+
+    let (contents, flags) = match existing {
+        Existing::Keep => {
+            if exists(filename) {
+                return Ok(false);
+            }
+            (render(), CREATE_NEW)
         }
-    }
+        Existing::ReplaceOwn(own_bodies) => {
+            let contents = render();
+            match bun_sys::File::read_from(Fd::cwd(), filename) {
+                Ok(on_disk) => {
+                    let holds = |body: &[u8]| strings::eql_long(&on_disk, body, true);
+                    if holds(&contents) || !own_bodies.iter().any(|body| holds(body)) {
+                        return Ok(false);
+                    }
+                    (contents, bun_sys::O::WRONLY | bun_sys::O::TRUNC)
+                }
+                Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+                    (contents, CREATE_NEW)
+                }
+                // Something is there that cannot be read, so it is not known to be bun's own.
+                Err(_) => return Ok(false),
+            }
+        }
+        Existing::Regenerate => {
+            let contents = render();
+            if let Ok(on_disk) = bun_sys::File::read_from(Fd::cwd(), filename) {
+                if strings::eql_long(&on_disk, &contents, true) {
+                    return Ok(false);
+                }
+            }
+            (
+                contents,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+            )
+        }
+    };
 
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
@@ -134,15 +170,14 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     }
 
     // Open file for writing
-    let fd = bun_sys::openat_a(
-        Fd::cwd(),
-        filename,
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-        0o644,
-    )?;
-    match bun_sys::File::from_fd(fd).write_all(contents) {
-        bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
-        bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
+    match bun_sys::File::openat(Fd::cwd(), filename, flags, 0o644) {
+        Ok(file) => {
+            file.write_all(&contents)?;
+            Ok(true)
+        }
+        // CREATE_NEW met something that `exists` or the read did not see, such as a dangling symlink.
+        Err(err) if err.get_errno() == bun_sys::E::EEXIST => Ok(false),
+        Err(err) => Err(err),
     }
 }
 
@@ -152,7 +187,7 @@ fn string_with_replacements(
     basename: &[u8],
     relative_name: &[u8],
     react_component_export: &[u8],
-) -> Result<Vec<u8>, bun_alloc::AllocError> {
+) -> Vec<u8> {
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
@@ -172,7 +207,7 @@ fn string_with_replacements(
             strings::replace_owned(&input, b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME", relative_name);
     }
 
-    Ok(input)
+    input
 }
 
 fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
@@ -272,30 +307,25 @@ pub(crate) fn generate_files(
         // Create all template files
         for index in 0..files.len() {
             let file = &files[index];
-            let file_name = string_with_replacements(
-                file.name,
-                basename,
-                normalized_name,
-                react_component_export,
-            )?;
-            if file.overwrite || !exists(&file_name) {
-                let content = string_with_replacements(
-                    file.content,
+            let render = |template: &[u8]| {
+                string_with_replacements(
+                    template,
                     basename,
                     normalized_name,
                     react_component_export,
-                )?;
-                match create_file(&file_name, &content) {
-                    bun_sys::Result::Ok(new) => {
-                        if new {
-                            max_filename_len = max_filename_len.max(file_name.len());
-                            filenames[index] = Some(file_name);
-                        }
+                )
+            };
+            let file_name = render(file.name);
+            match create_file(&file_name, file.existing, || render(file.content)) {
+                bun_sys::Result::Ok(written) => {
+                    if written {
+                        max_filename_len = max_filename_len.max(file_name.len());
+                        filenames[index] = Some(file_name);
                     }
-                    bun_sys::Result::Err(err) => {
-                        Output::err(err, "failed to create {}", (bstr::BStr::new(&file_name),));
-                        Global::crash();
-                    }
+                }
+                bun_sys::Result::Err(err) => {
+                    Output::err(err, "failed to create {}", (bstr::BStr::new(&file_name),));
+                    Global::crash();
                 }
             }
         }
@@ -758,28 +788,52 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 // Disabled until Tailwind v4 is supported.
 const ENABLE_SHADCN_UI: bool = true;
 
+/// What a template row does when its file is already on disk.
+#[derive(Clone, Copy)]
+pub(crate) enum Existing {
+    /// Never opened for writing.
+    Keep,
+    /// Replaced only when it holds one of these bodies, each of which `bun create` itself writes.
+    ReplaceOwn(&'static [&'static [u8]]),
+    /// Written again whenever the content differs.
+    Regenerate,
+}
+
 pub(crate) struct TemplateFile {
     pub name: &'static [u8],
     pub(crate) content: &'static [u8],
     pub reason: Reason,
-    pub(crate) overwrite: bool,
+    pub(crate) existing: Existing,
 }
 
 impl TemplateFile {
-    const fn new(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+    const fn keep(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
         Self {
             name,
             content,
             reason,
-            overwrite: true,
+            existing: Existing::Keep,
         }
     }
-    const fn new_no_overwrite(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+    const fn replace_own(
+        name: &'static [u8],
+        content: &'static [u8],
+        reason: Reason,
+        own_bodies: &'static [&'static [u8]],
+    ) -> Self {
         Self {
             name,
             content,
             reason,
-            overwrite: false,
+            existing: Existing::ReplaceOwn(own_bodies),
+        }
+    }
+    const fn regenerate(name: &'static [u8], content: &'static [u8], reason: Reason) -> Self {
+        Self {
+            name,
+            content,
+            reason,
+            existing: Existing::Regenerate,
         }
     }
 }
@@ -801,30 +855,40 @@ pub(crate) mod react_tailwind_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
             Reason::Build,
         ),
-        TemplateFile::new(
+        // SHADCN_CSS stays out: after `shadcn add`, later runs pick this template and must keep that stylesheet.
+        TemplateFile::replace_own(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            include_bytes!("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            TAILWIND_CSS,
             Reason::Css,
+            &[REACT_CSS, SHADCN_INDEX_CSS],
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             SHARED_HTML,
             Reason::Html,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             SHARED_CLIENT_TSX,
             Reason::Bun,
         ),
-        TemplateFile::new_no_overwrite(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
-        TemplateFile::new_no_overwrite(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
+        TemplateFile::keep(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
+        TemplateFile::keep(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
     ];
 }
+
+const REACT_CSS: &[u8] =
+    include_bytes!("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css");
+const TAILWIND_CSS: &[u8] =
+    include_bytes!("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css");
+const SHADCN_CSS: &[u8] =
+    include_bytes!("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css");
+const SHADCN_INDEX_CSS: &[u8] = include_bytes!("projects/react-shadcn-spa/styles/index.css");
 
 const SHARED_BUILD_TS: &[u8] =
     include_bytes!("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts");
@@ -840,27 +904,27 @@ pub(crate) mod react_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
             Reason::Build,
         ),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            include_bytes!("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            REACT_CSS,
             Reason::Css,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             SHARED_HTML,
             Reason::Html,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             SHARED_CLIENT_TSX,
             Reason::Bun,
         ),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(
             b"package.json",
             include_bytes!("projects/react-spa/package.json"),
             Reason::Npm,
@@ -873,49 +937,49 @@ pub(crate) mod react_shadcn_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"lib/utils.ts",
             include_bytes!("projects/react-shadcn-spa/lib/utils.ts"),
             Reason::Shadcn,
         ),
-        TemplateFile::new(
-            b"index.css",
-            include_bytes!("projects/react-shadcn-spa/styles/index.css"),
-            Reason::Shadcn,
-        ),
-        TemplateFile::new(
+        // For `./index.tsx` this is also the path of the `.css` rows, which therefore list SHADCN_INDEX_CSS.
+        TemplateFile::keep(b"index.css", SHADCN_INDEX_CSS, Reason::Shadcn),
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
             Reason::Bun,
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             SHARED_CLIENT_TSX,
             Reason::Bun,
         ),
-        TemplateFile::new(
+        TemplateFile::replace_own(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
-            include_bytes!("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
+            SHADCN_CSS,
             Reason::Css,
+            &[REACT_CSS, TAILWIND_CSS, SHADCN_INDEX_CSS],
         ),
-        TemplateFile::new(
+        TemplateFile::regenerate(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             SHARED_HTML,
             Reason::Html,
         ),
-        TemplateFile::new(
+        // For `./styles/globals.tsx` the `.css` row above has just written SHADCN_CSS to this path.
+        TemplateFile::replace_own(
             b"styles/globals.css",
             include_bytes!("projects/react-shadcn-spa/styles/globals.css"),
             Reason::Shadcn,
+            &[SHADCN_CSS],
         ),
-        TemplateFile::new_no_overwrite(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
-        TemplateFile::new_no_overwrite(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
+        TemplateFile::keep(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
+        TemplateFile::keep(
             b"tsconfig.json",
             include_bytes!("projects/react-shadcn-spa/tsconfig.json"),
             Reason::Tsc,
         ),
-        TemplateFile::new_no_overwrite(
+        TemplateFile::keep(
             b"components.json",
             include_bytes!("projects/react-shadcn-spa/components.json"),
             Reason::Shadcn,

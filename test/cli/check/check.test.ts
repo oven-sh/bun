@@ -42,6 +42,9 @@ const withResolveJsonModule = JSON.stringify({
   compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, resolveJsonModule: true },
 });
 
+// `"".repeat` is slow in debug builds of JavaScriptCore.
+const repeat = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+
 function project(files: Record<string, string>) {
   return tempDir("bun-check", {
     "tsconfig.json": tsconfig,
@@ -13766,7 +13769,7 @@ export const deferred: Deferred<"a"> = 1;
       });
       const { stdout, exitCode } = await check(dir);
       // The type has a level for every round up to the limit.
-      expect(stdout.replace("x".repeat(99), "<99 x>")).toMatchInlineSnapshot(`
+      expect(stdout.replace(repeat("x", 99), "<99 x>")).toMatchInlineSnapshot(`
         "a.ts(2,43): error TS2589: Type instantiation is excessively deep and possibly infinite.
         a.ts(3,40): error TS2589: Type instantiation is excessively deep and possibly infinite.
         a.ts(4,54): error TS2589: Type instantiation is excessively deep and possibly infinite.
@@ -14403,7 +14406,7 @@ export function f<T>(rest: T) {
       async args => {
         const depth = 100_000;
         using dir = project({
-          "tsconfig.json": `{ "a": ${"[".repeat(depth)}${"]".repeat(depth)} }`,
+          "tsconfig.json": `{ "a": ${repeat("[", depth)}${repeat("]", depth)} }`,
           "a.ts": `export const wrong: number = "";\n`,
         });
         const { stdout, exitCode } = await check(dir, args);
@@ -16286,7 +16289,7 @@ describe.concurrent("--check", () => {
       "const x = [[[[[[[[[[[[[[[[[[",
       "declare function f(a: any): any;\nconst x = f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(f(",
       "declare function f(a: any): any;\nconst x = (f([(f([(f([(f([(f([(f([",
-      `const x = ${"{ a: ".repeat(18)}`,
+      `const x = ${repeat("{ a: ", 18)}`,
       "const x = ((((((((((((((((((",
       "interface I { m(export= x: string): any; }",
       "interface I { n(,): any; }",
@@ -16419,7 +16422,7 @@ describe.concurrent("--check", () => {
             n,
           )
             .map(() => "while (c) { x = h(x);")
-            .join(" ")} ${"}".repeat(n)} return x; }`,
+            .join(" ")} ${repeat("}", n)} return x; }`,
       ],
       [
         "a chain of `&&`",
@@ -16440,7 +16443,7 @@ describe.concurrent("--check", () => {
       [
         "a chain of method calls",
         size,
-        n => `declare const a: { m(): typeof a };\nexport const r = a${".m()".repeat(n)};`,
+        n => `declare const a: { m(): typeof a };\nexport const r = a${repeat(".m()", n)};`,
       ],
       [
         // TypeScript needs seconds for 400 members too.
@@ -16479,11 +16482,11 @@ describe.concurrent("--check", () => {
             .map(i => `export function f${i}() { return f${i + 1}(); }`)
             .join("\n")}\nexport function f${n}() { return 1; }`,
       ],
-      ["nested object literals", size, n => `export const r = ${"{ a: ".repeat(n)}1${" }".repeat(n)};`],
+      ["nested object literals", size, n => `export const r = ${repeat("{ a: ", n)}1${repeat(" }", n)};`],
       [
         "nested array types",
         size,
-        n => `export type T = ${"Array<".repeat(n)}number${">".repeat(n)};\nexport declare const t: T;`,
+        n => `export type T = ${repeat("Array<", n)}number${repeat(">", n)};\nexport declare const t: T;`,
       ],
       [
         "a recursive conditional type",

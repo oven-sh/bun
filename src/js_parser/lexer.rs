@@ -1188,16 +1188,17 @@ impl<'a> Lexer<'a> {
         } else {
             what
         };
-        let what = bstr::BStr::new(what.unwrap_or_default());
         let logged_before = self.log().msgs.len();
         if kind == TypeScriptKind::Parse {
-            let _ = self.add_range_error(r, format_args!("{what}"));
+            let _ = self.add_range_error(r, format_args!(""));
         } else {
-            let text = format_args!("{what}");
-            self.log().add_range_error_fmt(Some(self.source), r, text);
+            self.log()
+                .add_range_error_fmt(Some(self.source), r, format_args!(""));
         }
         // Dropped if the previous error was at the same position.
         if let Some(msg) = self.log().msgs.get_mut(logged_before) {
+            // The bytes as they are: `Format` replaces what is not valid UTF-8.
+            msg.data.text = what.unwrap_or_default().to_vec().into();
             msg.metadata = bun_ast::Metadata::TypeScript { code, kind };
         }
     }
@@ -1641,7 +1642,8 @@ impl<'a> Lexer<'a> {
 
     /// Whether the token is the reserved word `keyword`. TypeScript's scanner returns the keyword
     /// also for a word written with an escape, so in tolerant mode the token becomes `keyword`;
-    /// `next_token` reports the escape.
+    /// `next_token` reports the escape. Only for a caller that takes the keyword if it is there:
+    /// the statement handlers leave their keyword with `next`.
     #[inline]
     pub(crate) fn is_keyword(&mut self, keyword: T) -> bool {
         if self.token == T::TEscapedKeyword
@@ -3420,17 +3422,21 @@ impl<'a> Lexer<'a> {
         Ok(res)
     }
 
-    /// `Scanner.TokenValue`
+    /// `Scanner.TokenValue`. `Scan` leaves it unchanged at a token that is no name, keyword or
+    /// literal: `previous` is the value of the last token that was one.
     #[cold]
     #[inline(never)]
-    pub(crate) fn token_value(&mut self) -> Result<Vec<u8>, Error> {
+    pub(crate) fn token_value(&mut self, previous: &[u8]) -> Result<Vec<u8>, Error> {
         Ok(match self.token {
             T::TStringLiteral => self.to_utf8_e_string()?.data.slice().to_vec(),
+            T::TNoSubstitutionTemplateLiteral | T::TTemplateHead => {
+                self.cooked_template_contents(self.string_literal_raw_content)
+            }
             T::TNumericLiteral => bun_sema::atom::number_to_string(self.number),
-            T::TBigIntegerLiteral => [self.identifier, b"n"].concat(),
+            T::TBigIntegerLiteral => bun_sema::json::bigint_token_value(self.raw()),
             T::TPrivateIdentifier => self.identifier.to_vec(),
             _ if self.is_identifier_or_keyword() => self.identifier.to_vec(),
-            _ => self.raw().to_vec(),
+            _ => previous.to_vec(),
         })
     }
 

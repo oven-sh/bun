@@ -60,6 +60,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.forbid_suffix_after_as_loc = p.lexer.loc();
                     return Ok(Continuation::Done);
                 }
+                // `parseBinaryExpressionRest`: no binary operator. The transpiler goes on with a
+                // property access, as esbuild does.
+                T::TDot if SEMA => {
+                    p.forbid_suffix_after_as_loc = p.lexer.loc();
+                    return Ok(Continuation::Done);
+                }
                 _ => {}
             }
 

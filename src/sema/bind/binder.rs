@@ -851,53 +851,9 @@ impl<'f, 's> Binder<'f, 's> {
         !self.label_edges[self.edges_of(label)].edges.is_empty()
     }
 
-    /// `isNarrowableReference`
-    fn is_narrowable_reference(&self, e: ExprId) -> bool {
-        match self.f[e].kind {
-            ExprKind::Ident(_)
-            | ExprKind::This
-            | ExprKind::Super
-            | ExprKind::NewTarget(_)
-            | ExprKind::ImportMeta => true,
-            ExprKind::Dot { obj, .. } => self.is_narrowable_reference(obj),
-            ExprKind::NonNull(x) => self.is_narrowable_reference(x),
-            // With a literal key the object is not checked.
-            ExprKind::Index { obj, index, .. } => {
-                is_string_or_numeric_literal_like(self.f, index)
-                    || is_entity_name_expression(self.f, index) && self.is_narrowable_reference(obj)
-            }
-            ExprKind::Binary {
-                op: BinOp::Comma,
-                right,
-                ..
-            } => self.is_narrowable_reference(right),
-            ExprKind::Assign { target, .. } => self.is_left_hand_side_expression(target),
-            _ => false,
-        }
-    }
-
-    /// `IsLeftHandSideExpression`
-    fn is_left_hand_side_expression(&self, e: ExprId) -> bool {
-        is_parenthesized(self.f, e)
-            || match self.f[e].kind {
-                ExprKind::Fn(f) => self.f[f].kind != FnKind::Arrow,
-                ExprKind::Unary { .. }
-                | ExprKind::Binary { .. }
-                | ExprKind::Assign { .. }
-                | ExprKind::Cond { .. }
-                | ExprKind::Spread(_)
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. }
-                | ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_) => false,
-                _ => true,
-            }
-    }
-
     /// `containsNarrowableReference`
     fn contains_narrowable_reference(&self, e: ExprId) -> bool {
-        self.is_narrowable_reference(e)
+        is_narrowable_reference(self.f, e)
             || self
                 .chain_of(e)
                 .is_some_and(|(inner, _)| self.contains_narrowable_reference(inner))
@@ -1138,7 +1094,7 @@ impl<'f, 's> Binder<'f, 's> {
             // `isNarrowableReference` are concerned.
             _ => {}
         }
-        if is_bound && self.is_narrowable_reference(e) {
+        if is_bound && is_narrowable_reference(self.f, e) {
             self.flow_mutation(Flow::Assign {
                 before: self.flow,
                 target: FlowTarget::Expr(e),
@@ -1635,42 +1591,48 @@ impl<'f, 's> Binder<'f, 's> {
         Some(SymbolId::NONE)
     }
 
-    /// `containsArgumentsReference`
+    /// `containsArgumentsReference`. Its `visit` recurses; here `to_visit` holds the nodes that are
+    /// still to be visited, the next one last, so that no expression is too deep for the stack.
     fn contains_arguments_reference(&mut self, func: FnId) -> bool {
-        self.visit_for_arguments_reference(self.f.body(self.f.node(func)))
-    }
-
-    /// `visit` of `containsArgumentsReference`
-    fn visit_for_arguments_reference(&mut self, node: Node) -> bool {
-        if node.is_none() || self.is_out_of_stack() {
-            return false;
-        }
         let f = self.f;
-        let kind = f.kind(node);
-        match kind {
-            Kind::Identifier => {
-                return f.text(node) == known::arguments && self.is_arguments_symbol_at(node);
+        let mut to_visit: SmallVec<[Node; 32]> = SmallVec::new();
+        to_visit.push(f.body(f.node(func)));
+        while let Some(node) = to_visit.pop() {
+            if node.is_none() {
+                continue;
             }
-            Kind::PropertyDeclaration
-            | Kind::MethodDeclaration
-            | Kind::GetAccessor
-            | Kind::SetAccessor
-                if f.kind(f.name(node)) == Kind::ComputedPropertyName =>
-            {
-                return self.visit_for_arguments_reference(f.name(node));
+            let kind = f.kind(node);
+            match kind {
+                Kind::Identifier => {
+                    if f.text(node) == known::arguments && self.is_arguments_symbol_at(node) {
+                        return true;
+                    }
+                }
+                Kind::PropertyDeclaration
+                | Kind::MethodDeclaration
+                | Kind::GetAccessor
+                | Kind::SetAccessor
+                    if f.kind(f.name(node)) == Kind::ComputedPropertyName =>
+                {
+                    to_visit.push(f.name(node));
+                }
+                Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
+                    to_visit.push(f.expression(node));
+                }
+                Kind::PropertyAssignment => to_visit.push(f.initializer(node)),
+                _ if Self::node_starts_new_lexical_environment(kind)
+                    || f.is_part_of_type_node(node) => {}
+                _ => {
+                    let first_child = to_visit.len();
+                    f.for_each_child(node, &mut |child| {
+                        to_visit.push(child);
+                        false
+                    });
+                    to_visit[first_child..].reverse();
+                }
             }
-            Kind::PropertyAccessExpression | Kind::ElementAccessExpression => {
-                return self.visit_for_arguments_reference(f.expression(node));
-            }
-            Kind::PropertyAssignment => {
-                return self.visit_for_arguments_reference(f.initializer(node));
-            }
-            _ => {}
         }
-        if Self::node_starts_new_lexical_environment(kind) || f.is_part_of_type_node(node) {
-            return false;
-        }
-        f.for_each_child(node, &mut |child| self.visit_for_arguments_reference(child))
+        false
     }
 
     /// `nodeStartsNewLexicalEnvironment`
@@ -1965,7 +1927,12 @@ impl<'f, 's> Binder<'f, 's> {
             StmtKind::Empty | StmtKind::Debugger => {}
             StmtKind::Expr(e) => {
                 self.expr(e, me);
-                self.maybe_call_flow(e);
+                // `bindForStatement` binds its initializer, which is no `ExpressionStatement`.
+                let is_initializer_of_for = matches!(parent, Parent::Stmt(owner)
+                    if matches!(self.f[owner].kind, StmtKind::For { init, .. } if init == id));
+                if !is_initializer_of_for {
+                    self.maybe_call_flow(e);
+                }
             }
             StmtKind::Var(decls) => {
                 for d in decls.iter() {
@@ -2514,14 +2481,12 @@ impl<'f, 's> Binder<'f, 's> {
         (self.return_target, self.exception_target) = saved;
         if finalizer.is_some() {
             let finally_label = self.branch_label();
-            // `combineFlowLists`: no flow node is marked as referenced again.
+            // `combineFlowLists`: no flow node is marked as referenced again, and one that is in two
+            // of the lists is an antecedent twice.
             let combined = self.edges_of(finally_label);
             for from in [normal_exit, exception_label, return_label] {
-                for edge in self.label_edges[self.edges_of(from)].edges.clone() {
-                    if !self.label_edges[combined].edges.contains(&edge) {
-                        self.label_edges[combined].edges.push(edge);
-                    }
-                }
+                let edges = self.label_edges[self.edges_of(from)].edges.clone();
+                self.label_edges[combined].edges.extend(edges);
             }
             self.flow = if self.has_edges(finally_label) {
                 self.node_of(finally_label)
@@ -2606,11 +2571,16 @@ impl<'f, 's> Binder<'f, 's> {
                 } else if self.f.has_module_syntax && ambient && name.is_some() {
                     self.b.module_augmentations.push(name);
                 }
-                let existing = self
-                    .b
-                    .ambient_modules
-                    .iter()
-                    .find(|a| a.0 == name && a.2 == is_augmentation)
+                // `declareSymbol(GetLocals(container), ..)`: one symbol in each container.
+                let b = &self.b;
+                let container = b.container_scope(self.scope);
+                let is_in_container = |symbol: SymbolId| {
+                    matches!(b.symbols[symbol.idx()].decls.first(), Some(&Decl::Module(first))
+                        if b.container_scope(b.scopes[b.module_scope[first.idx()].idx()].parent)
+                            == container)
+                };
+                let existing = (b.ambient_modules.iter())
+                    .find(|a| a.0 == name && a.2 == is_augmentation && is_in_container(a.1))
                     .map(|a| a.1);
                 match existing {
                     Some(symbol) => {
@@ -2752,7 +2722,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
             StmtKind::Module(m) => self.instance_state_of_module(m, outer, visited),
             // `type` on it or on a name has no effect.
-            StmtKind::ExportNamed(e) if self.f[e].spec.is_none() => {
+            StmtKind::ExportNamed(e) if !self.f[e].has_module_specifier => {
                 let mut state = ModuleInstanceState::NonInstantiated;
                 for spec in self.f[e].items.iter() {
                     state =
@@ -3563,12 +3533,19 @@ impl<'f, 's> Binder<'f, 's> {
             if let Some((includes, excludes)) = flags_of_member(member) {
                 let is_static =
                     matches!(owner, MemberOwner::Class(_)) && member.flags.contains(Flags::STATIC);
-                let table = if is_static {
-                    self.get_exports(container)
+                let decl = Decl::Member(m);
+                // `HasDynamicName`: no table is asked for, so `symbol.Members` can stay nil.
+                if self.get_declaration_name(decl) == known::computed {
+                    let symbol = self.bind_anonymous_declaration(decl, includes, known::computed);
+                    self.b.symbols[symbol.idx()].parent = container;
                 } else {
-                    self.get_members(container)
-                };
-                self.declare_symbol(table, container, Decl::Member(m), includes, excludes);
+                    let table = if is_static {
+                        self.get_exports(container)
+                    } else {
+                        self.get_members(container)
+                    };
+                    self.declare_symbol(table, container, decl, includes, excludes);
+                }
             }
             let seen_this = self.seen_this;
             let constructor = if member.kind == MemberKind::Property && !self.is_static(m, owner) {
@@ -4085,7 +4062,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// `bind` for `a.b` and `a[b]`: only a narrowable reference gets a flow node. Any other has its
     /// declared type.
     fn access_flow(&mut self, id: ExprId) {
-        if self.is_narrowable_reference(id) {
+        if is_narrowable_reference(self.f, id) {
             self.b.expr_flow[id.idx()] = self.flow;
         }
     }

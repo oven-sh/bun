@@ -1409,6 +1409,7 @@ dependencies = [
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
+ "bun_sys",
  "bun_threading",
  "libc",
 ]

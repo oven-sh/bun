@@ -1,11 +1,11 @@
 //! Property names, names in namespaces, and module exports:
-//! 2464, 2694 2713 2724 2749, 1117 1118 1119 2300, 2528 2309 2661, 1361 1362.
+//! 2464, 2694 2713 2724 2749, 1117 1118 1119 2300, 2528 2661, 1361 1362.
 //!
 //! Follows `checkComputedPropertyName`, `resolveQualifiedName`,
-//! `checkGrammarObjectLiteralExpression`, `checkExternalModuleExports`, `checkExportSpecifier`,
-//! `getTypeOnlyAliasDeclarationEx` and the end of `onSuccessfullyResolvedSymbol` of TypeScript
-//! 7.0.2's checker.go and grammarchecks.go, `IsValidTypeOnlyAliasUseSite` of its ast/utilities.go,
-//! and the errors `declareSymbolEx` of its binder.go reports for default exports.
+//! `checkGrammarObjectLiteralExpression`, `checkExportSpecifier`, `getTypeOnlyAliasDeclarationEx`
+//! and the end of `onSuccessfullyResolvedSymbol` of TypeScript 7.0.2's checker.go and
+//! grammarchecks.go, `IsValidTypeOnlyAliasUseSite` of its ast/utilities.go, and the errors
+//! `declareSymbolEx` of its binder.go reports for default exports.
 
 use super::enclosing_declaration::Enclosing;
 use super::errors::is_close;
@@ -15,7 +15,6 @@ use crate::bind::{PatParent, ScopeId};
 impl Checker<'_, '_> {
     pub(super) fn check_names_and_exports(&mut self, file: FileId) {
         self.check_computed_names(file);
-        self.check_exports(file);
         self.check_type_only_names_used_as_values(file);
     }
 
@@ -230,28 +229,6 @@ impl Checker<'_, '_> {
             })
     }
 
-    fn check_exports(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        // A module is only checked for an `export =` next to other exports.
-        if self.files().module(file).is_module() {
-            self.check_export_equals_alone(file, self.files().file_symbol(file));
-            return;
-        }
-        // At the top level of a module, `declare module "m"` augments `m` and is exempt:
-        // `isTopLevelInExternalModuleAugmentation`.
-        for s in hir.ids(hir.body) {
-            if let StmtKind::Module(m) = hir[s].kind
-                && matches!(hir[m].name, ModuleName::String(_))
-                && bound.module_symbol[m.idx()].is_some()
-            {
-                self.check_export_equals_alone(
-                    file,
-                    self.files().sym(file, bound.module_symbol[m.idx()]),
-                );
-            }
-        }
-    }
-
     /// The position where `declareSymbolEx` reports a conflict for the statement `s`, an `export
     /// default e` or `export = e`: the start of `GetNameOfDeclaration(node)`, or of the node if it
     /// has no name.
@@ -268,50 +245,6 @@ impl Checker<'_, '_> {
                 }
             }
             _ => hir[s].start,
-        }
-    }
-
-    /// `checkExternalModuleExports`: `export =` must be the only value export, and if types are
-    /// exported next to it, it must not name a namespace that has types.
-    fn check_export_equals_alone(&mut self, file: FileId, module: Sym) {
-        let files = self.files();
-        let Some(equals) = files.export(module, known::export_equals) else {
-            return;
-        };
-        // For a module with several declarations it may be in another file.
-        let declaration = files
-            .declaration_of_alias_symbol(equals)
-            .or_else(|| files.value_declaration(equals))
-            .filter(|declaration| declaration.0 == file);
-        let Some((start, end)) =
-            declaration.and_then(|it| self.error_range_of_declaration(file, it.1))
-        else {
-            return;
-        };
-        let others = |of: Sym| {
-            files
-                .exports(of)
-                .into_iter()
-                .filter(|e| e.0 != known::export_equals)
-        };
-        // `hasExportedMembersOfKind`. An unresolved alias matches any meaning: `getSymbolFlags`.
-        let exports_values = others(module).any(|(_, sym)| {
-            files
-                .resolve_alias_if_needed(sym)
-                .is_none_or(|s| files.flags(s).intersects(SymFlags::VALUE))
-        });
-        // `hasShadowedNamespace`. `bindCommonJSTypeExports`: the types and namespaces declared next to `export = name` are members of it.
-        let types = SymFlags::TYPE | SymFlags::NAMESPACE;
-        let shadows_a_namespace = || {
-            files.flags(equals).contains(SymFlags::ALIAS)
-                && others(module).any(|(_, sym)| files.flags(sym).intersects(types))
-                && files.resolve_alias(equals).is_some_and(|target| {
-                    files.flags(target).intersects(SymFlags::NAMESPACE)
-                        && others(target).any(|(_, sym)| files.means(sym, types))
-                })
-        };
-        if exports_values || shadows_a_namespace() {
-            self.error_at((file, start, end), 2309, &[]);
         }
     }
 

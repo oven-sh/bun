@@ -1073,18 +1073,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                     ModuleName::Ident(self.identifier(s.name.ref_, self.pos_of(s.name.loc)))
                 };
                 let mut flags = self.ambient();
-                // `parseAmbientExternalModuleDeclaration`: its contents are ambient, with or
-                // without `declare`.
-                let was_ambient = self.is_ambient;
-                self.is_ambient |= !matches!(name, ModuleName::Ident(_));
-                if name == ModuleName::Global {
-                    flags |= Flags::AMBIENT;
-                }
                 if s.is_export {
                     flags |= Flags::EXPORT;
                 }
                 let body = self.stmts(s.stmts.slice(), false);
-                self.is_ambient = was_ambient;
                 StmtKind::Module(self.b.file.add_module(Module {
                     name,
                     name_pos: self.pos_of(s.name.loc),

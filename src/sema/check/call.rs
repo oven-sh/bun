@@ -254,12 +254,21 @@ impl<'p, 's> Checker<'p, 's> {
         Some(ResolvedCall { sig, ret })
     }
 
-    /// `links.resolvedSignature = result`. The first value wins.
-    fn cache_call(&mut self, file: FileId, call: ExprId, resolved: ResolvedCall, stored: Stored) {
-        (self.p.call_return_types).insert(&self.task, (file, call), resolved.ret, stored);
-        self.p
-            .calls
-            .insert(&self.task, (file, call), resolved.sig, stored);
+    /// `links.resolvedSignature = result`. The first value wins, and is returned: "it's possible
+    /// that this inner resolution sets the resolvedSignature first. In such a case we ignore the
+    /// local result and reuse the correct one that was cached."
+    fn cache_call(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        resolved: ResolvedCall,
+        stored: Stored,
+    ) -> ResolvedCall {
+        let key = (file, call);
+        ResolvedCall {
+            ret: (self.p.call_return_types).insert(&self.task, key, resolved.ret, stored),
+            sig: self.p.calls.insert(&self.task, key, resolved.sig, stored),
+        }
     }
 
     /// `anySignature`, which `getContextuallyTypedParameterType` assigns to
@@ -341,7 +350,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolved_meanwhile.pop();
         // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is
         // non-empty.
-        // A nested resolution of a call in progress is not the result of the call.
         let left = self.leave(Query::Call(file, call));
         if let Err(open) = left
             && !is_in_progress
@@ -352,6 +360,9 @@ impl<'p, 's> Checker<'p, 's> {
         let is_tainted_by_patterns_only = !self.contextual_binding_patterns.is_empty()
             && self.taints == self.taints_before_patterns;
         let stored = (left.ok()).or_else(|| is_tainted_by_patterns_only.then(Stored::new));
+        // `len(c.flowLoopStack) != 0`
+        let is_in_flow_loop =
+            |c: &Self| (c.flow_loops.last()).is_some_and(|pushed| c.is_flow_loop_visible(pushed.5));
         // A call that is requested while it is being resolved is resolved again, and `resolveCall`
         // reports its errors in the state at that time. Only the first resolution is retained.
         if is_in_progress {
@@ -364,15 +375,22 @@ impl<'p, 's> Checker<'p, 's> {
                 (self.p.diagnostics_of_re_resolved_calls)
                     .insert_ref(&self.task, key, reported, stored);
             }
+            // The resolution around this one takes the result. Not one that depends on a frame in
+            // progress.
+            if let Ok(stored) = left
+                && !is_in_flow_loop(self)
+            {
+                return self.cache_call(file, call, resolved, stored);
+            }
         } else if let Some(stored) = stored {
             // A task that sees the call resolved also sees this: both are published at the same
             // barrier.
             if let Some(reported) = reported {
                 (self.p.call_diagnostics).insert_ref(&self.task, (file, call), reported, stored);
             }
-            self.cache_call(file, call, resolved, stored);
+            return self.cache_call(file, call, resolved, stored);
         } else if let Some(reported) = reported
-            && (self.flow_loops.last()).is_some_and(|pushed| self.is_flow_loop_visible(pushed.5))
+            && is_in_flow_loop(self)
         {
             // `len(c.flowLoopStack) != 0`: the signature is not stored, and what `resolveCall` has
             // reported from the temporary types stays.
@@ -554,9 +572,13 @@ impl<'p, 's> Checker<'p, 's> {
         spread: Option<usize>,
         is_incomplete: bool,
     ) -> bool {
-        // Which parameters accept `void` only matters where a required one is omitted.
+        // Which parameters accept `void` only matters where a required one is omitted. That
+        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern.
         let rest = params.last().filter(|p| p.rest);
-        if spread.is_none() && !rest.is_some_and(|p| self.is_tuple(p.ty)) {
+        if spread.is_none()
+            && !rest.is_some_and(|p| self.is_tuple(p.ty))
+            && !params.iter().any(SigParam::is_named_by_pattern)
+        {
             if actual > params.len() {
                 return rest.is_some();
             }
@@ -788,6 +810,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ..resolved
             };
         }
+        let in_place = self.members_in_place_hits;
         let mut sigs = self.signatures(callee, is_new);
         // A class that may not be constructed from here is an error.
         if is_new
@@ -813,7 +836,9 @@ impl<'p, 's> Checker<'p, 's> {
             return if is_untyped {
                 self.resolve_untyped_call(file, data.args)
             } else {
-                if !self.declared_index_infos_in_progress.is_empty() {
+                if self.members_in_place_hits != in_place
+                    || !self.declared_index_infos_in_progress.is_empty()
+                {
                     let key = (file, call);
                     (self.p.calls_before_signatures).insert(&self.task, key, (), Stored::new());
                 }
@@ -913,6 +938,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
     ) -> Option<TypeId> {
         // `getPropertyNameForKnownSymbolName`
+        self.resolve_known_symbol(b"hasInstance");
         let name = self.atoms().symbol_name(b"hasInstance");
         // `getPropertyOfType`: an index signature is not a property.
         let mut methods = Vec::new();
@@ -1145,11 +1171,12 @@ impl<'p, 's> Checker<'p, 's> {
             let mut inference_context = None;
             if !type_params.is_empty() {
                 if !s.type_args.is_empty() {
-                    if !self.do_type_arguments_fit(candidate, s.type_args) {
+                    let Some(filled) =
+                        self.check_type_arguments(candidate, &type_params, s.type_args, None)
+                    else {
                         s.candidate_for_type_argument_error = Some(candidate);
                         continue;
-                    }
-                    let filled = self.fill_sig_type_args(candidate, &type_params, s.type_args);
+                    };
                     let mapper = self.mapper_from(&type_params, &filled);
                     check_candidate = self.instantiate_sig(candidate, mapper);
                 } else {
@@ -1383,7 +1410,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A synthetic expression is no node here: what is pushed for it is pushed for the node it
         // is positioned at, in which nothing is checked meanwhile.
         let contextual_type = self.without_no_infer(contextual_type);
-        self.contextual.push((file, node, contextual_type));
+        self.push_contextual_type(file, node, Some(contextual_type), false);
         let ty = self.check_with_inference_context(
             file,
             node,
@@ -1394,7 +1421,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.instantiate_type_with_single_generic_call_signature(file, node, ty, check_mode)
             },
         );
-        self.contextual.pop();
+        self.pop_contextual_type();
         ty
     }
 
@@ -1890,19 +1917,11 @@ impl<'p, 's> Checker<'p, 's> {
                     is_same = false;
                     continue;
                 }
-                // `checkTypeArguments`
-                if let Ok(Some((index, argument, constraint))) =
-                    c.failing_type_argument(sig, &params, args, true)
-                {
-                    let (file, nodes) = c.type_argument_nodes(node);
-                    let at = c.hir(file).id_at(nodes, index);
-                    let start = super::errors_type_nodes::start_of_type(c.hir(file), at);
-                    let error_node = (file, start, c.end_of_type_node_from(file, at, start));
-                    c.check_type_assignable_to(argument, constraint, Some(error_node), Some(2344));
+                let error_nodes = Some(c.type_argument_nodes(node));
+                let Some(filled) = c.check_type_arguments(sig, &params, args, error_nodes) else {
                     out.push(sig);
                     continue;
-                }
-                let filled = c.fill_sig_type_args(sig, &params, args);
+                };
                 let mapper = c.mapper_from(&params, &filled);
                 is_same = false;
                 out.push(c.instantiate_sig(sig, mapper));
@@ -2130,7 +2149,7 @@ impl<'p, 's> Checker<'p, 's> {
         param: TypeId,
     ) -> TypeId {
         let param = self.without_no_infer(param);
-        self.contextual.push((file, e, param));
+        self.push_contextual_type(file, e, Some(param), false);
         self.inference_contexts.push(InferenceContextInfo {
             file,
             node: e,
@@ -2140,14 +2159,15 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.type_of_expr(file, e);
         self.end_recheck(outer);
         self.inference_contexts.pop();
-        self.contextual.pop();
+        self.pop_contextual_type();
         ty
     }
 
     /// `checkExpressionWithContextualType(arg, paramType, nil, checkMode)`, as
     /// `isSignatureApplicable` calls it for every candidate, pass and relation. tsgo rechecks every
     /// time. The result depends only on the argument, `param` and the mode, so a literal is checked
-    /// once per combination.
+    /// once per combination. Not one that is being checked already: `findContextualNode` finds what
+    /// was pushed for it then, not `param`.
     pub(super) fn arg_type_under(
         &mut self,
         file: FileId,
@@ -2162,7 +2182,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(
             self.hir(file)[e].kind,
             ExprKind::Object(_) | ExprKind::Array(_)
-        ) {
+        ) || self.find_contextual_node(file, e, true).is_some()
+        {
             return self.check_expression_with_contextual_type(file, e, param, None, check_mode);
         }
         let key = (file, e, param, check_mode.bits());
@@ -2317,16 +2338,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `checkTypeArguments`, without its errors: whether each of `type_args` satisfies the
-    /// constraint of its type parameter of `sig`. True when in doubt.
-    fn do_type_arguments_fit(&mut self, sig: SigId, type_args: &[TypeId]) -> bool {
-        let type_params = self.sig_type_params(sig);
-        !matches!(
-            self.failing_type_argument(sig, &type_params, type_args, true),
-            Ok(Some(_))
-        )
-    }
-
     /// `getOptionalCallSignature`: the return type of `sig` for `call`. In an optional chain that
     /// may have short-circuited before the call (`nonOptionalType != funcType`), it includes
     /// `undefined`.
@@ -2458,7 +2469,7 @@ impl<'p, 's> Checker<'p, 's> {
         inference_context: Option<&mut Inference>,
         check_mode: CheckMode,
     ) -> TypeId {
-        self.contextual.push((file, e, contextual_type));
+        self.push_contextual_type(file, e, Some(contextual_type), false);
         let ty = self.check_with_inference_context(
             file,
             e,
@@ -2467,7 +2478,7 @@ impl<'p, 's> Checker<'p, 's> {
             check_mode,
             |c, check_mode| c.check_expression_ex(file, e, check_mode),
         );
-        self.contextual.pop();
+        self.pop_contextual_type();
         ty
     }
 

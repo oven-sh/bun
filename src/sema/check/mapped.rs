@@ -24,6 +24,17 @@ pub(super) enum AccessNode {
     Other,
 }
 
+/// A `getObjectTypeInstantiation` of a mapped type: its target and its key.
+pub(super) struct MappedInstantiation {
+    target: (FileId, TypeNodeId),
+    /// `InstantiationKey::type_arguments`
+    type_arguments: MapperId,
+    /// `NewAlias::Given`
+    alias: Option<(Sym, SmallVec<[TypeId; 4]>)>,
+    /// `InstantiationKey::nesting`
+    nesting: u8,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// The pairs of `mapper`, followed by `param` mapped to `ty`.
     fn mapper_with_pair(&self, mapper: MapperId, param: TypeId, ty: TypeId) -> MapperId {
@@ -642,7 +653,11 @@ impl<'p, 's> Checker<'p, 's> {
                 undefined: access_flags.contains(AccessFlags::INCLUDE_UNDEFINED),
             });
             return Some(match alias {
-                Some((alias, type_arguments)) => self.with_alias(deferred, alias, type_arguments),
+                Some((alias, type_arguments)) => {
+                    // `getIndexedAccessKey`
+                    self.get_symbol_id(alias);
+                    self.with_alias(deferred, alias, type_arguments)
+                }
                 None => deferred,
             });
         }
@@ -1227,8 +1242,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
         match (self.leave(q), alias) {
+            // Where it was in progress several times, the outermost is the last to store.
             (Ok(stored), None) => {
-                (self.p.conditionals).insert(&self.task, (file, node, mapper), ty, stored)
+                (self.p.conditionals).rewrite(&self.task, (file, node, mapper), ty, stored);
+                ty
             }
             (Err(open), None) => {
                 self.cache_provisionally(q, u64::from(ty.0), open);
@@ -1584,28 +1601,14 @@ impl<'p, 's> Checker<'p, 's> {
         Ok(((root_file, root, root_mapper), true))
     }
 
-    /// `getConstraintFromConditionalType`, and the base constraint of its result
-    /// (`computeBaseConstraint`).
-    pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> TypeId {
-        let constraint = self.get_constraint_of_conditional_type(this);
-        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
-        // object type.
-        let constraint = self.next_base_constraint(constraint);
-        if self.some_type(constraint, |c, m| c.is_deferred(m)) {
-            TypeId::UNKNOWN
-        } else {
-            constraint
-        }
-    }
-
-    /// `getConstraintOfConditionalType`
-    pub(super) fn get_constraint_of_conditional_type(&mut self, this: TypeId) -> TypeId {
+    /// `computeBaseConstraint` of the conditional type `this`.
+    pub(super) fn constraint_of_conditional(&mut self, this: TypeId) -> Option<TypeId> {
         let (file, _, mapper, [check, ..]) = self.cond_origin(this);
         // `conditionalConstraintDepth`. The second test comes before `enter` would refuse a query
         // for lack of capacity on `stack`.
         if self.conditional_constraint_depth >= 100 || self.stack.len() + 20 >= MAX_DEPTH {
             self.bailed_out();
-            return TypeId::UNKNOWN;
+            return None;
         }
         self.conditional_constraint_depth += 1;
         // `getConstraintOfTypeParameter`: a type parameter with a circular constraint has no
@@ -1624,7 +1627,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.constraint_from_conditional(this)
         };
         self.conditional_constraint_depth -= 1;
-        constraint
+        // A remaining type variable is not a constraint. A mapped type over one is an ordinary
+        // object type.
+        let constraint = self.next_base_constraint(constraint)?;
+        (!self.some_type(constraint, |c, m| c.is_deferred(m))).then_some(constraint)
     }
 
     // ───────────────────────────── mapped types ─────────────────────────────
@@ -1804,8 +1810,89 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate_mapped_type(file, node, mapper, NewAlias::OfNode)
     }
 
-    /// `instantiateMappedType`. A mapped type over the keys of an array is an array, and so on.
+    /// `getObjectTypeInstantiation` of the mapped type at `node`, from where it finds nothing under
+    /// its key to `data.instantiations[key] = result`. The same key may be asked for in between.
     pub(super) fn instantiate_mapped_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        alias: NewAlias<'_>,
+    ) -> TypeId {
+        let nesting = self.mapped_instantiations_in_progress_under(file, node, mapper, alias);
+        self.mapped_instantiations_in_progress
+            .push(MappedInstantiation {
+                target: (file, node),
+                type_arguments: mapper,
+                alias: match alias {
+                    NewAlias::Given(alias, type_arguments) => {
+                        Some((alias, SmallVec::from_slice(type_arguments)))
+                    }
+                    NewAlias::OfNode => None,
+                },
+                nesting,
+            });
+        let result = self.instantiate_mapped_type_worker(file, node, mapper, alias);
+        self.mapped_instantiations_in_progress.pop();
+        result
+    }
+
+    /// How many `instantiate_mapped_type` with the key of these arguments are in progress.
+    fn mapped_instantiations_in_progress_under(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        alias: NewAlias<'_>,
+    ) -> u8 {
+        let mut with_type_arguments = (self.mapped_instantiations_in_progress.iter().rev())
+            .filter(|it| it.target == (file, node) && it.type_arguments == mapper)
+            .peekable();
+        // The target itself is under the key of its type parameters from the start.
+        if with_type_arguments.peek().is_none() || !self.is_instantiating(mapper) {
+            return 0;
+        }
+        // `instantiateTypeAlias(t.alias, m)` is one key, whether it is passed in or not.
+        let of_node = self.alias_of_node_under(file, node, mapper);
+        let of_node =
+            (of_node.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+        let new_alias = match alias {
+            NewAlias::Given(alias, type_arguments) => Some((alias, type_arguments)),
+            NewAlias::OfNode => of_node,
+        };
+        let innermost = with_type_arguments.find(|it| match &it.alias {
+            Some((alias, type_arguments)) => Some((*alias, &type_arguments[..])) == new_alias,
+            None => of_node == new_alias,
+        });
+        innermost.map_or(0, |it| it.nesting.saturating_add(1))
+    }
+
+    /// `InstantiationKey::nesting` of the innermost `instantiate_mapped_type`.
+    fn nesting_of_mapped_instantiation(&self) -> u8 {
+        (self.mapped_instantiations_in_progress.last()).map_or(0, |innermost| innermost.nesting)
+    }
+
+    /// `InstantiationKey::alias` for the alias passed to `instantiate_mapped_type`.
+    fn alias_of_instantiation_key(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+        alias: NewAlias<'_>,
+    ) -> Option<(Sym, TypeId)> {
+        let NewAlias::Given(alias, type_arguments) = alias else {
+            return None;
+        };
+        let of_node = self.alias_of_node_under(file, node, mapper);
+        if of_node.is_some_and(|it| it.0 == alias && it.1 == type_arguments) {
+            return None;
+        }
+        let flags = vec![ElemFlags::REQUIRED; type_arguments.len()];
+        Some((alias, self.tuple(type_arguments, &flags, false)))
+    }
+
+    /// `instantiateMappedType`. A mapped type over the keys of an array is an array, and so on.
+    fn instantiate_mapped_type_worker(
         &mut self,
         file: FileId,
         node: TypeNodeId,
@@ -1824,14 +1911,41 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return TypeId::WILDCARD;
             }
-            let created = c.intern(TypeData::Anon {
+            let created = TypeData::Anon {
                 origin: Origin::Mapped(file, node),
                 mapper,
-            });
+            };
+            let nesting = c.nesting_of_mapped_instantiation();
+            if nesting != 0 {
+                let given = c.alias_of_instantiation_key(file, node, mapper, alias);
+                let could_contain_type_variables =
+                    c.could_type_arguments_contain_type_variables(mapper);
+                return c.types().intern_key_with(
+                    TypeKey::Data(&created),
+                    &ProvenanceKey {
+                        alias: match alias {
+                            NewAlias::Given(alias, type_arguments) if given.is_some() => {
+                                Some((alias, type_arguments))
+                            }
+                            _ => None,
+                        },
+                        origin: OriginKey::None,
+                        is_enum: false,
+                        stored_under: Some(InstantiationKey {
+                            type_arguments: mapper,
+                            alias: given,
+                            could_contain_type_variables,
+                            nesting,
+                        }),
+                        is_array_literal: false,
+                    },
+                );
+            }
+            let created = c.intern(created);
             // `instantiateAnonymousType`
             match alias {
                 NewAlias::Given(alias, type_arguments) => {
-                    c.with_alias(created, alias, type_arguments)
+                    c.with_alias_of_instantiation(created, alias, type_arguments)
                 }
                 NewAlias::OfNode => created,
             }
@@ -1846,21 +1960,19 @@ impl<'p, 's> Checker<'p, 's> {
             return anon(self);
         }
         let value = self.reduced(value);
+        let given = self.alias_of_instantiation_key(file, node, mapper, alias);
         // `instantiateTypeAlias(t.alias, m)`
         let of_node = match alias {
-            NewAlias::OfNode if !self.is_union(value) => None,
-            _ => self.alias_of_node_under(file, node, mapper),
-        };
-        let of_node =
-            (of_node.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
-        // The second: `InstantiationKey::alias`.
-        let (alias, given) = match alias {
-            NewAlias::Given(alias, type_arguments) if Some((alias, type_arguments)) != of_node => {
-                let flags = vec![ElemFlags::REQUIRED; type_arguments.len()];
-                let given = (alias, self.tuple(type_arguments, &flags, false));
-                (Some((alias, type_arguments)), Some(given))
+            NewAlias::OfNode if self.is_union(value) => {
+                self.alias_of_node_under(file, node, mapper)
             }
-            _ => (of_node, None),
+            _ => None,
+        };
+        let alias = match alias {
+            NewAlias::Given(alias, type_arguments) => Some((alias, type_arguments)),
+            NewAlias::OfNode => {
+                (of_node.as_ref()).map(|(alias, type_arguments)| (*alias, &type_arguments[..]))
+            }
         };
         let result = self.map_type_with_alias(
             value,
@@ -1889,6 +2001,7 @@ impl<'p, 's> Checker<'p, 's> {
                     type_arguments: mapper,
                     alias: given,
                     could_contain_type_variables: false,
+                    nesting: self.nesting_of_mapped_instantiation(),
                 }),
                 is_array_literal: false,
             },
@@ -1944,7 +2057,8 @@ impl<'p, 's> Checker<'p, 's> {
                 mapper: one,
             };
             // `getObjectTypeInstantiation` stores the result under `m` and the alias.
-            if one == mapper && given.is_none() {
+            let nesting = c.nesting_of_mapped_instantiation();
+            if one == mapper && given.is_none() && nesting == 0 {
                 return c.intern(created);
             }
             // It sets the flag of its result from the type arguments. For a member of a union
@@ -1963,6 +2077,7 @@ impl<'p, 's> Checker<'p, 's> {
                         type_arguments: mapper,
                         alias: given,
                         could_contain_type_variables,
+                        nesting,
                     }),
                     is_array_literal: false,
                 },
@@ -2117,13 +2232,6 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.data(ty) {
             TypeData::Keyof(of) => {
                 let apparent = self.apparent_type(of);
-                // `getApparentTypeOfIntersectionType`: in an intersection each type variable is
-                // replaced by its constraint.
-                let apparent = if apparent == of && self.is_intersection(of) {
-                    self.base_constraint(of)
-                } else {
-                    apparent
-                };
                 if let TypeData::Tuple {
                     flags, readonly, ..
                 } = self.data(apparent)
@@ -2219,21 +2327,19 @@ impl<'p, 's> Checker<'p, 's> {
         let template = self.type_from_node(file, mapped.ty);
         let template = self.instantiate(template, with_key);
         // `couldAccessOptionalProperty`: it may be one of the optional properties.
-        let optional = mapped.optional == MappedModifier::Add || {
-            let keys = self.base_constraint(index);
+        let mut optional = mapped.optional == MappedModifier::Add;
+        if !optional && let Some(keys) = self.base_constraint_of(index) {
             let members = self.members(obj)?;
-            let mut could = false;
             for prop in &members.shape().props {
                 if prop.flags.contains(PropFlags::OPTIONAL)
                     && let Some(key) = self.key_type_of_prop(obj, prop)
                     && self.is_assignable(key, keys)
                 {
-                    could = true;
+                    optional = true;
                     break;
                 }
             }
-            could
-        };
+        }
         Some(if optional {
             self.optional_property(template)
         } else {
@@ -2504,6 +2610,28 @@ impl<'p, 's> Checker<'p, 's> {
             origin: Origin::Mapped(file, node),
             mapper: types.mapper_of(&type_arguments),
         })
+    }
+
+    /// `links.syntheticOrigin` of the symbol that `prop` stands for: `modifiersProp` of
+    /// `addMemberForKeyTypeWorker`. `build_mapped_shape` created `prop` for the mapped type `of`.
+    pub(super) fn synthetic_origin(&mut self, of: TypeId, prop: &Prop) -> Option<&'p Prop<'p>> {
+        let of = self.containing_type_of_mapped_prop(of, prop);
+        let (file, node, mapper) = self.mapped_origin(of)?;
+        let param = self.type_param(file, self.mapped_decl(file, node).param);
+        let key_type = self.types().map(prop.mapper, param)?;
+        // `keyType` is the union of the keys that have the name. The first created the symbol.
+        let key = if self.is_union(key_type) {
+            let constraint = self.mapped_constraint(file, node, mapper);
+            let (keys, _) = self.mapped_key_types(file, node, mapper, constraint);
+            let named_alike = self.parts(key_type);
+            keys.iter().copied().find(|key| named_alike.contains(key))?
+        } else {
+            key_type
+        };
+        let name = self.property_name_of_type(key)?;
+        let modifiers_type = self.mapped_modifiers_type(of).unwrap_or(TypeId::UNKNOWN);
+        let (origin, _) = self.get_property_of_type(modifiers_type, name)?;
+        Some(origin)
     }
 
     /// `getTypeOfMappedSymbol`: the type of `prop`, which `build_mapped_shape` created for the

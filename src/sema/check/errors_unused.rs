@@ -75,6 +75,15 @@ struct Use {
     is_self_reference: bool,
 }
 
+/// What `Checker::private_property_read` finds.
+enum PropertyRead {
+    /// The type of the receiver did not resolve.
+    Unresolved,
+    /// No member of a class is marked.
+    NotPrivate,
+    Private(Sym),
+}
+
 impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
@@ -165,6 +174,11 @@ impl Checker<'_, '_> {
         };
         if locals || bound.type_param_symbol.iter().any(is_member) {
             self.note_private_reads(file, &mut u);
+            let is_declared_here = |symbol: &&Sym| symbol.file == file;
+            let marked = self.referenced_properties.iter().filter(is_declared_here);
+            for symbol in marked.copied().collect::<Vec<Sym>>() {
+                self.note_property_symbol(&mut u, symbol);
+            }
         }
         self.check_unused_identifiers(&u);
     }
@@ -701,6 +715,67 @@ impl Checker<'_, '_> {
     ) {
         let is_this_type = matches!(self.data(receiver), TypeData::ThisParam(_));
         let receiver = self.apparent_type(receiver);
+        let symbol = match self.private_property_read(file, receiver, name, at) {
+            PropertyRead::Unresolved => return u.note_members_named(name),
+            PropertyRead::NotPrivate => return,
+            PropertyRead::Private(symbol) => symbol,
+        };
+        // A self-reference from inside any declaration of the member is not a reference.
+        if (from_this.is_some() || at.is_some_and(|e| self.is_self_type_access(file, e, receiver)))
+            && let Some(inside) = at.or(from_this).and_then(|e| u.enclosing_member_fn(e))
+            && self.symbol_of_member(file, inside) == symbol
+            && (is_this_type || {
+                let members = self.members_of_symbol(symbol);
+                self.is_uninstantiated(file, &members)
+            })
+        {
+            return;
+        }
+        self.note_property_symbol(u, symbol);
+    }
+
+    /// `markPropertyAsReferenced` where it is called, for a member that another file than `file`
+    /// declares: the property `name` of `receiver` is accessed in `file`. `note_private_reads`
+    /// collects the accesses in the file of the declaration. `at`: as for `note_property`. No
+    /// declaration of the member contains the access, so `isSelfTypeAccess` does not matter.
+    pub(super) fn mark_property_as_referenced(
+        &mut self,
+        file: FileId,
+        receiver: TypeId,
+        name: Atom,
+        at: Option<ExprId>,
+    ) {
+        let Some(visited) = self.task.file else {
+            return;
+        };
+        if !self.p.files.options.no_unused_locals {
+            return;
+        }
+        let receiver = self.apparent_type(receiver);
+        let PropertyRead::Private(symbol) = self.private_property_read(file, receiver, name, at)
+        else {
+            return;
+        };
+        // `checkUnusedClassMembers` comes at the end of the file of the declaration.
+        let files = self.files();
+        if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
+            return;
+        }
+        // The checkers of a `checkerPool` share nothing.
+        if self.referenced_properties.insert(symbol) && self.task.checker_count == 0 {
+            self.p.properties_referenced_before.lock().insert(symbol);
+        }
+    }
+
+    /// The start of `markPropertyAsReferenced`, up to `isSelfTypeAccess`, for the property `name`
+    /// of the apparent type `receiver`, accessed in `file`. `at`: as for `note_property`.
+    fn private_property_read(
+        &mut self,
+        file: FileId,
+        receiver: TypeId,
+        name: Atom,
+        at: Option<ExprId>,
+    ) -> PropertyRead {
         // `createUnionOrIntersectionProperty`: a private property must exist in every member of a
         // union. If all members have the same property, the result is the first member's property.
         // Otherwise there is no property, or a synthesized one, and that one is marked.
@@ -708,17 +783,19 @@ impl Checker<'_, '_> {
         for &part in self.parts(receiver) {
             let part = self.apparent_type(part);
             if part == TypeId::UNRESOLVED {
-                return u.note_members_named(name);
+                return PropertyRead::Unresolved;
             }
             let Some((mut prop, mut mapper)) = self.prop_ref(part, name) else {
-                return;
+                return PropertyRead::NotPrivate;
             };
             if let PropSource::Intersected(_, list) = &prop.source {
-                let Some(first) = list.first() else { return };
+                let Some(first) = list.first() else {
+                    return PropertyRead::NotPrivate;
+                };
                 if list.iter().any(|other| {
                     !self.is_same_property(first, MapperId::IDENTITY, other, MapperId::IDENTITY)
                 }) {
-                    return;
+                    return PropertyRead::NotPrivate;
                 }
                 (prop, mapper) = (first, MapperId::IDENTITY);
             }
@@ -735,39 +812,30 @@ impl Checker<'_, '_> {
                     _ => false,
                 };
                 if !is_private {
-                    return;
+                    return PropertyRead::NotPrivate;
                 }
                 found = Some((prop, mapper));
                 continue;
             };
             if !self.is_same_property(first.0, first.1, prop, mapper) {
-                return;
+                return PropertyRead::NotPrivate;
             }
         }
-        let Some((prop, _)) = found else { return };
+        let Some((prop, _)) = found else {
+            return PropertyRead::NotPrivate;
+        };
         let PropSource::Symbol(symbol) = prop.source else {
-            return;
+            return PropertyRead::NotPrivate;
         };
         // A write-only access is not a reference, unless the write calls a setter.
-        if at.is_some_and(|e| u.is_write_only(e))
+        if at.is_some_and(|e| self.bound(file).is_write_only_access(self.hir(file), e))
             && !self
                 .flags_of_property(symbol)
                 .contains(SymFlags::SET_ACCESSOR)
         {
-            return;
+            return PropertyRead::NotPrivate;
         }
-        // A self-reference from inside any declaration of the member is not a reference.
-        if (from_this.is_some() || at.is_some_and(|e| self.is_self_type_access(file, e, receiver)))
-            && let Some(inside) = at.or(from_this).and_then(|e| u.enclosing_member_fn(e))
-            && self.symbol_of_member(file, inside) == symbol
-            && (is_this_type || {
-                let members = self.members_of_symbol(symbol);
-                self.is_uninstantiated(file, &members)
-            })
-        {
-            return;
-        }
-        self.note_property_symbol(u, symbol);
+        PropertyRead::Private(symbol)
     }
 
     /// `symbolReferenceLinks.Get(symbol).referenceKinds |= SymbolFlagsAll` for the symbol of a
@@ -1631,7 +1699,7 @@ impl Unused<'_, '_> {
             }
             match s.kind {
                 // `export { a }` references `a` with any meaning.
-                StmtKind::ExportNamed(id) if hir[id].spec.is_none() => {
+                StmtKind::ExportNamed(id) if !hir[id].has_module_specifier => {
                     let scope = bound.export_scope[id.idx()];
                     for item in hir[id].items.iter() {
                         self.note_name(scope, hir[item].local, SymFlags::all(), ALL);
@@ -2243,7 +2311,9 @@ impl Checker<'_, '_> {
             let checks_locals = match scope.kind {
                 // `checkSourceFile`: `IsExternalOrCommonJSModule`
                 ScopeKind::File => hir.has_module_syntax || bound.commonjs_indicator.is_some(),
-                ScopeKind::Module(_) | ScopeKind::Block => true,
+                // `checkModuleDeclaration`: `!IsGlobalScopeAugmentation(node)`
+                ScopeKind::Module(m) => hir[m].name != ModuleName::Global,
+                ScopeKind::Block => true,
                 // Among overloads, only the implementation.
                 ScopeKind::Fn(f) => {
                     !matches!(hir[f].body, FnBody::None)
@@ -2568,6 +2638,7 @@ impl Checker<'_, '_> {
                         let name = hir.text.get(start as usize..end as usize);
                         let (at, name) = ((file, start, end), Arg::Bytes(name.unwrap_or_default()));
                         self.report_unused(u, hir.node(m), false, at, 6133, &[name]);
+                        self.unused_private_members.push((symbol, start));
                     }
                 }
                 MemberKind::Constructor => {
@@ -2589,6 +2660,10 @@ impl Checker<'_, '_> {
                                 ),
                             };
                             self.report_unused(u, hir.node(p), false, at, 6138, &[name]);
+                            if property.is_some() {
+                                let symbol = self.files().sym(file, property);
+                                self.unused_private_members.push((symbol, at.1));
+                            }
                         }
                     }
                 }

@@ -373,8 +373,6 @@ pub(crate) struct Import {
     /// `None` without `{ }`.
     pub(crate) specifiers: Option<Span<Specifier>>,
     pub(crate) module: ModuleSpecifier,
-    /// It is a statement in the body of an ambient module.
-    pub(crate) is_in_ambient_module: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -396,8 +394,6 @@ pub(crate) struct ImportEquals {
     pub(crate) name: Name,
     pub(crate) is_type_only: bool,
     pub(crate) reference: ModuleReference,
-    /// It is a statement in the body of an ambient module.
-    pub(crate) is_in_ambient_module: bool,
 }
 
 #[derive(Copy, Clone)]

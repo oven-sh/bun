@@ -645,7 +645,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_any_function_shape(shape: &Shape) -> bool {
-        shape.literal == Literalness::Partial && Self::has_no_members(shape)
+        shape.literal == Literalness::Partial
+            && shape.symbol_declared_at.is_none()
+            && Self::has_no_members(shape)
     }
 
     fn has_no_members(shape: &Shape) -> bool {
@@ -653,6 +655,20 @@ impl<'p, 's> Checker<'p, 's> {
             && shape.call.is_empty()
             && shape.construct.is_empty()
             && shape.index.is_empty()
+    }
+
+    /// `t.symbol != nil` for a synthesized object type. Not exact for the type of a signature, see
+    /// `Shape::has_no_instantiable_symbol`.
+    pub(super) fn shape_has_symbol(shape: &Shape) -> bool {
+        !(shape.has_no_instantiable_symbol
+            || matches!(
+                shape.literal,
+                Literalness::EmptyObject
+                    | Literalness::OfUnknown
+                    | Literalness::AutoArray
+                    | Literalness::OfLiteralKeyof
+            )
+            || Self::is_any_function_shape(shape))
     }
 
     /// `isEmptyResolvedType` of the resolved members of `ty`.
@@ -676,7 +692,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `IsEmptyAnonymousObjectType`. The members of a type that is created without them count only
-    /// once something else has resolved them (`ObjectFlagsMembersResolved`).
+    /// once something else has resolved them (`ObjectFlagsMembersResolved`), or is instantiating
+    /// them: until that is done there are none.
     pub(super) fn is_empty_anonymous_object_type(&mut self, ty: TypeId) -> bool {
         if matches!(ty, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
             return true;
@@ -701,9 +718,12 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => false,
             // A type literal that has an `Origin` has members in its symbol.
-            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => self
-                .resolved_members(ty)
-                .is_some_and(|m| Self::has_no_members(m.shape())),
+            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => {
+                match self.resolved_members(ty) {
+                    Some(members) => Self::has_no_members(members.shape()),
+                    None => self.has_no_members_in_place(ty),
+                }
+            }
             _ => false,
         }
     }
@@ -1251,6 +1271,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
+        // `EnumRelationKey`
+        self.get_symbol_id(source);
+        self.get_symbol_id(target);
         if let Some(&is_related) = self.enum_relation.get(&(source, target))
             && (is_related || error_reporter.is_none())
         {
@@ -1689,53 +1712,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getBaseConstraintOfType`. `None`: there is none.
     pub(super) fn base_constraint_of(&mut self, t: TypeId) -> Option<TypeId> {
-        self.base_constraint_of_as(t, false)
-    }
-
-    /// `nested`: the caller is `computeBaseConstraint`, which passes its stack on
-    /// (`getNextBaseConstraint`).
-    pub(super) fn base_constraint_of_as(&mut self, t: TypeId, nested: bool) -> Option<TypeId> {
-        match self.data(t) {
-            TypeData::Template { texts, types } => {
-                let constraints: Vec<TypeId> = types
-                    .iter()
-                    .map(|&ty| self.base_constraint_of_as(ty, nested).unwrap_or(ty))
-                    .collect();
-                // Any string, if some placeholder has no known constraint. A placeholder that is
-                // not generic is used as is.
-                if constraints
-                    .iter()
-                    .any(|&c| c == TypeId::UNKNOWN || self.is_deferred(c))
-                {
-                    return Some(TypeId::STRING);
-                }
-                if constraints[..] == types[..] {
-                    return Some(t);
-                }
-                Some(self.template_type(texts, &constraints))
-            }
-            TypeData::StringMapping { kind, ty } => {
-                let constraint = self.base_constraint_of_as(*ty, nested).unwrap_or(*ty);
-                Some(if constraint != *ty && constraint != TypeId::UNKNOWN {
-                    self.string_mapping(*kind, constraint)
-                } else {
-                    TypeId::STRING
-                })
-            }
-            // `noConstraintType`, `circularConstraintType`: no constraint. A union has no
-            // constraint if some member has none, an intersection if no member has one.
-            data if is_union_or_intersection_kind(data)
-                || is_instantiable_kind(data)
-                || is_generic_tuple_kind(data) =>
-            {
-                Some(if nested {
-                    self.next_base_constraint(t)
-                } else {
-                    self.base_constraint(t)
-                })
-                .filter(|&c| c != TypeId::UNKNOWN)
-            }
-            _ => None,
+        let data = self.data(t);
+        if is_union_or_intersection_kind(data)
+            || is_instantiable_kind(data)
+            || is_generic_tuple_kind(data)
+        {
+            self.resolved_base_constraint(t)
+        } else {
+            None
         }
     }
 
@@ -2049,8 +2033,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getModifiersTypeFromMappedType`
-    fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
+    /// `getModifiersTypeFromMappedType`. `None`: `unknown`.
+    pub(super) fn mapped_modifiers_type(&mut self, t: TypeId) -> Option<TypeId> {
         let (file, node, mapper) = self.mapped_origin(t)?;
         let (declared, _) = self.mapped_modifiers_source(file, node)?;
         Some(self.instantiate(declared, mapper))
@@ -4081,26 +4065,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let scope = self.begin_scope();
         let mut t = of;
-        let has_symbol = |c: &Self, ty: TypeId| {
-            matches!(
-                c.data(ty),
-                TypeData::Ref { .. }
-                    | TypeData::Anon { .. }
-                    | TypeData::Fns { .. }
-                    | TypeData::TypeParam(..)
-                    | TypeData::ThisParam(_)
-            ) || matches!(
-                c.data(ty),
-                // The symbol of an object literal.
-                TypeData::Synth(shape) if shape.symbol_declared_at.is_some()
-                    || matches!(
-                        shape.literal,
-                        Literalness::Literal
-                            | Literalness::WithSpread
-                            | Literalness::JsxAttributes
-                            | Literalness::Partial
-                    )
-            )
+        let has_symbol = |c: &Self, ty: TypeId| match c.data(ty) {
+            TypeData::Ref { .. }
+            | TypeData::Anon { .. }
+            | TypeData::Fns { .. }
+            | TypeData::TypeParam(..)
+            | TypeData::ThisParam(_) => true,
+            TypeData::Synth(shape) => Self::shape_has_symbol(shape),
+            _ => false,
         };
         // Circular aliases are reported elsewhere. Here the loop must terminate.
         for _ in 0..64 {
@@ -5195,9 +5167,6 @@ impl<'p, 's> Checker<'p, 's> {
             return Ternary::FALSE;
         }
         let source_is_primitive = self.has_primitive_flag_as(source, sd);
-        // The type that represents `object` has no declaration: it is not known to have no other
-        // members.
-        let source_is_object_keyword = !is_object_kind(sd) && self.is_object_keyword_like(source);
         let (mut source, mut sd) = (source, sd);
         if relation != Relation::Identity {
             // An object type other than a mapped one is its own apparent type.
@@ -5290,7 +5259,6 @@ impl<'p, 's> Checker<'p, 's> {
             is_object_kind(sd) || matches!(sd, TypeData::Intersection(_));
         if source_is_object_or_intersection && is_object_kind(td) {
             // `reportStructuralErrors`: only if nothing has been reported yet.
-            let primitive_or_keyword = (source_is_primitive, source_is_object_keyword);
             let result = if REPORT
                 && is_same_chain(&r.error_chain, &shared.save_error_state.chain)
                 && !source_is_primitive
@@ -5302,7 +5270,7 @@ impl<'p, 's> Checker<'p, 's> {
                     target,
                     td,
                     state,
-                    primitive_or_keyword,
+                    source_is_primitive,
                 )
             } else {
                 self.object_members_related_to::<false>(
@@ -5312,7 +5280,7 @@ impl<'p, 's> Checker<'p, 's> {
                     target,
                     td,
                     state,
-                    primitive_or_keyword,
+                    source_is_primitive,
                 )
             };
             if result.holds() {
@@ -5357,7 +5325,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The four comparisons of `structuredTypeRelatedToWorker` under `reportStructuralErrors`,
     /// which is `REPORT` here.
-    /// `primitive_or_keyword`: `sourceIsPrimitive`, and whether `source` represents `object`.
     #[inline]
     fn object_members_related_to<const REPORT: bool>(
         &mut self,
@@ -5367,9 +5334,8 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         td: &'p TypeData<'p>,
         state: u8,
-        primitive_or_keyword: (bool, bool),
+        source_is_primitive: bool,
     ) -> Ternary {
-        let (source_is_primitive, source_is_object_keyword) = primitive_or_keyword;
         let mut both = None;
         let mut result = self.properties_related_to_noting::<REPORT>(
             r,
@@ -5390,16 +5356,6 @@ impl<'p, 's> Checker<'p, 's> {
                     r, source, sd, target, td, true, state, both,
                 );
                 if result.holds() {
-                    // tsgo compares, and prints, `{}`.
-                    if REPORT && source_is_object_keyword {
-                        return result
-                            & self.report_index_signature_missing_in_object(r, source, target);
-                    }
-                    let source = if source_is_object_keyword {
-                        TypeId::OBJECT
-                    } else {
-                        source
-                    };
                     result &= self.index_signatures_related_to_among::<REPORT>(
                         r,
                         source,
@@ -6702,7 +6658,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The mapper of a construct signature of `class` before its type parameters, which are those
     /// of the class, got the type arguments that `mapper` has for them. `None`: it has none.
-    fn without_type_arguments_of_class(&self, class: Sym, mapper: MapperId) -> Option<MapperId> {
+    pub(super) fn without_type_arguments_of_class(
+        &self,
+        class: Sym,
+        mapper: MapperId,
+    ) -> Option<MapperId> {
         let own = self.local_type_params_of_symbol(class);
         let mapping = self.types().mapping(mapper);
         if !mapping.iter().any(|pair| own.contains(&pair.0)) {
@@ -6755,6 +6715,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getMinArgumentCount`
     pub(super) fn min_argument_count(&mut self, params: &[SigParam]) -> usize {
         let mut count = None;
+        if let Some(rest) = params.last().filter(|p| p.rest) {
+            self.get_type_of_parameter(rest);
+        }
         if let Some(flags) = self.rest_tuple(params) {
             let required = flags
                 .iter()
@@ -6768,7 +6731,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Trailing parameters that accept `void` are optional.
         while count > 0 {
             let ty = match params.get(count - 1) {
-                Some(param) if !param.rest => param.ty,
+                Some(param) if !param.rest => self.get_type_of_parameter(param),
                 _ => self.param_type_at(params, count - 1).unwrap_or(TypeId::ANY),
             };
             if !self.some_type(ty, |_, m| m == TypeId::VOID) {
@@ -6782,14 +6745,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getEffectiveRestType`
     pub(super) fn effective_rest_type(&mut self, params: &[SigParam]) -> Option<TypeId> {
         let last = params.last().filter(|p| p.rest)?;
-        match self.data(last.ty) {
+        let rest = self.get_type_of_parameter(last);
+        match self.data(rest) {
             TypeData::Tuple { flags, .. } => {
-                let elems = self.type_arguments(last.ty);
+                let elems = self.type_arguments(rest);
                 let fixed = Self::fixed_length(flags);
                 (fixed != flags.len()).then(|| self.tuple(&elems[fixed..], &flags[fixed..], false))
             }
-            _ if self.is_any(last.ty) => Some(self.array_of(TypeId::ANY)),
-            _ => Some(last.ty),
+            _ if self.is_any(rest) => Some(self.array_of(TypeId::ANY)),
+            _ => Some(rest),
         }
     }
 
@@ -7268,8 +7232,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getApparentTypeOfIntersectionType`: the intersection of the apparent types of the members
-    /// of `ty`. `apparent_type` returns an intersection whose members all have object apparent
-    /// types unchanged, and `members` builds its shape from those apparent types.
+    /// of `ty`. `apparent_type` returns an intersection whose members are all their own apparent
+    /// types unchanged.
     /// `getTypeWithThisArgument` also replaces a member that is a reference with a `this` type. The
     /// new reference prints like the old one, and the new intersection has no alias.
     pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {
@@ -7299,35 +7263,6 @@ impl<'p, 's> Checker<'p, 's> {
         p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)
     }
 
-    /// Whether `getApparentType(ty)` is `emptyObjectType`, which is the apparent type of `object`.
-    /// It has no symbol, unlike a `{}` in the source. Of the types that count as `{}` in an
-    /// intersection `addTypeToIntersection` keeps the first.
-    pub(super) fn is_object_keyword_like(&mut self, ty: TypeId) -> bool {
-        let ty = if self.is_deferred(ty) {
-            self.base_constraint(ty)
-        } else {
-            ty
-        };
-        let TypeData::Intersection(parts) = self.data(ty) else {
-            return ty == TypeId::OBJECT
-                || ty == TypeId::UNKNOWN && !self.p.files.options.strict_null_checks;
-        };
-        let mut first = None;
-        for &p in parts.iter() {
-            let look = if p == TypeId::OBJECT || self.is_deferred(p) {
-                self.apparent_type(p)
-            } else {
-                p
-            };
-            if matches!(look, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
-                first = first.or(Some(p));
-            } else if look != TypeId::UNKNOWN {
-                return false;
-            }
-        }
-        first.is_some_and(|p| self.is_object_keyword_like(p))
-    }
-
     /// `isObjectTypeWithInferableIndex`: known to have no properties other than the visible ones.
     pub(super) fn is_object_type_with_inferable_index(&mut self, t: TypeId) -> bool {
         // `t.symbol.Flags`
@@ -7341,15 +7276,9 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::ReverseMapped { source, .. } => {
                 return self.is_object_type_with_inferable_index(source);
             }
+            // The symbol of an instantiation expression type has no flags.
             TypeData::Synth(ref shape)
-                if shape.has_no_instantiable_symbol
-                    || matches!(
-                        shape.literal,
-                        Literalness::OfUnknown
-                            | Literalness::AutoArray
-                            | Literalness::OfLiteralKeyof
-                    )
-                    || Self::is_any_function_shape(shape) =>
+                if !Self::shape_has_symbol(shape) || shape.instantiation_expression.is_some() =>
             {
                 return false;
             }

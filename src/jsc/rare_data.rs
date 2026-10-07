@@ -832,11 +832,16 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
+    /// The loop a first `spawn_sync_event_loop` call made.
+    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
+        self.spawn_sync_event_loop_.as_deref()
+    }
+
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(
         &mut self,
         vm: &mut VirtualMachine,
-    ) -> Option<&mut SpawnSyncEventLoop> {
+    ) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
@@ -851,7 +856,7 @@ impl RareData {
             // SAFETY: `init` fully initialised the slot when it returned `true`.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_deref_mut()
+        self.spawn_sync_event_loop_.as_deref()
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────
@@ -901,9 +906,7 @@ impl RareData {
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
         // fails another, whose own close lands in a group already drained), so
-        // loop until every group is observed empty in the same pass — bounded;
-        // the post-close force-drain in close_all handles whatever is left
-        // after the cap.
+        // loop until every group is observed empty in the same pass — bounded.
         // Walk the loop's linked-group list rather than just our 14 embedded
         // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
         // sockets land *there*, not in RareData. Iterating only the embedded

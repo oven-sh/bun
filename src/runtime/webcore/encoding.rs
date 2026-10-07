@@ -50,7 +50,6 @@ const fn encoding_from_u8(n: u8) -> Encoding {
 
 /// `Encoding` discriminants as `u8` consts for use in `const ENCODING: u8`
 /// generic args (stable-Rust workaround for `adt_const_params`).
-#[allow(non_snake_case)]
 mod enc {
     use super::Encoding;
     pub(super) const UTF8: u8 = Encoding::Utf8 as u8;

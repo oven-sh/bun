@@ -75,7 +75,6 @@ impl DbgDepthGuard {
             debug_assert!(n <= Self::MAX_DEPTH);
             DBG_CATCH_EXEC_WITHIN_EXEC.set(n + 1);
         }
-        let _ = tag;
         Self
     }
 }

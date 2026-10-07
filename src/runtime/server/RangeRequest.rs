@@ -4,6 +4,7 @@
 //! (serve full body) rather than 416, matching common static-server behavior.
 
 use bun_core::strings;
+use bun_http_types::ETag;
 use bun_uws::AnyRequest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -124,13 +125,26 @@ pub(crate) fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
+/// `None` too when the request's `If-Range` does not match `etag` / `last_modified_ms`.
 // `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
 // it, so take `&AnyRequest` here.
-pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
+pub(crate) fn from_request(
+    req: &AnyRequest,
+    total: u64,
+    etag: Option<&[u8]>,
+    last_modified_ms: Option<u64>,
+) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
     };
-    parse(h, total)
+    let range = parse(h, total);
+    if range != Result::None
+        && let Some(if_range) = req.header(b"if-range")
+        && !if_range_matches(if_range, etag, last_modified_ms)
+    {
+        return Result::None;
+    }
+    range
 }
 
 pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
@@ -138,6 +152,38 @@ pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
         return Raw::None;
     };
     parse_raw(h)
+}
+
+/// Owned `If-Range` for a context that outlives the uWS request. `None` without a usable `Range`.
+pub(crate) fn if_range_from_request(req: &AnyRequest, range: Raw) -> Option<Box<[u8]>> {
+    if range == Raw::None {
+        return None;
+    }
+    req.header(b"if-range").map(Box::from)
+}
+
+/// RFC 9110 §13.1.5. `false` means: ignore `Range` and send the full 200 body.
+pub(crate) fn if_range_matches(
+    if_range: &[u8],
+    etag: Option<&[u8]>,
+    last_modified_ms: Option<u64>,
+) -> bool {
+    // An entity-tag has a DQUOTE in its first three bytes (`"` or `W/"`). An HTTP-date has none.
+    if strings::contains_char(&if_range[..if_range.len().min(3)], b'"') {
+        return ETag::if_range(etag, if_range);
+    }
+    let Some(last_modified_ms) = last_modified_ms else {
+        return false;
+    };
+    // `parse_http_date` is `Date.parse`, which reads a date with no zone (asctime) as local time.
+    if !if_range.ends_with(b"GMT") {
+        return false;
+    }
+    let Some(date_ms) = crate::jsc_hooks::parse_http_date(if_range) else {
+        return false;
+    };
+    // `Last-Modified` is second-granular on the wire.
+    last_modified_ms / 1000 == date_ms / 1000
 }
 
 /// Max bytes a `Content-Range: bytes ...` value can occupy: `"bytes "` (6) +

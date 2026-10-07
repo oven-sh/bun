@@ -668,9 +668,7 @@ impl Handle {
             close_on_complete: false,
             owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
@@ -683,9 +681,7 @@ impl Handle {
             close_on_complete: true,
             owns_fd: false,
             cluster_seq: None,
-            #[cfg(windows)]
             win_export_hex: None,
-            #[cfg(windows)]
             peer_pid: 0,
         }
     }
@@ -703,10 +699,6 @@ impl Handle {
             close_on_complete,
             owns_fd: true,
             cluster_seq: None,
-            #[cfg(windows)]
-            win_export_hex: None,
-            #[cfg(windows)]
-            peer_pid: 0,
         })
     }
 }
@@ -1945,7 +1937,6 @@ impl uv::StreamReader for SendQueue {
         // `incoming` itself, so only the length is forwarded and only a shared
         // view of `*this` is formed.
         let nread = data.len();
-        let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
         // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
         IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);

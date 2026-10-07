@@ -1,8 +1,17 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer, isDockerEnabled, tls as tlsCert } from "harness";
+import net from "node:net";
 import path from "node:path";
-import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
+import tls from "node:tls";
+import {
+  listeningServer,
+  pgAuthenticationCleartextPassword,
+  pgAuthenticationOk,
+  pgReadyForQuery,
+  pgSSLRequest,
+  pgSSLResponse,
+} from "./wire-frames";
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
@@ -47,6 +56,41 @@ if (!isDockerEnabled()) {
               ca: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
               serverName: "localhost",
             },
+          });
+          const [{ x }] = await sql`SELECT 1 as x`;
+          expect(x).toBe(1);
+        }
+      });
+
+      test("a BunFile tls option is the CA that the server certificate is verified against", async () => {
+        await container.ready;
+        const url = `postgres://postgres@${container.host}:${container.port}/bun_sql_test`;
+
+        // The server certificate does not chain to this unrelated CA, so the
+        // connection must be refused instead of proceeding over unverified TLS.
+        {
+          await using sql = new SQL({
+            url,
+            adapter: "postgres",
+            max: 1,
+            tls: Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem")),
+          });
+          const error = await sql`SELECT 1 as x`.then(
+            () => null,
+            e => e,
+          );
+          expect(error).not.toBeNull();
+          expect(error.code || error).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+        }
+
+        // The issuing CA verifies. `?sslmode=verify-ca` skips only the hostname
+        // check: the URL carries container.host and the certificate names `localhost`.
+        {
+          await using sql = new SQL({
+            url: `${url}?sslmode=verify-ca`,
+            adapter: "postgres",
+            max: 1,
+            tls: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
           });
           const [{ x }] = await sql`SELECT 1 as x`;
           expect(x).toBe(1);
@@ -418,3 +462,52 @@ test("postgres client aborts the connection when the server declines TLS that wa
     }
   }
 });
+
+// Reads the client's TLS records off the wire, which a container cannot show. A PostgreSQL server
+// logs "could not receive data from client" for a TLS connection that ends without a close_notify.
+test.each(["idleTimeout", "maxLifetime"])(
+  "postgres sends a close_notify when %s closes a TLS connection",
+  async option => {
+    // TLS 1.2 leaves a record's type in the clear.
+    const ALERT = 21;
+    const terminator = tls.createServer({ ...tlsCert, maxVersion: "TLSv1.2" }, socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
+    });
+    await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
+
+    let records = Buffer.alloc(0);
+    const closed = Promise.withResolvers<void>();
+    const { port, server } = await listeningServer(client => {
+      client.on("error", () => {});
+      client.on("close", () => closed.resolve());
+      client.once("data", () => {
+        client.write(pgSSLResponse("S"));
+        const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
+        upstream.on("error", () => {});
+        client.on("data", chunk => {
+          records = Buffer.concat([records, chunk]);
+        });
+        client.pipe(upstream).pipe(client);
+      });
+    });
+
+    try {
+      await using sql = new SQL({
+        url: `postgres://postgres@127.0.0.1:${port}/bun_sql_test`,
+        max: 1,
+        tls: { rejectUnauthorized: false },
+        [option]: 0.05,
+      });
+      await sql.connect();
+      await closed.promise;
+
+      const types: number[] = [];
+      for (let i = 0; i + 5 <= records.length; i += 5 + records.readUInt16BE(i + 3)) types.push(records[i]);
+      expect(types.at(-1)).toBe(ALERT);
+    } finally {
+      server.close();
+      terminator.close();
+    }
+  },
+);

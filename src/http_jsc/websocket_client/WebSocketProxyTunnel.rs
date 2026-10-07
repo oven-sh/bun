@@ -224,6 +224,7 @@ impl WebSocketProxyTunnel {
                 on_keylog: None,
                 server_identity: Some(Self::server_identity),
                 write_in_flight: None,
+                on_peer_close_waits: None,
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;

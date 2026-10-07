@@ -20,6 +20,8 @@ const clientCA = clientCert;
 // Both runtimes refuse an untrusted client. Bun reports the certificate check to 'tlsClientError', Node reports how
 // the connection ended.
 const isBun = process.versions.bun !== undefined;
+// Bun's debug and sanitizer builds use more memory for the same work, so a memory check gets a wider bound there.
+const isDebugOrASAN = isBun && (process.versions.bun.includes("debug") || process.execPath.includes("bun-asan"));
 
 // Resolves when this process has read what its sockets had received by the time of the call: a new connection that
 // the peer answers takes more turns of the event loop than a read that is already due.
@@ -1506,16 +1508,19 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
 
 // Two in-memory Duplexes, one per side of a connection. From `stall()` on, the side named by `stalls` keeps each chunk
 // and its write callback, as a transport does that has not completed the write. `release()` completes them in order.
+// From `gather()` on, the chunks of the other side wait for `deliver()`, which passes them on as one chunk.
 // With `peerStaysOpen`, the end() of a side does not end the other one: only the close_notify says that it closed.
 function stallingPair(stalls, { peerStaysOpen = false } = {}) {
   const held = [];
   let stalled = false;
+  let gathered;
   const makeSide = name =>
     new Duplex({
       read() {},
       write(chunk, encoding, callback) {
         if (stalled && name === stalls) return void held.push([chunk, callback]);
-        sides[name === "client" ? "server" : "client"].push(chunk);
+        if (gathered && name !== stalls) gathered.push(chunk);
+        else sides[name === "client" ? "server" : "client"].push(chunk);
         callback();
       },
       final(callback) {
@@ -1534,6 +1539,11 @@ function stallingPair(stalls, { peerStaysOpen = false } = {}) {
         sides[stalls === "client" ? "server" : "client"].push(chunk);
         callback();
       }
+    },
+    gather: () => void (gathered = []),
+    deliver() {
+      sides[stalls].push(Buffer.concat(gathered));
+      gathered = undefined;
     },
   };
 }
@@ -1609,6 +1619,96 @@ for (const side of ["client", "server"]) {
   }
 }
 
+for (const side of ["client", "server"]) {
+  // The close_notify is the peer's EOF. Node reports it at once and keeps the socket open for the write. An
+  // application that reads until 'end' must not wait for a transport that is slow to complete that write.
+  test(`over a Duplex: a ${side} reports 'end' at the peer's close_notify while its write is in flight`, async () => {
+    const pair = stallingPair(side, { peerStaysOpen: true });
+    const { client, server, writer, reader } = await connectOver(pair, side);
+    const log = [];
+    let received = "";
+    const arrived = Promise.withResolvers();
+    const written = Promise.withResolvers();
+    reader.on("data", chunk => {
+      received += chunk;
+      arrived.resolve();
+    });
+    writer.resume();
+    writer.on("end", () => log.push("'end'"));
+    writer.on("error", err => log.push(`'error': ${err.message}`));
+    reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+    try {
+      pair.stall();
+      writer.write("x", err => {
+        log.push(`write callback: ${err?.message}`);
+        written.resolve();
+      });
+      await turn();
+      // The next chunk of the writer's transport is the peer's close_notify. The TLS socket reads it first.
+      const closeNotify = new Promise(resolve => pair.sides[side].once("data", resolve));
+      reader.end();
+      await closeNotify;
+      await turn();
+      assert.deepStrictEqual({ held: pair.held.length, log }, { held: 1, log: ["'end'"] });
+      pair.release();
+
+      await Promise.all([written.promise, arrived.promise]);
+      assert.deepStrictEqual({ received, log }, { received: "x", log: ["'end'", "write callback: undefined"] });
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+
+  // The peer's last data and its close_notify can arrive in one read. The answer that the 'data' handler writes is
+  // a write in flight like one that began earlier.
+  test(`over a Duplex: a ${side} completes the writes of its 'data' handler when the same chunk carries the peer's close_notify`, async () => {
+    const pair = stallingPair(side, { peerStaysOpen: true });
+    const { client, server, writer, reader } = await connectOver(pair, side);
+    const log = [];
+    let received = "";
+    const bothReceived = Promise.withResolvers();
+    const bothWritten = Promise.withResolvers();
+    reader.on("data", chunk => {
+      received += chunk;
+      if (received.length === 2) bothReceived.resolve();
+    });
+    writer.on("data", request => {
+      log.push(`'data': ${request}`);
+      writer.write("x", err => log.push(`write callback: ${err?.message}`));
+      writer.write("y", err => {
+        log.push(`queued write callback: ${err?.message}`);
+        bothWritten.resolve();
+      });
+    });
+    writer.on("error", err => log.push(`'error': ${err.message}`));
+    reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+    try {
+      pair.stall();
+      pair.gather();
+      // The peer ends its transport after its close_notify.
+      const closeNotifyLeft = new Promise(resolve =>
+        pair.sides[side === "client" ? "server" : "client"].once("finish", resolve),
+      );
+      reader.end("request");
+      await closeNotifyLeft;
+      pair.deliver();
+      await turn();
+      assert.deepStrictEqual({ held: pair.held.length, log }, { held: 1, log: ["'data': request"] });
+      pair.release();
+
+      await Promise.all([bothWritten.promise, bothReceived.promise]);
+      assert.deepStrictEqual(
+        { received, log },
+        { received: "xy", log: ["'data': request", "write callback: undefined", "queued write callback: undefined"] },
+      );
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+}
+
 test("over a Duplex: what the peer sends behind its close_notify is not kept while a write is in flight", async () => {
   const pair = stallingPair("client", { peerStaysOpen: true });
   const { client, server, writer, reader } = await connectOver(pair, "client");
@@ -1644,7 +1744,7 @@ test("over a Duplex: what the peer sends behind its close_notify is not kept whi
     await Promise.all([written.promise, arrived.promise]);
     assert.deepStrictEqual({ received, log }, { received: "x", log: ["write callback: undefined"] });
     // 128 MiB went in. Node's own buffering is not what this checks.
-    if (isBun) assert.ok(kept < 64 * 1024 * 1024, `kept ${kept} bytes`);
+    if (isBun) assert.ok(kept < (isDebugOrASAN ? 64 : 32) * 1024 * 1024, `kept ${kept} bytes`);
   } finally {
     client.destroy();
     server.destroy();

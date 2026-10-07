@@ -382,6 +382,13 @@ impl UpgradedDuplex {
         !unsafe { &*this }.transport_idle()
     }
 
+    /// Node reports the EOF at the close_notify too, and keeps the socket open for its writes.
+    fn on_peer_close_waits(this: *mut Self) {
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        (this.handlers.on_end)(this.handlers.ctx);
+    }
+
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
         // SAFETY: see handler note above.
         unsafe { &*this }.write_encrypted(encoded_data);
@@ -555,6 +562,7 @@ impl UpgradedDuplex {
             on_keylog: Some(Self::on_keylog),
             server_identity: Some(Self::server_identity),
             write_in_flight: Some(Self::write_in_flight),
+            on_peer_close_waits: Some(Self::on_peer_close_waits),
         }
     }
 

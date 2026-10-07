@@ -387,6 +387,7 @@ impl WindowsNamedPipe {
             on_keylog: Some(Self::ssl_on_keylog),
             server_identity: Some(Self::ssl_server_identity),
             write_in_flight: None,
+            on_peer_close_waits: None,
         }
     }
 

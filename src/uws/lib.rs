@@ -517,6 +517,9 @@ pub mod ssl_wrapper {
         /// has one, the peer's close_notify does not end the session: see
         /// [`SSLWrapper::answer_peer_close`]. `None`: the session ends at once.
         pub write_in_flight: Option<fn(T) -> bool>,
+        /// The peer's close_notify began to wait for [`Self::write_in_flight`].
+        /// No more data arrives: the owner reports the end of its read side now.
+        pub on_peer_close_waits: Option<fn(T)>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -1231,9 +1234,9 @@ pub mod ssl_wrapper {
                         let mut is_fatal = err == boring_sys::SSL_ERROR_SSL
                             || err == boring_sys::SSL_ERROR_SYSCALL;
                         // See `answer_peer_close`. After our own close_notify nothing more is sealed.
-                        let close_waits = err == boring_sys::SSL_ERROR_ZERO_RETURN
+                        let can_wait = err == boring_sys::SSL_ERROR_ZERO_RETURN
                             && !self.flags.sent_ssl_shutdown()
-                            && (self.peer_close_waits.get() || self.write_in_flight());
+                            && self.handlers.get().write_in_flight.is_some();
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
                             // The count resets each MAX_RENEGOTIATION_WINDOW, matching
                             // the C path's `us_reneg_policy`.
@@ -1275,7 +1278,8 @@ pub mod ssl_wrapper {
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-                            self.flags.set_received_ssl_shutdown(!close_waits);
+                            // An owner that can wait takes the writes of the data callback below.
+                            self.flags.set_received_ssl_shutdown(!can_wait);
                             self.handle_end_of_renegotiation();
                         }
                         // Taken now: the callbacks below run JS, which can change the queue.
@@ -1292,11 +1296,24 @@ pub mod ssl_wrapper {
                         if !self.dispatch_read(unsafe { buffer.filled(read) }) {
                             return false;
                         }
-                        if close_waits {
-                            self.peer_close_waits.set(true);
-                            // Nothing the peer sends behind its close_notify is read.
-                            self.ciphertext.incoming.borrow_mut().clear();
-                            return false;
+                        if can_wait {
+                            // Asked now: a write that the data callback began waits as well.
+                            if !self.flags.sent_ssl_shutdown()
+                                && (self.peer_close_waits.get() || self.write_in_flight())
+                            {
+                                let began = !self.peer_close_waits.replace(true);
+                                // Nothing the peer sends behind its close_notify is read.
+                                self.ciphertext.incoming.borrow_mut().clear();
+                                if began {
+                                    let handlers = self.handlers.get();
+                                    if let Some(on_peer_close_waits) = handlers.on_peer_close_waits
+                                    {
+                                        on_peer_close_waits(handlers.ctx);
+                                    }
+                                }
+                                return false;
+                            }
+                            self.flags.set_received_ssl_shutdown(true);
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // 2-step shutdown, last: write_data fails once our close_notify is out.

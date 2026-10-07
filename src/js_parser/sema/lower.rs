@@ -1353,11 +1353,14 @@ impl<'p, 'a> Lower<'p, 'a> {
             // ends with the `n`, so `0n` does not match `0`.
             Data::EBigInt(_) => {
                 let source = self.p.source.contents();
-                let written = source.get(self.pos_of(key.loc) as usize..);
-                let mut tokens = written
-                    .unwrap_or_default()
-                    .split_inclusive(|&byte| byte == b'n');
-                let text = bun_sema::json::bigint_token_value(tokens.next().unwrap_or_default());
+                let written = source
+                    .get(self.pos_of(key.loc) as usize..)
+                    .unwrap_or_default();
+                let token = match bun_core::strings::index_of_char_usize(written, b'n') {
+                    Some(at) => &written[..=at],
+                    None => written,
+                };
+                let text = bun_sema::json::bigint_token_value(token);
                 PropKey::Name(self.b.atom(&text))
             }
             _ => PropKey::None,

@@ -395,7 +395,8 @@ impl Checker<'_, '_> {
         let mut ty = None;
         for block in blocks {
             let ty = *ty.get_or_insert_with(|| self.type_of_member_declaration(file, member));
-            if self.is_assigned_in_constructor(file, hir[block].func, name, ty) {
+            let key = super::flow::AccessKey::Name(name);
+            if self.is_assigned_in_constructor(file, hir[block].func, key, ty) {
                 return true;
             }
         }

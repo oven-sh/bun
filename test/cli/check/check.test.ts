@@ -2781,6 +2781,38 @@ export const wrong: number = { ...tool, kind: 1 };
       );
     });
 
+    // The frames of a build that is not optimised are larger: there the check itself runs out of stack.
+    test.skipIf(isDebug || isASAN)("a type that is nested too deeply to be printed whole loses no error", async () => {
+      using dir = project({
+        "a.ts": `declare const x: ${repeat("{ a: ", 1000)}1${repeat(" }", 1000)};
+export const wrong: number = x;
+`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
+      expect(stdout.slice(0, 60)).toBe("a.ts(2,14): error TS2322: Type '{ a: { a: { a: { a: { a: { a:");
+      expect(stdout.slice(-40)).toBe("}; }' is not assignable to type 'number'.");
+      expect(stderr.split("\n")[0]).toMatch(/^Found 1 error in 1 file, checked \d+ files \[time\]$/);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each(["overload", "callback"])("a JSDoc comment of 20,000 @%s tags, each nested in the last", async tag => {
+      using dir = project({
+        "a.ts": `/** {@link f} ${repeat(`@${tag} `, 20_000)}*/
+export function f() {}
+const wrong: number = "";
+`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["--noUnusedLocals"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(3,7): error TS6133: 'wrong' is declared but its value is never read."
+      `);
+      expect(stderr.split("\n")[0]).toBe(
+        "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
 
     test("isolatedDeclarations: every property of `export default {} satisfies T` is reported", async () => {

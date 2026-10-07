@@ -1110,6 +1110,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `e` that `resolveEntityName` does not resolve.
     fn resolved_symbol_of_checked_expression(&mut self, file: FileId, e: ExprId) -> AliasTarget {
         let hir = self.hir(file);
+        let before = self.non_cacheable_mark();
         let ty = self.check_expression_cached_ex(file, e, CheckMode::empty());
         match hir[e].kind {
             // `argumentsSymbol` is not a property of any type.
@@ -1122,7 +1123,13 @@ impl<'p, 's> Checker<'p, 's> {
             // `checkPropertyAccessExpressionOrQualifiedName` records a property, never an index
             // signature, and nothing for `any`.
             ExprKind::Dot { obj, name, .. } => {
-                let object = self.type_of_expr(file, obj);
+                // `getResolvedSymbolOrNil` evaluates nothing. The type of `obj` is not kept if it depends on a resolution in
+                // progress, and then it is `any` or an error, for which nothing is recorded.
+                let object = match self.cached_type_of_expr(file, obj) {
+                    Some(object) => object,
+                    None if self.non_cacheable_mark() != before => return AliasTarget::Unknown,
+                    None => self.type_of_expr(file, obj),
+                };
                 // `checkNonNullExpression`
                 let object = self.non_null_type(object);
                 if self.is_any(object) {

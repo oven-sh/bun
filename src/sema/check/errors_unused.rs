@@ -665,7 +665,9 @@ impl Checker<'_, '_> {
             };
             from = host.start as usize;
             let comments = jsdoc_comment_ranges(text, &host, hir.is_js);
-            let links = (comments.iter()).flat_map(|&(start, end)| jsdoc_links(text, start, end));
+            let is_stack_low = || self.is_stack_low();
+            let links = (comments.iter())
+                .flat_map(|&(start, end)| jsdoc_links(text, start, end, &is_stack_low));
             // `checkSourceElementWorker` visits the comments of `jsdoc` and of `jsdoc.Tags`.
             let mut names_of_links = Vec::new();
             for link in links {
@@ -1379,8 +1381,15 @@ fn is_object_or_object_array_type_reference(text: &[u8]) -> bool {
 
 /// `parseJSDocComment` for the comment of `source` from `start` to `end`: each `{@link a.b}`,
 /// `{@linkcode a.b}` and `{@linkplain a.b}` that has a name.
-fn jsdoc_links(source: &[u8], start: usize, end: usize) -> Vec<JSDocLink<'_>> {
+fn jsdoc_links<'a>(
+    source: &'a [u8],
+    start: usize,
+    end: usize,
+    is_stack_low: &'a dyn Fn() -> bool,
+) -> Vec<JSDocLink<'a>> {
     let mut parser = JSDocParser {
+        is_stack_low,
+        is_out_of_stack: false,
         text: &source[..end - 2],
         scanner: JSDocScannerState {
             token: JSDocToken::Other,
@@ -1398,6 +1407,10 @@ fn jsdoc_links(source: &[u8], start: usize, end: usize) -> Vec<JSDocLink<'_>> {
 
 /// The part of jsdoc.go, of TypeScript's parser, that finds the links in a JSDoc comment.
 struct JSDocParser<'a> {
+    /// `Checker::is_stack_low`: a tag in the signature of `@overload` or `@callback` is one level of recursion.
+    is_stack_low: &'a dyn Fn() -> bool,
+    /// It has been. Each tag of the comment would get as deep again.
+    is_out_of_stack: bool,
     /// The source, up to the `*/` of the comment.
     text: &'a [u8],
     scanner: JSDocScannerState,
@@ -1895,6 +1908,10 @@ impl<'a> JSDocParser<'a> {
             .parse_child_parameter_or_property_tag(CALLBACK_PARAMETER, indent, None)
             .is_some()
         {}
+        self.is_out_of_stack |= (self.is_stack_low)();
+        if self.is_out_of_stack {
+            return;
+        }
         let state = self.mark();
         let outer = self.nested_tag.replace(self.scanner.start);
         if !(self.parse_optional_jsdoc(JSDocToken::At)

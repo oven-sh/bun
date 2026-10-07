@@ -1138,7 +1138,7 @@ impl Checker<'_, '_> {
             let is_assigned = constructor.is_some_and(|func| {
                 let key = match member.key {
                     PropKey::Computed(k) => self.access_key(file, k),
-                    _ => name,
+                    _ => name.map(super::flow::AccessKey::Name),
                 };
                 key.is_some_and(|key| self.is_assigned_in_constructor(file, func, key, ty))
             });

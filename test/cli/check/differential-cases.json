@@ -1377,6 +1377,12 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
+  "08-C11a": {
+    "files": {
+      "a.ts": "import d from \"./a\"; const v = { n: 1, m: d }; export = v;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"commonjs\" } }\n"
+    }
+  },
   "08-C11b": {
     "files": {
       "a.ts": "import { x } from \"./a\"; const v = { x: 1, y: x }; export = v;\nconst sentinel: number = \"\";\n",
@@ -7527,6 +7533,13 @@
     "files": {
       "a.ts": "const sentinel: number = \"\";\n",
       "m.js": "module.exports = [exports];\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"allowJs\": true, \"checkJs\": true, \"module\": \"commonjs\" } }\n"
+    }
+  },
+  "32-C18b": {
+    "files": {
+      "a.ts": "const sentinel: number = \"\";\n",
+      "m.js": "module.exports = exports.a;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"allowJs\": true, \"checkJs\": true, \"module\": \"commonjs\" } }\n"
     }
   },
@@ -14123,6 +14136,13 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"commonjs\" }, \"files\": [\"a.ts\", \"m.ts\"] }\n"
     }
   },
+  "85-R16b": {
+    "files": {
+      "a.ts": "import { p } from \"./m\";\nexport const y = p;\nconst t: never = y;\nconst sentinel: number = \"\";\n",
+      "m.ts": "import { y } from \"./a\";\ninterface B<T> { b: T }\ninterface V extends B<typeof y> { p: number }\ndeclare const v: V;\nexport = v;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"commonjs\" }, \"files\": [\"m.ts\", \"a.ts\"] }\n"
+    }
+  },
   "85-R16c": {
     "files": {
       "a.ts": "import { p } from \"./m\";\nexport function g() { return [p]; }\nconst t: never = g;\nconst sentinel: number = \"\";\n",
@@ -15305,6 +15325,12 @@
       "lib.ts": "type Inner<T> = keyof T & string;\nexport type Values = Record<string, any>;\nexport type Path<T> = T extends any ? Inner<T> : never;\nexport type FieldPath<T extends Values> = Path<T>;\nexport declare function get(o: unknown, p?: number | null): unknown;\n",
       "tsconfig.json": "{\n \"compilerOptions\": {\n  \"strict\": true,\n  \"noEmit\": true,\n  \"target\": \"esnext\",\n  \"module\": \"esnext\",\n  \"moduleResolution\": \"bundler\",\n  \"lib\": [\n   \"esnext\"\n  ],\n  \"types\": [],\n  \"skipLibCheck\": true\n }\n}",
       "z.ts": "export const sentinel: number = \"\";\n"
+    }
+  },
+  "98-F1": {
+    "files": {
+      "a.ts": "declare const k: unique symbol;\nconst c = \"x\";\nexport class C {\n  [\"\\0\\0\\u007f\\u007f\\u007f\\u007f\"]: number;\n  [\"\\0\\u0001\\u007f\\u007f\\u007f\\u007f\"]: number;\n  [c]: number;\n  [k]: number;\n  constructor() {\n    for (;;) {\n      if (Math.random()) break;\n    }\n    this[c] = 1;\n  }\n}\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },
   "98-J1": {

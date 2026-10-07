@@ -12,8 +12,16 @@ use crate::bind::{
 };
 use smallvec::{SmallVec, smallvec};
 
+/// See `Checker::access_key`.
+#[derive(Copy, Clone)]
+pub(super) enum AccessKey {
+    Name(Atom),
+    /// `this[k]`, where `k` has no literal type: a variable whose value never changes (`is_constant_key`).
+    Variable(Root),
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Root {
+pub(super) enum Root {
     Symbol(SymbolId),
     /// A name that is not declared in the file.
     Global(Atom),
@@ -1505,40 +1513,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What distinguishes `this[index]` from `this[other]`, for `is_assigned_in_constructor`: the
-    /// name, or else the variable, if its value never changes. That is a zero byte, with which no
-    /// property name starts, the kind of `Root` and its number.
-    pub(super) fn access_key(&mut self, file: FileId, index: ExprId) -> Option<Atom> {
+    /// What distinguishes `this[index]` from `this[other]`, for `is_assigned_in_constructor`.
+    pub(super) fn access_key(&mut self, file: FileId, index: ExprId) -> Option<AccessKey> {
         if let Some(name) = self.literal_key(file, index) {
-            return Some(name);
+            return Some(AccessKey::Name(name));
         }
         let variable = self.variable_of_key(file, index);
-        if !self.is_constant_key(file, variable) {
-            return None;
-        }
-        let (kind, number) = match variable {
-            Root::Symbol(symbol) => (0, symbol.0),
-            Root::Global(name) => (1, name.0),
-            _ => return None,
-        };
-        let [a, b, c, d] = number.to_le_bytes();
-        Some(self.atoms().intern(&[0, kind, a, b, c, d]))
-    }
-
-    /// `[k]` as a step of a reference, from the `access_key` of `k`.
-    fn step_of_access_key(&self, key: Atom) -> Step {
-        let &[0, kind, a, b, c, d] = self.atoms().bytes(key) else {
-            return Step::named(key);
-        };
-        let number = u32::from_le_bytes([a, b, c, d]);
-        Step {
-            name: std::cell::Cell::new(AccessedName::None),
-            variable: if kind == 0 {
-                Root::Symbol(SymbolId(number))
-            } else {
-                Root::Global(Atom(number))
-            },
-        }
+        (self.is_constant_key(file, variable)).then_some(AccessKey::Variable(variable))
     }
 
     /// `writeFlowCacheKey`, only its calls of `writeSymbol`: for the leftmost identifier, then for
@@ -5753,13 +5734,13 @@ impl<'p, 's> Checker<'p, 's> {
         self.get_flow_type_of_reference(walk, flow)
     }
 
-    /// Whether `this.name`, declared as `declared`, has been assigned by the end of the constructor
-    /// `func`. For `this[k]`, `name` is the `access_key` of `k`.
+    /// Whether `this.name` or `this[k]`, declared as `declared`, has been assigned by the end of the
+    /// constructor `func`.
     pub(super) fn is_assigned_in_constructor(
         &mut self,
         file: FileId,
         func: FnId,
-        name: Atom,
+        key: AccessKey,
         declared: TypeId,
     ) -> bool {
         let exit = self.bound(file).fns[func.idx()].exit;
@@ -5770,7 +5751,13 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         let initial = self.optional(declared);
-        let path = smallvec![self.step_of_access_key(name)];
+        let path = smallvec![match key {
+            AccessKey::Name(name) => Step::named(name),
+            AccessKey::Variable(variable) => Step {
+                name: std::cell::Cell::new(AccessedName::None),
+                variable,
+            },
+        }];
         let constructor = self.hir(file).node(func);
         let reference = Reference::synthetic(file, Root::This, path, constructor);
         let walk = Walk::new(reference, declared, initial, false);

@@ -740,7 +740,12 @@ impl Checker<'_, '_> {
         };
         member.flags.contains(Flags::DEFINITE)
             || !self.p.files.options.strict_null_checks
-            || !self.is_assigned_in_constructor(file, hir[constructor].func, name, class_type)
+            || !self.is_assigned_in_constructor(
+                file,
+                hir[constructor].func,
+                super::flow::AccessKey::Name(name),
+                class_type,
+            )
     }
 
     pub(super) fn check_interface_heritage(&mut self, file: FileId, i: InterfaceId) {

@@ -1806,6 +1806,13 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    /// `is_stack_low` for the printer. It elides what is nested too deeply, which loses no error, so the check has not run out of
+    /// stack. It stops early enough for the queries that it makes.
+    #[inline]
+    pub(crate) fn is_stack_low_for_printing(&self) -> bool {
+        self.stack_base.saturating_sub(stack_pointer()) > self.stack_limit - self.stack_limit / 8
+    }
+
     /// Whether half of the stack that queries may use is in use. For a recursion that
     /// typescript-go ends at `instantiationCount`, on a stack that grows.
     #[inline]

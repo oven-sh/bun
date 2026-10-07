@@ -1573,15 +1573,22 @@ impl<'s> Checker<'_, 's> {
                     self.error(file, s, 1294, &[]);
                 }
             }
-            // `checkImportBinding` of `* as ns`: `checkAliasSymbol` begins with `resolveAlias`. The
-            // first use of a module decides whether it has a synthetic `default`.
-            StmtKind::Import(x) if hir[x].namespace.is_some() => {
+            // `checkImportBinding` of the default name, of `* as ns` and of each name in braces:
+            // `checkAliasSymbol` begins with `resolveAlias`. What a later statement asks of the alias
+            // finds it resolved, or being resolved. The first use of a module decides whether it has
+            // a synthetic `default`.
+            StmtKind::Import(x) => {
                 let scope = bound.import_scope[x.idx()];
-                if scope.is_some()
-                    && let Some(local) =
-                        bound.lookup(bound.scopes[scope.idx()].locals, hir[x].namespace)
-                {
-                    self.resolve_alias(self.files().sym(file, local));
+                if scope.is_some() {
+                    let locals = bound.scopes[scope.idx()].locals;
+                    let named = hir[x].named.iter().map(|item| hir[item].local);
+                    for name in [hir[x].default, hir[x].namespace].into_iter().chain(named) {
+                        if name.is_some()
+                            && let Some(local) = bound.lookup(locals, name)
+                        {
+                            self.resolve_alias(self.files().sym(file, local));
+                        }
+                    }
                 }
             }
             // `checkGrammarTypeOnlyNamedImportsOrExports`: `type` on the statement and again on a

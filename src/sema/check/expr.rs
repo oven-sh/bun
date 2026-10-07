@@ -2824,6 +2824,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _,
                     _,
                     is_js_literal,
+                    in_const_context,
                     ObjectLiteralCheck::ForParent,
                     object_flags,
                     is_fresh,
@@ -2868,6 +2869,7 @@ impl<'p, 's> Checker<'p, 's> {
                 file,
                 literal,
                 is_js_literal,
+                in_const_context,
                 created_by,
                 object_flags,
                 is_fresh,
@@ -3050,8 +3052,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `checkObjectLiteral` creates a new type for the symbol of the literal every time. `kept`,
     /// whose members are those of the first check, represents it if the members are the same.
-    fn recheck_object_literal(&mut self, file: FileId, e: ExprId, kept: TypeId) -> TypeId {
-        let shape = self.build_object_literal_shape(file, e, false);
+    fn recheck_object_literal(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        in_const_context: bool,
+        kept: TypeId,
+    ) -> TypeId {
+        let shape = self.build_object_literal_shape(file, e, in_const_context, false);
         let is_empty_resolved_type = shape.props.is_empty() && shape.index.is_empty();
         if is_empty_resolved_type
             || self.inference_contexts.is_empty()
@@ -3068,8 +3076,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`getTypeAtFlowLoopLabel`) or `anySignature`: the properties have the types just computed.
     /// The members of `kept` are resolved when they are read, from the complete type of the loop or
     /// the resolved signature.
-    fn object_literal_in_flow_loop(&mut self, file: FileId, e: ExprId, kept: TypeId) -> TypeId {
-        let shape = self.build_object_literal_shape(file, e, true);
+    fn object_literal_in_flow_loop(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        in_const_context: bool,
+        kept: TypeId,
+    ) -> TypeId {
+        let shape = self.build_object_literal_shape(file, e, in_const_context, true);
         if shape.props.is_empty() && shape.index.is_empty() {
             return kept;
         }
@@ -3658,15 +3672,23 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.enclosing_scope_of_expr(file, e);
         let mapper = self.identity_mapper_with_adopted(file, scope);
         let is_js_literal = self.is_js_literal(file, e);
-        let created_by = ObjectLiteralCheck::ForParent;
+        let in_const_context = self.is_const_context(file, e);
         let kept = self.intern(TypeData::Anon {
-            origin: Origin::ObjectLiteral(file, e, is_js_literal, created_by, object_flags, true),
+            origin: Origin::ObjectLiteral(
+                file,
+                e,
+                is_js_literal,
+                in_const_context,
+                ObjectLiteralCheck::ForParent,
+                object_flags,
+                true,
+            ),
             mapper,
         });
         if self.is_rechecking() {
-            self.recheck_object_literal(file, e, kept)
+            self.recheck_object_literal(file, e, in_const_context, kept)
         } else if is_written {
-            self.object_literal_in_flow_loop(file, e, kept)
+            self.object_literal_in_flow_loop(file, e, in_const_context, kept)
         } else {
             // `getObjectLiteralIndexInfo` requests the types of the members, accessors too, while
             // the literal is checked. The members of `kept` are resolved when they are read.
@@ -4488,6 +4510,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The start of `checkObjectLiteral`, for the literal `e`.
     fn object_literal_context(&mut self, file: FileId, e: ExprId) -> ObjectLiteralContext {
+        let in_const_context = self.is_const_context(file, e);
+        self.object_literal_context_in(file, e, in_const_context)
+    }
+
+    /// `object_literal_context`, given `isConstContext(e)`.
+    fn object_literal_context_in(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        in_const_context: bool,
+    ) -> ObjectLiteralContext {
         let in_destructuring_pattern = self.is_assignment_target(file, e);
         let implied = if self.pattern_that_may_expect(file, e).is_some() {
             self.apparent_type_of_contextual_type(file, e, ContextFlags::empty())
@@ -4498,7 +4531,7 @@ impl<'p, 's> Checker<'p, 's> {
         ObjectLiteralContext {
             in_destructuring_pattern,
             implied,
-            in_const_context: self.is_const_context(file, e),
+            in_const_context,
         }
     }
 
@@ -4684,18 +4717,19 @@ impl<'p, 's> Checker<'p, 's> {
         infos
     }
 
-    /// `is_written`: see `source_of_literal_member_in`.
+    /// `in_const_context`: see `Origin::ObjectLiteral`. `is_written`: see `source_of_literal_member_in`.
     pub(super) fn build_object_literal_shape(
         &mut self,
         file: FileId,
         e: ExprId,
+        in_const_context: bool,
         is_written: bool,
     ) -> Shape<'s> {
         let hir = self.hir(file);
         let ExprKind::Object(props) = hir[e].kind else {
             return Shape::new_in(self.arena);
         };
-        let context = self.object_literal_context(file, e);
+        let context = self.object_literal_context_in(file, e, in_const_context);
         let mut shape = Shape::new_in(self.arena);
         shape.props.reserve_exact(props.len());
         // The names of `shape.props`, of a literal with many members.

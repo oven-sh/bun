@@ -3298,13 +3298,22 @@ impl<'p, 's> Checker<'p, 's> {
         match self.data(ty) {
             &TypeData::Anon {
                 origin:
-                    Origin::ObjectLiteral(file, e, is_js_literal, created_by, object_flags, true),
+                    Origin::ObjectLiteral(
+                        file,
+                        e,
+                        is_js_literal,
+                        in_const_context,
+                        created_by,
+                        object_flags,
+                        true,
+                    ),
                 mapper,
             } => self.intern(TypeData::Anon {
                 origin: Origin::ObjectLiteral(
                     file,
                     e,
                     is_js_literal,
+                    in_const_context,
                     created_by,
                     object_flags,
                     false,
@@ -3420,8 +3429,9 @@ impl<'p, 's> Checker<'p, 's> {
                     self.add_index_signatures_of_computed_names(&mut b);
                 }
             }
-            Origin::ObjectLiteral(file, expr, .., is_fresh) => {
-                let mut shape = self.build_object_literal_shape(file, expr, false);
+            Origin::ObjectLiteral(file, expr, _, in_const_context, .., is_fresh) => {
+                let mut shape =
+                    self.build_object_literal_shape(file, expr, in_const_context, false);
                 if !is_fresh {
                     for prop in &mut shape.props {
                         prop.flags |= PropFlags::REGULAR;
@@ -3429,8 +3439,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 return shape;
             }
-            Origin::WidenedLiteral(file, expr, ..) => {
-                let mut shape = self.build_object_literal_shape(file, expr, false);
+            Origin::WidenedLiteral(file, expr, _, in_const_context, ..) => {
+                let mut shape =
+                    self.build_object_literal_shape(file, expr, in_const_context, false);
                 // `getWidenedProperty`: methods and accessors are left unchanged.
                 for prop in &mut shape.props {
                     if !prop
@@ -4567,11 +4578,11 @@ impl<'p, 's> Checker<'p, 's> {
         // `getPropertiesOfType`, `getIndexInfosOfType`: `null`, `undefined` and `void` have no members, so spreading one of them
         // copies the other side without its index signatures.
         let members_of = |c: &mut Self, ty: TypeId| {
-            c.members(if c.is_nullish(ty) {
-                TypeId::EMPTY_OBJECT
-            } else {
-                ty
-            })
+            let ty = match c.is_nullish(ty) {
+                true => TypeId::EMPTY_OBJECT,
+                false => c.reduced_apparent_type_as_object(ty),
+            };
+            c.members(ty)
         };
         let (Some(l), Some(r)) = (members_of(self, left), members_of(self, right)) else {
             return TypeId::UNRESOLVED;
@@ -5278,6 +5289,7 @@ impl<'p, 's> Checker<'p, 's> {
                         of,
                         literal,
                         is_js_literal,
+                        in_const_context,
                         ObjectLiteralCheck::ForParent,
                         object_flags,
                         is_fresh,
@@ -5288,6 +5300,7 @@ impl<'p, 's> Checker<'p, 's> {
                     of,
                     literal,
                     is_js_literal,
+                    in_const_context,
                     ObjectLiteralCheck::ForAssignmentDeclaration,
                     object_flags,
                     is_fresh,

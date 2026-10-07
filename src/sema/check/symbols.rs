@@ -2218,13 +2218,22 @@ impl<'p, 's> Checker<'p, 's> {
             let widened = match self.data(ty) {
                 TypeData::Anon {
                     origin:
-                        Origin::ObjectLiteral(file, e, is_js_literal, created_by, object_flags, _),
+                        Origin::ObjectLiteral(
+                            file,
+                            e,
+                            is_js_literal,
+                            in_const_context,
+                            created_by,
+                            object_flags,
+                            _,
+                        ),
                     mapper,
                 } => self.intern(TypeData::Anon {
                     origin: Origin::WidenedLiteral(
                         *file,
                         *e,
                         *is_js_literal,
+                        *in_const_context,
                         *created_by,
                         object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE),
                     ),

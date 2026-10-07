@@ -1047,7 +1047,7 @@ impl Identity {
     fn of_object_literal(file: FileId, literal: ExprId) -> Identity {
         let created_by = ObjectLiteralCheck::ForParent;
         Identity::Origin(Origin::WidenedLiteral(
-            file, literal, false, created_by, false,
+            file, literal, false, false, created_by, false,
         ))
     }
 }

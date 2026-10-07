@@ -218,13 +218,23 @@ pub enum Origin {
     Mapped(FileId, TypeNodeId),
     /// `{ a: 1 }`, as the type of the expression (`ObjectFlagsObjectLiteral`). The fields after the node:
     /// 1. `ObjectFlagsJSLiteral`.
-    /// 2. The call of `checkObjectLiteral` that created the type.
-    /// 3. `CONTAINS_WIDENING_TYPE` and `NON_INFERRABLE_TYPE`, propagated from the member types when the type was created.
-    /// 4. `ObjectFlagsFreshLiteral`.
-    ObjectLiteral(FileId, ExprId, bool, ObjectLiteralCheck, ObjectFlags, bool),
-    /// `getWidenedTypeOfObjectLiteral` of it. The first two fields after the node are the same. The
+    /// 2. `isConstContext(node)` when the type was created: its properties are `readonly`. The members are a function of the
+    ///    type, so resolving them asks for no contextual type.
+    /// 3. The call of `checkObjectLiteral` that created the type.
+    /// 4. `CONTAINS_WIDENING_TYPE` and `NON_INFERRABLE_TYPE`, propagated from the member types when the type was created.
+    /// 5. `ObjectFlagsFreshLiteral`.
+    ObjectLiteral(
+        FileId,
+        ExprId,
+        bool,
+        bool,
+        ObjectLiteralCheck,
+        ObjectFlags,
+        bool,
+    ),
+    /// `getWidenedTypeOfObjectLiteral` of it. The first three fields after the node are the same. The
     /// last one is `ObjectFlagsNonInferrableType`, which widening preserves.
-    WidenedLiteral(FileId, ExprId, bool, ObjectLiteralCheck, bool),
+    WidenedLiteral(FileId, ExprId, bool, bool, ObjectLiteralCheck, bool),
     /// The constructor function of a class, with its static members.
     ClassStatic(Sym),
     /// A function declaration with all its overloads, and the namespace merged with it.
@@ -3011,8 +3021,8 @@ follow_enum!(EnumValue {
 follow_enum!(Origin {
     Origin::TypeLiteral(a, b) => (a, b),
     Origin::Mapped(a, b) => (a, b),
-    Origin::ObjectLiteral(a, b, c, d, e, f) => (a, b, c, d, e, f),
-    Origin::WidenedLiteral(a, b, c, d, e) => (a, b, c, d, e),
+    Origin::ObjectLiteral(a, b, c, d, e, f, g) => (a, b, c, d, e, f, g),
+    Origin::WidenedLiteral(a, b, c, d, e, f) => (a, b, c, d, e, f),
     Origin::ClassStatic(a) => (a),
     Origin::Function(a) => (a),
     Origin::EnumObject(a) => (a),

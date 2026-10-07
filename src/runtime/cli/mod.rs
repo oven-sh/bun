@@ -336,6 +336,8 @@ pub(crate) mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub(crate) mod audit_command;
+#[path = "check_command.rs"]
+pub(crate) mod check_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
@@ -381,6 +383,7 @@ pub(crate) mod publish_command;
 pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
 pub(crate) mod scan_command;
+mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
 #[path = "update_command.rs"]
@@ -644,6 +647,7 @@ pub(crate) mod help_command {
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
             <d>lint<r>                 Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
+  <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1043,6 +1047,12 @@ pub(crate) mod command {
         if x == RootCommandMatcher::case(b"audit") {
             return Tag::AuditCommand;
         }
+        if x == RootCommandMatcher::case(b"check") {
+            return match super::check_command::is_package_script() {
+                true => Tag::AutoCommand,
+                false => Tag::CheckCommand,
+            };
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
@@ -1303,6 +1313,7 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::CheckCommand => exec_check(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1420,6 +1431,16 @@ pub(crate) mod command {
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
+        // Scripts have no entry point to start from: the project is checked, as by `bun check`.
+        let runs_several =
+            ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
+        if runs_several
+            && ctx.runtime_options.check
+            && !super::check_command::check_project_before()
+        {
+            Global::exit(1);
+        }
+
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);
@@ -1438,19 +1459,18 @@ pub(crate) mod command {
         // REPL (via process._eval). `-i -p` is not yet threaded through the
         // bootstrap (Node prints AND enters the REPL), so `-p` currently
         // bypasses the REPL. RunCommand's positionals carry a leading "run".
-        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print {
-            let no_target = match tag {
-                Tag::AutoCommand => ctx.positionals.is_empty(),
-                Tag::RunCommand => match ctx.positionals.as_slice() {
-                    [] => true,
-                    [r] => r.as_ref() == b"run",
-                    _ => false,
-                },
+        let no_target = match tag {
+            Tag::AutoCommand => ctx.positionals.is_empty(),
+            Tag::RunCommand => match ctx.positionals.as_slice() {
+                [] => true,
+                [r] => r.as_ref() == b"run",
                 _ => false,
-            };
-            if no_target {
-                return run_command::RunCommand::exec_node_repl(ctx);
-            }
+            },
+            _ => false,
+        };
+        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print && no_target
+        {
+            return run_command::RunCommand::exec_node_repl(ctx);
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
@@ -1462,6 +1482,11 @@ pub(crate) mod command {
             if extension == b".lockb" {
                 return bun_lockb(ctx);
             }
+        }
+
+        // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
+        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+            super::check_command::CheckCommand::exec_without_arguments();
         }
 
         if !ctx.positionals.is_empty() {
@@ -1545,6 +1570,17 @@ pub(crate) mod command {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
+        // CheckCommand parses its own argv.
+        init(Tag::CheckCommand, log)?;
+        let argv = argv_zslice();
+        // After the flags of `bun`, and those of `BUN_OPTIONS`.
+        let check = argv.iter().position(|arg| arg.as_bytes() == b"check");
+        super::check_command::CheckCommand::exec(&argv[check.map_or(argv.len(), |at| at + 1)..])
     }
 
     #[cold]
@@ -2041,6 +2077,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
 
+  <d>Type check the test files and what they import, then run them<r>
+  <b><green>bun test<r> <cyan>--check<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
                 );
@@ -2159,6 +2198,45 @@ Execute a shell script directly from Bun.
             }
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
+            }
+            Tag::CheckCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun check<r> <cyan>[flags]<r> <blue>[...files or directories]<r>
+  Type check a TypeScript project.
+
+  Uses the nearest <b>tsconfig.json<r> and reports the same errors as <b>tsc<r>, using all CPU cores.
+  Pass files or directories to check only those and their imports.
+  Project <b>references<r> are followed, like <b>tsc -b<r>, and nothing has to be built first.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::check_command::PARAMS);
+                pretty!(
+                    "
+      <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
+
+<b>Examples:<r>
+  <d>Check the current project<r>
+  <b><green>bun check<r>
+
+  <d>Check one file and everything it imports<r>
+  <b><green>bun check<r> <blue>src/index.ts<r>
+
+  <d>Check another project<r>
+  <b><green>bun check<r> <cyan>-p<r> <blue>packages/server<r>
+
+  <d>Try a stricter option without editing tsconfig.json<r>
+  <b><green>bun check<r> <cyan>--noUncheckedIndexedAccess<r>
+
+  <d>Check a file, then run it<r>
+  <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                Output::flush();
             }
             Tag::DedupeCommand => {
                 pm_print_help(PmSubcommand::Dedupe);

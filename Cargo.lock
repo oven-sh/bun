@@ -818,6 +818,7 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_react_compiler",
+ "bun_sema",
  "bun_url",
  "bun_wyhash",
  "bytemuck",
@@ -1286,6 +1287,8 @@ dependencies = [
  "bun_router",
  "bun_s3_signing",
  "bun_safety",
+ "bun_sema_baselines",
+ "bun_sema_driver",
  "bun_semver",
  "bun_semver_jsc",
  "bun_sha_hmac",
@@ -1345,6 +1348,70 @@ name = "bun_safety"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+]
+
+[[package]]
+name = "bun_sema"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_alloc",
+ "bun_collections",
+ "bun_core",
+ "bun_paths",
+ "bun_sema_standalone",
+ "bun_semver",
+ "bun_threading",
+ "bun_wyhash",
+ "hashbrown 0.15.5",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_sema_baselines"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_paths",
+ "bun_sema",
+ "bun_sema_driver",
+ "bun_sys",
+ "bun_threading",
+]
+
+[[package]]
+name = "bun_sema_driver"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_core",
+ "bun_js_parser",
+ "bun_parsers",
+ "bun_paths",
+ "bun_sema",
+ "bun_sys",
+ "bun_threading",
+]
+
+[[package]]
+name = "bun_sema_standalone"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_alloc",
+ "bun_core",
+ "bun_js_parser",
+ "bun_paths",
+ "bun_sema",
+ "bun_sema_baselines",
+ "bun_sema_driver",
+ "bun_sys",
+ "bun_threading",
+ "libc",
 ]
 
 [[package]]

@@ -290,6 +290,20 @@ impl ThreadPool {
         // Wake all the threads to check for idle events.
         self.idle_event.wake_all();
     }
+
+    /// Queues a task from `new_task` for every thread the pool has spawned, to run on that thread
+    /// when it is next idle, and wakes them. Does not wait for any of them.
+    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> *mut Task) {
+        let mut next = self.threads.load(Ordering::Acquire);
+        while let Some(thread) = NonNull::new(next) {
+            // A registered worker stays in the list, and alive, until the pool shuts down:
+            // `Thread::pop` walks the same links.
+            let thread = bun_ptr::BackRef::from(thread);
+            thread.push_idle_task(new_task());
+            next = thread.next;
+        }
+        self.wake_for_idle_events();
+    }
 }
 
 /// Shut down the thread pool and stop the worker threads.
@@ -516,7 +530,28 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values);
+        self.each_impl(ctx, ByValue(run_fn), values, || {});
+    }
+
+    /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
+    /// after it has returned.
+    pub fn each_while<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
+        F: Fn(&Ctx, V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: Copy + core::marker::Sync + core::marker::Send,
+    {
+        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+    }
+
+    /// The most threads that this pool starts.
+    pub fn max_threads(&self) -> usize {
+        self.max_threads as usize
     }
 
     /// Like `each`, but calls `run_fn` with a pointer to the value.
@@ -529,17 +564,22 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values);
+        self.each_impl(ctx, ByPtr(run_fn), values, || {});
     }
 
-    fn each_impl<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
-    where
+    fn each_impl<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
         F: EachCall<Ctx, V>,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
         if values.is_empty() {
-            return;
+            return on_calling_thread();
         }
 
         struct WaitContext<Ctx, V, F> {
@@ -598,6 +638,7 @@ impl ThreadPool {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
         self.schedule(batch);
+        on_calling_thread();
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }

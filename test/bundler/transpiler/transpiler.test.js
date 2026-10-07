@@ -1676,6 +1676,90 @@ function foo() {}
       // err("async <const const T extends X>() => {}", "Unexpected const");
     });
 
+    describe("a signature parameter in a type literal that is not a binding", () => {
+      // [code, message, line, column]
+      const cases = [
+        ["type T = { foo(1): void }", "Unexpected 1", 1, 16],
+        ["let x: { foo(1): void }", "Unexpected 1", 1, 14],
+        ["interface I { foo(1): void }", "Unexpected 1", 1, 19],
+        ['function g() :{ a("/y") }', 'Unexpected "/y"', 1, 19],
+        ["function f(a: { m(1): void }) {}", "Unexpected 1", 1, 19],
+        ["x as { m(1): void }", "Unexpected 1", 1, 10],
+        ["type T = { (1): void }", "Unexpected 1", 1, 13],
+        ["type T = { new (1): void }", "Unexpected 1", 1, 17],
+        ["type T = { foo(...1): void }", "Unexpected 1", 1, 19],
+        ["type T = { foo([1]): void }", "Unexpected 1", 1, 17],
+        ["type T = { foo({ a: 1 }): void }", "Unexpected 1", 1, 21],
+        ["const a = 1;\n\ntype T = { foo(a, true): void };\n", "Unexpected true", 3, 19],
+        ["type T = { foo(", "Unexpected end of file", 1, 15],
+      ];
+
+      it.each(cases)("%j is a located syntax error from every API", async (code, message, line, column) => {
+        const thrown = { name: "BuildMessage", message, line, column };
+        const actual = {};
+        for (const api of ["scan", "scanImports", "transformSync", "transform"]) {
+          try {
+            await transpiler[api](code, "ts");
+            actual[api] = "did not throw";
+          } catch (e) {
+            actual[api] = { name: e.name, message: e.message, line: e.position?.line, column: e.position?.column };
+          }
+        }
+        expect(actual).toEqual({ scan: thrown, scanImports: thrown, transformSync: thrown, transform: thrown });
+      });
+
+      it("logs nothing when the parameter list is a speculative parse", () => {
+        const exp = ts.expectPrinted_;
+        const err = ts.expectParseError;
+
+        // "(" starts arrow function arguments or a parenthesized type. The
+        // failed attempt at the first must not report the token it stopped on.
+        exp("let x: (1 | 2)[] = []", "let x = [];\n");
+        exp('let x: ("a" | "b")[] = []', "let x = [];\n");
+        exp("let x: (typeof y)[] = []", "let x = [];\n");
+        exp("let x: (() => void)[] = []", "let x = [];\n");
+
+        // The type literal is inside a failed attempt at an arrow function
+        // return type or at type arguments. The error comes from the parse
+        // that follows the attempt.
+        err('const f = () :{ a("/y") } => 1', 'Expected "=>" but found ":"');
+        err("f<{ m(1): void }>()", 'Expected identifier but found "1"');
+
+        exp("let x: (a: number, [b]: [number], { c, d: [e] }: T, ...f: any[]) => void = y", "let x = y;\n");
+        exp("type T = { foo(this: Window, a?: number, [b]: [number], { c, d: [e] }: T, ...f: any[]): void }", "");
+      });
+
+      it("bun run and bun build print the located error", async () => {
+        using dir = tempDir("ts-signature-parameter", {
+          "in.ts": "const a = 1;\n\ntype T = { foo(1): void };\nconsole.log(a);\n",
+        });
+        const results = await Promise.all(
+          [
+            ["run", "in.ts"],
+            ["build", "in.ts"],
+          ].map(async args => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: { ...bunEnv, NO_COLOR: "1" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const lines = stderr.split("\n").map(l => l.trim());
+            return {
+              stdout,
+              error: lines.find(l => l.startsWith("error: ")),
+              at: lines.find(l => l.startsWith("at "))?.slice(-"in.ts:3:16".length),
+              exitCode,
+            };
+          }),
+        );
+        const printed = { stdout: "", error: "error: Unexpected 1", at: "in.ts:3:16", exitCode: 1 };
+        expect(results).toEqual([printed, printed]);
+      });
+    });
+
     it("non-null assertion with new operator", () => {
       const exp = ts.expectPrinted_;
 

@@ -7,7 +7,6 @@ use bun_collections::OffsetByteList;
 use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_ptr::RefPtr;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -287,7 +286,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-struct DeferredFailure {
+pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -296,7 +295,7 @@ struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    fn run(self) -> JsResult<()> {
+    pub(crate) fn run(self) -> JsResult<()> {
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -310,17 +309,21 @@ impl DeferredFailure {
 
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
-            let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this)
-        }
-        let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
-            .enqueue_task(managed_task);
+            .enqueue_task(bun_event_loop::Task::from_boxed(self));
+    }
+}
+
+impl bun_event_loop::Taskable for DeferredFailure {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredFailure;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -609,8 +612,7 @@ impl ValkeyClient {
     /// stopped reading never lets it through. Either way the close callback
     /// has run when this returns.
     ///
-    /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
-    /// runs by hand here, whatever that left.
+    /// `Err` when the close event left a termination pending.
     pub(crate) fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
@@ -620,16 +622,6 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
-        // The close event is what releases the keep-alive ref `connect()`
-        // took, so detect a SEMI_SOCKET before closing and run the close
-        // event by hand afterwards.
-        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
-            && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
         // Still open means usockets parked the fast shutdown behind its
@@ -639,22 +631,11 @@ impl ValkeyClient {
         if code == uws::CloseCode::FastShutdown && !socket.is_closed() {
             socket.close(uws::CloseCode::Failure);
         }
-        let thrown = if global.has_exception() {
+        if global.has_exception() {
             Err(bun_jsc::JsError::Thrown)
         } else {
             Ok(())
-        };
-        if !is_semi_socket {
-            return thrown;
         }
-        // SAFETY: takes over the keep-alive ref `connect()` handed to this
-        // socket, as `SocketHandler::on_close` does for one uSockets closes.
-        // Every caller of `close()` holds a scoped ref of its own, so the
-        // client outlives this scope.
-        let _socket_ref = unsafe { RefPtr::from_raw(self.parent_ptr()) };
-        self.status = Status::Disconnected;
-        let closed = self.on_close();
-        thrown.and(closed)
     }
 
     /// Handle connection closed event

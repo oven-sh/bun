@@ -363,6 +363,19 @@ impl FileRoute {
             return Serve::Done;
         }
 
+        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+            || req.header(b"if-range").is_some()
+        {
+            let Ok(lmd) = self.last_modified_date() else {
+                return Serve::Done;
+            };
+            lmd
+        } else {
+            None
+        };
+
         // Range applies to the slice the route was configured with, not the
         // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's
@@ -373,22 +386,11 @@ impl FileRoute {
             && self.status_code == 200
             && !self.has_content_range_header
         {
-            RangeRequest::from_request(req, size)
+            RangeRequest::from_request(req, size, etag, last_modified_ms)
         } else {
             RangeRequest::Result::None
         };
 
-        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
-        let last_modified_ms = if req.header(b"if-modified-since").is_some()
-            || req.header(b"if-unmodified-since").is_some()
-        {
-            let Ok(lmd) = self.last_modified_date() else {
-                return Serve::Done;
-            };
-            lmd
-        } else {
-            None
-        };
         let status_code =
             status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
 
@@ -481,6 +483,7 @@ impl Drop for FileRoute {
 /// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
 /// before steps 3/4 can yield 304. Preconditions only apply when the selected
 /// representation would otherwise be 200 (§13.1.1).
+/// Step 5, If-Range, is already applied to `range` by `RangeRequest::from_request`.
 pub(crate) fn status_for_preconditions(
     req: &AnyRequest,
     method: Method,

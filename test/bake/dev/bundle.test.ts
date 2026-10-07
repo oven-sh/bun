@@ -412,6 +412,24 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// Counts the loads of each file that `filter` matches. A load for the client graph gets its own key.
+const countLoads = (filter: string) => `
+  import { basename } from "node:path";
+  export default [
+    {
+      name: "count-loads",
+      setup(build) {
+        build.onLoad({ filter: /${filter}/ }, args => {
+          const loads = (globalThis.loads ??= {});
+          const file = basename(args.path) + (args.side === "client" ? " (client)" : "");
+          loads[file] = (loads[file] ?? 0) + 1;
+        });
+      },
+    },
+  ];
+`;
+const oneServerGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: false };
+const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: true };
 // A failed import belongs to the graph of the file that has the import. The
 // package shows which graphs bundle the page: only a graph without the
 // "react-server" condition resolves it to ssr.js.
@@ -422,9 +440,7 @@ devTest("removing 'use client' from a component with a pending resolution failur
       return Response.json({ which, loads: globalThis.loads });
     }
   `;
-  const oneServerGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: false };
-  const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGraph: true };
-  for (const { name, serverComponents, failedImport, which } of [
+  for (const { name, serverComponents, failedImport, which, create } of [
     { name: "no server components", serverComponents: undefined, failedImport: `import "./missing";`, which: "ssr" },
     { name: "one server graph", serverComponents: oneServerGraph, failedImport: `import "./missing";`, which: "rsc" },
     {
@@ -432,6 +448,13 @@ devTest("removing 'use client' from a component with a pending resolution failur
       serverComponents: separateSSRGraph,
       failedImport: `import "./missing";`,
       which: "rsc",
+    },
+    {
+      name: "separate SSR graph, the missing file is created",
+      serverComponents: separateSSRGraph,
+      failedImport: `import "../missing";`,
+      which: "rsc",
+      create: "missing.ts",
     },
     {
       name: "bunBakeGraph attribute without an SSR graph",
@@ -448,21 +471,7 @@ devTest("removing 'use client' from a component with a pending resolution failur
   ]) {
     devTest(`a page is bundled once per save after a failed import (${name})`, {
       framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes, serverComponents },
-      pluginFile: `
-        import { basename } from "node:path";
-        export default [
-          {
-            name: "count-loads",
-            setup(build) {
-              build.onLoad({ filter: /(routes.index[.]ts|cond-pkg.(rsc|ssr)[.]js)$/ }, args => {
-                const loads = (globalThis.loads ??= {});
-                const file = basename(args.path);
-                loads[file] = (loads[file] ?? 0) + 1;
-              });
-            },
-          },
-        ];
-      `,
+      pluginFile: countLoads("(routes.index[.]ts|cond-pkg.(rsc|ssr)[.]js)$"),
       files: {
         "node_modules/cond-pkg/package.json": JSON.stringify({
           name: "cond-pkg",
@@ -475,7 +484,8 @@ devTest("removing 'use client' from a component with a pending resolution failur
       },
       async test(dev) {
         expect((await dev.fetch("/")).status).toBe(500);
-        await dev.write("routes/index.ts", page);
+        if (create) await dev.write(create, `export {};`);
+        else await dev.write("routes/index.ts", page);
         expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 2, [`${which}.js`]: 1 } });
         await dev.write("routes/index.ts", page + "// saved again");
         expect(await dev.fetch("/").json()).toEqual({ which, loads: { "index.ts": 3, [`${which}.js`]: 1 } });
@@ -483,6 +493,87 @@ devTest("removing 'use client' from a component with a pending resolution failur
     });
   }
 }
+// The other direction: a file stays in the graphs that bundle it. shared.ts is in
+// the server graph and in the SSR graph, ssr-only.ts is in the SSR graph only.
+for (const [name, broken] of [
+  ["a failed import", `import "./missing";`],
+  ["a syntax error", `export const broken = () => {`],
+] as const) {
+  devTest(`a file is bundled once per graph per save after ${name}`, {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    pluginFile: countLoads("(shared|ssr-only)[.]ts$"),
+    files: {
+      "routes/index.ts": `
+        import "../shared";
+        import "../Comp";
+        export default function () {
+          return Response.json(globalThis.loads);
+        }
+      `,
+      "Comp.ts": `
+        "use client";
+        import "./shared";
+        import "./ssr-only";
+        export const marker = 1;
+      `,
+      "shared.ts": broken,
+      "ssr-only.ts": broken,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(500);
+      await dev.write("shared.ts", `export const shared = 1;`);
+      await dev.write("ssr-only.ts", `export const ssrOnly = 1;`);
+      const repaired = await dev.fetch("/").json();
+      await dev.write("shared.ts", `export const shared = 2;`);
+      await dev.write("ssr-only.ts", `export const ssrOnly = 2;`);
+      const saved = await dev.fetch("/").json();
+      expect(Object.fromEntries(Object.keys(saved).map(file => [file, saved[file] - repaired[file]]))).toEqual({
+        "shared.ts": 2,
+        "shared.ts (client)": 1,
+        "ssr-only.ts": 1,
+        "ssr-only.ts (client)": 1,
+      });
+    },
+  });
+}
+devTest("a stylesheet with a failed @import does not stop a dev server without server components", {
+  framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes },
+  files: {
+    "routes/index.ts": `
+      import "../style.css";
+      export default function () {
+        return new Response("index");
+      }
+    `,
+    "style.css": `
+      @import "./missing.css";
+      body {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "style.css",
+      `
+        body {
+          color: red;
+        }
+      `,
+    );
+    await dev.write(
+      "routes/index.ts",
+      `
+        import "../style.css";
+        export default function () {
+          return new Response("saved");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("saved");
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

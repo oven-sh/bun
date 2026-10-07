@@ -2846,7 +2846,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut opts = *_opts;
         let mut stmts = StmtList::new_in(p.arena);
 
-        let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
         let mut is_directive_prologue = true;
         let list = if eend == T::TEndOfFile {
@@ -2963,30 +2962,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             if !skip {
                 stmts.push(stmt);
-            }
-
-            // Warn about ASI and return statements. Here's an example of code with
-            // this problem: https://github.com/rollup/rollup/issues/3729
-            if !p.options.suppress_warnings_about_weird_code {
-                let mut needs_check = true;
-                if let js_ast::stmt::Data::SReturn(ret) = &stmt.data {
-                    if ret.value.is_none() && !p.latest_return_had_semicolon {
-                        return_without_semicolon_start = stmt.loc.start;
-                        needs_check = false;
-                    }
-                }
-
-                if needs_check && return_without_semicolon_start != -1 {
-                    if let js_ast::stmt::Data::SExpr(_) = &stmt.data {
-                        p.log().add_warning(
-                    Some(p.source),
-                            bun_ast::Loc { start: return_without_semicolon_start + 6 },
-                            b"The following expression is not returned because of an automatically-inserted semicolon",
-                        );
-                    }
-
-                    return_without_semicolon_start = -1;
-                }
             }
         }
 

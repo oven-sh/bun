@@ -116,7 +116,6 @@ pub struct Options<'a> {
     pub ignore_dce_annotations: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
-    pub suppress_warnings_about_weird_code: bool,
     pub features: RuntimeFeatures,
 
     pub tree_shaking: bool,
@@ -178,7 +177,6 @@ impl<'a> Default for Options<'a> {
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
-            suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
@@ -231,7 +229,6 @@ impl<'a> Options<'a> {
             ignore_dce_annotations: self.ignore_dce_annotations,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
-            suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
@@ -340,7 +337,6 @@ impl<'a> Options<'a> {
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: true,
-            suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,

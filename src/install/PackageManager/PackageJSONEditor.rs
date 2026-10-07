@@ -991,21 +991,10 @@ pub(crate) fn edit(
 
                             if let Some(value) = query.expr.as_property(name) {
                                 if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
-                                    // `bun update <pkg>` keeps a `catalog:` reference intact.
-                                    let keep_catalog_reference = manager.subcommand
-                                        == Subcommand::Update
-                                        && value.expr.as_utf8_string_literal().is_some_and(
-                                            |version_literal| {
-                                                dependency::Tag::infer(version_literal)
-                                                    == dependency::Tag::Catalog
-                                            },
-                                        );
-
                                     // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && manager.subcommand != Subcommand::Update
                                         && strings::eql_long(list, dependency_list, true)
-                                        && !keep_catalog_reference
                                     {
                                         replacing += 1;
                                     } else {

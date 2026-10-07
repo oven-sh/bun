@@ -1,6 +1,5 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena;
 use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
@@ -33,7 +32,6 @@ struct ScanOpts {
 impl ScanOpts {
     fn parse_cwd(
         global_this: &JSGlobalObject,
-        _arena: &Arena,
         cwd_val: JSValue,
         absolute: bool,
         fn_name: &'static str,
@@ -98,7 +96,6 @@ impl ScanOpts {
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
         fn_name: &'static str,
-        arena: &mut Arena,
     ) -> JsResult<Option<ScanOpts>> {
         let Some(opts_obj) = arguments.next_eat() else {
             return Ok(None);
@@ -117,8 +114,7 @@ impl ScanOpts {
         if !opts_obj.is_object() {
             if opts_obj.is_string() {
                 {
-                    let result =
-                        Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
+                    let result = Self::parse_cwd(global_this, opts_obj, out.absolute, fn_name)?;
                     if !result.is_empty() {
                         out.cwd = Some(result);
                     }
@@ -173,7 +169,7 @@ impl ScanOpts {
             }
 
             {
-                let result = Self::parse_cwd(global_this, arena, cwd_val, out.absolute, fn_name)?;
+                let result = Self::parse_cwd(global_this, cwd_val, out.absolute, fn_name)?;
                 if !result.is_empty() {
                     out.cwd = Some(result);
                 }
@@ -455,17 +451,13 @@ fn glob_walk_result_to_js<A: walk::Accessor>(
 }
 
 impl Glob {
-    /// The reference to the arena is not used after the scope because it is copied
-    /// by `GlobWalker.init`/`GlobWalker.initWithCwd` if all allocations work and no
-    /// errors occur
     fn make_glob_walker(
         &self,
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
         fn_name: &'static str,
-        arena: &mut Arena,
     ) -> JsResult<Option<AnyGlobWalker>> {
-        let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
+        let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name)? else {
             return Ok(None);
         };
 
@@ -589,21 +581,9 @@ impl Glob {
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
 
-        let mut arena = Arena::new();
-        // GlobWalker::init/init_with_cwd own their allocations (Box); the
-        // arena here is vestigial.
-        let glob_walker =
-            match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
-                Err(err) => {
-                    drop(arena);
-                    return Err(err);
-                }
-                Ok(None) => {
-                    drop(arena);
-                    return Ok(JSValue::UNDEFINED);
-                }
-                Ok(Some(gw)) => gw,
-            };
+        let Some(glob_walker) = self.make_glob_walker(global_this, &mut arguments, "scan")? else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
         let cx = global_this.js_thread_of_caller(callframe);
         let promise = JSPromiseStrong::init(global_this);
@@ -631,19 +611,11 @@ impl Glob {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
-        let mut arena = Arena::new();
-        let mut glob_walker =
-            match self.make_glob_walker(global_this, &mut arguments, "scanSync", &mut arena) {
-                Err(err) => {
-                    drop(arena);
-                    return Err(err);
-                }
-                Ok(None) => {
-                    drop(arena);
-                    return Ok(JSValue::UNDEFINED);
-                }
-                Ok(Some(gw)) => gw,
-            };
+        let Some(mut glob_walker) =
+            self.make_glob_walker(global_this, &mut arguments, "scanSync")?
+        else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // Box<GlobWalker> drops at scope exit.
 
         match glob_walker.walk().map_err(crate::Error::from)? {

@@ -218,7 +218,6 @@ fn parse_js<'a>(
     opts.features.trim_unused_imports = false;
     opts.features.minify_syntax = options.minify_syntax;
     opts.transform_only = true;
-    opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
     let mut log = bun_ast::Log::init();
     let parser = bun_js_parser::Parser::init(opts, &mut log, source, define, arena).ok()?;

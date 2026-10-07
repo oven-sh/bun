@@ -266,7 +266,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) allow_private_identifiers: bool,
 
     pub(crate) has_top_level_return: bool,
-    pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
     /// Tolerant mode: a list rejected `await` as an identifier in the top-level statement being
@@ -9948,7 +9947,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // ─── all remaining fields default ───
             allow_private_identifiers: false,
             has_top_level_return: false,
-            latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,
             await_was_refused: false,

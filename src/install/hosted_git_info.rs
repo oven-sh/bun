@@ -910,24 +910,12 @@ impl HostProvider {
         &shct[0..shct.len() - 1]
     }
 
-    /// Find the appropriate host provider by its shortcut (e.g. "github:").
-    ///
-    /// The second parameter allows you to declare whether the given string includes the protocol:
-    /// colon or not.
-    fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
-        for provider in Self::ALL {
-            let shortcut_matches = if with_colon {
-                provider.shortcut() == shortcut_str
-            } else {
-                provider.shortcut_without_colon() == shortcut_str
-            };
-
-            if shortcut_matches {
-                return Some(provider);
-            }
-        }
-
-        None
+    /// Find the appropriate host provider by its shortcut without the protocol colon
+    /// (e.g. "github").
+    fn from_shortcut(shortcut_str: &[u8]) -> Option<HostProvider> {
+        Self::ALL
+            .into_iter()
+            .find(|&provider| provider.shortcut_without_colon() == shortcut_str)
     }
 
     /// Find the appropriate host provider by its domain (e.g. "github.com").
@@ -942,7 +930,7 @@ impl HostProvider {
         let proto_str = url.protocol();
 
         // Try shortcut first (github:, gitlab:, etc.)
-        if let Some(provider) = HostProvider::from_shortcut(proto_str.byte_slice(), false) {
+        if let Some(provider) = HostProvider::from_shortcut(proto_str.byte_slice()) {
             return Some(provider);
         }
 

@@ -686,6 +686,184 @@ describe("fs.watch", () => {
     }
   });
 
+  // A path can come to name another inode while the old inode stays alive: a
+  // second hard link or an open descriptor keeps it, or an ancestor directory
+  // moved. The kernel then reports no deletion of the old inode. A call in the
+  // same tick as the replace also runs before any report of it is read. In
+  // each case the new watcher must follow what the path names now and must
+  // report nothing of the old inode, as in node.
+  describe("fs.watch on a path that no longer names an open watcher's root", () => {
+    function observe(target: string, recursive = false) {
+      const events: [string, string | null][] = [];
+      let next = Promise.withResolvers<void>();
+      const watcher = fs.watch(target, { recursive }, (eventType, filename) => {
+        events.push([eventType, filename]);
+        next.resolve();
+        next = Promise.withResolvers<void>();
+      });
+      watcher.once("error", err => next.reject(err));
+      return {
+        events,
+        // Resolves once `count` events (of `type`, if given) have arrived.
+        async saw(type?: string, count = 1) {
+          while (events.filter(([t]) => !type || t === type).length < count) await next.promise;
+        },
+        [Symbol.dispose]: () => watcher.close(),
+      };
+    }
+
+    function replace(target: string, how: "rename-over" | "unlink+create" | "unlink+mkdir") {
+      if (how === "rename-over") {
+        fs.writeFileSync(target + ".tmp", "2");
+        fs.renameSync(target + ".tmp", target);
+      } else {
+        fs.unlinkSync(target);
+        if (how === "unlink+mkdir") fs.mkdirSync(target);
+        else fs.writeFileSync(target, "2");
+      }
+    }
+
+    // Windows watches a file by its name in the parent directory, so nothing
+    // follows the old file there.
+    describe.skipIf(!isLinux && !isMacOS)("a file", () => {
+      describe.each(["hard link", "open descriptor"] as const)("kept by a second %s", keep => {
+        // macOS watches a directory with FSEvents, whose first event for a new
+        // directory is not fixed, so the directory case is Linux only.
+        const hows = ["rename-over", "unlink+create", ...(isLinux ? (["unlink+mkdir"] as const) : [])] as const;
+        test.each(hows)("replaced by %s", async how => {
+          using dir = tempDir("fs-watch-rebound-file", { "f.txt": "1" });
+          const target = path.join(String(dir), "f.txt");
+          const link = path.join(String(dir), "link.txt");
+          let fd = keep === "open descriptor" ? fs.openSync(target, "r") : -1;
+          if (keep === "hard link") fs.linkSync(target, link);
+          try {
+            using stale = observe(target);
+            replace(target, how);
+            // The old inode lost a name. Once its watcher has reported that, no
+            // event of the replace is on its way to a watcher that joins it.
+            await stale.saw();
+            using fresh = observe(target);
+            // Only the old inode reports this: its other name moves, or it dies.
+            if (keep === "hard link") fs.renameSync(link, link + ".moved");
+            else (fs.closeSync(fd), (fd = -1));
+            await stale.saw("rename");
+            if (how === "unlink+mkdir") fs.writeFileSync(path.join(target, "new.txt"), "x");
+            else fs.appendFileSync(target, "x");
+            await fresh.saw();
+            expect(fresh.events[0]).toEqual(how === "unlink+mkdir" ? ["rename", "new.txt"] : ["change", "f.txt"]);
+          } finally {
+            if (fd !== -1) fs.closeSync(fd);
+          }
+        });
+      });
+
+      test("kept by a second hard link, replaced by rename-over, watched with fs.promises.watch", async () => {
+        using dir = tempDir("fs-watch-rebound-promises", { "f.txt": "1" });
+        const target = path.join(String(dir), "f.txt");
+        const link = path.join(String(dir), "link.txt");
+        fs.linkSync(target, link);
+        using stale = observe(target);
+        replace(target, "rename-over");
+        await stale.saw();
+        const ac = new AbortController();
+        const fresh = fs.promises.watch(target, { signal: ac.signal })[Symbol.asyncIterator]();
+        try {
+          const first = fresh.next();
+          fs.renameSync(link, link + ".moved");
+          await stale.saw("rename");
+          fs.appendFileSync(target, "x");
+          expect(await first).toEqual({ done: false, value: { eventType: "change", filename: "f.txt" } });
+        } finally {
+          ac.abort();
+        }
+      });
+    });
+
+    // The exact events are inotify's. macOS watches a directory with FSEvents,
+    // which follows the path.
+    describe.skipIf(!isLinux)("linux", () => {
+      test.each(["directory", "recursive directory", "file"] as const)(
+        "a directory kept by an open descriptor, removed and replaced by a %s",
+        async kind => {
+          using dir = tempDir("fs-watch-rebound-dir", { "d": {} });
+          const target = path.join(String(dir), "d");
+          const recursive = kind === "recursive directory";
+          let fd = fs.openSync(target, "r");
+          try {
+            using stale = observe(target, recursive);
+            // The descriptor keeps the removed directory, so its watcher hears nothing yet.
+            fs.rmdirSync(target);
+            if (kind === "file") fs.writeFileSync(target, "1");
+            else fs.mkdirSync(target);
+            using fresh = observe(target, recursive);
+            (fs.closeSync(fd), (fd = -1));
+            await stale.saw("rename");
+            if (kind === "file") fs.appendFileSync(target, "x");
+            else fs.writeFileSync(path.join(target, "new.txt"), "x");
+            await fresh.saw();
+            expect(fresh.events[0]).toEqual(kind === "file" ? ["change", "d"] : ["rename", "new.txt"]);
+          } finally {
+            if (fd !== -1) fs.closeSync(fd);
+          }
+        },
+      );
+
+      test.each(["file", "directory", "recursive directory"] as const)(
+        "a %s below an ancestor that was renamed aside and recreated",
+        async kind => {
+          using dir = tempDir("fs-watch-rebound-ancestor", { "parent": { "x": kind === "file" ? "1" : {} } });
+          const parent = path.join(String(dir), "parent");
+          const aside = path.join(String(dir), "aside");
+          const target = path.join(parent, "x");
+          const recursive = kind === "recursive directory";
+          using stale = observe(target, recursive);
+          // The old inode moved with its parent. Its watcher is told nothing.
+          fs.renameSync(parent, aside);
+          fs.mkdirSync(parent);
+          if (kind === "file") fs.writeFileSync(target, "2");
+          else fs.mkdirSync(target);
+          using fresh = observe(target, recursive);
+          fs.renameSync(path.join(aside, "x"), path.join(aside, "y"));
+          await stale.saw("rename");
+          if (kind === "file") fs.appendFileSync(target, "x");
+          else fs.writeFileSync(path.join(target, "new.txt"), "x");
+          await fresh.saw();
+          expect(fresh.events[0]).toEqual(kind === "file" ? ["change", "x"] : ["rename", "new.txt"]);
+        },
+      );
+
+      // Nothing keeps the old inode here. It dies at the replace, but the
+      // reader thread has not read that yet when fs.watch() runs again, and
+      // ext4 gives the new file the old inode number. A watcher that joined
+      // the old one gets its change (link count), rename (IN_DELETE_SELF) and
+      // rename (IN_IGNORED), and never the write to the new file.
+      test.each(["rename-over", "unlink+create"] as const)(
+        "a file watched again in the same tick as the %s",
+        async how => {
+          using dir = tempDir("fs-watch-rebound-same-tick", {});
+          for (let i = 0; i < 10; i++) {
+            const name = `f${i}.txt`;
+            const target = path.join(String(dir), name);
+            fs.writeFileSync(target, "1");
+            using stale = observe(target);
+            replace(target, how);
+            using fresh = observe(target);
+            await stale.saw("rename", 2);
+            // The old inode's events are all delivered. This watcher joins
+            // `fresh`, after it, so its first event comes after any of `fresh`.
+            using later = observe(target);
+            fs.appendFileSync(target, "x");
+            await later.saw();
+            expect({ fresh: fresh.events, later: later.events }).toEqual({
+              fresh: [["change", name]],
+              later: [["change", name]],
+            });
+          }
+        },
+      );
+    });
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

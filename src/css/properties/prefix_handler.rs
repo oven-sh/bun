@@ -81,6 +81,23 @@ impl FallbackHandler {
         let caret_color = &mut this.caret_color;
         let caret = &mut this.caret;
 
+        // `caret` sets `caret-color` and `caret-shape`, so they must keep their source
+        // order. Seeing one forgets where the other was tracked, so a later declaration
+        // of it is appended instead of written back ahead of the one in between:
+        // `caret-color: red; caret: auto; caret-color: blue` must stay blue.
+        let tag = match property {
+            Property::Caret(_) => Some(PropertyIdTag::Caret),
+            Property::CaretColor(_) => Some(PropertyIdTag::CaretColor),
+            Property::CaretShape(_) => Some(PropertyIdTag::CaretShape),
+            Property::Unparsed(val) => Some(val.property_id.tag()),
+            _ => None,
+        };
+        match tag {
+            Some(PropertyIdTag::Caret) => *caret_color = None,
+            Some(PropertyIdTag::CaretColor | PropertyIdTag::CaretShape) => *caret = None,
+            _ => {}
+        }
+
         // PropertyIdTag::Color has no vendor prefix.
         handle_unprefixed!(
             color,

@@ -1945,6 +1945,17 @@ describe("css tests", () => {
     // Typed, so keywords are normalized; anything else still passes through as written.
     minify_test(".foo { caret-shape: BLOCK }", ".foo{caret-shape:block}");
     minify_test(".foo { caret-shape: banana }", ".foo{caret-shape:banana}");
+    // `caret` sets `caret-color` and `caret-shape`, so interleaved declarations keep their order.
+    minify_test(
+      ".foo { caret-color: red; caret: auto; caret-color: blue }",
+      ".foo{caret-color:red;caret:auto;caret-color:#00f}",
+    );
+    minify_test(".foo { caret: red; caret-color: blue; caret: green }", ".foo{caret:red;caret-color:#00f;caret:green}");
+    minify_test(".foo { caret: red; caret-shape: bar; caret: green }", ".foo{caret:red;caret-shape:bar;caret:green}");
+    minify_test(
+      ".foo { caret-color: red; caret: var(--c); caret-color: blue }",
+      ".foo{caret-color:red;caret:var(--c);caret-color:#00f}",
+    );
     minify_test(".foo { caret: yellow block }", ".foo{caret:#ff0 block}");
     minify_test(".foo { caret: block yellow }", ".foo{caret:#ff0 block}");
     minify_test(".foo { caret: block }", ".foo{caret:block}");

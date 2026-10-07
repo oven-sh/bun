@@ -795,6 +795,36 @@ describe("constant arguments", () => {
     expect(await lastLineOf(header + entry, build)).toMatchObject({ stdout: "[5,7]", exitCode: 0 });
   });
 
+  // The macro gives undefined, so the binding holds its default when the program runs.
+  test.concurrent.each(modes)("$mode: a binding that takes its default holds the default", async ({ build }) => {
+    const entry = `
+      const { a = 5 } = getUndefined();
+      const { list: [x = 8, y = 9] } = getUndefined();
+      const { a: random = Math.random() } = getUndefined();
+      const { a: object = getObj() } = getUndefined();
+      let { a: changed = 5 } = getUndefined();
+      changed = 9;
+      console.log(JSON.stringify([id(a), a, id(x), x, id(y), y, random === random, object === object, changed]));
+    `;
+    expect(await lastLineOf(header + entry, build)).toMatchObject({
+      stdout: "[5,5,8,8,2,2,true,true,9]",
+      exitCode: 0,
+    });
+  });
+
+  // A var that a direct eval adds stays in the function that holds the eval.
+  test.concurrent.each(modes)("$mode: a direct eval in another function does not hide the const", async ({ build }) => {
+    const entry = `
+      function helper(s) { return eval(s); }
+      console.log("a statement");
+      const N = 5;
+      const out = [id(N), helper("1 + 1")];
+      { eval("0"); out.push(id(N)); }
+      console.log(JSON.stringify(out));
+    `;
+    expect(await lastLineOf(header + entry, build, {}, "entry.js")).toMatchObject({ stdout: "[5,2,5]", exitCode: 0 });
+  });
+
   test.concurrent("a joined flag name in an argument is read whole", async () => {
     const entry = `
       import { feature } from "bun:bundle";
@@ -855,15 +885,10 @@ describe("constant arguments", () => {
       entry: `const o = getObj(); o.a = 2; console.log(id(o));`,
       error: identifierError,
     },
-    // The binding takes its default, not what the macro returned.
+    // The binding takes its default, and the build does not know that value.
     {
-      what: "an object binding that takes its default",
-      entry: `const { a = 5 } = getUndefined(); console.log(id(a));`,
-      error: identifierError,
-    },
-    {
-      what: "an array binding that takes its default",
-      entry: `const { list: [x = 8] } = getUndefined(); console.log(id(x));`,
+      what: "a binding that takes a default that is not known",
+      entry: `const { a = Math.random() } = getUndefined(); console.log(id(a));`,
       error: identifierError,
     },
     {

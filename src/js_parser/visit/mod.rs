@@ -733,10 +733,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// A destructured binding of a macro result. The inliner takes it only under inlining.
-    fn record_macro_result(&mut self, r#ref: Ref, value: Expr, is_const: bool, has_default: bool) {
-        // The binding takes its default, not this value.
-        if has_default && matches!(value.data, ExprData::EUndefined(_)) {
-            return;
+    fn record_macro_result(
+        &mut self,
+        r#ref: Ref,
+        mut value: Expr,
+        is_const: bool,
+        default: Option<Expr>,
+    ) {
+        // An `undefined` gives the binding its default. Only a `const` keeps that value.
+        if let (Some(default), ExprData::EUndefined(_)) = (default, value.data) {
+            if !is_const {
+                return;
+            }
+            let Some(default) = self.macro_argument_value(default) else {
+                return;
+            };
+            value = default;
         }
         let inlinable = self.inlining_outside_macro_args();
         self.put_const_value_for_macros(r#ref, value, inlinable, is_const);
@@ -747,7 +759,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         binding: Binding,
         expr: Expr,
         is_const: bool,
-        has_default: bool,
+        default: Option<Expr>,
     ) {
         match binding.data {
             BData::BObject(bound_object) => {
@@ -769,7 +781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                                 property.value,
                                                 query.expr,
                                                 is_const,
-                                                property.default_value.is_some(),
+                                                property.default_value,
                                             );
                                         }
                                         _ => {
@@ -778,7 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                                     id.r#ref,
                                                     query.expr,
                                                     is_const,
-                                                    property.default_value.is_some(),
+                                                    property.default_value,
                                                 );
                                             }
                                         }
@@ -815,15 +827,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 item.binding,
                                 *child_expr,
                                 is_const,
-                                item.default_value.is_some(),
+                                item.default_value,
                             );
                         }
                     }
                 }
             }
-            BData::BIdentifier(id) => {
-                self.record_macro_result(id.r#ref, expr, is_const, has_default)
-            }
+            BData::BIdentifier(id) => self.record_macro_result(id.r#ref, expr, is_const, default),
             BData::BMissing(_) => {}
         }
     }
@@ -870,12 +880,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(
-                            decl.binding,
-                            value,
-                            was_const,
-                            false,
-                        );
+                        self.visit_binding_and_expr_for_macro(decl.binding, value, was_const, None);
                     }
                 }
             }

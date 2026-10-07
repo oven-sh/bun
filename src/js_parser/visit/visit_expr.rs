@@ -1884,10 +1884,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.macro_.in_args {
             return false;
         }
-        // A `with` object or a direct `eval` can shadow the `const`.
+        // A `with` object can shadow the `const`. So can a `var` that a direct `eval` adds to a function.
         let mut scope = Some(p.current_scope);
         while let Some(s) = scope {
-            if s.kind == js_ast::scope::Kind::With || s.contains_direct_eval {
+            let eval_adds_vars_here = s.kind_stops_hoisting() && s.parent.is_some();
+            if s.kind == js_ast::scope::Kind::With
+                || (s.contains_direct_eval && eval_adds_vars_here)
+            {
                 return false;
             }
             scope = s.parent;

@@ -279,6 +279,7 @@ impl<'p, 's> Checker<'p, 's> {
             matches!(
                 q,
                 Query::Pat(..)
+                    | Query::ParameterSymbol(..)
                     | Query::Symbol(_)
                     | Query::Return(..)
                     | Query::ReturnAtFirstLook(..)
@@ -562,6 +563,51 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// `pushCachedContextualType`
+    pub(super) fn push_cached_contextual_type(&mut self, file: FileId, node: ExprId) {
+        let t = self.contextual_type(file, node, ContextFlags::empty());
+        self.push_contextual_type(file, node, t, true);
+    }
+
+    /// `pushContextualType`
+    #[inline]
+    pub(super) fn push_contextual_type(
+        &mut self,
+        file: FileId,
+        node: ExprId,
+        t: Option<TypeId>,
+        is_cache: bool,
+    ) {
+        self.contextual.push(ContextualInfo {
+            file,
+            node,
+            t,
+            is_cache,
+        });
+    }
+
+    /// `popContextualType`
+    #[inline]
+    pub(super) fn pop_contextual_type(&mut self) {
+        self.contextual.pop();
+    }
+
+    /// `findContextualNode`. A node that is checked again while it is being checked has several
+    /// entries: the search begins at the one that was pushed first.
+    pub(super) fn find_contextual_node(
+        &self,
+        file: FileId,
+        node: ExprId,
+        include_caches: bool,
+    ) -> Option<ContextualInfo> {
+        let mut infos = self.contextual.iter();
+        infos
+            .find(|info| {
+                info.file == file && info.node == node && (include_caches || !info.is_cache)
+            })
+            .copied()
+    }
+
     /// `getContextualType`
     pub(super) fn contextual_type(
         &mut self,
@@ -574,13 +620,10 @@ impl<'p, 's> Checker<'p, 's> {
         if hir.is_in_with(hir[e].pos) {
             return None;
         }
-        if let Some(&(_, _, ty)) = self
-            .contextual
-            .iter()
-            .rev()
-            .find(|c| c.0 == file && c.1 == e)
-        {
-            return Some(ty);
+        // "Cached contextual types are obtained with no ContextFlags, so we can only consult them
+        // for requests with no ContextFlags."
+        if let Some(info) = self.find_contextual_node(file, e, context_flags.is_empty()) {
+            return info.t;
         }
         let ty = self.contextual_type_from_parent(file, e, context_flags)?;
         if ty == TypeId::UNRESOLVED {
@@ -787,7 +830,7 @@ impl<'p, 's> Checker<'p, 's> {
         let parent_ty = match bound.pat_parent[parent.idx()] {
             PatParent::Var(d) if hir[d].ty.is_some() => self.type_from_node(file, hir[d].ty),
             PatParent::Var(d) if hir[d].init.is_some() => {
-                self.check_declaration_initializer(file, hir[d].init)
+                self.check_declaration_initializer(file, parent, hir[d].init, false)?
             }
             PatParent::Param(p) if hir[p].ty.is_some() => self.type_from_node(file, hir[p].ty),
             PatParent::Param(p) => {
@@ -799,7 +842,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ) {
                     Some(ty) => ty,
                     None if hir[p].default.is_some() => {
-                        self.check_declaration_initializer(file, hir[p].default)
+                        self.check_declaration_initializer(file, parent, hir[p].default, true)?
                     }
                     None => return None,
                 }
@@ -818,14 +861,75 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `checkDeclarationInitializer(parent, CheckModeNormal, nil)` for `getContextualTypeForBindingElement`. What it adds under a
-    /// parameter for the defaults in the pattern is omitted: for a default it only restates the type of that default.
-    /// `checkExpressionCached` has no re-entrancy guard: an initializer that is being checked is checked again.
-    fn check_declaration_initializer(&mut self, file: FileId, initializer: ExprId) -> TypeId {
+    /// `checkDeclarationInitializer(parent, CheckModeNormal, nil)` for `getContextualTypeForBindingElement`: `parent` is the
+    /// variable, or the parameter if `is_parameter`, whose name is the pattern `name`. `None`: see `check_initializer_cached`.
+    fn check_declaration_initializer(
+        &mut self,
+        file: FileId,
+        name: PatId,
+        initializer: ExprId,
+        is_parameter: bool,
+    ) -> Option<TypeId> {
+        let ty = self.check_initializer_cached(file, initializer)?;
+        Some(if is_parameter {
+            self.padded_for_pattern(file, name, ty)
+        } else {
+            ty
+        })
+    }
+
+    /// `getQuickTypeOfExpression`, then `checkExpressionCached`. That has no re-entrancy guard: an initializer that is being
+    /// checked is checked again, until one of the visits returns and assigns `links.resolvedType`.
+    ///
+    /// A function whose first check (`NodeCheckFlagsContextChecked`) leads here begins a visit, which skips that function and
+    /// gets to the next one: as many visits are nested as there are such functions. tsgo has a stack that grows. In the upper
+    /// half of this one a nested visit gets no further visit but `None`, and what has asked is not stored: it asks again from
+    /// a lower height, after `links.resolvedType` is assigned.
+    fn check_initializer_cached(&mut self, file: FileId, initializer: ExprId) -> Option<TypeId> {
         let q = Query::Expr(file, initializer);
         let from = self.resolution_start.min(self.stack.len());
-        if !self.may_be_in_flight(q) || !self.stack[from..].contains(&q) {
-            return self.type_of_expr(file, initializer);
+        let outermost = match self.may_be_in_flight(q) {
+            true => self.stack[from..].iter().position(|&visit| visit == q),
+            false => None,
+        };
+        let Some(outermost) = outermost.map(|above| from + above) else {
+            let outer = self.suspend_recheck();
+            let ty = self.type_of_declaration_initializer(file, initializer);
+            self.end_recheck(outer);
+            return Some(ty);
+        };
+        // `type_of_declaration_initializer` would enter the expression again.
+        if let Some(quick) = self.quick_type_of_expr(file, initializer) {
+            return Some(quick);
+        }
+        let serial = self.frames[outermost].serial;
+        let frames = &self.frames;
+        self.initializers_resolved_by_nested_visit
+            .retain(|it| frames.get(it.0).is_some_and(|frame| frame.serial == it.1));
+        let mut resolved = self.initializers_resolved_by_nested_visit.iter();
+        if let Some(&(.., ty)) = resolved.find(|it| it.1 == serial) {
+            return Some(ty);
+        }
+        let innermost = self.stack.iter().rposition(|&visit| visit == q);
+        if let Some(innermost) = innermost.filter(|&innermost| innermost != outermost)
+            && (self.stack.len() >= MAX_DEPTH / 2 || self.is_half_of_stack_in_use())
+        {
+            // The frames of a visit store nothing, up to the first that is not rechecked.
+            let is_stored = |in_flight: &Query| match *in_flight {
+                Query::LiteralProp(..) => false,
+                Query::Expr(of, e) => matches!(
+                    self.hir(of)[e].kind,
+                    ExprKind::Ident(_)
+                        | ExprKind::This
+                        | ExprKind::Dot { .. }
+                        | ExprKind::Index { .. }
+                ),
+                _ => true,
+            };
+            let stored = self.stack[innermost + 1..].iter().position(is_stored);
+            let top = (self.stack.len() - 1).max(innermost + 1);
+            self.bailed_out_from(stored.map_or(top, |above| innermost + 1 + above));
+            return None;
         }
         // Results computed under what is pushed are not valid here, nor these there.
         let found_outside = (
@@ -836,7 +940,20 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.check_expression_ex(file, initializer, CheckMode::empty());
         self.end_recheck(outer);
         (self.rechecked_exprs, self.rechecked_members) = found_outside;
-        ty
+        // Of two nested visits the outer one assigns last. A visit that was refused assigns nothing.
+        if ty != TypeId::UNRESOLVED {
+            match self
+                .initializers_resolved_by_nested_visit
+                .iter_mut()
+                .find(|it| it.1 == serial)
+            {
+                Some(it) => it.2 = ty,
+                None => self
+                    .initializers_resolved_by_nested_visit
+                    .push((outermost, serial, ty)),
+            }
+        }
+        Some(ty)
     }
 
     /// `contextual_property`, for the value `e` of the property. A literal or a function is queried
@@ -1172,7 +1289,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getApparentTypeOfIntersectionType`. `apparent_type` leaves it out where the members of the
     /// intersection as a whole do not depend on it.
-    fn apparent_type_of_intersection_type(&mut self, t: TypeId, this_argument: TypeId) -> TypeId {
+    pub(super) fn apparent_type_of_intersection_type(
+        &mut self,
+        t: TypeId,
+        this_argument: TypeId,
+    ) -> TypeId {
         let key = (t, this_argument);
         if let Some(&cached) = self.apparent_types_of_intersections.get(&key) {
             return cached;
@@ -1401,6 +1522,7 @@ impl<'p, 's> Checker<'p, 's> {
                         | Query::Call(..)
                         | Query::LiteralProp(..)
                         | Query::Pat(..)
+                        | Query::ParameterSymbol(..)
                         | Query::Symbol(_)
                         | Query::Return(..)
                         | Query::ReturnOfSignature(_)
@@ -2103,16 +2225,13 @@ impl<'p, 's> Checker<'p, 's> {
         });
         let required = self.required_own_params(file, func);
         let mut found: SmallVec<[SigId; 4]> = SmallVec::new();
-        // The members that can have a signature, in the order of `sorted_parts`.
-        let mut parts: Parts = self
+        // The members that can have a signature.
+        let parts: Parts = self
             .parts(context)
             .iter()
             .copied()
             .filter(|&part| !self.is_primitive(part))
             .collect();
-        if parts.len() > 1 {
-            parts.sort_by(|&a, &b| self.compare_types(a, b));
-        }
         for part in parts {
             // `getContextualCallSignature`
             let mut fitting: SmallVec<[SigId; 4]> = SmallVec::new();

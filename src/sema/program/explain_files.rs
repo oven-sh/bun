@@ -56,19 +56,11 @@ impl Files<'_> {
             let module: &Module = &self.modules[file.idx()];
             lines.push(to_relative_file_name(name));
             for visit in reasons_of(file, name) {
-                let (code, mut args) = included.reason_message(visit);
+                let (code, mut args) = included.reason_message(visit, to_relative_file_name);
                 if let IncludeReason::Reference(it) = &visit.reason
                     && let Some(text) = text_read(it)
                 {
                     args[0] = text;
-                }
-                // `toFileName`
-                if matches!(
-                    visit.reason,
-                    IncludeReason::Reference(_) | IncludeReason::RootFile(_)
-                ) && let Some(file_name) = args.get_mut(1)
-                {
-                    *file_name = to_relative_file_name(file_name);
                 }
                 lines.push(line(code, &args));
             }
@@ -80,8 +72,9 @@ impl Files<'_> {
             }
             if is_redirect {
                 lines.push(line(1429, &[to_relative_file_name(module.file_name())]));
-            } else if let Some((code, args)) = implied_format_reason(&resolver, options, module) {
-                let args: Vec<Vec<u8>> = args.iter().map(|it| to_relative_file_name(it)).collect();
+            } else if let Some((code, args)) =
+                implied_format_reason(&resolver, options, module, to_relative_file_name)
+            {
                 lines.push(line(code, &args));
             }
         };

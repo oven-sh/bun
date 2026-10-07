@@ -194,7 +194,7 @@ impl Checker<'_, '_> {
             // are one property, identified by the first.
             let is_first = bound.member_symbol[i].is_some() && {
                 let sym = self.symbol_of_member(file, member);
-                self.files().value_declaration(sym) == Some((file, Decl::Member(member)))
+                self.value_declaration_of_property(sym) == Some((file, Decl::Member(member)))
             };
             if is_first || hir[member].kind == MemberKind::Property {
                 self.type_of_member_declaration(file, member);

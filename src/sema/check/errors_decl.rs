@@ -243,7 +243,7 @@ impl Checker<'_, '_> {
             Decl::Member(m) => self.symbol_of_member(file, m),
             _ => (self.files()).sym(file, self.bound(file).symbol_of_declaration(node)),
         };
-        let Some(value_declaration) = self.files().value_declaration(symbol) else {
+        let Some(value_declaration) = self.value_declaration_of_property(symbol) else {
             return;
         };
         let (start, end) = match node {

@@ -1,10 +1,11 @@
 //! The checker's view of the file system.
 //!
-//! The checker's paths are absolute, use `/`, and start with one. On Windows it represents `C:\a\b`
-//! as `/C:/a/b`.
+//! The checker's paths are absolute, use `/`, and start with one. It represents `C:\a\b` as
+//! `/C:/a/b`, on every system: see `resolve::root_length`. Whoever puts a path into a message, a
+//! printed type or a line of output converts it there, with `resolve::displayed_path`.
 
 use bun_ast::e::{JsonValue, ObjectJSON};
-use bun_core::strings::{BOM, contains, index_of, is_valid_utf8, without_trailing_slash};
+use bun_core::strings::{BOM, contains, is_valid_utf8, without_trailing_slash};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
@@ -13,7 +14,7 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     Host, ModuleDetection, Options, Phase, ScriptKind, Spent, ancestors, inside,
-    is_declaration_file_name, join, to_file_name_lower_case, to_path,
+    is_declaration_file_name, join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::{FxHashMap, ShardedMap};
@@ -41,51 +42,41 @@ pub fn is_bundled(path: &[u8]) -> bool {
 
 /// `/C:/a` becomes `C:/a`, and `/\\server/share/a` becomes `\\server/share/a`, which Windows accepts.
 /// `/bundled:///libs/a` becomes `bundled:///libs/a`, which is how typescript-go prints it.
+/// Where `C:/a` is no absolute path, the system looks for it in the working directory, which is
+/// where `os.DirFS("C:/")` is (`Common.RootAndPath`).
 pub fn to_native(path: &[u8]) -> &[u8] {
     match path {
-        _ if is_bundled(path) => &path[1..],
-        [b'/', drive, b':', ..] if cfg!(windows) && drive.is_ascii_alphabetic() => &path[1..],
         [b'/', b'\\', b'\\', ..] if cfg!(windows) => &path[1..],
-        _ => path,
+        _ => typescript_path(path),
     }
 }
 
 /// The root of a drive is `/C:`. For the system, to which `C:` is the working directory on that
-/// drive, and in a message it is `/C:/`.
-pub fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
-    match path {
-        [b'/', drive, b':'] if cfg!(windows) && drive.is_ascii_alphabetic() => {
-            Cow::Owned([path, b"/"].concat())
-        }
-        _ => Cow::Borrowed(path),
-    }
-}
-
-/// Rewrites every `/C:/a` in the message `text` to its `to_native` form, which is how TypeScript
-/// prints it, and every `/\\server/a` to `//server/a`.
-pub fn show_drives(text: &mut Vec<u8>) {
-    while let Some(at) = index_of(text, b"/\\\\") {
-        text.splice(at..at + 3, *b"//");
-    }
-    let mut from = 0;
-    while let Some(colon) = index_of(&text[from..], b":/").map(|at| from + at) {
-        from = colon + 2;
-        // Not in the middle of a path or of a word.
-        let is_start = |b: &u8| !b.is_ascii_alphanumeric() && !b"/._-".contains(b);
-        if colon >= 2
-            && text[colon - 1].is_ascii_alphabetic()
-            && text[colon - 2] == b'/'
-            && text[..colon - 2].last().is_none_or(is_start)
-        {
-            text.remove(colon - 2);
-            from -= 1;
-        }
+/// drive, it is `/C:/`. So it is with every root but `/`.
+fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
+    match path.len() > 1 && path.len() == root_length(path) {
+        true => Cow::Owned([path, b"/"].concat()),
+        false => Cow::Borrowed(path),
     }
 }
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    join(b"/", bun_paths::string_paths::without_nt_prefix(path))
+    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    // It begins with `/`, whatever the name after that looks like: see `root_length`.
+    match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
+        true => [b"/\0", &path[..]].concat(),
+        false => path,
+    }
+}
+
+/// A path of the command line, which is relative to `cwd`. Where `/` is the root of the file system,
+/// one that begins with it is a native path.
+pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    match !cfg!(windows) && path.starts_with(b"/") {
+        true => from_native(path),
+        false => join(cwd, path),
+    }
 }
 
 /// The entries of a directory. The names are sorted.
@@ -316,6 +307,12 @@ fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
     })
 }
 
+/// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
+pub(crate) fn read_at(path: &[u8]) -> Option<Cow<'static, [u8]>> {
+    let bytes = bun_sys::File::read_from(Fd::cwd(), to_native(path));
+    bytes.ok().map(decoded)
+}
+
 /// The two parts of a path.
 struct Split<'a> {
     /// The parent directory.
@@ -324,9 +321,18 @@ struct Split<'a> {
     name: &'a [u8],
 }
 
+/// `GetDirectoryPath`, `GetBaseFileName`: a root is its own directory and has no name.
 fn split(path: &[u8]) -> Split<'_> {
+    let parent = dirname::<Posix>(path);
+    // Only what is before the last separator of a root ends with one.
+    if parent.ends_with(b"/") && path.len() <= root_length(path) {
+        return Split {
+            parent: path,
+            name: b"",
+        };
+    }
     Split {
-        parent: dirname::<Posix>(path),
+        parent,
         name: basename_posix(path),
     }
 }
@@ -418,7 +424,11 @@ impl Disk {
     }
 
     fn directory(&self, path: &[u8]) -> &Directory {
-        let path = without_trailing_slash(path);
+        // `SplitPath`: the separator at the end of what follows the root.
+        let path = match path.ends_with(b"/") {
+            true => &path[..without_trailing_slash(path).len().max(root_length(path))],
+            false => path,
+        };
         if let Some(known) = self.directories.get_ref(path) {
             return known;
         }
@@ -446,6 +456,9 @@ impl Disk {
     fn find_in_memory(&self, path: &[u8]) -> Option<bool> {
         let Split { parent, name } = split(path);
         let names = self.in_memory.get(parent)?;
+        if name.is_empty() {
+            return Some(true);
+        }
         let has = |names: &[Vec<u8>]| names.iter().any(|it| it == name);
         if has(&names.files) {
             return Some(false);
@@ -474,9 +487,12 @@ impl Disk {
 
     /// `Listing::find`. `None`: the system has to be queried. The name is there in another
     /// spelling, and the file system of that directory may take one for the other, whatever that of
-    /// the project does: a project can have several.
+    /// the project does: a project can have several. Or it has letters outside ASCII, which a file
+    /// system folds and normalizes by rules of its own: for APFS U+017F is `s`, and a composed
+    /// letter is the decomposed one, with or without case.
     fn find_in<'a>(&self, listing: &'a Listing, name: &[u8]) -> Option<Option<(&'a [u8], bool)>> {
         match listing.find(name, self.case_sensitive) {
+            None if !name.is_ascii() => None,
             None if self.case_sensitive && listing.find(name, false).is_some() => None,
             found => Some(found),
         }
@@ -529,8 +545,9 @@ impl Disk {
         let real_parent = match self.real_directories.get_ref(parent) {
             Some(known) => known,
             None => {
-                let real = if parent == b"/" {
-                    b"/".to_vec()
+                // A root is where it is. See `root_length` for the second one.
+                let real = if matches!(parent, b"/" | b"/\0") {
+                    parent.to_vec()
                 } else {
                     self.real_path_of(parent)
                 };
@@ -618,7 +635,7 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
         (swapped != name).then_some(swapped)
     };
     // `[eval]` is only in memory: no spelling of its name is found.
-    let Some(path) = ancestors(path).find(|it| bun_sys::exists(it)) else {
+    let Some(path) = ancestors(path).find(|it| bun_sys::exists(to_native(it))) else {
         return true;
     };
     // What is in a directory is on its file system. Its own name is not, if it is where that file
@@ -626,14 +643,14 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
     if let Directory::Listed(listing) = list(path) {
         let mut names = listing.files.iter().chain(&listing.directories);
         if let Some(other) = names.find_map(|name| swapped(name)) {
-            return !bun_sys::exists(&inside(path, &other));
+            return !bun_sys::exists(to_native(&inside(path, &other)));
         }
     }
     // Only the name: what is above it can be on another file system, like `/mnt` of `/mnt/c`.
     for path in ancestors(path) {
         let Split { parent, name } = split(path);
         if let Some(other) = swapped(name) {
-            return !bun_sys::exists(&inside(parent, &other));
+            return !bun_sys::exists(to_native(&inside(parent, &other)));
         }
     }
     true
@@ -1016,9 +1033,7 @@ impl Host for Disk {
         }
         let Split { parent, name } = split(path);
         if name.is_empty() || Self::is_above_listings(parent) {
-            return bun_sys::File::read_from(Fd::cwd(), to_native(path))
-                .ok()
-                .map(decoded);
+            return read_at(path);
         }
         let _turn = self.reading.as_ref().map(Turn::wait_for);
         let mut reader = self.take_reader(parent);

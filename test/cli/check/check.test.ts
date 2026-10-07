@@ -329,7 +329,10 @@ describe.concurrent("bun check", () => {
       "two/tsconfig.json": composite,
       "two/a.ts": files["a.ts"],
     });
-    const [projects, file] = await Promise.all([check(solution), run(String(solution), ["--check", "one/b.ts"])]);
+    const [projects, file] = await Promise.all([
+      check(solution, ["-b"]),
+      run(String(solution), ["--check", "one/b.ts"]),
+    ]);
     expect(projects.stdout).toContain("two/a.ts(1,14): error TS2322");
     expect(projects.stdout).not.toContain("one/a.ts");
     expect(note(projects.stderr)).toEqual(stoppedBefore("2 files"));
@@ -1419,11 +1422,7 @@ describe.concurrent("bun check", () => {
         "tools/index.ts": implicitAny,
         "scripts/build.ts": implicitAny,
       });
-      const [{ stdout, stderr, exitCode }, here, packages] = await Promise.all([
-        check(dir),
-        check(dir, ["."]),
-        check(dir, ["packages"]),
-      ]);
+      const [{ stdout, stderr, exitCode }, packages] = await Promise.all([check(dir, ["."]), check(dir, ["packages"])]);
       expect(stdout).toMatchInlineSnapshot(`
         "packages/strict/index.ts(3,19): error TS7006: Parameter 'x' implicitly has an 'any' type.
         scripts/build.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."
@@ -1435,7 +1434,6 @@ describe.concurrent("bun check", () => {
           1  scripts/build.ts:1"
       `);
       expect(exitCode).toBe(1);
-      expect([here.stdout, here.stderr]).toEqual([stdout, stderr]);
       expect(packages.stdout).toBe(
         `packages/strict/index.ts(3,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`,
       );
@@ -1549,7 +1547,10 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toBe("");
-      expect(stderr).toMatchInlineSnapshot(`"✓ No type errors in 2 files across 2 projects [time]"`);
+      expect(stderr).toMatchInlineSnapshot(`
+        "note: tsconfig.json has no files of its own. Checked the projects it references, like tsc -b.
+        ✓ No type errors in 2 files across 2 projects [time]"
+      `);
       expect(exitCode).toBe(0);
     });
 
@@ -1699,8 +1700,8 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         other("examples/x/e.ts"),
         main,
       ]);
-      // As much work, too.
-      expect(results[1].stderr).toBe(results[0].stderr);
+      // As much work, too. Nothing is to be said about a directory that was named.
+      expect(results[1].stderr).toBe(results[0].stderr.replace(/^note: tsconfig.json has no files .*\n/, ""));
       expect(results[9].stderr).toBe(results[3].stderr);
       expect(results[10].stderr).toContain("TS2322");
       expect(results[10].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
@@ -2043,7 +2044,7 @@ const kind: number = Shape.kind;
           "two/tsconfig.json": JSON.stringify({ compilerOptions, include: ["./*.js"] }),
           "two/index.js": index("two"),
         });
-        const { stdout } = await check(dir);
+        const { stdout } = await check(dir, ["-b"]);
         expect(
           stdout
             .split("\n")
@@ -14563,7 +14564,7 @@ export function f<T>(rest: T) {
         );
       }
       const [whole, ...results] = await Promise.all([
-        run(root, ["check"]),
+        run(root, ["check", "."]),
         ...commands.map(([, cwd, cmd]) => run(cwd, cmd)),
       ]);
       const all = reported(root, whole.stdout);
@@ -14636,6 +14637,7 @@ export function f<T>(rest: T) {
     const { stdout, exitCode } = await check(dir, ["--help"]);
     expect(stdout).toContain("Usage: bun check [flags] [...files or directories]");
     expect(stdout).toContain("-p, --project=<val>");
+    expect(stdout).toContain("-b, --build");
     expect(exitCode).toBe(0);
   });
 });
@@ -15042,6 +15044,231 @@ describe.concurrent("--check", () => {
       expect(
         results.map((it, index) => [expected[kind][index][0].join(" "), /TS\d+/.exec(it.stdout + it.stderr)?.[0]]),
       ).toEqual(expected[kind].map(([args, code]) => [args.join(" "), code]));
+    });
+  });
+
+  // `bun check <args>` reports what `tsc <args> --noEmit` reports. Where tsc checks nothing, it says what it does.
+  describe("which projects are reported", () => {
+    const base = JSON.parse(tsconfig).compilerOptions;
+    const composite = { ...base, noEmit: false, composite: true, outDir: "dist" };
+    const wrong = (name: string) => `export const ${name}: number = "";\n`;
+    const error = (file: string, line = 1) =>
+      `${file}(${line},14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+
+    test.concurrent.each([
+      [[], [error("src/main.ts", 2)]],
+      [["."], [error("src/main.ts", 2)]],
+      [["-p", "."], [error("src/main.ts", 2)]],
+      [["--noEmit"], [error("src/main.ts", 2)]],
+      [["src/main.ts"], [error("src/main.ts", 2)]],
+      [["-b"], [error("../lib/src/index.ts"), error("src/main.ts", 2)]],
+    ])("in a project with files and references, which are not built: %j", async (args, expected) => {
+      using dir = project({
+        "app/tsconfig.json": JSON.stringify({
+          compilerOptions: composite,
+          include: ["src"],
+          references: [{ path: "../lib" }],
+        }),
+        "app/src/main.ts": `import { lib } from "../../lib/src/index";\n${wrong("app")}export const used = lib;\n`,
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["src"] }),
+        "lib/src/index.ts": wrong("lib"),
+      });
+      const { stdout, stderr, exitCode } = await run(join(String(dir), "app"), ["check", ...args]);
+      expect(stdout.split("\n")).toEqual(expected);
+      expect(stderr).not.toContain("note:");
+      expect(exitCode).toBe(1);
+    });
+
+    // A flag is for the projects that are reported.
+    test.concurrent.each([
+      [["--strict"], ["scripts/s.ts"]],
+      [
+        [".", "--strict"],
+        ["packages/a/a.ts", "scripts/s.ts"],
+      ],
+      [
+        ["-b", "--strict"],
+        ["packages/a/a.ts", "scripts/s.ts"],
+      ],
+      [["."], []],
+    ])("in a project with files, and references below it: %j", async (args, files) => {
+      const loose = { ...composite, strict: false };
+      const implicitAny = `export function f(x) {\n  return x;\n}\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: loose,
+          include: ["scripts"],
+          references: [{ path: "packages/a" }],
+        }),
+        "scripts/s.ts": implicitAny,
+        "packages/a/tsconfig.json": JSON.stringify({ compilerOptions: loose, include: ["*.ts"] }),
+        "packages/a/a.ts": implicitAny,
+      });
+      const { stdout } = await check(dir, args);
+      expect(stdout.split("\n").filter(Boolean)).toEqual(
+        files.map(file => `${file}(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`),
+      );
+    });
+
+    test.concurrent("nothing is written, so no file would be overwritten, with references too", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...base, noEmit: false, allowJs: true },
+          include: ["src"],
+          references: [{ path: "lib" }],
+        }),
+        "src/a.js": `export const a = 1;\n`,
+        "src/b.ts": wrong("b"),
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
+        "lib/l.ts": `export const l = 1;\n`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout).toBe(error("src/b.ts"));
+    });
+
+    test.concurrent.each([
+      [[], true],
+      [["-b"], false],
+      [["."], false],
+    ])("in a project with nothing but references: %j", async (args, says) => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "a" }, { path: "b" }] }),
+        "a/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
+        "a/a.ts": wrong("a"),
+        "b/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
+        "b/b.ts": wrong("b"),
+      });
+      const { stdout, stderr, exitCode } = await check(dir, args);
+      expect(stdout.split("\n")).toEqual([error("a/a.ts"), error("b/b.ts")]);
+      const note = "note: tsconfig.json has no files of its own. Checked the projects it references, like tsc -b.";
+      expect(stderr.includes(note)).toBe(says);
+      expect(exitCode).toBe(1);
+    });
+
+    const below = () => {
+      const dir = project({
+        "packages/server/tsconfig.json": tsconfig,
+        "packages/server/s.ts": wrong("s"),
+        "packages/web/tsconfig.json": tsconfig,
+        "packages/web/w.ts": wrong("w"),
+        "loose.ts": wrong("l"),
+      });
+      rmSync(join(String(dir), "tsconfig.json"));
+      return dir;
+    };
+
+    test.concurrent(
+      "without a tsconfig.json here or above, those below are listed and nothing is checked",
+      async () => {
+        using dir = below();
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+        "error: No tsconfig.json in '<dir>' or above it. Below it:
+          packages/server/tsconfig.json
+          packages/web/tsconfig.json
+        To check one: bun check -p packages/server/tsconfig.json
+        To check everything below this directory: bun check ."
+      `);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // The list proposes commands that run nothing.
+    test.concurrent.each([
+      ["export const s = 1;\n", 0],
+      [wrong("s"), 1],
+    ])("there, `bun run --check` checks what is below and then runs the script: %j", async (source, code) => {
+      using dir = project({
+        "package.json": JSON.stringify({ scripts: { build: "echo the script ran" } }),
+        "packages/server/tsconfig.json": tsconfig,
+        "packages/server/s.ts": source,
+      });
+      rmSync(join(String(dir), "tsconfig.json"));
+      const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--check", "build"]);
+      expect(stderr).not.toContain("No tsconfig.json");
+      expect(stderr.includes(error("packages/server/s.ts"))).toBe(code === 1);
+      expect(stdout.includes("the script ran")).toBe(code === 0);
+      expect(exitCode).toBe(code);
+    });
+
+    test.concurrent.each([
+      [["."], [error("loose.ts"), error("packages/server/s.ts"), error("packages/web/w.ts")]],
+      [["-p", "packages/server/tsconfig.json"], [error("packages/server/s.ts")]],
+    ])("and what the message proposes works: %j", async (args, expected) => {
+      using dir = below();
+      const { stdout, exitCode } = await check(dir, args);
+      expect(stdout.split("\n")).toEqual(expected);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("the command line is read as tsc reads it", () => {
+    const assignment = `a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+    const parameter = `a.ts(2,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`;
+    const strict = `${assignment}\n${parameter}`;
+    // What tsc 7.0.2 prints, except where it says otherwise.
+    const expected: Record<string, [string[], string][]> = {
+      "a response file": [
+        [["@args.txt"], assignment],
+        [["@quoted.txt"], assignment],
+        [["@outer.txt"], assignment],
+        [["@args.txt", "--strict"], strict],
+        [["@missing.txt"], `error TS5083: Cannot read file '<dir>/missing.txt'.`],
+        [["@open.txt"], `error TS6045: Unterminated quoted string in response file '<dir>/open.txt'.`],
+        // tsc reads past the end of a file that does not end in white space, and crashes.
+        [["@lines.txt"], assignment],
+        // tsc reads these until its stack overflows.
+        [["@self.txt"], `error TS5083: Cannot read file '<dir>/self.txt'.`],
+        [["@one.txt"], `error TS5083: Cannot read file '<dir>/one.txt'.`],
+      ],
+      "`null` unsets an option": [
+        [["--strict", "false"], assignment],
+        [["--strict", "null"], strict],
+        [["--strict", "false", "--strict", "null"], strict],
+      ],
+      "`--quiet` prints no diagnostic": [
+        [["--quiet"], ""],
+        [["-q"], ""],
+        [["--quiet", "false"], strict],
+        [["--quiet", "--quiet", "false"], strict],
+        [["--quiet", "false", "--quiet"], ""],
+      ],
+      "a project that is not there": [
+        [["-b", "nowhere"], `error TS6053: File '<dir>/nowhere/tsconfig.json' not found.`],
+        [["-p", "nowhere"], `error TS5058: The specified path does not exist: '<dir>/nowhere'.`],
+        [
+          ["-p", "empty"],
+          `error TS5081: Cannot find a tsconfig.json file at the current directory: <dir>/empty/tsconfig.json.`,
+        ],
+      ],
+    };
+    test.concurrent.each(Object.keys(expected))("%s", async kind => {
+      using dir = project({
+        "a.ts": `export const a: number = "";\nexport function f(x) {\n  return x;\n}\n`,
+        "args.txt": `--strict false\n`,
+        "quoted.txt": `  --strict   "false"  \n\n`,
+        "outer.txt": `@args.txt\n`,
+        "open.txt": `--strict "false\n`,
+        "lines.txt": `--strict\nfalse`,
+        "self.txt": `@self.txt\n`,
+        "one.txt": `@two.txt\n`,
+        "two.txt": `@one.txt\n`,
+        "empty/not-a-tsconfig.json": `{}\n`,
+      });
+      const results = await Promise.all(expected[kind].map(([args]) => check(dir, args)));
+      expect(results.map((it, index) => [expected[kind][index][0].join(" "), it.stdout, it.exitCode])).toEqual(
+        expected[kind].map(([args, stdout]) => [args.join(" "), stdout, 1]),
+      );
+    });
+
+    test("`--quiet` leaves the list of files", async () => {
+      using dir = project({ "a.ts": `export const a: number = "";\n` });
+      const { stdout, exitCode } = await check(dir, ["--quiet", "--listFilesOnly"]);
+      expect(stdout.split("\n").filter(line => !/\/lib\.[\w.]+\.d\.ts$/.test(line))).toEqual([
+        "<dir>/a.ts",
+        "<dir>/console.d.ts",
+      ]);
+      expect(exitCode).toBe(0);
     });
   });
 

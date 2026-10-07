@@ -4,7 +4,7 @@
 //! enclosing type parameters), not its members. The checker resolves the members on demand, once.
 
 use crate::atom::{Atom, Interner};
-use crate::hir::{ExprId, FnId, TypeNodeId, TypeParamId};
+use crate::hir::{ExprId, FnId, ParamId, TypeNodeId, TypeParamId};
 use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
@@ -640,9 +640,9 @@ pub struct Shape<'s> {
     /// For a type created by `getSpreadType`, which creates a new type on every call: its left and
     /// right operands.
     pub spread_of: Option<(TypeId, TypeId)>,
-    /// The number of types the outermost `getSpreadType` had created before this one. `mapType`
-    /// iterates over a union of named unions by its origin, which is not the order of
-    /// `CompareTypes`.
+    /// The number of types `getSpreadType` had created for the same object literal before this
+    /// one. `mapType` iterates over a union of named unions by its origin, which is not the order
+    /// of `CompareTypes`.
     pub spread_rank: u32,
     /// For a type created by `getSignatureInstantiation` with `inferredTypeParameters`
     /// (`ObjectFlagsSingleSignatureType`), which creates a new type on every call: the outer type
@@ -678,7 +678,7 @@ pub enum Literalness {
     /// The attributes of a JSX element. Names that contain a hyphen are ignored.
     JsxAttributes,
     /// An object literal checked without its context-sensitive functions
-    /// (`ObjectFlagsNonInferrableType`). With no members, it is such a function
+    /// (`ObjectFlagsNonInferrableType`). With no members and no symbol, it is such a function
     /// (`anyFunctionType`). With one call signature and nothing else, it is such a function without
     /// context-sensitive parameters, retained for its return type (`returnOnlyType`).
     Partial,
@@ -693,6 +693,9 @@ pub enum Literalness {
     /// (`getTypeWithSyntheticDefaultImportType`). Its symbol is a type literal without members, so
     /// `IsEmptyAnonymousObjectType` treats it as `{}`, widened or not.
     SyntheticDefault,
+    /// `emptyObjectType`. It has no symbol. A type that `getRestType` or
+    /// `getWidenedTypeOfObjectLiteral` creates without members is `No`.
+    EmptyObject,
     /// `unknownEmptyObjectType`: the `{}` that `unknown` narrows to when it is neither `null` nor
     /// `undefined`. It has no symbol.
     OfUnknown,
@@ -760,25 +763,16 @@ pub struct SigParam {
     /// minimum argument counts, and the parameter at that position may be the rest parameter of
     /// the other signature: `((...a: number[]) => void) | ((a: string) => void)`.
     pub is_required_rest: bool,
-    /// `symbol.ValueDeclaration`: its file and position. `None`: a parameter that the checker
-    /// synthesizes (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no
-    /// declaration.
-    pub declaration: Option<(FileId, u32)>,
+    /// `symbol.ValueDeclaration`. `None`: a parameter that the checker synthesizes
+    /// (`combineUnionOrIntersectionParameters`, `newParameter`) has a name and no declaration.
+    pub declaration: Option<(FileId, ParamId)>,
 }
 
 impl SigParam {
-    /// `getNameableDeclarationAtPosition`: the label of a tuple element created from this
-    /// parameter. `name` is `NONE` for a pattern (`isValidDeclarationForTupleLabel`).
+    /// `ast.IsBindingPattern(symbol.ValueDeclaration.Name())`, or the name is missing.
     #[inline]
-    pub fn label(&self) -> LabeledDeclaration {
-        match self.declaration {
-            Some((file, pos)) if self.name.is_some() => LabeledDeclaration {
-                name: self.name,
-                file,
-                pos,
-            },
-            _ => LabeledDeclaration::NONE,
-        }
+    pub fn is_named_by_pattern(&self) -> bool {
+        self.name.is_none() && self.declaration.is_some()
     }
 }
 
@@ -993,7 +987,8 @@ pub struct Provenance<'s> {
     /// For a mapped type that `instantiateConstituent` created: the key under which
     /// `getObjectTypeInstantiation` stores the result of that `instantiateMappedType`. `None`: it
     /// is the key of the type itself, its type arguments and its alias. Also for a result that is
-    /// a union of such types and could not contain type variables.
+    /// a union of such types and could not contain type variables, and for a mapped type that is
+    /// no longer under its key (`InstantiationKey::nesting`).
     pub stored_under: Option<InstantiationKey>,
     /// `ObjectFlagsArrayLiteral`: the clone of a type reference that `createArrayLiteralType`
     /// creates (`cloneTypeReference`), once per reference.
@@ -1010,6 +1005,10 @@ pub struct InstantiationKey {
     pub alias: Option<(Sym, TypeId)>,
     /// `ObjectFlagsCouldContainTypeVariables` of the type that is stored.
     pub could_contain_type_variables: bool,
+    /// How many `getObjectTypeInstantiation` with this key were in progress around the one that
+    /// created the type. None of them has found an entry, and each assigns `instantiations[key]`
+    /// when it returns: the type that stays under the key is the one with 0.
+    pub nesting: u8,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Default)]
@@ -1649,7 +1648,7 @@ impl TypeId {
 
     /// `false | true`
     pub const BOOLEAN: TypeId = TypeId(WELL_KNOWN.len() as u32);
-    /// `emptyObjectType`: `{}` where no type node says so. It has no symbol.
+    /// `emptyObjectType`, see `Literalness::EmptyObject`
     pub const EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 1);
     /// `unknownEmptyObjectType`, see `Literalness::OfUnknown`
     pub const UNKNOWN_EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 2);
@@ -1742,7 +1741,13 @@ impl<'s> TypeStore<'s> {
         let booleans = List::copy_from_slice_in(&[TypeId::FALSE, TypeId::TRUE], arena);
         assert_eq!(publish(TypeData::Union(booleans)), TypeId::BOOLEAN);
         let synth = |shape| TypeData::Synth(ArenaBox::new_in(shape, arena));
-        assert_eq!(publish(synth(Shape::new_in(arena))), TypeId::EMPTY_OBJECT);
+        assert_eq!(
+            publish(synth(Shape {
+                literal: Literalness::EmptyObject,
+                ..Shape::new_in(arena)
+            })),
+            TypeId::EMPTY_OBJECT
+        );
         assert_eq!(
             publish(synth(Shape {
                 literal: Literalness::OfUnknown,
@@ -2021,6 +2026,7 @@ impl<'p, 's> Types<'p, 's> {
                 let is_plain = matches!(
                     shape.literal,
                     Literalness::No
+                        | Literalness::EmptyObject
                         | Literalness::OfUnknown
                         | Literalness::AutoArray
                         | Literalness::EmptyTypeLiteral
@@ -2864,10 +2870,12 @@ has_no_references!(
     usize,
     ExprId,
     FnId,
+    ParamId,
     TypeNodeId,
     TypeParamId,
     crate::hir::MemberId,
     crate::hir::PropId,
+    crate::node::Node,
     Intrinsic,
     StringMappingKind,
     PropFlags,
@@ -3030,7 +3038,8 @@ follow_struct!(Provenance<'_> {
 follow_struct!(InstantiationKey {
     type_arguments,
     alias,
-    could_contain_type_variables
+    could_contain_type_variables,
+    nesting
 });
 follow_enum!(UnionOrigin<'_> {
     UnionOrigin::None => (),

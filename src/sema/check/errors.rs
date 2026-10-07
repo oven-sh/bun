@@ -30,6 +30,9 @@ pub struct Checked {
     /// `Checker::expected_errors`
     expected_errors: Vec<Reported>,
     never_checked: Vec<(u32, u32)>,
+    /// The private members that `checkUnusedClassMembers` has reported, and where. See
+    /// `Program::properties_referenced_before`.
+    unused_private_members: Vec<(Sym, u32)>,
     /// `Options::writes_declaration_files`: the emitted text of the file's declaration file, if it
     /// has one.
     pub declaration_file: Option<Vec<u8>>,
@@ -46,6 +49,7 @@ impl Checked {
             include: Vec::new(),
             expected_errors: Vec::new(),
             never_checked: Vec::new(),
+            unused_private_members: Vec::new(),
             declaration_file: None,
         })
     }
@@ -64,6 +68,15 @@ impl Program<'_> {
                 d.by_emit || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
             };
             out.extend(self.take_buffer(file).into_iter().filter(is_checked));
+            if !checked.unused_private_members.is_empty() {
+                let referenced = self.properties_referenced_before.lock();
+                let mut unused = checked.unused_private_members;
+                unused.retain(|it| referenced.contains(&it.0));
+                let is_referenced = |d: &Reported| {
+                    matches!(d.code, 6133 | 6138) && unused.iter().any(|it| it.1 == d.start)
+                };
+                out.retain(|d| !is_referenced(d));
+            }
             // `getDiagnosticsWithPrecedingDirectives`
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
@@ -267,7 +280,10 @@ impl Checker<'_, '_> {
         let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = elsewhere;
         self.log_reported_from(0);
+        let emits_later = !self.emits_first();
+        let was_emitting = self.set_symbol_ids_emitting(emits_later);
         let declaration = self.get_declaration_diagnostics(file);
+        self.set_symbol_ids_emitting(was_emitting);
         self.is_type_checked = true;
         let mut directives = Directives::default();
         let semantic = semantic.into_iter();
@@ -324,6 +340,7 @@ impl Checker<'_, '_> {
             include: Vec::new(),
             expected_errors: Vec::new(),
             never_checked: self.never_checked.take(),
+            unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }
     }
@@ -384,7 +401,10 @@ impl Checker<'_, '_> {
             };
             return super::explain::Line {
                 code: 6278,
-                args: held(vec![types.to_vec(), package]),
+                args: held(vec![
+                    crate::resolve::displayed_path(types).into_owned(),
+                    package,
+                ]),
                 level: 1,
             };
         }
@@ -598,8 +618,8 @@ impl Checker<'_, '_> {
         }
         let export_star = self.export_star_past_a_default(module);
         let related = export_star.map(|at| self.new_diagnostic(at, 1195, &[]));
-        let at = self.place_of_token(file, import.default_pos);
-        self.error_at(at, 1192, &[Arg::Sym(module)])
+        let end = self.end_of_identifier_at(file, import.default, import.default_pos);
+        self.error_at((file, import.default_pos, end), 1192, &[Arg::Sym(module)])
             .related_information
             .extend(related);
     }
@@ -785,23 +805,15 @@ impl Checker<'_, '_> {
             return (2305, None);
         };
         let local = self.merged_resolved_symbol(local);
-        let own = files.exports(module);
         let Some(equals) = files.export(module, known::export_equals) else {
+            let own = files.exports(module);
             let mut own = own.iter();
             return match own.find(|&&(_, e)| self.merged_resolved_symbol(e) == local) {
                 Some(&(_, exported)) => (2460, Some(exported)),
                 None => (2459, None),
             };
         };
-        // `bindCommonJSTypeExports`: alongside exported types or namespaces, `export =` is also a
-        // namespace that contains them, and no longer aliases its target.
-        let is_more_than_an_alias = own.iter().any(|&(other, s)| {
-            other != known::export_equals
-                && files
-                    .flags(s)
-                    .intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-        });
-        let code = if is_more_than_an_alias || self.merged_resolved_symbol(equals) != local {
+        let code = if self.merged_resolved_symbol(equals) != local {
             2305
         } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
             2595
@@ -849,7 +861,7 @@ impl Checker<'_, '_> {
                 let hint = self.module_not_found_hint(text, atoms.bytes(package), alternate);
                 Reported::new(at, hint.code, hint.args)
             });
-        let args = [Arg::Atom(spec), Arg::Atom(path)];
+        let args = [Arg::Atom(spec), Arg::Path(atoms.bytes(path))];
         let diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
         self.add_diagnostic(diagnostic);
     }
@@ -927,6 +939,9 @@ impl Checker<'_, '_> {
     /// is assumed to be initialized at the start of its control flow container
     /// (`assumeInitialized`).
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
+        // FOR SPEED: it is evaluated last, unless the answer depends on what has been asked before.
+        let is_never_initialized = (self.has_order_dependent_assignment_marks(file))
+            .then(|| self.is_never_initialized(file, e));
         let is_automatic = self.is_automatic_type(declared);
         if !is_automatic
             && (!self.p.files.options.strict_null_checks
@@ -964,7 +979,6 @@ impl Checker<'_, '_> {
         {
             return true;
         }
-        let symbol = bound.expr_symbol[e.idx()];
         // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the
         // initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
@@ -982,13 +996,25 @@ impl Checker<'_, '_> {
         {
             return false;
         }
-        // `isNeverInitialized`: its assignments by the time this code runs are unknown, unless it
-        // is never assigned.
-        !(decl.pat == pat
+        // Its assignments by the time this code runs are unknown, unless it is never assigned.
+        !is_never_initialized.unwrap_or_else(|| self.is_never_initialized(file, e))
+    }
+
+    /// `isNeverInitialized` of `checkIdentifier`, for the identifier `e`.
+    fn is_never_initialized(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Some((pat, d)) = self.value_declaration_of_variable(file, e) else {
+            return false;
+        };
+        let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
+        decl.pat == pat
+            && stmt.is_some()
+            && matches!(hir[stmt].kind, StmtKind::Var(_))
             && !self.declares_loop_variable(file, stmt)
             && decl.init.is_none()
+            && !decl.flags.contains(Flags::DEFINITE)
             && self.is_mutable_local_variable_declaration(file, d)
-            && !self.is_symbol_assigned_definitely(file, symbol))
+            && !self.is_symbol_assigned_definitely(file, bound.expr_symbol[e.idx()])
     }
 
     /// `isMutableLocalVariableDeclaration`

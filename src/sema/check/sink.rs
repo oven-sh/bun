@@ -54,6 +54,8 @@ pub(super) enum Arg<'a> {
     Number(usize),
     Bytes(&'a [u8]),
     Text(&'a str),
+    /// A path in the checker's format: `displayed_path`.
+    Path(&'a [u8]),
 }
 
 /// The arguments of a message, printed.
@@ -243,6 +245,7 @@ fn is_task_independent(q: Query) -> bool {
         | Query::Return(..)
         | Query::ReturnAtFirstLook(..)
         | Query::Pat(..)
+        | Query::ParameterSymbol(..)
         | Query::LiteralProp(..)
         | Query::TypeNode(..)
         | Query::Enum(..)
@@ -299,7 +302,12 @@ impl super::Program<'_> {
 
     /// `CompareDiagnostics`
     pub(super) fn compare_diagnostics(&self, a: &Reported, b: &Reported) -> std::cmp::Ordering {
-        let path = |file: FileId| self.files.modules.get(file.idx()).map(|m| m.file_name());
+        // `getDiagnosticPath`
+        let path = |file: FileId| match file {
+            crate::program::IN_CONFIGURATION => Some(&self.files.options.config_path[..]),
+            file => self.files.modules.get(file.idx()).map(|m| m.file_name()),
+        };
+        let path = |file: FileId| path(file).map(crate::resolve::typescript_path);
         (path(a.file), a.start, a.end, a.code, &a.args)
             .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
             .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
@@ -343,13 +351,16 @@ impl Checker<'_, '_> {
                     Arg::Sym(symbol) => self.write_symbol(&mut out, symbol),
                     Arg::Prop(prop) => self.write_prop(&mut out, prop),
                     Arg::Sig(signature) => self.write_signature(&mut out, signature),
-                    Arg::Atom(name) => out.extend_from_slice(self.atoms().bytes(name)),
+                    Arg::Atom(name) => out.extend_from_slice(&self.symbol_name_with_id(name)),
                     Arg::Number(number) => out.extend_from_slice(bun_core::fmt::itoa(
                         &mut bun_core::fmt::ItoaBuf::new(),
                         number,
                     )),
                     Arg::Bytes(bytes) => out.extend_from_slice(bytes),
                     Arg::Text(text) => out.extend_from_slice(text.as_bytes()),
+                    Arg::Path(path) => {
+                        out.extend_from_slice(&crate::resolve::displayed_path(path));
+                    }
                 }
                 out.into_boxed_slice()
             })
@@ -591,12 +602,21 @@ impl Checker<'_, '_> {
     /// The check of a file asks for the queries about its own syntax. So what is reported now is
     /// reported no later than the first of these files is checked: that of the task, and those
     /// whose syntax `owner` and the queries in progress are about. Any file can be the first to ask
-    /// for a query about a type.
-    fn is_reported_in_time(&self, owner: Option<Query>, file: FileId) -> bool {
+    /// for a query about a type. No check asks for the type of a symbol that
+    /// `is_resolved_on_request`.
+    pub(super) fn is_reported_in_time(&self, owner: Option<Query>, file: FileId) -> bool {
         let is_in_time = |visited: FileId| self.is_checked_no_later_than(visited, file);
+        let is_asked_by_check = |q: Query| match q {
+            Query::ParameterSymbol(of, name) => !matches!(
+                self.bound(of).pat_parent[name.idx()],
+                crate::bind::PatParent::Param(p) if self.is_resolved_on_request(of, p)
+            ),
+            _ => true,
+        };
         self.task.file.is_none_or(is_in_time)
-            || (owner.iter().chain(&self.stack))
-                .any(|q| q.syntax().is_none_or(|(visited, _)| is_in_time(visited)))
+            || (owner.iter().chain(&self.stack)).any(|&q| {
+                is_asked_by_check(q) && q.syntax().is_none_or(|(visited, _)| is_in_time(visited))
+            })
     }
 
     /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key

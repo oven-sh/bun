@@ -583,11 +583,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   if (port !== null && typeof port === "object" && typeof port.recvStart === "function") {
     throwNotImplemented("Socket.prototype.bind(handle)");
-    /*
-    replaceHandle(this, port);
-    startListening(this);
-    return this;
-    */
   }
 
   // Open an existing fd instead of creating a new one.

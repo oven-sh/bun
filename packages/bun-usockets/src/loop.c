@@ -354,6 +354,13 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         }
 
         us_internal_socket_group_link_socket(s->group, s);
+        if (s->flags.is_paused) {
+            /* us_socket_pause found the reads already off and only set the flag. Hand back an
+             * ordinary paused socket: us_socket_resume arms the reads, and the readable dispatch
+             * gates it again. */
+            s->flags.low_prio_state = 0;
+            continue;
+        }
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
@@ -548,6 +555,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
+                        s->hangup_closes_unsent = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -872,9 +880,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * left behind it. This includes sockets we already shut down (a client
              * that end()ed before reading the reply), the case that truncated; once
              * read_eof is set there is nothing left to drain and deferring would only
-             * lose the close. Error-flagged events keep the error path. */
+             * lose the close. Error-flagged events keep the error path. A hangup
+             * takes the write side down too, so a hangup_closes_unsent socket does
+             * not wait when the write this event retried failed again. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
-            if (eof_deferrable && s->flags.is_paused) {
+            const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
+            if (eof_deferrable && s->flags.is_paused && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */

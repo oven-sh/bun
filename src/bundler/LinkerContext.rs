@@ -111,7 +111,7 @@ pub struct LinkerContext<'a> {
     /// string buffer containing prefix for each unique keys
     pub(crate) unique_key_prefix: Box<[u8]>,
 
-    pub source_maps: SourceMapData,
+    pub(crate) source_maps: SourceMapData,
 
     /// This will eventually be used for reference-counting LinkerContext
     /// to know whether or not we can free it safely.
@@ -1445,6 +1445,7 @@ pub struct LinkerOptions {
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
     pub(crate) fold_chunks: bool,
+    pub(crate) entry_naming_has_hash: bool,
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
@@ -1493,6 +1494,7 @@ impl Default for LinkerOptions {
             css_chunking: false,
             min_chunk_size: 0,
             fold_chunks: true,
+            entry_naming_has_hash: false,
             module_preload: true,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
@@ -1514,10 +1516,10 @@ pub enum LinkerOptionsMode {
 
 #[derive(Default)]
 pub struct SourceMapData {
-    pub line_offset_wait_group: WaitGroup,
+    pub(crate) line_offset_wait_group: WaitGroup,
     pub(crate) line_offset_tasks: Box<[SourceMapDataTask]>,
 
-    pub quoted_contents_wait_group: WaitGroup,
+    pub(crate) quoted_contents_wait_group: WaitGroup,
     pub(crate) quoted_contents_tasks: Box<[SourceMapDataTask]>,
 }
 
@@ -1895,7 +1897,6 @@ pub struct PendingPartRange<'a> {
 ///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
 ///   - all other access through `c` / `chunk` during codegen is read-only.
 #[inline]
-#[allow(clippy::type_complexity)]
 pub(crate) unsafe fn pending_part_range_prologue<'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (

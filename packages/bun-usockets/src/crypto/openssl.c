@@ -586,6 +586,11 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 
   BIO_clear_retry_flags(bio);
   if (!written) {
+    if (!us_internal_socket_can_raw_write(loop_ssl_data->ssl_socket)) {
+      /* Sealed after our FIN, so it can never leave. A retry would wait for a
+       * writable event that never comes. */
+      return length;
+    }
     BIO_set_retry_write(bio);
     return -1;
   }
@@ -596,7 +601,8 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
  * spills the remainder into the loop's single spill slot - SSL already
  * counts those records as delivered, so they are drained (in order, to this
  * socket only) from its writable event. Returns 1 when the wire took
- * everything, 0 when a spill is now pending. */
+ * everything, 0 when it did not: the rest is spilled, or dropped when it can
+ * never be sent. */
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   unsigned int len = loop_ssl_data->ssl_write_batch_len;
   if (!len) return 1;
@@ -612,6 +618,11 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
+    if (!us_internal_socket_can_raw_write(s)) {
+      /* Sealed after our FIN, so it can never leave. A spill would hold the
+       * loop's one spill slot, and us_internal_ssl_close would wait for it. */
+      return 0;
+    }
     if (loop_ssl_data->ssl_spill_owner) {
       /* The spill slot is already another socket's (a re-entrant JS region
        * produced one between the entry-time gate and this flush).
@@ -1130,6 +1141,10 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
   if (!s->ssl || s->ssl_is_server || s->ssl_handshake_state == HANDSHAKE_COMPLETED) return;
   s->ssl_inline_reject = 1;
   SSL_set_verify(s_ssl(s), SSL_VERIFY_PEER, us_inline_reject_verify_callback);
+}
+
+void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {
+  s->ssl_first_flight_before_fin = 1;
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -1703,6 +1718,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_in_use = 0;
   s->ssl_pending_detach = 0;
   s->ssl_pending_close_code = 0;
+  s->ssl_first_flight_before_fin = 0;
+  s->ssl_shutdown_after_first_flight = 0;
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
@@ -2216,6 +2233,12 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_set_loop_data(result);
   ssl_update_handshake(result, 1);
+  if (ssl_gone(result)) return result;
+  result->ssl_first_flight_before_fin = 0;
+  if (result->ssl_shutdown_after_first_flight) {
+    result->ssl_shutdown_after_first_flight = 0;
+    us_internal_ssl_shutdown(result);
+  }
   return result;
 }
 
@@ -2696,7 +2719,14 @@ unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
 }
 
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
-  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
+  struct us_iovec_t iov = {(void *)data, (size_t)length};
+  return us_internal_ssl_writev(s, &iov, 1);
+}
+
+/* The records of every part share one batch, so they reach the kernel in one write. Returns the plaintext bytes taken, in order. */
+int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+  while (count && iov->iov_len == 0) iov++, count--;
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || count == 0) return 0;
 
   /* Fast-path connect attaches SSL eagerly on a SEMI_SOCKET (see
    * us_socket_group_connect_resolved_dns); on_open hasn't fired yet so
@@ -2743,12 +2773,17 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
 
   int total = 0;
   int last_ssl_written = 1;
-  while (total < length) {
-    int chunk = length - total;
-    if (chunk > 16384) chunk = 16384;
+  size_t part_offset = 0;
+  while (count) {
+    if (part_offset == iov->iov_len) {
+      iov++, count--, part_offset = 0;
+      continue;
+    }
+    size_t part_left = iov->iov_len - part_offset;
+    int chunk = part_left > 16384 ? 16384 : (int)part_left;
     /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
     s->ssl_in_use = 1;
-    last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    last_ssl_written = SSL_write(s_ssl(s), (const char *)iov->iov_base + part_offset, chunk);
     s->ssl_in_use = 0;
     if (s->ssl_pending_detach) {
       /* Closed from inside the call: drop this write's records (and any held
@@ -2761,6 +2796,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
+    part_offset += (size_t)last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;
      * stop sealing records for a connection that is being torn down. */
     if (s->ssl_fatal_error) break;
@@ -2794,6 +2830,10 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
 
 void us_internal_ssl_shutdown(struct us_socket_t *s) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) return;
+  if (s->ssl_first_flight_before_fin) {
+    s->ssl_shutdown_after_first_flight = 1;
+    return;
+  }
 
   /* Spilled ciphertext is data the layers above already count as written;
    * a FIN/close_notify now would cut it off. Finish the shutdown from the

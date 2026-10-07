@@ -7,7 +7,6 @@
 //! `bun_install` (via `bun_transpiler` → `bun_bundler`), so no cycle is
 //! introduced; this only makes the existing edge direct.
 
-#![allow(non_snake_case)]
 pub mod arguments;
 pub mod bunfig;
 pub mod error;

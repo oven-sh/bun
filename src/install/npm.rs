@@ -1221,10 +1221,7 @@ pub mod package_manifest {
                                 tmp_path,
                                 cache_dir,
                                 outpath,
-                                bun_sys::Renameat2Flags {
-                                    mode: bun_sys::RenameMode::Exchange,
-                                    ..Default::default()
-                                },
+                                bun_sys::RenameMode::Exchange,
                             )?;
 
                             // Success.
@@ -3200,8 +3197,6 @@ impl PackageManifest {
             v.truncate(string_builder.len);
             result.string_buf = v.into_boxed_slice();
         }
-
-        let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
         Ok(Some(result))
     }

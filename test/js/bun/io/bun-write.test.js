@@ -1142,6 +1142,26 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(stream.locked).toBe(true);
     });
 
+    // Only an Error was taken for a failure. With anything else the promise stayed pending.
+    it.each([[42], ["boom"], [{ code: "E" }], [undefined]])(
+      "a direct stream whose pull() throws %p rejects with that",
+      async thrown => {
+        using dir = tempDir("bun-write-direct-pull-throws", {});
+        const stream = new ReadableStream({
+          type: "direct",
+          pull() {
+            throw thrown;
+          },
+        });
+        expect(
+          await Bun.write(join(String(dir), "out.txt"), stream).then(
+            () => ({ resolved: true }),
+            rejected => ({ rejected }),
+          ),
+        ).toEqual({ rejected: thrown });
+      },
+    );
+
     it("a stream whose source fails rejects with that error", async () => {
       using dir = tempDir("bun-write-stream-reject", {});
       const nextTask = () => new Promise(resolve => setImmediate(resolve));

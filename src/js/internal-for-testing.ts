@@ -109,6 +109,9 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
+  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
+    subprocess: import("bun").Subprocess,
+  ) => boolean,
 };
 
 export const iniInternals = {
@@ -857,6 +860,14 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
   0,
+);
+
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
+export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
+  "ZigSourceProvider.cpp",
+  "jsSourceHasLineStarts",
+  1,
 );
 
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds

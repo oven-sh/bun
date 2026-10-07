@@ -374,12 +374,14 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                  * connect refused), or a read-filter EV_EOF carrying the
                  * socket error in fflags: both are epoll's EPOLLERR. */
                 if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
-                    ((struct us_socket_t *) poll)->flags.is_paused) {
+                    ((struct us_socket_t *) poll)->flags.is_paused &&
+                    !(((struct us_socket_t *) poll)->hangup_closes_unsent && ((struct us_socket_t *) poll)->flags.last_write_failed)) {
                     /* fflags==0 with reads paused is AF_UNIX's graceful peer
                      * close (TCP only gets SS_CANTSENDMORE from RST, which
                      * carries the error): the receive buffer survives, so
                      * defer like epoll's EPOLLHUP - resume() delivers the
-                     * tail + end instead of an error close discarding it. */
+                     * tail + end instead of an error close discarding it.
+                     * Not when a hangup_closes_unsent socket has bytes unsent. */
                     eof = 1;
                 } else {
                     error = 1;
@@ -512,9 +514,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
      * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
-     * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
-     * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
-    const int handed_off = mi_on_thread_idle_start();
+     * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
+     * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
+     * it between ticks is what we are avoiding. */
+    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;

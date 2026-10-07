@@ -165,16 +165,25 @@ class Session implements AsyncDisposable {
       }
       session.#transport = await Promise.race([connected.promise, session.#exited.promise]);
 
-      const { breakpointsActive = true, pauseOnDebuggerStatements, pauseOnMicrotasks, breakpoints = [] } =
-        options.handshake ?? {};
+      const {
+        breakpointsActive = true,
+        pauseOnDebuggerStatements,
+        pauseOnMicrotasks,
+        breakpoints = [],
+      } = options.handshake ?? {};
       await session.send("Inspector.enable");
       await session.send("Runtime.enable");
       await session.send("Debugger.enable");
-      if (breakpointsActive !== null) await session.send("Debugger.setBreakpointsActive", { active: breakpointsActive });
+      if (breakpointsActive !== null)
+        await session.send("Debugger.setBreakpointsActive", { active: breakpointsActive });
       if (pauseOnDebuggerStatements) await session.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
       if (pauseOnMicrotasks) await session.send("Debugger.setPauseOnMicrotasks", { enabled: true });
       for (const { file, line } of breakpoints) {
-        await session.send("Debugger.setBreakpointByUrl", { url: join(cwd, file), lineNumber: line - 1, columnNumber: 0 });
+        await session.send("Debugger.setBreakpointByUrl", {
+          url: join(cwd, file),
+          lineNumber: line - 1,
+          columnNumber: 0,
+        });
       }
       // The program runs from here. It can end before this answer arrives.
       session.send("Inspector.initialized").catch(() => {});
@@ -393,38 +402,6 @@ describe.concurrent("--inspect-brk", () => {
     expect(session.pauses).toHaveLength(1);
   });
 
-  // Nothing transpiles the entry of an executable, with or without its bytecode.
-  test.each([[[] as string[]], [["--bytecode", "--format=esm"]]])(
-    "BUN_INSPECT=<url>?break=1 pauses in a bun build --compile %j executable",
-    async flags => {
-      using dir = tempDir("inspect-brk-compile", { "entry.ts": `globalThis.ran = 1;\nconsole.log("done");\n` });
-      const exe = join(String(dir), isWindows ? "app.exe" : "app");
-      await using build = spawn({
-        cmd: [bunExe(), "build", "--compile", ...flags, join(String(dir), "entry.ts"), "--outfile", exe],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
-      expect(buildStdout + buildStderr).toContain("compile");
-      expect(buildExitCode).toBe(0);
-
-      await using session = await Session.start({}, [], { exe, breakFromEnv: true });
-      const pause = await session.paused(/^done$/m);
-      expect({ reason: pause.reason, file: pause.file }).toEqual({ reason: start, file: basename(exe) });
-      expect(await session.evaluate(pause, "typeof globalThis.ran")).toBe("undefined");
-      await session.send("Debugger.resume");
-      await session.output("stdout", /^done$/m);
-      expect(session.pauses).toHaveLength(1);
-    },
-    60_000,
-  );
-
   test("an entry that starts with a class pauses before the class", async () => {
     await using session = await Session.start(
       {
@@ -559,27 +536,29 @@ describe.concurrent("--inspect-brk", () => {
       expect(await session.finish(false)).toEqual({ stdout: "done\n", exitCode: 0, pauses: [] });
     });
 
-    test("a debugger statement of the program still needs Debugger.setPauseOnDebuggerStatements", async () => {
-      await using quiet = await Session.start(files, [brk, "entry.mjs"]);
-      await quiet.paused();
-      expect(await quiet.finish()).toEqual({
+    test("without Debugger.setPauseOnDebuggerStatements, a debugger statement of the program does not pause", async () => {
+      await using session = await Session.start(files, [brk, "entry.mjs"]);
+      await session.paused();
+      expect(await session.finish()).toEqual({
         stdout: "done\n",
         exitCode: 0,
         pauses: [{ reason: start, file: "entry.mjs", line: 1, column: 1 }],
       });
+    });
 
-      await using armed = await Session.start(files, [brk, "entry.mjs"], {
+    test("with Debugger.setPauseOnDebuggerStatements, a debugger statement on line 1 pauses after the start pause", async () => {
+      await using session = await Session.start(files, [brk, "entry.mjs"], {
         handshake: { pauseOnDebuggerStatements: true },
       });
-      await armed.paused();
-      expect(where(await armed.resumeToPause())).toEqual({
+      await session.paused();
+      expect(where(await session.resumeToPause())).toEqual({
         reason: "DebuggerStatement",
         file: "entry.mjs",
         line: 1,
         column: 1,
       });
-      expect(await armed.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
-      expect(armed.pauses).toHaveLength(2);
+      expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
+      expect(session.pauses).toHaveLength(2);
     });
   });
 
@@ -637,6 +616,31 @@ describe.concurrent("--inspect-brk", () => {
       expect(session.pauses).toHaveLength(2);
     });
 
+    test("an entry that started with breakpoints inactive does not pause later", async () => {
+      await using session = await Session.start(
+        {
+          "entry.cjs": `console.log("started");\nconst timer = setInterval(() => {\n  if (!globalThis.breakpointsAreBack) return;\n  clearInterval(timer);\n  console.log("ran on");\n}, 1);\n`,
+        },
+        [brk, "entry.cjs"],
+        { handshake: { breakpoints: [{ file: "entry.cjs", line: 1 }] } },
+      );
+      // The breakpoint stops in the program that makes the module's function, before the entry starts.
+      expect((await session.paused()).reason).toBe("Breakpoint");
+      await session.send("Debugger.setBreakpointsActive", { active: false });
+      await session.send("Debugger.resume");
+      await session.output("stdout", /^started$/m);
+      // The timer callback is a function of the entry, and it is compiled again with debug hooks.
+      await session.send("Debugger.setBreakpointsActive", { active: true });
+      await session.send("Runtime.evaluate", { expression: "globalThis.breakpointsAreBack = true" });
+      const outcome = await Promise.race([
+        session.output("stdout", /^ran on$/m).then(() => "ran on"),
+        session.paused().then(where),
+      ]);
+      expect(outcome).toBe("ran on");
+      expect(await session.finish(false)).toMatchObject({ exitCode: 0 });
+      expect(session.pauses).toHaveLength(1);
+    });
+
     test("the program runs on when the debugger disconnects", async () => {
       await using session = await Session.start(files, [brk, "entry.mjs"]);
       await session.paused();
@@ -665,4 +669,39 @@ describe.concurrent("--inspect-brk", () => {
       expect(session.pauses).toHaveLength(2);
     });
   });
+});
+
+// After the block above: each of these writes and runs an executable of the size of bun.
+describe.concurrent("--inspect-brk in a compiled executable", () => {
+  // Nothing transpiles the entry of an executable, with or without its bytecode.
+  test.each([[[] as string[]], [["--bytecode", "--format=esm"]]])(
+    "BUN_INSPECT=<url>?break=1 pauses in a bun build --compile %j executable",
+    async flags => {
+      using dir = tempDir("inspect-brk-compile", { "entry.ts": `globalThis.ran = 1;\nconsole.log("done");\n` });
+      const exe = join(String(dir), isWindows ? "app.exe" : "app");
+      await using build = spawn({
+        cmd: [bunExe(), "build", "--compile", ...flags, join(String(dir), "entry.ts"), "--outfile", exe],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect(buildStdout + buildStderr).toContain("compile");
+      expect(buildExitCode).toBe(0);
+
+      await using session = await Session.start({}, [], { exe, breakFromEnv: true });
+      const pause = await session.paused(/^done$/m);
+      expect({ reason: pause.reason, file: pause.file }).toEqual({ reason: start, file: basename(exe) });
+      expect(await session.evaluate(pause, "typeof globalThis.ran")).toBe("undefined");
+      await session.send("Debugger.resume");
+      await session.output("stdout", /^done$/m);
+      expect(session.pauses).toHaveLength(1);
+    },
+    60_000,
+  );
 });

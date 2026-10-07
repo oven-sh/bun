@@ -1,12 +1,13 @@
 export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_) {
   const createShellInterpreter = createShellInterpreter_ as (
-    resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
+    resolve: (code: number, stdout: Buffer, stderr: Buffer, inherited: boolean) => void,
     reject: (error: unknown) => void,
     args: $ZigGeneratedClasses.ParsedShellScript,
   ) => $ZigGeneratedClasses.ShellInterpreter;
   const createParsedShellScript = createParsedShellScript_ as (
     raw: string,
     args: string[],
+    inheritStdio: boolean,
   ) => $ZigGeneratedClasses.ParsedShellScript;
 
   function lazyBufferToHumanReadableString(this: Buffer) {
@@ -103,11 +104,45 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
+  function throwNotBuffered(): never {
+    throw new Error("output is not buffered when inheritStdio() is used");
+  }
+
+  // The output of a script that ran with `inheritStdio()`. Nothing was buffered.
+  class InheritedShellOutput extends ShellOutput {
+    text(): never {
+      throwNotBuffered();
+    }
+
+    json(): never {
+      throwNotBuffered();
+    }
+
+    arrayBuffer(): never {
+      throwNotBuffered();
+    }
+
+    bytes(): never {
+      throwNotBuffered();
+    }
+
+    blob(): never {
+      throwNotBuffered();
+    }
+  }
+  Object.defineProperty(InheritedShellOutput, "name", { value: "ShellOutput" });
+
+  // Mirrors `OutputMode` in src/runtime/shell/ParsedShellScript.rs.
+  const enum OutputMode {
+    Capture = 1,
+    Inherit = 2,
+  }
+
   class ShellPromise extends Promise<ShellOutput> {
     #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
-    #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #resolve: (code: number, stdout: Buffer, stderr: Buffer, inherited: boolean) => void;
     #reject: (error: unknown) => void;
 
     constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
@@ -119,8 +154,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       let resolve, reject;
 
       super((res, rej) => {
-        resolve = (code, stdout, stderr) => {
-          const out = new ShellOutput(stdout, stderr, code);
+        resolve = (code, stdout, stderr, inherited) => {
+          const out = inherited
+            ? new InheritedShellOutput(stdout, stderr, code)
+            : new ShellOutput(stdout, stderr, code);
           if (this.#throws && code !== 0) {
             potentialError!.initialize(out, code);
             rej(potentialError);
@@ -184,12 +221,18 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     #quiet(isQuiet: boolean = true): this {
       this.#throwIfRunning();
-      this.#args!.setQuiet(isQuiet);
+      this.#args!.setOutputMode(OutputMode.Capture, isQuiet);
       return this;
     }
 
     quiet(isQuiet: boolean | undefined): this {
       return this.#quiet(isQuiet ?? true);
+    }
+
+    inheritStdio(isInherit: boolean | undefined): this {
+      this.#throwIfRunning();
+      this.#args!.setOutputMode(OutputMode.Inherit, isInherit ?? true);
+      return this;
     }
 
     nothrow(): this {
@@ -266,11 +309,13 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
   const throwsSymbol = Symbol("throws");
+  const inheritStdioSymbol = Symbol("inheritStdio");
 
   class ShellPrototype {
     [cwdSymbol]: string | undefined;
     [envSymbol]: Record<string, string | undefined> | undefined;
     [throwsSymbol]: boolean = true;
+    [inheritStdioSymbol]: boolean = false;
 
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
@@ -307,11 +352,16 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       this[throwsSymbol] = !!doThrow;
       return this;
     }
+
+    inheritStdio(isInherit: boolean | undefined) {
+      this[inheritStdioSymbol] = !!(isInherit ?? true);
+      return this;
+    }
   }
 
   var BunShell = function BunShell(first, ...rest) {
     if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-    const parsed_shell_script = createParsedShellScript(first.raw, rest);
+    const parsed_shell_script = createParsedShellScript(first.raw, rest, BunShell[inheritStdioSymbol]);
 
     const cwd = BunShell[cwdSymbol];
     const env = BunShell[envSymbol];
@@ -331,7 +381,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     var Shell = function Shell(first, ...rest) {
       if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-      const parsed_shell_script = createParsedShellScript(first.raw, rest);
+      const parsed_shell_script = createParsedShellScript(first.raw, rest, Shell[inheritStdioSymbol]);
 
       const cwd = Shell[cwdSymbol];
       const env = Shell[envSymbol];
@@ -351,6 +401,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     Shell[cwdSymbol] = defaultCwd;
     Shell[envSymbol] = defaultEnv;
     Shell[throwsSymbol] = true;
+    Shell[inheritStdioSymbol] = false;
 
     return Shell;
   }
@@ -362,6 +413,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   BunShell[cwdSymbol] = defaultCwd;
   BunShell[envSymbol] = defaultEnv;
   BunShell[throwsSymbol] = true;
+  BunShell[inheritStdioSymbol] = false;
 
   Object.defineProperties(BunShell, {
     Shell: {

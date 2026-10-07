@@ -1972,6 +1972,15 @@ mod spawn_process_body {
         let mut dup_fds: [uv::uv_file; 2] = [-1, -1];
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
+        // A dup onto a stream the child takes as an fd needs no pipe: both
+        // slots take that fd, and there is nothing for the caller to read.
+        let dup_onto_fd: Option<uv::uv_file> = match (stdio_options[1], stdio_options[2]) {
+            (WindowsStdio::Inherit, WindowsStdio::Dup2(_)) => Some(1),
+            (WindowsStdio::Dup2(_), WindowsStdio::Inherit) => Some(2),
+            (WindowsStdio::Pipe(fd), WindowsStdio::Dup2(_))
+            | (WindowsStdio::Dup2(_), WindowsStdio::Pipe(fd)) => Some(fd.uv()),
+            _ => None,
+        };
 
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
@@ -2063,17 +2072,21 @@ mod spawn_process_body {
             }
 
             if treat_as_dup {
-                if fd_i == 1 {
-                    // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                    if let Some(err) =
-                        unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.to_error(bun_sys::Tag::pipe)
-                    {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
-                }
                 stdio.flags = uv::UV_INHERIT_FD;
-                stdio.data.fd = dup_fds[1];
+                if let Some(fd) = dup_onto_fd {
+                    stdio.data.fd = fd;
+                } else {
+                    if fd_i == 1 {
+                        // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
+                        if let Some(err) =
+                            unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) }.to_error(bun_sys::Tag::pipe)
+                        {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Ok(Err(err));
+                        }
+                    }
+                    stdio.data.fd = dup_fds[1];
+                }
             }
         }
 
@@ -2275,7 +2288,11 @@ mod spawn_process_body {
             if dup_src == Some(u32::try_from(i).expect("int cast")) {
                 *result_stdio = WindowsStdioResult::Unavailable;
             } else if dup_tgt == Some(u32::try_from(i).expect("int cast")) {
-                *result_stdio = WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]));
+                *result_stdio = if dup_onto_fd.is_some() {
+                    WindowsStdioResult::Unavailable
+                } else {
+                    WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]))
+                };
             } else {
                 match stdio_options[i] {
                     WindowsStdio::Buffer(_) => {

@@ -3520,3 +3520,317 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(exitCode).toBe(0);
   }
 });
+
+// These run in sequence: a debug build starts about four processes a second however many cores it
+// has, so the fixtures below would push each other past the default timeout.
+describe("inheritStdio", () => {
+  const notBuffered = "output is not buffered when inheritStdio() is used";
+  const notCombined = "inheritStdio() cannot be combined with quiet() or an output method such as text()";
+  const readers = ["text", "json", "arrayBuffer", "bytes", "blob"] as const;
+
+  // Writes one line to stdout and one to stderr. Each line says whether the process has a file
+  // or a pipe on fd 1 and on fd 2, so the place where a line lands shows where that stream goes
+  // and the line shows whether the shell relays it. The fixtures stay off node:fs and node:tty:
+  // in a debug build each of those adds up to a second to every process.
+  const probe = `
+    const [tag, readStdin] = process.argv.slice(2);
+    const kind = async fd => ((await Bun.file(fd).stat()).isFile() ? "file" : "pipe");
+    const kinds = (await kind(1)) + " " + (await kind(2));
+    const input = readStdin ? " stdin=" + (await Bun.stdin.text()).trim() : "";
+    console.log(tag + " out " + kinds + input);
+    console.error(tag + " err " + kinds);
+  `;
+
+  // Runs `fixture` in a bun whose stdout and stderr are two files. The fixtures run their scripts
+  // at the same time, so the lines of the two files come back sorted.
+  async function runWithFileStdio(fixture: string, fileNames: string[]) {
+    using dir = tempDir("shell-inherit-stdio", { "probe.mjs": probe, "inherit-fixture.mjs": fixture });
+    const cwd = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "inherit-fixture.mjs"],
+      env: bunEnv,
+      cwd,
+      stdin: "ignore",
+      stdout: Bun.file(join(cwd, "stdout.txt")),
+      stderr: Bun.file(join(cwd, "stderr.txt")),
+    });
+    const exitCode = await proc.exited;
+    const read = (name: string) =>
+      Bun.file(join(cwd, name))
+        .text()
+        .catch(() => "");
+    const sortedLines = (text: string) => text.split("\n").filter(Boolean).sort();
+    const files: Record<string, string> = {};
+    for (const name of fileNames) files[name] = await read(name);
+    return {
+      stdout: sortedLines(await read("stdout.txt")),
+      stderr: sortedLines(await read("stderr.txt")),
+      files,
+      exitCode,
+    };
+  }
+
+  test("each command of a script gets bun's own stdout and stderr", async () => {
+    const { stdout, stderr, files, exitCode } = await runWithFileStdio(
+      `
+        import { $ } from "bun";
+        const exe = process.execPath;
+        const scripts = [
+          $\`(\${exe} probe.mjs @subshell); echo @builtin\`,
+          $\`\${exe} probe.mjs @first | \${exe} probe.mjs @last stdin\`,
+          $\`echo @substitution=$(\${exe} probe.mjs @inner)\`,
+        ];
+        const results = await Promise.all(scripts.map(script => script.inheritStdio()));
+        await Bun.write("result.json", JSON.stringify(results.map(({ stdout, stderr, exitCode }) => [stdout.length, stderr.length, exitCode])));
+      `,
+      ["result.json"],
+    );
+    expect({ stdout, stderr, files }).toEqual({
+      stdout: [
+        "@subshell out file file",
+        "@builtin",
+        "@last out file file stdin=@first out pipe file",
+        "@substitution=@inner out pipe file",
+      ].sort(),
+      stderr: ["@subshell err file file", "@first err pipe file", "@last err file file", "@inner err pipe file"].sort(),
+      files: { "result.json": JSON.stringify(Array.from({ length: 3 }, () => [0, 0, 0])) },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a redirect moves one stream and leaves the other on bun's own", async () => {
+    const { stdout, stderr, files, exitCode } = await runWithFileStdio(
+      `
+        import { $ } from "bun";
+        const exe = process.execPath;
+        const scripts = [
+          $\`\${exe} probe.mjs @to-file > out.txt\`,
+          $\`\${exe} probe.mjs @err-to-file 2> err.txt\`,
+          $\`\${exe} probe.mjs @err-to-out 2>&1\`,
+          $\`\${exe} probe.mjs @out-to-err 1>&2\`,
+        ];
+        const results = await Promise.all(scripts.map(script => script.inheritStdio()));
+        await Bun.write("result.json", JSON.stringify(results.map(({ stdout, stderr, exitCode }) => [stdout.length, stderr.length, exitCode])));
+      `,
+      ["out.txt", "err.txt", "result.json"],
+    );
+    expect({ stdout, stderr, files }).toEqual({
+      stdout: ["@err-to-file out file file", "@err-to-out out file file", "@err-to-out err file file"].sort(),
+      stderr: ["@to-file err file file", "@out-to-err out file file", "@out-to-err err file file"].sort(),
+      files: {
+        "out.txt": "@to-file out file file\n",
+        "err.txt": "@err-to-file err file file\n",
+        "result.json": JSON.stringify(Array.from({ length: 4 }, () => [0, 0, 0])),
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("$.inheritStdio() sets the default of one shell instance", async () => {
+    const { stdout, stderr, files, exitCode } = await runWithFileStdio(
+      `
+        import { $ } from "bun";
+        const on = new $.Shell();
+        const returned = on.inheritStdio();
+        const off = new $.Shell().inheritStdio().inheritStdio(false);
+        const [inherit, text, quiet, commandOff, shellOff, other] = await Promise.all([
+          on\`echo @default\`,
+          on\`echo @text\`.text(),
+          on\`echo @quiet\`.quiet(),
+          on\`echo @command-off\`.inheritStdio(false),
+          off\`echo @shell-off\`,
+          $\`\${process.execPath} probe.mjs @global\`,
+        ]);
+        await Bun.write("result.json", JSON.stringify({
+          returned: returned === on,
+          inherit: inherit.stdout.toString(),
+          text,
+          quiet: quiet.stdout.toString(),
+          commandOff: commandOff.stdout.toString(),
+          shellOff: shellOff.stdout.toString(),
+          other: other.stdout.toString(),
+        }));
+      `,
+      ["result.json"],
+    );
+    expect({ stdout, stderr, files }).toEqual({
+      stdout: ["@default", "@command-off", "@shell-off", "@global out pipe pipe"].sort(),
+      stderr: ["@global err pipe pipe"],
+      files: {
+        "result.json": JSON.stringify({
+          returned: true,
+          inherit: "",
+          text: "@text\n",
+          quiet: "@quiet\n",
+          commandOff: "@command-off\n",
+          shellOff: "@shell-off\n",
+          other: "@global out pipe pipe\n",
+        }),
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a command sees a terminal when bun's stdout and stderr are one", async () => {
+    using dir = tempDir("shell-inherit-stdio-tty", {
+      // `isTTY` of tty_wrap is what process.stdout.isTTY reports, without node:tty.
+      "tty.mjs": `
+        const { isTTY } = process.binding("tty_wrap");
+        await Bun.write(process.argv[2] + ".json", JSON.stringify({ stdout: isTTY(1), stderr: isTTY(2) }));
+        console.log("bytes");
+      `,
+      "inherit-fixture.mjs": `
+        import { $ } from "bun";
+        const exe = process.execPath;
+        const [tee] = await Promise.all([$\`\${exe} tty.mjs tee\`, $\`\${exe} tty.mjs inherit\`.inheritStdio()]);
+        await Bun.write("tee-stdout.json", JSON.stringify(tee.stdout.toString()));
+      `,
+    });
+    let screen = "";
+    const decoder = new TextDecoder();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_terminal, chunk: Uint8Array) {
+        screen += decoder.decode(chunk, { stream: true });
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "inherit-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+    const exitCode = await proc.exited;
+    const read = (name: string) =>
+      Bun.file(join(String(dir), name))
+        .json()
+        .catch(() => `missing. terminal: ${screen}`);
+    expect({
+      tee: await read("tee.json"),
+      inherit: await read("inherit.json"),
+      teeStdout: await read("tee-stdout.json"),
+    }).toEqual({
+      tee: { stdout: false, stderr: false },
+      inherit: { stdout: true, stderr: true },
+      teeStdout: "bytes\n",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a command settles when its process exits, not when its output closes", async () => {
+    using dir = tempDir("shell-inherit-stdio-settle", {
+      // Exits at once and leaves a process that holds its stdout and stderr open.
+      "spawner.mjs": `
+        const holder = Bun.spawn({
+          cmd: [process.execPath, "-e", "setTimeout(() => {}, 60_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        });
+        await Bun.write("holder.pid", String(holder.pid));
+        holder.unref();
+      `,
+      "inherit-fixture.mjs": `
+        import { $ } from "bun";
+        await $\`\${process.execPath} spawner.mjs\`.inheritStdio();
+        const holder = Number(await Bun.file("holder.pid").text());
+        process.kill(holder, 0);
+        process.kill(holder);
+        console.log("settled while the holder was alive");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "inherit-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "settled while the holder was alive\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("output stays complete and in order when bun's stdout is a pipe", async () => {
+    using dir = tempDir("shell-inherit-stdio-pipe", {
+      "say.mjs": `console.log(process.argv[2]);`,
+      "inherit-fixture.mjs": `
+        import { $ } from "bun";
+        await $\`\${process.execPath} say.mjs command\`.inheritStdio();
+        await $\`echo builtin-1\`.inheritStdio();
+        console.log(Buffer.alloc(2 * 1024 * 1024, "x").toString());
+        await $\`echo builtin-2\`.inheritStdio();
+        console.log("end");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "inherit-fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const large = Buffer.alloc(2 * 1024 * 1024, "x").toString();
+    expect({ stdout: stdout.replace(large, "<2 MiB>"), stderr }).toEqual({
+      stdout: "command\nbuiltin-1\n<2 MiB>\nbuiltin-2\nend\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the result holds no output and its output methods throw", async () => {
+    const output = await $`true`.inheritStdio();
+    expect({ stdout: output.stdout.length, stderr: output.stderr.length, exitCode: output.exitCode }).toEqual({
+      stdout: 0,
+      stderr: 0,
+      exitCode: 0,
+    });
+    for (const reader of readers) expect(() => output[reader]()).toThrow(notBuffered);
+
+    const error = await $`exit 3`
+      .inheritStdio()
+      .throws(true)
+      .then(
+        () => undefined,
+        error => error,
+      );
+    expect(error).toBeInstanceOf($.ShellError);
+    expect({ stdout: error.stdout.length, stderr: error.stderr.length, exitCode: error.exitCode }).toEqual({
+      stdout: 0,
+      stderr: 0,
+      exitCode: 3,
+    });
+    for (const reader of readers) expect(() => error[reader]()).toThrow(notBuffered);
+  });
+
+  test("cannot be combined with quiet() or an output method on one command", async () => {
+    expect(() => $`true`.inheritStdio().quiet()).toThrow(notCombined);
+    expect(() => $`true`.quiet().inheritStdio()).toThrow(notCombined);
+    for (const reader of readers) {
+      const promise: any = $`true`.inheritStdio();
+      await expect(promise[reader]()).rejects.toThrow(notCombined);
+    }
+    const lines = $`true`.inheritStdio().lines()[Symbol.asyncIterator]();
+    await expect(lines.next()).rejects.toThrow(notCombined);
+  });
+
+  test("inheritStdio(false) and quiet(false) each undo only their own mode", async () => {
+    // `echo` prints to this process in the default mode, so each script here ends quiet or inherited.
+    expect((await $`echo hi`.inheritStdio().inheritStdio(false).quiet()).text()).toBe("hi\n");
+    expect((await $`echo hi`.quiet().inheritStdio(false)).text()).toBe("hi\n");
+    const stillInherited = await $`true`.inheritStdio().quiet(false);
+    expect(() => stillInherited.text()).toThrow(notBuffered);
+    const inheritedAfterQuiet = await $`true`.quiet().quiet(false).inheritStdio();
+    expect(() => inheritedAfterQuiet.text()).toThrow(notBuffered);
+  });
+
+  test("cannot be set once the script runs", async () => {
+    const promise = $`true`;
+    const settled = promise.then(() => {});
+    expect(() => promise.inheritStdio()).toThrow("Shell is already running");
+    await settled;
+  });
+});

@@ -77,6 +77,25 @@ declare module "bun" {
     function throws(shouldThrow: boolean): $;
 
     /**
+     * Configure whether commands run by this instance write to the current
+     * process's stdout and stderr directly. See {@link ShellPromise.inheritStdio}.
+     *
+     * A call to `.quiet()`, `.inheritStdio(false)` or an output method such as
+     * `.text()` on one command takes precedence for that command.
+     *
+     * @param isInherit Defaults to `true`
+     *
+     * @example
+     * ```ts
+     * import { $ } from "bun";
+     * $.inheritStdio();
+     * await $`git status`; // colors, as in a terminal
+     * const head = await $`git rev-parse HEAD`.text(); // still buffered
+     * ```
+     */
+    function inheritStdio(isInherit?: boolean): $;
+
+    /**
      * A shell command that runs once awaited, or once an output method like
      * `.text()` or `.json()` is called.
      *
@@ -112,9 +131,32 @@ declare module "bun" {
        * By default, the shell writes to the current process's stdout and stderr while also buffering that output.
        *
        * `quiet()` configures the shell to only buffer the output.
+       * {@link inheritStdio} configures it to only write the output.
        * @param isQuiet Whether to suppress output. Defaults to `true`
        */
       quiet(isQuiet?: boolean): this;
+
+      /**
+       * Configure the shell to give its commands the current process's stdout
+       * and stderr themselves, and to buffer nothing.
+       *
+       * By default each command writes to a pipe that the shell copies to the
+       * terminal, so programs that check for a terminal turn off colors and
+       * progress bars. With `inheritStdio()` they see the terminal, as they do
+       * under `Bun.spawn` with `stdio: "inherit"`.
+       *
+       * The resolved `stdout` and `stderr` are empty and the output methods of
+       * the result throw. Cannot be combined with {@link quiet} or an output
+       * method such as {@link text} on the same command.
+       *
+       * @param isInherit Defaults to `true`
+       *
+       * @example
+       * ```ts
+       * await $`git log --oneline -5`.inheritStdio();
+       * ```
+       */
+      inheritStdio(isInherit?: boolean): this;
 
       /**
        * Read from stdout as a string, line by line

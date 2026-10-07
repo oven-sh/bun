@@ -969,6 +969,10 @@ declare module "bun" {
      * With the SQLite adapter, `values` may also be an object of named
      * parameters (`:name`, `$name`, or `@name` placeholders). Object keys
      * keep the prefix unless the connection sets `strict: true`.
+     *
+     * An object of named parameters works only when `sql.unsafe` runs on its
+     * own. If a nested `sql.unsafe` has one, or has any other `values` that
+     * are not an array, the outer query rejects with a `SyntaxError`.
      * @example
      * ```ts
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)

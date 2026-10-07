@@ -1580,6 +1580,121 @@ describe("SQL helpers", () => {
     expect(rows).toEqual([{ id: 1, name: "tx" }]);
   });
 
+  // A nested fragment gives its values to the outer query by index. An object
+  // of named parameters cannot be merged that way, so the outer query rejects.
+  describe.each([false, true])("unsafe nested in another query (strict: %p)", strict => {
+    const nestedValuesError =
+      "Nested sql.unsafe() fragment values must be an array, received an object. An object of named parameters cannot be nested in another query";
+    const owners = [
+      { id: 1, owner: "alice" },
+      { id: 2, owner: "bob" },
+    ];
+    // Without strict, the key keeps the prefix of the placeholder.
+    const named = (placeholder: string, value: string) => ({ [strict ? placeholder.slice(1) : placeholder]: value });
+    let db: SQL;
+
+    beforeEach(async () => {
+      db = new SQL({ adapter: "sqlite", filename: ":memory:", strict });
+      await db`CREATE TABLE owners (id INTEGER PRIMARY KEY, owner TEXT)`;
+      await db`INSERT INTO owners (owner) VALUES ('alice'), ('bob')`;
+    });
+
+    afterEach(async () => {
+      await db?.close();
+    });
+
+    async function rejectsAndChangesNothing(query: Promise<any>) {
+      const err = await query.catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe(nestedValuesError);
+      expect(await db`SELECT id, owner FROM owners ORDER BY id`).toEqual(owners);
+    }
+
+    test("SELECT, INSERT, UPDATE and DELETE reject a fragment with named parameters", async () => {
+      await rejectsAndChangesNothing(db`SELECT id FROM owners WHERE owner = ${db.unsafe("$o", named("$o", "bob"))}`);
+      await rejectsAndChangesNothing(
+        db`INSERT INTO owners (owner) VALUES (${db.unsafe(":o", named(":o", "carol"))}) RETURNING owner`,
+      );
+      await rejectsAndChangesNothing(
+        db`UPDATE owners SET owner = ${db.unsafe("@o", named("@o", "dave"))} WHERE id = 1 RETURNING owner`,
+      );
+      // If NULL is bound here, `owner IS NOT NULL` deletes every row.
+      await rejectsAndChangesNothing(
+        db`DELETE FROM owners WHERE owner IS NOT ${db.unsafe("$o", named("$o", "bob"))} RETURNING id`,
+      );
+    });
+
+    test("statements without RETURNING reject before any statement runs", async () => {
+      await rejectsAndChangesNothing(db`INSERT INTO owners (owner) VALUES (${db.unsafe(":o", named(":o", "carol"))})`);
+      await rejectsAndChangesNothing(
+        db`UPDATE owners SET owner = ${db.unsafe("@o", named("@o", "dave"))} WHERE id = 1`,
+      );
+      await rejectsAndChangesNothing(db`DELETE FROM owners WHERE owner IS NOT ${db.unsafe("$o", named("$o", "bob"))}`);
+      // The fragment is in the second statement of the text.
+      await rejectsAndChangesNothing(
+        db`INSERT INTO owners (owner) VALUES ('erin'); DELETE FROM owners WHERE owner IS NOT ${db.unsafe("$o", named("$o", "bob"))}`,
+      );
+    });
+
+    test("values(), raw() and execute() reject the same way", async () => {
+      const query = () => db`SELECT id FROM owners WHERE owner = ${db.unsafe("$o", named("$o", "bob"))}`;
+      await rejectsAndChangesNothing(query().values());
+      await rejectsAndChangesNothing(query().raw());
+      await rejectsAndChangesNothing(query().execute());
+    });
+
+    test("the fragment rejects at any depth, next to other values and from another connection", async () => {
+      const fragment = () => db.unsafe("$o", named("$o", "bob"));
+      await rejectsAndChangesNothing(db`SELECT id FROM owners WHERE owner = ${fragment()} OR owner = ${fragment()}`);
+      await rejectsAndChangesNothing(db`SELECT id FROM owners WHERE ${db`owner = ${fragment()}`}`);
+      await rejectsAndChangesNothing(db`SELECT id FROM owners WHERE id > ${0} AND owner = ${fragment()} AND id < ${9}`);
+      // `?1` names the first parameter of the statement, so it can read the outer value.
+      await rejectsAndChangesNothing(db`SELECT ${"outer"} AS a, ${db.unsafe("?1", named("$o", "bob"))} AS b`);
+
+      await using other = new SQL({ adapter: "sqlite", filename: ":memory:", strict });
+      await rejectsAndChangesNothing(db`SELECT id FROM owners WHERE owner = ${other.unsafe("$o", named("$o", "bob"))}`);
+    });
+
+    test("tx.unsafe rejects in a transaction and in a savepoint", async () => {
+      await db.begin(async tx => {
+        await rejectsAndChangesNothing(
+          tx`DELETE FROM owners WHERE owner IS NOT ${tx.unsafe("$o", named("$o", "bob"))}`,
+        );
+        await tx.savepoint(async savepoint => {
+          await rejectsAndChangesNothing(
+            savepoint`DELETE FROM owners WHERE owner IS NOT ${savepoint.unsafe("$o", named("$o", "bob"))}`,
+          );
+        });
+      });
+      expect(await db`SELECT id, owner FROM owners ORDER BY id`).toEqual(owners);
+    });
+
+    test("array values, no values, template fragments and identifiers still nest", async () => {
+      const bob = [{ id: 2 }];
+      expect(await db`SELECT id FROM owners WHERE owner = ${db.unsafe("?", ["bob"])}`).toEqual(bob);
+      expect(
+        await db`SELECT id FROM owners WHERE id > ${0} AND owner = ${db.unsafe("?", ["bob"])} AND id < ${9}`,
+      ).toEqual(bob);
+      expect(await db`SELECT id FROM owners WHERE ${db.unsafe("owner = 'bob'")}`).toEqual(bob);
+      expect(await db`SELECT id FROM owners WHERE ${db.unsafe("owner = 'bob'", null as any)}`).toEqual(bob);
+
+      class Values extends Array<string> {}
+      expect(await db`SELECT id FROM owners WHERE owner = ${db.unsafe("?", Values.of("bob"))}`).toEqual(bob);
+      expect(await db`SELECT id FROM owners WHERE owner = ${db.unsafe("?", new Proxy(["bob"], {}))}`).toEqual(bob);
+
+      expect(await db`SELECT id FROM owners WHERE ${db`owner = ${"bob"}`}`).toEqual(bob);
+      expect(await db`SELECT id FROM ${db("owners")} WHERE owner = ${"bob"}`).toEqual(bob);
+
+      // Array#map gives its callback the index too. The arrow passes the text alone.
+      const [id] = ["id"].map(text => db.unsafe(text));
+      expect(await db`SELECT ${id} FROM owners WHERE owner = ${"bob"}`).toEqual(bob);
+    });
+
+    test("named parameters still bind when unsafe runs on its own", async () => {
+      expect(await db.unsafe("SELECT id FROM owners WHERE owner = $o", named("$o", "bob"))).toEqual([{ id: 2 }]);
+    });
+  });
+
   test("insert into with select helper using where IN", async () => {
     const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;

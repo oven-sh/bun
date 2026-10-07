@@ -75,6 +75,52 @@ describe.each(adapters)("%s helper validation", (_adapter, makeSql) => {
       expect(err.message).toBe("Update needs to have at least one column");
     }
   });
+
+  // The outer query takes a nested fragment's values by index, so only an array can carry them.
+  const received = (what: string) => `Nested sql.unsafe() fragment values must be an array, received ${what}`;
+
+  test("a nested sql.unsafe() fragment whose values are not an array is rejected", async () => {
+    await using sql = makeSql();
+    const anObject = received("an object. An object of named parameters cannot be nested in another query");
+    const notArrays: [unknown, string][] = [
+      [{ $o: "bob" }, anObject],
+      [{}, anObject],
+      [new Uint8Array([1]), anObject],
+      ["abc", received("a string")],
+      ["", received("a string")],
+      [0, received("a number")],
+      [5, received("a number")],
+      [false, received("a boolean")],
+      [1n, received("a bigint")],
+    ];
+    for (const [values, message] of notArrays) {
+      const fragment = () => sql.unsafe("?", values as any);
+      for (const query of [
+        () => sql`SELECT ${fragment()}`,
+        () => sql`SELECT ${fragment()}`.values(),
+        () => sql`SELECT ${fragment()}`.raw(),
+        // inside a nested template fragment
+        () => sql`SELECT ${sql`${fragment()}`}`,
+        // with outer values before and after it
+        () => sql`SELECT ${1}, ${fragment()}, ${2}`,
+      ]) {
+        const err = await query().catch(e => e);
+        expect(err).toBeInstanceOf(SyntaxError);
+        expect(err.message).toBe(message);
+      }
+    }
+  });
+
+  test("sql.unsafe passed to Array#map takes the index as its values and is rejected when nested", async () => {
+    await using sql = makeSql();
+    const [only] = ["1 AS a"].map(sql.unsafe as any);
+    const [a, b] = ["1 AS a", "2 AS b"].map(sql.unsafe as any);
+    for (const query of [() => sql`SELECT ${only}`, () => sql`SELECT ${a}, ${b}`]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe(received("a number"));
+    }
+  });
 });
 
 const distributedAdapters: [string, () => SQL][] = [

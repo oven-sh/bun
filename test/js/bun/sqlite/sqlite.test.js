@@ -2853,6 +2853,60 @@ describe("prepared statements refresh cached column names after a schema change"
     expect(q.get()).toEqual({ id: 1, greeting2: "Welcome to bun!" });
   });
 
+  it.each([
+    ["dropping a column", "ALTER TABLE t DROP COLUMN a", { id: 1, b: "B", c: "C" }],
+    [
+      "rebuilding the table with another column order",
+      "CREATE TABLE t2 (id INTEGER PRIMARY KEY, c TEXT, b TEXT, a TEXT);" +
+        "INSERT INTO t2 SELECT id, c, b, a FROM t;" +
+        "DROP TABLE t;" +
+        "ALTER TABLE t2 RENAME TO t",
+      { id: 1, c: "C", b: "B", a: "A" },
+    ],
+    ["adding a column", "ALTER TABLE t ADD COLUMN e TEXT DEFAULT 'E'", { id: 1, a: "A", b: "B", c: "C", e: "E" }],
+  ])("%s from another connection reaches every reader of a kept statement", (_name, migration, after) => {
+    using dir = tempDir("sqlite-migration", {});
+    const file = path.join(String(dir), "app.db");
+    using db = new Database(file, { create: true });
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT, c TEXT)");
+    db.run("INSERT INTO t VALUES (1, 'A', 'B', 'C')");
+    db.run("CREATE TABLE u (tid INTEGER, d TEXT)");
+    db.run("INSERT INTO u VALUES (1, 'D')");
+
+    class Row {}
+    const SELECT = "SELECT * FROM t WHERE id = 1";
+    using kept = db.prepare(SELECT);
+    using asClass = db.prepare(SELECT).as(Row);
+    using join = db.prepare("SELECT * FROM t JOIN u ON u.tid = t.id");
+    const read = () => ({
+      "query().get()": db.query(SELECT).get(),
+      "get()": kept.get(),
+      "keys of get()": Object.keys(kept.get()),
+      "all()": kept.all(),
+      "iterate()": [...kept.iterate()],
+      "as(Class).get()": { ...asClass.get() },
+      "join get()": join.get(),
+    });
+    const expected = row => ({
+      "query().get()": row,
+      "get()": row,
+      "keys of get()": Object.keys(row),
+      "all()": [row],
+      "iterate()": [row],
+      "as(Class).get()": row,
+      "join get()": { ...row, tid: 1, d: "D" },
+    });
+
+    // Run every statement once so each one has cached its column names.
+    expect(read()).toEqual(expected({ id: 1, a: "A", b: "B", c: "C" }));
+
+    {
+      using other = new Database(file);
+      other.run(migration);
+    }
+    expect(read()).toEqual(expected(after));
+  });
+
   it("columnTypes reflects the new result shape after a schema change", () => {
     using db = new Database(":memory:");
     db.run("CREATE TABLE t (a INT)");

@@ -952,6 +952,8 @@ describe("Query Execution", () => {
     const query = sql`INSERT INTO cancel_before_execute VALUES (1)`;
     query.cancel();
     query.execute();
+    // execute() settles the query in the call. The await below would start it as well.
+    expect(Bun.peek.status(query)).toBe("rejected");
 
     expect(await settle(query)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
     expect(await sql`SELECT count(*) AS n FROM cancel_before_execute`).toEqual([{ n: 0 }]);

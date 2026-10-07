@@ -1,5 +1,6 @@
+import { setAbortAlgorithmIdentifier } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // addEventListener({ signal }) registers an abort algorithm on the signal
@@ -109,6 +110,31 @@ describe("addEventListener({ signal }) does not leak abort algorithms", () => {
 
     target.dispatchEvent(new Event("qux"));
     expect(calls).toBe(0);
+  });
+
+  test("removing a listener leaves the abort algorithm of a listener whose identifier is 2^32 lower", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const target = new EventTarget();
+    const keep = jest.fn();
+    const fn = () => {};
+
+    // Identifier 1. This listener stays registered until abort().
+    target.addEventListener("keep", keep, { signal });
+    const withKeep = estimateShallowMemoryUsageOf(signal);
+
+    // The next two registrations draw 2^32 and 2^32 + 1. Their low 32 bits are 0 and 1.
+    setAbortAlgorithmIdentifier(signal, 0xffff_ffff);
+    for (const type of ["x", "y"]) {
+      target.addEventListener(type, fn, { signal });
+      target.removeEventListener(type, fn);
+    }
+    // Each removal took its own abort algorithm off the signal.
+    expect(estimateShallowMemoryUsageOf(signal)).toBe(withKeep);
+
+    controller.abort();
+    target.dispatchEvent(new Event("keep"));
+    expect(keep).not.toHaveBeenCalled();
   });
 
   test("GC of signal with self-referencing { signal } listener does not crash", async () => {

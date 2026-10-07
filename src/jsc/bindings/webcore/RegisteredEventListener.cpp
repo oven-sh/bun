@@ -30,7 +30,7 @@ namespace WebCore {
 
 RegisteredEventListener::~RegisteredEventListener() = default;
 
-void RegisteredEventListener::setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&& signal, uint32_t algorithmIdentifier)
+void RegisteredEventListener::setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&& signal, AbortAlgorithmIdentifier algorithmIdentifier)
 {
     m_abortSignal = WTF::move(signal);
     m_abortAlgorithmIdentifier = algorithmIdentifier;

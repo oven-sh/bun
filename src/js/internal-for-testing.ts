@@ -688,6 +688,13 @@ export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction
   1,
 );
 
+// Sets the counter `signal` issues abort-algorithm identifiers from: its next `{ signal }` listener or pipe draws `identifier + 1`.
+export const setAbortAlgorithmIdentifier: (signal: AbortSignal, identifier: number) => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_setAbortAlgorithmIdentifierForTesting",
+  2,
+);
+
 export const emitMemoryPressure: (level: "warning" | "critical") => void = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_emitMemoryPressure",

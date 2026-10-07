@@ -1361,7 +1361,6 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sema_standalone",
- "bun_semver",
  "bun_threading",
  "bun_wyhash",
  "hashbrown 0.15.5",

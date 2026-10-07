@@ -185,6 +185,10 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
+    /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
+    /// declaration does not see what another one has marked, so `finish_file` takes back what it
+    /// has reported. A union: it does not depend on which task comes first.
+    properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     pub files: &'s Files<'s>,
@@ -250,9 +254,8 @@ pub struct Program<'s> {
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
     /// `links.resolvedType != nil` of the symbol of a parameter that `is_resolved_on_request`: the
-    /// type is in `pat_types`, with or without it. The flag: under noImplicitAny the type contains
-    /// a widening type before it is widened, so the request has reported.
-    resolved_parameter_symbols: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
+    /// type is in `pat_types`, with or without it.
+    resolved_parameter_symbols: ByNode<(FileId, ParamId), (), Buffered, &'s Session>,
     /// See `is_untyped_signature_in_js_file`.
     untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
     declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
@@ -440,6 +443,7 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
+            properties_referenced_before: Default::default(),
             auto_array_type,
             types,
             expr_types: ByNode::new_in(&exprs, session),
@@ -602,6 +606,7 @@ impl<'s> Program<'s> {
             loop_values: Vec::new(),
             non_circular_returns: Vec::new(),
             array_or_tuple_constraint_requests: Vec::new(),
+            mapped_instantiations_in_progress: Vec::new(),
             contextual_binding_patterns: Vec::new(),
             late_bound_members: Default::default(),
             late_bound_declarations: Default::default(),
@@ -610,6 +615,7 @@ impl<'s> Program<'s> {
             reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
             anonymous_members_in_place: Vec::new(),
+            index_infos_in_instantiation: Vec::new(),
             enum_values_in_progress: Vec::new(),
             inheriting: Vec::new(),
             base_types_so_far: Vec::new(),
@@ -636,6 +642,8 @@ impl<'s> Program<'s> {
             cycles: 0,
             lowest_taint: usize::MAX,
             context_checked_under: Vec::new(),
+            initializers_resolved_by_nested_visit: Vec::new(),
+            resolved_parameter_types: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -727,12 +735,10 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
+            has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: false,
-            flow_analysis_disabled_in_shared_file: false,
-            widening_parameter_resolved_elsewhere: false,
-            re_resolved_call_reported_in_shared_file: false,
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
@@ -743,6 +749,7 @@ impl<'s> Program<'s> {
             undefined_properties: Default::default(),
             synthetic_default_import_types: Default::default(),
             referenced_properties: Default::default(),
+            unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
             widened_types: Default::default(),
             iteration_types_cache: Default::default(),
@@ -1077,13 +1084,17 @@ pub struct Checker<'p, 's> {
     /// `resolveDeclaredMembers` is at `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
     /// For each one in progress: the depth of `stack` at that point, with the `Query::Shape` on
     /// top if `resolveObjectTypeMembers` is the caller, and the first member of the declaration
-    /// whose computed name is some string, number or symbol.
-    declared_index_infos_in_progress: Vec<(usize, FileId, MemberId)>,
+    /// whose computed name is some string, number or symbol. `None` for members that are not the
+    /// instance side of a class or an interface.
+    declared_index_infos_in_progress: Vec<(usize, FileId, MemberId, Option<shape::Declaring>)>,
     /// `resolveAnonymousTypeMembers` of a class or an enum as a value is past its first
     /// `setStructuredTypeMembers`, so `ObjectFlagsMembersResolved` is set. For each one in
     /// progress: the origin of the type, what it has assigned so far, and the height of `stack`
     /// at that point.
     anonymous_members_in_place: Vec<(Origin, shape::MembersInPlace, usize)>,
+    /// `resolveAnonymousTypeMembers` of an instantiated type is at `instantiateIndexInfos`, with
+    /// `ObjectFlagsMembersResolved` set and no members. An entry for each one in progress.
+    index_infos_in_instantiation: Vec<shape::IndexInfosInInstantiation>,
     /// `NodeCheckFlagsEnumValuesComputed` of each enum declaration that `computeEnumMemberValues`
     /// is at, and `enumMemberLinks.Get(member).value` of the members it has come to.
     enum_values_in_progress: Vec<((FileId, EnumId), Vec<decl::Evaluated>)>,
@@ -1134,6 +1145,9 @@ pub struct Checker<'p, 's> {
     non_circular_returns: Vec<usize>,
     /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
     array_or_tuple_constraint_requests: Vec<usize>,
+    /// The `getObjectTypeInstantiation` of mapped types that have found nothing under their key
+    /// and have not assigned `instantiations[key]` yet.
+    mapped_instantiations_in_progress: Vec<mapped::MappedInstantiation>,
     /// The index in `stack` from which a query counts as in progress.
     resolution_start: usize,
     /// Why the last `enter` refused: the query is one of TypeScript's own resolutions and is in
@@ -1207,10 +1221,11 @@ pub struct Checker<'p, 's> {
     /// `cycles` too.
     unresolved_members_hits: u64,
     /// How many times a request for members got those that were in place: `unresolved_members_hits`,
-    /// a re-entered query that `has_members_in_place`, and a provisional result that follows from
-    /// either. Each time is counted in `cycles` too, so no other memo stores what follows. tsgo
-    /// marks nothing there. What it assigns once, whatever is in progress, is stored here as well:
-    /// `compose` (`resolveObjectTypeMembers`) and `resolve_type_arguments` (`getTypeArguments`).
+    /// a re-entered query that `has_members_in_place`, `has_no_members_in_place`, and a provisional
+    /// result that follows from any. Each time is counted in `cycles` too, so no other memo stores
+    /// what follows. tsgo marks nothing there. What it assigns once, whatever is in progress, is
+    /// stored here as well: `compose` (`resolveObjectTypeMembers`), `resolve_type_arguments`
+    /// (`getTypeArguments`) and `instantiate_index_infos` (`resolveAnonymousTypeMembers`).
     /// Otherwise n type references that need a member of each other are resolved n! times.
     members_in_place_hits: u64,
     /// `work` at the last of them.
@@ -1361,6 +1376,8 @@ pub struct Checker<'p, 's> {
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
+    /// Set by `compare_type_names` where `CompareTypes` is not transitive.
+    has_compared_without_total_order: std::cell::Cell<bool>,
     /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
     symbol_ids: Option<std::cell::RefCell<symbol_ids::SymbolIds>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
@@ -1369,22 +1386,6 @@ pub struct Checker<'p, 's> {
     /// `flowAnalysisDisabled`. Only `checkBlock` restores it, so after a reference outside any
     /// function or module block it stays set for the files that this checker checks afterwards.
     flow_analysis_disabled: bool,
-    /// Not in tsgo. `flow_analysis_disabled` was set by, or has decided about, a reference in a
-    /// file that the task was not visiting, or that is not a leaf. Several tasks evaluate such a
-    /// reference, each with its own flag, where one checker for all files evaluates it once.
-    flow_analysis_disabled_in_shared_file: bool,
-    /// Not in tsgo. While the task was visiting another file, and no later than one checker for
-    /// all files collects the diagnostics of the parameter's file, something has asked for the
-    /// type of a symbol that is flagged in `resolved_parameter_symbols`. Whether that comes before
-    /// the names in the pattern are checked decides what is reported for them (7031), and the
-    /// task that checks them does not see it.
-    widening_parameter_resolved_elsewhere: bool,
-    /// Not in tsgo. A call that was resolved again while it was being resolved has reported
-    /// something (`diagnostics_of_re_resolved_calls`), in a file that a file before it in program
-    /// order can refer to. The call is resolved again only if nothing has cached what leads back to
-    /// it (`flowLoopCache`, `links.resolvedType`). One checker for all files may have, while it
-    /// checked the earlier file, and the task does not see that.
-    re_resolved_call_reported_in_shared_file: bool,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.
@@ -1407,6 +1408,8 @@ pub struct Checker<'p, 's> {
     /// `symbolReferenceLinks` of the private members that an access in another file than that of
     /// their declaration has marked (`mark_property_as_referenced`).
     referenced_properties: crate::util::FxHashSet<Sym>,
+    /// `Checked::unused_private_members` of the file that is being checked.
+    unused_private_members: Vec<(Sym, u32)>,
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
     widening_contexts: Vec<symbols::WideningContext<'p>>,
     /// `cachedTypes[CachedTypeKindWidened]`
@@ -1518,6 +1521,14 @@ pub struct Checker<'p, 's> {
     /// `NodeCheckFlagsContextChecked` and assigns the parameter types whatever is in progress. So
     /// until that frame is left the function is checked, with that signature.
     context_checked_under: Vec<(usize, u64, (FileId, crate::hir::FnId), Option<SigId>)>,
+    /// `links.resolvedType` of an initializer that `checkExpressionCached` is checking, as a nested
+    /// `checkExpressionCached` of it has assigned it: the index and the serial of the frame of the
+    /// outermost visit, and the type. See `check_declaration_initializer`.
+    initializers_resolved_by_nested_visit: Vec<(usize, u64, TypeId)>,
+    /// The parameters of instantiated signatures, by index, whose `links.resolvedType` is assigned.
+    /// `sig_params` computes the types of all parameters at once. See
+    /// `note_parameter_types_resolved`.
+    resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating. See `is_flow_loop_visible`.
     quick_initializers: Vec<(usize, usize)>,
@@ -2722,8 +2733,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `leave` for `module` or `exports`: the first time, its entry stays on `typeResolutions`.
+    /// Only its own file refers to it, and `checkSourceFile` checks every reference. So for one
+    /// checker, which visits the files in program order, the first time is no later than that.
     fn leave_without_pop(&mut self, symbol: Sym) -> Result<Stored, Open> {
-        if let Some(frame) = self.frames.last()
+        let is_resolved_by_check = self.task.file.is_some_and(|current| {
+            current != symbol.file && self.is_checked_no_later_than(symbol.file, current)
+        });
+        if !is_resolved_by_check
+            && let Some(frame) = self.frames.last()
             && self.unpopped_resolutions.insert(symbol)
         {
             let (height, circular) = (self.frames.len() - 1, frame.circular);
@@ -2900,6 +2917,24 @@ impl<'p, 's> Checker<'p, 's> {
     fn cycle_result(&self) -> Stored {
         debug_assert!(self.left_a_cycle || self.found_cycle);
         Stored::new()
+    }
+
+    /// Permission to store the result of `q`, for which `leave` has just returned `Err`, if the only reason is the incomplete type of a loop
+    /// (`taint_from`). For a result that tsgo computes with `flowLoopStack` as it is and stores all the same. Nothing computes it again, so
+    /// what was reported for it belongs to the entry, as after an `Ok`: no frame below drops it.
+    fn incomplete_flow_result(&mut self, q: Query) -> Option<Stored> {
+        let frame = self.left_frame.take()?;
+        if !frame.incomplete_flow || frame.drops_reported {
+            return None;
+        }
+        if self.reported.len() > frame.reported_from as usize {
+            let finished = QueryFrame {
+                tainted: false,
+                ..frame
+            };
+            self.settle_reported(finished, q);
+        }
+        Some(Stored::new())
     }
 
     fn is_innermost_tainted(&self) -> bool {

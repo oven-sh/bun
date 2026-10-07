@@ -170,7 +170,11 @@ impl Checker<'_, '_> {
                     || self.modules_alias_is_used(&cx, sym))
                 && let Some(at) = self.place_of_alias_declaration(Sym { file, ..sym }, decl)
             {
-                self.error_at(at, 2303, &[Arg::Sym(sym)]);
+                if self.files().alias_links(sym).ran_out_of_stack {
+                    self.ran_out_of_stack.set(true);
+                } else {
+                    self.error_at(at, 2303, &[Arg::Sym(sym)]);
+                }
             }
         }
     }
@@ -748,7 +752,7 @@ impl Checker<'_, '_> {
             || hir.import_equals.iter().enumerate().any(|(other, import)| {
                 matches!(import.target, ImportEqualsTarget::Entity(names) if !names.is_empty() && is_checked(import.stmt) && means_it(bound.import_equals_scope[other], hir[names.at(0)].text))
             })
-            || hir.exports.iter().enumerate().any(|(x, export)| export.spec.is_none() && is_checked(export.stmt) && export.items.iter().any(|s| means_it(bound.export_scope[x], hir[s].local)))
+            || hir.exports.iter().enumerate().any(|(x, export)| !export.has_module_specifier && is_checked(export.stmt) && export.items.iter().any(|s| means_it(bound.export_scope[x], hir[s].local)))
             || cx.is_global_source_file
                 && files.globals.get(alias) == Some(&sym)
                 && self.modules_resolves_members_of_global_this(cx)
@@ -1092,7 +1096,7 @@ impl Checker<'_, '_> {
         let is_exported = import.flags.contains(Flags::EXPORT);
         let is_referenced = is_exported && is_in_appropriate_context(bound, import.stmt)
             || hir.exports.iter().enumerate().any(|(x, export)| {
-                export.spec.is_none()
+                !export.has_module_specifier
                     && !export.type_only
                     && bound.export_scope[x] == scope
                     && is_in_appropriate_context(bound, export.stmt)
@@ -1155,11 +1159,11 @@ impl Checker<'_, '_> {
             }
             return;
         }
-        if export.spec.is_none()
+        if !export.has_module_specifier
             || self.modules_is_in_valid_position(cx, s, export.spec, true, around)
         {
             let is_ambient = self.modules_is_ambient(cx, s, around);
-            let is_missing = if export.spec.is_none() {
+            let is_missing = if !export.has_module_specifier {
                 false
             } else if export.items.is_empty() {
                 // Without a name to resolve, nothing requests the module.
@@ -1170,7 +1174,7 @@ impl Checker<'_, '_> {
             // `checkExportSpecifier`: `checkModuleExportName` for both names. Without `from`, a
             // string before `as` is a 1003.
             for s in export.items.iter() {
-                if export.spec.is_some() && hir[s].local_pos != hir[s].pos {
+                if export.has_module_specifier && hir[s].local_pos != hir[s].pos {
                     self.modules_module_export_name(cx, hir[s].local_pos);
                 }
                 self.modules_module_export_name(cx, hir[s].pos);
@@ -1178,16 +1182,17 @@ impl Checker<'_, '_> {
             // `checkExportSpecifier`: `checkAliasSymbol`
             for item in export.items.iter().filter(|_| !is_missing) {
                 self.check_alias_symbol(cx.file, &cx.aliases, Decl::ExportSpec(item), is_ambient);
-                if export.spec.is_none() {
+                if !export.has_module_specifier {
                     self.modules_export_specifier(cx, x, item, is_ambient);
                 }
             }
-            let is_in_ambient_namespace = export.spec.is_none() && is_ambient;
+            let is_in_ambient_namespace = !export.has_module_specifier && is_ambient;
             if around.module.is_some() && !around.is_ambient_module && !is_in_ambient_namespace {
                 let start = hir[s].start;
                 self.error_at((cx.file, start, self.end_of_stmt(cx.file, s)), 1194, &[]);
             }
-        } else {
+        // `resolveExternalModuleNameWorker` reports nothing for what is not a string.
+        } else if export.spec.is_some() {
             let mut items = export.items.iter();
             let may_be_used = around.module.is_some()
                 && items.any(|s| self.modules_follows_a_dot_somewhere(cx, hir[s].exported))
@@ -1324,7 +1329,8 @@ impl Checker<'_, '_> {
             {
                 self.modules_module_export_name(cx, alias_pos);
             }
-        } else {
+        // `resolveExternalModuleNameWorker` reports nothing for what is not a string.
+        } else if spec.is_some() {
             let may_be_used = is_resolved_for_file
                 || around.module.is_some()
                     && alias.is_some()
@@ -1471,12 +1477,21 @@ impl Checker<'_, '_> {
         }
     }
 
+    /// `IsStringLiteralLike(declaration.ModuleSpecifier())` for the declaration `s`, which names the
+    /// module `spec`.
+    fn modules_specifier_is_string_like(&self, file: FileId, s: StmtId, spec: Atom) -> bool {
+        let hir = self.hir(file);
+        let within = hir[s].loc;
+        let mut expressions = hir.specifier_expressions.iter();
+        match expressions.find(|&&e| (within.pos..within.end).contains(&hir[e].pos)) {
+            Some(&e) => self.modules_string_literal_like(file, e).is_some(),
+            None => spec.is_some(),
+        }
+    }
+
     /// `checkImportAttributes` for the declaration `s`, which names the module `spec`.
     fn check_import_attributes(&mut self, cx: &Cx<'_>, s: StmtId, spec: Atom, is_type_only: bool) {
         let within = self.hir(cx.file)[s].loc;
-        if spec.is_none() {
-            return;
-        }
         let Some((start, object, attributes)) = self.modules_get_import_attributes(cx.file, within)
         else {
             return;
@@ -1510,7 +1525,9 @@ impl Checker<'_, '_> {
             || matches!(kind, ModuleKind::Preserve | ModuleKind::EsNext))
         {
             2823
-        } else if self.modules_emits_commonjs(cx.file) {
+        } else if self.modules_specifier_is_string_like(cx.file, s, spec)
+            && self.modules_emits_commonjs(cx.file)
+        {
             // `getEmitSyntaxForModuleSpecifierExpression`
             2856
         } else if is_type_only {

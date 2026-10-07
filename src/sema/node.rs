@@ -14,9 +14,8 @@
 //! HIR nodes that are not tsgo nodes: the statement that wraps the contents of the head of a `for`,
 //! the `Pat` of an omitted element, the `TupleElem` of a plain element, the `Assign` of `{ a = 1
 //! }`, the placeholders for the specifier of `import()` and for the empty `{}` of JSX. The heritage
-//! elements a class extends after the first have no `ExpressionWithTypeArguments` around them. An
-//! import or export whose specifier is not a string is an `EmptyStatement`, a `WithStatement` is a
-//! `Block` of two statements.
+//! elements a class extends after the first have no `ExpressionWithTypeArguments` around them. A
+//! `WithStatement` is a `Block` of two statements.
 //! tsgo nodes that are not represented yet, so `parent` skips them: `ParenthesizedType`, tokens.
 
 use crate::atom::{Atom, known};
@@ -901,9 +900,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
     fn stmt(&mut self, s: StmtId, node: Node) -> bool {
         let file = self.file;
         match file[s].kind {
-            StmtKind::Debugger => false,
-            // It also represents an import or an export whose specifier is not a string.
-            StmtKind::Empty => self.after_from(s),
+            StmtKind::Empty | StmtKind::Debugger => false,
             StmtKind::Break(label) | StmtKind::Continue(label) => {
                 self.part(node, Part::Label, label.is_some())
             }

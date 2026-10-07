@@ -761,7 +761,10 @@ impl Checker<'_, '_> {
         if symbol.file == file || files.rank_of_file(visited) > files.rank_of_file(symbol.file) {
             return;
         }
-        self.referenced_properties.insert(symbol);
+        // The checkers of a `checkerPool` share nothing.
+        if self.referenced_properties.insert(symbol) && self.task.checker_count == 0 {
+            self.p.properties_referenced_before.lock().insert(symbol);
+        }
     }
 
     /// The start of `markPropertyAsReferenced`, up to `isSelfTypeAccess`, for the property `name`
@@ -1696,7 +1699,7 @@ impl Unused<'_, '_> {
             }
             match s.kind {
                 // `export { a }` references `a` with any meaning.
-                StmtKind::ExportNamed(id) if hir[id].spec.is_none() => {
+                StmtKind::ExportNamed(id) if !hir[id].has_module_specifier => {
                     let scope = bound.export_scope[id.idx()];
                     for item in hir[id].items.iter() {
                         self.note_name(scope, hir[item].local, SymFlags::all(), ALL);
@@ -2635,6 +2638,7 @@ impl Checker<'_, '_> {
                         let name = hir.text.get(start as usize..end as usize);
                         let (at, name) = ((file, start, end), Arg::Bytes(name.unwrap_or_default()));
                         self.report_unused(u, hir.node(m), false, at, 6133, &[name]);
+                        self.unused_private_members.push((symbol, start));
                     }
                 }
                 MemberKind::Constructor => {
@@ -2656,6 +2660,10 @@ impl Checker<'_, '_> {
                                 ),
                             };
                             self.report_unused(u, hir.node(p), false, at, 6138, &[name]);
+                            if property.is_some() {
+                                let symbol = self.files().sym(file, property);
+                                self.unused_private_members.push((symbol, at.1));
+                            }
                         }
                     }
                 }

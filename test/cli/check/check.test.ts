@@ -1549,7 +1549,10 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);
       expect(stdout).toBe("");
-      expect(stderr).toMatchInlineSnapshot(`"✓ No type errors in 2 files across 2 projects [time]"`);
+      expect(stderr).toMatchInlineSnapshot(`
+        "note: tsconfig.json has no files of its own. Checked the projects it references, like tsc -b.
+        ✓ No type errors in 2 files across 2 projects [time]"
+      `);
       expect(exitCode).toBe(0);
     });
 
@@ -1699,8 +1702,8 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
         other("examples/x/e.ts"),
         main,
       ]);
-      // As much work, too.
-      expect(results[1].stderr).toBe(results[0].stderr);
+      // As much work, too. Nothing is to be said about a directory that was named.
+      expect(results[1].stderr).toBe(results[0].stderr.replace(/^note: tsconfig.json has no files .*\n/, ""));
       expect(results[9].stderr).toBe(results[3].stderr);
       expect(results[10].stderr).toContain("TS2322");
       expect(results[10].stderr).not.toMatch(/TS17004|TS5097|TS6142/);
@@ -2043,7 +2046,7 @@ const kind: number = Shape.kind;
           "two/tsconfig.json": JSON.stringify({ compilerOptions, include: ["./*.js"] }),
           "two/index.js": index("two"),
         });
-        const { stdout } = await check(dir);
+        const { stdout } = await check(dir, ["-b"]);
         expect(
           stdout
             .split("\n")
@@ -14636,6 +14639,7 @@ export function f<T>(rest: T) {
     const { stdout, exitCode } = await check(dir, ["--help"]);
     expect(stdout).toContain("Usage: bun check [flags] [...files or directories]");
     expect(stdout).toContain("-p, --project=<val>");
+    expect(stdout).toContain("-b, --build");
     expect(exitCode).toBe(0);
   });
 });
@@ -15042,6 +15046,96 @@ describe.concurrent("--check", () => {
       expect(
         results.map((it, index) => [expected[kind][index][0].join(" "), /TS\d+/.exec(it.stdout + it.stderr)?.[0]]),
       ).toEqual(expected[kind].map(([args, code]) => [args.join(" "), code]));
+    });
+  });
+
+  // `bun check <args>` reports what `tsc <args> --noEmit` reports. Where tsc checks nothing, it says what it does.
+  describe("which projects are reported", () => {
+    const base = JSON.parse(tsconfig).compilerOptions;
+    const composite = { ...base, noEmit: false, composite: true, outDir: "dist" };
+    const wrong = (name: string) => `export const ${name}: number = "";\n`;
+    const error = (file: string, line = 1) =>
+      `${file}(${line},14): error TS2322: Type 'string' is not assignable to type 'number'.`;
+
+    test.concurrent.each([
+      [[], [error("src/main.ts", 2)]],
+      [["."], [error("src/main.ts", 2)]],
+      [["-p", "."], [error("src/main.ts", 2)]],
+      [["--noEmit"], [error("src/main.ts", 2)]],
+      [["src/main.ts"], [error("src/main.ts", 2)]],
+      [["-b"], [error("../lib/src/index.ts"), error("src/main.ts", 2)]],
+    ])("in a project with files and references, which are not built: %j", async (args, expected) => {
+      using dir = project({
+        "app/tsconfig.json": JSON.stringify({
+          compilerOptions: composite,
+          include: ["src"],
+          references: [{ path: "../lib" }],
+        }),
+        "app/src/main.ts": `import { lib } from "../../lib/src/index";\n${wrong("app")}export const used = lib;\n`,
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["src"] }),
+        "lib/src/index.ts": wrong("lib"),
+      });
+      const { stdout, stderr, exitCode } = await run(join(String(dir), "app"), ["check", ...args]);
+      expect(stdout.split("\n")).toEqual(expected);
+      expect(stderr).not.toContain("note:");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each([
+      [[], true],
+      [["-b"], false],
+      [["."], false],
+    ])("in a project with nothing but references: %j", async (args, says) => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "a" }, { path: "b" }] }),
+        "a/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
+        "a/a.ts": wrong("a"),
+        "b/tsconfig.json": JSON.stringify({ compilerOptions: composite, include: ["*.ts"] }),
+        "b/b.ts": wrong("b"),
+      });
+      const { stdout, stderr, exitCode } = await check(dir, args);
+      expect(stdout.split("\n")).toEqual([error("a/a.ts"), error("b/b.ts")]);
+      const note = "note: tsconfig.json has no files of its own. Checked the projects it references, like tsc -b.";
+      expect(stderr.includes(note)).toBe(says);
+      expect(exitCode).toBe(1);
+    });
+
+    const below = () => {
+      const dir = project({
+        "packages/server/tsconfig.json": tsconfig,
+        "packages/server/s.ts": wrong("s"),
+        "packages/web/tsconfig.json": tsconfig,
+        "packages/web/w.ts": wrong("w"),
+        "loose.ts": wrong("l"),
+      });
+      rmSync(join(String(dir), "tsconfig.json"));
+      return dir;
+    };
+
+    test.concurrent(
+      "without a tsconfig.json here or above, those below are listed and nothing is checked",
+      async () => {
+        using dir = below();
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+        "error: No tsconfig.json in '<dir>' or above it. Below it:
+          packages/server/tsconfig.json
+          packages/web/tsconfig.json
+        To check one: bun check -p packages/server/tsconfig.json
+        To check everything below this directory: bun check ."
+      `);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test.concurrent.each([
+      [["."], [error("loose.ts"), error("packages/server/s.ts"), error("packages/web/w.ts")]],
+      [["-p", "packages/server/tsconfig.json"], [error("packages/server/s.ts")]],
+    ])("and what the message proposes works: %j", async (args, expected) => {
+      using dir = below();
+      const { stdout, exitCode } = await check(dir, args);
+      expect(stdout.split("\n")).toEqual(expected);
+      expect(exitCode).toBe(1);
     });
   });
 

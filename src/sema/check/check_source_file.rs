@@ -155,27 +155,6 @@ impl<'s> Checker<'_, 's> {
         self.ran_out_of_stack.replace(false)
     }
 
-    /// After `check_file`: `flowAnalysisDisabled`, with which tsgo goes on to the next file of the
-    /// program.
-    pub fn is_flow_analysis_disabled(&self) -> bool {
-        self.flow_analysis_disabled
-    }
-
-    /// See the field.
-    pub fn is_flow_analysis_disabled_in_shared_file(&self) -> bool {
-        self.flow_analysis_disabled_in_shared_file
-    }
-
-    /// See the field.
-    pub fn is_widening_parameter_resolved_elsewhere(&self) -> bool {
-        self.widening_parameter_resolved_elsewhere
-    }
-
-    /// See the field.
-    pub fn is_re_resolved_call_reported_in_shared_file(&self) -> bool {
-        self.re_resolved_call_reported_in_shared_file
-    }
-
     /// How many entries of `relations` this checker has stored under a generic key whose hash
     /// included a task-local id. Such an entry is bound to its task: after the link the same two
     /// references hash differently. A function of the program.
@@ -1106,7 +1085,11 @@ impl<'s> Checker<'_, 's> {
                 _ => {}
             }
             self.check_decorators(file, member.modifiers);
-            self.check_type_node(file, member.ty);
+            // `checkVariableLikeDeclaration`. The type of an index signature is the return type of
+            // its signature, the same node.
+            if member.kind != MemberKind::IndexSignature {
+                self.check_type_node(file, member.ty);
+            }
             if member.func.is_some() {
                 self.check_signature_declaration(file, member.func);
                 self.check_getter_returns_a_value(file, member.func);
@@ -1420,20 +1403,33 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// `checkSourceElement` for a statement.
+    /// `checkSourceElement` for a statement. The last call of `checkIfStatement`,
+    /// `checkSourceElement(node.ElseStatement)`, is the next turn of the loop: a chain of `else if`
+    /// takes no stack.
     fn check_source_element(&mut self, file: FileId, s: StmtId) {
-        let within_unreachable_code = self.within_unreachable_code;
-        if s.is_some()
-            && !within_unreachable_code
-            && self.p.files.options.allow_unreachable_code != Some(true)
-            && self.check_source_element_unreachable(file, s)
-        {
-            self.within_unreachable_code = true;
+        if s.is_none() || self.is_stack_low() {
+            return;
         }
-        let saved = self.enter_source_element(CurrentNode::Node(file, self.hir(file).node(s)));
-        self.check_source_element_worker(file, s);
-        self.current_source_element = saved;
-        self.within_unreachable_code = within_unreachable_code;
+        let hir = self.hir(file);
+        let save_current_node = self.current_source_element;
+        let save_within_unreachable_code = self.within_unreachable_code;
+        let mut node = s;
+        loop {
+            self.enter_source_element(CurrentNode::Node(file, hir.node(node)));
+            if !self.within_unreachable_code
+                && self.p.files.options.allow_unreachable_code != Some(true)
+                && self.check_source_element_unreachable(file, node)
+            {
+                self.within_unreachable_code = true;
+            }
+            self.check_source_element_worker(file, node);
+            match hir[node].kind {
+                StmtKind::If { no, .. } if no.is_some() => node = no,
+                _ => break,
+            }
+        }
+        self.current_source_element = save_current_node;
+        self.within_unreachable_code = save_within_unreachable_code;
     }
 
     /// `checkSourceElementWorker`. The head of a `for` and the object of a `with` are stored as
@@ -1447,7 +1443,8 @@ impl<'s> Checker<'_, 's> {
         // its result.
         if self.has_ambient_context
             && match hir[s].kind {
-                StmtKind::Debugger
+                StmtKind::Empty
+                | StmtKind::Debugger
                 | StmtKind::Expr(_)
                 | StmtKind::If { .. }
                 | StmtKind::While { .. }
@@ -1455,12 +1452,6 @@ impl<'s> Checker<'_, 's> {
                 | StmtKind::Switch { .. }
                 | StmtKind::Try { .. } => true,
                 StmtKind::Block(_) => !is_with_statement(hir, s),
-                // An import or an export whose specifier is not a string is stored as an empty
-                // statement.
-                StmtKind::Empty => {
-                    !is_word_at(&hir.text, hir[s].start as usize, b"import")
-                        && !is_word_at(&hir.text, hir[s].start as usize, b"export")
-                }
                 _ => false,
             }
         {
@@ -1567,7 +1558,8 @@ impl<'s> Checker<'_, 's> {
                 self.check_grammar_type_declaration(file, s, hir[alias].name_pos, "type");
                 self.check_type_alias_declaration(file, alias)
             }
-            StmtKind::If { test, yes, no } => {
+            // `checkIfStatement`, up to `node.ElseStatement`: see `check_source_element`.
+            StmtKind::If { test, yes, .. } => {
                 self.check_truthiness_expression(file, test);
                 let body = Parent::Stmt(yes);
                 self.check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(
@@ -1577,7 +1569,6 @@ impl<'s> Checker<'_, 's> {
                 if matches!(hir[yes].kind, StmtKind::Empty) {
                     self.check_empty_then_statement(file, s, yes);
                 }
-                self.check_source_element(file, no);
             }
             StmtKind::For {
                 init,
@@ -1672,10 +1663,11 @@ impl<'s> Checker<'_, 's> {
             StmtKind::Block(list) => self.check_source_elements(file, list),
             StmtKind::Switch { expr, cases } => {
                 self.check_expression(file, expr);
+                let expression_type = self.type_of_expr(file, expr);
                 for c in cases.iter() {
                     if hir[c].test.is_some() {
                         self.check_expression(file, hir[c].test);
-                        self.check_case_clause(file, expr, hir[c].test);
+                        self.check_case_clause(file, expression_type, hir[c].test);
                     }
                     self.check_source_elements(file, hir[c].body);
                     let fallthrough = bound.case_fallthrough[c.idx()];
@@ -1892,7 +1884,8 @@ impl<'s> Checker<'_, 's> {
             ExprKind::Satisfies { expr, ty } => {
                 self.check_type_node(file, ty);
                 self.check_expression(file, expr);
-                check_satisfies(self, file, e, expr, ty);
+                let source = self.type_of_expr(file, expr);
+                check_satisfies(self, file, e, expr, source, ty);
             }
             // `checkExpressionWithTypeArguments`
             ExprKind::Instantiation { expr, type_args } => {

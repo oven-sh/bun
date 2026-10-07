@@ -257,7 +257,7 @@ fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
 }
 
 /// `tokenValue` of the bigint literal `text`: `scanHexDigits`, `scanBigIntSuffix`.
-pub(crate) fn bigint_token_value(text: &[u8]) -> Vec<u8> {
+pub fn bigint_token_value(text: &[u8]) -> Vec<u8> {
     let without_separators = text.iter().filter(|&&byte| byte != b'_');
     let mut value: Vec<u8> = without_separators.map(u8::to_ascii_lowercase).collect();
     // `Scan`: for a radix prefix without digits, the digit is 0.

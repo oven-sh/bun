@@ -645,7 +645,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_any_function_shape(shape: &Shape) -> bool {
-        shape.literal == Literalness::Partial && Self::has_no_members(shape)
+        shape.literal == Literalness::Partial
+            && shape.symbol_declared_at.is_none()
+            && Self::has_no_members(shape)
     }
 
     fn has_no_members(shape: &Shape) -> bool {
@@ -690,7 +692,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `IsEmptyAnonymousObjectType`. The members of a type that is created without them count only
-    /// once something else has resolved them (`ObjectFlagsMembersResolved`).
+    /// once something else has resolved them (`ObjectFlagsMembersResolved`), or is instantiating
+    /// them: until that is done there are none.
     pub(super) fn is_empty_anonymous_object_type(&mut self, ty: TypeId) -> bool {
         if matches!(ty, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
             return true;
@@ -715,9 +718,12 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => false,
             // A type literal that has an `Origin` has members in its symbol.
-            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => self
-                .resolved_members(ty)
-                .is_some_and(|m| Self::has_no_members(m.shape())),
+            TypeData::Anon { .. } | TypeData::ReverseMapped { .. } => {
+                match self.resolved_members(ty) {
+                    Some(members) => Self::has_no_members(members.shape()),
+                    None => self.has_no_members_in_place(ty),
+                }
+            }
             _ => false,
         }
     }
@@ -6652,7 +6658,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The mapper of a construct signature of `class` before its type parameters, which are those
     /// of the class, got the type arguments that `mapper` has for them. `None`: it has none.
-    fn without_type_arguments_of_class(&self, class: Sym, mapper: MapperId) -> Option<MapperId> {
+    pub(super) fn without_type_arguments_of_class(
+        &self,
+        class: Sym,
+        mapper: MapperId,
+    ) -> Option<MapperId> {
         let own = self.local_type_params_of_symbol(class);
         let mapping = self.types().mapping(mapper);
         if !mapping.iter().any(|pair| own.contains(&pair.0)) {
@@ -7222,8 +7232,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getApparentTypeOfIntersectionType`: the intersection of the apparent types of the members
-    /// of `ty`. `apparent_type` returns an intersection whose members all have object apparent
-    /// types unchanged, and `members` builds its shape from those apparent types.
+    /// of `ty`. `apparent_type` returns an intersection whose members are all their own apparent
+    /// types unchanged.
     /// `getTypeWithThisArgument` also replaces a member that is a reference with a `this` type. The
     /// new reference prints like the old one, and the new intersection has no alias.
     pub(super) fn apparent_type_of_intersection(&mut self, ty: TypeId) -> TypeId {

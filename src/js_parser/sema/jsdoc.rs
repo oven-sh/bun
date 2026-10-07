@@ -955,7 +955,12 @@ impl<'p, 'a> Reader<'p, 'a> {
         }
         self.enter_lexer();
         self.p.scopes_in_order.truncate(0);
-        self.p.begin_module_syntax(&Default::default());
+        // The statement list that `reparseUnhosted` adds the declaration to is not known here.
+        self.p
+            .begin_module_syntax(&crate::parser::ParseStatementOptions {
+                scope: crate::parser::StatementScope::Module,
+                ..Default::default()
+            });
         let result = Self::read_import_declaration(self.p, &mut import);
         import.module = self.p.end_module_specifier();
         self.p.lexer.skips_jsdoc_asterisks = false;

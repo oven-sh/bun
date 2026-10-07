@@ -1171,11 +1171,12 @@ impl<'p, 's> Checker<'p, 's> {
             let mut inference_context = None;
             if !type_params.is_empty() {
                 if !s.type_args.is_empty() {
-                    if !self.do_type_arguments_fit(candidate, s.type_args) {
+                    let Some(filled) =
+                        self.check_type_arguments(candidate, &type_params, s.type_args, None)
+                    else {
                         s.candidate_for_type_argument_error = Some(candidate);
                         continue;
-                    }
-                    let filled = self.fill_sig_type_args(candidate, &type_params, s.type_args);
+                    };
                     let mapper = self.mapper_from(&type_params, &filled);
                     check_candidate = self.instantiate_sig(candidate, mapper);
                 } else {
@@ -1916,19 +1917,11 @@ impl<'p, 's> Checker<'p, 's> {
                     is_same = false;
                     continue;
                 }
-                // `checkTypeArguments`
-                if let Ok(Some((index, argument, constraint))) =
-                    c.failing_type_argument(sig, &params, args, true)
-                {
-                    let (file, nodes) = c.type_argument_nodes(node);
-                    let at = c.hir(file).id_at(nodes, index);
-                    let start = super::errors_type_nodes::start_of_type(c.hir(file), at);
-                    let error_node = (file, start, c.end_of_type_node_from(file, at, start));
-                    c.check_type_assignable_to(argument, constraint, Some(error_node), Some(2344));
+                let error_nodes = Some(c.type_argument_nodes(node));
+                let Some(filled) = c.check_type_arguments(sig, &params, args, error_nodes) else {
                     out.push(sig);
                     continue;
-                }
-                let filled = c.fill_sig_type_args(sig, &params, args);
+                };
                 let mapper = c.mapper_from(&params, &filled);
                 is_same = false;
                 out.push(c.instantiate_sig(sig, mapper));
@@ -2343,16 +2336,6 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::TypeParam(_, _, around) if around != MapperId::IDENTITY => ty,
             _ => self.instantiate(ty, outer),
         }
-    }
-
-    /// `checkTypeArguments`, without its errors: whether each of `type_args` satisfies the
-    /// constraint of its type parameter of `sig`. True when in doubt.
-    fn do_type_arguments_fit(&mut self, sig: SigId, type_args: &[TypeId]) -> bool {
-        let type_params = self.sig_type_params(sig);
-        !matches!(
-            self.failing_type_argument(sig, &type_params, type_args, true),
-            Ok(Some(_))
-        )
     }
 
     /// `getOptionalCallSignature`: the return type of `sig` for `call`. In an optional chain that

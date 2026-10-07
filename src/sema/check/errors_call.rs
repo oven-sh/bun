@@ -99,19 +99,6 @@ impl Checker<'_, '_> {
         called
     }
 
-    /// Not in tsgo. See `Checker::re_resolved_call_reported_in_shared_file`.
-    #[cold]
-    fn note_re_resolved_call_reported(&mut self, file: FileId) {
-        let files = self.files();
-        let (module, components) = (files.module(file), &files.components);
-        let component = (components.of_file.get(file.idx()))
-            .and_then(|&index| components.all.get(index as usize));
-        // A file comes after what it imports, unless that imports it in turn.
-        let is_first = component.is_none_or(|it| it.files.first() == Some(&file));
-        let is_out_of_reach = module.is_leaf || is_first && module.is_module();
-        self.re_resolved_call_reported_in_shared_file |= !is_out_of_reach;
-    }
-
     fn check_call(&mut self, file: FileId, e: ExprId, c: CallId, is_new: bool) {
         let hir = self.hir(file);
         let data = hir[c];
@@ -128,10 +115,6 @@ impl Checker<'_, '_> {
             .get_ref(&self.task, &(file, e))
         {
             self.reported.extend_from_slice(reported);
-            let finally = self.p.call_diagnostics.get_ref(&self.task, &(file, e));
-            if !(reported.iter()).all(|it| finally.is_some_and(|all| all.contains(it))) {
-                self.note_re_resolved_call_reported(file);
-            }
         }
         let called = if is_new {
             self.type_of_expr(file, data.callee)
@@ -813,21 +796,7 @@ impl Checker<'_, '_> {
             (s.candidate_for_type_argument_error, type_argument_list)
         {
             let type_params = self.sig_type_params(candidate);
-            if let Ok(Some((index, actual, constraint))) =
-                self.failing_type_argument(candidate, &type_params, type_args, true)
-            {
-                let node = hir.ids(list).nth(index).unwrap();
-                let end = self.end_of_type_node(file, node);
-                // 2344, or a more specific error.
-                self.report_not_assignable_with_end(
-                    file,
-                    actual,
-                    constraint,
-                    hir[node].pos,
-                    end,
-                    2344,
-                );
-            }
+            self.check_type_arguments(candidate, &type_params, type_args, Some((file, list)));
         } else {
             let mut fitting = Vec::new();
             for &sig in sigs {
@@ -898,17 +867,18 @@ impl Checker<'_, '_> {
         related
     }
 
-    /// `checkTypeArguments`: the first type argument that does not satisfy its constraint, and the
-    /// two types. `Err`: unknown. `with_this_argument`: false for `checkTypeArgumentConstraints`,
-    /// which compares with the constraint as it is.
-    pub(super) fn failing_type_argument(
+    /// `checkTypeArguments`: `typeArgumentTypes`, or `None` if one of `type_args` does not satisfy
+    /// its constraint. `error_nodes`: `typeArgumentNodes`, with `reportErrors`. A call that has a
+    /// `headMessage` has no type arguments.
+    pub(super) fn check_type_arguments(
         &mut self,
         sig: SigId,
         type_params: &[TypeId],
         type_args: &[TypeId],
-        with_this_argument: bool,
-    ) -> Result<Option<(usize, TypeId, TypeId)>, ()> {
-        let filled = self.fill_sig_type_args(sig, type_params, type_args);
+        error_nodes: Option<(FileId, IdList<TypeNodeId>)>,
+    ) -> Option<Vec<TypeId>> {
+        let is_js = (self.sig_decl(sig)).is_some_and(|(file, ..)| self.hir(file).is_js);
+        let filled = self.fill_sig_type_args_as(sig, type_params, type_args, is_js);
         let mapper = self.mapper_from(type_params, &filled);
         let outer = self.mapper_around_sig(sig);
         for i in 0..type_args.len().min(type_params.len()) {
@@ -917,16 +887,18 @@ impl Checker<'_, '_> {
             };
             let constraint = self.filled_in_around(type_params[i], constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
-            let constraint = if with_this_argument {
-                self.type_with_this_argument(constraint, filled[i])
-            } else {
-                constraint
-            };
-            if !self.is_assignable(filled[i], constraint) {
-                return Ok(Some((i, filled[i], constraint)));
+            let constraint = self.type_with_this_argument(constraint, filled[i]);
+            let error_node = error_nodes.map(|(file, nodes)| {
+                let hir = self.hir(file);
+                let node: TypeNodeId = hir.id_at(nodes, i);
+                let start = super::errors_type_nodes::start_of_type(hir, node);
+                (file, start, self.end_of_type_node_from(file, node, start))
+            });
+            if !self.check_type_assignable_to(filled[i], constraint, error_node, Some(2344)) {
+                return None;
             }
         }
-        Ok(None)
+        Some(filled)
     }
 
     /// `isSignatureApplicable`. Where something could not be determined the result is true, except

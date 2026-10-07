@@ -45,6 +45,9 @@ const PRETTY: &[clap::Param<clap::Help>] = &[clap::param!(
 )];
 const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!(
+        "-b, --build        Check the projects in <b>references<r> too, like <b>tsc -b<r>"
+    ),
+    clap::param!(
         "--no-pretty        One line per error, like <b>tsc --pretty false<r> <d>(default when piped)<r>"
     ),
     clap::param!(
@@ -56,7 +59,6 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
     clap::param!("--no-emit"),
-    clap::param!("-b, --build"),
     clap::param!("<POS>..."),
 ];
 pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);

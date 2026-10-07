@@ -195,6 +195,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         true
     }
 
+    /// `GetIdentifierToken`: a reserved word also if it is written with an escape.
+    fn token(&self) -> T {
+        match self.lexer.token {
+            T::TEscapedKeyword => {
+                crate::lexer::keyword(self.lexer.identifier).unwrap_or(T::TIdentifier)
+            }
+            token => token,
+        }
+    }
+
     /// The word the current token spells (`GetIdentifierToken`) if it is an identifier, otherwise empty.
     fn word(&self) -> &'a [u8] {
         if self.lexer.token == T::TIdentifier {
@@ -419,12 +429,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             | T::TTry
             | T::TDebugger
             | T::TCatch
-            | T::TFinally
-            // TypeScript scans an escaped keyword as that keyword. Let the statement parser handle it.
-            | T::TEscapedKeyword => true,
+            | T::TFinally => true,
+            T::TEscapedKeyword => {
+                self.lexer.token = self.token();
+                let starts = self.is_start_of_statement();
+                self.lexer.token = T::TEscapedKeyword;
+                starts
+            }
             T::TImport => {
                 self.is_start_of_declaration()
-                    || self.look_ahead(|p| p.step() && matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot))
+                    || self.look_ahead(|p| {
+                        p.step() && matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot)
+                    })
             }
             // `is_start_of_declaration` does not look ahead past this token.
             T::TConst => true,
@@ -434,7 +450,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 match Modifier::find(self.word()) {
                     Some(PAccessor | PPublic | PPrivate | PProtected | PStatic | PReadonly) => {
                         self.is_start_of_declaration()
-                            || !self.look_ahead(|p| p.step() && p.is_identifier_or_keyword() && !p.lexer.has_newline_before)
+                            || !self.look_ahead(|p| {
+                                p.step()
+                                    && p.is_identifier_or_keyword()
+                                    && !p.lexer.has_newline_before
+                            })
                     }
                     // Any other identifier starts an expression.
                     _ => true,
@@ -613,7 +633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             | ListKind::SwitchClauseStatements => {
                 !(token == T::TSemicolon && recovering) && self.is_start_of_statement()
             }
-            ListKind::SwitchClauses => matches!(token, T::TCase | T::TDefault),
+            ListKind::SwitchClauses => matches!(self.token(), T::TCase | T::TDefault),
             ListKind::TypeMembers => self.is_type_member_start(),
             ListKind::ClassMembers => {
                 self.is_class_member_start() || token == T::TSemicolon && !recovering
@@ -691,13 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn is_list_terminator(&self, kind: ListKind) -> bool {
-        // `GetIdentifierToken`: a reserved word also if it is written with an escape.
-        let token = match self.lexer.token {
-            T::TEscapedKeyword => {
-                crate::lexer::keyword(self.lexer.identifier).unwrap_or(T::TIdentifier)
-            }
-            token => token,
-        };
+        let token = self.token();
         if token == T::TEndOfFile {
             return true;
         }
@@ -785,7 +799,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn parsing_context_error(&self, kind: ListKind) -> u32 {
         match kind {
             // 'export' expected.
-            ListKind::SourceElements if self.lexer.token == T::TDefault => 1005,
+            ListKind::SourceElements if self.token() == T::TDefault => 1005,
             ListKind::SourceElements | ListKind::BlockStatements => 1128,
             ListKind::SwitchClauses => 1130,
             ListKind::SwitchClauseStatements => 1129,

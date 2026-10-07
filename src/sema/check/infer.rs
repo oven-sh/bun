@@ -574,9 +574,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The members of a union in the order TypeScript iterates over them, as `parts_in_order`
     /// returns them.
     pub(super) fn sorted_parts(&self, ty: TypeId) -> Parts {
-        let parts = Parts::from_slice(self.parts(ty));
-        debug_assert!(parts.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
-        parts
+        Parts::from_slice(self.parts(ty))
     }
 
     /// `inferFromTypeArguments`, between two instantiations of `of`. Cached variances are read in
@@ -1799,6 +1797,8 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             source_count.min(target_non_rest_count)
         };
+        // `getTypeAtPosition(target, i)`
+        self.note_parameter_types_resolved(target, &tp, param_count);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(param_count + 2);
         if let Some(s) = self.sig_this_type(source)
             && let Some(t) = self.sig_this_type(target)

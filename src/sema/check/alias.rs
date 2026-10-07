@@ -169,6 +169,34 @@ impl<'p, 's> Checker<'p, 's> {
         Some((alias, parameters.iter().map(map).collect()))
     }
 
+    /// `created`, an instantiation that `getObjectTypeInstantiation` stores under
+    /// `getTypeInstantiationKey(typeArguments, newAlias)`, for the `newAlias` given. The alias that
+    /// `created` has without storing one is the same key, however it was passed.
+    pub(super) fn with_alias_of_instantiation(
+        &self,
+        created: TypeId,
+        alias: Sym,
+        type_arguments: &[TypeId],
+    ) -> TypeId {
+        let of_node = self.alias_node_of_type(created);
+        let is_alias_of_node = of_node.is_some_and(|(file, node, mapper)| {
+            let scope = self.bound(file).type_scope[node.idx()];
+            if self.alias_symbol_for_type_node(file, scope, node) != Some(alias) {
+                return false;
+            }
+            let parameters = self.local_type_params_of_symbol(alias);
+            let map = |parameter: TypeId| self.types().map(mapper, parameter).unwrap_or(parameter);
+            parameters.len() == type_arguments.len()
+                && (parameters.iter().zip(type_arguments))
+                    .all(|(&parameter, &argument)| map(parameter) == argument)
+        });
+        if is_alias_of_node {
+            self.intern_key(TypeKey::Data(self.data(created)))
+        } else {
+            self.with_alias(created, alias, type_arguments)
+        }
+    }
+
     /// `source.alias.symbol == target.alias.symbol`: that alias, and `fillMissingTypeArguments` of
     /// the type arguments of each. Both lists are empty if neither has any. The flag:
     /// `len(source.alias.typeArguments) != 0`. Also `None` while the alias is in progress: nothing
@@ -361,7 +389,10 @@ impl<'p, 's> Checker<'p, 's> {
         match (alias, kept) {
             // A type that references no type parameter is not instantiated.
             (Some(_), _) if result == ty => ty,
-            (Some((alias, type_arguments)), _) => self.with_alias(result, alias, type_arguments),
+            (Some((alias, type_arguments)), _) => {
+                self.with_alias_of_instantiation(result, alias, type_arguments)
+            }
+            // A stored alias has another symbol than that of the node, or fewer type arguments.
             (None, Some((alias, type_arguments))) => {
                 let instantiated = self.instantiate_all(type_arguments, mapper);
                 if result == ty && instantiated[..] == type_arguments[..] {

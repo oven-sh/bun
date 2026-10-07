@@ -629,10 +629,22 @@ fn type_to_string_with(
 
 /// `strings.ToValidUTF8(text, "\uFFFD")` for text that leaves the checker.
 pub(super) fn to_valid_utf8(text: Vec<u8>) -> Vec<u8> {
-    match bstr::ByteSlice::to_str_lossy(&text[..]) {
-        std::borrow::Cow::Borrowed(_) => text,
-        std::borrow::Cow::Owned(valid) => valid.into_bytes(),
+    if std::str::from_utf8(&text).is_ok() {
+        return text;
     }
+    let mut valid = Vec::with_capacity(text.len());
+    // Whether the previous byte was invalid: a run of them is replaced once.
+    let mut invalid = false;
+    for chunk in text.utf8_chunks() {
+        if !chunk.valid().is_empty() {
+            valid.extend_from_slice(chunk.valid().as_bytes());
+            invalid = false;
+        }
+        if !chunk.invalid().is_empty() && !std::mem::replace(&mut invalid, true) {
+            valid.extend_from_slice("\u{FFFD}".as_bytes());
+        }
+    }
+    valid
 }
 
 /// Printing resolves the types it encounters. A cycle through here is not an error, and the state

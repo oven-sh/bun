@@ -1369,7 +1369,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let StmtKind::ExportNamed(export) = hir[statement].kind else {
                     return false;
                 };
-                return hir[export].spec.is_none()
+                return !hir[export].has_module_specifier
                     && self.is_container_visible(file, bound.stmt_parent[statement.idx()]);
             }
             _ => return false,
@@ -3491,7 +3491,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                         self.mark_linked_aliases(files.resolve_name(self.file(), scope, name, any));
                     }
                 }
-                StmtKind::ExportNamed(export) if hir[export].spec.is_none() => {
+                StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => {
                     let scope = bound.export_scope[export.idx()];
                     for spec in hir[export].items.iter() {
                         let target = files.resolve_name(self.file(), scope, hir[spec].local, any);
@@ -3557,10 +3557,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         }
         let parent_is_file = bound.stmt_parent[s.idx()] == Parent::File;
         match statement.kind {
-            StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } | StmtKind::Empty
-                if !matches!(statement.kind, StmtKind::Empty)
-                    || hir.exports_from_expressions.iter().any(|it| it.0 == s) =>
-            {
+            StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
                 self.result_has_external_module_indicator |= parent_is_file;
                 self.result_has_scope_marker = true;
                 let mut written = self.export_declaration(s);
@@ -3660,7 +3657,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let hir = self.c.hir(self.file());
         let mut text = b"export ".to_vec();
         let from_expression = hir.exports_from_expressions.iter().find(|it| it.0 == s);
-        let (spec, mode) = match from_expression.map_or(hir[s].kind, |it| it.1) {
+        let (spec, mode) = match hir[s].kind {
             StmtKind::ExportNamed(export) => {
                 let export = &hir[export];
                 if export.type_only {
@@ -3722,13 +3719,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             _ => (Atom::NONE, ResolutionMode::None),
         };
-        if spec.is_some() {
+        if spec.is_some() || from_expression.is_some() {
             // `rewriteModuleSpecifier`
             self.result_has_external_module_indicator = true;
             text.extend_from_slice(b" from ");
             match from_expression {
                 // `rewriteModuleSpecifier` leaves what is not a string literal as it is.
-                Some(&(_, _, e)) if e.is_some() => {
+                Some(&(_, e)) if e.is_some() => {
                     let (start, end) = (hir[e].pos, self.c.end_of_expr(self.file(), e));
                     text.extend_from_slice(&hir.text[start as usize..end as usize]);
                 }

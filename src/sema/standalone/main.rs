@@ -611,10 +611,13 @@ fn run(args: &[String]) {
                 let mut fields = bun_core::strings::split(line.as_bytes(), b"\t").map(text);
                 let directory = bun_core::ZBox::from_bytes(fields.next().unwrap());
                 let mut redirected = bun_sys::chdir(&directory);
+                let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                 for (fd, extension) in [(Fd::stdout(), "out"), (Fd::stderr(), "err")] {
                     let path = format!("{out}/{number}.{extension}");
                     redirected = redirected
-                        .and_then(|()| bun_sys::File::create(Fd::cwd(), path.as_bytes(), true))
+                        .and_then(|()| {
+                            bun_sys::File::openat(Fd::cwd(), path.as_bytes(), flags, 0o644)
+                        })
                         .and_then(|file| bun_sys::dup2(file.handle(), fd).map(|_| ()));
                 }
                 if redirected.is_err() {

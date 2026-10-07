@@ -31,12 +31,9 @@ pub fn parse<'s>(
     .0
 }
 
-/// Runs `work(i)` for every `i` below `count` on `threads` threads. Their stack size is `BUN_SEMA_STACK_MB`, 256 by default. The threads of
-/// `bun check` have `bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE` (4 MB; 18 MB on Windows).
+/// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.
 pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
-    let megabytes = bun_core::getenv_z(bun_core::zstr!("BUN_SEMA_STACK_MB"));
-    let megabytes = megabytes.and_then(|n| core::str::from_utf8(n).ok()?.parse().ok());
-    let stack = megabytes.unwrap_or(256usize) << 20;
+    let stack = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
     let next = std::sync::atomic::AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..threads.max(1) {
@@ -148,5 +145,40 @@ pub fn peak_rss() -> u64 {
         usage.max_rss as u64
     } else {
         usage.max_rss as u64 * 1024
+    }
+}
+
+// Here and not beside what it tests: this crate has what a test binary needs to link (`native`).
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use bun_sema::resolve::{displayed_path, join};
+    use bun_sema_driver::host::{from_native, to_native};
+
+    #[test]
+    fn a_directory_in_the_root_can_be_named_like_a_root_of_typescript() {
+        for native in [
+            &b"/c:/a/b.ts"[..],
+            b"/c:",
+            b"/^/a",
+            b"/^",
+            b"/usr/c:/a",
+            b"/",
+        ] {
+            let path = from_native(native);
+            assert_eq!(to_native(&path), native);
+            assert_eq!(&*displayed_path(&path), native);
+            assert_eq!(from_native(to_native(&path)), path);
+            assert_eq!(join(b"/", &path), path);
+        }
+        // What TypeScript takes for a drive is another path, which the system looks for in the
+        // working directory.
+        let drive = join(b"/x", b"c:/a");
+        assert_ne!(drive, from_native(b"/c:/a"));
+        assert_eq!(to_native(&drive), b"c:/a");
+        // `..` ends at `/`.
+        let inside = from_native(b"/c:/a");
+        assert_eq!(to_native(&join(&inside, b"../b")), b"/c:/b");
+        assert_eq!(&*displayed_path(&join(&inside, b"../..")), b"/");
+        assert_eq!(&*displayed_path(&join(&inside, b"../../..")), b"/");
     }
 }

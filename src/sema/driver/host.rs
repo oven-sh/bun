@@ -62,7 +62,12 @@ fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    join(b"/", bun_paths::string_paths::without_nt_prefix(path))
+    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    // It begins with `/`, whatever the name after that looks like: see `root_length`.
+    match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
+        true => [b"/\0", &path[..]].concat(),
+        false => path,
+    }
 }
 
 /// The entries of a directory. The names are sorted.

@@ -23,6 +23,9 @@ impl Predicate {
     pub const NO_PARAMETER: usize = usize::MAX;
 }
 
+/// `signature.thisParameter` in `Checker::resolved_parameter_types`.
+const THIS_PARAMETER: u32 = u32::MAX;
+
 /// The enclosing type parameters that a piece of type syntax may reference.
 #[derive(Default)]
 struct Mentioned {
@@ -1379,9 +1382,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeNodeKind::Fn(func) => self.collect_fn_mentions(file, func, out),
             TypeNodeKind::Object(members) => {
                 for m in members.iter() {
-                    self.collect_mentions(file, hir[m].ty, out);
+                    // The type of an index signature is the return type of its function, the same
+                    // node.
                     if hir[m].func.is_some() {
                         self.collect_fn_mentions(file, hir[m].func, out);
+                    } else {
+                        self.collect_mentions(file, hir[m].ty, out);
                     }
                 }
             }
@@ -3840,7 +3846,7 @@ impl<'p, 's> Checker<'p, 's> {
                     self.get_symbol_id(alias.0);
                     self.instantiate_with_alias(declared, mapper, alias)
                 }
-                None => self.instantiate(declared, mapper),
+                None => self.type_alias_instantiation(declared, mapper),
             };
         }
         if flags.intersects(SymFlags::TYPE) {
@@ -4199,7 +4205,98 @@ impl<'p, 's> Checker<'p, 's> {
                 self.type_of_param(file, p);
             }
         }
-        self.sig_params(sig)
+        let params = self.sig_params(sig);
+        self.note_parameter_types_resolved(sig, &params, count);
+        params
+    }
+
+    /// tsgo has assigned `links.resolvedType` of the first `count` of `params`, the parameters of
+    /// `sig`. Recorded for those about which `is_parameter_type_resolved` is asked: `sig` is an
+    /// instantiation that has type parameters, and its mapper has left no type variable in a type
+    /// that is declared with some.
+    pub(super) fn note_parameter_types_resolved(
+        &mut self,
+        sig: SigId,
+        params: &[SigParam],
+        count: usize,
+    ) {
+        let (file, func, mapper) = match *self.types().sig(sig) {
+            SigData::Decl { file, func, mapper }
+                if !self.hir(file)[func].type_params.is_empty() =>
+            {
+                (file, func, mapper)
+            }
+            SigData::Construct {
+                file, func, mapper, ..
+            } => (file, func, mapper),
+            _ => return,
+        };
+        if !self.is_instantiating(mapper) || self.sig_type_params(sig).is_empty() {
+            return;
+        }
+        for (i, param) in params.iter().enumerate().take(count) {
+            if !self.could_contain_type_variables(param.ty)
+                && let Some((of, declaration)) = param.declaration
+                && let declared = self.type_of_param(of, declaration)
+                && self.has_type_variables(declared)
+            {
+                self.resolved_parameter_types.insert((sig, i as u32));
+            }
+        }
+        // The callers ask for `getThisTypeOfSignature` too.
+        if self.hir(file)[func].this_param.is_some()
+            && let Some(this_type) = self.sig_this_type(sig)
+            && !self.could_contain_type_variables(this_type)
+            && let declared = self.type_of_this_parameter(file, func)
+            && self.has_type_variables(declared)
+        {
+            self.resolved_parameter_types.insert((sig, THIS_PARAMETER));
+        }
+    }
+
+    /// `signature.target`, if that is an instantiation too: `sig` has the type arguments for a
+    /// signature whose outer type parameters are instantiated.
+    fn instantiated_target(&self, sig: SigId) -> Option<SigId> {
+        let target = match *self.types().sig(sig) {
+            SigData::Decl { file, func, mapper } => {
+                let (mapper, _) = self.steps_of_sig_mapper(file, func, mapper)?;
+                SigData::Decl { file, func, mapper }
+            }
+            SigData::Construct {
+                class,
+                file,
+                func,
+                mapper,
+            } if mapper != MapperId::IDENTITY => {
+                let mapper = self.without_type_arguments_of_class(class, mapper)?;
+                if !self.is_instantiating(mapper) {
+                    return None;
+                }
+                SigData::Construct {
+                    class,
+                    file,
+                    func,
+                    mapper,
+                }
+            }
+            _ => return None,
+        };
+        Some(self.types().intern_sig(target))
+    }
+
+    /// `links.resolvedType != nil` for the parameter of `sig` at `index`, when `instantiateSymbol`
+    /// gets to it. `params`: the parameters of `sig`. `hasCorrectArity` comes before
+    /// `getSignatureInstantiation`, and `getMinArgumentCount` asks for the type of a rest parameter
+    /// and of the required parameters, from the last one down to one that does not accept `void`.
+    fn is_parameter_type_resolved(
+        &mut self,
+        sig: SigId,
+        params: &[SigParam],
+        index: usize,
+    ) -> bool {
+        self.resolved_parameter_types.contains(&(sig, index as u32))
+            || params[index].rest
+            || index < Self::min_args(params) && index + 1 >= self.min_argument_count(params)
     }
 
     /// `kept` is the stored result of `sig_params(sig)`.
@@ -4229,7 +4326,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.cached_sig_params(sig, kept);
         }
         let scope = self.begin_scope();
-        let params = self.sig_params_of_declaration(file, func, mapper);
+        let target = self.instantiated_target(sig);
+        let params = self.sig_params_of_declaration(file, func, mapper, target);
         if let Ok(stored) = self.end_scope_by_counters(scope) {
             let kept = (self.p.sig_params).insert_ref(&self.task, sig, params.into(), stored);
             return self.cached_sig_params(sig, kept.1);
@@ -4237,12 +4335,14 @@ impl<'p, 's> Checker<'p, 's> {
         List::Own(params.to_vec())
     }
 
+    /// `target`: see `instantiated_target`.
     #[inline(never)]
     fn sig_params_of_declaration(
         &mut self,
         file: FileId,
         func: FnId,
         mapper: MapperId,
+        target: Option<SigId>,
     ) -> Vec<SigParam, &'s Arena> {
         let hir = self.hir(file);
         let mut out = Vec::with_capacity_in(hir[func].params.len(), self.arena);
@@ -4259,6 +4359,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.types().mapping(mapper),
             &[(source, _)] if matches!(self.data(source), TypeData::ThisParam(_))
         );
+        // `instantiateSignatureEx` instantiates the parameters of `signature.target`.
+        let target = target.map(|target| (target, self.sig_params(target)));
         for (i, p) in hir[func].params.iter().enumerate() {
             let param = &hir[p];
             let name = match hir[param.pat].kind {
@@ -4296,13 +4398,24 @@ impl<'p, 's> Checker<'p, 's> {
                     true => super::errors_unused::is_thisless_type(hir, param.ty),
                     false => param.default.is_none(),
                 };
+            let mut ty = if is_kept {
+                declared
+            } else {
+                self.instantiate(declared, mapper)
+            };
+            // And one whose type is resolved and cannot contain type variables. Of any other it
+            // goes back to the declared parameter and combines the mappers.
+            if let Some((target, of_target)) = &target
+                && let Some(open) = of_target.get(i).map(|open| open.ty)
+                && open != ty
+                && !self.could_contain_type_variables(open)
+                && self.is_parameter_type_resolved(*target, of_target, i)
+            {
+                ty = open;
+            }
             out.push(SigParam {
                 name,
-                ty: if is_kept {
-                    declared
-                } else {
-                    self.instantiate(declared, mapper)
-                },
+                ty,
                 optional: optional || is_untyped_in_js && !param.flags.contains(Flags::REST),
                 rest: param.flags.contains(Flags::REST),
                 is_required_rest: false,
@@ -4419,7 +4532,17 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if self.hir(file)[func].this_param.is_some() {
             let declared = self.type_of_this_parameter(file, func);
-            return Some((self.instantiate(declared, mapper), sig));
+            let ty = self.instantiate(declared, mapper);
+            // `instantiateSymbol(sig.thisParameter, m)`, as for the parameters.
+            if let Some(target) = self.instantiated_target(sig)
+                && let Some(open) = self.sig_this_type(target)
+                && open != ty
+                && !self.could_contain_type_variables(open)
+                && (self.resolved_parameter_types).contains(&(target, THIS_PARAMETER))
+            {
+                return Some((open, sig));
+            }
+            return Some((ty, sig));
         }
         // `getSignatureFromDeclaration`: "If only one accessor includes a this-type annotation, the
         // other behaves as if it had the same type annotation"

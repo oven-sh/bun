@@ -2092,7 +2092,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 };
                                 self.lexer.expect(T::TIdentifier)?;
                                 let mut has_constraint = false;
-                                if self.lexer.token == T::TExtends {
+                                if self.lexer.is_keyword(T::TExtends) {
                                     has_constraint = self
                                         .try_skip_type_script_constraint_of_infer_type_with_backtracking(
                                             opts,

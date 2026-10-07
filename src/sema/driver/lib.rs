@@ -822,8 +822,11 @@ pub struct Report {
     pub files_not_checked: usize,
     /// The steps that ran, in order. See `Plan`.
     pub steps: Vec<StepReport>,
-    /// How many projects were checked, if the configuration has `references`. Otherwise 0.
+    /// How many projects are reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
+    /// The configuration file has `references` and no files of its own, and `--build` was not
+    /// given: `tsc` checks nothing then.
+    pub follows_references: bool,
     /// `Options::writes_declaration_files`: each source file that a declaration file is emitted
     /// for, and the emitted text.
     pub declaration_files: Vec<(Vec<u8>, Vec<u8>)>,
@@ -833,19 +836,6 @@ pub struct Report {
     pub load_phases: [Duration; Phase::ALL.len()],
     /// The maximum stack usage of any file, in bytes.
     pub deepest_stack: usize,
-    /// The program was not checked to the end: what tsgo reports for it depends on the order in
-    /// which one checker visits the files, in a way that the tasks of a `Plan` do not reproduce.
-    /// `flowAnalysisDisabled` (TS2563) is a field of the checker, and nothing resets it between
-    /// files. So a task that ends a file with it set decides for every later file of the program,
-    /// which other tasks check, or have checked and published. And a reference that several tasks
-    /// evaluate (`Checker::is_flow_analysis_disabled_in_shared_file`) has errorType or not by the
-    /// flag of the first to come to it. Found at a barrier, from the tasks of the step, each of
-    /// which is a function of the program. `check_named_files` then uses one checker.
-    /// Likewise if a task has resolved the symbol of a parameter of another file, and that is
-    /// reported (`Checker::is_widening_parameter_resolved_elsewhere`).
-    /// Likewise if what a call reports depends on whether an earlier file has asked for something
-    /// around it (`Checker::is_re_resolved_call_reported_in_shared_file`).
-    needs_serial_order: bool,
 }
 
 impl Report {
@@ -1359,6 +1349,35 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
     found
 }
 
+/// For a directory without a configuration file at or above it, and `below` under it.
+fn no_project_here(cwd: &[u8], below: &[Vec<u8>]) -> Diagnostic {
+    const NAMED: usize = 8;
+    let relative =
+        |config: &'_ [u8]| -> Vec<u8> { get_relative_path_from_directory(cwd, config, true) };
+    let mut text = [
+        b"No tsconfig.json in '",
+        &*displayed_path(cwd),
+        b"' or above it. Below it:",
+    ]
+    .concat();
+    for config in below.iter().take(NAMED) {
+        text.extend_from_slice(b"\n  ");
+        text.extend_from_slice(&relative(config));
+    }
+    if below.len() > NAMED {
+        let more = below.len() - NAMED;
+        let _ = std::io::Write::write_fmt(&mut text, format_args!("\n  and {more} more"));
+    }
+    text.extend_from_slice(b"\nTo check one: bun check -p ");
+    text.extend_from_slice(&relative(&below[0]));
+    text.extend_from_slice(b"\nTo check everything below this directory: bun check .");
+    Diagnostic {
+        text,
+        code: 0,
+        ..global(18003, &[""; 0])
+    }
+}
+
 fn check_request(disk: &host::Disk, request: &Request) -> Report {
     // `ParseBuildCommandLine`: `Projects` is `fileNames`, or else `.`.
     let request = &match (request.build, request.project, request.paths) {
@@ -1472,8 +1491,17 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 };
                 return check_project_of(disk, request, &mut projects, of, report, started);
             }
-            // Whatever is here, each file with the options that are nearest to it.
-            None => paths.push(cwd.clone()),
+            None => {
+                // `tsc` prints its help. Which of them is meant is not for a guess: they are
+                // fixtures and examples as often as packages.
+                let below = nested_configs(disk, &cwd);
+                if !below.is_empty() {
+                    report.diagnostics.push(no_project_here(&cwd, &below));
+                    return report;
+                }
+                // Whatever is here, with the default options.
+                paths.push(cwd.clone())
+            }
         }
     }
 
@@ -1985,7 +2013,10 @@ impl Host for WithOutputs<'_> {
 
 /// Checks what `tsc -b` checks: `root` and every project it references, each with its own options.
 /// Nothing is written: a project reads the declaration files of the projects it references from
-/// memory. `named`: see `check_named_files` and `Extent`.
+/// memory. Without `Request::build` only `root` is reported, as by `tsc`, which reads the
+/// declaration files that an earlier build has written. If `root` has no files of its own, `tsc`
+/// checks nothing: then all are reported (`Report::follows_references`).
+/// `named`: see `check_named_files` and `Extent`.
 /// `elsewhere`: see `OfProject`.
 fn check_with_references(
     host: &dyn Host,
@@ -1998,11 +2029,18 @@ fn check_with_references(
 ) -> Report {
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
+    let follows_references = !request.build && root.files.is_empty();
+    let reports_references =
+        request.build || follows_references || matches!(named, Some((Extent::Graph, _)));
     let configuration = Session::new();
     let mut graph = Graph {
         host,
         session: &configuration,
-        overrides: overriding_options(request, true),
+        // The command line of a plain `tsc` is for the project that it is given.
+        overrides: match request.build || follows_references {
+            true => overriding_options(request, true),
+            false => Vec::new(),
+        },
         tasks: FxHashMap::default(),
         projects: Vec::new(),
         index_of: FxHashMap::default(),
@@ -2029,6 +2067,8 @@ fn check_with_references(
         let path = to_path(path, is_case_sensitive);
         Some(&projects[(*index_of.get(&*path)?)?].project)
     };
+    let root_index =
+        (index_of.get(&*to_path(&root_config_path, is_case_sensitive))).and_then(|it| *it);
     let about_references: Vec<Vec<ConfigError>> = (projects.iter())
         .map(|p| {
             (verify_project_references(&p.project, &resolved).iter())
@@ -2233,16 +2273,13 @@ fn check_with_references(
             .chain(elsewhere.into_iter().flatten().copied())
             .filter(|path| !own.contains(path))
             .collect();
-        project.options.is_build = true;
+        let is_root = is_same_path(&project.config_path, &root_config_path, is_case_sensitive);
+        project.options.is_build = reports_references || !is_root;
         project.options.build_info_file_name = project.get_build_info_file_name();
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
         let named = match named {
-            Some((Extent::Project, files))
-                if is_same_path(&project.config_path, &root_config_path, is_case_sensitive) =>
-            {
-                Some(files)
-            }
+            Some((Extent::Project, files)) if is_root => Some(files),
             // What another program reads is built whole. A solution has no program.
             Some((Extent::Graph, files)) if !is_read_by_a_program(index) => {
                 let is_named = |file: &Vec<u8>| is_among(files, file);
@@ -2364,14 +2401,18 @@ fn check_with_references(
                 ..Default::default()
             });
         }
-        if let Some(mut checked) = checked.get_mut().take() {
+        if let Some(mut checked) = checked.get_mut().take()
+            // A project that is only read, with no file in the directory that was named, is not asked about.
+            && (reports_references && has_named[index] || Some(index) == root_index)
+        {
             for d in &mut checked.diagnostics {
                 d.project = index as u32;
             }
             report.report_task(checked);
-            report.projects_checked += 1;
+            report.projects_checked += usize::from(reports_references);
         }
     }
+    report.follows_references = follows_references && named.is_none();
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     report
 }
@@ -2502,64 +2543,15 @@ pub fn check_project(
 /// Both have a `tspath.Path` for each file.
 fn check_named_files(
     host: &dyn Host,
-    project: config::Project,
-    request: &Request,
-    report: Report,
-    started: Instant,
-    named: Option<&[Vec<u8>]>,
-    owned_elsewhere: Option<&FxHashSet<&[u8]>>,
-    // Asked when the program is loaded: whether it is not to be checked.
-    is_outdated: Option<&dyn Fn() -> bool>,
-) -> Report {
-    let again = project.clone();
-    let mut report = check_named_files_as_planned(
-        host,
-        project,
-        request,
-        report,
-        started,
-        named,
-        owned_elsewhere,
-        is_outdated,
-    );
-    if !std::mem::take(&mut report.needs_serial_order) {
-        return report;
-    }
-    // One task for all files, in program order. The program is loaded again: trees are freed, and
-    // what the steps so far have published cannot be taken back.
-    let plan_options = PlanOptions {
-        checkers: 1,
-        ..request.plan_options
-    };
-    let in_serial_order = Request {
-        plan_options,
-        ..*request
-    };
-    check_named_files_as_planned(
-        host,
-        again,
-        &in_serial_order,
-        report,
-        started,
-        named,
-        owned_elsewhere,
-        is_outdated,
-    )
-}
-
-/// `check_named_files` with the `Plan` that `request` asks for. Under `Report::needs_serial_order`
-/// the result has the diagnostics that `report` came with, and `Request::progress` is as before.
-fn check_named_files_as_planned(
-    host: &dyn Host,
     mut project: config::Project,
     request: &Request,
     mut report: Report,
     started: Instant,
     named: Option<&[Vec<u8>]>,
     owned_elsewhere: Option<&FxHashSet<&[u8]>>,
+    // Asked when the program is loaded: whether it is not to be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
 ) -> Report {
-    let reported_before = report.diagnostics.len();
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
@@ -2751,8 +2743,6 @@ fn check_named_files_as_planned(
     let emit_diagnostics: Guarded<Vec<Diagnostic>> = Guarded::new(Vec::new());
     let incomplete: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
     let deepest_stack = AtomicUsize::new(0);
-    // What this call has added to `Progress::errors`.
-    let errors_counted = AtomicUsize::new(0);
     // `Files::parse_and_bind` retains the text of every file except those of the default library.
     let text_of = |file: FileId| {
         let module = &program.files.modules[file.idx()];
@@ -2836,7 +2826,6 @@ fn check_named_files_as_planned(
             .collect();
         if let Some(progress) = request.progress {
             progress.errors.fetch_add(shown.len(), Ordering::Relaxed);
-            errors_counted.fetch_add(shown.len(), Ordering::Relaxed);
         }
         found.lock().extend(shown);
     };
@@ -2867,12 +2856,7 @@ fn check_named_files_as_planned(
         trees_to_free: Vec<FileId>,
         /// What `Checker::check_statements_ahead` returned. 0 for any other task.
         obstacles: u8,
-        /// See `Report::needs_serial_order`.
-        needs_serial_order: bool,
     }
-    // How many of the files to check come after `file` in program order.
-    let files_after =
-        |file: FileId| to_check.len() - to_check.partition_point(|&it| place(it) <= place(file));
     let free_trees = |files: Vec<FileId>| {
         for file in files {
             // SAFETY: the only task that reads the HIR has ended and will not be retried.
@@ -2892,13 +2876,8 @@ fn check_named_files_as_planned(
                 }
             }
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
-            let mut needs_serial_order = false;
-            for (index, &file) in files.iter().enumerate() {
+            for &file in files {
                 checked.push((file, checker.check_file(file)));
-                // The rest of `files` is checked with the flag as it is.
-                needs_serial_order |= checker.is_flow_analysis_disabled_in_shared_file()
-                    || checker.is_flow_analysis_disabled()
-                        && files_after(file) > files.len() - index - 1;
                 if let Some(after_file) = request.after_file
                     && expected == Requested::All
                 {
@@ -2913,8 +2892,6 @@ fn check_named_files_as_planned(
                     progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
                 }
             }
-            needs_serial_order |= checker.is_widening_parameter_resolved_elsewhere();
-            needs_serial_order |= checker.is_re_resolved_call_reported_in_shared_file();
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
             let mut outcome = Outcome {
                 finished: task.map(|_| checker.end_task()),
@@ -2924,7 +2901,6 @@ fn check_named_files_as_planned(
                     .generic_relation_entries_not_published(),
                 trees_to_free: Vec::new(),
                 obstacles: 0,
-                needs_serial_order,
             };
             // It holds references into the HIR of files.
             drop(checker);
@@ -2955,9 +2931,6 @@ fn check_named_files_as_planned(
                 .generic_relation_entries_not_published(),
             trees_to_free: Vec::new(),
             obstacles,
-            needs_serial_order: checker.is_flow_analysis_disabled_in_shared_file()
-                || checker.is_widening_parameter_resolved_elsewhere()
-                || checker.is_re_resolved_call_reported_in_shared_file(),
         }
     };
     let declaration_files: Guarded<Vec<(Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
@@ -3061,8 +3034,6 @@ fn check_named_files_as_planned(
     let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
     // For every task since the last barrier: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
-    // See `Report::needs_serial_order`. Once it is set, no further task is started.
-    let needs_serial_order = std::cell::Cell::new(false);
     // Returns the invalid tasks.
     // `ahead`: by task. Empty: every task checks whole files.
     let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
@@ -3105,12 +3076,6 @@ fn check_named_files_as_planned(
         let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
             .map(|mut outcome| outcome.get_mut().take().unwrap())
             .collect();
-        // Nothing is published. `unfinished` gets what `Progress` has counted.
-        if checker_count == 0 && outcomes.iter().any(|it| it.needs_serial_order) {
-            needs_serial_order.set(true);
-            outcomes.into_iter().for_each(&accept);
-            return Vec::new();
-        }
         let mut finished: Vec<Finished> = (outcomes.iter_mut())
             .map(|outcome| outcome.finished.take().unwrap())
             .collect();
@@ -3228,15 +3193,9 @@ fn check_named_files_as_planned(
     let stops = request.stops_like_tsc;
     // `type_checked`: the files that are, or else the others.
     let check_files = |expected: Requested, type_checked: bool| {
-        if needs_serial_order.get() {
-            return;
-        }
         if type_checked == is_any_type_checked {
             for (number, step) in plan.steps.iter().enumerate() {
                 run_step(number, step, expected);
-                if needs_serial_order.get() {
-                    return;
-                }
             }
         }
         if !type_checked {
@@ -3308,9 +3267,6 @@ fn check_named_files_as_planned(
         let emits_first = options.emits_first && !options.no_emit_on_error;
         for type_checked in [!emits_first, emits_first] {
             check_files(Requested::All, type_checked);
-            if needs_serial_order.get() {
-                break 'stages;
-            }
             report.diagnostics.append(&mut found.lock());
             // What a checker reports without a file after this is never asked for.
             if type_checked {
@@ -3348,27 +3304,6 @@ fn check_named_files_as_planned(
                 after_file(&mut checker, file);
             }
         }
-    }
-    if needs_serial_order.get() {
-        report.diagnostics.truncate(reported_before);
-        report.needs_serial_order = true;
-        if let Some(progress) = request.progress {
-            let counted = unfinished.lock();
-            let bytes_counted = counted.iter().map(|it| size(it.0) as usize).sum();
-            let bytes = (0..to_check.len()).map(bytes_of).sum();
-            progress.checked.fetch_sub(counted.len(), Ordering::Relaxed);
-            progress
-                .bytes_checked
-                .fetch_sub(bytes_counted, Ordering::Relaxed);
-            progress
-                .to_check
-                .fetch_sub(to_check.len(), Ordering::Relaxed);
-            progress.bytes_to_check.fetch_sub(bytes, Ordering::Relaxed);
-            let errors = errors_counted.load(Ordering::Relaxed);
-            progress.errors.fetch_sub(errors, Ordering::Relaxed);
-        }
-        root.release();
-        return report;
     }
     report.deepest_stack = deepest_stack.into_inner();
     report.steps = std::mem::take(&mut *steps.lock());

@@ -678,7 +678,7 @@ pub enum Literalness {
     /// The attributes of a JSX element. Names that contain a hyphen are ignored.
     JsxAttributes,
     /// An object literal checked without its context-sensitive functions
-    /// (`ObjectFlagsNonInferrableType`). With no members, it is such a function
+    /// (`ObjectFlagsNonInferrableType`). With no members and no symbol, it is such a function
     /// (`anyFunctionType`). With one call signature and nothing else, it is such a function without
     /// context-sensitive parameters, retained for its return type (`returnOnlyType`).
     Partial,
@@ -987,7 +987,8 @@ pub struct Provenance<'s> {
     /// For a mapped type that `instantiateConstituent` created: the key under which
     /// `getObjectTypeInstantiation` stores the result of that `instantiateMappedType`. `None`: it
     /// is the key of the type itself, its type arguments and its alias. Also for a result that is
-    /// a union of such types and could not contain type variables.
+    /// a union of such types and could not contain type variables, and for a mapped type that is
+    /// no longer under its key (`InstantiationKey::nesting`).
     pub stored_under: Option<InstantiationKey>,
     /// `ObjectFlagsArrayLiteral`: the clone of a type reference that `createArrayLiteralType`
     /// creates (`cloneTypeReference`), once per reference.
@@ -1004,6 +1005,10 @@ pub struct InstantiationKey {
     pub alias: Option<(Sym, TypeId)>,
     /// `ObjectFlagsCouldContainTypeVariables` of the type that is stored.
     pub could_contain_type_variables: bool,
+    /// How many `getObjectTypeInstantiation` with this key were in progress around the one that
+    /// created the type. None of them has found an entry, and each assigns `instantiations[key]`
+    /// when it returns: the type that stays under the key is the one with 0.
+    pub nesting: u8,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Default)]
@@ -3033,7 +3038,8 @@ follow_struct!(Provenance<'_> {
 follow_struct!(InstantiationKey {
     type_arguments,
     alias,
-    could_contain_type_variables
+    could_contain_type_variables,
+    nesting
 });
 follow_enum!(UnionOrigin<'_> {
     UnionOrigin::None => (),

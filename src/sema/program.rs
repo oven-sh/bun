@@ -939,6 +939,9 @@ pub struct AliasSymbolLinks {
     pub type_only_declaration: Option<TypeOnlyDeclaration>,
     /// `resolveAlias` reports 2303 at the declaration of the alias.
     pub is_circular: bool,
+    /// The stack ended while the alias was in progress, where Go's grows. It `is_circular`, as it
+    /// may be, and its file is reported as not fully checked in place of 2303.
+    pub ran_out_of_stack: bool,
 }
 
 /// The functions that resolve names, exports and aliases. Each of them can call `alias_links`, and
@@ -1951,8 +1954,10 @@ struct AliasResolver<'a, 's> {
     /// `typeResolutions` and `resolutionResults`: each alias in progress, and whether no cycle
     /// through it has been found.
     in_flight: std::cell::RefCell<Vec<(Sym, bool)>>,
-    /// The number of times an alias was read while in progress, or was rejected because the alias
-    /// chain is too long.
+    /// How many of `in_flight`, from the first, were in progress when the stack ended.
+    out_of_stack: std::cell::Cell<usize>,
+    /// The number of times an alias was read while in progress, or was rejected because the stack
+    /// has no room for it.
     cycles: std::cell::Cell<u32>,
     /// `None`: results are written to the tables immediately. For the merge, which is
     /// single-threaded.
@@ -6695,8 +6700,7 @@ impl<'s> Files<'s> {
                 let export = &hir[hir[s].export];
                 let mode = self.mode_of_import(file, export.mode);
                 export
-                    .spec
-                    .is_some()
+                    .has_module_specifier
                     .then_some((export.spec, mode, hir[s].local))
             }
             Decl::Require(pat) => {
@@ -7589,6 +7593,7 @@ impl<'a, 's> AliasResolver<'a, 's> {
         AliasResolver {
             files,
             in_flight: Default::default(),
+            out_of_stack: Default::default(),
             cycles: Default::default(),
             buffer: buffer.map(std::cell::RefCell::new),
             arena: Default::default(),
@@ -7621,9 +7626,11 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
                     begun.1 = false;
                 }
             }
-            let is_pushed = start.is_none() && in_flight.len() < 100;
+            let is_pushed = start.is_none() && bun_core::StackCheck::init().is_safe_to_recurse();
             if is_pushed {
                 in_flight.push((sym, true));
+            } else if start.is_none() {
+                self.out_of_stack.set(in_flight.len());
             }
             is_pushed
         };
@@ -7656,7 +7663,12 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         }
         // `popTypeResolution`
         let begun = self.in_flight.borrow_mut().pop();
-        if !begun.is_some_and(|begun| begun.1) {
+        let left = self.in_flight.borrow().len();
+        if left < self.out_of_stack.get() {
+            self.out_of_stack.set(left);
+            links.ran_out_of_stack = true;
+        }
+        if links.ran_out_of_stack || !begun.is_some_and(|begun| begun.1) {
             links.alias_target = None;
             links.is_circular = true;
         }

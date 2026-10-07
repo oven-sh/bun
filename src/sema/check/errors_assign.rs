@@ -744,7 +744,7 @@ impl Checker<'_, '_> {
             && !self.is_error_type(referenced)
         {
             let type_parameters = self.type_params_of_symbol(sym);
-            self.check_type_argument_constraints(file, args, &type_parameters);
+            self.check_type_argument_constraints(file, args, &type_parameters, None);
         }
         if before == (self.reported.len(), self.taints, self.non_cacheable_mark())
             && self.serialization_level == 0
@@ -753,67 +753,70 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkTypeArgumentConstraints`: 2344, or a more specific error.
+    /// `checkTypeArgumentConstraints`: 2344, or a more specific error. `sig`: the signature that
+    /// has `type_parameters`, see `mapper_around_sig`. `None` for those of a type.
     fn check_type_argument_constraints(
         &mut self,
         file: FileId,
         nodes: IdList<TypeNodeId>,
         type_parameters: &[TypeId],
-    ) {
-        if !type_parameters
-            .iter()
-            .any(|&p| self.constraint_of_type_param(p).is_some())
-        {
-            return;
-        }
+        sig: Option<SigId>,
+    ) -> bool {
         let hir = self.hir(file);
-        // `getEffectiveTypeArguments`
-        let actual = self.types_from_nodes(file, nodes);
-        let type_arguments = self.fill_type_args_as(type_parameters, &actual, hir.is_js);
-        let mapper = self.mapper_from(type_parameters, &type_arguments);
+        let outer = sig.map_or(MapperId::IDENTITY, |sig| self.mapper_around_sig(sig));
+        let mut effective: Option<(Vec<TypeId>, MapperId)> = None;
+        let mut result = true;
         for (i, &type_parameter) in type_parameters.iter().enumerate() {
             let Some(constraint) = self.constraint_of_type_param(type_parameter) else {
                 continue;
             };
+            if !result {
+                continue;
+            }
+            let (type_arguments, mapper) = effective.get_or_insert_with(|| {
+                // `getEffectiveTypeArguments`
+                let actual = self.types_from_nodes(file, nodes);
+                let filled = match sig {
+                    Some(sig) => {
+                        self.fill_sig_type_args_as(sig, type_parameters, &actual, hir.is_js)
+                    }
+                    None => self.fill_type_args_as(type_parameters, &actual, hir.is_js),
+                };
+                let mapper = self.mapper_from(type_parameters, &filled);
+                (filled, mapper)
+            });
+            let (argument, mapper) = (type_arguments[i], *mapper);
+            let constraint = self.filled_in_around(type_parameter, constraint, outer);
             let constraint = self.instantiate(constraint, mapper);
             // A default has no node, and nothing is reported for it.
             let error_node = (i < nodes.len()).then(|| {
                 let node: TypeNodeId = hir.id_at(nodes, i);
-                (file, hir[node].pos, self.end_of_type_node(file, node))
+                let start = start_of_type(hir, node);
+                (file, start, self.end_of_type_node_from(file, node, start))
             });
-            let argument = type_arguments[i];
-            if !self.check_type_assignable_to(argument, constraint, error_node, Some(2344)) {
-                return;
-            }
+            result = self.check_type_assignable_to(argument, constraint, error_node, Some(2344));
         }
+        result
     }
 
     /// `checkClassLikeDeclaration`: the type arguments of `extends Base<Args>`, checked against
     /// each construct signature of `Base` that accepts that many.
     pub(super) fn check_type_arguments_of_base(&mut self, file: FileId, class: ClassId, sym: Sym) {
-        let hir = self.hir(file);
-        let nodes = hir[class].extends_args;
+        let nodes = self.hir(file)[class].extends_args;
         if nodes.is_empty() || self.base_types(sym).is_empty() {
             return;
         }
         let constructor = self.base_constructor_type_of_class(sym);
         let apparent = self.apparent_type(constructor);
-        let actual = self.types_from_nodes(file, nodes);
         // `getConstructorsForTypeArguments`
         for sig in self.signatures(apparent, true) {
             let type_parameters = self.sig_type_params(sig);
-            if actual.len() < self.min_type_argument_count(&type_parameters)
-                || actual.len() > type_parameters.len()
+            if nodes.len() < self.min_type_argument_count(&type_parameters)
+                || nodes.len() > type_parameters.len()
             {
                 continue;
             }
-            // `checkTypeArgumentConstraints`
-            if let Ok(Some((i, argument, constraint))) =
-                self.failing_type_argument(sig, &type_parameters, &actual, false)
-            {
-                let node: TypeNodeId = hir.id_at(nodes, i);
-                let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
-                self.check_type_assignable_to(argument, constraint, Some(error_node), Some(2344));
+            if !self.check_type_argument_constraints(file, nodes, &type_parameters, Some(sig)) {
                 return;
             }
         }

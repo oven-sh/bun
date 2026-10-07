@@ -30,6 +30,9 @@ pub struct Checked {
     /// `Checker::expected_errors`
     expected_errors: Vec<Reported>,
     never_checked: Vec<(u32, u32)>,
+    /// The private members that `checkUnusedClassMembers` has reported, and where. See
+    /// `Program::properties_referenced_before`.
+    unused_private_members: Vec<(Sym, u32)>,
     /// `Options::writes_declaration_files`: the emitted text of the file's declaration file, if it
     /// has one.
     pub declaration_file: Option<Vec<u8>>,
@@ -46,6 +49,7 @@ impl Checked {
             include: Vec::new(),
             expected_errors: Vec::new(),
             never_checked: Vec::new(),
+            unused_private_members: Vec::new(),
             declaration_file: None,
         })
     }
@@ -64,6 +68,15 @@ impl Program<'_> {
                 d.by_emit || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
             };
             out.extend(self.take_buffer(file).into_iter().filter(is_checked));
+            if !checked.unused_private_members.is_empty() {
+                let referenced = self.properties_referenced_before.lock();
+                let mut unused = checked.unused_private_members;
+                unused.retain(|it| referenced.contains(&it.0));
+                let is_referenced = |d: &Reported| {
+                    matches!(d.code, 6133 | 6138) && unused.iter().any(|it| it.1 == d.start)
+                };
+                out.retain(|d| !is_referenced(d));
+            }
             // `getDiagnosticsWithPrecedingDirectives`
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
@@ -327,6 +340,7 @@ impl Checker<'_, '_> {
             include: Vec::new(),
             expected_errors: Vec::new(),
             never_checked: self.never_checked.take(),
+            unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }
     }

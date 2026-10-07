@@ -738,6 +738,13 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             );
         }
     }
+    if report.follows_references {
+        pretty!(
+            out,
+            style.color,
+            "<blue>note<r><d>:<r> tsconfig.json has no files of its own. Checked the projects it references, like <cyan>tsc -b<r>.\n"
+        );
+    }
     if report.files_not_checked > 0 {
         pretty!(
             out,

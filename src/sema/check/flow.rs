@@ -103,12 +103,21 @@ pub(super) struct FlowMemo {
     min_antecedent: Vec<u32>,
     /// The flow nodes at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<(u32, ResolvesKey)>,
+    /// The call statements and the clauses of a `switch (true)` with a union
+    /// (`NarrowingSubjects::add_union`), in ascending order.
+    union_nodes: Vec<u32>,
+    /// For each `Flow::Reduce`: the label at the start of the `finally` block, and the node itself.
+    /// The nodes of the block have the numbers in between.
+    finally_blocks: Vec<(u32, u32)>,
     /// Indexed by symbol: the flow node at which its declaration initializes it.
     declaration_node: Vec<u32>,
     /// Indexed by flow node: see `highest_unsettled_call` and `first_unsettled_call`. `u32::MAX`:
     /// not computed. A call that has been settled since: to be computed again.
     unsettled_call_before: Vec<u32>,
     unsettled_call_on_first_path: Vec<u32>,
+    /// One bit per flow node: a settled call at which both stop, whatever is settled later. An entry
+    /// that names it is not computed again.
+    stopping_calls: Vec<u64>,
     /// The functions whose `type_predicates_from_body` is being computed: `sig.resolvedTypePredicate = c.noTypePredicate`.
     type_predicates_in_progress: SmallVec<[(FileId, FnId); 2]>,
     /// `flowNodePostSuper`
@@ -181,6 +190,31 @@ impl FlowMemo {
     fn is_settled_call(&self, file: FileId, flow: FlowId) -> bool {
         self.settled_calls_of == Some(file)
             && self.settled_calls[flow.idx() / 64].0 & 1 << (flow.idx() % 64) != 0
+    }
+
+    /// Whether `known`, an entry of `unsettled_call_before` or `unsettled_call_on_first_path`, is
+    /// the answer.
+    #[inline]
+    fn is_up_to_date(&self, file: FileId, known: u32) -> bool {
+        known == 0
+            || known == NEVER_RETURNS
+            || known != u32::MAX
+                && (!self.is_settled_call(file, FlowId(known))
+                    || self.stopping_calls[known as usize / 64] & 1 << (known % 64) != 0)
+    }
+
+    #[inline]
+    fn takes_union(&self, flow: FlowId) -> bool {
+        !self.union_nodes.is_empty() && self.union_nodes.binary_search(&flow.0).is_ok()
+    }
+
+    /// Whether a walk that passes the loop label `flow` leaves a type in `flowLoopCache` that a
+    /// walk from behind the `finally` block around the loop, for which the block has fewer
+    /// antecedents, would not compute itself.
+    #[inline]
+    fn is_in_finally_block(&self, flow: FlowId) -> bool {
+        let mut blocks = self.finally_blocks.iter();
+        blocks.any(|&(label, reduce)| label < flow.0 && flow.0 < reduce)
     }
 
     fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
@@ -361,6 +395,10 @@ trait NarrowingSubjects {
     }
     /// A key whose name can only be resolved by a query (`is_computed_key`). `true`: bail out.
     fn bails_on_computed_key(&mut self, resolves: ResolvesKey) -> bool;
+    /// The test has a `&&` or a `||`, for which `narrow` returns the union of two types narrowed
+    /// from its input. For a reference that is no subject that is `getUnionType([t, t])`:
+    /// errorType if `t` is the error type of a name, neverType if it is another `never`.
+    fn add_union(&mut self);
 }
 
 /// For which references a walk that passes a flow node resolves the name of a key there.
@@ -388,11 +426,15 @@ impl NarrowingSubjects for About {
         self.state |= About::ANYTHING;
         true
     }
+
+    fn add_union(&mut self) {
+        self.state |= About::ANYTHING;
+    }
 }
 
 /// Indexed by symbol: the first flow node that concerns a reference rooted at it, whatever its
-/// path. Second field: the current node. Third: what its keys require.
-struct FirstNarrowingNodes<'a>(&'a mut [u32], u32, ResolvesKey);
+/// path. Second field: the current node. Third: what its keys require. Fourth: `add_union`.
+struct FirstNarrowingNodes<'a>(&'a mut [u32], u32, ResolvesKey, bool);
 
 impl NarrowingSubjects for FirstNarrowingNodes<'_> {
     fn add(&mut self, root: u32, _: u32) {
@@ -406,15 +448,20 @@ impl NarrowingSubjects for FirstNarrowingNodes<'_> {
         self.2 = self.2.max(resolves);
         false
     }
+
+    fn add_union(&mut self) {
+        self.3 = true;
+    }
 }
 
 /// The symbols a call statement references, each once: indexed by symbol, the last call that
-/// referenced it; the current call; the list; what the keys in the call require.
+/// referenced it; the current call; the list; what the keys in the call require; `add_union`.
 struct CallStatementSubjects<'a>(
     &'a mut [u32],
     u32,
     &'a mut Vec<(SymbolId, FlowId)>,
     ResolvesKey,
+    bool,
 );
 
 impl NarrowingSubjects for CallStatementSubjects<'_> {
@@ -429,13 +476,17 @@ impl NarrowingSubjects for CallStatementSubjects<'_> {
         self.3 = self.3.max(resolves);
         false
     }
+
+    fn add_union(&mut self) {
+        self.4 = true;
+    }
 }
 
 impl About {
     const ALONE: u32 = u32::MAX;
     const KNOWN: u32 = 1;
-    /// There are more subjects than `chains` can hold, or a key whose name can only be resolved by
-    /// a query.
+    /// There are more subjects than `chains` can hold, a key whose name can only be resolved by a
+    /// query, or a union (`add_union`).
     const ANYTHING: u32 = 2;
 
     fn add(&mut self, root: u32, first: u32) {
@@ -1000,7 +1051,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `recombineUnknownType`
     fn recombine_unknown_type(&mut self, ty: TypeId) -> TypeId {
-        if ty == self.unknown_union_type() {
+        // FOR SPEED: `unknown_union_type` looks the union up. Every join of a walk asks.
+        let has_its_members = matches!(
+            self.data(ty),
+            TypeData::Union(members)
+                if members.len() == 3 && members.contains(&TypeId::UNKNOWN_EMPTY_OBJECT)
+        );
+        if has_its_members && ty == self.unknown_union_type() {
             TypeId::UNKNOWN
         } else {
             ty
@@ -2116,8 +2173,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkIdentifier`: `flowContainer` is not `declarationContainer`, and it is a function that
     /// `flowContainer` moves out of, depending on what is then asked about the variable.
     fn is_closed_over(&self, file: FileId, symbol: SymbolId, e: ExprId) -> bool {
+        // As `flow_containers_up_to_declaration` has it.
         let Some(declaration_container) = self.declaration_container(file, symbol) else {
-            return false;
+            return true;
         };
         let parent = self.bound(file).expr_parent[e.idx()];
         let flow_container = self.get_control_flow_container(file, parent);
@@ -2404,12 +2462,31 @@ impl<'p, 's> Checker<'p, 's> {
                 BinOp::In => self.note_chain(file, right, false, 0, about),
                 BinOp::Comma => self.note_test(file, right, level, about),
                 BinOp::And | BinOp::Or => {
+                    about.add_union();
                     self.note_test(file, left, level, about);
                     self.note_test(file, right, level, about);
                 }
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    /// The same for `narrow_by_asserted`, which takes no union for a `&&`.
+    fn note_asserted(&self, file: FileId, e: ExprId, about: &mut CallStatementSubjects<'_>) {
+        if self.is_stack_low() {
+            return;
+        }
+        match self.hir(file)[e].kind {
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                right,
+            } => {
+                self.note_asserted(file, left, about);
+                self.note_asserted(file, right, about);
+            }
+            _ => self.note_test(file, e, 0, about),
         }
     }
 
@@ -3859,7 +3936,6 @@ impl<'p, 's> Checker<'p, 's> {
                 );
                 self.union(&[a, b])
             }
-            _ if ty.is_never() => ty,
             _ => self.narrow(reference, ty, e, true),
         }
     }
@@ -4609,10 +4685,14 @@ impl<'p, 's> Checker<'p, 's> {
         let mut highest = vec![0u32; bound.flow.len()];
         let mut lowest = vec![0u32; bound.flow.len()];
         let mut computed_key_nodes = Vec::new();
+        let mut finally_blocks = Vec::new();
+        let mut union_nodes = Vec::new();
         let mut longest = 0;
         for (i, &node) in bound.flow.iter().enumerate() {
-            let about = &mut FirstNarrowingNodes(&mut first_nodes, i as u32, ResolvesKey::Never);
+            let about =
+                &mut FirstNarrowingNodes(&mut first_nodes, i as u32, ResolvesKey::Never, false);
             let mut resolves_in_call = ResolvesKey::Never;
+            let mut takes_union = false;
             // Its antecedents: a range of edges, or a single node.
             let before = match node {
                 Flow::Unreachable => &[][..],
@@ -4663,7 +4743,7 @@ impl<'p, 's> Checker<'p, 's> {
             longest = longest.max(lengths[i]);
             match node {
                 Flow::Cond { expr, .. } => self.note_test(file, expr, 0, about),
-                Flow::Switch { stmt, .. } => {
+                Flow::Switch { stmt, from, to, .. } => {
                     if let StmtKind::Switch { expr, cases } = hir[stmt].kind {
                         // `switch (x)`, `switch (x.kind)`, `switch (typeof x)`, and `switch (true) { case test: }`
                         self.note_test(file, expr, 0, about);
@@ -4675,6 +4755,9 @@ impl<'p, 's> Checker<'p, 's> {
                                 self.note_test(file, hir[case].test, 0, about);
                             }
                         }
+                        // `narrowTypeBySwitchOnTrue`: the union of what its clauses leave.
+                        takes_union = matches!(hir[expr].kind, ExprKind::True)
+                            && (about.3 || to.saturating_sub(from) > 1);
                     }
                 }
                 Flow::Assign { target, .. } => match target {
@@ -4710,19 +4793,24 @@ impl<'p, 's> Checker<'p, 's> {
                             i as u32,
                             &mut call_statements_by_symbol,
                             ResolvesKey::Never,
+                            false,
                         );
                         self.note_test(file, call, 0, about);
                         for argument in hir.ids(hir[c].args) {
-                            self.note_test(file, argument, 0, about);
+                            self.note_asserted(file, argument, about);
                         }
-                        resolves_in_call = about.3;
+                        (resolves_in_call, takes_union) = (about.3, about.4);
                     }
                 }
+                Flow::Reduce { label, .. } => finally_blocks.push((label.0, i as u32)),
                 _ => {}
             }
             let resolves = about.2.max(resolves_in_call);
             if resolves != ResolvesKey::Never {
                 computed_key_nodes.push((i as u32, resolves));
+            }
+            if takes_union {
+                union_nodes.push(i as u32);
             }
         }
         if longest >= MAX_FLOW_DEPTH {
@@ -4741,6 +4829,8 @@ impl<'p, 's> Checker<'p, 's> {
         ) = (first_nodes, mentioned_in_calls, call_statements_by_symbol);
         (memo.max_antecedent, memo.declaration_node) = (highest, declaration_node);
         (memo.min_antecedent, memo.computed_key_nodes) = (lowest, computed_key_nodes);
+        memo.union_nodes = union_nodes;
+        memo.finally_blocks = finally_blocks;
         for calls in [
             &mut memo.unsettled_call_before,
             &mut memo.unsettled_call_on_first_path,
@@ -4748,6 +4838,8 @@ impl<'p, 's> Checker<'p, 's> {
             calls.clear();
             calls.resize(bound.flow.len(), u32::MAX);
         }
+        memo.stopping_calls.clear();
+        memo.stopping_calls.resize(bound.flow.len() / 64 + 1, 0);
     }
 
     /// Not in tsgo. The first node at which a walk back from `flow` evaluates something, if its
@@ -4763,10 +4855,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut at = flow;
         let found = loop {
             let known = self.flow_memo.unsettled_call_on_first_path[at.idx()];
-            if known == 0
-                || known == NEVER_RETURNS
-                || known != u32::MAX && !self.flow_memo.is_settled_call(file, FlowId(known))
-            {
+            if self.flow_memo.is_up_to_date(file, known) {
                 break known;
             }
             passed.push(at);
@@ -4780,7 +4869,10 @@ impl<'p, 's> Checker<'p, 's> {
                     if !self.flow_memo.is_idle_call(file, at)
                         && let Some(sig) = self.effects_signature(file, call)
                     {
-                        if self.asserts_false_expression(file, call, sig) {
+                        if self.flow_memo.takes_union(at)
+                            || self.asserts_false_expression(file, call, sig)
+                        {
+                            self.flow_memo.stopping_calls[at.idx() / 64] |= 1 << (at.idx() % 64);
                             break at.0;
                         }
                         if !matches!(self.sig_predicate(sig), Some(p) if p.asserts)
@@ -4791,6 +4883,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     before
                 }
+                Flow::Switch { .. } if self.flow_memo.takes_union(at) => break at.0,
                 Flow::Start { outer: before, .. }
                 | Flow::StartInvoked { outer: before, .. }
                 | Flow::ArrayMutation { before, .. }
@@ -4798,6 +4891,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Flow::Switch { before, .. }
                 | Flow::Assign { before, .. } => before,
                 Flow::Reduce { .. } => break at.0,
+                Flow::Loop { .. } if self.flow_memo.is_in_finally_block(at) => break at.0,
                 Flow::Label { start, len } | Flow::Loop { start, len } => {
                     if self.is_stack_low() {
                         return u32::MAX;
@@ -4842,60 +4936,117 @@ impl<'p, 's> Checker<'p, 's> {
     /// Not in tsgo. The same for a walk that takes every antecedent of a join, as one does that
     /// does not start with the declared type: the highest numbered call statement among them. An
     /// antecedent has a lower number than its node, except on the back edge of a loop.
+    /// `NEVER_RETURNS`: there is none, and every path ends at a call that never returns.
     fn highest_unsettled_call(&mut self, file: FileId, flow: FlowId) -> u32 {
         let bound = self.bound(file);
         let mut passed: SmallVec<[FlowId; 16]> = SmallVec::new();
+        // The index in `passed` of the last loop label with a back edge.
+        let mut last_loop = None;
         let mut at = flow;
-        let found = loop {
+        let mut found = loop {
             let known = self.flow_memo.unsettled_call_before[at.idx()];
-            if known == 0
-                || known != u32::MAX && !self.flow_memo.is_settled_call(file, FlowId(known))
-            {
+            if self.flow_memo.is_up_to_date(file, known) {
                 break known;
             }
             passed.push(at);
             at = match bound.flow[at.idx()] {
                 Flow::Unreachable => break 0,
                 Flow::Call { .. } if !self.flow_memo.is_settled_call(file, at) => break at.0,
-                Flow::Call { call, .. }
+                Flow::Call { before, call } => {
+                    // `getTypeAtFlowCall`
                     if !self.flow_memo.is_idle_call(file, at)
-                        && self
-                            .effects_signature(file, call)
-                            .is_some_and(|sig| self.asserts_false_expression(file, call, sig)) =>
-                {
-                    break at.0;
+                        && let Some(sig) = self.effects_signature(file, call)
+                    {
+                        if self.flow_memo.takes_union(at)
+                            || self.asserts_false_expression(file, call, sig)
+                        {
+                            self.flow_memo.stopping_calls[at.idx() / 64] |= 1 << (at.idx() % 64);
+                            break at.0;
+                        }
+                        if !matches!(self.sig_predicate(sig), Some(p) if p.asserts)
+                            && self.sig_return(sig).is_never()
+                        {
+                            break NEVER_RETURNS;
+                        }
+                    }
+                    before
                 }
+                Flow::Switch { .. } if self.flow_memo.takes_union(at) => break at.0,
                 Flow::Start { outer: before, .. }
                 | Flow::StartInvoked { outer: before, .. }
-                | Flow::Reduce { before, .. }
                 | Flow::ArrayMutation { before, .. }
                 | Flow::Cond { before, .. }
                 | Flow::Switch { before, .. }
-                | Flow::Assign { before, .. }
-                | Flow::Call { before, .. } => before,
-                // The type at the entry is the declared type, so no back edge is followed.
-                Flow::Loop { start, len } => match bound.edges(start, len).first() {
-                    Some(&entry) => entry,
-                    None => break 0,
+                | Flow::Assign { before, .. } => before,
+                // The walk passes the `finally` block, whose label then has the antecedents of
+                // `instead` only.
+                Flow::Reduce {
+                    before, instead, ..
+                } => {
+                    if self.is_stack_low() {
+                        return u32::MAX;
+                    }
+                    let in_block = self.highest_unsettled_call(file, before);
+                    match (in_block, self.highest_unsettled_call(file, instead)) {
+                        (u32::MAX, _) | (_, u32::MAX) => return u32::MAX,
+                        (0, NEVER_RETURNS) => break NEVER_RETURNS,
+                        _ => break in_block,
+                    }
+                }
+                Flow::Loop { .. } if self.flow_memo.is_in_finally_block(at) => break at.0,
+                // If the type at the entry is the declared type, no back edge is followed.
+                Flow::Loop { start, len } => match *bound.edges(start, len) {
+                    [] => break 0,
+                    [entry] => entry,
+                    [entry, ..] => {
+                        last_loop = Some(passed.len() - 1);
+                        entry
+                    }
                 },
                 Flow::Label { start, len } => {
                     if self.is_stack_low() {
                         return u32::MAX;
                     }
-                    let mut highest = 0;
+                    let (mut highest, mut is_reached, mut bypass) = (0, false, None);
                     for &edge in bound.edges(start, len) {
-                        highest = highest.max(self.highest_unsettled_call(file, edge));
+                        if bypass.is_none()
+                            && matches!(bound.flow[edge.idx()], Flow::Switch { from, to, .. } if from == to)
+                        {
+                            bypass = Some(edge);
+                            continue;
+                        }
+                        match self.highest_unsettled_call(file, edge) {
+                            u32::MAX => return u32::MAX,
+                            NEVER_RETURNS => {}
+                            found => {
+                                is_reached = true;
+                                highest = highest.max(found);
+                            }
+                        }
                     }
-                    if highest == u32::MAX {
-                        return highest;
+                    match bypass.map(|edge| self.highest_unsettled_call(file, edge)) {
+                        Some(u32::MAX) => return u32::MAX,
+                        None | Some(NEVER_RETURNS) if is_reached => break highest,
+                        None | Some(NEVER_RETURNS) => break NEVER_RETURNS,
+                        Some(found) if is_reached => break highest.max(found),
+                        // The walk asks whether the `switch` is exhaustive.
+                        Some(_) => break at.0,
                     }
-                    break highest;
                 }
             };
             if at.is_none() {
                 break 0;
             }
         };
+        // A loop whose entry is unreachable has neverType, not `unreachableNeverType`.
+        if found == NEVER_RETURNS
+            && let Some(last_loop) = last_loop
+        {
+            for at in passed.drain(last_loop + 1..) {
+                self.flow_memo.unsettled_call_before[at.idx()] = found;
+            }
+            found = passed[last_loop].0;
+        }
         for at in passed {
             self.flow_memo.unsettled_call_before[at.idx()] = found;
         }
@@ -4967,6 +5118,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(reference.root, Root::Symbol(_) | Root::Other)
             || self.task.file != Some(file)
             || self.is_automatic_type(declared)
+            // See `NarrowingSubjects::add_union`.
+            || self.is_unresolved_name(declared)
             || self.has_order_dependent_assignment_marks(file)
         {
             return false;
@@ -5071,7 +5224,8 @@ impl<'p, 's> Checker<'p, 's> {
             && self.p.files.options.strict_null_checks
         {
             let unsettled = self.highest_unsettled_call(file, flow);
-            return unsettled == 0 || unsettled < self.flow_memo.declaration_node[s.idx()];
+            return matches!(unsettled, 0 | NEVER_RETURNS)
+                || unsettled < self.flow_memo.declaration_node[s.idx()];
         }
         matches!(self.first_unsettled_call(file, flow), 0 | NEVER_RETURNS)
     }
@@ -5109,7 +5263,6 @@ impl<'p, 's> Checker<'p, 's> {
         of_name: Crossing,
     ) -> TypeId {
         if self.flow_analysis_disabled {
-            self.note_flow_analysis_disabled_at(file);
             return TypeId::ERROR;
         }
         let bound = self.bound(file);
@@ -5165,29 +5318,27 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// Not in tsgo. A reference in `file` sets `flowAnalysisDisabled`, or gets errorType because it
-    /// is set. See `Checker::flow_analysis_disabled_in_shared_file`.
-    #[cold]
-    fn note_flow_analysis_disabled_at(&mut self, file: FileId) {
-        self.flow_analysis_disabled_in_shared_file |=
-            self.task.file != Some(file) || !self.files().module(file).is_leaf;
-    }
-
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
         if self.flow_analysis_disabled {
-            self.note_flow_analysis_disabled_at(file);
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
         let outer = std::mem::replace(&mut self.walk_declared, declared);
-        let evolved = self.flow_type(&mut walk, flow).ty;
+        let evolved = self.flow_type(&mut walk, flow);
         self.walk_declared = outer;
+        // The walk that completes a loop goes on with the entries that the back edges left in
+        // `sharedFlows`. The next walk finds the loop in `flowLoopCache`, and may find another
+        // type. What follows from this one stays in `flowTypeCache`.
+        let depth = self.flow_type_cache_depth;
+        if evolved.incomplete && depth != usize::MAX && self.is_flow_loop_visible(depth) {
+            self.taint_from(depth);
+        }
+        let evolved = evolved.ty;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
             self.flow_analysis_disabled = true;
-            self.note_flow_analysis_disabled_at(file);
             if e.is_some() {
                 (self.p.flows_too_deep).insert(&self.task, (file, e), (), Stored::new());
             }
@@ -5403,6 +5554,14 @@ impl<'p, 's> Checker<'p, 's> {
         initial: TypeId,
     ) -> TypeId {
         let flow = self.bound(file).expr_flow[e.idx()];
+        // `getFlowNodeOfNode(reference) == nil`: `declaredType`. `expr_flow` has the unreachable
+        // node for that too.
+        if flow == UNREACHABLE
+            && !self.flow_analysis_disabled
+            && !is_narrowable_reference(self.hir(file), e)
+        {
+            return TypeId::AUTO;
+        }
         let reference = self.reference_of(file, e);
         let walk = Walk::new(reference, TypeId::AUTO, initial, false);
         self.get_flow_type_of_reference(walk, flow)
@@ -5558,7 +5717,7 @@ impl<'p, 's> Checker<'p, 's> {
             (self.is_marked_in_nested_function(file, declaring_function, node)).is_some()
         };
         hir.exports.iter().enumerate().any(|(i, export)| {
-            export.spec.is_none()
+            !export.has_module_specifier
                 && !export.type_only
                 && (export.items.iter())
                     .any(|s| hir[s].local == name && !hir[s].type_only && is_marked(s))
@@ -5757,38 +5916,15 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 self.union(types)
             };
-            // Only `unknown` is ever split.
-            let union = if self.walk_declared == TypeId::UNKNOWN {
-                self.recombine_unknown_type(union)
-            } else {
-                union
-            };
-            // The union of all the members of the declared type is the declared type.
+            let union = self.recombine_unknown_type(union);
+            // The union of all the members of the declared type is the declared type. A fresh
+            // `true` or `false` that an assignment left is not a member of it.
             if union != self.walk_declared
                 && let (TypeData::Union(parts), TypeData::Union(declared)) =
                     (self.data(union), self.data(self.walk_declared))
                 && parts == declared
             {
                 return self.walk_declared;
-            }
-            // `false | true` is `boolean` regardless of their freshness: together they widen to it
-            // anyway.
-            let parts = self.parts(union);
-            let (fresh_false, fresh_true) = (
-                parts.contains(&TypeId::FRESH_FALSE),
-                parts.contains(&TypeId::FRESH_TRUE),
-            );
-            if (fresh_false || fresh_true)
-                && (fresh_false || parts.contains(&TypeId::FALSE))
-                && (fresh_true || parts.contains(&TypeId::TRUE))
-            {
-                return self.map_type(union, |c, m| {
-                    if c.is_boolean_like(m) {
-                        c.regular(m)
-                    } else {
-                        m
-                    }
-                });
             }
             return union;
         }
@@ -6472,8 +6608,8 @@ impl<'p, 's> Checker<'p, 's> {
         AtAssignment::Type(self.assignment_reduced_type(declared, assigned))
     }
 
-    /// `getTypeOfExpression`. `flowTypeCache` is ported for the traversal of a loop back edge only. Outside one, the shared expression
-    /// cache stores every cacheable result, and a non-cacheable result comes from a cycle or a limit, not from flow analysis.
+    /// `getTypeOfExpression`. `flowTypeCache` is ported for the traversal of a loop back edge and for `type_of_expr_outside_loops`, and
+    /// holds what the shared expression cache does not store (`taint_from`). Outside them that cache stores every cacheable result.
     pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let depth = self.flow_type_cache_depth;
         // `checkExpressionCached` computes with an empty cache: a type resolution entered since the traversal began hides this one.
@@ -7448,12 +7584,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `checkExpressionCached`: the type of `e`, computed with an empty `flowLoopStack`. It is complete, whatever incomplete types the
-    /// analyses started for it met.
+    /// `checkExpressionCached`: the type of `e`, computed with an empty `flowLoopStack` and an empty `flowTypeCache`. Only its callers
+    /// read `links.resolvedType`, each once: `checkExpression` computes the type again.
     fn type_of_expr_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
         let loops = std::mem::take(&mut self.flow_loops);
         let cache = std::mem::take(&mut self.flow_type_cache);
-        let depth = std::mem::replace(&mut self.flow_type_cache_depth, usize::MAX);
+        let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
         let ty = self.type_of_expr(file, e);
         self.flow_type_cache = cache;
         self.flow_type_cache_depth = depth;
@@ -7767,7 +7903,6 @@ impl<'p, 's> Checker<'p, 's> {
         sense: bool,
     ) -> TypeId {
         if self.flow_analysis_disabled {
-            self.note_flow_analysis_disabled_at(reference.file);
             return TypeId::ERROR;
         }
         let start = if before.is_none() {
@@ -7777,7 +7912,6 @@ impl<'p, 's> Checker<'p, 's> {
             let ty = self.flow_type(&mut walk, before).ty;
             if walk.too_deep {
                 self.flow_analysis_disabled = true;
-                self.note_flow_analysis_disabled_at(reference.file);
                 return TypeId::ERROR;
             }
             if walk.steps >= MAX_STEPS {

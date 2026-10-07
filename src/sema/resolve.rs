@@ -1144,8 +1144,11 @@ pub fn get_root_length(path: &[u8]) -> usize {
 /// `GetRootLength` of a path in the checker's format, which has a `/` before a root that does not
 /// begin with one: `/c:/a` is `c:/a`, `/^/a` is `^/a` and `/http://host/a` is `http://host/a`. The
 /// separator at the end of the root is not counted, unless it is all of the root.
+/// A directory in `/` can have such a name. What is in it has a zero byte for a root, which no name
+/// has: `/\0/c:/a` is `/c:/a`.
 pub fn root_length(path: &[u8]) -> usize {
     match path {
+        [b'/', 0] | [b'/', 0, b'/', ..] => 2,
         [b'/', volume, b':'] | [b'/', volume, b':', b'/', ..] if volume.is_ascii_alphabetic() => 3,
         [b'/', b'^'] | [b'/', b'^', b'/', ..] => 2,
         [b'/', b'/', ..] => unc_root_length(path),
@@ -1171,6 +1174,7 @@ pub fn typescript_path(path: &[u8]) -> &[u8] {
     match root_length(path) {
         0 | 1 => path,
         _ if path.starts_with(b"//") => path,
+        _ if path[1] == 0 => &path[2..],
         _ => &path[1..],
     }
 }
@@ -1569,6 +1573,16 @@ enum IsPattern {
 enum IsImports {
     No,
     Yes,
+}
+
+impl IsImports {
+    /// The field of package.json.
+    fn field(self) -> &'static [u8] {
+        match self {
+            IsImports::Yes => b"imports",
+            IsImports::No => b"exports",
+        }
+    }
 }
 
 /// `module.PackageId`, with a `Name`. The texts live as long as the resolver.
@@ -3516,7 +3530,103 @@ impl<'h> Resolver<'h> {
 
     /// `loadModuleFromTargetExportOrImport`. `subpath`: the text matched by the `*` of `key` if
     /// `is_pattern`, or else the text after `key`.
-    fn export_target(
+    fn export_target<'j>(
+        &self,
+        package_dir: &[u8],
+        module_name: &[u8],
+        mut target: &'j Json,
+        subpath: &[u8],
+        is_pattern: IsPattern,
+        key: &[u8],
+        is_imports: IsImports,
+        look: Look,
+    ) -> Found {
+        /// An object or an array whose targets are being searched.
+        enum Entered<'a> {
+            /// The condition whose target is being searched, and those after it.
+            Conditions(&'a [u8], std::slice::Iter<'a, (Vec<u8>, Json)>),
+            Targets(std::slice::Iter<'a, Json>),
+        }
+        let field = is_imports.field();
+        let next_target = |entered: &mut Entered<'j>| -> Option<&'j Json> {
+            match entered {
+                Entered::Conditions(condition, rest) => {
+                    for (next, target) in rest.by_ref() {
+                        if self.condition_matches(next, look) {
+                            look.trace(6403, &[Arg::Bytes(field), Arg::Bytes(next)]);
+                            *condition = next.as_slice();
+                            return Some(target);
+                        }
+                        look.trace(6405, &[Arg::Bytes(next)]);
+                    }
+                    look.trace(6416, &[]);
+                    None
+                }
+                Entered::Targets(rest) => {
+                    let next = rest.next();
+                    if next.is_none() {
+                        look.trace(6275, &[Arg::Path(package_dir), Arg::Bytes(module_name)]);
+                    }
+                    next
+                }
+            }
+        };
+        // Outermost first. The decoder accepts 10000 levels, for which Go's stack grows.
+        let mut entered: SmallVec<[Entered<'j>; 4]> = SmallVec::new();
+        loop {
+            // Inwards, to a target that has none of its own.
+            let found = loop {
+                let mut inner = match target {
+                    Json::Object(conditions) => {
+                        look.trace(6413, &[]);
+                        Entered::Conditions(b"", conditions.iter())
+                    }
+                    Json::Array(targets) => Entered::Targets(targets.iter()),
+                    _ => {
+                        break self.plain_export_target(
+                            package_dir,
+                            module_name,
+                            target,
+                            subpath,
+                            is_pattern,
+                            key,
+                            is_imports,
+                            look,
+                        );
+                    }
+                };
+                match next_target(&mut inner) {
+                    Some(next) => target = next,
+                    None => break Found::No,
+                }
+                entered.push(inner);
+            };
+            // Outwards, to the first that has another target to search. A result ends the search.
+            loop {
+                let Some(innermost) = entered.last_mut() else {
+                    return found;
+                };
+                if let Found::No = found {
+                    if let Entered::Conditions(condition, _) = innermost {
+                        look.trace(6415, &[Arg::Bytes(condition)]);
+                    }
+                    if let Some(next) = next_target(innermost) {
+                        target = next;
+                        break;
+                    }
+                } else if let Entered::Conditions(condition, _) = innermost {
+                    if let Found::File(_) = found {
+                        look.trace(6414, &[Arg::Bytes(condition)]);
+                    }
+                    look.trace(6416, &[]);
+                }
+                entered.pop();
+            }
+        }
+    }
+
+    /// `loadModuleFromTargetExportOrImport`, for a `target` that is no object and no array.
+    fn plain_export_target(
         &self,
         package_dir: &[u8],
         module_name: &[u8],
@@ -3527,22 +3637,7 @@ impl<'h> Resolver<'h> {
         is_imports: IsImports,
         look: Look,
     ) -> Found {
-        let field: &[u8] = match is_imports {
-            IsImports::Yes => b"imports",
-            IsImports::No => b"exports",
-        };
-        let inner = |target: &Json| {
-            self.export_target(
-                package_dir,
-                module_name,
-                target,
-                subpath,
-                is_pattern,
-                key,
-                is_imports,
-                look,
-            )
-        };
+        let field = is_imports.field();
         match target {
             Json::String(target_string) => {
                 let is_pattern = is_pattern == IsPattern::Yes;
@@ -3613,39 +3708,6 @@ impl<'h> Resolver<'h> {
                     self.get_package_id(path, package_dir, self.package(package_dir), look);
                 }
                 found
-            }
-            // The first condition that matches and produces a result.
-            Json::Object(conditions) => {
-                look.trace(6413, &[]);
-                for (condition, target) in conditions {
-                    if !self.condition_matches(condition, look) {
-                        look.trace(6405, &[Arg::Bytes(condition)]);
-                        continue;
-                    }
-                    look.trace(6403, &[Arg::Bytes(field), Arg::Bytes(condition)]);
-                    match inner(target) {
-                        Found::No => look.trace(6415, &[Arg::Bytes(condition)]),
-                        found => {
-                            if let Found::File(_) = found {
-                                look.trace(6414, &[Arg::Bytes(condition)]);
-                            }
-                            look.trace(6416, &[]);
-                            return found;
-                        }
-                    }
-                }
-                look.trace(6416, &[]);
-                Found::No
-            }
-            Json::Array(targets) => {
-                for target in targets {
-                    match inner(target) {
-                        Found::No => {}
-                        found => return found,
-                    }
-                }
-                look.trace(6275, &[Arg::Path(package_dir), Arg::Bytes(module_name)]);
-                Found::No
             }
             Json::Null => {
                 look.trace(6274, &[Arg::Path(package_dir), Arg::Bytes(module_name)]);

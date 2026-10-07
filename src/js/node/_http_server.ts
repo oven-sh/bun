@@ -3463,7 +3463,15 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
-  if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
+  // Node's write_() runs the implicit writeHead() before it reads the response: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L975-L992
+  const stateBefore = this[headerStateSymbol];
+  const headerState = callWriteHeadIfObservable(this, stateBefore, true);
+  // A replaced writeHead() that called end() itself finished the response: the data of this call is dropped.
+  if (headerState !== stateBefore && this.finished) {
+    hasServerResponseFinished(this, undefined, callback, true);
+    return this;
+  }
+  if (headerState === NodeHTTPHeaderState.none) {
     // Implicit header: Node's write_() runs _implicitHeader() (which derives
     // _hasBody from the status code) unconditionally before its !_hasBody
     // discard - not gated on the chunk, or an empty first write would flip
@@ -3480,9 +3488,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       chunk = undefined;
     }
   }
-
-  const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState, true);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -4046,14 +4051,17 @@ function emitResponseFinishedThenClose(res, callback) {
 }
 
 ServerResponse.prototype.flushHeaders = function () {
-  if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) return; // Should be idempotent.
-  if (this[headerStateSymbol] !== NodeHTTPHeaderState.assigned) this._implicitHeader();
+  const headerState = this[headerStateSymbol];
+  if (headerState === NodeHTTPHeaderState.sent) return; // Should be idempotent.
+  if (headerState !== NodeHTTPHeaderState.assigned) this._implicitHeader();
 
   if (this[kPipelinedQueuedState] !== undefined) {
     // Queued pipelined response: its headers go out when it is assigned the
     // socket (advanceResponsePipeline) - nothing can be flushed before then.
     return;
   }
+  // end() drives this writeHead() and sends the head with the body, as Node's corked end() does: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1094-L1098
+  if (this[kImplicitHeaderFromEnd]) return;
 
   const handle = this[kHandle];
   if (handle) {
@@ -4104,6 +4112,7 @@ function updateHasBody(response, statusCode) {
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
+// Returns the header state after the call: a replaced writeHead() can store the head, or send it with write().
 function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   if (
     headerState === NodeHTTPHeaderState.none &&
@@ -4118,7 +4127,9 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
     } finally {
       if (fromEnd) self[kImplicitHeaderFromEnd] = false;
     }
+    return self[headerStateSymbol];
   }
+  return headerState;
 }
 
 function allowWritesToContinue() {

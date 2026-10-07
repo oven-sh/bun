@@ -141,16 +141,29 @@ impl RegularExpression {
     }
 }
 
+/// A clone starts uncompiled and compiles `source` on its own first match.
+impl Clone for RegularExpression {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            compiled: OnceCell::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct PnpmMatcher {
     pub matchers: Box<[Matcher]>,
     pub behavior: Behavior,
 }
 
+#[derive(Clone)]
 pub struct Matcher {
     pub(crate) pattern: Pattern,
     pub is_exclude: bool,
 }
 
+#[derive(Clone)]
 pub enum Pattern {
     MatchAll,
     Regex(RegularExpression),

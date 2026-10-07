@@ -1,7 +1,8 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { mkdirSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, directoryPathOfLength, bunEnv as env, isIPv6, isLinux, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -221,6 +222,19 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
+    });
+
+    // The path buffer is 4096 bytes on Linux. `$HOME/.npmrc` does not fit, so there is no user .npmrc.
+    it.skipIf(!isLinux)("skips a $HOME whose .npmrc path does not fit the path buffer", async () => {
+      using dir = tempDir("npmrc-long-home", pkg);
+      const home = directoryPathOfLength(join(String(dir), "home"), 4092);
+      mkdirSync(home, { recursive: true });
+      const result = await publishDryRun(String(dir), { HOME: home, USERPROFILE: home });
+      expect(result).toEqual({
+        stdout: expect.stringContaining("Total files: 1"),
+        stderr: "error: missing authentication (run `bunx npm login`)\n",
+        exitCode: 1,
+      });
     });
   });
 

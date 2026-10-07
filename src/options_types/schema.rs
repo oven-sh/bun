@@ -185,6 +185,14 @@ pub mod api {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
     }
 
+    impl Clone for NpmRegistryMap {
+        fn clone(&self) -> Self {
+            Self {
+                scopes: bun_core::handle_oom(self.scopes.clone()),
+            }
+        }
+    }
+
     /// Value of `BunInstall.ca`; hoisted to a named type so callers can
     /// construct it.
     #[derive(Clone, Debug)]
@@ -202,9 +210,8 @@ pub mod api {
     /// Full field set.
     /// `Default` is every field `None`/empty.
     ///
-    /// No `Debug`/`Clone` derive: `NpmRegistryMap` wraps `StringArrayHashMap`
-    /// which currently provides neither.
-    #[derive(Default)]
+    /// No `Debug` derive: `StringArrayHashMap` provides none.
+    #[derive(Clone, Default)]
     pub struct BunInstall {
         /// default_registry
         pub default_registry: Option<NpmRegistry>,

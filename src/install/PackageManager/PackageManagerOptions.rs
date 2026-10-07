@@ -593,7 +593,7 @@ impl Options {
                     Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
             }
 
-            // `PnpmMatcher` is move-only; `config` is `&` here so the matchers
+            // `config` is `&` here, so the `PnpmMatcher`s are not cloned: they
             // are taken by the owning caller (`PackageManager::init`) right
             // after `load()` returns. The runtime auto-install path never uses
             // the isolated linker, so it has nothing to transfer.

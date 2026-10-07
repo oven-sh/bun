@@ -850,11 +850,11 @@ impl<'p, 's> Checker<'p, 's> {
         } else if self.is_reference_to_global(source, known::Object, 0) {
             self.report_error(r, 2696, &[]);
         } else if is_jsx && self.is_intersection(target) {
+            let (file, location) = (r.error_node.0, self.jsx_element_around(r.error_node));
             if let TypeData::Intersection(parts) = self.data(target)
-                && let Some(file) = self.task.file
                 && let (Some(a), Some(b)) = (
-                    self.jsx_type(file, Node::FILE, known::IntrinsicAttributes),
-                    self.jsx_type(file, Node::FILE, known::IntrinsicClassAttributes),
+                    self.jsx_type(file, location, known::IntrinsicAttributes),
+                    self.jsx_type(file, location, known::IntrinsicClassAttributes),
                 )
                 && (parts.contains(&a) || parts.contains(&b))
             {
@@ -875,6 +875,22 @@ impl<'p, 's> Checker<'p, 's> {
             let at = self.place_of_type_parameter_declaration(file, tp);
             r.related_info
                 .push(self.new_diagnostic(at, 2208, &[Arg::Bytes(&constraint)]));
+        }
+    }
+
+    /// `error_node` as the location that `getJsxNamespaceAt` resolves a name from: the opening of
+    /// the innermost JSX element around it. `Node::FILE`: there is none.
+    fn jsx_element_around(&mut self, error_node: Place) -> Node {
+        let (file, start, end) = error_node;
+        if end == 0 {
+            return Node::FILE;
+        }
+        let (hir, by_kind) = (self.hir(file), self.exprs_by_kind(file));
+        let elements = by_kind.of(ExprTag::Jsx).iter().copied();
+        let around = elements.filter(|&e| hir[e].pos <= start && start < hir[e].end);
+        match around.max_by_key(|&e| hir[e].pos) {
+            Some(element) => self.jsx_opening_like(file, element),
+            None => Node::FILE,
         }
     }
 

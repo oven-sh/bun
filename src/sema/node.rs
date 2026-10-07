@@ -1014,7 +1014,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             TypeNodeKind::Template { types, .. } => {
                 self.one(node.with(Part::Head)) || self.wrapped(types, Part::Span)
             }
-            TypeNodeKind::Heritage(e) => self.one(e),
+            TypeNodeKind::Heritage { expr, args } => self.one(expr) || self.list(args),
             TypeNodeKind::Import { name, args, .. } => {
                 self.one(file.attributes_of_import_type(t).unwrap_or(ExprId::NONE))
                     || self.one(name)
@@ -1153,7 +1153,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
             Part::ImportClause => match statement {
                 Some(StmtKind::Import(i)) => {
                     let has_bindings = file[i].namespace.is_some()
-                        || !file[i].named.is_empty()
+                        || file[i].has_named_imports
                         || file[i].default.is_none();
                     self.part(row, Part::Name, file[i].default.is_some())
                         || self.part(row, Part::NamedBindings, has_bindings)
@@ -1486,13 +1486,13 @@ impl<'s> File<'s> {
     }
 
     /// `<T>operand`, which starts before its operand, parentheses included; not `operand as T`.
-    fn is_type_assertion(&self, e: ExprId, operand: ExprId) -> bool {
+    pub(crate) fn is_type_assertion(&self, e: ExprId, operand: ExprId) -> bool {
         self[e].pos < open_parenthesis(self, operand).unwrap_or(self[operand].pos)
     }
 
     /// A `with` statement is stored as a block of its object and its body, positioned at the
     /// keyword.
-    fn is_with_statement(&self, s: StmtId) -> bool {
+    pub(crate) fn is_with_statement(&self, s: StmtId) -> bool {
         let written = self.text.get(self[s].start as usize..);
         matches!(self[s].kind, StmtKind::Block(list) if list.len() == 2)
             && written.is_some_and(|text| text.starts_with(b"with"))
@@ -2178,7 +2178,7 @@ impl<'s> File<'s> {
     fn kind_of_type(&self, t: TypeNodeId, node: Node) -> Kind {
         match self[t].kind {
             TypeNodeKind::Error => Kind::Unknown,
-            TypeNodeKind::Heritage(_) => Kind::ExpressionWithTypeArguments,
+            TypeNodeKind::Heritage { .. } => Kind::ExpressionWithTypeArguments,
             TypeNodeKind::Keyword(keyword) => match keyword {
                 Keyword::Any => Kind::AnyKeyword,
                 Keyword::Unknown => Kind::UnknownKeyword,
@@ -2507,7 +2507,7 @@ impl File<'_> {
                 _ => Node::NONE,
             },
             NodeData::Type(t) => match self[t].kind {
-                TypeNodeKind::Heritage(e) => self.child(e),
+                TypeNodeKind::Heritage { expr, .. } => self.child(expr),
                 _ => Node::NONE,
             },
             NodeData::Case(c) => self.child(self[c].test),
@@ -3253,11 +3253,15 @@ impl File<'_> {
                     return Ok(is_await);
                 }
                 Kind::PropertyDeclaration if below == self.initializer(above) => return Ok(false),
-                // Its decorators are parsed in the outer context.
+                // `parseParameterEx`: its decorators are parsed in the context that
+                // `parseParametersWorker` found, which `parseType` has exited for a function type.
                 Kind::Parameter
                     if is_await && matches!(self.data(below), NodeData::Modifier(_)) =>
                 {
                     above = self.parent(above);
+                    if matches!(self.data(above), NodeData::Type(_)) {
+                        return Ok(false);
+                    }
                 }
                 // The part of an exported class after its type parameters.
                 Kind::ClassDeclaration | Kind::ClassExpression
@@ -3292,7 +3296,7 @@ impl File<'_> {
     }
 
     /// Whether `child` is the parameter of the arrow function `x => ..` or `async x => ..`.
-    fn is_parameter_without_parentheses(&self, arrow_function: Node, child: Node) -> bool {
+    pub fn is_parameter_without_parentheses(&self, arrow_function: Node, child: Node) -> bool {
         let (first_token, start) = (self.start(arrow_function), self.start(child));
         matches!(self.data(child), NodeData::Param(_))
             && (start == first_token

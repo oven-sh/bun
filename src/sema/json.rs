@@ -2,7 +2,7 @@
 //! parsed by the one shared parser.
 
 use crate::atom::Interner;
-use crate::check::spans::Spans;
+use crate::check::spans::{Spans, skip_trivia};
 use crate::config_options::Declaration;
 use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
@@ -170,7 +170,9 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                         continue;
                     }
                     if !is_double_quoted(prop.pos) {
-                        refused.push((prop.pos, 1327, spans.prop_name(p) as u32));
+                        // `getErrorSpanForNode`: a missing name is before the trivia.
+                        let start = skip_trivia(spans.text, prop.pos as usize) as u32;
+                        refused.push((start, 1327, spans.prop_name(p) as u32));
                     }
                     prop.value
                 }
@@ -203,6 +205,11 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
     hir.diagnostics
         .to_mut()
         .extend(refused.iter().map(|&(start, code, end)| {
+            // Only a missing node ends where the text starts.
+            let end = match end {
+                0 => Diagnostic::NO_LENGTH,
+                end => end,
+            };
             Diagnostic::new(DiagnosticKind::Parse, (start, end), code, &[])
         }));
 }

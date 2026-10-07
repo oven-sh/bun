@@ -1145,6 +1145,8 @@ pub enum MemberKind {
 #[derive(Copy, Clone, Debug)]
 pub struct Member {
     pub kind: MemberKind,
+    /// The name `declareSymbolEx` gives its symbol: that of `node.Name()`, but `default` for a
+    /// member with that modifier (`default class: 1`).
     pub key: PropKey,
     pub flags: Flags,
     pub ty: TypeNodeId,
@@ -1328,6 +1330,8 @@ pub struct Import {
     /// Position of the `*` of `* as namespace`.
     pub namespace_start: u32,
     pub named: Span<ImportSpecId>,
+    /// `importClause.NamedBindings` is a `NamedImports`: `named` can be empty.
+    pub has_named_imports: bool,
     pub type_only: bool,
     /// `importClause.PhaseModifier` is `defer`.
     pub is_deferred: bool,
@@ -1597,8 +1601,11 @@ pub enum TypeNodeKind {
     /// Syntax the type parser failed on.
     Error,
     /// An element of a heritage clause of an interface, or of an `implements` clause of a class,
-    /// whose expression is not an entity name, which is an error: `extends f()`.
-    Heritage(ExprId),
+    /// whose expression is not an entity name, which is an error: `extends f()<Args>`.
+    Heritage {
+        expr: ExprId,
+        args: IdList<TypeNodeId>,
+    },
     Keyword(Keyword),
     /// `A.B.C<Args>`
     Ref {
@@ -2509,8 +2516,16 @@ pub fn is_string_literal_like(hir: &File, e: ExprId) -> bool {
 
 /// `IsStringOrNumericLiteralLike`
 pub fn is_string_or_numeric_literal_like(hir: &File, e: ExprId) -> bool {
-    is_string_literal_like(hir, e)
-        || matches!(hir[e].kind, ExprKind::Number(_)) && !is_parenthesized(hir, e)
+    !is_parenthesized(hir, e) && is_string_or_numeric_literal_like_in_parentheses(hir, e)
+}
+
+/// `IsStringOrNumericLiteralLike(SkipParentheses(e))`
+pub fn is_string_or_numeric_literal_like_in_parentheses(hir: &File, e: ExprId) -> bool {
+    match hir[e].kind {
+        ExprKind::String(_) | ExprKind::Number(_) => true,
+        ExprKind::Template { exprs, .. } => exprs.is_empty(),
+        _ => false,
+    }
 }
 
 /// `IsSignedNumericLiteral`

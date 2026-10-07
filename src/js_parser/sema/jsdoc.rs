@@ -163,6 +163,8 @@ pub(crate) struct Import {
     pub(crate) clause_end: u32,
     pub(crate) namespace_start: u32,
     pub(crate) named: Vec<ImportSpecifier>,
+    /// `importClause.NamedBindings` is a `NamedImports`.
+    pub(crate) has_named_imports: bool,
     /// The module specifier and its position. `None` if it is not a string.
     pub(crate) specifier: Option<(StoreStr, u32)>,
     pub(crate) module: Option<ts::ModuleSpecifier>,
@@ -269,7 +271,10 @@ pub(crate) fn read_comments<'a>(
     let flags = core::mem::take(&mut p.lexer.comment_flags);
     let file = core::mem::take(&mut syntax.b.file);
     let pending = core::mem::take(&mut syntax.b.pending);
+    let function_contexts = core::mem::take(&mut syntax.function_contexts);
     p.type_syntax = Some(Box::new(syntax));
+    // `parseJSDocComment` leaves `statementHasAwaitIdentifier` as it finds it.
+    p.lexer.await_name_seen = false;
     // `PCJSDocComment`: like `PCJsxChildren`, any token is an element of it, so list error recovery
     // never skips a token.
     let outer_contexts = core::mem::replace(
@@ -292,7 +297,27 @@ pub(crate) fn read_comments<'a>(
         {
             continue;
         }
+        // `withJSDoc`: in the [Await] and [Yield] contexts of its place. Only the names of an
+        // `@import` tag depend on them: types are parsed outside both.
+        let innermost =
+            if function_contexts.is_empty() || !bun_core::strings::contains(comment, b"@import") {
+                None
+            } else {
+                let around = function_contexts
+                    .iter()
+                    .filter(|it| (it.start.to_usize()..it.end.to_usize()).contains(&start));
+                around.max_by_key(|it| it.start.start)
+            };
+        let data = &mut p.fn_or_arrow_data_parse;
+        let outer = (data.allow_await, data.allow_yield, data.is_top_level);
+        if let Some(innermost) = innermost {
+            data.allow_await = innermost.allow_await;
+            data.allow_yield = innermost.allow_yield;
+            data.is_top_level = false;
+        }
         comments.list.push(Reader::read(p, source, start, end));
+        let data = &mut p.fn_or_arrow_data_parse;
+        (data.allow_await, data.allow_yield, data.is_top_level) = outer;
     }
     p.lexer.contents = source;
     p.lexer.all_comments = ranges;
@@ -502,8 +527,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             .drain(before.0..)
             .filter(|msg| msg.kind == bun_ast::Kind::Err);
         let diagnostics = errors.filter_map(|msg| {
-            // `ScanJSDocToken` does not scan `</` as one token.
-            let mut diagnostic = super::diagnostic(&msg, source, false)??;
+            let mut diagnostic = super::diagnostic(&msg, source)??;
             if diagnostic.kind == DiagnosticKind::Parse {
                 diagnostic.kind = DiagnosticKind::JsDoc;
             }
@@ -935,13 +959,23 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.leave_lexer(result);
     }
 
+    /// `isIdentifier`, of the word `word`. The top level is outside the [Await] context.
+    fn is_identifier(&self, word: &[u8]) -> bool {
+        let data = &self.p.fn_or_arrow_data_parse;
+        let off = crate::AwaitOrYield::AllowIdent;
+        crate::lexer::keyword(word).is_none()
+            && !(word == b"await" && data.allow_await != off && !data.is_top_level)
+            && !(word == b"yield" && data.allow_yield != off)
+    }
+
     /// `parseImportTag`, starting at the token after the tag name.
     fn read_import(&mut self) -> Import {
         // Either only whitespace remains in the comment (`skipWhitespaceOrAsterisk` does not consume it), or `ScanJSDocToken` returned
-        // `KindUnknown`, for example for a quote or a slash. `parseModuleSpecifier` reports TS1109 without consuming the token.
+        // `KindUnknown`, for example for a quote or a slash, or a token of its own: `#a` is no private name and a backtick opens no
+        // template. `parseModuleSpecifier` reports TS1109 without consuming the token.
         let cannot_start_expression = matches!(
             self.token,
-            Token::Whitespace | Token::NewLine | Token::Unknown
+            Token::Whitespace | Token::NewLine | Token::Unknown | Token::Hash | Token::Backtick
         );
         if !self.is_in_lexer && cannot_start_expression {
             self.error_at_token(1109);
@@ -956,7 +990,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         };
         // `isIdentifier`, `parseIdentifier`: the token after the tag name is one of
         // `ScanJSDocToken`, whose words can contain `-`.
-        if self.token == Token::Word && crate::lexer::keyword(self.token_value()).is_none() {
+        if self.token == Token::Word && self.is_identifier(self.token_value()) {
             import.default = Some(self.name_at_word());
             self.next_token();
         }
@@ -1009,6 +1043,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                     }
                 } else {
                     // `parseNamedImports`
+                    import.has_named_imports = true;
                     p.parse_import_clause()?;
                     let syntax = p.type_syntax_mut();
                     let specifiers = syntax.module_syntax.last().and_then(|kept| kept.specifiers);

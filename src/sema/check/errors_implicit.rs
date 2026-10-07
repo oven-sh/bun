@@ -24,14 +24,14 @@ impl Checker<'_, '_> {
                 return;
             };
             let (code, is_the_one_to_be_told) = if decl.kind == FnKind::Setter {
-                let getter = self.sibling_accessor(file, func, FnKind::Getter);
+                let getter = self.sibling_accessor_at_this_moment(file, func, FnKind::Getter);
                 (
                     7032,
                     getter.is_none_or(|(of, g)| self.accessor_has_no_type_source(of, g)),
                 )
             } else {
                 // The error is reported on the setter, if possible.
-                let setter = self.sibling_accessor(file, func, FnKind::Setter);
+                let setter = self.sibling_accessor_at_this_moment(file, func, FnKind::Setter);
                 (
                     7033,
                     setter.is_none_or(|(of, s)| {
@@ -186,25 +186,5 @@ impl Checker<'_, '_> {
                 .files()
                 .resolve_name(file, scope, name, SymFlags::TYPE)
                 .is_some()
-    }
-
-    /// `checkVariableLikeDeclaration` returns before it requests the type of a renamed element in a
-    /// function without a body. 7031 comes from `getTypeFromBindingPattern`, which only runs once
-    /// the type of the parameter is requested: by another element of the pattern, by a call, or by
-    /// a comparison with another signature.
-    pub(super) fn is_parameter_type_never_requested(
-        &self,
-        file: FileId,
-        func: FnId,
-        p: ParamId,
-    ) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let (f, symbol) = (&hir[func], bound.fn_symbol[func.idx()]);
-        f.kind == FnKind::Decl
-            && matches!(f.body, FnBody::None)
-            && matches!(hir[hir[p].pat].kind, PatKind::Object(props) if props.iter().all(|q| self.is_renamed_binding_element(file, q)))
-            && symbol.is_some()
-            && bound.symbols[symbol.idx()].decls.len() == 1
-            && !bound.expr_symbol.contains(&symbol)
     }
 }

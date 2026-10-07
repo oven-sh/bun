@@ -53,7 +53,7 @@ impl Checker<'_, '_> {
         if class.extends.is_some()
             && let Some(&base) = self.base_types(sym).first()
         {
-            match self.unrelated_with_this_argument(class_type, base, this) {
+            match self.unrelated_with_this_argument(class_type, base, this, false) {
                 Some(with_this) => self.issue_member_specific_error(file, c, with_this, 2415),
                 // The static side is checked only if the instance side has no error.
                 None => {
@@ -79,9 +79,13 @@ impl Checker<'_, '_> {
             if !self.is_valid_base_type(implemented) {
                 continue;
             }
-            let is_class = matches!(*self.data(implemented), TypeData::Ref { target, .. } if self.files().flags(target).contains(SymFlags::CLASS));
+            let is_class = matches!(
+                self.symbol_of_type(implemented),
+                Some(super::errors_small::SymbolAtLocation::Symbol(symbol))
+                    if self.files().flags(symbol).contains(SymFlags::CLASS)
+            );
             if let Some(with_this) =
-                self.unrelated_with_this_argument(class_type, implemented, this)
+                self.unrelated_with_this_argument(class_type, implemented, this, false)
             {
                 let generic_diag = if is_class { 2720 } else { 2420 };
                 self.issue_member_specific_error(file, c, with_this, generic_diag);
@@ -107,22 +111,28 @@ impl Checker<'_, '_> {
         members
     }
 
-    /// `isTypeAssignableTo(source, getTypeWithoutSignatures(ty))`. A source is related to an
+    /// Whether `source` is assignable to `getTypeWithoutSignatures(ty)`. A source is related to an
     /// intersection if it is related to each member (`typeRelatedToEachType`) and has the
-    /// properties of the whole (`propertiesRelatedTo`).
+    /// properties of the whole (`propertiesRelatedTo`). The one run of tsgo has an `errorNode`:
+    /// `report_static_side`.
     fn is_assignable_to_type_without_signatures(&mut self, source: TypeId, ty: TypeId) -> bool {
         if !self.is_intersection(ty) {
             let target = self.type_without_signatures(ty);
-            return self.is_assignable(source, target);
+            return self.is_assignable_on_trial(source, target);
         }
         for &member in self.constituents(ty) {
             let target = self.type_without_signatures(member);
-            if !self.is_assignable(source, target) {
+            if !self.is_assignable_on_trial(source, target) {
                 return false;
             }
         }
         let properties = self.type_of_properties(ty);
-        self.is_assignable(source, properties)
+        self.is_assignable_on_trial(source, properties)
+    }
+
+    /// See `try_is_type_related_to`: nothing is reported, and an overflow counts as unrelated.
+    fn is_assignable_on_trial(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.try_is_type_related_to(source, target, Relation::Assignable, true) == Ok(true)
     }
 
     /// 2417: `checkTypeAssignableTo(staticType, getTypeWithoutSignatures(staticBaseType), ..)` has
@@ -146,7 +156,7 @@ impl Checker<'_, '_> {
         let mut unrelated = None;
         if members.len() > 1 {
             for &member in &members {
-                if !self.is_assignable(static_type, member.0) {
+                if !self.is_assignable_on_trial(static_type, member.0) {
                     unrelated = Some(member);
                     break;
                 }
@@ -164,6 +174,13 @@ impl Checker<'_, '_> {
             head,
             level,
         );
+        // `r.overflow`: that is the diagnostic, about the two types passed in.
+        if let Some(code @ (2859 | 2321)) = lines.first().map(|line| line.code) {
+            let types = [Arg::Type(static_type), Arg::Type(printed)];
+            let diagnostic = self.new_diagnostic(at, code, &types);
+            self.add_diagnostic(diagnostic);
+            return;
+        }
         // tsgo's type has the symbol of `shown` and is printed like it. `target` has no symbol.
         let from = self.type_to_string(target);
         let to = self.type_names_for_error_display(static_type, shown).1;
@@ -287,19 +304,22 @@ impl Checker<'_, '_> {
         self.synth(shape)
     }
 
-    /// `getTypeWithThisArgument` of `ty` and of `base`, with `this` for both. `None`: the first is assignable to the second.
+    /// `getTypeWithThisArgument` of `ty` and of `base`, with `this` for both. `None`: the first is
+    /// assignable to the second. `is_trial`: see `try_is_type_related_to`. If not, this is
+    /// `checkTypeAssignableTo(typeWithThis, baseWithThis, nil, nil)`.
     fn unrelated_with_this_argument(
         &mut self,
         ty: TypeId,
         base: TypeId,
         this: TypeId,
+        is_trial: bool,
     ) -> Option<[TypeId; 2]> {
         // It returns a type that is not a reference unchanged. Deciding that is costly
         // (`isThislessInterface`), and whether the two are related does not depend on it, so it is
         // evaluated only once they are found unrelated.
         let mut with_this = [ty, base].map(|t| self.type_with_this_argument(t, this));
         let [source, target] = with_this;
-        if self.try_is_type_related_to(source, target, Relation::Assignable, true) == Ok(true) {
+        if self.try_is_type_related_to(source, target, Relation::Assignable, is_trial) == Ok(true) {
             return None;
         }
         for (t, plain) in with_this.iter_mut().zip([ty, base]) {
@@ -527,8 +547,7 @@ impl Checker<'_, '_> {
         let mut missed_properties: Vec<&Prop> = Vec::new();
         'base_property_check: for base_property in &base_members.shape().props {
             let base = self.target_symbol(base_property);
-            // `SymbolFlagsPrototype`
-            if base.name == known::prototype && matches!(base.source, PropSource::Type(_)) {
+            if self.is_prototype_of_class(base) {
                 continue;
             }
             let Some(derived) = own_members.resolved.prop(base.name) else {
@@ -760,14 +779,14 @@ impl Checker<'_, '_> {
             if !self.check_inherited_properties_are_identical(sym, ty, &bases, Some(at)) {
                 return;
             }
-            let this = self.intern(TypeData::ThisParam(sym));
             for &base in bases.iter() {
                 // `resolveBaseTypesOfInterface`: a type that cannot be extended is not a base type.
                 if !self.is_valid_base_type(base) {
                     continue;
                 }
+                let this = self.this_argument_for_base_type(sym, base);
                 if let Some([type_with_this, base_with_this]) =
-                    self.unrelated_with_this_argument(ty, base, this)
+                    self.unrelated_with_this_argument(ty, base, this, true)
                 {
                     self.check_type_assignable_to(
                         type_with_this,
@@ -811,13 +830,13 @@ impl Checker<'_, '_> {
         let own: Vec<Atom> = (self.resolve_declared_members(sym).props.iter())
             .map(|prop| prop.name)
             .collect();
-        let this = self.intern(TypeData::ThisParam(sym));
         let access = PropFlags::PRIVATE | PropFlags::PROTECTED;
         // For a private or protected property, also its declaration.
         let mut seen: Vec<(Atom, TypeId, PropFlags, Option<&PropSource>, TypeId)> = Vec::new();
         let mut identical = true;
         for &declared_base in bases {
             // In each base, `this` is instantiated with the `this` type of the derived type.
+            let this = self.this_argument_for_base_type(sym, declared_base);
             let base = self.type_with_this_argument(declared_base, this);
             let Some(members) = self.members(base) else {
                 continue;

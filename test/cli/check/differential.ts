@@ -41,7 +41,7 @@ export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-/** `deep`: nested too deeply for the stack of a build that is not optimised. */
+/** `deep`: nested too deeply for the stack of a build that is not optimised, or too slow in one. */
 type Case = { files: Record<string, string>; build?: true; deep?: true };
 
 /**

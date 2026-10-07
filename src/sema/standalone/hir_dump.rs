@@ -1297,6 +1297,7 @@ impl Dump<'_, '_> {
             clause_end,
             namespace_start,
             named,
+            has_named_imports: _,
             type_only,
             is_deferred,
             mode,
@@ -1412,9 +1413,10 @@ impl Dump<'_, '_> {
         let d = depth + 1;
         match kind {
             TypeNodeKind::Error | TypeNodeKind::UniqueSymbol => self.line(depth, label, &head),
-            TypeNodeKind::Heritage(expr) => {
+            TypeNodeKind::Heritage { expr, args } => {
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
+                self.list(d, "args", args, Self::ty);
             }
             TypeNodeKind::Keyword(keyword) => put!(self, depth, label, "{head} {keyword:?}"),
             TypeNodeKind::Ref { name, args } => {
@@ -1676,7 +1678,7 @@ fn stmt_kind_name(kind: StmtKind) -> &'static str {
 fn type_kind_name(kind: TypeNodeKind) -> &'static str {
     match kind {
         TypeNodeKind::Error => "Error",
-        TypeNodeKind::Heritage(_) => "Heritage",
+        TypeNodeKind::Heritage { .. } => "Heritage",
         TypeNodeKind::Keyword(_) => "Keyword",
         TypeNodeKind::Ref { .. } => "Ref",
         TypeNodeKind::StringLit(_) => "StringLit",

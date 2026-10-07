@@ -684,6 +684,7 @@ impl<'p, 's> Checker<'p, 's> {
                 new.instantiation_expression = shape.instantiation_expression;
                 new.instantiation_target = target;
                 new.is_js_literal = shape.is_js_literal;
+                new.is_object_rest_type = shape.is_object_rest_type;
                 new.mapper = self.map_mapper(shape.mapper, mapper);
                 let stored = self.end_scope_by_counters(scope);
                 if let Some(arguments) = shape.single_signature_arguments {

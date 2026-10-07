@@ -49,6 +49,7 @@ impl Checker<'_, '_> {
                 hir.exprs[i].kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
             ) || bound.is_unchecked(i)
+                || self.is_never_checked(hir.exprs[i].pos)
             {
                 continue;
             }
@@ -122,6 +123,10 @@ impl Checker<'_, '_> {
             self.chain_receiver(file, data.callee, data.chain).0
         };
         let called = self.check_non_null_callee(file, data.callee, called, is_new);
+        // `silentNeverSignature`
+        if called == TypeId::SILENT_NEVER {
+            return;
+        }
         let apparent = self.apparent_type(called);
         // `resolveErrorCall`
         if self.is_error_type(apparent) {
@@ -282,6 +287,14 @@ impl Checker<'_, '_> {
         }
         let at = self.span_of_callee(file, data.callee);
         self.invocation_error(at, 2351, data.callee, apparent, (true, false), None);
+    }
+
+    /// `getResolvedSignature(node) == silentNeverSignature`, for the call or the `new` expression
+    /// `e`: `resolveCallExpression` and `resolveNewExpression` have returned before they check an
+    /// argument.
+    pub(super) fn is_silent_never_signature(&mut self, file: FileId, e: ExprId) -> bool {
+        let resolved = self.resolved_signature(file, e);
+        resolved.sig.is_none() && resolved.ret == TypeId::SILENT_NEVER
     }
 
     /// Error span of a callee: from the start of the (possibly parenthesized) expression to its error end.
@@ -454,7 +467,11 @@ impl Checker<'_, '_> {
         }
         // `getOptionalCallSignature`: `void | undefined` after a `?.` that may short-circuit.
         let return_type = self.type_of_expr(file, e);
-        if self.flags(return_type) & tf::VOID == 0 || self.sig_predicate(sig).is_none() {
+        if self.flags(return_type) & tf::VOID == 0
+            || self.sig_predicate(sig).is_none()
+            // The initializer of a `for` and the object of a `with` are stored as statements too.
+            || hir.kind(hir.parent(hir.node(e))) != Kind::ExpressionStatement
+        {
             return;
         }
         let start = self.start_of(file, data.callee);
@@ -594,7 +611,10 @@ impl Checker<'_, '_> {
             PropSource::Symbol(sym) => {
                 (self.flags_of_property(*sym)).contains(SymFlags::GET_ACCESSOR)
             }
-            PropSource::Literal(f, p) => self.hir(*f)[*p].kind == PropKind::Getter,
+            // `SymbolFlagsProperty|member.Flags`
+            PropSource::Literal(f, p) => {
+                (self.flags_of_literal_member(*f, *p)).contains(SymFlags::GET_ACCESSOR)
+            }
             // `propFlags` of `createUnionOrIntersectionProperty`
             PropSource::Intersected(..) => {
                 prop.flags & (PropFlags::ACCESSOR | PropFlags::WRITE_ONLY) == PropFlags::ACCESSOR
@@ -1271,7 +1291,7 @@ impl Checker<'_, '_> {
 
     /// `isPromiseResolveArityError`: the callee is the `resolve` of `new Promise((resolve) =>
     /// ...)`. Not if `resolve`, the function or `Promise` is parenthesized: parentheses are nodes.
-    fn is_promise_resolve_arity_error(&self, file: FileId, e: ExprId, c: CallId) -> bool {
+    fn is_promise_resolve_arity_error(&mut self, file: FileId, e: ExprId, c: CallId) -> bool {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let callee = hir[c].callee;
         let ExprKind::Ident(name) = hir[callee].kind else {

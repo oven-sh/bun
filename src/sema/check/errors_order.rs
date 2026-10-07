@@ -53,7 +53,7 @@ impl Checker<'_, '_> {
             |m: &&Member| matches!(m.kind, MemberKind::Property | MemberKind::StaticBlock);
         let places = Places::new(hir.members.iter().filter(is_place).map(|m| m.loc));
         for &e in index.of(ExprTag::Dot) {
-            if !bound.is_unchecked(e.idx()) {
+            if !bound.is_unchecked(e.idx()) && !self.is_never_checked(hir[e].pos) {
                 let may_be_in_place = places.contain(hir[e].pos);
                 self.check_property_not_used_before_declaration(file, e, may_be_in_place);
             }
@@ -442,8 +442,15 @@ impl Checker<'_, '_> {
     }
 
     /// `prop.ValueDeclaration`
-    fn value_declaration_of(&self, prop: &Prop) -> Option<(FileId, Node)> {
-        let (file, decl) = self.value_declaration_of_prop(prop)?;
+    fn value_declaration_of(&mut self, prop: &Prop) -> Option<(FileId, Node)> {
+        let (mut file, mut decl) = self.value_declaration_of_prop(prop)?;
+        // `mergeSymbol`, `SetValueDeclaration`: a late bound declaration takes the place of an
+        // assignment, and of nothing else.
+        if matches!(decl, Decl::ThisProperty(_) | Decl::Expando(_))
+            && let Some(&PropSource::Symbol(sym)) = Self::value_declaration(prop)
+        {
+            (file, decl) = self.value_declaration_of_property(sym)?;
+        }
         Some((file, self.hir(file).node(decl)))
     }
 

@@ -98,13 +98,15 @@ impl Checker<'_, '_> {
     pub(super) fn check_iteration(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let index = self.exprs_by_kind(file);
-        // `f(...x)`, `import(...x)`. `checkArrayLiteral` reports for `[...x]`.
+        // `f(...x)`, `import(...x)`. `checkArrayLiteral` reports for `[...x]`. Where a signature
+        // is applied, `check_argument` or `spread_argument_type` has made the request before.
         for &e in index.of(ExprTag::Spread) {
             let ExprKind::Spread(inner) = hir[e].kind else {
                 continue;
             };
             if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::ImportCall { .. }))
                 && !self.is_definite_assignment_target(file, e)
+                && !self.is_never_checked(hir[e].pos)
             {
                 let actual = self.type_of_expr(file, inner);
                 if !self.is_spread_of_array_like(file, e, actual) {
@@ -248,6 +250,22 @@ impl Checker<'_, '_> {
             // `checkBinaryExpression`. Errors in `left` as a reference are reported with the
             // operators.
             let initializer = self.type_of_expr(file, value);
+            // `{ a = d }` is no `BinaryExpression`.
+            let (holder, is_shorthand) = match self.bound(file).expr_parent[node.idx()] {
+                Parent::Expr(array) => (array, false),
+                Parent::Prop(p) => (
+                    self.bound(file).prop_owner[p.idx()],
+                    hir[p].kind == PropKind::Shorthand,
+                ),
+                _ => (ExprId::NONE, false),
+            };
+            // `checkExpression` of the pattern, for the contextual type of the right side, has come
+            // to `node` before this, with `c.currentNode = node`.
+            let save_current_node = self.current_source_element;
+            if !is_shorthand && holder.is_some() && self.cached_type_of_expr(file, holder).is_some()
+            {
+                self.enter_source_element(CurrentNode::Expr(file, node));
+            }
             if self.is_assignment_pattern(file, left) {
                 self.check_destructuring_assignment(file, left, initializer);
             } else if why_no_reference(hir, left, 2364, 2779).is_none() {
@@ -265,9 +283,9 @@ impl Checker<'_, '_> {
                     None,
                 );
             }
+            self.current_source_element = save_current_node;
             // The default of `{ a = d }` removes `undefined` from the source type only if it cannot
             // be `undefined` itself.
-            let is_shorthand = matches!(self.bound(file).expr_parent[node.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand);
             if self.p.files.options.strict_null_checks
                 && !(is_shorthand && self.is_possibly_undefined(initializer))
             {
@@ -296,7 +314,7 @@ impl Checker<'_, '_> {
     }
 
     /// `hasDefaultValue`
-    fn has_default_value(&self, file: FileId, e: ExprId) -> bool {
+    pub(super) fn has_default_value(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         matches!(hir[e].kind, ExprKind::Assign { op: None, .. }) && !is_parenthesized(hir, e)
     }
@@ -352,10 +370,12 @@ impl Checker<'_, '_> {
                 .iter()
                 .filter(|&other| hir[other].kind != PropKind::Spread)
             {
-                let (key, name_kind) = (hir[other].key, hir[other].name_kind);
+                let (key, name_kind, pos) = (hir[other].key, hir[other].name_kind, hir[other].pos);
                 match key {
                     PropKey::Name(name) if !self.is_numeric_name(name) => names.push(name),
-                    _ => keys.extend(self.literal_type_from_property_name(file, key, name_kind)),
+                    _ => {
+                        keys.extend(self.literal_type_from_property_name(file, key, name_kind, pos))
+                    }
                 }
             }
             let keys = self.union(&keys);
@@ -378,8 +398,9 @@ impl Checker<'_, '_> {
             }
             return;
         }
+        let (key, name_kind) = (property.key, property.name_kind);
         let Some(expr_type) =
-            self.literal_type_from_property_name(file, property.key, property.name_kind)
+            self.literal_type_from_property_name(file, key, name_kind, property.pos)
         else {
             return;
         };
@@ -550,7 +571,15 @@ impl Checker<'_, '_> {
         let (message, optional_message) = if is_rest { (2701, 2778) } else { (2364, 2779) };
         if self.check_reference_expression(file, target, message, optional_message) {
             let error_node = Some(self.error_range_of(file, target));
-            self.check_type_assignable_to(source_type, target_type, error_node, None);
+            self.check_type_assignable_to_and_optionally_elaborate(
+                source_type,
+                target_type,
+                error_node,
+                Some((file, target)),
+                false,
+                None,
+                None,
+            );
         }
     }
 

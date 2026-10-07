@@ -1,0 +1,24 @@
+{
+  "premise": "bug (design review run a8ab0a6aa0c0: 3/3 votes). A valid .tgz that the buffered extractor installs fails under the streaming extractor only because a body chunk ended inside a header sequence.",
+  "review_status": "The design review never reached a verdict: the run was killed by infra 3 times. The pick below is my own, from its candidate list and my own measurements.",
+  "pick": "tar-header-replay-window",
+  "pick_reason": "Every header-phase read in the tar reader goes through one wrapper that defers the consume. When the source runs dry the whole header sequence is forgotten and parsed again from its first byte once more input is there. One mechanism covers the PAX 1.0 map, old GNU extension blocks, AppleDouble blobs, pax payloads over 1 MiB, and any reader a libarchive bump adds. It deletes header_in_progress/header_seen/header_eof_fatal/header_err, TAR_HEADER_RETURN and the 1 MiB extension pre-buffer.",
+  "why_not_minimal": "A pre-buffer in the regular-header arm needs a second parser for the PAX 1.0 map grammar to know how much to buffer, keeps the readers treating a dry read as truncation, leaves pax payloads over 1 MiB failing, and adds a third special case to the patch. Buffered-retry fallback (#39986) was closed by a maintainer as papering over the failure.",
+  "plan": [
+    "tar reader: tar_read_ahead/tar_read_consume wrappers, file-wide redirect of __archive_read_ahead/__archive_read_consume",
+    "archive_read_format_tar_read_header: begin/commit/rollback around tar_read_header; replay resets entry and the few tar fields read before written",
+    "window cap so a crafted header cannot force unbounded buffering; past the cap the reader commits and behaves as before",
+    "delete the old resume state and the extension pre-buffer from the patch",
+    "tests in test/cli/install/bun-install-streaming-extract.test.ts (8 sparse cases done; add a pax payload over 1 MiB case)",
+    "verify with the standalone harness at every split offset, both delivery modes, mac-ext on"
+  ],
+  "measurements": [
+    "instructions per extracted entry on the buffered path, before and after (callgrind or perf stat over a fixed loop)",
+    "patch size before and after (lines)",
+    "binary size delta of the release build",
+    "harness: plans with a mismatch before and after"
+  ],
+  "siblings_in_scope": ["PAX 1.0 sparse map and padding", "old GNU sparse extension blocks", "AppleDouble ._ blob (macOS default)", "pax/GNU extension payload over 1 MiB"],
+  "siblings_noted": ["gzip bidder with a first chunk under 10 bytes (already handled by bypassing bidding)"],
+  "revive": ""
+}

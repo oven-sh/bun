@@ -1,5 +1,4 @@
 //! Core AST node payload types and arena-slice helpers.
-#![allow(non_snake_case)]
 
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;

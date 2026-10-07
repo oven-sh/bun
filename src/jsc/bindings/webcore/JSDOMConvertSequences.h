@@ -157,7 +157,6 @@ struct GenericSequenceConverter {
         forEachInIterable(&lexicalGlobalObject, object, [&result, &index, &elementCtx](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            // auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue);
             auto convertedValue = Bun::convertIDL<IDLType>(*lexicalGlobalObject, nextValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, );
             Traits::append(*lexicalGlobalObject, result, index++, WTF::move(convertedValue));
@@ -259,7 +258,6 @@ struct SequenceConverter {
                 if (!indexValue)
                     indexValue = JSC::jsUndefined();
 
-                // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
                 auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
                 RETURN_IF_EXCEPTION(scope, {});
                 Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
@@ -274,7 +272,6 @@ struct SequenceConverter {
             if (!indexValue)
                 indexValue = JSC::jsUndefined();
 
-            // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
             auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, {});
             Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));

@@ -1716,6 +1716,75 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
         });
       });
 
+      // Bun.serve(), fetch() and Bun.write() read a body in native code. They consume it like a
+      // mixin method does: the stream ends up used, closed and locked, whatever backs the body.
+      describe("a native consumer leaves a body's stream consumed and locked", () => {
+        const consumers: [string, (owner: Request | Response) => Promise<string>][] = [
+          ownerName === "Response"
+            ? [
+                "Bun.serve() sends it",
+                async owner => {
+                  await using server = Bun.serve({ port: 0, fetch: () => owner as Response });
+                  return await (await fetch(server.url)).text();
+                },
+              ]
+            : [
+                "fetch(url, request) uploads it",
+                async owner => {
+                  await using echo = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+                  return await (await fetch(echo.url, owner as RequestInit)).text();
+                },
+              ],
+          [
+            "Bun.write() writes it",
+            async owner => {
+              using dir = tempDir("body-native-consumer", {});
+              await Bun.write(join(String(dir), "out"), owner);
+              return await file(join(String(dir), "out")).text();
+            },
+          ],
+        ];
+        // An async iterable body is a type: "direct" stream underneath, which the consumer's sink pumps itself.
+        const iterables: typeof sources = [
+          [
+            "async generator",
+            () =>
+              (async function* () {
+                yield new TextEncoder().encode("payload");
+              })() as unknown as BodyInit,
+            "payload",
+          ],
+          ["node:stream Readable", () => Readable.from([Buffer.from("payload")]) as unknown as BodyInit, "payload"],
+        ];
+        for (const [name, init, content] of [...sources, ...iterables]) {
+          for (const [consumer, consume] of consumers) {
+            test(`${name} .body then ${consumer}`, async () => {
+              const owner = make(init());
+              const stream = owner.body!;
+              expect(await consume(owner)).toBe(content);
+              expect({
+                same: owner.body === stream,
+                ...streamState(stream),
+                bodyUsed: owner.bodyUsed,
+                getReader: errorName(() => stream.getReader()),
+                rewrap: errorName(() => make(stream)),
+                again: await settled(owner.text()),
+                clone: errorName(() => owner.clone()),
+              }).toEqual({
+                same: true,
+                ...consumedState,
+                bodyUsed: true,
+                getReader: "TypeError",
+                rewrap: "TypeError",
+                again: "TypeError",
+                clone: "TypeError",
+              });
+              await finished(stream);
+            });
+          }
+        }
+      });
+
       // A zero-length body is a body: reading it, through a mixin method or
       // through its stream, uses it up.
       describe("a zero-length body is used up like any other", () => {

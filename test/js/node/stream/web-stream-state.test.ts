@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { isDisturbed, isErrored, isReadable } from "node:stream";
+import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 
 test("node:stream observes ReadableStream state", async () => {
@@ -137,6 +137,182 @@ describe.concurrent("a stream that a native consumer takes", () => {
     await consume(response, upstream.finish);
     expect(state(body)).toEqual(closed);
     await finished(body);
+  });
+
+  // A stream with no native source to attach to goes through a pump in C++. The pump reads through
+  // a reader, or hands the sink to the pull() of a type: "direct" stream. The consumers are the
+  // same and take the stream as a body, so the stream must end up the same: closed, and still
+  // locked once the pump lets go. Each stream yields "first ", waits for finish(), then yields "last".
+  const encode = (text: string) => new TextEncoder().encode(text);
+  function held(make: (released: Promise<void>) => ReadableStream) {
+    const { promise: released, resolve: finish } = Promise.withResolvers<void>();
+    return { stream: make(released), finish, async [Symbol.asyncDispose]() {} };
+  }
+  const pumped: Record<string, () => { stream: ReadableStream; finish(): void } & AsyncDisposable> = {
+    "a JS stream": () =>
+      held(
+        released =>
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(encode("first "));
+              await released;
+              controller.enqueue(encode("last"));
+              controller.close();
+            },
+          }),
+      ),
+    'a type: "direct" stream': () =>
+      held(
+        released =>
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("first ");
+              await controller.flush();
+              await released;
+              controller.write("last");
+              controller.close();
+            },
+          }),
+      ),
+    // An async iterable body is a type: "direct" stream underneath.
+    "the stream of an async generator body": () =>
+      held(released => {
+        const body = (async function* () {
+          yield encode("first ");
+          await released;
+          yield encode("last");
+        })();
+        return new Response(body as unknown as BodyInit).body!;
+      }),
+    "the stream of a node:stream Readable body": () =>
+      held(released => {
+        const body = new Readable({ read() {} });
+        body.push("first ");
+        released.then(() => {
+          body.push("last");
+          body.push(null);
+        });
+        return new Response(body as unknown as BodyInit).body!;
+      }),
+    // The pump attaches the sink to a native byte transform and lets it write there directly.
+    "the readable of a TextEncoderStream": () =>
+      held(released => {
+        const { readable, writable } = new TextEncoderStream();
+        const writer = writable.getWriter();
+        writer.write("first ").catch(() => {});
+        released.then(() => writer.write("last").then(() => writer.close())).catch(() => {});
+        return readable;
+      }),
+    // The child still runs, so its stdout is a pipe: no consumer can take it as a finished buffer.
+    "the stdout of a running child": () => {
+      const child = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.stdout.write("first "); await Bun.stdin.bytes(); process.stdout.write("last");`],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      return {
+        stream: child.stdout,
+        finish: () => void child.stdin.end(),
+        async [Symbol.asyncDispose]() {
+          child.kill();
+          await child.exited;
+        },
+      };
+    },
+  };
+
+  describe.each(Object.entries(pumped))("%s", (_kind, make) => {
+    test.each(Object.entries(consumers))("closes after %s takes it to the end", async (_name, consume) => {
+      await using source = make();
+      await consume(new Response(source.stream), source.finish);
+      expect(state(source.stream)).toEqual(closed);
+      await finished(source.stream);
+    });
+  });
+
+  const failing: Record<string, (failure: Error) => ReadableStream> = {
+    "a JS stream": failure =>
+      new ReadableStream({
+        pull(controller) {
+          controller.error(failure);
+        },
+      }),
+    'a type: "direct" stream': failure =>
+      new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write("first ");
+          await controller.flush();
+          throw failure;
+        },
+      }),
+  };
+
+  test.each(Object.entries(failing))("%s errors with the failure of its producer", async (_kind, make) => {
+    using dir = tempDir("web-stream-state", {});
+    const failure = new Error("the producer failed");
+    const stream = make(failure);
+    expect(await Bun.write(join(dir, "out"), new Response(stream)).catch(error => error)).toBe(failure);
+    expect(state(stream)).toEqual(errored);
+    expect(await finished(stream).catch(error => error)).toBe(failure);
+  });
+
+  // pull() yields "first " and then stays pending until the stream is cancelled.
+  const endless: Record<string, (cancelled: Promise<void>, onCancel: () => void) => ReadableStream> = {
+    "a JS stream": (cancelled, onCancel) =>
+      new ReadableStream({
+        async pull(controller) {
+          controller.enqueue(encode("first "));
+          await cancelled;
+        },
+        cancel: onCancel,
+      }),
+    'a type: "direct" stream': (cancelled, onCancel) =>
+      new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write("first ");
+          await controller.flush();
+          await cancelled;
+        },
+        cancel: onCancel,
+      }),
+  };
+
+  test.each(Object.entries(endless))("%s closes when its consumer stops early", async (_kind, make) => {
+    const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<void>();
+    const stream = make(cancelled, onCancel);
+    const abort = new AbortController();
+    await using sink = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        // The upload is attached once its first bytes arrive here.
+        await request.body!.getReader().read();
+        abort.abort();
+        return new Response();
+      },
+    });
+    const upload = fetch(sink.url, { method: "POST", body: stream, signal: abort.signal });
+    expect(await upload.catch(error => error.name)).toBe("AbortError");
+    await cancelled;
+    expect(state(stream)).toEqual(closed);
+    await finished(stream);
+  });
+
+  test("a JS stream closes when the client of its Bun.serve() response goes away", async () => {
+    const { promise: cancelled, resolve: onCancel } = Promise.withResolvers<void>();
+    const stream = endless["a JS stream"](cancelled, onCancel);
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(stream) });
+    const abort = new AbortController();
+    const response = await fetch(server.url, { signal: abort.signal });
+    expect(new TextDecoder().decode((await response.body!.getReader().read()).value)).toBe("first ");
+    abort.abort();
+    await cancelled;
+    expect(state(stream)).toEqual(closed);
+    await finished(stream);
   });
 
   test("errors with the failure of its producer", async () => {

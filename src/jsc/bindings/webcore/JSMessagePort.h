@@ -30,7 +30,6 @@ namespace WebCore {
 class WEBCORE_EXPORT JSMessagePort : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = MessagePort;
     static JSMessagePort* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessagePort>&& impl)
     {
         JSMessagePort* ptr = new (NotNull, JSC::allocateCell<JSMessagePort>(globalObject->vm())) JSMessagePort(structure, *globalObject, WTF::move(impl));

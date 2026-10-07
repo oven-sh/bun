@@ -1,18 +1,15 @@
-diff --git a/src/bun_bin/Cargo.toml b/src/bun_bin/Cargo.toml
-index 94839e8d1237..dd880fa1fa74 100644
---- a/src/bun_bin/Cargo.toml
-+++ b/src/bun_bin/Cargo.toml
-@@ -11,7 +11,12 @@ edition.workspace = true
- [lib]
- name = "bun_rust"
- path = "lib.rs"
--crate-type = ["staticlib"]
-+crate-type = ["staticlib", "rlib"]
-+
+diff --git a/src/runtime/Cargo.toml b/src/runtime/Cargo.toml
+--- a/src/runtime/Cargo.toml
++++ b/src/runtime/Cargo.toml
+@@ -9,6 +9,11 @@
+ # the link takes each crate's rlib beside the C/C++ objects. No crate is a "final" Rust artifact, so nothing copies
+ # every crate into one archive.
+ 
 +# hawk dead-code linter smoke test: throwaway analysis root. See ../../hawk.toml.
 +[[bin]]
 +name = "bun_hawk_root"
 +path = "hawk_root.rs"
- 
++
  [lints]
  workspace = true
+ 

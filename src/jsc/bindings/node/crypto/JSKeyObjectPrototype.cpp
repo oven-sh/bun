@@ -26,8 +26,8 @@ static const JSC::HashTableValue JSKeyObjectPrototypeTableValues[] = {
 void JSKeyObjectPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSKeyObjectPrototype::info(), JSKeyObjectPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSKeyObjectPrototype::info(), JSKeyObjectPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsKeyObjectPrototype_equals, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -70,12 +70,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsKeyObjectPrototype_type, (JSGlobalObject * globalObje
 
     KeyObject& handle = keyObject->handle();
 
+    auto& commonStrings = Bun::commonStrings(vm);
     switch (handle.type()) {
     case CryptoKeyType::Secret:
-        return JSValue::encode(jsNontrivialString(vm, "secret"_s));
+        return JSValue::encode(commonStrings.keyTypeSecretString());
     case CryptoKeyType::Public:
-        return JSValue::encode(jsNontrivialString(vm, "public"_s));
+        return JSValue::encode(commonStrings.keyTypePublicString());
     case CryptoKeyType::Private:
-        return JSValue::encode(jsNontrivialString(vm, "private"_s));
+        return JSValue::encode(commonStrings.keyTypePrivateString());
     }
 }

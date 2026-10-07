@@ -28,7 +28,7 @@ bun_core::declare_scope!(quic, hidden);
 
 /// Mirrors Node's `Endpoint::State`.
 #[repr(C)]
-pub struct EndpointState {
+pub(crate) struct EndpointState {
     pub bound: u8,
     pub(crate) receiving: u8,
     pub(crate) listening: u8,
@@ -183,7 +183,7 @@ impl Default for BindConfig {
 /// `#[repr(C)]` so `vtable_ptr` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)peer_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicEndpoint {
+pub(crate) struct QuicEndpoint {
     /// MUST stay the first field — `ea_get_ssl_ctx`'s `peer_ctx` is the
     /// QuicEndpoint pointer, and the C shim's thunk reads
     /// `*(us_nq_vtable**)peer_ctx` to recover the vtable.
@@ -1065,7 +1065,7 @@ fn apply_transport_params(
         ..lsquic::NqTransportParams::default()
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
-        let name = bun_core::String::from_js(cc, global)?.to_utf8_bytes();
+        let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
         // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
         // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
         // backend), so map 'reno' to Cubic, the closest loss-based option,
@@ -1263,7 +1263,7 @@ impl QuicEndpoint {
                 .get(global, "blockListPolicy")?
                 .filter(|v| v.is_string())
             {
-                let policy = bun_core::String::from_js(policy, global)?.to_utf8_bytes();
+                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
                 // SAFETY: as above.
                 unsafe { (**raw).block_list_allow.set(policy == b"allow") };
             }
@@ -1511,6 +1511,7 @@ impl QuicEndpoint {
             if let Some(callback) = callbacks::get(global, "onSessionNew") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     self.this_value.get().get(),
@@ -2181,6 +2182,7 @@ impl QuicEndpoint {
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 self.this_value.get().get(),
@@ -2225,7 +2227,7 @@ impl QuicEndpoint {
                         if !v.is_string() {
                             continue;
                         }
-                        let bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+                        let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
                         if bytes.is_empty() || bytes.len() > u16::MAX as usize {
                             continue;
                         }
@@ -2569,13 +2571,6 @@ impl QuicEndpoint {
         self.with_state(|s| s.busy = busy as u8);
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn do_ref(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let want = frame.arguments_as_array::<1>()[0].to_boolean();
-        let ctx = bun_io::js_vm_ctx();
-        self.poll_ref
-            .with_mut(|p| if want { p.ref_(ctx) } else { p.unref(ctx) });
-        Ok(JSValue::UNDEFINED)
-    }
     fn build_sni_contexts(
         global: &JSGlobalObject,
         entries: JSValue,
@@ -2586,7 +2581,7 @@ impl QuicEndpoint {
         let mut out = Vec::with_capacity(len as usize);
         for i in 0..len {
             let key = keys.get_index(global, i)?;
-            let host = bun_core::String::from_js(key, global)?.to_utf8_bytes();
+            let host = bun_core::String::from_js(key, global)?.to_owned_slice();
             let value = entries
                 .get(global, host.as_slice())?
                 .unwrap_or(JSValue::UNDEFINED);

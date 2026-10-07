@@ -19,8 +19,8 @@ use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
 use crate::{
-    DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, ManifestLoad, PackageID,
-    PackageManager, PackageNameHash, ResolutionTag, invalid_package_id,
+    DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, PackageID, PackageManager,
+    PackageNameHash, ResolutionTag, invalid_package_id,
 };
 
 /// Root/workspace dependency rows as loaded from bun.lock, taken before the differ re-enqueues them.
@@ -447,7 +447,7 @@ pub(crate) fn enqueue_peer_rows(
             .iter()
             .map(|&row| manager.lockfile.buffers.resolutions[row as usize])
             .collect();
-        targets.sort_unstable();
+        index_sort::sort_indices_unstable(&mut targets, &mut |a, b| a.cmp(&b));
         targets.dedup();
         populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&targets))?;
         print_log(manager)?;
@@ -457,18 +457,22 @@ pub(crate) fn enqueue_peer_rows(
         }
     }
     let mut from: Vec<PackageID> = moved.iter().map(|&(_, from)| from).collect();
-    from.sort_unstable();
+    index_sort::sort_indices_unstable(&mut from, &mut |a, b| a.cmp(&b));
     from.dedup();
     register_moved(manager, &from)
 }
 
-/// Pending log lines go to stderr; `--silent` drops everything but errors.
+/// Pending log lines go to stderr; `--silent` drops everything but errors. An error among them fails the install here, because the reset below hides it from `install_with_manager`.
 fn print_log(manager: &PackageManager) -> crate::Result<()> {
     let log = manager.log_mut();
-    if manager.options.log_level != LogLevel::Silent || log.has_errors() {
+    let failed = log.has_errors();
+    if manager.options.log_level != LogLevel::Silent || failed {
         log.print(core::ptr::from_mut(Output::error_writer()))?;
     }
     log.reset();
+    if failed {
+        return Err(crate::Error::InstallFailed);
+    }
     Ok(())
 }
 
@@ -576,8 +580,7 @@ pub(crate) fn register_moved(
         }
         let mut tag_buf =
             vec![0u8; current.tag.pre.len() + current.tag.build.len()].into_boxed_slice();
-        let mut cursor: &mut [u8] = &mut tag_buf;
-        let original = current.clone_into(buf, &mut cursor);
+        let original = current.clone_into(buf, &mut tag_buf, &mut 0);
         *entry.value_ptr = PackageUpdateInfo {
             original_version_literal: Box::default(),
             written_back: false,
@@ -652,7 +655,7 @@ fn print_rows(rows: &[Row]) {
 /// `name@version` of every drained `manager.kept_patched` id (pre-clean) whose rows would allow something newer, with that version.
 fn kept_patched_rows(manager: &mut PackageManager) -> Vec<Row> {
     let mut kept = core::mem::take(&mut manager.kept_patched);
-    kept.sort_unstable();
+    index_sort::sort_indices_unstable(&mut kept, &mut |a, b| a.cmp(&b));
     kept.dedup();
     let mut rows = Vec::new();
     for id in kept {
@@ -818,7 +821,6 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
         name,
         lockfile.packages.items_name_hash()[pkg],
         Some(&mut false),
-        ManifestLoad::LoadFromMemoryFallbackToDisk,
         min_age.is_some(),
     )?;
     let manifest_buf: &[u8] = &manifest.string_buf;
@@ -1154,7 +1156,6 @@ fn plan_edges(
             scope,
             name,
             Some(&mut expired),
-            ManifestLoad::LoadFromMemoryFallbackToDisk,
             min_age.is_some(),
         ) else {
             let entry = (Box::from(name), text(inst.current.fmt(buf)));

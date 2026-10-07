@@ -65,7 +65,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceObserverEntryListPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceObserverEntryListPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserverEntryListPrototype>(vm)) JSPerformanceObserverEntryListPrototype(vm, globalObject, structure);
+        JSPerformanceObserverEntryListPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceObserverEntryListPrototype))) JSPerformanceObserverEntryListPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -79,7 +79,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -104,11 +104,7 @@ template<> JSValue JSPerformanceObserverEntryListDOMConstructor::prototypeForStr
 
 template<> void JSPerformanceObserverEntryListDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceObserverEntryList"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceObserverEntryList::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "PerformanceObserverEntryList"_s, JSPerformanceObserverEntryList::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -125,8 +121,8 @@ const ClassInfo JSPerformanceObserverEntryListPrototype::s_info = { "Performance
 void JSPerformanceObserverEntryListPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceObserverEntryList::info(), JSPerformanceObserverEntryListPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceObserverEntryList::info(), JSPerformanceObserverEntryListPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceObserverEntryList::s_info = { "PerformanceObserverEntryList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserverEntryList) };
@@ -231,12 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntr
 
 JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserverEntryList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceObserverEntryList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserverEntryList, m_subspaceForPerformanceObserverEntryList));
 }
 
 void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -248,38 +239,8 @@ void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& ana
     Base::analyzeHeap(cell, analyzer);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7PerformanceObserverEntryList@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore28PerformanceObserverEntryListE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<PerformanceObserverEntryList>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<PerformanceObserverEntryList>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7PerformanceObserverEntryList@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore28PerformanceObserverEntryListE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // PerformanceObserverEntryList has subclasses. If PerformanceObserverEntryList has subclasses that get passed
-        // to toJS() we currently require PerformanceObserverEntryList you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<PerformanceObserverEntryList>(globalObject, WTF::move(impl));
 }
 

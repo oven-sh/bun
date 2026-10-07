@@ -39,6 +39,7 @@
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -1016,7 +1017,7 @@ extern "C" {
 
 size_t highway_count_mapping_delims(const uint8_t* bytes, size_t len)
 {
-    return HWY_DYNAMIC_DISPATCH(CountDelimsImpl)(bytes, len);
+    return BUN_HWY_DISPATCH(CountDelimsImpl)(bytes, len);
 }
 
 size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
@@ -1025,7 +1026,7 @@ size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
     size_t cap, int32_t sources_count,
     int32_t* state, size_t* err_at)
 {
-    return HWY_DYNAMIC_DISPATCH(ParseMappingsImpl)(bytes, len,
+    return BUN_HWY_DISPATCH(ParseMappingsImpl)(bytes, len,
         out_generated, out_original, out_src_idx, out_name_idx,
         cap, sources_count, state, err_at);
 }

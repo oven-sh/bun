@@ -42,7 +42,8 @@ enum Separator {
 /// MySQL DATE/DATETIME/TIMESTAMP text. Accepts the 10-byte date-only form
 /// (`YYYY-MM-DD`) and either `' '` or `'T'` as the date/time separator.
 pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, TimePart::Optional, Separator::SpaceOrT)
+    let (dt, consumed) = parse(text, TimePart::Optional, Separator::SpaceOrT)?;
+    (consumed == text.len()).then_some(dt)
 }
 
 /// Postgres `timestamp` (WITHOUT TIME ZONE) text. Requires the full
@@ -50,24 +51,50 @@ pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
 /// separator, `infinity`, BC dates, 5+ digit years) returns `None` so the
 /// caller can fall back to `Date.parse`.
 pub(crate) fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, TimePart::Required, Separator::Space)
+    let (dt, consumed) = parse(text, TimePart::Required, Separator::Space)?;
+    (consumed == text.len()).then_some(dt)
 }
 
-fn parse(text: &[u8], time_part: TimePart, separator: Separator) -> Option<DateTimeText> {
-    fn parse_u(bytes: &[u8]) -> Option<u32> {
-        if bytes.is_empty() {
+/// Postgres `timestamptz` text; the `±HH[:MM[:SS]]` offset is returned in seconds east of UTC.
+pub(crate) fn parse_postgres_timestamptz(text: &[u8]) -> Option<(DateTimeText, i32)> {
+    let (dt, consumed) = parse(text, TimePart::Required, Separator::Space)?;
+    let (&sign, offset) = text.get(consumed..)?.split_first()?;
+    let sign: i32 = match sign {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let hours = parse_u(offset.get(0..2)?)?;
+    let (minutes, seconds) = match offset.len() {
+        2 => (0, 0),
+        5 if offset[2] == b':' => (parse_u(&offset[3..5])?, 0),
+        8 if offset[2] == b':' && offset[5] == b':' => {
+            (parse_u(&offset[3..5])?, parse_u(&offset[6..8])?)
+        }
+        _ => return None,
+    };
+    if minutes > 59 || seconds > 59 {
+        return None;
+    }
+    let offset_seconds = i32::try_from(hours * 3600 + minutes * 60 + seconds).ok()?;
+    Some((dt, sign * offset_seconds))
+}
+
+fn parse_u(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut n: u32 = 0;
+    for &c in bytes {
+        if !c.is_ascii_digit() {
             return None;
         }
-        let mut n: u32 = 0;
-        for &c in bytes {
-            if !c.is_ascii_digit() {
-                return None;
-            }
-            n = n.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
-        }
-        Some(n)
+        n = n.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
     }
+    Some(n)
+}
 
+fn parse(text: &[u8], time_part: TimePart, separator: Separator) -> Option<(DateTimeText, usize)> {
     if text.len() < 10 || text[4] != b'-' || text[7] != b'-' {
         return None;
     }
@@ -79,7 +106,7 @@ fn parse(text: &[u8], time_part: TimePart, separator: Separator) -> Option<DateT
     };
     if text.len() == 10 {
         return match time_part {
-            TimePart::Optional => Some(result),
+            TimePart::Optional => Some((result, 10)),
             TimePart::Required => None,
         };
     }
@@ -95,21 +122,18 @@ fn parse(text: &[u8], time_part: TimePart, separator: Separator) -> Option<DateT
     result.minute = u8::try_from(parse_u(&text[14..16])?).ok()?;
     result.second = u8::try_from(parse_u(&text[17..19])?).ok()?;
 
-    if text.len() == 19 {
-        return Some(result);
-    }
-    if text[19] != b'.' {
-        return None;
+    if text.len() == 19 || text[19] != b'.' {
+        return Some((result, 19));
     }
     // Fractional seconds: up to 6 digits, right-padded to microseconds.
-    let frac = &text[20..];
-    if frac.is_empty() || frac.len() > 6 {
+    let frac_len = text[20..].iter().take_while(|c| c.is_ascii_digit()).count();
+    if frac_len == 0 || frac_len > 6 {
         return None;
     }
-    let mut micro = parse_u(frac)?;
-    for _ in 0..(6 - frac.len()) {
+    let mut micro = parse_u(&text[20..20 + frac_len])?;
+    for _ in 0..(6 - frac_len) {
         micro *= 10;
     }
     result.microsecond = micro;
-    Some(result)
+    Some((result, 20 + frac_len))
 }

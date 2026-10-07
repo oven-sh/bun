@@ -164,6 +164,27 @@ import { readableStreamFromArray } from "harness";
     expect((await Bun.readableStreamToArray(output)).join("")).toBe("Привет");
   });
 
+  test("legacy multi-byte encodings carry a split character across chunks", async () => {
+    // "日本" in Shift_JIS (93 FA 96 7B), split inside the first character.
+    const input = readableStreamFromArray([new Uint8Array([0x93]), new Uint8Array([0xfa, 0x96, 0x7b])]);
+    const output = input.pipeThrough(new TextDecoderStream("shift_jis"));
+    expect(await Bun.readableStreamToArray(output)).toEqual(["日本"]);
+  });
+
+  test("a lead byte left over at the end of a legacy multi-byte stream is replaced, or rejects with fatal", async () => {
+    const chunks = () => readableStreamFromArray([new Uint8Array([0x41, 0x93])]);
+    expect(await Bun.readableStreamToArray(chunks().pipeThrough(new TextDecoderStream("shift_jis")))).toEqual([
+      "A",
+      "\uFFFD",
+    ]);
+    await expect(
+      Bun.readableStreamToArray(chunks().pipeThrough(new TextDecoderStream("shift_jis", { fatal: true }))),
+    ).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR_ENCODING_INVALID_ENCODED_DATA",
+    });
+  });
+
   test("constructing with a non-stringifiable encoding should throw", () => {
     expect(() => {
       new TextDecoderStream({

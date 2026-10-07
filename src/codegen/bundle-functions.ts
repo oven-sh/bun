@@ -43,7 +43,7 @@
 // single JSC::SourceProvider. Passing start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
-import { readdirSync, rmSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
@@ -92,7 +92,7 @@ interface BundledBuiltin {
  */
 async function processFileSplit(filename: string): Promise<{ functions: BundledBuiltin[]; internal: boolean }> {
   const basename = path.basename(filename, ".ts");
-  let contents = await Bun.file(filename).text();
+  let contents = readFileSync(filename, "utf8");
 
   contents = applyGlobalReplacements(contents);
   const originalContents = contents;
@@ -286,7 +286,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     const useThis = true;
 
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
-    await Bun.write(
+    writeFileSync(
       tmpFile,
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
@@ -381,9 +381,12 @@ async function processFunctionFile(x: string) {
 
 interface BundleBuiltinFunctionsArgs {
   requireTransformer: (x: string, filename: string) => string;
+  /** Where WebCoreJSBuiltins.d.ts goes. */
+  typesDir: string;
 }
 
-export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: BundleBuiltinFunctionsArgs) {
+  mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
     .sort();
@@ -462,7 +465,7 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
 
   const initializeSourceCodeFn = (fn: BundledBuiltin, basename: string) => {
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
-    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
+    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
   for (const { basename, internal, functions } of files) {
     bundledCPP += `
@@ -479,8 +482,10 @@ ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::
   }
 
   bundledCPP += `
+static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ functions }) => functions.map(fn => fn.sourceOffset)).join(", ")} };
+
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
-    return JSC::StringSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), SourceOrigin(), String(), SourceTaintedOrigin());
+    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), internalCombinedSourceStarts);
 }
 `;
 
@@ -841,7 +846,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       dts += `\n// ${basename}.ts\n`;
       for (const fn of functions) {
         dts += `declare const \$${fn.name}: RemoveThis<typeof import("${path.relative(
-          CODEGEN_DIR,
+          typesDir,
           path.join(SRC_DIR, basename),
         )}")[${JSON.stringify(fn.name)}]>;\n`;
       }
@@ -850,7 +855,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   dts += getJS2NativeDTS();
 
-  writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
+  writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);
 
   const totalJSSize = files.reduce(
     (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),

@@ -64,7 +64,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSEventEmitterPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSEventEmitterPrototype* ptr = new (NotNull, JSC::allocateCell<JSEventEmitterPrototype>(vm)) JSEventEmitterPrototype(vm, globalObject, structure);
+        JSEventEmitterPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEventEmitterPrototype))) JSEventEmitterPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -78,7 +78,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -114,7 +114,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (maxListeners && maxListeners.isUInt32()) {
-        object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+        object->setMaxListeners(maxListeners.asUInt32());
     }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
@@ -143,7 +143,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (maxListeners && maxListeners.isUInt32()) {
-        object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+        object->setMaxListeners(maxListeners.asUInt32());
     }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, object.copyRef());
@@ -204,8 +204,8 @@ const ClassInfo JSEventEmitterPrototype::s_info = { "EventEmitter"_s, &Base::s_i
 void JSEventEmitterPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSEventEmitter::info(), JSEventEmitterPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSEventEmitter::info(), JSEventEmitterPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSEventEmitter::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitter) };
@@ -307,7 +307,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListener
         throwTypeError(lexicalGlobalObject, throwScope, "The maxListeners argument must be a number"_s);
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    unsigned maxListeners = argument0.value().toUInt32(lexicalGlobalObject);
+    unsigned maxListeners = JSC::toUInt32(argument0.value().asNumber());
 
     impl.setMaxListeners(maxListeners);
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -509,12 +509,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners, (JSGlobalObj
 
 JSC::GCClient::IsoSubspace* JSEventEmitter::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSEventEmitter, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForEventEmitter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEventEmitter = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForEventEmitter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForEventEmitter = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSEventEmitter, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEventEmitter, m_subspaceForEventEmitter));
 }
 
 template<typename Visitor>

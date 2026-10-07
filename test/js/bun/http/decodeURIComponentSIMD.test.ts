@@ -368,7 +368,12 @@ describe("decodeURIComponentSIMD with UTF-8 byte input", () => {
 
 // A "%" without two hex digits after it is not an escape. The decoder keeps
 // it and continues with the next character. It does not replace the "%" and
-// does not skip the characters after it.
+// does not skip the characters after it. URLSearchParams decodes a bare "%"
+// the same way, so these tests compare with it.
+//
+// The comparison holds for a bare "%" only. A well-formed sequence that is
+// overlong or out of range, such as %C0%AF, gives one U+FFFD here and one
+// U+FFFD for each byte in URLSearchParams.
 describe("decodeURIComponentSIMD with a '%' that is not an escape", () => {
   // Every other escape in these inputs decodes to valid UTF-8, so the only
   // question is what happens to the bare "%".
@@ -376,15 +381,22 @@ describe("decodeURIComponentSIMD with a '%' that is not an escape", () => {
     "%",
     "%%",
     "%%%",
+    "%%%%",
     "%2",
     "%g",
     "%2g",
     "%g2",
     "%gg",
+    "%0G",
+    "%G0",
+    "%2%3",
+    "%00%0G",
     "50%-off",
     "a%zzb",
     "abc%",
     "x%2",
+    "hello%",
+    "hello%2",
     "a%%b",
     "%2sf%2a",
     "%2%2af%2a",
@@ -394,11 +406,29 @@ describe("decodeURIComponentSIMD with a '%' that is not an escape", () => {
     "%41%zz",
     "%zz%C3%A9",
     "%C3%A9%zz",
+    "valid%20invalid%GGvalid%20",
     "%é",
     "é%",
     "%€",
+    // The "%" at, before and after a 16-byte chunk boundary.
+    ...[15, 16, 31].map(length => Buffer.alloc(length, "a").toString() + "%GG"),
   ])("decodes %s the same way URLSearchParams does", input => {
     expect(decodeURIComponentSIMD(input)).toBe(new URLSearchParams("v=" + input).get("v")!);
+  });
+
+  // A multi-byte sequence that a bare "%" cuts off. The cut-off sequence
+  // becomes one U+FFFD, and the "%" and the characters after it are kept.
+  it.each([
+    ["%C3%zz", "\uFFFD%zz"],
+    ["%C3%", "\uFFFD%"],
+    ["%E2%zz", "\uFFFD%zz"],
+    ["%E2%82%", "\uFFFD%"],
+    ["%F0%9F%", "\uFFFD%"],
+    ["%F0%9F%98%zz", "\uFFFD%zz"],
+    ["a%C3%zzb", "a\uFFFD%zzb"],
+  ])("decodes %s to one U+FFFD and keeps the percent sign", (input, expected) => {
+    expect(decodeURIComponentSIMD(input)).toBe(expected);
+    expect(new URLSearchParams("v=" + input).get("v")).toBe(expected);
   });
 
   it("keeps a '%' followed by non-hex characters literal", () => {

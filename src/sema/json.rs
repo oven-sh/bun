@@ -144,27 +144,26 @@ fn negated_numeric_literal(hir: &File, e: ExprId) -> Option<u32> {
     }
 }
 
+/// What a function that visits the values of a JSON text in source order has yet to visit. It is
+/// in a list, the next at the end: the original calls itself, on a stack that grows.
+enum Pending {
+    Value(ExprId),
+    /// Of an object literal.
+    Property(PropId),
+}
+
 /// The end of `parseJSONText` for the file `hir` with source `text`: the errors of
 /// `validateJsonValue` are parse diagnostics.
 pub fn validate_json(hir: &mut File, text: &[u8]) {
     /// `validateJsonValue`, `validateJsonObjectLiteral`
-    fn validate_json_value(spans: Spans<'_, '_>, e: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
+    fn validate_json_value(spans: Spans<'_, '_>, root: ExprId, refused: &mut Vec<(u32, u32, u32)>) {
         let hir = spans.hir;
         let is_double_quoted = |at: u32| spans.text.get(at as usize) == Some(&b'"');
-        let start = start_of(hir, e);
-        let code = match hir[e].kind {
-            _ if is_parenthesized(hir, e) => 1328,
-            ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
-            ExprKind::String(_) if is_double_quoted(start) => return,
-            ExprKind::String(_) if spans.text.get(start as usize) != Some(&b'`') => 1327,
-            ExprKind::Unary { .. } if negated_numeric_literal(hir, e).is_some() => return,
-            ExprKind::Array(items) => {
-                return hir
-                    .ids(items)
-                    .for_each(|item| validate_json_value(spans, item, refused));
-            }
-            ExprKind::Object(props) => {
-                for p in props.iter() {
+        let mut pending = vec![Pending::Value(root)];
+        while let Some(next) = pending.pop() {
+            let e = match next {
+                Pending::Value(e) => e,
+                Pending::Property(p) => {
                     let prop = hir[p];
                     if prop.kind != PropKind::Init {
                         refused.push((prop.start, 1136, spans.prop(p) as u32));
@@ -173,13 +172,28 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                     if !is_double_quoted(prop.pos) {
                         refused.push((prop.pos, 1327, spans.prop_name(p) as u32));
                     }
-                    validate_json_value(spans, prop.value, refused);
+                    prop.value
                 }
-                return;
-            }
-            _ => 1328,
-        };
-        refused.push((start, code, spans.expr(e) as u32));
+            };
+            let start = start_of(hir, e);
+            let code = match hir[e].kind {
+                _ if is_parenthesized(hir, e) => 1328,
+                ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => continue,
+                ExprKind::String(_) if is_double_quoted(start) => continue,
+                ExprKind::String(_) if spans.text.get(start as usize) != Some(&b'`') => 1327,
+                ExprKind::Unary { .. } if negated_numeric_literal(hir, e).is_some() => continue,
+                ExprKind::Array(items) => {
+                    pending.extend(hir.ids(items).rev().map(Pending::Value));
+                    continue;
+                }
+                ExprKind::Object(props) => {
+                    pending.extend(props.iter().rev().map(Pending::Property));
+                    continue;
+                }
+                _ => 1328,
+            };
+            refused.push((start, code, spans.expr(e) as u32));
+        }
     }
     let mut refused = Vec::new();
     if let Some(root) = root_expression(hir).filter(|_| !hir.has_errors) {
@@ -243,7 +257,7 @@ fn parse_pseudo_big_int(text: &[u8]) -> Vec<u8> {
 }
 
 /// `tokenValue` of the bigint literal `text`: `scanHexDigits`, `scanBigIntSuffix`.
-pub(crate) fn bigint_token_value(text: &[u8]) -> Vec<u8> {
+pub fn bigint_token_value(text: &[u8]) -> Vec<u8> {
     let without_separators = text.iter().filter(|&&byte| byte != b'_');
     let mut value: Vec<u8> = without_separators.map(u8::to_ascii_lowercase).collect();
     // `Scan`: for a radix prefix without digits, the digit is 0.
@@ -288,15 +302,16 @@ impl<'s> TsConfigSourceFile<'s> {
         Some(TsConfigSourceFile { hir, atoms, root })
     }
 
-    /// `SourceFile.Diagnostics`: the code, the message arguments, the start and the end.
-    pub fn diagnostics(&self) -> impl Iterator<Item = (u32, Vec<Vec<u8>>, u32, u32)> {
+    /// `SourceFile.Diagnostics`
+    pub fn diagnostics(&self) -> impl Iterator<Item = &Diagnostic> {
         let diagnostics = self.hir.diagnostics.iter();
-        let parse_errors = diagnostics.filter(|d| d.kind == DiagnosticKind::Parse);
-        let spans = Spans::of(&self.hir);
-        parse_errors.map(move |d| {
-            let args = d.args.iter().map(|arg| arg.to_vec()).collect();
-            (d.code, args, d.start, spans.diagnostic_end(d.start, d.end))
-        })
+        diagnostics.filter(|d| d.kind == DiagnosticKind::Parse)
+    }
+
+    /// `Loc` of one of `diagnostics`, or of its related information.
+    pub fn diagnostic_span(&self, d: &Diagnostic) -> (u32, u32) {
+        let end = Spans::of(&self.hir).diagnostic_end(d.start, d.end);
+        (d.start, end)
     }
 
     /// `TryGetTextOfPropertyName` for the name of `p`.
@@ -359,9 +374,10 @@ impl<'s> TsConfigSourceFile<'s> {
         self.hir[p].value
     }
 
+    /// None if `array` is no array literal (`IsArrayLiteralExpression`).
     pub fn elements(&self, array: ExprId) -> impl Iterator<Item = ExprId> {
         let items = match self.hir[array].kind {
-            ExprKind::Array(items) => items,
+            ExprKind::Array(items) if !is_parenthesized(&self.hir, array) => items,
             _ => Default::default(),
         };
         self.hir.ids(items)
@@ -396,19 +412,13 @@ impl<'s> TsConfigSourceFile<'s> {
         errors: &mut Vec<(u32, Vec<Vec<u8>>, (u32, u32))>,
     ) {
         let (hir, spans) = (&self.hir, Spans::of(&self.hir));
-        match hir[e].kind {
-            _ if is_parenthesized(hir, e) => {}
-            ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => return,
-            ExprKind::String(_) if !self.is_template(e) => return,
-            ExprKind::Unary { .. } if negated_numeric_literal(hir, e).is_some() => return,
-            // `convertArrayLiteralExpressionToJson`
-            ExprKind::Array(_) => {
-                return (self.elements(e))
-                    .for_each(|element| self.conversion_errors(element, option, errors));
-            }
-            // `convertObjectLiteralExpressionToJson`
-            ExprKind::Object(props) => {
-                for p in props.iter() {
+        // Each with the option that it, or the object literal that has it, is converted for.
+        let mut pending = vec![(Pending::Value(e), option)];
+        while let Some((next, option)) = pending.pop() {
+            let (e, option) = match next {
+                Pending::Value(e) => (e, option),
+                // `convertObjectLiteralExpressionToJson`
+                Pending::Property(p) => {
                     let prop = hir[p];
                     if prop.kind != PropKind::Init {
                         errors.push((1136, Vec::new(), self.loc(prop.start, spans.prop(p))));
@@ -421,32 +431,53 @@ impl<'s> TsConfigSourceFile<'s> {
                         errors.push((8009, vec![b"?".to_vec()], loc));
                     }
                     let key_text = self.try_get_text_of_property_name(p).unwrap_or_default();
-                    let of_key = option.and_then(|it| it.element(key_text));
-                    self.conversion_errors(prop.value, of_key, errors);
+                    (prop.value, option.and_then(|it| it.element(key_text)))
                 }
-                return;
+            };
+            match hir[e].kind {
+                _ if is_parenthesized(hir, e) => {}
+                ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => continue,
+                ExprKind::String(_) if !self.is_template(e) => continue,
+                ExprKind::Unary { .. } if negated_numeric_literal(hir, e).is_some() => continue,
+                // `convertArrayLiteralExpressionToJson`
+                ExprKind::Array(items) => {
+                    let elements = hir.ids(items).rev();
+                    pending.extend(elements.map(|element| (Pending::Value(element), option)));
+                    continue;
+                }
+                ExprKind::Object(props) => {
+                    pending.extend(props.iter().rev().map(|p| (Pending::Property(p), option)));
+                    continue;
+                }
+                _ => {}
             }
-            _ => {}
+            let (code, args) = match option {
+                Some(option) => (5024, vec![option.name().to_vec(), option.takes().to_vec()]),
+                None => (1328, Vec::new()),
+            };
+            let end = spans.expr(e);
+            let loc = match hir[e].kind {
+                // `createMissingNode`: it is empty, at the end of the token before it.
+                ExprKind::Missing if !is_parenthesized(hir, e) => (end as u32, end as u32),
+                _ => self.loc(start_of(hir, e), end),
+            };
+            errors.push((code, args, loc));
         }
-        let (code, args) = match option {
-            Some(option) => (5024, vec![option.name().to_vec(), option.takes().to_vec()]),
-            None => (1328, Vec::new()),
-        };
-        let end = spans.expr(e);
-        let loc = match hir[e].kind {
-            // `createMissingNode`: it is empty, at the end of the token before it.
-            ExprKind::Missing if !is_parenthesized(hir, e) => (end as u32, end as u32),
-            _ => self.loc(start_of(hir, e), end),
-        };
-        errors.push((code, args, loc));
     }
 
     /// `convertPropertyValueToJson`. A value that is not in the expected format becomes `null`,
     /// which stays in an array (`[null]` is a nil slice, `[]` is not): the readers leave it out.
+    /// So does a value for which the stack, which grows in Go, is at its end. Only `StringifyJson`
+    /// reads what is nested that deep, and it panics beyond `maxNestingDepth`.
     pub fn convert_property_value_to_json(&self, e: ExprId) -> Json {
         let hir = &self.hir;
         match hir[e].kind {
             _ if is_parenthesized(hir, e) || self.is_template(e) => Json::Null,
+            ExprKind::Array(_) | ExprKind::Object(_)
+                if !bun_core::StackCheck::init().is_safe_to_recurse() =>
+            {
+                Json::Null
+            }
             ExprKind::True => Json::Bool(true),
             ExprKind::False => Json::Bool(false),
             ExprKind::String(text) => Json::String(self.atoms.bytes(text).to_vec()),

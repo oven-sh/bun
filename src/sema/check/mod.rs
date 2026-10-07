@@ -69,6 +69,7 @@ mod related_expected;
 mod shape;
 mod sink;
 pub(crate) mod spans;
+mod symbol_ids;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/symbol_writer.rs"]
 pub mod symbol_writer;
@@ -150,7 +151,7 @@ macro_rules! buffered_fields {
             sig_type_params resolved_return_types call_signatures construct_signatures candidate_orders members
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
-            awaited_types synthetic_default_import_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
+            awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
             union_properties union_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
@@ -158,7 +159,8 @@ macro_rules! buffered_fields {
             expr_types flows_too_deep calls call_return_types call_diagnostics diagnostics_of_re_resolved_calls
             effects_signatures resolved_effects_signatures context_free_expr_types context_free_types
             type_predicates_from_body initializer_is_undefined circular_initializers circular_returns deferred_nodes
-            calls_before_signatures untyped_signatures_in_js jsx_fragment_types
+            resolved_parameter_symbols
+            calls_before_signatures untyped_signatures_in_js jsx_fragment_types assignments_marked
         )
     };
 }
@@ -183,6 +185,10 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
+    /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
+    /// declaration does not see what another one has marked, so `finish_file` takes back what it
+    /// has reported. A union: it does not depend on which task comes first.
+    properties_referenced_before: Guarded<crate::util::FxHashSet<Sym>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
     pub files: &'s Files<'s>,
@@ -217,9 +223,9 @@ pub struct Program<'s> {
     /// The functions for which 7023 was reported and whose entry in `fn_return_types` is not the result of the cycle: it is in flight and
     /// keeps its inferred type, or the cycle is that of a composite signature.
     circular_returns: ByNode<(FileId, FnId), (), Buffered, &'s Session>,
-    /// The calls that found no signature while index signatures were being computed. The callee may
-    /// be the static side of a class whose members were in place and whose signatures were not
-    /// (`resolveAnonymousTypeMembers`).
+    /// The calls that found no signature among members that were in place, or while index
+    /// signatures were being computed. The callee may be the static side of a class whose members
+    /// were in place and whose signatures were not (`resolveAnonymousTypeMembers`).
     calls_before_signatures: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
     /// References whose control flow walk reached depth 2000 (2563). `getTypeAtFlowNode`
     flows_too_deep: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
@@ -247,6 +253,9 @@ pub struct Program<'s> {
     mapped_types_with_errors: ById<TypeId, (), Buffered, &'s Session>,
     /// `NodeCheckFlagsInitializerIsUndefinedComputed` and `NodeCheckFlagsInitializerIsUndefined`
     initializer_is_undefined: ByNode<(FileId, ParamId), bool, Buffered, &'s Session>,
+    /// `links.resolvedType != nil` of the symbol of a parameter that `is_resolved_on_request`: the
+    /// type is in `pat_types`, with or without it.
+    resolved_parameter_symbols: ByNode<(FileId, ParamId), (), Buffered, &'s Session>,
     /// See `is_untyped_signature_in_js_file`.
     untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
     declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
@@ -295,6 +304,11 @@ pub struct Program<'s> {
     deferred_nodes: ByNode<(FileId, ExprId), (), Buffered, &'s Session>,
     /// `links.jsxFragmentType` of a source file.
     jsx_fragment_types: ByKey<FileId, TypeId, Buffered, &'s Session>,
+    /// `NodeCheckFlagsAssignmentsMarked` of a function or a source file. `true`: it had no parent
+    /// with the flag, so `markNodeAssignments` has walked it. `markedAssignmentSymbolLinks` follows
+    /// from the walks. Only for a file that `has_order_dependent_assignment_marks`. For
+    /// `Node::NONE` see `are_assignments_marked_in_program_order`.
+    assignments_marked: ByKey<(FileId, Node), bool, Buffered, &'s Session>,
     /// `getEffectiveFirstArgumentForJsxSignature` of the signature a JSX element is resolved to,
     /// keyed by the element.
     jsx_attributes_types: ByNode<(FileId, JsxId), TypeId, FileLocal, &'s Session>,
@@ -316,9 +330,6 @@ pub struct Program<'s> {
     /// declaration.
     /// `awaited_no_alias` as a top-level query, once it is final.
     awaited_types: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
-    /// `cachedTypes[CachedTypeKindSyntheticType]`, by the type of a module: whether the cached type
-    /// has a synthetic `default`.
-    synthetic_default_import_types: ById<TypeId, bool, Buffered, &'s Session>,
     /// `resolvedType` of a property of a mapped type, keyed by the mapped type and the property name. `getTypeOfMappedSymbol`
     mapped_prop_types: ByKey<(TypeId, Atom), TypeId, Buffered, &'s Session>,
     /// `reverseMappedCache`
@@ -337,7 +348,9 @@ pub struct Program<'s> {
     /// `getMappedTargetWithSymbol` of a mapped type.
     mapped_targets: ById<TypeId, TypeId, Buffered, &'s Session>,
     inferred_constraints: ById<TypeId, Option<TypeId>, Buffered, &'s Session>,
-    constraints: ById<TypeId, (TypeId, bool), Buffered, &'s Session>,
+    /// `ConstrainedType.resolvedBaseConstraint`: `None` is `noConstraintType`, the flag
+    /// `circularConstraintType`.
+    constraints: ById<TypeId, (Option<TypeId>, bool), Buffered, &'s Session>,
     /// `global_ref` of a name, without type arguments.
     plain_global_refs: ById<Atom, TypeId, Buffered, &'s Session>,
     /// `CachedTypeKindEquivalentBaseType`
@@ -430,6 +443,7 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
+            properties_referenced_before: Default::default(),
             auto_array_type,
             types,
             expr_types: ByNode::new_in(&exprs, session),
@@ -459,6 +473,7 @@ impl<'s> Program<'s> {
             global_errors: Default::default(),
             mapped_types_with_errors: ById::new_in(session),
             initializer_is_undefined: ByNode::new_in(&params, session),
+            resolved_parameter_symbols: ByNode::new_in(&params, session),
             untyped_signatures_in_js: ByNode::new_in(&fns, session),
             declared_types: ByNode::new_in(&symbols, session),
             shapes: ByIdIndirect::new_in(session),
@@ -483,6 +498,7 @@ impl<'s> Program<'s> {
             call_return_types: ByNode::new_in(&exprs, session),
             deferred_nodes: ByNode::new_in(&exprs, session),
             jsx_fragment_types: ByKey::new_in(session),
+            assignments_marked: ByKey::new_in(session),
             jsx_attributes_types: ByNode::new_in(&exprs, session),
             call_diagnostics: ByNodeIndirect::new_in(&exprs, session),
             context_checked: ByNode::new_in(&fns, session),
@@ -491,7 +507,6 @@ impl<'s> Program<'s> {
             relations: ByKey::new_in(session),
             variances: ByNodeIndirect::new_in(&symbols, session),
             awaited_types: ById::new_in(session),
-            synthetic_default_import_types: ById::new_in(session),
             mapped_prop_types: ByKey::new_in(session),
             reverse_mapped_cache: ByKey::new_in(session),
             optional_properties: ById::new_in(session),
@@ -591,12 +606,17 @@ impl<'s> Program<'s> {
             loop_values: Vec::new(),
             non_circular_returns: Vec::new(),
             array_or_tuple_constraint_requests: Vec::new(),
+            mapped_instantiations_in_progress: Vec::new(),
             contextual_binding_patterns: Vec::new(),
             late_bound_members: Default::default(),
+            late_bound_declarations: Default::default(),
             this_types: Default::default(),
             late_binding: Vec::new(),
             reporting_nonexistent: Vec::new(),
             declared_index_infos_in_progress: Vec::new(),
+            anonymous_members_in_place: Vec::new(),
+            index_infos_in_instantiation: Vec::new(),
+            enum_values_in_progress: Vec::new(),
             inheriting: Vec::new(),
             base_types_so_far: Vec::new(),
             mapped_constraints_in_progress: Vec::new(),
@@ -622,6 +642,8 @@ impl<'s> Program<'s> {
             cycles: 0,
             lowest_taint: usize::MAX,
             context_checked_under: Vec::new(),
+            initializers_resolved_by_nested_visit: Vec::new(),
+            resolved_parameter_types: Default::default(),
             quick_initializers: Vec::new(),
             contextual: Vec::new(),
             pulls_contextual_types_at: usize::MAX,
@@ -713,6 +735,8 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
+            has_compared_without_total_order: std::cell::Cell::new(false),
+            symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: false,
             inline_level: 0,
@@ -723,6 +747,9 @@ impl<'s> Program<'s> {
             awaiting: Vec::new(),
             last_flow_node: (FileId(u32::MAX), crate::bind::FlowId::NONE, false),
             undefined_properties: Default::default(),
+            synthetic_default_import_types: Default::default(),
+            referenced_properties: Default::default(),
+            unused_private_members: Vec::new(),
             widening_contexts: Vec::new(),
             widened_types: Default::default(),
             iteration_types_cache: Default::default(),
@@ -816,6 +843,9 @@ enum Query {
     InferredConstraint(TypeId),
     Call(FileId, ExprId),
     Pat(FileId, PatId),
+    /// `getTypeOfSymbol` of a parameter whose name is the pattern. For such a pattern `Pat` is
+    /// `getTypeForVariableLikeDeclaration`, which pushes no resolution. Both store in `pat_types`.
+    ParameterSymbol(FileId, PatId),
     LiteralProp(FileId, PropId),
     TypeNode(FileId, TypeNodeId),
     /// The type of a property of a mapped type: the mapped type and the property name. `getTypeOfMappedSymbol`
@@ -869,7 +899,7 @@ impl Query {
             Query::LiteralProp(file, _) => (file, 2),
             Query::Return(file, _) => (file, 3),
             Query::ReturnAtFirstLook(file, _) => (file, 4),
-            Query::Pat(file, _) => (file, 5),
+            Query::Pat(file, _) | Query::ParameterSymbol(file, _) => (file, 5),
             Query::InitializerIsUndefined(file, _) => (file, 6),
             Query::Symbol(sym) => (sym.file, 7),
             Query::TypeNode(file, _) => (file, 8),
@@ -915,6 +945,16 @@ bitflags::bitflags! {
         const IGNORE_NODE_INFERENCES = 1 << 2;
         const SKIP_BINDING_PATTERNS = 1 << 3;
     }
+}
+
+/// `ContextualInfo`
+#[derive(Copy, Clone)]
+struct ContextualInfo {
+    file: FileId,
+    node: ExprId,
+    /// `None`: `pushCachedContextualType` of a node without a contextual type.
+    t: Option<TypeId>,
+    is_cache: bool,
 }
 
 /// `InferenceContextInfo`
@@ -972,6 +1012,11 @@ struct QueryFrame {
     /// It is a `Query::Expr`, and a nested visit of the expression has stored its type since the
     /// frame was pushed. Every later visit is a cache hit, which reports nothing.
     is_stored_by_nested_visit: bool,
+    /// It is a `Query::Expr` or a `Query::LiteralProp`, and has read members from
+    /// `anonymous_members_in_place`. `checkExpression` stores nothing: the next visit finds the
+    /// members there are then, so no type is stored here either. Not set where there is no next
+    /// visit: see `note_members_in_place_read_above`.
+    has_read_members_in_place: bool,
     /// `Checker::current_source_element` when it was pushed.
     source_element: Option<CurrentNode>,
 }
@@ -1024,19 +1069,35 @@ pub struct Checker<'p, 's> {
     contextual_binding_patterns: Vec<(FileId, PatId, usize)>,
     /// `membersAndExportsLinks`, keyed by container and side.
     late_bound_members: FxHashMap<(Sym, bool), late_bound::LateBoundMembers>,
+    /// `symbolNodeLinks.Get(decl).resolvedSymbol != nil`: the declarations that `lateBindMember` has
+    /// bound, of the containers in `late_binding`.
+    late_bound_declarations: crate::util::FxHashSet<(FileId, crate::bind::Decl)>,
     /// `has_this_type` of an interface.
     this_types: FxHashMap<Sym, bool>,
     /// `getResolvedMembersOrExportsOfSymbol` is binding the computed names, with `earlySymbols` in
     /// `links[resolutionKind]`. For each one in progress: the depth of `stack` at that point, the
-    /// container, and whether it is at the exports. See `is_late_binding`.
+    /// container, and whether it is at the exports. See `is_late_binding`. Where `earlySymbols` is
+    /// nil, only for the outermost one.
     late_binding: Vec<(usize, Sym, bool)>,
     /// `nonExistentProperties`: property accesses whose 2339 message is being printed, with `stack.len()` when printing started.
     reporting_nonexistent: Vec<(FileId, ExprId, usize)>,
     /// `resolveDeclaredMembers` is at `getIndexInfosOfSymbol`, with `declaredMembersResolved` set.
     /// For each one in progress: the depth of `stack` at that point, with the `Query::Shape` on
     /// top if `resolveObjectTypeMembers` is the caller, and the first member of the declaration
-    /// whose computed name is some string, number or symbol.
-    declared_index_infos_in_progress: Vec<(usize, FileId, MemberId)>,
+    /// whose computed name is some string, number or symbol. `None` for members that are not the
+    /// instance side of a class or an interface.
+    declared_index_infos_in_progress: Vec<(usize, FileId, MemberId, Option<shape::Declaring>)>,
+    /// `resolveAnonymousTypeMembers` of a class or an enum as a value is past its first
+    /// `setStructuredTypeMembers`, so `ObjectFlagsMembersResolved` is set. For each one in
+    /// progress: the origin of the type, what it has assigned so far, and the height of `stack`
+    /// at that point.
+    anonymous_members_in_place: Vec<(Origin, shape::MembersInPlace, usize)>,
+    /// `resolveAnonymousTypeMembers` of an instantiated type is at `instantiateIndexInfos`, with
+    /// `ObjectFlagsMembersResolved` set and no members. An entry for each one in progress.
+    index_infos_in_instantiation: Vec<shape::IndexInfosInInstantiation>,
+    /// `NodeCheckFlagsEnumValuesComputed` of each enum declaration that `computeEnumMemberValues`
+    /// is at, and `enumMemberLinks.Get(member).value` of the members it has come to.
+    enum_values_in_progress: Vec<((FileId, EnumId), Vec<decl::Evaluated>)>,
     /// The classes and interfaces whose shapes are at the members of their base types, by the key
     /// of the shape. `resolveObjectTypeMembers` calls `setStructuredTypeMembers` with the declared
     /// members before that.
@@ -1084,6 +1145,9 @@ pub struct Checker<'p, 's> {
     non_circular_returns: Vec<usize>,
     /// The height of `stack` at each request of `hasArrayOrTypeTypeConstraint` in progress.
     array_or_tuple_constraint_requests: Vec<usize>,
+    /// The `getObjectTypeInstantiation` of mapped types that have found nothing under their key
+    /// and have not assigned `instantiations[key]` yet.
+    mapped_instantiations_in_progress: Vec<mapped::MappedInstantiation>,
     /// The index in `stack` from which a query counts as in progress.
     resolution_start: usize,
     /// Why the last `enter` refused: the query is one of TypeScript's own resolutions and is in
@@ -1111,8 +1175,8 @@ pub struct Checker<'p, 's> {
     cycles: u64,
     /// The lowest index given to `mark_tainted_from` since the innermost `begin_scope`.
     lowest_taint: usize,
-    /// Expressions being checked against a pushed contextual type, innermost last.
-    contextual: Vec<(FileId, ExprId, TypeId)>,
+    /// `contextualInfos`
+    contextual: Vec<ContextualInfo>,
     /// The height of `stack` at which `getContextualType` finds nothing pushed: the contextual
     /// types recorded by call resolution (`arg_contexts`) are not read, and the contextual type of
     /// an argument comes from the parameters of `links.resolvedSignature`. A query entered above
@@ -1157,10 +1221,11 @@ pub struct Checker<'p, 's> {
     /// `cycles` too.
     unresolved_members_hits: u64,
     /// How many times a request for members got those that were in place: `unresolved_members_hits`,
-    /// a re-entered query that `has_members_in_place`, and a provisional result that follows from
-    /// either. Each time is counted in `cycles` too, so no other memo stores what follows. tsgo
-    /// marks nothing there. What it assigns once, whatever is in progress, is stored here as well:
-    /// `compose` (`resolveObjectTypeMembers`) and `resolve_type_arguments` (`getTypeArguments`).
+    /// a re-entered query that `has_members_in_place`, `has_no_members_in_place`, and a provisional
+    /// result that follows from any. Each time is counted in `cycles` too, so no other memo stores
+    /// what follows. tsgo marks nothing there. What it assigns once, whatever is in progress, is
+    /// stored here as well: `compose` (`resolveObjectTypeMembers`), `resolve_type_arguments`
+    /// (`getTypeArguments`) and `instantiate_index_infos` (`resolveAnonymousTypeMembers`).
     /// Otherwise n type references that need a member of each other are resolved n! times.
     members_in_place_hits: u64,
     /// `work` at the last of them.
@@ -1311,6 +1376,10 @@ pub struct Checker<'p, 's> {
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
+    /// Set by `compare_type_names` where `CompareTypes` is not transitive.
+    has_compared_without_total_order: std::cell::Cell<bool>,
+    /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
+    symbol_ids: Option<std::cell::RefCell<symbol_ids::SymbolIds>>,
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
@@ -1331,12 +1400,16 @@ pub struct Checker<'p, 's> {
     awaiting: Vec<TypeId>,
     /// `lastFlowNode`, `lastFlowNodeReachable`
     last_flow_node: (FileId, crate::bind::FlowId, bool),
-    /// `undefinedProperties`. In tsgo it lives as long as a checker, which checks many files. Here
-    /// a checker checks one. The widened type of an exported variable is cached in the shared memo
-    /// by the first caller, with the table of that checker, so the order of its printed properties
-    /// can vary with more than one thread. If that is flagged, the table is for what is not cached
-    /// there.
+    /// `undefinedProperties`
     undefined_properties: FxHashMap<Atom, Prop<'s>>,
+    /// `cachedTypes[CachedTypeKindSyntheticType]`, by the type of a module: whether the cached type
+    /// has a synthetic `default`.
+    synthetic_default_import_types: FxHashMap<TypeId, bool>,
+    /// `symbolReferenceLinks` of the private members that an access in another file than that of
+    /// their declaration has marked (`mark_property_as_referenced`).
+    referenced_properties: crate::util::FxHashSet<Sym>,
+    /// `Checked::unused_private_members` of the file that is being checked.
+    unused_private_members: Vec<(Sym, u32)>,
     /// The contexts of the unions being widened. A `*WideningContext` is an index into it.
     widening_contexts: Vec<symbols::WideningContext<'p>>,
     /// `cachedTypes[CachedTypeKindWidened]`
@@ -1448,6 +1521,14 @@ pub struct Checker<'p, 's> {
     /// `NodeCheckFlagsContextChecked` and assigns the parameter types whatever is in progress. So
     /// until that frame is left the function is checked, with that signature.
     context_checked_under: Vec<(usize, u64, (FileId, crate::hir::FnId), Option<SigId>)>,
+    /// `links.resolvedType` of an initializer that `checkExpressionCached` is checking, as a nested
+    /// `checkExpressionCached` of it has assigned it: the index and the serial of the frame of the
+    /// outermost visit, and the type. See `check_declaration_initializer`.
+    initializers_resolved_by_nested_visit: Vec<(usize, u64, TypeId)>,
+    /// The parameters of instantiated signatures, by index, whose `links.resolvedType` is assigned.
+    /// `sig_params` computes the types of all parameters at once. See
+    /// `note_parameter_types_resolved`.
+    resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
     /// `getQuickTypeOfExpression` is evaluating. See `is_flow_loop_visible`.
     quick_initializers: Vec<(usize, usize)>,
@@ -1708,6 +1789,7 @@ impl<'p, 's> Checker<'p, 's> {
             has_result: false,
             incomplete_flow,
             is_stored_by_nested_visit: false,
+            has_read_members_in_place: false,
             source_element: self.current_source_element,
         });
         true
@@ -1909,6 +1991,20 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(q, Query::Cond(..)) {
             return false;
         }
+        // Nor have `getDeclaredTypeOfEnum`, `getDeclaredTypeOfEnumMember` and
+        // `getTypeOfEnumMember`. The second visit takes the values that `computeEnumMemberValues`
+        // has assigned so far (`enum_values_in_progress`).
+        let is_of_enum = match q {
+            Query::Declared(sym) => {
+                let flags = self.files().flags(sym);
+                flags.intersects(SymFlags::ENUM | SymFlags::ENUM_MEMBER)
+            }
+            Query::Symbol(sym) => self.files().flags(sym).contains(SymFlags::ENUM_MEMBER),
+            _ => false,
+        };
+        if is_of_enum && !self.is_resolution(q) {
+            return false;
+        }
         // Neither has `getTypeFromTypeNode`. The result has a level for every round up to the limit.
         if matches!(q, Query::TypeNode(..)) && self.is_runaway(i) {
             return false;
@@ -1932,10 +2028,9 @@ impl<'p, 's> Checker<'p, 's> {
             && (is_through_printing && !self.reprinting
                 || self.ends_at_non_circular_return(i)
                 || self.ends_at_array_or_tuple_constraint(i)
-                || self.ends_at_declared_members(i)
+                || self.ends_at_members_in_place(i)
                 || self.ends_at_reduction_in_progress(i)
                 || self.ends_at_default_in_progress(i)
-                || self.ends_at_members_of_mapped_type(i)
                 || self.is_below_stale_resolution(i))
         {
             return false;
@@ -2033,22 +2128,6 @@ impl<'p, 's> Checker<'p, 's> {
             })
     }
 
-    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
-    /// whose computed names are being bound or whose index signatures are being resolved:
-    /// `getResolvedMembersOrExportsOfSymbol` assigns `earlySymbols` to its links first, and
-    /// `resolveDeclaredMembers` sets `declaredMembersResolved` first.
-    fn ends_at_declared_members(&self, i: usize) -> bool {
-        if self.declared_index_infos_in_progress.is_empty() && self.late_binding.is_empty() {
-            return false;
-        }
-        let mut from_here = self.stack[i..].iter();
-        let resolution = from_here.position(|&q| self.is_resolution(q));
-        let resolution = resolution.map_or(self.stack.len(), |at| i + at);
-        let index_infos = self.declared_index_infos_in_progress.iter().map(|it| it.0);
-        let mut began = index_infos.chain(self.late_binding.iter().map(|it| it.0));
-        began.any(|height| height > i && height <= resolution)
-    }
-
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at an
     /// intersection whose properties `getReducedType` is examining: it sets
     /// `ObjectFlagsIsNeverIntersectionComputed` first, and returns the intersection the next time.
@@ -2077,26 +2156,8 @@ impl<'p, 's> Checker<'p, 's> {
         began.any(|&(_, height, _)| height > i && height <= resolution)
     }
 
-    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at a mapped
-    /// type whose members are being resolved: `resolveMappedTypeMembers` installs empty members
-    /// first.
-    fn ends_at_members_of_mapped_type(&self, i: usize) -> bool {
-        let mut before_first_resolution = self.stack[i..]
-            .iter()
-            .take_while(|&&q| !self.is_resolution(q));
-        before_first_resolution.any(|&q| {
-            matches!(q, Query::Shape(ty) if matches!(
-                self.data(ty),
-                TypeData::Anon {
-                    origin: Origin::Mapped(..),
-                    ..
-                }
-            ))
-        })
-    }
-
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
-    /// that are already installed.
+    /// that are already installed or at the values of an enum declaration that are being computed.
     fn ends_at_members_in_place(&self, i: usize) -> bool {
         let before_first_resolution = self.stack[i..]
             .iter()
@@ -2104,7 +2165,9 @@ impl<'p, 's> Checker<'p, 's> {
         before_first_resolution.enumerate().any(|(above, &q)| {
             // `resolveDeclaredMembers` has them in place while it resolves the index signatures, and
             // `getResolvedMembersOrExportsOfSymbol` the early-bound ones while it binds the rest.
+            // `computeEnumMemberValues` has set `NodeCheckFlagsEnumValuesComputed`.
             self.has_members_in_place(q)
+                || matches!(q, Query::Enum(..))
                 || (self.declared_index_infos_in_progress.iter()).any(|it| it.0 == i + above + 1)
                 || self.late_binding.iter().any(|it| it.0 == i + above + 1)
         })
@@ -2275,7 +2338,8 @@ impl<'p, 's> Checker<'p, 's> {
             | Query::InitializerIsUndefined(..)
             | Query::TypeArguments(_)
             | Query::AliasTarget(_)
-            | Query::WriteType(..) => true,
+            | Query::WriteType(..)
+            | Query::ParameterSymbol(..) => true,
             // `getTypeOfSymbol` tests for a variable or a property first. `getTypeOfFuncClassEnumModule` and `getTypeOfEnumMember`
             // push no resolution.
             Query::Symbol(sym) => {
@@ -2356,6 +2420,42 @@ impl<'p, 's> Checker<'p, 's> {
         let frames = self.frames.iter_mut().zip(&self.stack);
         for (frame, _) in frames.filter(|x| *x.1 == q) {
             frame.is_stored_by_nested_visit = true;
+        }
+    }
+
+    /// See `QueryFrame::has_read_members_in_place`. `height`: of the entry of
+    /// `anonymous_members_in_place` that has been read. A comparison that has begun since then is
+    /// not stored either: in tsgo the entry of one that began before replaces it.
+    fn note_members_in_place_read_above(&mut self, height: usize) {
+        self.lowest_taint = self.lowest_taint.min(height);
+        for at in height..self.stack.len() {
+            let q = self.stack[at];
+            // `checkExpressionCached` does store, and then nothing visits the expression or a part
+            // of it again. Except a visit of it that is in progress further down.
+            if let Query::Expr(file, e) = q
+                && self.is_checked_by_check_expression_cached(file, e)
+                && !self.quick_initializers.iter().any(|quick| quick.1 == at)
+                && !self.stack[..at].contains(&q)
+            {
+                break;
+            }
+            self.frames[at].has_read_members_in_place |=
+                matches!(q, Query::Expr(..) | Query::LiteralProp(..));
+        }
+    }
+
+    /// Whether every check of `e` is a `checkExpressionCached`: it is the initializer of a variable,
+    /// a parameter or a property (`checkDeclarationInitializer`, `checkVariableLikeDeclaration`),
+    /// or the expression of a `return` statement (`checkAndAggregateReturnExpressionTypes`,
+    /// `checkReturnStatement`).
+    fn is_checked_by_check_expression_cached(&self, file: FileId, e: ExprId) -> bool {
+        use crate::bind::Parent;
+        let hir = self.hir(file);
+        match self.bound(file).expr_parent[e.idx()] {
+            Parent::VarInit(_) | Parent::ParamDefault(_) => true,
+            Parent::MemberInit(m) => hir[m].init == e,
+            Parent::Stmt(s) => s.is_some() && matches!(hir[s].kind, StmtKind::Return(_)),
+            _ => false,
         }
     }
 
@@ -2633,8 +2733,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `leave` for `module` or `exports`: the first time, its entry stays on `typeResolutions`.
+    /// Only its own file refers to it, and `checkSourceFile` checks every reference. So for one
+    /// checker, which visits the files in program order, the first time is no later than that.
     fn leave_without_pop(&mut self, symbol: Sym) -> Result<Stored, Open> {
-        if let Some(frame) = self.frames.last()
+        let is_resolved_by_check = self.task.file.is_some_and(|current| {
+            current != symbol.file && self.is_checked_no_later_than(symbol.file, current)
+        });
+        if !is_resolved_by_check
+            && let Some(frame) = self.frames.last()
             && self.unpopped_resolutions.insert(symbol)
         {
             let (height, circular) = (self.frames.len() - 1, frame.circular);
@@ -2811,6 +2917,24 @@ impl<'p, 's> Checker<'p, 's> {
     fn cycle_result(&self) -> Stored {
         debug_assert!(self.left_a_cycle || self.found_cycle);
         Stored::new()
+    }
+
+    /// Permission to store the result of `q`, for which `leave` has just returned `Err`, if the only reason is the incomplete type of a loop
+    /// (`taint_from`). For a result that tsgo computes with `flowLoopStack` as it is and stores all the same. Nothing computes it again, so
+    /// what was reported for it belongs to the entry, as after an `Ok`: no frame below drops it.
+    fn incomplete_flow_result(&mut self, q: Query) -> Option<Stored> {
+        let frame = self.left_frame.take()?;
+        if !frame.incomplete_flow || frame.drops_reported {
+            return None;
+        }
+        if self.reported.len() > frame.reported_from as usize {
+            let finished = QueryFrame {
+                tainted: false,
+                ..frame
+            };
+            self.settle_reported(finished, q);
+        }
+        Some(Stored::new())
     }
 
     fn is_innermost_tainted(&self) -> bool {

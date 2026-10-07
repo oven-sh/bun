@@ -1496,7 +1496,7 @@ impl<'s> Checker<'_, 's> {
                     let end = spans.token(at);
                     if end <= at
                         || matches!(spans.byte(at), b'"' | b'\'')
-                        || &spans.text[at..end] == b"constructor"
+                        || &*unescaped_identifier(&spans.text[at..end]) == b"constructor"
                     {
                         return (member.start, end as u32);
                     }
@@ -1541,6 +1541,18 @@ impl<'s> Checker<'_, 's> {
     /// `[computed]`, a binding pattern.
     pub(super) fn end_of_name_at(&self, file: FileId, pos: u32) -> u32 {
         self.spans(file).name(pos as usize) as u32
+    }
+
+    /// `node.End()` of the identifier `name` at `pos`. One that `ScanJSDocToken` returned can
+    /// contain `-`, which ends the token that `Scan` finds there.
+    pub(super) fn end_of_identifier_at(&self, file: FileId, name: Atom, pos: u32) -> u32 {
+        let written = self.hir(file).text.get(pos as usize..).unwrap_or_default();
+        let name = self.atoms().bytes(name);
+        if !name.is_empty() && written.starts_with(name) {
+            pos + name.len() as u32
+        } else {
+            self.end_of_token_at(file, pos)
+        }
     }
 
     /// `GetRangeOfTokenAtPosition`: the end of the token that starts at `pos`, operators of any
@@ -1661,7 +1673,7 @@ impl Checker<'_, '_> {
                 ModifierKind::Decorator(e) => self.end_of_expr(file, e),
                 ModifierKind::Keyword(_) => self.end_of_token_at(file, hir[m].pos),
             },
-            NodeData::Name(n) => self.end_of_token_at(file, hir[n].pos()),
+            NodeData::Name(n) => self.end_of_identifier_at(file, hir[n].text, hir[n].pos()),
         }
     }
 

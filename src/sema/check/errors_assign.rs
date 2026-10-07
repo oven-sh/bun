@@ -300,9 +300,9 @@ impl Checker<'_, '_> {
             // `getTypeFromBindingElement`: for the type implied by the whole pattern, the default
             // is checked with the type implied by its own pattern as its contextual type.
             if is_whole_implied && let Some(implied) = self.context_implied_by_pattern(file, pat) {
-                self.contextual.push((file, default, implied));
+                self.push_contextual_type(file, default, Some(implied), false);
                 self.check_literals_expected_by_pattern(file, default);
-                self.contextual.pop();
+                self.pop_contextual_type();
             }
         }
         let strict = self.p.files.options.strict_null_checks;
@@ -416,7 +416,7 @@ impl Checker<'_, '_> {
             };
         }
         // Resolving the parameter also resolves the enclosing call, whose signature `open_contextual_signature` reads.
-        let resolved = self.type_of_param(file, p);
+        let resolved = self.type_of_pat(file, param.pat);
         let func = bound.param_fn[p.idx()];
         if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
             return resolved;
@@ -744,7 +744,7 @@ impl Checker<'_, '_> {
             && !self.is_error_type(referenced)
         {
             let type_parameters = self.type_params_of_symbol(sym);
-            self.check_type_argument_constraints(file, args, &type_parameters);
+            self.check_type_argument_constraints(file, args, &type_parameters, None);
         }
         if before == (self.reported.len(), self.taints, self.non_cacheable_mark())
             && self.serialization_level == 0
@@ -753,73 +753,70 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkTypeArgumentConstraints`: 2344, or a more specific error.
+    /// `checkTypeArgumentConstraints`: 2344, or a more specific error. `sig`: the signature that
+    /// has `type_parameters`, see `mapper_around_sig`. `None` for those of a type.
     fn check_type_argument_constraints(
         &mut self,
         file: FileId,
         nodes: IdList<TypeNodeId>,
         type_parameters: &[TypeId],
-    ) {
-        if !type_parameters
-            .iter()
-            .any(|&p| self.constraint_of_type_param(p).is_some())
-        {
-            return;
-        }
+        sig: Option<SigId>,
+    ) -> bool {
         let hir = self.hir(file);
-        // `getEffectiveTypeArguments`
-        let actual = self.types_from_nodes(file, nodes);
-        let type_arguments = self.fill_type_args_as(type_parameters, &actual, hir.is_js);
-        let mapper = self.mapper_from(type_parameters, &type_arguments);
+        let outer = sig.map_or(MapperId::IDENTITY, |sig| self.mapper_around_sig(sig));
+        let mut effective: Option<(Vec<TypeId>, MapperId)> = None;
+        let mut result = true;
         for (i, &type_parameter) in type_parameters.iter().enumerate() {
             let Some(constraint) = self.constraint_of_type_param(type_parameter) else {
                 continue;
             };
-            let constraint = self.instantiate(constraint, mapper);
-            if self.is_assignable(type_arguments[i], constraint) {
+            if !result {
                 continue;
             }
+            let (type_arguments, mapper) = effective.get_or_insert_with(|| {
+                // `getEffectiveTypeArguments`
+                let actual = self.types_from_nodes(file, nodes);
+                let filled = match sig {
+                    Some(sig) => {
+                        self.fill_sig_type_args_as(sig, type_parameters, &actual, hir.is_js)
+                    }
+                    None => self.fill_type_args_as(type_parameters, &actual, hir.is_js),
+                };
+                let mapper = self.mapper_from(type_parameters, &filled);
+                (filled, mapper)
+            });
+            let (argument, mapper) = (type_arguments[i], *mapper);
+            let constraint = self.filled_in_around(type_parameter, constraint, outer);
+            let constraint = self.instantiate(constraint, mapper);
             // A default has no node, and nothing is reported for it.
-            if i < nodes.len() {
+            let error_node = (i < nodes.len()).then(|| {
                 let node: TypeNodeId = hir.id_at(nodes, i);
-                let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
-                self.check_type_assignable_to(
-                    type_arguments[i],
-                    constraint,
-                    Some(error_node),
-                    Some(2344),
-                );
-            }
-            return;
+                let start = start_of_type(hir, node);
+                (file, start, self.end_of_type_node_from(file, node, start))
+            });
+            result = self.check_type_assignable_to(argument, constraint, error_node, Some(2344));
         }
+        result
     }
 
     /// `checkClassLikeDeclaration`: the type arguments of `extends Base<Args>`, checked against
     /// each construct signature of `Base` that accepts that many.
     pub(super) fn check_type_arguments_of_base(&mut self, file: FileId, class: ClassId, sym: Sym) {
-        let hir = self.hir(file);
-        let nodes = hir[class].extends_args;
+        let nodes = self.hir(file)[class].extends_args;
         if nodes.is_empty() || self.base_types(sym).is_empty() {
             return;
         }
         let constructor = self.base_constructor_type_of_class(sym);
         let apparent = self.apparent_type(constructor);
-        let actual = self.types_from_nodes(file, nodes);
         // `getConstructorsForTypeArguments`
         for sig in self.signatures(apparent, true) {
             let type_parameters = self.sig_type_params(sig);
-            if actual.len() < self.min_type_argument_count(&type_parameters)
-                || actual.len() > type_parameters.len()
+            if nodes.len() < self.min_type_argument_count(&type_parameters)
+                || nodes.len() > type_parameters.len()
             {
                 continue;
             }
-            // `checkTypeArgumentConstraints`
-            if let Ok(Some((i, argument, constraint))) =
-                self.failing_type_argument(sig, &type_parameters, &actual, false)
-            {
-                let node: TypeNodeId = hir.id_at(nodes, i);
-                let error_node = (file, hir[node].pos, self.end_of_type_node(file, node));
-                self.check_type_assignable_to(argument, constraint, Some(error_node), Some(2344));
+            if !self.check_type_argument_constraints(file, nodes, &type_parameters, Some(sig)) {
                 return;
             }
         }
@@ -994,6 +991,15 @@ impl Checker<'_, '_> {
                 hir::parentheses_around(hir, e).first().map(|p| (p.1, p.2))
             }
             _ => None,
+        }
+    }
+
+    /// `GetErrorRangeForNode` for `e`, the result of `getEffectiveCheckNode`: its enclosing
+    /// parentheses are not part of it, except those of a JSDoc type assertion.
+    pub(super) fn place_of_effective_check_node(&self, file: FileId, e: ExprId) -> Place {
+        match self.range_of_jsdoc_type_assertion(file, e) {
+            Some((open, end)) => (file, open, end),
+            None => self.place_of_expr(file, e),
         }
     }
 
@@ -1187,23 +1193,13 @@ impl Checker<'_, '_> {
         } else {
             ty
         };
-        // `getEffectiveCheckNode`
-        let mut e = e;
-        while let ExprKind::Satisfies { expr, .. } = hir[e].kind {
-            e = expr;
-        }
+        let e = self.effective_check_node(file, e);
         let error_node = if in_return_statement == InReturnStatement::Yes
             && in_conditional_expression == InConditionalExpression::No
         {
             node
-        } else if let Some((open, end)) = self.range_of_jsdoc_type_assertion(file, e) {
-            (file, open, end)
         } else {
-            (
-                file,
-                self.error_start_inside_parentheses(file, e),
-                self.error_end_inside_parentheses(file, e),
-            )
+            self.place_of_effective_check_node(file, e)
         };
         self.check_type_assignable_to_and_optionally_elaborate(
             ty,
@@ -1342,51 +1338,26 @@ impl Checker<'_, '_> {
         source: TypeId,
         target: TypeId,
         head_message: Option<u32>,
-        diagnostic_output: Option<&mut Vec<Reported>>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let hir = self.hir(file);
         if self.is_or_has_generic_conditional(target) {
             return false;
         }
-        // `elaborateDidYouMeanToCallOrConstruct`: the result of calling it is assignable.
-        for construct in [true, false] {
-            let mut would_do = false;
-            for sig in self.signatures(source, construct) {
-                let returned = self.sig_return(sig);
-                if !self.is_any(returned)
-                    && !returned.is_never()
-                    && self.is_assignable(returned, target)
-                {
-                    would_do = true;
-                    break;
-                }
-            }
-            if !would_do {
-                continue;
-            }
-            let at = if is_effective {
-                (
-                    file,
-                    self.error_start_inside_parentheses(file, e),
-                    self.error_end_inside_parentheses(file, e),
-                )
-            } else {
-                (
-                    file,
-                    self.error_start_of(file, e),
-                    self.error_end_of(file, e),
-                )
-            };
-            let mut diags = Vec::new();
-            let output = Some(&mut diags);
-            if !self.check_type_assignable_to_ex(source, target, Some(at), head_message, output)
-                && let Some(mut diagnostic) = diags.pop()
-            {
-                let code = if construct { 6213 } else { 6212 };
-                diagnostic.add_related_info(self.new_diagnostic(at, code, &[]));
-                self.report_diagnostic(diagnostic, diagnostic_output);
-                return true;
-            }
+        let node = if is_effective {
+            self.place_of_effective_check_node(file, e)
+        } else {
+            self.span_of_parenthesized_expr(file, e)
+        };
+        let output = diagnostic_output.as_deref_mut();
+        if self.elaborate_did_you_mean_to_call_or_construct(
+            node,
+            source,
+            target,
+            head_message,
+            output,
+        ) {
+            return true;
         }
         let next = match hir[e].kind {
             // `x as const` is elaborated through its operand. `<const>x` is not.
@@ -1440,6 +1411,45 @@ impl Checker<'_, '_> {
             head_message,
             diagnostic_output,
         )
+    }
+
+    /// `elaborateDidYouMeanToCallOrConstruct`, for `SignatureKindConstruct` and then for
+    /// `SignatureKindCall`: the result of calling `node` is assignable.
+    pub(super) fn elaborate_did_you_mean_to_call_or_construct(
+        &mut self,
+        node: Place,
+        source: TypeId,
+        target: TypeId,
+        head_message: Option<u32>,
+        diagnostic_output: Option<&mut Vec<Reported>>,
+    ) -> bool {
+        for construct in [true, false] {
+            let mut would_do = false;
+            for sig in self.signatures(source, construct) {
+                let returned = self.sig_return(sig);
+                if !self.is_any(returned)
+                    && !returned.is_never()
+                    && self.is_assignable(returned, target)
+                {
+                    would_do = true;
+                    break;
+                }
+            }
+            if !would_do {
+                continue;
+            }
+            let mut diags = Vec::new();
+            let output = Some(&mut diags);
+            if !self.check_type_assignable_to_ex(source, target, Some(node), head_message, output)
+                && let Some(mut diagnostic) = diags.pop()
+            {
+                let code = if construct { 6213 } else { 6212 };
+                diagnostic.add_related_info(self.new_diagnostic(node, code, &[]));
+                self.report_diagnostic(diagnostic, diagnostic_output);
+                return true;
+            }
+        }
+        false
     }
 
     /// `elaborateObjectLiteral`
@@ -1518,15 +1528,8 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            let mut check_node = item;
-            while let ExprKind::Satisfies { expr, .. } = hir[check_node].kind {
-                check_node = expr;
-            }
-            let at = (
-                file,
-                self.error_start_inside_parentheses(file, check_node),
-                self.error_end_inside_parentheses(file, check_node),
-            );
+            let check_node = self.effective_check_node(file, item);
+            let at = self.place_of_effective_check_node(file, check_node);
             let output = diagnostic_output.as_deref_mut();
             reported |= self.elaborate_element(
                 source, target, at, check_node, true, name_type, None, output,

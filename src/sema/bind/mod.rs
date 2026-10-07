@@ -842,7 +842,8 @@ pub struct BoundIn<S: Storage> {
     pub export_stars: S::Few<(SymbolId, StmtId)>,
     /// `declare module "name"` at the top level of a file, or directly inside an ambient module at
     /// the top level of a script. The flag is `IsModuleAugmentationExternal`: it augments a module
-    /// that is declared elsewhere.
+    /// that is declared elsewhere. One entry for each symbol, which the declarations of a name in
+    /// one container share.
     pub ambient_modules: S::Few<(Atom, SymbolId, bool)>,
     /// `file.PatternAmbientModules`: a module whose name has exactly one `*` and that augments
     /// nothing, wherever it is declared. One entry for each declaration.

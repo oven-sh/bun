@@ -14,10 +14,10 @@ use crate::json::Json;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
     Options, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer, ancestors,
-    contains_path, file_extension_is_one_of, file_path, format_by_extension, get_lib_file_name,
-    has_ts_implementation_extension, inside, is_javascript, is_javascript_file, is_relative,
-    is_same_path, join, remove_file_extension, supported_extensions, to_file_name_lower_case,
-    to_path, to_path_in,
+    contains_path, displayed_path, file_extension_is_one_of, file_path, format_by_extension,
+    get_lib_file_name, has_ts_implementation_extension, inside, is_javascript, is_javascript_file,
+    is_relative, is_same_path, join, remove_file_extension, supported_extensions,
+    to_file_name_lower_case, to_path, to_path_in,
 };
 use crate::session::{
     Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -939,6 +939,9 @@ pub struct AliasSymbolLinks {
     pub type_only_declaration: Option<TypeOnlyDeclaration>,
     /// `resolveAlias` reports 2303 at the declaration of the alias.
     pub is_circular: bool,
+    /// The stack ended while the alias was in progress, where Go's grows. It `is_circular`, as it
+    /// may be, and its file is reported as not fully checked in place of 2303.
+    pub ran_out_of_stack: bool,
 }
 
 /// The functions that resolve names, exports and aliases. Each of them can call `alias_links`, and
@@ -1951,8 +1954,10 @@ struct AliasResolver<'a, 's> {
     /// `typeResolutions` and `resolutionResults`: each alias in progress, and whether no cycle
     /// through it has been found.
     in_flight: std::cell::RefCell<Vec<(Sym, bool)>>,
-    /// The number of times an alias was read while in progress, or was rejected because the alias
-    /// chain is too long.
+    /// How many of `in_flight`, from the first, were in progress when the stack ended.
+    out_of_stack: std::cell::Cell<usize>,
+    /// The number of times an alias was read while in progress, or was rejected because the stack
+    /// has no room for it.
     cycles: std::cell::Cell<u32>,
     /// `None`: results are written to the tables immediately. For the merge, which is
     /// single-threaded.
@@ -2252,12 +2257,13 @@ fn unsupported_extension_error(
 
 /// The full diagnostic for the error `code` that `referenced_file` returns for the file at `path`.
 fn reference_problem(options: &Options, code: u32, path: &[u8]) -> Problem {
+    let file_name = displayed_path(path);
     if code == 6504 || code == 6053 {
-        return Problem::new(code, &[path], Place::Nowhere);
+        return Problem::new(code, &[&file_name], Place::Nowhere);
     }
     let extensions = supported_extensions(options).concat();
     let quoted = [b"'", &extensions.join(&b"', '"[..])[..], b"'"].concat();
-    Problem::new(code, &[path, &quoted], Place::Nowhere)
+    Problem::new(code, &[&file_name, &quoted], Place::Nowhere)
 }
 
 /// `resolveTripleslashPathReference`: the path that the `/// <reference path>` with the value
@@ -2986,8 +2992,19 @@ impl Included<'_, '_> {
         visits
     }
 
+    /// `GetEmitScriptTarget().String()`
+    fn emit_script_target(&self) -> Vec<u8> {
+        let target = match self.options.target {
+            ScriptTarget::None => ScriptTarget::ES2025,
+            target => target,
+        };
+        let mut name = Vec::new();
+        let _ = write!(name, "{target:?}");
+        name
+    }
+
     /// `computeDiagnostic`: the code and the arguments of the message for a reason.
-    fn reason_message(&self, visit: &Visit) -> (u32, Vec<Vec<u8>>) {
+    fn reason_message(&self, visit: &Visit, to_file_name: ToFileName<'_>) -> (u32, Vec<Vec<u8>>) {
         let options = self.options;
         let uses_wildcard = uses_wildcard_types(options);
         let with_id = |code: u32, mut args: Vec<Vec<u8>>, id: Option<&Vec<u8>>| {
@@ -2995,20 +3012,14 @@ impl Included<'_, '_> {
             (code + u32::from(id.is_some()), args)
         };
         match &visit.reason {
-            &IncludeReason::RootFile(index) => {
-                root_file_reason(options, &self.roots[index], self.host.is_case_sensitive())
-            }
+            &IncludeReason::RootFile(index) => root_file_reason(
+                options,
+                &self.roots[index],
+                self.host.is_case_sensitive(),
+                to_file_name,
+            ),
             IncludeReason::LibFile(Some(entry)) => (1422, vec![entry.clone()]),
-            // `GetEmitScriptTarget`
-            IncludeReason::LibFile(None) => {
-                let target = match options.target {
-                    ScriptTarget::None => ScriptTarget::ES2025,
-                    target => target,
-                };
-                let mut name = Vec::new();
-                let _ = write!(name, "{target:?}");
-                (1425, vec![name])
-            }
+            IncludeReason::LibFile(None) => (1425, vec![self.emit_script_target()]),
             IncludeReason::AutomaticTypeDirectiveFile(name, id) => {
                 let code = if uses_wildcard { 1420 } else { 1417 };
                 with_id(code, vec![name.clone()], id.as_ref())
@@ -3028,7 +3039,7 @@ impl Included<'_, '_> {
                 };
                 with_id(
                     it.code,
-                    vec![written, from.file_name().to_vec()],
+                    vec![written, to_file_name(from.file_name())],
                     it.package_id.as_ref(),
                 )
             }
@@ -3059,16 +3070,11 @@ impl Included<'_, '_> {
             _ if options.config_path.is_empty() => None,
             &IncludeReason::RootFile(index) => {
                 let is_case_sensitive = self.host.is_case_sensitive();
-                let file_name = &self.roots[index];
-                match root_file_reason(options, file_name, is_case_sensitive) {
-                    (1409, _) => in_configuration(
-                        Place::File(
-                            file_name.clone(),
-                            options.base_dir.clone(),
-                            is_case_sensitive,
-                        ),
-                        1410,
-                    ),
+                let root = &self.roots[index];
+                match root_file_reason(options, root, is_case_sensitive, &file_name_as_it_is) {
+                    (1409, args) => {
+                        in_configuration(Place::TopElement(b"files", args[0].clone()), 1410)
+                    }
                     (1407, args) => {
                         in_configuration(Place::TopElement(b"include", args[0].clone()), 1408)
                     }
@@ -3082,7 +3088,9 @@ impl Included<'_, '_> {
             IncludeReason::LibFile(Some(entry)) => {
                 in_configuration(Place::Element(b"lib", entry.clone()), 1423)
             }
-            IncludeReason::LibFile(None) => None,
+            IncludeReason::LibFile(None) => {
+                in_configuration(Place::Element(b"target", self.emit_script_target()), 1426)
+            }
         }
     }
 
@@ -3137,7 +3145,7 @@ impl Included<'_, '_> {
         if preferred_location.is_none() || all.len() != 1 {
             problem = problem.with(1, 1430, &[]);
             for visit in all {
-                let (code, args) = self.reason_message(visit);
+                let (code, args) = self.reason_message(visit, &file_name_as_it_is);
                 let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
                 problem = problem.with(2, code, &args);
             }
@@ -3153,11 +3161,13 @@ impl Included<'_, '_> {
             !is_same_path(name, module.file_name(), self.host.is_case_sensitive());
         if !is_redirects_file && module.project_reference_source.is_some() {
             let source = self.atoms.bytes(module.project_reference_source);
-            problem = problem.with(1, 1428, &[source]);
+            problem = problem.with(1, 1428, &[&displayed_path(source)]);
         }
         if is_redirects_file {
-            problem = problem.with(1, 1429, &[module.file_name()]);
-        } else if let Some((code, args)) = implied_format_reason(resolver, self.options, module) {
+            problem = problem.with(1, 1429, &[&displayed_path(module.file_name())]);
+        } else if let Some((code, args)) =
+            implied_format_reason(resolver, self.options, module, &file_name_as_it_is)
+        {
             let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
             problem = problem.with(1, code, &args);
         }
@@ -3181,8 +3191,8 @@ impl Included<'_, '_> {
             .collect()
     }
 
-    /// `code`, with the file and `arg` as arguments, for each source file that would be emitted and
-    /// for which `is_wrong` returns true. `is_wrong` receives whether it is a root file.
+    /// `code`, with the file and the path `arg` as arguments, for each source file that would be
+    /// emitted and for which `is_wrong` returns true. `is_wrong` receives whether it is a root file.
     fn explain_source_files(
         &self,
         code: u32,
@@ -3221,7 +3231,7 @@ impl Included<'_, '_> {
                     &visits,
                     None,
                     code,
-                    &[module.file_name(), arg],
+                    &[&displayed_path(module.file_name()), &displayed_path(arg)],
                 )
             })
             .collect()
@@ -3260,10 +3270,13 @@ impl Included<'_, '_> {
         let resolver = Resolver::new(&resolving, self.host, self.options);
         let visits = self.visits(&resolver, &is_asked);
         let differs = |file: FileId, to_file: &[&Visit], visit: &Visit, is_referred_to: bool| {
-            let existing = &to_file[0].name[..];
+            let (existing, name) = (
+                displayed_path(&to_file[0].name),
+                displayed_path(&visit.name),
+            );
             let (code, args) = match !visit.is_reference() && is_referred_to {
-                true => (1261, [existing, &visit.name[..]]),
-                false => (1149, [&visit.name[..], existing]),
+                true => (1261, [&*existing, &*name]),
+                false => (1149, [&*name, &*existing]),
             };
             self.explain(&resolver, file, to_file, Some(visit), code, &args)
         };
@@ -3294,7 +3307,8 @@ impl Included<'_, '_> {
                 let mut checked = seen.iter().copied();
                 match checked.find(|it| is_same_path(it, name, is_case_sensitive)) {
                     Some(checked_name) if without_root(checked_name) != without_root(name) => {
-                        let (because, args) = (Some(visit), [name, checked_name]);
+                        let names = (displayed_path(name), displayed_path(checked_name));
+                        let (because, args) = (Some(visit), [&*names.0, &*names.1]);
                         problems.push(self.explain(&resolver, no_file, &[], because, 1149, &args));
                     }
                     Some(_) => {}
@@ -3322,22 +3336,30 @@ impl Included<'_, '_> {
     }
 }
 
+/// `toFileName` of `computeDiagnostic` and `explainRedirectAndImpliedFormat`: what a message has for
+/// the file with a name.
+type ToFileName<'a> = &'a dyn Fn(&[u8]) -> Vec<u8>;
+
+/// `toFileName` of `toDiagnostic` without `relativeFileName`.
+fn file_name_as_it_is(file_name: &[u8]) -> Vec<u8> {
+    displayed_path(file_name).into_owned()
+}
+
 /// `computeDiagnostic` of `fileIncludeKindRootFile`: the code and the arguments of the message that
 /// explains why the file at `path` is a root file.
 fn root_file_reason(
     options: &Options,
     path: &[u8],
     is_case_sensitive: bool,
+    to_file_name: ToFileName<'_>,
 ) -> (u32, Vec<Vec<u8>>) {
     if options.config_path.is_empty() {
         return (1427, Vec::new());
     }
-    if options
-        .file_specs
-        .iter()
-        .any(|spec| is_same_path(spec, path, is_case_sensitive))
+    if let Some(spec) =
+        crate::config::matched_file_spec(&options.file_specs, path, is_case_sensitive)
     {
-        return (1409, Vec::new());
+        return (1409, vec![spec.to_vec(), to_file_name(path)]);
     }
     if options.is_default_include_spec {
         return (1457, Vec::new());
@@ -3348,7 +3370,10 @@ fn root_file_reason(
         path,
         is_case_sensitive,
     ) {
-        Some(spec) => (1407, vec![spec.to_vec(), options.config_path.clone()]),
+        Some(spec) => (
+            1407,
+            vec![spec.to_vec(), to_file_name(&options.config_path)],
+        ),
         None => (1427, Vec::new()),
     }
 }
@@ -3359,6 +3384,7 @@ fn implied_format_reason(
     resolver: &Resolver,
     options: &Options,
     module: &Module,
+    to_file_name: ToFileName<'_>,
 ) -> Option<(u32, Vec<Vec<u8>>)> {
     if !module.is_module() {
         return None;
@@ -3376,7 +3402,7 @@ fn implied_format_reason(
         .and_then(|scope| scope.1.get(b"type"))
         .and_then(Json::as_str)
         .unwrap_or(b"");
-    let package_json = scope.as_ref().map(|scope| scope.0.clone());
+    let package_json = scope.as_ref().map(|scope| to_file_name(&scope.0));
     match (module.implied_format, package_json) {
         (ResolutionMode::Import, Some(path)) if package_type == b"module" => {
             Some((1458, vec![path]))
@@ -3488,6 +3514,10 @@ pub fn own_emit_output_file_path(
     [remove_file_extension(&moved), extension].concat()
 }
 
+/// `UseCaseSensitiveFileNames` of `Program.comparePathsOptions`. Nothing assigns that field, so it
+/// is Go's zero value on every file system.
+pub const COMPARE_PATHS_CASE_SENSITIVE: bool = false;
+
 /// `verifyEmitFilePath`: 5055 for an output file that is an input file, 5056 for one that two input
 /// files are emitted to. Errors reported at a position in a file go to `include_errors`. With them,
 /// `CommonSourceDirectory`, if anything depends on it.
@@ -3562,7 +3592,8 @@ fn output_path_errors(
             common = common_directory_of(&paths, &options.current_directory, is_case_sensitive);
         } else {
             explained.extend(explain(6059, specified, &|module, _| {
-                !contains_path(specified, module.file_name(), is_case_sensitive) && is_own(module)
+                !contains_path(specified, module.file_name(), COMPARE_PATHS_CASE_SENSITIVE)
+                    && is_own(module)
             }));
             common = Some(specified.to_vec());
         }
@@ -3600,8 +3631,11 @@ fn output_path_errors(
         };
         let config_name = &options.config_path
             [strings::last_index_of_char(&options.config_path, b'/').map_or(0, |i| i + 1)..];
-        let relative =
-            crate::verify::relative_from_file(&options.config_path, &computed, is_case_sensitive);
+        let relative = crate::verify::relative_from_file(
+            &options.config_path,
+            &computed,
+            COMPARE_PATHS_CASE_SENSITIVE,
+        );
         errors.push(
             Problem::new(5011, &[config_name, &relative], Place::Key(one, other)).with(
                 1,
@@ -3616,7 +3650,7 @@ fn output_path_errors(
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     let mut verify = |output: Vec<u8>| {
         if by_path.contains(&output) {
-            let problem = Problem::new(5055, &[&output], Place::Nowhere);
+            let problem = Problem::new(5055, &[&displayed_path(&output)], Place::Nowhere);
             errors.push(if options.has_config_file {
                 problem
             } else {
@@ -3625,7 +3659,11 @@ fn output_path_errors(
         }
         let key = to_path(&output, is_case_sensitive).into_owned();
         if seen.contains(&key) {
-            errors.push(Problem::new(5056, &[&output], Place::Nowhere));
+            errors.push(Problem::new(
+                5056,
+                &[&displayed_path(&output)],
+                Place::Nowhere,
+            ));
         } else {
             seen.insert(key);
         }
@@ -4054,7 +4092,8 @@ impl<'s> Files<'s> {
                     }
                     for &(start, end, path, code) in &loaded.unsupported_libs {
                         // One task loads the file, whoever else refers to it.
-                        let is_about_it = |message: &Problem| message.args[0] == path;
+                        let file_name = displayed_path(path);
+                        let is_about_it = |message: &Problem| message.args[0] == *file_name;
                         if !unsupported.iter().any(|it| is_about_it(&it.3))
                             && !without_file.iter().any(|it| is_about_it(&it.1))
                         {
@@ -4093,7 +4132,8 @@ impl<'s> Files<'s> {
                             let uses = module.hir.specifier_uses.iter();
                             let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
                             if let Some(u) = uses.min_by_key(|u| u.pos)
-                                && !unsupported.iter().any(|it| it.3.args[0] == path)
+                                && !(unsupported.iter())
+                                    .any(|it| it.3.args[0] == *displayed_path(path))
                             {
                                 let end = end_of_string_literal(&module.hir.text, u.pos);
                                 let problem = reference_problem(options, code, path);
@@ -5431,6 +5471,13 @@ impl<'s> Files<'s> {
         libs
     }
 
+    /// Whether `mergeModuleAugmentation` merges `symbol` of `file`.
+    pub fn merges_module_augmentation(&self, file: FileId, symbol: SymbolId) -> bool {
+        let module = self.module(file);
+        let collected = module_augmentations(&module.hir, &self.atoms);
+        merges_module_augmentation(&module.bound, &collected, symbol)
+    }
+
     fn merge(&mut self) {
         self.keeps_module_links = true;
         self.make_global_this_symbol();
@@ -5532,6 +5579,10 @@ impl<'s> Files<'s> {
                     if merges_module_augmentation(&module.bound, collected, symbol) {
                         augmentations.push((id, name, sym));
                     }
+                    continue;
+                }
+                // `!IsExternalOrCommonJSModule(file)`: it is a local of a CommonJS module.
+                if self.modules[file].is_module() {
                     continue;
                 }
                 let merged = match self.ambient_modules.get(&name).copied() {
@@ -5985,6 +6036,13 @@ impl<'s> Files<'s> {
                 Some(self.sym(sym.file, member))
             }
         }
+    }
+
+    /// `symbol.Members != nil`. `mergeSymbol` creates the table of the target for a source that
+    /// has one.
+    pub fn has_members_table(&self, sym: Sym) -> bool {
+        let parts = self.parts(self.canonical(sym));
+        parts.iter().any(|&it| self.symbol(it).members.is_some())
     }
 
     /// The two branches of `mergeSymbol` that report.
@@ -6642,8 +6700,7 @@ impl<'s> Files<'s> {
                 let export = &hir[hir[s].export];
                 let mode = self.mode_of_import(file, export.mode);
                 export
-                    .spec
-                    .is_some()
+                    .has_module_specifier
                     .then_some((export.spec, mode, hir[s].local))
             }
             Decl::Require(pat) => {
@@ -7536,6 +7593,7 @@ impl<'a, 's> AliasResolver<'a, 's> {
         AliasResolver {
             files,
             in_flight: Default::default(),
+            out_of_stack: Default::default(),
             cycles: Default::default(),
             buffer: buffer.map(std::cell::RefCell::new),
             arena: Default::default(),
@@ -7568,9 +7626,11 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
                     begun.1 = false;
                 }
             }
-            let is_pushed = start.is_none() && in_flight.len() < 100;
+            let is_pushed = start.is_none() && bun_core::StackCheck::init().is_safe_to_recurse();
             if is_pushed {
                 in_flight.push((sym, true));
+            } else if start.is_none() {
+                self.out_of_stack.set(in_flight.len());
             }
             is_pushed
         };
@@ -7603,7 +7663,12 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         }
         // `popTypeResolution`
         let begun = self.in_flight.borrow_mut().pop();
-        if !begun.is_some_and(|begun| begun.1) {
+        let left = self.in_flight.borrow().len();
+        if left < self.out_of_stack.get() {
+            self.out_of_stack.set(left);
+            links.ran_out_of_stack = true;
+        }
+        if links.ran_out_of_stack || !begun.is_some_and(|begun| begun.1) {
             links.alias_target = None;
             links.is_circular = true;
         }

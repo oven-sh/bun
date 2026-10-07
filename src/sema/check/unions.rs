@@ -122,6 +122,48 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     }
 }
 
+/// A stable sort for `CompareTypes`, which is not a total order: `slice::sort_by` may panic.
+/// A comparison of two instantiations of one alias is expensive, and what is sorted is often nearly
+/// in order or made of sorted runs. A binary insertion sort compares twice as often there.
+fn merge_sort_by<T: Copy>(
+    items: &mut [T],
+    compare: &mut impl FnMut(&T, &T) -> std::cmp::Ordering,
+    buffer: &mut Vec<T>,
+) {
+    if items.len() <= 8 {
+        for end in 1..items.len() {
+            let item = items[end];
+            let mut at = end;
+            while at > 0 && compare(&items[at - 1], &item).is_gt() {
+                items[at] = items[at - 1];
+                at -= 1;
+            }
+            items[at] = item;
+        }
+        return;
+    }
+    let middle = items.len() / 2;
+    merge_sort_by(&mut items[..middle], compare, buffer);
+    merge_sort_by(&mut items[middle..], compare, buffer);
+    if compare(&items[middle - 1], &items[middle]).is_le() {
+        return;
+    }
+    buffer.clear();
+    buffer.extend_from_slice(&items[..middle]);
+    let (mut left, mut right, mut out) = (0, middle, 0);
+    while left < buffer.len() && right < items.len() {
+        if compare(&items[right], &buffer[left]).is_lt() {
+            items[out] = items[right];
+            right += 1;
+        } else {
+            items[out] = buffer[left];
+            left += 1;
+        }
+        out += 1;
+    }
+    items[out..out + buffer.len() - left].copy_from_slice(&buffer[left..]);
+}
+
 impl<'p, 's> Checker<'p, 's> {
     fn add_to_union(&self, out: &mut Flat, ty: TypeId) {
         match self.data(ty) {
@@ -227,7 +269,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
-        self.sort_types(&mut members);
+        self.sort_type_set(types, &mut members);
         match members[..] {
             [] => TypeId::NEVER,
             [only] => only,
@@ -382,7 +424,7 @@ impl<'p, 's> Checker<'p, 's> {
                     is_plain = !has_constrained;
                     // Both evaluate something for each member, and evaluation order determines the
                     // creation order of types. tsgo keeps the set sorted from the start.
-                    self.sort_types(&mut members);
+                    self.sort_type_set(actual, &mut members);
                 }
                 if has_pattern {
                     self.remove_string_literals_matched_by_template_literals(&mut members);
@@ -393,7 +435,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // Up to here they were ordered by id.
-        self.sort_types(&mut members);
+        self.sort_type_set(actual, &mut members);
         let first_new_type_id = self.types().first_new_type_id();
         let union = match members[..] {
             [] => TypeId::NEVER,
@@ -434,7 +476,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .binary_search_by_key(&m.arrival_order(), |n| n.arrival_order())
                 .is_ok()
         };
-        let mut origin: Vec<TypeId> = members
+        let mut origin: Flat = members
             .iter()
             .copied()
             .filter(|m| !is_in_named(m))
@@ -445,9 +487,9 @@ impl<'p, 's> Checker<'p, 's> {
             return only;
         }
         let origin = if in_named.len() + origin.len() == members.len() {
-            // `insertType`
-            origin.extend_from_slice(&named);
-            self.sort_types(&mut origin);
+            for &union in &named {
+                self.insert_type(&mut origin, union);
+            }
             OriginKey::Union(&origin)
         } else {
             OriginKey::None
@@ -722,10 +764,11 @@ impl<'p, 's> Checker<'p, 's> {
                 actual.iter().position(|&g| g == m).unwrap_or(usize::MAX),
             )
         };
-        members.sort_by(|&x, &y| {
+        let mut compare = |&x: &TypeId, &y: &TypeId| {
             self.compare_types_without_ids(x, y)
                 .then_with(|| key(self, x).cmp(&key(self, y)))
-        });
+        };
+        merge_sort_by(&mut members, &mut compare, &mut Vec::new());
         // hasEmptyObject: next to an empty object type, primitives are candidates for removal too:
         // `{} | 0` is `{}`.
         let has_empty_object = members.iter().any(|&m| {
@@ -787,7 +830,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if (source == TypeId::EMPTY_OBJECT || self.is_unknown_empty_object(source))
                     && match self.data(target) {
                         TypeData::Anon { .. } => true,
-                        TypeData::Synth(shape) => shape.literal == Literalness::EmptyTypeLiteral,
+                        TypeData::Synth(shape) => Self::shape_has_symbol(shape),
                         _ => false,
                     }
                     && self.is_empty_anonymous_object_type(target)
@@ -813,13 +856,13 @@ impl<'p, 's> Checker<'p, 's> {
         if keep.iter().all(|&k| k) {
             return union;
         }
-        let mut kept: Vec<TypeId> = members
+        let mut kept: Flat = members
             .iter()
             .zip(&keep)
             .filter(|(_, k)| **k)
             .map(|(&m, _)| m)
             .collect();
-        self.sort_types(&mut kept);
+        self.sort_type_set(types, &mut kept);
         match kept[..] {
             [] => TypeId::NEVER,
             [only] => only,
@@ -984,13 +1027,13 @@ impl<'p, 's> Checker<'p, 's> {
                 if mapped[..] == *types {
                     ty
                 } else if let Some(kept) = self.union_of_kept_members(types, &mapped) {
-                    debug_assert_eq!(
-                        kept,
-                        match no_reductions {
+                    debug_assert!({
+                        let union = match no_reductions {
                             true => self.union_unreduced(&mapped),
                             false => self.union(&mapped),
-                        }
-                    );
+                        };
+                        kept == union || self.has_compared_without_total_order.get()
+                    });
                     kept
                 } else if no_reductions {
                     self.union_unreduced(&mapped)
@@ -1148,6 +1191,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         match (self.intersection_worker(types, false), alias) {
             ((created, true), Some((alias, type_arguments))) => {
+                // `getIntersectionKey`
+                self.get_symbol_id(alias);
                 let aliased = self.with_alias(created, alias, type_arguments);
                 if let Some(flag) = self.types().is_constrained_type_variable(created) {
                     self.types().set_constrained_type_variable(aliased, flag);
@@ -1166,6 +1211,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         if let [only] = types {
             return *only;
+        }
+        // `UnionOfUnionKey`
+        if let (Some((alias, _)), &[a, b]) = (alias, types)
+            && (self.is_union(a) || self.is_union(b))
+        {
+            self.get_symbol_id(alias);
         }
         let created = self.union(types);
         match alias {
@@ -1790,7 +1841,17 @@ impl<'p, 's> Checker<'p, 's> {
                 let arguments = |ty: TypeId| self.alias_of_type(ty).map_or(Vec::new(), |it| it.1);
                 self.compare_type_lists(&arguments(a), &arguments(b))
             }
-            _ => std::cmp::Ordering::Equal,
+            (None, None) => std::cmp::Ordering::Equal,
+            // Two symbols of one name. What follows orders the two, but it does not order two
+            // instantiations of one alias, so the order of three types can be a cycle.
+            _ => {
+                let has_arguments =
+                    |ty: TypeId| self.alias_of_type(ty).is_some_and(|it| !it.1.is_empty());
+                if has_arguments(a) || has_arguments(b) {
+                    self.has_compared_without_total_order.set(true);
+                }
+                std::cmp::Ordering::Equal
+            }
         })
     }
 
@@ -1859,6 +1920,11 @@ impl<'p, 's> Checker<'p, 's> {
             let (_, file, pos) = self.sort_place(t)?;
             Some(self.place_in_program_order(file, pos))
         };
+        // A synthesized type does not always say where its symbol is declared.
+        let has_symbol = |t: TypeId| match self.data(t) {
+            TypeData::Synth(shape) => Self::shape_has_symbol(shape),
+            _ => false,
+        };
         // `compareSymbols` of a symbol and its `cloneTypeAsModuleType` clone falls back to the
         // symbol ids. Here the symbol comes first, then the clones in the order of the imports.
         let originating_import = |t: TypeId| match *self.data(t) {
@@ -1884,12 +1950,15 @@ impl<'p, 's> Checker<'p, 's> {
                 .compare_type_names(a, b)
                 .then_with(|| match are_of_one_symbol {
                     true => Equal,
-                    false => some_first(place(a), place(b)).then_with(|| {
-                        some_first(
-                            self.name_of_symbol_without_declarations(a),
-                            self.name_of_symbol_without_declarations(b),
-                        )
-                    }),
+                    false => some_first(place(a), place(b))
+                        .then_with(|| {
+                            some_first(
+                                self.name_of_symbol_without_declarations(a),
+                                self.name_of_symbol_without_declarations(b),
+                            )
+                        })
+                        // nil comes last.
+                        .then_with(|| has_symbol(b).cmp(&has_symbol(a))),
                 })
                 .then_with(|| originating_import(a).cmp(&originating_import(b)))
                 .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
@@ -2211,7 +2280,79 @@ impl<'p, 's> Checker<'p, 's> {
         self.types().creation_order(a, b)
     }
 
+    /// `slices.BinarySearchFunc(types, t, CompareTypes)`, with its probes: where the order is not
+    /// total, the place that is found depends on them.
+    fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> (usize, bool) {
+        let (mut i, mut j) = (0, types.len());
+        while i < j {
+            let h = (i + j) / 2;
+            if self.compare_types(types[h], t).is_lt() {
+                i = h + 1;
+            } else {
+                j = h;
+            }
+        }
+        // Only a type and itself compare equal.
+        (i, types.get(i) == Some(&t))
+    }
+
+    /// `insertType`
+    fn insert_type(&self, types: &mut Flat, t: TypeId) {
+        if let (index, false) = self.binary_search_types(types, t) {
+            types.insert(index, t);
+        }
+    }
+
+    /// `addTypesToUnion`, without `includes`.
+    fn add_types_to_union(&self, type_set: &mut Flat, types: &[TypeId]) {
+        let mut last_type = None;
+        for &t in types {
+            if last_type == Some(t) {
+                continue;
+            }
+            match self.data(t) {
+                TypeData::Union(members) => self.add_types_to_union(type_set, members),
+                _ => self.add_type_to_union(type_set, t),
+            }
+            last_type = Some(t);
+        }
+    }
+
+    /// `addTypeToUnion`, without `includes`.
+    fn add_type_to_union(&self, type_set: &mut Flat, t: TypeId) {
+        let flags = self.flags(t);
+        if flags & tf::NEVER == 0
+            && (self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0)
+        {
+            self.insert_type(type_set, t);
+        }
+    }
+
+    /// Puts `members`, what is left of the `typeSet` of `getUnionTypeWorker(actual, ..)`, into the
+    /// order of that set.
+    fn sort_type_set(&self, actual: &[TypeId], members: &mut Flat) {
+        // FOR SPEED: a total order gives one result, however it is reached.
+        self.sort_types(members);
+        if !self.has_compared_without_total_order.get() {
+            return;
+        }
+        // A type that the search does not find again is a member twice.
+        let mut type_set = Flat::new();
+        self.add_types_to_union(&mut type_set, actual);
+        type_set.retain(|t| members.contains(t));
+        // `removeConstrainedTypeVariables` inserts the type variable.
+        for &member in members.iter() {
+            if !type_set.contains(&member) {
+                self.insert_type(&mut type_set, member);
+            }
+        }
+        *members = type_set;
+    }
+
+    /// Sorts by `CompareTypes`. `has_compared_without_total_order` tells whether that is an order
+    /// of `types`.
     pub(super) fn sort_types(&self, types: &mut [TypeId]) {
+        self.has_compared_without_total_order.set(false);
         if types.len() < 3 {
             return types.sort_by(|&a, &b| self.compare_types(a, b));
         }
@@ -2232,15 +2373,19 @@ impl<'p, 's> Checker<'p, 's> {
                 (flags, name, ty)
             })
             .collect();
-        keys.sort_by(|a, b| {
-            (a.0.cmp(&b.0))
-                .then_with(|| some_first(a.1, b.1))
-                .then_with(|| self.compare_types(a.2, b.2))
-        });
+        keys.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| some_first(a.1, b.1)));
+        let mut buffer = Vec::new();
+        for of_one_name in keys.chunk_by_mut(|a, b| (a.0, a.1) == (b.0, b.1)) {
+            let mut compare = |a: &(_, _, TypeId), b: &(_, _, TypeId)| self.compare_types(a.2, b.2);
+            merge_sort_by(of_one_name, &mut compare, &mut buffer);
+        }
         for (ty, key) in types.iter_mut().zip(keys) {
             *ty = key.2;
         }
-        debug_assert!(types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
+        debug_assert!(
+            self.has_compared_without_total_order.get()
+                || types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le())
+        );
     }
 
     /// `containsType` for the members of a union. It tests identity, and a comparison of two types
@@ -2249,9 +2394,7 @@ impl<'p, 's> Checker<'p, 's> {
         if types.len() <= 512 {
             return types.contains(&t);
         }
-        types
-            .binary_search_by(|&member| self.compare_types(member, t))
-            .is_ok()
+        self.binary_search_types(types, t).1
     }
 }
 

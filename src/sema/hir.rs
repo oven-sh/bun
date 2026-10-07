@@ -989,6 +989,7 @@ pub enum StmtKind {
     ExportNamed(ExportId),
     /// `export * from spec`, `export * as alias from spec`, and the same after `export type`
     ExportStar {
+        /// `NONE` if it is not a string literal.
         spec: Atom,
         alias: Atom,
         type_only: bool,
@@ -1393,8 +1394,10 @@ pub struct ImportEquals {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Export {
-    /// `NONE` without `from`.
+    /// `NONE` without `from`, and after `from` if it is not a string literal.
     pub spec: Atom,
+    /// `node.ModuleSpecifier != nil`: it has `from`.
+    pub has_module_specifier: bool,
     pub items: Span<ExportSpecId>,
     pub type_only: bool,
     /// As in [`SpecifierUse`].
@@ -1831,10 +1834,8 @@ pub struct FileIn<S: Storage> {
     /// The module specifiers of imports and exports that are not string literals. They are bound,
     /// and nothing in them is checked.
     pub specifier_expressions: S::Few<ExprId>,
-    /// The `ExportDeclaration`s among them. Nothing in one is bound or checked, so its statement is
-    /// `StmtKind::Empty`. This is what it would be with a string literal, and that expression. The
-    /// specifier is "".
-    pub exports_from_expressions: S::Few<(StmtId, StmtKind, ExprId)>,
+    /// Those of `ExportDeclaration`s, each with its statement, whose `spec` is `NONE`.
+    pub exports_from_expressions: S::Few<(StmtId, ExprId)>,
     /// `ParenthesizedExpression`: the inner expression, the start and the end of the parentheses.
     /// Ordered by expression, and for nested parentheses around one expression innermost first.
     pub parens: S::List<(ExprId, u32, u32)>,
@@ -2527,6 +2528,50 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
         ExprKind::Dot { obj, .. } => is_dotted_name(hir, obj),
         _ => false,
     }
+}
+
+/// `isNarrowableReference`
+pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
+    match hir[e].kind {
+        ExprKind::Ident(_)
+        | ExprKind::This
+        | ExprKind::Super
+        | ExprKind::NewTarget(_)
+        | ExprKind::ImportMeta => true,
+        ExprKind::Dot { obj, .. } => is_narrowable_reference(hir, obj),
+        ExprKind::NonNull(x) => is_narrowable_reference(hir, x),
+        // With a literal key the object is not checked.
+        ExprKind::Index { obj, index, .. } => {
+            is_string_or_numeric_literal_like(hir, index)
+                || is_entity_name_expression(hir, index) && is_narrowable_reference(hir, obj)
+        }
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            right,
+            ..
+        } => is_narrowable_reference(hir, right),
+        ExprKind::Assign { target, .. } => is_left_hand_side_expression(hir, target),
+        _ => false,
+    }
+}
+
+/// `IsLeftHandSideExpression`
+pub fn is_left_hand_side_expression(hir: &File, e: ExprId) -> bool {
+    is_parenthesized(hir, e)
+        || match hir[e].kind {
+            ExprKind::Fn(f) => hir[f].kind != FnKind::Arrow,
+            ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Spread(_)
+            | ExprKind::Await(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_) => false,
+            _ => true,
+        }
 }
 
 /// `NodeIsPresent(node.Body())`

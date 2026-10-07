@@ -173,15 +173,15 @@ fn check_plain_assignment(c: &mut Checker<'_, '_>, file: FileId, target: ExprId)
 
 // ───────────────────────────── assertions ─────────────────────────────
 
-/// `checkSatisfiesExpression`
+/// `checkSatisfiesExpressionWorker`, once it has `exprType`, which is `source`.
 pub(super) fn check_satisfies(
     c: &mut Checker<'_, '_>,
     file: FileId,
     node: ExprId,
     expr: ExprId,
+    source: TypeId,
     ty: TypeNodeId,
 ) {
-    let source = c.type_of_expr(file, expr);
     let target = c.type_from_node(file, ty);
     if c.is_assignable(source, target) {
         return;

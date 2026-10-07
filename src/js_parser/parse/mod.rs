@@ -2681,19 +2681,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.next()?;
         } else {
             // Any expression is accepted and never checked. `checkExternalImportOrExportDeclaration` reports 1141 unless it
-            // is missing. `checkGrammarModuleElementContext` returns first in a block or a function.
+            // is missing. `checkGrammarModuleElementContext` returns first.
             let value = p.parse_expr(Level::Lowest)?;
-            if !value.is_missing() && p.current_scope().kind == js_ast::scope::Kind::Entry {
+            if !value.is_missing() && p.is_in_appropriate_context() {
                 p.ts_checker_error(p.lexer.range_from(path.loc), 1141);
             }
             p.keep_module_specifier(None, Some(value), path.loc);
         }
 
-        // After an import, `with` can be on the next line.
-        let is_with = p.lexer.is_keyword(T::TWith);
-        if (is_with || p.lexer.is_contextual_keyword(b"assert"))
-            && (!p.lexer.has_newline_before || (is_with && !p.is_in_export_statement()))
-        {
+        // After an import, `with` can be on the next line. After an export it starts a statement
+        // there, whose handler expects `is_keyword` not to have been asked.
+        let is_on_same_line = !p.lexer.has_newline_before;
+        let is_with =
+            (is_on_same_line || !p.is_in_export_statement()) && p.lexer.is_keyword(T::TWith);
+        if is_with || (is_on_same_line && p.lexer.is_contextual_keyword(b"assert")) {
             if !is_with {
                 let range = p.lexer.range();
                 p.lexer.ts_error(range, 2880);
@@ -2826,7 +2827,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             properties: G::PropertyList::from_bump_vec(properties),
             ..Default::default()
         };
-        Ok((keeps.then(|| p.new_expr(object, open_brace_loc)), mode))
+        // `finishNode`, with or without the "}".
+        let end = p.lexer.full_start();
+        let object = keeps.then(|| {
+            let mut object = p.new_expr(object, open_brace_loc);
+            p.note_end(&mut object.loc, end);
+            object
+        });
+        Ok((object, mode))
     }
 
     pub(crate) fn parse_stmts_up_to(
@@ -3230,8 +3238,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         let snapshot = p.parser_snapshot();
         match attempt(p) {
-            // Stack and memory exhaustion are not outcomes of the speculative parse
-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+            // Stack and memory exhaustion are not outcomes of the speculative parse. Its errors are
+            // dropped all the same: it has not succeeded.
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => {
+                p.restore_parser_snapshot(snapshot);
+                Err(err)
+            }
             Err(_) => {
                 p.restore_parser_snapshot(snapshot);
                 // Speculative parses nested in this one may have added entries of their own.

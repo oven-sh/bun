@@ -79,10 +79,6 @@ impl Lower<'_, '_> {
             SpecifierKind::SideEffect
         };
         let (spec, mode) = self.module_specifier(import.module, kind, import.is_type_only);
-        if spec.is_none() && import.is_in_ambient_module {
-            // The checker reads the source text of a specifier inside `declare module "m" { }`.
-            return self.b.file.stmt(StmtKind::Empty, at);
-        }
         let declaration = ImportId(self.b.file.imports.len() as u32);
         let mut named = Vec::new();
         for specifier in import.specifiers.unwrap_or_default().iter() {
@@ -179,11 +175,6 @@ impl Lower<'_, '_> {
                 expression: argument,
                 ..
             } => {
-                if import.is_in_ambient_module {
-                    // The checker reads the source text of a specifier inside `declare module "m" {
-                    // }`.
-                    return self.b.file.stmt(StmtKind::Empty, at);
-                }
                 if let Some(argument) = argument {
                     expression = self.expr(&argument);
                 }
@@ -213,7 +204,6 @@ impl Lower<'_, '_> {
             }
             None => (Atom::NONE, ResolutionMode::None),
         };
-        // `checkExportDeclaration` stops at a specifier that is not a string.
         let expression = match export.module {
             Some(module) if spec.is_none() => {
                 let expressions = &self.b.file.specifier_expressions;
@@ -224,10 +214,6 @@ impl Lower<'_, '_> {
             }
             _ => None,
         };
-        let spec = match expression {
-            Some(_) => known::empty,
-            None => spec,
-        };
         let specifiers = match export.clause {
             ts::ExportClause::Star {
                 star_loc,
@@ -236,9 +222,8 @@ impl Lower<'_, '_> {
             } => {
                 let kind = StmtKind::ExportStar {
                     spec,
-                    alias: alias.map_or(Atom::NONE, |alias| match expression {
-                        Some(_) => self.b.atom(&alias.text),
-                        None => self.b.identifier(&alias.text, pos(alias.loc)),
+                    alias: alias.map_or(Atom::NONE, |alias| {
+                        self.b.identifier(&alias.text, pos(alias.loc))
                     }),
                     type_only: export.is_type_only,
                     mode,
@@ -259,7 +244,7 @@ impl Lower<'_, '_> {
                 name,
                 end,
             } = self.b.ts[specifier];
-            if is_type_only && expression.is_none() {
+            if is_type_only {
                 self.b
                     .js_error_at_range((pos(loc), pos(end)), 8006, b"export...type");
             }
@@ -278,6 +263,7 @@ impl Lower<'_, '_> {
         let items = self.b.file.add_export_specs(&items);
         let declaration = self.b.file.add_export(Export {
             spec,
+            has_module_specifier: export.module.is_some(),
             items,
             type_only: export.is_type_only,
             mode,
@@ -289,14 +275,13 @@ impl Lower<'_, '_> {
     /// `expression`: what the `ExportDeclaration` has in place of a string literal, if it has
     /// (`hir::File::exports_from_expressions`).
     fn export_statement(&mut self, kind: StmtKind, expression: Option<ExprId>, at: u32) -> StmtId {
-        let Some(expression) = expression else {
-            return self.b.file.stmt(kind, at);
-        };
-        let statement = self.b.file.stmt(StmtKind::Empty, at);
-        self.b
-            .file
-            .exports_from_expressions
-            .push((statement, kind, expression));
+        let statement = self.b.file.stmt(kind, at);
+        if let Some(expression) = expression {
+            self.b
+                .file
+                .exports_from_expressions
+                .push((statement, expression));
+        }
         statement
     }
 

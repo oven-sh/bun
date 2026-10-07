@@ -41,7 +41,8 @@ export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
 }
 
-type Case = { files: Record<string, string>; build?: true };
+/** `deep`: nested too deeply for the stack of a build that is not optimised. */
+type Case = { files: Record<string, string>; build?: true; deep?: true };
 
 /**
  * Small programs about which `bun check` and tsc once said something else, each named after where it was found.
@@ -55,6 +56,7 @@ export function programsThatOnceDiffered(part: number, parts: number) {
       async () => {
         const all: Record<string, Case> = await Bun.file(join(import.meta.dir, "differential-cases.json")).json();
         const cases = Object.entries(all)
+          .filter(([, it]) => !(it.deep && (isDebug || isASAN)))
           // A debug build checks a sample. It is always the same sample.
           .filter((_, index) => index % (isDebug || isASAN ? 40 : 1) === 0)
           .filter((_, index) => index % (parts * tests) === part * tests + nth)
@@ -68,12 +70,9 @@ export function programsThatOnceDiffered(part: number, parts: number) {
         await inTurns(cases, async ([name, it]) => {
           const cwd = join(root, name);
           // In this order: `tsc -b` writes files.
-          const ours = await linesOf([bunExe(), "check"], cwd, root);
-          const theirs = await linesOf(
-            [tsc!, ...(it.build ? ["-b"] : []), "--pretty", "false", "--singleThreaded"],
-            cwd,
-            root,
-          );
+          const build = it.build ? ["-b"] : [];
+          const ours = await linesOf([bunExe(), "check", ...build], cwd, root);
+          const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
         });
         expect(different).toEqual({});

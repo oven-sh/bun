@@ -75,6 +75,19 @@ pub(super) fn circularity_error_type(annotation: TypeNodeId) -> TypeId {
     }
 }
 
+/// Whether `getTypeOfSymbol` calls `getTypeOfVariableOrParameterOrProperty` for a symbol with
+/// `flags` and `value_declaration`. It tests for an accessor first, and neither
+/// `getTypeOfAccessors` nor `getTypeOfAlias` assigns or reports anything where
+/// `pushTypeResolution` fails.
+fn is_variable_or_property(flags: SymFlags, value_declaration: Option<(FileId, Decl)>) -> bool {
+    !flags.intersects(SymFlags::ACCESSOR)
+        && (flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
+            || matches!(
+                value_declaration,
+                Some((_, Decl::Expando(_) | Decl::ThisProperty(_)))
+            ))
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct IterationTypes {
     pub yielded: TypeId,
@@ -212,7 +225,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Inlined: a frame of its own would be one more for each variable in a chain.
     #[inline(always)]
     fn resolve_type_of_symbol_once(&mut self, sym: Sym) -> TypeId {
-        let value_declaration = self.files().value_declaration(sym);
+        let mut value_declaration = self.files().value_declaration(sym);
         // A parameter property has the type of its parameter, which is a separate query.
         if let Some((file, Decl::ParameterProperty(p))) = value_declaration {
             let scope = self.begin_scope();
@@ -228,9 +241,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Before the query is entered: `lateBindMember` resolves the names of the other members,
         // which may re-enter this query.
-        let mut members = SmallVec::new();
-        if self.files().flags(sym).intersects(SymFlags::CLASS_MEMBER) {
-            members = self.members_of_symbol(sym);
+        let mut flags = self.files().flags(sym);
+        let (mut members, mut declarations) = (SmallVec::new(), List::default());
+        if flags.intersects(SymFlags::CLASS_MEMBER) {
+            (flags, value_declaration, declarations) = self.merged_symbol_of_property(sym);
+            members = members_among(&declarations);
             if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
                 return known;
             }
@@ -242,7 +257,7 @@ impl<'p, 's> Checker<'p, 's> {
             && matches!(value_declaration, Some((file, Decl::Expando(e)))
                 if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
         if in_report && self.stack[self.resolution_start..].contains(&Query::Symbol(sym)) {
-            return self.type_of_circular_symbol(sym, None);
+            return self.type_of_circular_symbol(sym, flags, value_declaration, None);
         }
         if let Some(raw) = self.provisional(Query::Symbol(sym)) {
             return TypeId(raw as u32);
@@ -260,15 +275,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 return TypeId::UNRESOLVED;
             }
-            let ty = self.type_of_circular_symbol(sym, None);
-            let ty = self.cache_circularity_error_type(sym, value_declaration, ty);
-            if self.files().flags(sym).contains(SymFlags::MODULE_EXPORTS)
-                && let Some(at) = self.place_of_export_value_declaration(sym)
-            {
-                self.report_circularity_error(Query::Symbol(sym), at, Arg::Sym(sym), ty, false);
-            }
+            let ty = self.type_of_circular_symbol(sym, flags, value_declaration, None);
+            let ty = self.cache_circularity_error_type(sym, flags, value_declaration, ty);
             if let Some((file, Decl::Var(pat) | Decl::Param(pat))) = value_declaration {
                 self.report_circularity_error_of_pat(Query::Pat(file, pat), file, pat);
+            } else if is_variable_or_property(flags, value_declaration) {
+                let first = declarations.first().copied();
+                self.report_circularity_error_of_property(sym, value_declaration, first, ty);
             }
             return ty;
         }
@@ -277,9 +290,19 @@ impl<'p, 's> Checker<'p, 's> {
         if in_report {
             self.resolution_start = self.stack.len() - 1;
         }
-        let ty = match members.is_empty() {
-            true => self.type_of_symbol_uncached(sym),
-            false => self.type_of_members_uncached(&members),
+        // `getTypeOfSymbol` tests for an accessor, then for a property, then for a method.
+        let is_property =
+            flags.contains(SymFlags::PROPERTY) && !flags.intersects(SymFlags::ACCESSOR);
+        let ty = match value_declaration {
+            // `getTypeOfVariableOrParameterOrPropertyWorker`, `case ast.KindMethodDeclaration`:
+            // `checkObjectLiteralMethod` ends with `getTypeOfSymbol(getSymbolOfDeclaration(node))`.
+            Some((file, Decl::Member(m)))
+                if is_property && self.hir(file)[m].kind == MemberKind::Method =>
+            {
+                self.type_of_symbol(sym)
+            }
+            _ if members.is_empty() => self.type_of_symbol_uncached(sym),
+            _ => self.type_of_members_uncached(&members),
         };
         self.resolution_start = resolution_start;
         // For `module` and `exports`, `getTypeOfVariableOrParameterOrPropertyWorker` returns
@@ -290,59 +313,40 @@ impl<'p, 's> Checker<'p, 's> {
             false => self.leave(Query::Symbol(sym)),
         };
         if self.left_a_cycle && !is_module_exports {
-            let ty = self.type_of_circular_symbol(sym, Some(ty));
+            let ty = self.type_of_circular_symbol(sym, flags, value_declaration, Some(ty));
             let stored = self.cycle_result();
             let kept = self.p.symbol_types.insert(&self.task, sym, ty, stored);
-            let flags = self.files().flags(sym);
-            if let Some((file, Decl::Member(first))) = value_declaration {
-                if flags.intersects(SymFlags::ACCESSOR) {
+            let first = declarations.first().copied();
+            match value_declaration {
+                Some((_, Decl::Member(_))) if flags.intersects(SymFlags::ACCESSOR) => {
                     self.report_circular_accessors(sym, &members);
-                } else {
-                    let (hir, end) = (self.hir(file), self.end_of_member_name(file, first));
-                    let start = hir[first].name_pos;
-                    let name = Arg::Bytes(&hir.text[start as usize..end as usize]);
-                    let at = (file, start, end);
-                    self.report_circularity_error(Query::Symbol(sym), at, name, ty, false);
                 }
-            } else if let Some((
-                file,
-                Decl::Expando(declaration) | Decl::ThisProperty(declaration),
-            )) = value_declaration
-            {
-                let hir = self.hir(file);
-                let range = |c: &Self, e: ExprId| {
-                    (
-                        file,
-                        c.start_inside_parentheses(file, e),
-                        c.end_inside_parentheses(file, e),
-                    )
-                };
-                // `GetNonAssignedNameOfDeclaration`: for `f["a"] = e` and `Object.defineProperty(f,
-                // "a", d)` the `"a"`, as source text.
-                let named = match hir[declaration].kind {
-                    ExprKind::Assign { target, .. } => match hir[target].kind {
-                        ExprKind::Index { index, .. } => Some(index),
-                        _ => None,
-                    },
-                    ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
-                    _ => None,
-                };
-                let name = match named.map(|named| range(self, named)) {
-                    Some((_, start, end)) => Arg::Bytes(&hir.text[start as usize..end as usize]),
-                    None => Arg::Atom(self.files().symbol(sym).name),
-                };
-                let at = range(self, declaration);
-                self.report_circularity_error(Query::Symbol(sym), at, name, ty, false);
-            } else if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
-                self.report_circularity_error_of_alias(sym);
-            } else if flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
-                && let Some(at) = self.place_of_export_value_declaration(sym)
-            {
-                self.report_circularity_error(Query::Symbol(sym), at, Arg::Sym(sym), ty, false);
+                Some((_, Decl::Member(_) | Decl::Expando(_) | Decl::ThisProperty(_))) => {
+                    self.report_circularity_error_of_property(sym, value_declaration, first, ty);
+                }
+                _ if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) => {
+                    self.report_circularity_error_of_alias(sym);
+                }
+                _ if flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY) => {
+                    self.report_circularity_error_of_property(sym, value_declaration, first, ty);
+                }
+                _ => {}
             }
             return kept;
         }
+        // `getTypeOfAccessors`: `links.resolvedType` is assigned only if it is nil, and the caller
+        // gets that value. `getTypeOfVariableOrParameterOrProperty` returns its own.
+        if flags.intersects(SymFlags::ACCESSOR)
+            && let Some(known) = self.p.symbol_types.get(&self.task, &sym)
+        {
+            return known;
+        }
         match left {
+            // `getTypeOfEnumMember` assigns `links.resolvedType` whatever a nested call has
+            // assigned.
+            Ok(stored) if self.files().flags(sym).contains(SymFlags::ENUM_MEMBER) => {
+                self.p.symbol_types.rewrite(&self.task, sym, ty, stored);
+            }
             Ok(stored) => {
                 self.p.symbol_types.insert(&self.task, sym, ty, stored);
             }
@@ -371,6 +375,65 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let err = self.new_diagnostic(at, code, &[name]);
         self.add_diagnostic_of(Some(owner), err);
+    }
+
+    /// `reportCircularityError(symbol)` in `getTypeOfVariableOrParameterOrPropertyWorker`, both
+    /// where `pushTypeResolution` fails and where `popTypeResolution` finds the cycle, for a
+    /// `sym` whose `value_declaration` is no variable, parameter or binding element. `first`:
+    /// `symbol.Declarations[0]`. `ty`: what it returns.
+    #[cold]
+    #[inline(never)]
+    fn report_circularity_error_of_property(
+        &mut self,
+        sym: Sym,
+        value_declaration: Option<(FileId, Decl)>,
+        first: Option<(FileId, Decl)>,
+        ty: TypeId,
+    ) {
+        let owner = Query::Symbol(sym);
+        match value_declaration {
+            Some((file, Decl::Member(member))) => {
+                let (hir, end) = (self.hir(file), self.end_of_member_name(file, member));
+                let start = hir[member].name_pos;
+                // `getNameOfSymbolAsWritten`: the name in the first declaration that has one.
+                let name = match first {
+                    Some(named) if named != (file, Decl::Member(member)) => Arg::Sym(sym),
+                    _ => Arg::Bytes(&hir.text[start as usize..end as usize]),
+                };
+                self.report_circularity_error(owner, (file, start, end), name, ty, false);
+            }
+            Some((file, Decl::Expando(declaration) | Decl::ThisProperty(declaration))) => {
+                let hir = self.hir(file);
+                let range = |c: &Self, e: ExprId| {
+                    (
+                        file,
+                        c.start_inside_parentheses(file, e),
+                        c.end_inside_parentheses(file, e),
+                    )
+                };
+                // `GetNonAssignedNameOfDeclaration`: for `f["a"] = e` and `Object.defineProperty(f,
+                // "a", d)` the `"a"`, as source text.
+                let named = match hir[declaration].kind {
+                    ExprKind::Assign { target, .. } => match hir[target].kind {
+                        ExprKind::Index { index, .. } => Some(index),
+                        _ => None,
+                    },
+                    ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
+                    _ => None,
+                };
+                let name = match named.map(|named| range(self, named)) {
+                    Some((_, start, end)) => Arg::Bytes(&hir.text[start as usize..end as usize]),
+                    None => Arg::Atom(self.files().symbol(sym).name),
+                };
+                let at = range(self, declaration);
+                self.report_circularity_error(owner, at, name, ty, false);
+            }
+            _ => {
+                if let Some(at) = self.place_of_export_value_declaration(sym) {
+                    self.report_circularity_error(owner, at, Arg::Sym(sym), ty, false);
+                }
+            }
+        }
     }
 
     /// `report_circularity_error` for the variable, parameter or binding element whose name is
@@ -507,11 +570,16 @@ impl<'p, 's> Checker<'p, 's> {
         is_export.then_some((file, start, end))
     }
 
-    /// The type of `sym` when the resolution of its type depends on itself. `resolved`: the
-    /// resolved type, if `popTypeResolution` found the cycle. `None`: `pushTypeResolution` found
-    /// it.
-    fn type_of_circular_symbol(&self, sym: Sym, resolved: Option<TypeId>) -> TypeId {
-        let flags = self.files().flags(sym);
+    /// The type of `sym`, which has `flags` and `value_declaration`, when the resolution of its
+    /// type depends on itself. `resolved`: the resolved type, if `popTypeResolution` found the
+    /// cycle. `None`: `pushTypeResolution` found it.
+    fn type_of_circular_symbol(
+        &self,
+        sym: Sym,
+        flags: SymFlags,
+        value_declaration: Option<(FileId, Decl)>,
+        resolved: Option<TypeId>,
+    ) -> TypeId {
         // `getTypeOfAlias`
         if flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE) {
             return resolved.unwrap_or(TypeId::ERROR);
@@ -522,6 +590,9 @@ impl<'p, 's> Checker<'p, 's> {
             return resolved.map_or(TypeId::ERROR, |_| TypeId::ANY);
         }
         // `symbol.ValueDeclaration.Type()`
+        if let Some((file, member @ Decl::Member(_))) = value_declaration {
+            return circularity_error_type(self.type_node_of_declaration(file, member));
+        }
         for (file, decl) in declarations_of(self.files(), sym) {
             let hir = self.hir(file);
             let annotation = match decl {
@@ -552,16 +623,11 @@ impl<'p, 's> Checker<'p, 's> {
     fn cache_circularity_error_type(
         &mut self,
         sym: Sym,
+        flags: SymFlags,
         value_declaration: Option<(FileId, Decl)>,
         ty: TypeId,
     ) -> TypeId {
-        let flags = self.files().flags(sym);
-        if !flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
-            && !matches!(
-                value_declaration,
-                Some((_, Decl::Expando(_) | Decl::ThisProperty(_)))
-            )
-        {
+        if !is_variable_or_property(flags, value_declaration) {
             return ty;
         }
         if let Some((file, Decl::Var(pat) | Decl::Param(pat))) = value_declaration
@@ -589,6 +655,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let stored = self.cycle_result();
         self.note_result(Query::Pat(file, pat));
+        self.note_result(Query::ParameterSymbol(file, pat));
         self.p
             .pat_types
             .insert(&self.task, (file, pat), (ty, true), stored);
@@ -643,8 +710,7 @@ impl<'p, 's> Checker<'p, 's> {
         if flags.contains(SymFlags::MODULE_EXPORTS) {
             if self.files().symbol(sym).name == known::exports {
                 let module = self.files().file_symbol(sym.file);
-                // `resolveExternalModuleSymbol(.., false /*dontResolveAlias*/)`
-                let value = self.resolve_symbol(self.files().module_value(module));
+                let value = self.resolve_external_module_symbol(module);
                 return self.type_of_alias_target(value);
             }
             // `newAnonymousType(symbol, symbol.Members, ..)`
@@ -734,8 +800,15 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     // A literal type is preserved, except in a JSON file
                     // (`getTypeOfVariableOrParameterOrPropertyWorker`).
+                    let hir = self.hir(file);
+                    let is_json = hir.kind == FileKind::Json;
+                    // `len(statements) == 0`: the value of a text without a token is an object
+                    // literal at its end (`parse_json_text`).
+                    if is_json && hir.text.get(hir[e].pos as usize).is_none() {
+                        return TypeId::EMPTY_OBJECT;
+                    }
                     let ty = self.type_of_expr(file, e);
-                    return if self.hir(file).kind == FileKind::Json {
+                    return if is_json {
                         self.widened(ty)
                     } else {
                         self.widened_for_declaration(ty, None)
@@ -826,22 +899,16 @@ impl<'p, 's> Checker<'p, 's> {
                 return AliasTarget::Unknown;
             }
             resolving.push(at);
-            // `resolveESModuleSymbol`. No symbol is created for the copy of a target that has none
-            // itself: `export = a`, where `a` resolves to a property.
-            let mut declarations = files.symbol(at).decls.iter();
-            if declarations.any(|it| matches!(it, Decl::ImportNamespace(_))) {
+            if let Some(module) = self.module_of_namespace_import_or_export(at) {
                 if !self.enter_alias_targets(&resolving) {
                     return AliasTarget::Unknown;
                 }
-                let ty = self.type_of_namespace_import(at);
+                let created = self.resolve_es_module_symbol(at, module);
                 if !self.leave_alias_targets(&resolving) {
                     return AliasTarget::Unknown;
                 }
-                if let Some(ty) = ty {
-                    return match files.module_clone(at) {
-                        Some(clone) => AliasTarget::Symbol(clone),
-                        None => AliasTarget::Property(TypeId::NEVER, files.symbol(at).name, ty),
-                    };
+                if let Some(created) = created {
+                    return created;
                 }
             }
             let immediate_target = match self.target_of_module_default(&resolving) {
@@ -858,10 +925,21 @@ impl<'p, 's> Checker<'p, 's> {
                 if !self.leave_alias_targets(before) {
                     return AliasTarget::Unknown;
                 }
-                return match symbol_from_variable {
-                    Some((object, name, ty)) => AliasTarget::Property(object, name, ty),
-                    None => self.resolved_symbol_of_alias_like_expression(&resolving),
+                let symbol_from_module = self.synthetic_default_from_module(&resolving);
+                // `combineValueAndTypeSymbols`: the property is the value. The `default` that
+                // `createDefaultPropertyWrapperForModule` makes is an alias without a declaration:
+                // combined with the `export =`, it resolves as that does.
+                let symbol_from_variable = symbol_from_variable.filter(|&(object, ..)| {
+                    symbol_from_module.is_none() || !self.has_default_property_wrapper(object)
+                });
+                if let Some((object, name, ty)) = symbol_from_variable {
+                    return AliasTarget::Property(object, name, ty);
+                }
+                let Some(next) = symbol_from_module else {
+                    return self.resolved_symbol_of_alias_like_expression(&resolving);
                 };
+                at = next;
+                continue;
             };
             if let Some(combined) = self.combined_symbol_of_alias(at) {
                 return AliasTarget::Symbol(combined);
@@ -886,6 +964,20 @@ impl<'p, 's> Checker<'p, 's> {
                 self.resolve_alias(alias)
             }
             symbol => symbol,
+        }
+    }
+
+    /// `resolveExternalModuleSymbol(module, false /*dontResolveAlias*/)`. `Files::module_value`
+    /// follows an `export =` past an `import * as ns` to what that imports, also where
+    /// `resolveESModuleSymbol` creates a symbol for `ns`.
+    pub(super) fn resolve_external_module_symbol(&mut self, module: Sym) -> AliasTarget {
+        let files = self.files();
+        match files.export(module, known::export_equals) {
+            Some(equals) if files.is_non_local_alias(equals) => match self.resolve_alias(equals) {
+                AliasTarget::Symbol(symbol) => AliasTarget::Symbol(files.canonical(symbol)),
+                target => target,
+            },
+            _ => AliasTarget::Symbol(files.module_value(module)),
         }
     }
 
@@ -1067,6 +1159,41 @@ impl<'p, 's> Checker<'p, 's> {
         Some(self.prop_ref(apparent, name)?.0)
     }
 
+    /// The module that `getTargetOfNamespaceImport` or `getTargetOfNamespaceExport` passes to
+    /// `resolveESModuleSymbol` for `alias`: `import * as ns`, `export * as ns`.
+    fn module_of_namespace_import_or_export(&self, alias: Sym) -> Option<Sym> {
+        let (file, files) = (alias.file, self.files());
+        let hir = self.hir(file);
+        let mut declarations = files.symbol(alias).decls.iter();
+        let (spec, mode) = declarations.find_map(|&decl| match decl {
+            Decl::ImportNamespace(import) => Some((hir[import].spec, hir[import].mode)),
+            Decl::ExportStarAs(statement) => match hir[statement].kind {
+                StmtKind::ExportStar { spec, mode, .. } => Some((spec, mode)),
+                _ => None,
+            },
+            _ => None,
+        })?;
+        files.module_of_specifier_as(file, spec, files.mode_of_import(file, mode))
+    }
+
+    /// `resolveESModuleSymbol` for `alias`, which names `module`, where the result is a symbol
+    /// that `cloneTypeAsModuleType` has created. `None`: the tables have the target.
+    fn resolve_es_module_symbol(&mut self, alias: Sym, module: Sym) -> Option<AliasTarget> {
+        let files = self.files();
+        // No symbol is created for the copy of a target that has none itself: `export = a`, where
+        // `a` resolves to a property.
+        if let Some(ty) = self.type_of_namespace_import(alias) {
+            return Some(match files.module_clone(alias) {
+                Some(clone) => AliasTarget::Symbol(clone),
+                None => AliasTarget::Property(TypeId::NEVER, files.symbol(alias).name, ty),
+            });
+        }
+        // For another `import * as ns`, through which the `export =` of `module` resolves.
+        let symbol = self.resolve_external_module_symbol(module).symbol()?;
+        let target = files.target_of_module_clone(symbol);
+        target.map(|_| AliasTarget::Symbol(symbol))
+    }
+
     /// `resolveESModuleSymbol`: the type of the symbol `cloneTypeAsModuleType` creates for the
     /// `import * as ns` that declares `sym`. It has no signatures, and a `default` where one is
     /// synthesized. `None`: `sym` is declared differently, or aliases the module, or its `export =`
@@ -1091,9 +1218,13 @@ impl<'p, 's> Checker<'p, 's> {
         let module = self
             .files()
             .module_of_specifier_as(file, import.spec, mode)?;
-        let value = self.files().module_value(module);
-        let ty = self.type_of_symbol(value);
+        let symbol = self.resolve_external_module_symbol(module);
+        let ty = self.type_of_alias_target(symbol);
         let files = self.files();
+        // A property has no symbol: the `export =` that resolves to it stands for it.
+        let value = symbol
+            .symbol()
+            .unwrap_or_else(|| files.module_value(module));
         // Under a Node module mode, an ECMAScript module imports a file.
         let is_file_to_node = files
             .symbol(module)
@@ -1153,20 +1284,16 @@ impl<'p, 's> Checker<'p, 's> {
         usage: ResolutionMode,
         module: Sym,
     ) -> bool {
-        if let Some(known) = (self.p.synthetic_default_import_types).get(&self.task, &ty) {
+        if let Some(&known) = self.synthetic_default_import_types.get(&ty) {
             return known;
         }
-        let scope = self.begin_scope();
+        let before = self.non_cacheable_mark();
         let has_synthetic_default = self.can_have_synthetic_default(usage, module);
-        match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.synthetic_default_import_types).insert(
-                &self.task,
-                ty,
-                has_synthetic_default,
-                stored,
-            ),
-            Err(_) => has_synthetic_default,
+        if before == self.non_cacheable_mark() {
+            self.synthetic_default_import_types
+                .insert(ty, has_synthetic_default);
         }
+        has_synthetic_default
     }
 
     /// `canHaveSyntheticDefault`. `resolveExportByName` of a module with `export =` looks up a
@@ -1313,11 +1440,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// from "m"` and `const { a } = require("m")` name a property of the value when `m` has `export
     /// = value`. Returns the type of the value, `a`, and the type of the property.
     pub(super) fn symbol_from_variable(&mut self, sym: Sym) -> Option<(TypeId, Atom, TypeId)> {
-        let (value, name) = self.imported_from_export_equals(sym)?;
+        let (module, name) = self.imported_from_export_equals(sym)?;
         if !self.enter_alias_target(sym) {
             return None;
         }
-        let ty = self.type_of_symbol(value);
+        let value = self.resolve_external_module_symbol(module);
+        let ty = self.type_of_alias_target(value);
         let property = match self.is_any(ty) {
             true => None,
             false => self.get_property_of_type_ex(ty, name, true),
@@ -1328,6 +1456,51 @@ impl<'p, 's> Checker<'p, 's> {
         // `resolveAlias` finds the property. Its type is for `getTypeOfAlias`.
         let (prop, mapper) = property?;
         Some((ty, name, self.type_of_prop(prop, mapper)))
+    }
+
+    /// `symbolFromModule` of `getExternalModuleMember` where the module exports no `default`, for
+    /// the last of the aliases `resolving` (`enter_alias_targets`). Only a binding element comes
+    /// there with that name: `const { default: d } = require("m")`.
+    fn synthetic_default_from_module(&mut self, resolving: &[Sym]) -> Option<Sym> {
+        let &alias = resolving.last()?;
+        let (file, files) = (alias.file, self.files());
+        let mut declarations = files.symbol(alias).decls.iter();
+        let (spec, mode, name) = declarations.find_map(|&decl| match decl {
+            Decl::Require(_) => files.external_module_member_of(file, decl),
+            _ => None,
+        })?;
+        if name != known::default {
+            return None;
+        }
+        let module = files.module_of_specifier_as(file, spec, mode)?;
+        if !self.enter_alias_targets(resolving) {
+            return None;
+        }
+        // `getEmitSyntaxForModuleSpecifierExpression` of the argument of `require`.
+        let usage = ResolutionMode::Require;
+        let has_synthetic_default = files.is_only_importable_as_default(usage, module)
+            || self.can_have_synthetic_default(usage, module);
+        if !self.leave_alias_targets(resolving) || !has_synthetic_default {
+            return None;
+        }
+        // `resolveExternalModuleSymbol(moduleSymbol, true /*dontResolveAlias*/)`
+        let export_equals = files.export(module, known::export_equals);
+        Some(export_equals.map_or(module, |it| files.canonical(it)))
+    }
+
+    /// Whether the `default` of `ty` is the one `createDefaultPropertyWrapperForModule` makes for
+    /// an `import * as ns`.
+    fn has_default_property_wrapper(&self, ty: TypeId) -> bool {
+        let TypeData::Anon { origin, .. } = self.data(ty) else {
+            return false;
+        };
+        matches!(
+            origin,
+            Origin::Namespace {
+                with_default: true,
+                ..
+            }
+        )
     }
 
     /// The beginning of `resolveAlias`. `false`: `aliasTarget` is `unknownSymbol` since an earlier
@@ -1377,7 +1550,7 @@ impl<'p, 's> Checker<'p, 's> {
         is_resolved
     }
 
-    /// The value and the name `a`, for `symbol_from_variable`.
+    /// `m` and the name `a`, for `symbol_from_variable`.
     fn imported_from_export_equals(&self, sym: Sym) -> Option<(Sym, Atom)> {
         let file = sym.file;
         let files = self.files();
@@ -1392,11 +1565,10 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(module) = files.module_of_specifier_as(file, spec, mode) else {
                 continue;
             };
-            let value = files.module_value(module);
-            if value == module {
+            if files.module_value(module) == module {
                 continue;
             }
-            return Some((value, name));
+            return Some((module, name));
         }
         None
     }
@@ -2118,28 +2290,21 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((known, _)) = self.p.pat_types.get(&self.task, &(file, pat)) {
             return known;
         }
-        self.resolve_type_of_pat(file, pat, false)
+        self.resolve_type_of_pat(file, pat, Query::Pat(file, pat))
     }
 
-    /// `is_parameter_symbol`: the type of the symbol of a parameter is requested. A pattern has no
-    /// symbol unless it is the name of a parameter, and `getTypeForBindingElementParent` pushes no
-    /// resolution for that one.
+    /// `query`: `Query::Pat` or `Query::ParameterSymbol` of `pat`.
     #[inline(never)]
-    fn resolve_type_of_pat(
-        &mut self,
-        file: FileId,
-        pat: PatId,
-        is_parameter_symbol: bool,
-    ) -> TypeId {
+    fn resolve_type_of_pat(&mut self, file: FileId, pat: PatId, query: Query) -> TypeId {
         if self.prepare_query_for_pat(file, pat)
             && let Some((known, _)) = self.p.pat_types.get(&self.task, &(file, pat))
         {
             return known;
         }
-        if let Some(raw) = self.provisional(Query::Pat(file, pat)) {
+        if let Some(raw) = self.provisional(query) {
             return TypeId(raw as u32);
         }
-        if !self.enter(Query::Pat(file, pat)) {
+        if !self.enter(query) {
             if !self.found_cycle {
                 return TypeId::UNRESOLVED;
             }
@@ -2153,18 +2318,15 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             // `reportCircularityError`, as where `popTypeResolution` finds the cycle.
-            if is_parameter_symbol || matches!(self.hir(file)[pat].kind, PatKind::Ident(_)) {
-                self.report_circularity_error_of_pat(Query::Pat(file, pat), file, pat);
-            }
+            self.report_circularity_error_of_pat(query, file, pat);
             return ty;
         }
         let ty = self.type_of_pat_uncached(file, pat);
-        let left = self.leave(Query::Pat(file, pat));
+        let left = self.leave(query);
         if self.left_a_cycle {
             let ty = circularity_error_type(self.type_annotation_of_pat(file, pat));
             // `isParameterOfContextSensitiveSignature`: `links.resolvedType` stays nil, for
             // `assignParameterType` or `assignBindingElementTypes`, which is in progress below.
-            let query = Query::Pat(file, pat);
             let mut assigned = self.assigned_parameters.iter();
             if !assigned.any(|&at| self.stack.get(at) == Some(&query)) {
                 let stored = self.cycle_result();
@@ -2174,7 +2336,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .pat_types
                     .rewrite(&self.task, (file, pat), (ty, true), stored);
             }
-            if is_parameter_symbol || matches!(self.hir(file)[pat].kind, PatKind::Ident(_)) {
+            if self.is_resolution(query) {
                 self.report_circularity_error_of_pat(query, file, pat);
             }
             return ty;
@@ -2186,7 +2348,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .pat_types
                     .insert(&self.task, (file, pat), (ty, false), stored);
             }
-            Err(open) => self.cache_provisionally(Query::Pat(file, pat), u64::from(ty.0), open),
+            Err(open) => self.cache_provisionally(query, u64::from(ty.0), open),
         }
         ty
     }
@@ -2418,13 +2580,9 @@ impl<'p, 's> Checker<'p, 's> {
             // literal methods are typed (`assignParameterType`, widened) before their patterns are
             // checked, any other once something asks for the type of its symbol.
             PatParent::Param(p)
-                if hir[p].ty.is_none()
-                    && !matches!(
-                        bound.fns[bound.param_fn[p.idx()].idx()].owner,
-                        FnOwner::Expr(_)
-                    )
+                if self.is_resolved_on_request(file, p)
                     && (is_rest
-                        || (self.p.pat_types.get(&self.task, &(file, parent))).is_none()
+                        || !self.is_parameter_symbol_resolved(file, p)
                         || self.p.files.options.strict_null_checks
                             && hir[p].flags.contains(Flags::OPTIONAL)) =>
             {
@@ -2437,7 +2595,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if hir[p].ty.is_none()
                     && hir[p].default.is_some()
                     && hir[bound.param_fn[p.idx()]].kind != FnKind::Setter
-                    && (is_rest || self.stack.contains(&Query::Pat(file, parent)))
+                    && (is_rest
+                        || self.stack.contains(&Query::Pat(file, parent))
+                        || self.stack.contains(&Query::ParameterSymbol(file, parent)))
                     && {
                         let func = bound.param_fn[p.idx()];
                         let index = (p.0 - hir[func].params.start) as usize;
@@ -3062,14 +3222,107 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// Whether `links.resolvedType` of the symbol of the parameter `p` is nil until something asks
+    /// for the type of the symbol. Its name is a pattern, for which `checkVariableLikeDeclaration`
+    /// asks `getWidenedTypeForVariableLikeDeclaration(node, false /*reportErrors*/)` and stores
+    /// nothing. `assignParameterType` has no part in its function. With an annotation nothing
+    /// depends on it.
+    #[inline]
+    pub(super) fn is_resolved_on_request(&self, file: FileId, p: ParamId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
+            && hir[p].ty.is_none()
+            && bound.param_fn[p.idx()]
+                .some()
+                .is_some_and(|func| !matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)))
+    }
+
+    /// `links.resolvedType != nil` for the symbol of `p`, which `is_resolved_on_request`.
+    fn is_parameter_symbol_resolved(&self, file: FileId, p: ParamId) -> bool {
+        let resolved = (self.p.resolved_parameter_symbols).get(&self.task, &(file, p));
+        // `reportCircularityError` has assigned it as well.
+        let known = (self.p.pat_types).get(&self.task, &(file, self.hir(file)[p].pat));
+        resolved.is_some() || known.is_some_and(|(_, is_circular)| is_circular)
+    }
+
+    /// `get_type_of_parameter` for a parameter whose name is no identifier.
+    #[inline(never)]
+    pub(super) fn resolve_parameter_symbol_on_request(&mut self, file: FileId, p: ParamId) {
+        if self.is_resolved_on_request(file, p) {
+            self.type_of_param_on_request(file, p);
+        }
+    }
+
+    /// `getTypeOfSymbol(p.Symbol())` where `is_resolved_on_request`. `pat_types` has what
+    /// `getWidenedTypeForVariableLikeDeclaration` returns, with either `reportErrors`.
+    #[inline(never)]
+    fn type_of_param_on_request(&mut self, file: FileId, p: ParamId) -> TypeId {
+        let pat = self.hir(file)[p].pat;
+        let known = self.p.pat_types.get(&self.task, &(file, pat));
+        if let Some((ty, true)) = known {
+            return ty;
+        }
+        // tsgo does not ask here (`sig_params_of_declaration`), or asks when every file is checked
+        // (a baseline writer).
+        if self.is_requested_eagerly(self.stack.len()) || self.is_type_checked {
+            return self.type_of_pat(file, pat);
+        }
+        let resolved = (self.p.resolved_parameter_symbols).get(&self.task, &(file, p));
+        if resolved.is_some() {
+            return self.type_of_pat(file, pat);
+        }
+        // `reportErrorsFromWidening`. Under strictNullChecks there is no widening type.
+        let options = &self.p.files.options;
+        let reports = options.no_implicit_any && !options.strict_null_checks;
+        // One checker has collected the diagnostics of `file` by now, and has resolved the names
+        // in the pattern.
+        if reports && self.task.checker_count == 0 && !self.is_reported_in_time(None, file) {
+            return self.type_of_pat(file, pat);
+        }
+        let query = Query::ParameterSymbol(file, pat);
+        let ty = match known {
+            Some((ty, _)) => ty,
+            None => {
+                let ty = self.resolve_type_of_pat(file, pat, query);
+                let entry = self.p.pat_types.get(&self.task, &(file, pat));
+                if !matches!(entry, Some((_, false))) {
+                    return ty;
+                }
+                ty
+            }
+        };
+        let stored = if reports {
+            if !self.enter(query) {
+                return ty;
+            }
+            let unwidened = self.type_for_parameter_of_declaration(file, p, CheckMode::empty());
+            self.widened_for_declaration(unwidened, Some((file, pat)));
+            let Ok(stored) = self.leave(query) else {
+                return ty;
+            };
+            stored
+        } else {
+            Stored::new()
+        };
+        (self.p.resolved_parameter_symbols).insert(&self.task, (file, p), (), stored);
+        ty
+    }
+
     /// `getTypeOfSymbol(p.Symbol())`
     #[inline]
     pub fn type_of_param(&mut self, file: FileId, p: ParamId) -> TypeId {
+        if self.is_resolved_on_request(file, p) {
+            return self.type_of_param_on_request(file, p);
+        }
         let pat = self.hir(file)[p].pat;
         if let Some((known, _)) = self.p.pat_types.get(&self.task, &(file, pat)) {
             return known;
         }
-        self.resolve_type_of_pat(file, pat, true)
+        let query = match self.hir(file)[pat].kind {
+            PatKind::Object(_) | PatKind::Array(_) => Query::ParameterSymbol(file, pat),
+            PatKind::Ident(_) | PatKind::Missing => Query::Pat(file, pat),
+        };
+        self.resolve_type_of_pat(file, pat, query)
     }
 
     /// `sig_params_up_to` for `compareSignaturesRelated`, after `sig_params(sig)` could not be
@@ -3228,8 +3481,8 @@ impl<'p, 's> Checker<'p, 's> {
         if param.default.is_some() {
             let ty = self.type_from_param_default(file, p, CheckMode::empty());
             // `checkVariableLikeDeclaration` requests the type of a name, `assignParameterType`
-            // that of any parameter of a function expression. The type of a pattern in a
-            // declaration is requested only by callers that compare the signature.
+            // that of any parameter of a function expression. For a pattern in a declaration
+            // `type_of_param_on_request` reports.
             let is_requested_for = matches!(hir[param.pat].kind, PatKind::Ident(_))
                 || matches!(self.bound(file).fns[func.idx()].owner, FnOwner::Expr(_));
             let ty =
@@ -3719,7 +3972,10 @@ impl<'p, 's> Checker<'p, 's> {
             // The next type: the contextual types of the `yield` expressions.
             let next = if star {
                 let usage = IterationUse::yield_star(is_async);
-                self.iterable_types(operand, usage, None).n
+                let error_node = value
+                    .is_some()
+                    .then(|| self.span_of_parenthesized_expr(file, value));
+                self.iterable_types(operand, usage, error_node).n
             } else {
                 self.contextual_type(file, e, ContextFlags::empty())
             };
@@ -4164,6 +4420,7 @@ impl<'p, 's> Checker<'p, 's> {
                         | Query::Call(..)
                         | Query::LiteralProp(..)
                         | Query::Pat(..)
+                        | Query::ParameterSymbol(..)
                         | Query::Symbol(_)
                         | Query::Return(..)
                         | Query::ReturnOfSignature(_)
@@ -4249,14 +4506,11 @@ impl<'p, 's> Checker<'p, 's> {
         match self.base_constraint_of(ty) {
             Some(constraint) => {
                 self.is_any(constraint)
+                    || constraint == TypeId::UNKNOWN
                     || self.is_empty_object_type(constraint)
                     || self.parts(constraint).iter().any(|&m| self.is_thenable(m))
             }
-            // `base_constraint_of` has no constraint where `getBaseConstraintOfType` has `unknown`.
-            None => {
-                self.maybe_type_of_kind(ty, Self::is_type_variable)
-                    || self.has_unknown_base_constraint(ty, 0)
-            }
+            None => self.maybe_type_of_kind(ty, Self::is_type_variable),
         }
     }
 
@@ -4629,7 +4883,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if star {
             let usage = IterationUse::yield_star(is_async);
-            let types = self.iterable_types(yield_expression_type, usage, None);
+            let error_node = value
+                .is_some()
+                .then(|| self.span_of_parenthesized_expr(file, value));
+            let types = self.iterable_types(yield_expression_type, usage, error_node);
             return types.r.unwrap_or(TypeId::ANY);
         }
         if return_type.is_some() {
@@ -5122,9 +5379,12 @@ impl<'p, 's> Checker<'p, 's> {
         error_node: Option<Place>,
         diagnostic_output: &mut Vec<Reported>,
     ) -> Iter3 {
+        // `getPropertyNameForKnownSymbolName`
         let name = if is_async {
+            self.resolve_known_symbol(b"asyncIterator");
             known::sym_async_iterator
         } else {
+            self.resolve_known_symbol(b"iterator");
             known::sym_iterator
         };
         let Some((method, false)) = self.declared_property(ty, name) else {

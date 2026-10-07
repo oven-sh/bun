@@ -2223,6 +2223,24 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
+// OutgoingMessage keeps an array value by reference and appendHeader pushes into it, as in Node.
+// A header list folded below must not reach the caller's array, so an array value goes in as a copy.
+function copyHeaderValueArray(values) {
+  const length = values.length;
+  const copy = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);
+  return copy;
+}
+
+// For a fold with no remove pass: an array stored earlier can be one that a caller gave to setHeader.
+function detachStoredHeaderArrays(response) {
+  const outHeaders = response[kOutHeaders];
+  for (const key in outHeaders) {
+    const entry = outHeaders[key];
+    if ($isArray(entry[1])) entry[1] = copyHeaderValueArray(entry[1]);
+  }
+}
+
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
@@ -2253,9 +2271,15 @@ function _writeHead(statusCode, reason, obj, response) {
       const length = obj.length;
       // Append all the headers provided in the array:
       if (length && $isArray(obj[0])) {
+        if (response[kOutHeaders] !== null) detachStoredHeaderArrays(response);
         for (let i = 0; i < length; i++) {
           const k = obj[i];
-          if (k) response.appendHeader(k[0], k[1]);
+          if (k) {
+            const name = k[0];
+            let value = k[1];
+            if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
+            response.appendHeader(name, value);
+          }
         }
       } else {
         if (length % 2 !== 0) {
@@ -2279,7 +2303,13 @@ function _writeHead(statusCode, reason, obj, response) {
 
         for (let n = 0; n < length; n += 2) {
           k = obj[n];
-          if (k) response.appendHeader(k, obj[n + 1]);
+          if (k) {
+            let value = obj[n + 1];
+            // With a header set before, Node appends to the caller's array here, and the value stays in it:
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L450-L453. Bun appends to a copy.
+            if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
+            response.appendHeader(k, value);
+          }
         }
       }
     } else if (obj) {
@@ -3172,11 +3202,11 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
     if ($isArray(value)) {
       // Array of [name, value] pairs, like the WHATWG Headers sequence init.
       for (const { 0: key, 1: val } of value) {
-        this.appendHeader(key, val);
+        this.appendHeader(key, typeof val === "object" && $isArray(val) ? copyHeaderValueArray(val) : val);
       }
     } else if (typeof value.entries === "function") {
       for (const { 0: key, 1: val } of value.entries()) {
-        this.appendHeader(key, val);
+        this.appendHeader(key, typeof val === "object" && $isArray(val) ? copyHeaderValueArray(val) : val);
       }
     } else {
       const keys = ObjectKeys(value);

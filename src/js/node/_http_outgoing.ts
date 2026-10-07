@@ -303,35 +303,37 @@ OutgoingMessage.prototype.cork = function cork() {
 
 OutgoingMessage.prototype.uncork = function uncork() {
   this[kCorked]--;
-  if (this[kSocket]) {
-    this[kSocket].uncork();
-  }
-
-  if (this[kCorked] || this[kChunkedBuffer].length === 0) {
-    return;
-  }
-
-  const len = this[kChunkedLength];
-  const buf = this[kChunkedBuffer];
-
-  $assert(this.chunkedEncoding);
-
-  let callbacks;
-  this._send(len.toString(16), "latin1", null);
-  this._send(crlf_buf, null, null);
-  for (let n = 0; n < buf.length; n += 3) {
-    this._send(buf[n + 0], buf[n + 1], null);
-    if (buf[n + 2]) {
-      callbacks ??= [];
-      callbacks.push(buf[n + 2]);
+  const socket = this[kSocket];
+  try {
+    if (this[kCorked] || this[kChunkedBuffer].length === 0) {
+      return;
     }
+
+    const len = this[kChunkedLength];
+    const buf = this[kChunkedBuffer];
+
+    $assert(this.chunkedEncoding);
+
+    let callbacks;
+    this._send(len.toString(16), "latin1", null);
+    this._send(crlf_buf, null, null);
+    for (let n = 0; n < buf.length; n += 3) {
+      this._send(buf[n + 0], buf[n + 1], null);
+      if (buf[n + 2]) {
+        callbacks ??= [];
+        callbacks.push(buf[n + 2]);
+      }
+    }
+    this._send(crlf_buf, null, callbacks?.length ? runChunkCallbacks.bind(undefined, callbacks) : null);
+
+    this[kChunkedBuffer].length = 0;
+    this[kChunkedLength] = 0;
+  } finally {
+    // The socket stays corked over the flush, so a flush that it takes late still ends in its 'drain'. https://github.com/nodejs/node/blob/v26.10.0/lib/_http_outgoing.js#L303-L341
+    socket?.uncork();
   }
-  this._send(crlf_buf, null, callbacks?.length ? runChunkCallbacks.bind(undefined, callbacks) : null);
 
-  this[kChunkedBuffer].length = 0;
-  this[kChunkedLength] = 0;
-
-  // If we had a pending drain and flushed all data, emit the drain event. https://github.com/nodejs/node/blob/v26.8.2/lib/_http_outgoing.js#L329-L333
+  // If we had a pending drain and flushed all data, emit the drain event. https://github.com/nodejs/node/blob/v26.10.0/lib/_http_outgoing.js#L343-L347
   if (this[kNeedDrain] && this.writableLength === 0) {
     this[kNeedDrain] = false;
     this.emit("drain");
@@ -963,8 +965,13 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
   }
 
-  // A buffered chunk with an unknown encoding makes the flush in uncork() or end() throw half-way. https://github.com/nodejs/node/blob/v26.10.0/lib/_http_outgoing.js#L1020-L1022
-  if (msg.chunkedEncoding && typeof chunk === "string" && encoding && !Buffer.isEncoding(encoding)) {
+  // Node checks only string chunks here, so a Buffer with an unknown encoding still makes the socket throw half-way through a chunk. https://github.com/nodejs/node/blob/v26.10.0/lib/_http_outgoing.js#L1020-L1022
+  if (
+    msg.chunkedEncoding &&
+    encoding &&
+    !Buffer.isEncoding(encoding) &&
+    (encoding !== "buffer" || typeof chunk === "string")
+  ) {
     throw $ERR_UNKNOWN_ENCODING(encoding);
   }
 

@@ -2121,44 +2121,59 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
       });
     });
 
-    test.concurrent("write() throws for an unknown encoding and the request stays usable", async () => {
+    // The socket rejects these encodings. write() must throw before it sends or buffers any part of the chunk.
+    test.concurrent.each([
+      ["a string with an unknown encoding under cork()", true, "bbbbbb", "bogus", "ERR_UNKNOWN_ENCODING", "aaaacc"],
+      [
+        "a Buffer with an unknown encoding under cork()",
+        true,
+        Buffer.from("bbbbbb"),
+        "bogus",
+        "ERR_UNKNOWN_ENCODING",
+        "aaaacc",
+      ],
+      ["a Buffer with an unknown encoding", false, Buffer.from("bbbbbb"), "bogus", "ERR_UNKNOWN_ENCODING", "aaaacc"],
+      ['a string with the encoding "buffer" under cork()', true, "bbbbbb", "buffer", "ERR_UNKNOWN_ENCODING", "aaaacc"],
+      [
+        'a Buffer with the encoding "buffer" under cork()',
+        true,
+        Buffer.from("bbbbbb"),
+        "buffer",
+        undefined,
+        "aaaabbbbbbcc",
+      ],
+    ])("write() of %s", async (_, corked, chunk, encoding, code, body) => {
       let thrown: any;
       const { chunks, ...message } = await send(req => {
-        req.cork();
         req.write("aaaa");
+        if (corked) req.cork();
         try {
-          req.write("bbbbbb", "bogus" as BufferEncoding);
+          req.write(chunk, encoding as BufferEncoding);
         } catch (error) {
           thrown = error;
         }
         req.end("cc");
       }, connected);
-      expect({ code: thrown?.code, ...message }).toEqual({
-        code: "ERR_UNKNOWN_ENCODING",
-        body: "aaaacc",
-        trailers: "",
-        after: "",
-      });
+      expect({ code: thrown?.code, ...message }).toEqual({ code, body, trailers: "", after: "" });
     });
 
     test.concurrent("'drain' follows an uncork() that flushes a full buffer", async () => {
       const data = Buffer.alloc(16 * 1024, "a").toString();
-      const atDrain = Promise.withResolvers<{ writableLength: number; writableNeedDrain: boolean }>();
+      let atDrain: { writableLength: number; writableNeedDrain: boolean } | undefined;
       let body = "";
-      const message = await send(async req => {
+      const message = await send(req => {
         req.flushHeaders();
         req.cork();
         do body += data;
         while (req.write(data) && body.length < 1024 * 1024);
         // On a connected socket uncork() emits 'drain' before it returns.
-        req.once("drain", () =>
-          atDrain.resolve({ writableLength: req.writableLength, writableNeedDrain: req.writableNeedDrain }),
-        );
+        req.once("drain", () => {
+          atDrain = { writableLength: req.writableLength, writableNeedDrain: req.writableNeedDrain };
+          req.end();
+        });
         req.uncork();
-        await atDrain.promise;
-        req.end();
       }, connected);
-      expect({ ...message, atDrain: await atDrain.promise }).toEqual({
+      expect({ ...message, atDrain }).toEqual({
         chunks: [body.length],
         body,
         trailers: "",
@@ -2166,6 +2181,66 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
         atDrain: { writableLength: 0, writableNeedDrain: false },
       });
     });
+  });
+
+  // A request on an in-memory socket. Its cork buffer is full: write() has returned false.
+  async function fillCorkBuffer(socket: Duplex, pieceLength: number) {
+    const req = request({ method: "POST", createConnection: () => socket as unknown as Socket });
+    const counts = { drains: 0 };
+    req.on("error", () => {});
+    req.on("drain", () => counts.drains++);
+    await once(req, "socket");
+    const data = Buffer.alloc(pieceLength, "a").toString();
+    req.flushHeaders();
+    req.cork();
+    for (let writes = 1; req.write(data) && writes < 64; writes++);
+    return { req, counts };
+  }
+
+  test("uncork() emits 'drain' when the socket has room for the whole flush", async () => {
+    // This socket has a larger high-water mark than the request, so it emits no 'drain' for the flush.
+    const socket = new Duplex({
+      writableHighWaterMark: 1024 * 1024,
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    const { req, counts } = await fillCorkBuffer(socket, 16 * 1024);
+    const before = req.writableNeedDrain;
+    req.uncork();
+    expect({ before, drains: counts.drains, after: req.writableNeedDrain }).toEqual({
+      before: true,
+      drains: 1,
+      after: false,
+    });
+    req.destroy();
+  });
+
+  test("'drain' follows a flush that the socket takes late", async () => {
+    // This socket completes every write at once, except that it holds the third piece of the body.
+    const held = Promise.withResolvers<() => void>();
+    let pieces = 0;
+    const socket = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        if (chunk.length === pieceLength && ++pieces === 3) held.resolve(callback);
+        else callback();
+      },
+    });
+    const pieceLength = socket.writableHighWaterMark / 4;
+    const { req, counts } = await fillCorkBuffer(socket, pieceLength);
+    const drained = once(req, "drain");
+    req.uncork();
+    const before = { drains: counts.drains, writableNeedDrain: req.writableNeedDrain };
+    (await held.promise)();
+    await drained;
+    expect({ before, drains: counts.drains, writableNeedDrain: req.writableNeedDrain }).toEqual({
+      before: { drains: 0, writableNeedDrain: true },
+      drains: 1,
+      writableNeedDrain: false,
+    });
+    req.destroy();
   });
 
   test.concurrent("a pipe into a corked request continues after uncork()", async () => {
@@ -2180,10 +2255,13 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     expect(message).toEqual({ body: Buffer.alloc(16 * data.length, "a").toString(), trailers: "", after: "" });
   });
 
-  test.concurrent("end() while corked hands the whole request to a connected socket in one write", async () => {
+  test.concurrent.each([
+    ["cork write:aaaa write:bbbbbb end", 1],
+    ["cork write:aaaa write:bbbbbb uncork end", 2],
+  ])("%s reaches a connected socket in %d write(s)", async (order, expected) => {
     let writes = 0;
     let depth = 0;
-    const { chunks, ...message } = await send("cork write:aaaa write:bbbbbb end", true, (socket: any) => {
+    const { chunks, ...message } = await send(order, true, (socket: any) => {
       // Counts each hand-over from the Writable to the socket once: Bun's _writev ends in _write.
       for (const method of ["_write", "_writev"]) {
         const original = socket[method];
@@ -2197,7 +2275,7 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
         };
       }
     });
-    expect({ ...message, writes }).toEqual({ body: "aaaabbbbbb", trailers: "", after: "", writes: 1 });
+    expect({ ...message, writes }).toEqual({ body: "aaaabbbbbb", trailers: "", after: "", writes: expected });
   });
 
   // One keep-alive socket to a server that answers "/early" on the request head and any other request on the

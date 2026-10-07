@@ -2782,16 +2782,22 @@ export const wrong: number = { ...tool, kind: 1 };
     });
 
     test("a type that is nested too deeply to be printed whole loses no error", async () => {
-      // The frames of a build that is not optimised are larger: at 1,000 levels the check itself runs out of stack there.
-      const depth = isDebug || isASAN ? 100 : 1000;
+      // An optimised build prints about 700 levels, and the check itself runs out of stack at about 3,000. The frames of
+      // another build are larger, by how much depends on the system: there the type may be printed whole.
+      const isOptimised = !isDebug && !isASAN;
+      const depth = isOptimised ? 1500 : 100;
       using dir = project({
         "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
 export const wrong: number = x;
 `,
       });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
-      expect(stdout).toStartWith("a.ts(2,14): error TS2322: Type '{ a: { a: { a: { a: { a: { a: ");
-      expect(stdout).toEndWith(" }; }; }' is not assignable to type 'number'.");
+      const levels = stdout.split("{ a: ").length - 1;
+      if (isOptimised) expect(levels).toBeLessThan(depth);
+      const innermost = levels < depth ? "any" : "1";
+      expect(stdout).toBe(
+        `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
+      );
       expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
     });

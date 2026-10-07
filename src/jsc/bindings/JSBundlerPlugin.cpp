@@ -575,7 +575,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
     });
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId, bool isDevServer)
 {
     dispatchRequest(plugin, BundlerPlugin::RequestKind::Resolve, context, plugin->onResolveFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments) {
         arguments.append(path->transferToJS(globalObject));
@@ -586,6 +586,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
         RETURN_IF_EXCEPTION(scope, void());
         arguments.append(WRAP_BUNDLER_PLUGIN(context));
         arguments.append(JSC::jsNumber(kindId));
+        arguments.append(JSC::jsBoolean(isDevServer));
     });
 }
 

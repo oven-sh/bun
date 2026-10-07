@@ -410,7 +410,15 @@ export function runSetupFunction(
   return processSetupResult();
 }
 
-export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespace, importer, internalID, kindId) {
+export function runOnResolvePlugins(
+  this: BundlerPlugin,
+  specifier,
+  inputNamespace,
+  importer,
+  internalID,
+  kindId,
+  isDevServer,
+) {
   // Must be kept in sync with ImportRecord.label
   const kind = $ImportKindIdToLabel[kindId];
 
@@ -455,8 +463,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
         }
 
         if (!path) {
-          // An entry point cannot be external, so `{ external: true }` only keeps an import.
-          if (external !== true || kind === "entry-point-build") continue;
+          // `{ external: true }` keeps an import under its own specifier. An entry point
+          // cannot be external, and the dev server cannot load an external import.
+          if (external !== true || kind === "entry-point-build" || isDevServer) continue;
           path = inputPath;
         }
 

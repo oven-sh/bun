@@ -33,6 +33,36 @@ devTest("onResolve", {
     await dev.fetch("/").equals("value: 1");
   },
 });
+// The dev server cannot load an import that a plugin marks external. A result with
+// `external: true` and no `path` does not resolve the import here, unlike in `Bun.build`.
+devTest("onResolve external without path does not resolve the import", {
+  framework: minimalFramework,
+  pluginFile: `
+    export default [
+      {
+        name: 'a',
+        setup(build) {
+          build.onResolve({ filter: /dep\\.ts$/ }, () => ({ external: true }));
+        },
+      }
+    ];
+  `,
+  files: {
+    "dep.ts": `
+      export const value = 1;
+    `,
+    "routes/index.ts": `
+      import { value } from '../dep.ts';
+
+      export default function (req, meta) {
+        return new Response('value: ' + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("value: 1");
+  },
+});
 devTest("onLoad", {
   framework: minimalFramework,
   pluginFile: `

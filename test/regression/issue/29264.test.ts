@@ -55,7 +55,7 @@ test("#29264 bundler survives external + missing imports in same file", { timeou
 // The test above now reaches the external arm of on_resolve, because Bun keeps
 // "src" external. This one stays on the path that crashed: the plugin declines
 // "other", so the bundler resolves it after "./src" already failed.
-test("#29264 bundler survives declined + missing imports in same file", { timeout: 30_000 }, async () => {
+test("#29264 bundler survives declined + missing imports in same file", async () => {
   using dir = tempDir("issue-29264-declined", {
     "build-fixture.js": /* js */ `
       try {

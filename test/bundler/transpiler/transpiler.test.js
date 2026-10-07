@@ -718,7 +718,7 @@ describe("Bun.Transpiler", () => {
       exp("if (x) {} else function g(): void;\nfor (z in {}) {}", "if (x) {}\nfor (z in {}) {}");
 
       // A function declaration with a body in the same position is still wrapped.
-      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  let f = function(ag) {};\n}\nfor (g in {}) {}");
+      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  function f(ag) {}\n}\nfor (g in {}) {}");
 
       // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
       const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
@@ -5686,8 +5686,7 @@ describe("export of a block-scoped function declaration", () => {
   it("does not affect block-level function declarations in sloppy mode", () => {
     const transpiler = new Bun.Transpiler({ loader: "js" });
     const out = transpiler.transformSync("{\n  function f() {}\n}\nmodule.exports = f;");
-    expect(out).toContain("let f = function");
-    expect(out).toContain("module.exports = f");
+    expect(out).toBe("{\n  function f() {}\n}\nmodule.exports = f;\n");
   });
 
   it("reports the error when running a module with this pattern", async () => {
@@ -5703,6 +5702,82 @@ describe("export of a block-scoped function declaration", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('"encrypt" is not declared in this file');
     expect(exitCode).toBe(1);
+  });
+});
+
+describe("block-level function declarations", () => {
+  const print = (code, options) => new Bun.Transpiler({ loader: "js", ...options }).transformSync(code);
+
+  // In sloppy code the name is also a `var` of the enclosing function (Annex B).
+  // Without a renamer there is no second name for that `var`, so the declaration
+  // is printed as written and the engine does the rest.
+  it.each([
+    ["a block", "{\n  function f() {}\n}\nmodule.exports = f;\n"],
+    ["an if block", "if (x) {\n  function f() {}\n}\nmodule.exports = f;\n"],
+    ["a try block", "try {\n  function f() {}\n} catch {}\nmodule.exports = f;\n"],
+    ["a switch case", "switch (x) {\n  case 1:\n    function f() {}\n}\nmodule.exports = f;\n"],
+    ["a block inside a function", "function o() {\n  {\n    function f() {}\n  }\n  return f;\n}\n"],
+    ["a block, after another statement", "{\n  g();\n  function f() {}\n}\nmodule.exports = f;\n"],
+  ])("sloppy code keeps the declaration in %s", (_, code) => {
+    expect(print(code)).toBe(code);
+  });
+
+  it("keeps the block around a function that is the body of an if or an else", () => {
+    expect(print("if (x) function f() {}\nmodule.exports = f;")).toBe(
+      "if (x) {\n  function f() {}\n}\nmodule.exports = f;\n",
+    );
+    expect(print("if (x) {} else function f() {}\nmodule.exports = f;")).toBe(
+      "if (x) {} else {\n  function f() {}\n}\nmodule.exports = f;\n",
+    );
+  });
+
+  // The bare form is a SyntaxError in strict code, and a file with no CommonJS marker runs as a module.
+  // Inside the block the function is assigned when the label runs, not at function entry as the bare form is.
+  it("keeps the block around a labelled function", () => {
+    expect(print("l: function f() {}\nmodule.exports = f;")).toBe("l: {\n  function f() {}\n}\nmodule.exports = f;\n");
+  });
+
+  // Annex B makes no `var` when a lexical binding of an enclosing scope has the name.
+  it.each([
+    [
+      "a let",
+      "{\n  let f = g();\n  {\n    function f() {}\n  }\n}\nmodule.exports = 1;\n",
+      "{\n  let f = g();\n  {\n    let f = function() {};\n  }\n}\nmodule.exports = 1;\n",
+    ],
+    [
+      "a function",
+      "{\n  function f() {}\n  {\n    function f() {}\n  }\n}\nmodule.exports = f;\n",
+      "{\n  function f() {}\n  {\n    let f = function() {};\n  }\n}\nmodule.exports = f;\n",
+    ],
+  ])("sloppy code lowers a function to let inside the block of %s with its name", (_, code, expected) => {
+    expect(print(code)).toBe(expected);
+  });
+
+  // A strict scope has no `var` to lose, and its "use strict" may not be printed.
+  it.each([
+    ['a function with "use strict"', 'function o() {\n  "use strict";\n  {\n    function f() {}\n  }\n}'],
+    ['a file with "use strict"', '"use strict";\n{\n  function f() {}\n}\nmodule.exports = 1;'],
+    ["a class method", "class A {\n  m() {\n    {\n      function f() {}\n    }\n  }\n}"],
+    ["a module", "{\n  function f() {}\n}\nexport {};"],
+  ])("strict code is still lowered to let in %s", (_, code) => {
+    const out = print(code);
+    expect(out).toContain("let f = function() {};");
+    expect(out).not.toContain("function f()");
+  });
+
+  it("a renamer still gets the let and the var alias", () => {
+    expect(print("{\n  function f() {}\n}\nmodule.exports = f;", { minify: { identifiers: true } })).toMatch(
+      /^\{\n  let (\w+) = function\(\) \{\};\n  (\w+) = \1;\n\}\nmodule\.exports = \2;\nvar \2;\n$/,
+    );
+  });
+
+  // Each REPL input runs inside a wrapper function, which would own the `var` of a top-level block.
+  it("REPL input is lowered to let at its top level only", () => {
+    const out = print("if (x) {\n  function f() {}\n}\nfunction o() {\n  {\n    function g() {}\n  }\n}", {
+      replMode: true,
+    });
+    expect(out).toContain("let f = function() {};");
+    expect(out).toContain("    {\n      function g() {}\n    }");
   });
 });
 

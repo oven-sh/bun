@@ -1581,6 +1581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
                                     == SymbolKind::HoistedFunction
+                                && p.lowers_block_level_function(data.func.name.unwrap().ref_)
                             {
                                 break 'list_getter &mut before;
                             }

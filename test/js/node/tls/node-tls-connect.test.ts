@@ -1,8 +1,17 @@
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { once } from "events";
-import { writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import { readFileSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  tls as COMMON_CERT_,
+  isASAN,
+  nodeExe,
+  rejectUnauthorizedScope,
+  tempDir,
+} from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -11,6 +20,7 @@ import tls, { checkServerIdentity, connect as tlsConnect, TLSSocket } from "tls"
 
 import type { AddressInfo } from "net";
 import { Duplex } from "node:stream";
+import * as clientWrap from "./node-tls-client-wrap-fixture.mjs";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -1430,6 +1440,11 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     });
     return closed.promise;
   };
+  // The transport's FIN: its readable side ends, then it closes by itself.
+  const finish = (transport: Duplex) => {
+    transport.push(null);
+    transport.end();
+  };
 
   it("a server wrap closes when the transport is destroyed in the same tick", async () => {
     // The engine does not exist yet, so the close has to be held and reported
@@ -1561,7 +1576,10 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     });
   });
 
-  it("a transport destroyed before the engine starts leaves no native socket behind", async () => {
+  it.each([
+    ["destroyed", (transport: Duplex) => transport.destroy()],
+    ["ended", finish],
+  ])("a transport %s before the engine starts leaves no native socket behind", async (_how, teardown) => {
     // The queued engine start has to see that close. An engine started for a
     // transport that is gone is never closed, and it keeps the native socket,
     // and through it the TLSSocket, strongly referenced for good.
@@ -1569,26 +1587,390 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
     Bun.gc(true);
     const baseline = nativeSockets();
     const count = 20;
+    // Well under the 10 of each kind, so a leak of every client or of every server wrap fails.
+    const bound = 2;
     await (async () => {
-      const closes: Promise<unknown>[] = [];
+      const closes: Promise<void>[] = [];
       for (let i = 0; i < count; i++) {
         const transport = makeTransport();
         const socket =
           i % 2 === 0
             ? tls.connect({ socket: transport, rejectUnauthorized: false })
             : new TLSSocket(transport, serverContext());
-        closes.push(once(socket, "close"));
-        transport.destroy();
+        const closed = Promise.withResolvers<void>();
+        // A client whose transport ended fails with ECONNRESET before it closes.
+        socket.on("error", () => {});
+        socket.on("close", () => closed.resolve());
+        closes.push(closed.promise);
+        teardown(transport);
       }
       await Promise.all(closes);
     })();
     let alive = count;
-    for (let i = 0; i < 10 && alive > count / 2; i++) {
+    for (let i = 0; i < 10 && alive > bound; i++) {
       await new Promise<void>(resolve => setImmediate(resolve));
       Bun.gc(true);
       alive = nativeSockets() - baseline;
     }
-    expect(alive).toBeLessThanOrEqual(count / 2);
+    expect(alive).toBeLessThanOrEqual(bound);
+  });
+
+  it.each([
+    ["socket", "in the same tick"],
+    ["socket", "after the engine started"],
+    ["transport", "in the same tick"],
+    ["transport", "after the engine started"],
+  ])("the %s is destroyed %s: the destroyed transport gets no end()", async (which, when) => {
+    // Node destroys the transport and never ends it.
+    const transport = makeTransport();
+    let ends = 0;
+    const end = transport.end;
+    transport.end = function (this: Duplex, ...args: Parameters<Duplex["end"]>) {
+      ends++;
+      return end.apply(this, args);
+    } as Duplex["end"];
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    const teardown = recordTeardown(client);
+    if (when === "after the engine started") await new Promise<void>(resolve => setImmediate(resolve));
+    (which === "socket" ? client : transport).destroy();
+    expect(await teardown).toEqual(["close:false"]);
+    expect({ ends, writableEnded: transport.writableEnded }).toEqual({ ends: 0, writableEnded: false });
+  });
+
+  it.each(["in the same tick", "after the engine started"])(
+    "a connected net.Socket is closed when the TLS socket is destroyed %s",
+    async when => {
+      // The TLS socket does not destroy a net.Socket it runs over, so its own
+      // close has to end that socket. Node closes it in both cases.
+      const peerSawFin = Promise.withResolvers<void>();
+      await using server = net.createServer({ allowHalfOpen: true }, peer => {
+        peer.on("error", () => {});
+        peer.resume();
+        peer.on("end", () => {
+          peerSawFin.resolve();
+          peer.end();
+        });
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const transport = net.connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+      await once(transport, "connect");
+      // A held write sends the wrap to the engine that runs over the stream.
+      transport.cork();
+      transport.write("x");
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const teardown = recordTeardown(client);
+      const transportClosed = once(transport, "close");
+      if (when === "after the engine started") await new Promise<void>(resolve => setImmediate(resolve));
+      client.destroy();
+      expect(await teardown).toEqual(["close:false"]);
+      await Promise.all([transportClosed, peerSawFin.promise]);
+      expect(transport.destroyed).toBe(true);
+    },
+  );
+
+  // A transport that ends has delivered a FIN. Node hands that EOF to the TLS
+  // socket inside the transport's 'end', so the socket's own 'end' is ahead of
+  // the transport's 'close':
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L82-L86
+  // A client that is still connecting then fails with ECONNRESET. A server
+  // wrap emits 'end', and the transport's 'close' closes it with no error.
+  describe("a transport that ends before it closes", () => {
+    // Resolves with what the socket emitted, and with where the transport's 'close' fell.
+    const recordLifecycle = (socket: TLSSocket, transport?: Duplex) => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<string[]>();
+      transport?.on("close", () => events.push("transport close"));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+      socket.on("close", hadError => {
+        events.push(`close:${hadError}`);
+        closed.resolve(events);
+      });
+      return closed.promise;
+    };
+    const resetByPeer = ["end", "transport close", "error:ECONNRESET", "close:true"];
+    // The start of a handshake record: an engine that reads it waits for the rest.
+    const partialRecord = Buffer.from([0x16, 0x03, 0x03]);
+    // Only the last one runs after the engine exists.
+    const timings = {
+      "in the same tick": (fn: () => void) => fn(),
+      "in a microtask": (fn: () => void) => queueMicrotask(fn),
+      "on the next tick": (fn: () => void) => process.nextTick(fn),
+      "after the engine started": (fn: () => void) => setImmediate(fn),
+    };
+
+    describe.each(Object.keys(timings) as (keyof typeof timings)[])("%s", when => {
+      it("tls.connect({ socket }) fails with ECONNRESET", async () => {
+        const transport = makeTransport();
+        const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const lifecycle = recordLifecycle(client, transport);
+        let message: string | undefined;
+        client.on("error", err => (message = err.message));
+        timings[when](() => finish(transport));
+        expect(await lifecycle).toEqual(resetByPeer);
+        expect(message).toBe("Client network socket disconnected before secure TLS connection was established");
+      });
+
+      it("a server wrap emits 'end' and closes with no error", async () => {
+        const transport = makeTransport();
+        const wrapped = new TLSSocket(transport, serverContext());
+        const lifecycle = recordLifecycle(wrapped, transport);
+        timings[when](() => finish(transport));
+        expect(await lifecycle).toEqual(["end", "transport close", "close:false"]);
+      });
+
+      it("tls.connect({ socket }) fails with ECONNRESET when bytes come ahead of the EOF", async () => {
+        const transport = makeTransport();
+        const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const lifecycle = recordLifecycle(client, transport);
+        timings[when](() => {
+          transport.push(partialRecord);
+          finish(transport);
+        });
+        expect(await lifecycle).toEqual(resetByPeer);
+      });
+
+      it("a server wrap emits 'end' and closes with no error when bytes come ahead of the EOF", async () => {
+        const transport = makeTransport();
+        const wrapped = new TLSSocket(transport, serverContext());
+        const lifecycle = recordLifecycle(wrapped, transport);
+        timings[when](() => {
+          transport.push(partialRecord);
+          finish(transport);
+        });
+        expect(await lifecycle).toEqual(["end", "transport close", "close:false"]);
+      });
+    });
+
+    it("a paused socket fails with ECONNRESET", async () => {
+      const transport = makeTransport();
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const lifecycle = recordLifecycle(client, transport);
+      client.pause();
+      finish(transport);
+      expect(await lifecycle).toEqual(resetByPeer);
+    });
+
+    it("a transport with allowHalfOpen: false ends itself after its EOF", async () => {
+      const transport = new Duplex({
+        allowHalfOpen: false,
+        read() {},
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      });
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const lifecycle = recordLifecycle(client, transport);
+      transport.push(null);
+      expect(await lifecycle).toEqual(resetByPeer);
+    });
+
+    it("a transport with autoDestroy: false is closed by the socket", async () => {
+      // The transport stays open after its FIN. No handshake byte goes to its
+      // ended writable side ahead of the 'end'.
+      const transport = new Duplex({
+        autoDestroy: false,
+        read() {},
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      });
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const lifecycle = recordLifecycle(client, transport);
+      finish(transport);
+      expect(await lifecycle).toEqual(resetByPeer);
+    });
+
+    it("TLS in TLS: the inner socket fails with ECONNRESET", async () => {
+      const transport = makeTransport();
+      const outer = tls.connect({ socket: transport, rejectUnauthorized: false });
+      outer.on("error", () => {});
+      const inner = tls.connect({ socket: outer, rejectUnauthorized: false });
+      const lifecycle = recordLifecycle(inner);
+      finish(transport);
+      expect(await lifecycle).toEqual(["end", "error:ECONNRESET", "close:true"]);
+    });
+
+    it("two sockets in one tick: only the one whose transport ended reports an EOF", async () => {
+      const ended = makeTransport();
+      const destroyed = makeTransport();
+      const first = tls.connect({ socket: ended, rejectUnauthorized: false });
+      const second = tls.connect({ socket: destroyed, rejectUnauthorized: false });
+      const lifecycles = [recordLifecycle(first, ended), recordLifecycle(second, destroyed)];
+      finish(ended);
+      destroyed.destroy();
+      expect(await Promise.all(lifecycles)).toEqual([resetByPeer, ["transport close", "close:false"]]);
+    });
+
+    it.each(["in the same tick", "on the next tick"] as const)(
+      "a socket that is destroyed %s reports no EOF",
+      async when => {
+        // On the next tick the transport's 'end' comes after the destroy.
+        const transport = makeTransport();
+        const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const lifecycle = recordLifecycle(client, transport);
+        finish(transport);
+        timings[when](() => client.destroy());
+        expect(await lifecycle).toEqual(["transport close", "close:false"]);
+      },
+    );
+
+    it("a transport that ended before the wrap and is then destroyed reports no EOF", async () => {
+      // That EOF predates the wrap, so none is on its way to the TLS socket.
+      const transport = makeTransport();
+      transport.push(null);
+      transport.resume();
+      await once(transport, "end");
+      const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+      const lifecycle = recordLifecycle(client, transport);
+      transport.destroy();
+      expect(await lifecycle).toEqual(["transport close", "close:false"]);
+    });
+
+    it.each([true, false])(
+      "a connected net.Socket with allowHalfOpen: %p is closed with the socket",
+      async allowHalfOpen => {
+        // A half-open socket does not close itself after its EOF, and the TLS
+        // socket does not destroy a net.Socket. So the close of the TLS socket
+        // has to end it, also when no engine exists yet. A FIN over loopback
+        // arrives after the engine started, so the EOF is pushed by hand.
+        const peerSawFin = Promise.withResolvers<void>();
+        await using server = net.createServer({ allowHalfOpen: true }, peer => {
+          peer.on("error", () => {});
+          peer.resume();
+          peer.on("end", () => {
+            peerSawFin.resolve();
+            peer.end();
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const transport = net.connect({
+          port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
+          allowHalfOpen,
+        });
+        await once(transport, "connect");
+        // A held write sends the wrap to the engine that runs over the stream.
+        transport.cork();
+        transport.write("x");
+        const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const lifecycle = recordLifecycle(client);
+        const transportClosed = once(transport, "close");
+        transport.push(null);
+        expect(await lifecycle).toEqual(["end", "error:ECONNRESET", "close:true"]);
+        await Promise.all([transportClosed, peerSawFin.promise]);
+        expect(transport.destroyed).toBe(true);
+      },
+    );
+  });
+});
+
+it("a wrap whose transport closed before its engine started leaves later wraps alone", async () => {
+  // The close of a transport that has no engine yet is carried out by the
+  // queued StartTLS task, and the native context is freed by a second task
+  // after it. That context holds the four functions it listens with. They
+  // were left set, so a GC between the two tasks could free them, and the
+  // second task then wrote a null data pointer into freed cells. Another
+  // wrap made in between gets those cells for its own functions, and its
+  // handshake never finishes.
+  const script = `
+    const tls = require("node:tls");
+    const { Duplex } = require("node:stream");
+
+    const secureContext = tls.createSecureContext(${JSON.stringify(COMMON_CERT_)});
+    const clients = 8;
+    const earlyCloses = 16;
+
+    // Two streams joined in memory: a write reaches the peer inside the call.
+    function pair(onWrite) {
+      let a, b;
+      a = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) { if (onWrite) onWrite(); b.push(chunk); callback(); },
+        final(callback) { b.push(null); callback(); },
+      });
+      b = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) { a.push(chunk); callback(); },
+        final(callback) { a.push(null); callback(); },
+      });
+      return [a, b];
+    }
+    function serve(stream) {
+      const server = new tls.TLSSocket(stream, { isServer: true, secureContext });
+      server.on("error", () => {});
+      server.once("data", data => server.end("hello " + data));
+    }
+
+    const state = [];
+    let answered = 0;
+    function report() {
+      const counts = {};
+      for (const one of state) counts[one] = (counts[one] || 0) + 1;
+      console.log("answered " + answered + " of " + clients + " " + JSON.stringify(counts));
+      process.exit(0);
+    }
+    // Bounds the failure only. The success path reports as soon as the last
+    // client holds its answer.
+    const bound = setTimeout(report, 15000);
+
+    function client(i) {
+      const [serverSide, clientSide] = pair();
+      serve(serverSide);
+      state[i] = "no secureConnect";
+      const socket = tls.connect({ socket: clientSide, rejectUnauthorized: false }, () => {
+        state[i] = "secure, no answer";
+        socket.write("c" + i);
+      });
+      socket.on("data", data => {
+        if (String(data) !== "hello c" + i) return;
+        state[i] = "answered";
+        if (++answered === clients) {
+          clearTimeout(bound);
+          report();
+        }
+      });
+      socket.on("error", err => { state[i] = "error " + err.code; });
+    }
+
+    let started = false;
+    function insideTheWindow() {
+      // Runs while the last wrap writes its ClientHello: after the closed
+      // wraps ran their close, and before the task that frees them.
+      if (started) return;
+      started = true;
+      Bun.gc(true);
+      for (let i = 0; i < clients; i++) client(i);
+    }
+
+    // Wraps whose transport closes in the turn that made them.
+    // resetAndDestroy() holds no closure over the wrap, and
+    // removeAllListeners() takes the four native functions off the
+    // transport, so nothing roots them. Each one alone keeps them rooted.
+    for (let i = 0; i < earlyCloses; i++) {
+      const transport = new Duplex({ read() {}, write(chunk, _encoding, callback) { callback(); } });
+      const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+      socket.on("error", () => {});
+      socket.resetAndDestroy();
+      transport.removeAllListeners();
+    }
+    {
+      const [serverSide, clientSide] = pair(insideTheWindow);
+      tls.connect({ socket: clientSide, rejectUnauthorized: false }).on("error", () => {});
+      serve(serverSide);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: 'answered 8 of 8 {"answered":8}',
+    stderr: "",
+    exitCode: 0,
   });
 });
 
@@ -1675,6 +2057,64 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
     req.end();
     await closed.promise;
     expect(events).toEqual(["error:transport failed", "close destroyed=true"]);
+  });
+
+  it("what a method or an accessor of the transport throws is reported", async () => {
+    // Out of process: a socket that has closed emits no 'error', so the throw is uncaught, as in node.
+    const script = `
+      const tls = require("node:tls");
+      const { Duplex } = require("node:stream");
+
+      const uncaught = [];
+      process.on("uncaughtException", err => uncaught.push(err.message));
+
+      async function run(method, kind, when) {
+        const transport = new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } });
+        const name = method + " " + kind;
+        const fail = () => { throw new Error(name); };
+        Object.defineProperty(transport, method, kind === "call" ? { value: fail } : { get: fail });
+        // Only a transport that is still open is ended.
+        transport.destroy = function () { return this; };
+        const socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+        const events = [];
+        const closed = Promise.withResolvers();
+        socket.on("error", err => events.push("error:" + err.message));
+        socket.on("close", hadError => {
+          events.push("close:" + hadError);
+          closed.resolve();
+        });
+        if (when === "after the engine started") await new Promise(resolve => setImmediate(resolve));
+        // The ClientHello is the write that fails, and that destroys the socket.
+        if (method === "end") socket.destroy();
+        await closed.promise;
+        console.log(name + ", " + when + ": " + events.join("|") + " uncaught:" + uncaught.splice(0).join("|"));
+      }
+
+      for (const kind of ["call", "getter"]) {
+        await run("end", kind, "before the engine starts");
+        await run("end", kind, "after the engine started");
+        await run("write", kind, "after the engine started");
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "end call, before the engine starts: close:false uncaught:end call",
+        "end call, after the engine started: close:false uncaught:end call",
+        "write call, after the engine started: error:write call|close:true uncaught:",
+        "end getter, before the engine starts: close:false uncaught:end getter",
+        "end getter, after the engine started: close:false uncaught:end getter",
+        "write getter, after the engine started: error:write getter|close:true uncaught:",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
@@ -2687,6 +3127,93 @@ describe.concurrent("the final handshake flight and a write issued before the ha
     });
   });
 
+  // A socket that shut down while its handshake ran seals a flight that can
+  // never leave. It must not take the spill slot of the loop: the sockets
+  // after it still send their flight and their first write in one segment.
+  it("node:tls, after another socket shut down while its handshake ran", async () => {
+    const connections = 4;
+    const other = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert, minVersion: "TLSv1.3" }, socket =>
+      socket.on("error", () => {}),
+    );
+    other.on("tlsClientError", () => {});
+    await once(other.listen(0, "127.0.0.1"), "listening");
+    // Holds the server's flight until the client's FIN arrived, and keeps the connection open.
+    const relayed: net.Socket[] = [];
+    const relay = net.createServer({ allowHalfOpen: true }, downstream => {
+      const upstream = net.connect({
+        port: (other.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        allowHalfOpen: true,
+      });
+      relayed.push(downstream, upstream);
+      const held: Buffer[] = [];
+      let sawClientFin = false;
+      downstream.on("data", data => upstream.write(data));
+      downstream.on("end", () => {
+        sawClientFin = true;
+        for (const data of held.splice(0)) downstream.write(data);
+      });
+      upstream.on("data", data => (sawClientFin ? downstream.write(data) : held.push(data)));
+      downstream.on("error", () => {});
+      upstream.on("error", () => {});
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    let result = {};
+    try {
+      const chunkCounts = await countClientChunks({}, async proxyPort => {
+        const script = `
+          const tls = require("node:tls");
+          const reported = Promise.withResolvers();
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: ${(relay.address() as AddressInfo).port},
+            tls: { rejectUnauthorized: false },
+            socket: {
+              open(socket) {
+                setImmediate(() => socket.shutdown());
+              },
+              handshake: () => reported.resolve(),
+              data() {},
+              close() {},
+              error() {},
+            },
+          })
+            .then(() => reported.promise)
+            .then(() => {
+              let left = ${connections};
+              (function next() {
+                if (left-- === 0) process.exit(0);
+                const socket = tls.connect({
+                  host: "127.0.0.1",
+                  port: ${proxyPort},
+                  rejectUnauthorized: false,
+                  minVersion: "TLSv1.3",
+                  maxVersion: "TLSv1.3",
+                });
+                socket.write("HELLO");
+                socket.resume();
+                socket.on("error", error => console.log("error:" + error.code));
+                socket.on("close", next);
+              })();
+            });
+        `;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        result = { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+      });
+      expect({ ...result, chunkCounts }).toEqual({
+        stdout: "",
+        exitCode: 0,
+        failureDetail: "",
+        chunkCounts: Array(connections).fill(2),
+      });
+    } finally {
+      for (const socket of relayed) socket.destroy();
+      relay.close();
+      other.close();
+    }
+  });
+
   // With a handshake callback, open runs before the handshake. drain blocks
   // until the proxy has read everything sent so far, so a flight that left
   // before the handler's write is always its own chunk.
@@ -2822,23 +3349,24 @@ describe("a write issued before the handshake is failed, not delivered", () => {
 // still finish its writable side and send the FIN, as node does:
 // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
 // The fixture runs on both runtimes so the expected reports are pinned to node.
+async function runShutdownFixture(exe: string, ...mode: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [exe, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), ...mode],
+    env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The report is the fixture's last line before exit(0): no exit 0, nothing to parse.
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout);
+}
 describe.each([
   ["bun", bunExe()],
   ["node", nodeExe()],
-])("end() and destroySoon() before the handshake completes (%s)", (_runtime, exe) => {
-  async function run(mode: string) {
-    await using proc = Bun.spawn({
-      cmd: [exe!, join(import.meta.dir, "tls-shutdown-before-handshake-fixture.mjs"), mode],
-      env: { ...bunEnv, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const report = JSON.parse(stdout);
-    expect(exitCode).toBe(0);
-    return report;
-  }
+])("end() and destroySoon() before the handshake completes (%s)", (runtime, exe) => {
+  const run = (...mode: string[]) => runShutdownFixture(exe!, ...mode);
 
   it.skipIf(!exe)("end() finishes the writable side and sends the FIN", async () => {
     expect(await run("end")).toEqual({
@@ -2875,6 +3403,106 @@ describe.each([
     expect(await run("server-end")).toEqual({
       log: ["end secureConnecting=true", "finish"],
       clientSawFin: true,
+    });
+  });
+
+  // tls.connect({ socket: duplex }) and new TLSSocket(duplex): the engine has no
+  // fd to shut down, so the FIN is the transport's own end(), which runs its
+  // final(). Node: TLSWrap::DoShutdown -> JSStreamSocket.doShutdown -> stream.end().
+  describe("over a Duplex transport", () => {
+    const clientEnded = {
+      log: ["end secureConnecting=true", "finish"],
+      transportFinalCalled: true,
+      peerSawFin: true,
+      peerSawHandshakeRecord: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
+    };
+    const clientDestroyed = {
+      ...clientEnded,
+      log: ["destroySoon secureConnecting=true", "finish", "close"],
+      readyState: "closed",
+      destroyed: true,
+    };
+
+    it.skipIf(!exe)(
+      "end() in the turn that created the socket sends the ClientHello, then ends the transport",
+      async () => {
+        expect(await run("duplex-end", "same-turn")).toEqual(clientEnded);
+      },
+    );
+
+    it.skipIf(!exe)("end() while the engine waits for the server's flight ends the transport", async () => {
+      expect(await run("duplex-end", "after-first-flight")).toEqual(clientEnded);
+    });
+
+    it.skipIf(!exe)("destroySoon() ends the transport, then closes the socket", async () => {
+      expect(await run("duplex-destroySoon", "after-first-flight")).toEqual(clientDestroyed);
+    });
+
+    // Known gap in bun: 'finish' does not wait for the transport's end(). In
+    // the turn that created the socket it fires before the engine exists, so
+    // destroySoon()'s destroy() runs first and destroys the transport: no
+    // ClientHello and no final(), the peer only sees the connection close.
+    (!exe ? it.skip : runtime === "bun" ? it.failing : it)(
+      "destroySoon() in the turn that created the socket ends the transport, then closes the socket",
+      async () => {
+        expect(await run("duplex-destroySoon", "same-turn")).toEqual(clientDestroyed);
+      },
+    );
+
+    // A healthy server. Without the FIN its handshake completes and the
+    // session stays open with nothing left to close it.
+    it.skipIf(!exe)("end() makes a healthy server give up on the handshake", async () => {
+      expect(await run("duplex-end-live-server")).toEqual({
+        log: ["end secureConnecting=true", "finish"],
+        transportFinalCalled: true,
+        server: "tlsClientError:ECONNRESET",
+        destroyed: true,
+      });
+    });
+
+    it.skipIf(!exe)("a server-side TLSSocket end()s while it waits for the client's first flight", async () => {
+      expect(await run("duplex-server-end", "same-turn")).toEqual({
+        log: ["end secureConnecting=true", "finish"],
+        transportFinalCalled: true,
+        transportWroteHandshakeRecord: false,
+        clientSawFin: true,
+        clientSawHandshakeRecord: false,
+      });
+    });
+  });
+});
+
+// The ClientHello is already in the stream's readable buffer when the server
+// wraps it and ends in the same turn. The engine answers what arrived first, so
+// the client gets the server's flight and then the FIN. Bun only: node v26.3.0
+// aborts here (ERR_INTERNAL_ASSERTION in JSStreamSocket.doWrite).
+it("a server-side TLSSocket over a Duplex answers a buffered ClientHello before its end()", async () => {
+  expect(await runShutdownFixture(bunExe(), "duplex-server-end", "buffered-client-hello")).toEqual({
+    log: ["end secureConnecting=true", "finish"],
+    transportFinalCalled: true,
+    transportWroteHandshakeRecord: true,
+    clientSawFin: true,
+    clientSawHandshakeRecord: true,
+  });
+});
+
+// The half-close is the close_notify and then the end of the transport, whatever
+// the peer does next: this server reads the close_notify and does not answer it.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("end() after the handshake over a Duplex transport (%s)", (_runtime, exe) => {
+  it.skipIf(!exe)("ends the transport without waiting for the peer's close_notify", async () => {
+    expect(await runShutdownFixture(exe!, "duplex-end-established")).toEqual({
+      log: ["secureConnect", "finish"],
+      transportFinalCalled: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
     });
   });
 });
@@ -2983,3 +3611,457 @@ it.each(["TLSv1.3", "TLSv1.2"] as const)(
     });
   },
 );
+
+describe("new tls.TLSSocket(socket) on the client side", () => {
+  // The STARTTLS client shape: the caller holds a connected socket and wraps
+  // it itself instead of going through tls.connect({ socket }). Node wraps the
+  // handle in the constructor; the handshake result arrives as 'secure' and
+  // the verification verdict through ssl.verifyError(). 'secureConnect' and
+  // the hostname check belong to tls.connect()'s onConnectSecure, which a
+  // constructor wrap never gets. Verified against node v26.3.0.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1081-L1108
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  // events.once() would reject on the 'error' these sockets are expected to
+  // emit on their way to 'close'.
+  const closed = (socket: net.Socket) => new Promise<void>(resolve => socket.once("close", () => resolve()));
+
+  async function echoServer(options: tls.TlsOptions) {
+    const server = tls.createServer(options, socket => {
+      socket.on("data", data => socket.write(`echo:${data}`));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return server;
+  }
+
+  // Destroyed in afterEach, so a failed assertion leaves no connection behind.
+  const opened: net.Socket[] = [];
+  afterEach(() => {
+    for (const socket of opened.splice(0)) socket.destroy();
+  });
+
+  async function connectedRawSocket(server: tls.Server) {
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    opened.push(raw);
+    await once(raw, "connect");
+    return raw;
+  }
+
+  it("with rejectUnauthorized: false, 'secure' fires for an untrusted certificate and a write goes out over TLS", async () => {
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      const socket = new TLSSocket(raw, { isServer: false, rejectUnauthorized: false });
+      const events: string[] = [];
+      socket.on("secure", () => events.push("secure"));
+      socket.on("secureConnect", () => events.push("secureConnect"));
+      const writeReturned = socket.write("ping");
+      const [reply] = await once(socket, "data");
+      expect({
+        writeReturned,
+        reply: String(reply),
+        events,
+        protocol: socket.getProtocol(),
+        authorized: socket.authorized,
+        verifyError: (socket as any).ssl.verifyError().code,
+        wrapsTheRawSocket: (socket as any)._handle !== raw,
+      }).toEqual({
+        writeReturned: true,
+        reply: "echo:ping",
+        events: ["secure"],
+        protocol: "TLSv1.3",
+        authorized: false,
+        verifyError: "DEPTH_ZERO_SELF_SIGNED_CERT",
+        wrapsTheRawSocket: true,
+      });
+      socket.destroy();
+      await closed(socket);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("_start() is accepted after the wrap (how the mysql driver starts TLS)", async () => {
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+      (socket as any)._start();
+      await once(socket, "secure");
+      socket.write("ping");
+      const [reply] = await once(socket, "data");
+      expect(String(reply)).toBe("echo:ping");
+      socket.destroy();
+      await closed(socket);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Node never rejects on a wrap: the app must read ssl.verifyError(), and an app that forgets accepts anything.
+  it.each([
+    ["default options", undefined],
+    ["rejectUnauthorized: true", { rejectUnauthorized: true }],
+  ])("unlike node, an untrusted certificate destroys the wrap with the verify error (%s)", async (_name, options) => {
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      // The default must not depend on the environment of the test process.
+      using _ = rejectUnauthorizedScope(true);
+      const socket = new TLSSocket(raw, options);
+      const events: string[] = [];
+      socket.on("secure", () => events.push("secure"));
+      // Installed by the constructor ahead of any user listener, so a wrap
+      // whose owner listens to nothing is not an uncaught exception.
+      socket.on("_tlsError", (err: NodeJS.ErrnoException) => events.push(`_tlsError ${err.code}`));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      // 'secure' ends the wait too, so a wrap that accepts the certificate fails here and does not time out.
+      await new Promise(resolve => socket.once("close", resolve).once("secure", resolve));
+      expect({ events, authorized: socket.authorized, authorizationError: socket.authorizationError }).toEqual({
+        events: ["_tlsError DEPTH_ZERO_SELF_SIGNED_CERT", "error DEPTH_ZERO_SELF_SIGNED_CERT"],
+        authorized: false,
+        authorizationError: null,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("NODE_TLS_REJECT_UNAUTHORIZED=0 turns the default off, as for tls.connect()", async () => {
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      using _ = rejectUnauthorizedScope(false);
+      const socket = new TLSSocket(raw);
+      await once(socket, "secure");
+      expect((socket as any).ssl.verifyError().code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("an own `rejectUnauthorized: undefined` still rejects with NODE_TLS_REJECT_UNAUTHORIZED=0, as for tls.connect()", async () => {
+    // An own `undefined` is not an omitted key: the environment gives the default only for an omitted key.
+    const server = await echoServer(COMMON_CERT_);
+    try {
+      const raw = await connectedRawSocket(server);
+      using _ = rejectUnauthorizedScope(false);
+      const socket = new TLSSocket(raw, { rejectUnauthorized: undefined });
+      const events: string[] = [];
+      socket.on("secure", () => events.push("secure"));
+      socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      await new Promise(resolve => socket.once("close", resolve).once("secure", resolve));
+      expect(events).toEqual(["error DEPTH_ZERO_SELF_SIGNED_CERT"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("NODE_TLS_REJECT_UNAUTHORIZED=0 gives the warning of tls.connect() for a wrap too", async () => {
+    // In a process of its own: the warning comes one time for each process.
+    const script = `
+      const { TLSSocket } = require("node:tls");
+      const { PassThrough } = require("node:stream");
+      process.on("warning", warning => console.log(warning.message));
+      new TLSSocket(new PassThrough()).on("error", () => {}).destroy();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const warning =
+      "Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections " +
+      "and HTTPS requests insecure by disabling certificate verification.";
+    expect({
+      stdout,
+      // Without the process id, and without the hint about --trace-warnings that names the executable.
+      stderr: stderr.replace(/^\(node:\d+\) /, "").replace(/\(Use `.*` to show where the warning was created\)\n/, ""),
+      exitCode,
+    }).toEqual({ stdout: `${warning}\n`, stderr: `Warning: ${warning}\n`, exitCode: 0 });
+  });
+
+  it("an inherited rejectUnauthorized cannot turn the check of a wrap off", async () => {
+    // The rule of tls.connect(): only an own `rejectUnauthorized: false` of the caller accepts an untrusted certificate.
+    // In a process of its own, so that the test process keeps its Object.prototype.
+    const script = `
+      Object.prototype.rejectUnauthorized = false;
+      const net = require("node:net");
+      const tls = require("node:tls");
+      const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, socket => socket.on("error", () => {}));
+      server.listen(0, "127.0.0.1", async () => {
+        const cases = [
+          ["default options", undefined],
+          ["{ rejectUnauthorized: true }", { rejectUnauthorized: true }],
+          ["{ rejectUnauthorized: false }", { rejectUnauthorized: false }],
+        ];
+        const verdicts = await Promise.all(
+          cases.map(
+            ([name, options]) =>
+              new Promise(resolve => {
+                const raw = net.connect(server.address().port, "127.0.0.1", () => {
+                  const socket = new tls.TLSSocket(raw, options);
+                  let verdict;
+                  socket.on("error", error => (verdict = "error " + error.code));
+                  socket.on("secure", () => {
+                    verdict = "secure";
+                    socket.destroy();
+                  });
+                  socket.on("close", () => resolve(name + ": " + verdict));
+                });
+              }),
+          ),
+        );
+        for (const verdict of verdicts) console.log(verdict);
+        server.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ verdicts: stdout.trim().split("\n"), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+      verdicts: [
+        "default options: error DEPTH_ZERO_SELF_SIGNED_CERT",
+        "{ rejectUnauthorized: true }: error DEPTH_ZERO_SELF_SIGNED_CERT",
+        "{ rejectUnauthorized: false }: secure",
+      ],
+      exitCode: 0,
+      failureDetail: "",
+    });
+  });
+
+  it("setSession() on a wrap has no effect: it does not abort the process and does not throw", async () => {
+    // In a process of its own: the wrap sent its ClientHello in the constructor, and BoringSSL
+    // aborts the process when a session is set after that.
+    const script = `
+      const net = require("node:net");
+      const tls = require("node:tls");
+      const { once } = require("node:events");
+      (async () => {
+        // With TLS 1.2 the session of a connection is ready at 'secureConnect'.
+        const server = tls.createServer({ ...${JSON.stringify(COMMON_CERT_)}, maxVersion: "TLSv1.2" }, socket => {
+          socket.on("error", () => {});
+          socket.resume();
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address();
+        const first = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+        await once(first, "secureConnect");
+        const session = first.getSession();
+        first.destroy();
+
+        const raw = net.connect(port, "127.0.0.1");
+        await once(raw, "connect");
+        const wrap = new tls.TLSSocket(raw, { rejectUnauthorized: false });
+        const secure = once(wrap, "secure");
+        let threw = false;
+        try {
+          wrap.setSession(session);
+        } catch {
+          threw = true;
+        }
+        wrap._start();
+        await secure;
+        console.log(JSON.stringify({ sessionBytes: session.length > 0, threw, reused: wrap.isSessionReused() }));
+        wrap.destroy();
+        server.close();
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      // `sessionBytes` shows that the call got a session that the native function can parse.
+      stdout: '{"sessionBytes":true,"threw":false,"reused":false}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("verifies the chain but, unlike tls.connect({ socket }), not the hostname", async () => {
+    // agent1's certificate names no host at all, so only tls.connect()'s
+    // onConnectSecure has something to object to.
+    const ca = readFileSync(join(fixturesDir, "ca1-cert.pem"));
+    const server = await echoServer({
+      key: readFileSync(join(fixturesDir, "agent1-key.pem")),
+      cert: readFileSync(join(fixturesDir, "agent1-cert.pem")),
+    });
+    try {
+      const wrapped = new TLSSocket(await connectedRawSocket(server), { ca, rejectUnauthorized: true });
+      await once(wrapped, "secure");
+      wrapped.write("ping");
+      const [reply] = await once(wrapped, "data");
+
+      const connected = tls.connect({ socket: await connectedRawSocket(server), ca, rejectUnauthorized: true });
+      const connectedClosed = closed(connected);
+      const [connectError] = (await once(connected, "error")) as [NodeJS.ErrnoException];
+      await connectedClosed;
+
+      expect({
+        reply: String(reply),
+        authorized: wrapped.authorized,
+        verifyError: (wrapped as any).ssl.verifyError(),
+        connectError: connectError.code,
+      }).toEqual({
+        reply: "echo:ping",
+        // Only tls.connect() sets `authorized`: a wrap checked no host name.
+        authorized: false,
+        verifyError: null,
+        connectError: "ERR_TLS_CERT_ALTNAME_INVALID",
+      });
+      wrapped.destroy();
+      await closed(wrapped);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("wraps a generic Duplex, talking to a server-side wrap over an in-memory pair", async () => {
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+
+    const secure: string[] = [];
+    const server = new TLSSocket(serverSide, { isServer: true, ...COMMON_CERT_ });
+    server.on("secure", () => secure.push("server"));
+    server.on("data", data => server.write(`pong ${data}`));
+    server.on("end", () => server.end());
+
+    const client = new TLSSocket(clientSide, { rejectUnauthorized: false });
+    client.on("secure", () => {
+      secure.push("client");
+      // Unlike the fd-adopting wrap above, this only exercises the stream
+      // engine once the handshake is done; its pre-handshake buffering is a
+      // separate matter shared with tls.connect({ socket: duplex }).
+      client.write("one");
+    });
+    const exchange: string[] = [];
+    client.on("data", data => {
+      exchange.push(String(data));
+      if (exchange.length === 1) client.write("two");
+      else client.end();
+    });
+    await once(client, "close");
+    expect({ secure: secure.sort(), exchange }).toEqual({
+      secure: ["client", "server"],
+      exchange: ["pong one", "pong two"],
+    });
+  });
+
+  it("the http2-wrapper JSStreamSocket probe still resolves and exits quietly", async () => {
+    // http2-wrapper (and so got) runs this at import time; the wrap it leaves
+    // behind handshakes against its own PassThrough and must fail quietly.
+    const script = `
+      const { TLSSocket } = require("node:tls");
+      const { PassThrough } = require("node:stream");
+      const JSStreamSocket = new TLSSocket(new PassThrough())._handle._parentWrap.constructor;
+      process.on("exit", () => console.log(typeof JSStreamSocket));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function\n", stderr: "", exitCode: 0 });
+  });
+
+  it("servername reaches the ClientHello, also next to an explicit secureContext", async () => {
+    const { promise: seen, resolve } = Promise.withResolvers<string | false>();
+    const server = tls.createServer(COMMON_CERT_, socket => resolve((socket as any).servername));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let socket: TLSSocket | undefined;
+    try {
+      socket = new TLSSocket(await connectedRawSocket(server), {
+        servername: "sni.example",
+        secureContext: tls.createSecureContext({}),
+        rejectUnauthorized: false,
+      });
+      expect(await seen).toBe("sni.example");
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  // Bun runs the functions of the fixture in this process. Node runs the same file as a
+  // script, so each expected report below is also node v26.3.0's.
+  async function underNode(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [nodeExe()!, join(import.meta.dir, "node-tls-client-wrap-fixture.mjs"), mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+  const onNode = (mode: string) => () => underNode(mode);
+
+  describe.concurrent.each([
+    ["bun", false, clientWrap.shutdown, clientWrap.mysql, clientWrap.peerCloses, clientWrap.session],
+    ["node", !nodeExe(), onNode("shutdown"), onNode("mysql"), onNode("peer-closes"), onNode("session")],
+  ] as const)("under %s", (_runtime, skip, shutdown, mysql, peerCloses, session) => {
+    // Each cell calls the method and then destroy(): end() alone leaves a wrap open, on node too.
+    it.skipIf(skip)(
+      "end(), end(cb), destroySoon() and destroy() do not throw, and destroy() closes the wrap",
+      async () => {
+        const transports = ["connected", "connecting", "never connected", "duplex"];
+        const methods = ["end()", "end(cb)", "destroySoon()", "destroy()"];
+        const cells = transports.flatMap(transport => methods.map(method => `${transport}: ${method}`));
+        expect(await shutdown()).toEqual(Object.fromEntries(cells.map(cell => [cell, { errors: [], closed: true }])));
+      },
+    );
+
+    it.skipIf(skip)(
+      "the _startTLS call sequence of the mysql driver connects, and reports a bad chain once",
+      async () => {
+        const connected = { log: ["onSecure null"], result: "result of query", authorized: false };
+        expect(await mysql()).toEqual({
+          "rejectUnauthorized: false": connected,
+          "ca of the server": connected,
+          "no ca": { log: ["onSecure UNABLE_TO_VERIFY_LEAF_SIGNATURE"], result: null, authorized: false },
+        });
+      },
+    );
+
+    it.skipIf(skip)("a peer that closes during the handshake ends the wrap with no error", async () => {
+      expect(await peerCloses()).toEqual({
+        wrap: ["end", "finish"],
+        connect: ["end", "error ECONNRESET"],
+      });
+    });
+
+    // Not covered here: setSession() after the handshake started on a tls.connect() socket aborts the process (#41671).
+    it.skipIf(skip)("a session that is set before the handshake starts is resumed", async () => {
+      expect(await session()).toEqual({
+        "tls.connect({ port, session })": true,
+        "tls.connect({ socket, session })": true,
+        "new TLSSocket(socket, { session })": true,
+        "tls.connect({ port }), then setSession()": true,
+      });
+    });
+  });
+});

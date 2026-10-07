@@ -263,7 +263,7 @@ impl MySQLRequestQueue {
         self.requests.get().front().map(RefPtr::this_ptr)
     }
 
-    pub(crate) fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
+    pub(crate) fn clean(&self, reason: Option<JSValue>, queries_array: JSValue) {
         // reject()/rejectWithJSValue() run JS which can synchronously call .close()
         // (or otherwise fail the connection) and re-enter clean(). Swap the queue
         // into a local first so the re-entrant call sees an empty queue instead of

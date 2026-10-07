@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
+use crate::parse::lists::ListKind;
 use crate::parser::{JSXTag, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
@@ -8,8 +9,15 @@ use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
+    /// After the "<" at `loc`, whose `TokenFullStart` is `full_start`.
+    pub(crate) fn parse_jsx_element(
+        &mut self,
+        loc: bun_ast::Loc,
+        full_start: bun_ast::Loc,
+    ) -> crate::CrateResult<Expr> {
         let p = self;
         // Nested child elements (`<a><b><c>...`) recurse back into this function,
         // so guard the stack the same way the other recursive parse entry points do.
@@ -20,12 +28,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.needs_jsx_import = true;
         }
 
+        // The tag name of the parent element, empty for a fragment. Tolerant mode only.
+        let parent_tag = if p.is_tolerant() {
+            p.jsx_parent_tag.take()
+        } else {
+            None
+        };
+
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
+        let mut type_arguments = crate::sema::ts_syntax::Types::EMPTY;
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            let _ = p.skip_type_script_type_arguments::<true, false>()?;
+            // `</` is one token for TypeScript. It opens no type arguments, and `parseTypeArguments` does not rescan `<<`. Nor are
+            // there any in a JavaScript file (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
+            if (!p.is_tolerant() || p.is_at_less_than_token())
+                && !p.lexer.is_javascript_file()
+                && p.skip_type_script_type_arguments::<true, false>()?
+            {
+                type_arguments = p.take_saved_type_argument_list();
+            }
         }
 
         let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
@@ -45,6 +68,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut props: Vec<G::Property> = Vec::new();
             let mut first_spread_prop_i: i32 = -1;
             let mut i: i32 = 0;
+            let saved_contexts = p.enter_list(ListKind::JsxAttributes);
             'parse_attributes: loop {
                 match p.lexer.token {
                     T::TIdentifier => {
@@ -53,15 +77,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // intentionally skips the increment: no property is pushed there, so
                         // `key_prop_i`/`first_spread_prop_i` stay valid indices into `props`.
                         // Parse the prop name
-                        let key_range = p.lexer.range();
-                        let prop_name_literal = p.lexer.identifier;
-                        let special_prop = E::JSXSpecialProp::from_bytes(prop_name_literal)
+                        let mut key_range = p.lexer.range();
+                        let mut prop_name_literal = p.lexer.identifier;
+                        let mut special_prop = E::JSXSpecialProp::from_bytes(prop_name_literal)
                             .unwrap_or(E::JSXSpecialProp::Any);
                         p.lexer.next_inside_jsx_element()?;
 
+                        if p.is_tolerant() {
+                            // `parseJsxAttributeName`
+                            let name = JSXTag::parse_namespaced_name(
+                                p.arena,
+                                &mut p.lexer,
+                                prop_name_literal,
+                                &mut key_range,
+                            )?;
+                            if name.len() != prop_name_literal.len() {
+                                special_prop = E::JSXSpecialProp::Any;
+                            }
+                            prop_name_literal = name;
+                        }
+
                         if special_prop == E::JSXSpecialProp::Key {
                             // <ListItem key>
-                            if p.lexer.token != T::TEquals {
+                            // `parseJsxAttribute`: to the type checker it is an attribute like any other, and `true`.
+                            if p.lexer.token != T::TEquals && !p.is_tolerant() {
                                 // Unlike Babel, we're going to just warn here and move on.
                                 p.log().add_warning(
                                     Some(p.source),
@@ -78,44 +117,61 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.new_expr(E::EString::init(prop_name_literal), key_range.loc);
 
                         // Parse the value
-                        let value: Expr = if p.lexer.token != T::TEquals {
-                            // Implicitly true value
-                            // <button selected>
-                            p.new_expr(
-                                E::Boolean { value: true },
-                                bun_ast::Loc {
-                                    start: key_range.loc.start + key_range.len,
-                                },
-                            )
-                        } else {
+                        let value: Option<Expr> = if p.lexer.token == T::TEquals {
                             can_be_inlined = false;
                             p.parse_jsx_prop_value_identifier(
                                 &mut previous_string_with_backslash_loc,
                             )?
+                        } else if p.is_tolerant() {
+                            // `parseJsxAttribute`: no `Initializer`.
+                            None
+                        } else {
+                            // Implicitly true value
+                            // <button selected>
+                            Some(p.new_expr(
+                                E::Boolean { value: true },
+                                bun_ast::Loc {
+                                    start: key_range.loc.start + key_range.len,
+                                },
+                            ))
                         };
 
+                        let mut prop_name = prop_name;
+                        p.note_token_full_start(&mut prop_name.loc, crate::sema::Mark::MemberEnd);
                         props.push(G::Property {
                             key: Some(prop_name),
-                            value: Some(value),
+                            value,
                             ..Default::default()
                         });
                         i += 1;
                     }
                     T::TOpenBrace => {
                         // This arm must increment `i` once before exiting.
+                        let open_brace = p.lexer.loc();
                         // Use Next() not ExpectInsideJSXElement() so we can parse "..."
                         p.lexer.next()?;
 
-                        match p.lexer.token {
+                        // `parseJsxSpreadAttribute`: TypeScript has no shorthand. It reports the missing `...` (1005).
+                        let is_missing_dots = p.is_tolerant() && p.lexer.token != T::TDotDotDot;
+
+                        match if is_missing_dots {
+                            T::TDotDotDot
+                        } else {
+                            p.lexer.token
+                        } {
                             T::TDotDotDot => {
-                                p.lexer.next()?;
+                                p.lexer.expect(T::TDotDotDot)?;
                                 can_be_inlined = false;
 
                                 if first_spread_prop_i == -1 {
                                     first_spread_prop_i = i;
                                 }
                                 spread_loc = p.lexer.loc();
-                                let value = p.parse_expr(Level::Comma)?;
+                                let value = p.parse_expr(if p.is_tolerant() {
+                                    Level::Lowest
+                                } else {
+                                    Level::Comma
+                                })?;
                                 props.push(G::Property {
                                     value: Some(value),
                                     kind: G::PropertyKind::Spread,
@@ -170,7 +226,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // If we get here, it's invalid
                                     p.log().add_error(
                                         Some(p.source),
-                                        expr.loc,
+                                        p.real_loc(expr.loc),
                                         b"Invalid JSX prop shorthand, must be identifier, dot or string",
                                     );
                                     return Err(crate::Error::SyntaxError);
@@ -205,14 +261,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => p.lexer.unexpected()?,
                         }
 
-                        p.lexer.next_inside_jsx_element()?;
+                        if p.lexer.token != T::TCloseBrace && p.is_tolerant() {
+                            // `parseExpected`
+                            p.lexer.expect(T::TCloseBrace)?;
+                            Self::rescan_inside_jsx_element(p)?;
+                        } else {
+                            p.lexer.next_inside_jsx_element()?;
+                        }
+                        // `JsxSpreadAttribute`
+                        if let Some(G::Property {
+                            key: None,
+                            value: Some(spread),
+                            ..
+                        }) = props.last_mut()
+                        {
+                            p.note_loc(&mut spread.loc, crate::sema::Mark::MemberStart, open_brace);
+                            p.note_token_full_start(&mut spread.loc, crate::sema::Mark::MemberEnd);
+                        }
                         i += 1;
                     }
                     _ => {
+                        if p.is_tolerant() && Self::recover_jsx_attribute(p)? {
+                            continue 'parse_attributes;
+                        }
                         break 'parse_attributes;
                     }
                 }
             }
+            p.lexer.list_contexts = saved_contexts;
 
             let is_key_after_spread =
                 key_prop_i > -1 && first_spread_prop_i > -1 && key_prop_i > first_spread_prop_i;
@@ -249,6 +325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TSyntaxError
             && p.lexer.raw() == b"\\"
             && previous_string_with_backslash_loc.start > 0
+            && !p.is_tolerant()
         {
             let r = p.lexer.range();
             // Not dealing with this right now.
@@ -270,6 +347,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token != T::TGreaterThan {
                 p.lexer.expected(T::TGreaterThan)?;
             }
+            let end = Self::end_of_jsx_tag(p);
+            let syntax = p.keep_jsx(None, end, bun_ast::Loc::EMPTY, end, type_arguments);
 
             return Ok(p.new_expr(
                 E::JSXElement {
@@ -278,25 +357,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_prop_index: key_prop_i,
                     flags,
                     close_tag_loc,
+                    syntax,
                     ..Default::default()
                 },
                 loc,
             ));
         }
 
+        if p.lexer.token != T::TGreaterThan && p.is_tolerant() {
+            // `parseJsxOpeningOrSelfClosingElementOrOpeningFragment`: 1005 for the `/`, and the element is self-closing.
+            p.lexer.expected(T::TSlash)?;
+            let end = Self::end_of_jsx_tag(p);
+            let syntax = p.keep_jsx(None, end, bun_ast::Loc::EMPTY, end, type_arguments);
+            return Ok(p.new_expr(
+                E::JSXElement {
+                    tag: start_tag,
+                    properties,
+                    key_prop_index: key_prop_i,
+                    flags,
+                    close_tag_loc: loc,
+                    syntax,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        }
+
+        let opening_end = Self::end_of_jsx_tag(p);
         // Use ExpectJSXElementChild() so we parse child strings
         p.lexer.expect_jsx_element_child(T::TGreaterThan)?;
         let mut children: Vec<Expr> = Vec::new();
         // var last_element_i: usize = 0;
 
+        let saved_contexts = p.enter_list(ListKind::JsxChildren);
         loop {
             match p.lexer.token {
                 T::TStringLiteral => {
                     let e_string = p.lexer.to_e_string()?;
-                    children.push(p.new_expr(e_string, loc));
+                    // `parseJsxText`
+                    let range = p.lexer.range();
+                    let text_loc = if p.is_tolerant() { range.loc } else { loc };
+                    let mut text = p.new_expr(e_string, text_loc);
+                    p.note_end(&mut text.loc, range.end());
+                    children.push(text);
                     p.lexer.next_jsx_element_child()?;
                 }
                 T::TOpenBrace => {
+                    let open_brace = p.lexer.loc();
+                    let children_before = children.len();
                     // Use Next() instead of NextJSXElementChild() here since the next token is an expression
                     p.lexer.next()?;
 
@@ -306,7 +414,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // The expression is optional, and may be absent
-                    if p.lexer.token != T::TCloseBrace {
+                    // `parseJsxExpression`: not after `...`, where it is missed.
+                    if p.lexer.token != T::TCloseBrace || (is_spread && p.is_tolerant()) {
                         if can_be_inlined {
                             can_be_inlined = false;
                         }
@@ -316,20 +425,83 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             item = p.new_expr(E::Spread { value: item }, loc);
                         }
                         children.push(item);
+                    } else if p.is_tolerant() {
+                        // As for an attribute, the missing expression is placed at the opening
+                        // brace.
+                        children.push(p.new_expr(E::Missing {}, open_brace));
                     }
 
+                    // `parseJsxExpression`
+                    let end = match p.lexer.token {
+                        T::TCloseBrace => p.lexer.range().end(),
+                        _ => p.lexer.full_start(),
+                    };
+                    if let Some(inside) = children[children_before..].last_mut() {
+                        p.note_loc(
+                            &mut inside.loc,
+                            crate::sema::Mark::JsxExpression,
+                            open_brace,
+                        );
+                        p.note_loc(&mut inside.loc, crate::sema::Mark::JsxExpressionEnd, end);
+                    }
                     // Use ExpectJSXElementChild() so we parse child strings
                     p.lexer.expect_jsx_element_child(T::TCloseBrace)?;
                 }
                 T::TLessThan => {
                     let less_than_loc = p.lexer.loc();
-                    p.lexer.next_inside_jsx_element()?;
+                    let less_than_full_start = p.lexer.full_start();
+                    // `ScanJsxTokenEx`: for TypeScript "</" is one token. Nothing comes between its
+                    // characters, and its "/" starts no comment.
+                    let is_less_than_slash = p.is_tolerant() && p.lexer.code_point == 0x2F;
+                    if is_less_than_slash {
+                        p.lexer.step();
+                    } else {
+                        p.lexer.next_inside_jsx_element()?;
+                    }
 
-                    if p.lexer.token != T::TSlash {
+                    if !is_less_than_slash && (p.lexer.token != T::TSlash || p.is_tolerant()) {
                         // This is a child element
 
-                        let child = Self::parse_jsx_element(p, less_than_loc)?;
+                        if p.is_tolerant() {
+                            p.jsx_parent_tag = Some(tag.name);
+                        }
+                        let child =
+                            Self::parse_jsx_element(p, less_than_loc, less_than_full_start)?;
                         children.push(child);
+
+                        if p.is_tolerant() {
+                            if let Some((end_tag, closing_start, end)) = p.jsx_adopted_close.take()
+                            {
+                                // The child was not closed, and reached the closing tag of this
+                                // element.
+                                p.lexer.list_contexts = saved_contexts;
+                                let closing_tag = end_tag.data.as_expr();
+                                let syntax = p.keep_jsx(
+                                    closing_tag,
+                                    opening_end,
+                                    closing_start,
+                                    end,
+                                    type_arguments,
+                                );
+                                return Ok(p.new_expr(
+                                    E::JSXElement {
+                                        tag: start_tag,
+                                        children: ExprNodeList::move_from_list(children),
+                                        properties,
+                                        key_prop_index: key_prop_i,
+                                        flags,
+                                        close_tag_loc: end_tag.range.loc,
+                                        syntax,
+                                    },
+                                    loc,
+                                ));
+                            }
+                            if p.lexer.token != T::TGreaterThan {
+                                // The child lacks its last `>`, and consumed nothing for it.
+                                p.lexer.rescan_as_jsx_element_child()?;
+                                continue;
+                            }
+                        }
 
                         // The call to parseJSXElement() above doesn't consume the last
                         // TGreaterThan because the caller knows what Next() function to call.
@@ -340,8 +512,85 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // This is the closing element
+                    let after_slash = p.lexer.range().end();
                     p.lexer.next_inside_jsx_element()?;
+
+                    if start_tag.is_none() && p.lexer.token != T::TGreaterThan && p.is_tolerant() {
+                        // `parseJsxClosingFragment`: nothing is consumed.
+                        if p.lexer.is_log_disabled {
+                            return Err(crate::Error::Backtrack);
+                        }
+                        let range = p.lexer.range();
+                        p.lexer.ts_error(range, 17015);
+                        p.lexer.list_contexts = saved_contexts;
+                        let syntax = p.keep_jsx(
+                            None,
+                            opening_end,
+                            less_than_loc,
+                            after_slash,
+                            type_arguments,
+                        );
+                        return Ok(p.new_expr(
+                            E::JSXElement {
+                                tag: None,
+                                children: ExprNodeList::move_from_list(children),
+                                properties,
+                                key_prop_index: key_prop_i,
+                                flags,
+                                close_tag_loc: range.loc,
+                                syntax,
+                            },
+                            loc,
+                        ));
+                    }
+
                     let end_tag = JSXTag::parse(p)?;
+
+                    if end_tag.name != tag.name && p.is_tolerant() && !p.lexer.is_log_disabled {
+                        let belongs_to_parent = Self::report_jsx_tag_mismatch(
+                            p,
+                            loc,
+                            &tag,
+                            &end_tag,
+                            parent_tag,
+                            after_slash,
+                        )?;
+                        let mut end = Self::end_of_jsx_tag(p);
+                        let close_tag_loc = end_tag.range.loc;
+                        let closing_tag = if belongs_to_parent {
+                            // The closing tag of this element is reported as missing at the start
+                            // of the parent's closing tag.
+                            p.jsx_adopted_close = Some((end_tag, less_than_loc, end));
+                            end = less_than_loc;
+                            p.new_expr(E::Missing {}, less_than_loc)
+                        } else {
+                            // `</>` has a missing name.
+                            end_tag
+                                .data
+                                .as_expr()
+                                .unwrap_or_else(|| p.new_expr(E::Missing {}, after_slash))
+                        };
+                        p.lexer.list_contexts = saved_contexts;
+                        let syntax = p.keep_jsx(
+                            Some(closing_tag),
+                            opening_end,
+                            less_than_loc,
+                            end,
+                            type_arguments,
+                        );
+                        return Ok(p.new_expr(
+                            E::JSXElement {
+                                tag: start_tag,
+                                children: ExprNodeList::move_from_list(children),
+                                properties,
+                                key_prop_index: key_prop_i,
+                                flags,
+                                close_tag_loc,
+                                syntax,
+                            },
+                            loc,
+                        ));
+                    }
 
                     if end_tag.name != tag.name {
                         p.log().add_range_error_fmt_with_note(
@@ -360,25 +609,225 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token != T::TGreaterThan {
                         p.lexer.expected(T::TGreaterThan)?;
                     }
+                    let end = Self::end_of_jsx_tag(p);
 
+                    p.lexer.list_contexts = saved_contexts;
+                    // The type checker checks both names (`checkJsxElementDeferred`).
+                    let closing_tag = end_tag.data.as_expr();
+                    let kept_tag = if p.preserves_type_syntax() {
+                        start_tag
+                    } else {
+                        closing_tag
+                    };
+                    let syntax =
+                        p.keep_jsx(closing_tag, opening_end, less_than_loc, end, type_arguments);
                     return Ok(p.new_expr(
                         E::JSXElement {
-                            tag: end_tag.data.as_expr(),
+                            tag: kept_tag,
                             children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,
                             flags,
                             close_tag_loc: end_tag.range.loc,
-                            ..Default::default()
+                            syntax,
                         },
                         loc,
                     ));
                 }
                 _ => {
+                    if p.lexer.token == T::TEndOfFile && p.is_tolerant() && !p.lexer.is_log_disabled
+                    {
+                        Self::report_unclosed_jsx_element(p, full_start, &tag);
+                        let at = p.lexer.loc();
+                        let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
+                        let syntax = p.keep_jsx(closing_tag, opening_end, at, at, type_arguments);
+                        p.lexer.list_contexts = saved_contexts;
+                        return Ok(p.new_expr(
+                            E::JSXElement {
+                                tag: start_tag,
+                                children: ExprNodeList::move_from_list(children),
+                                properties,
+                                key_prop_index: key_prop_i,
+                                flags,
+                                close_tag_loc: loc,
+                                syntax,
+                            },
+                            loc,
+                        ));
+                    }
+                    // `parseJsxChild`: a conflict marker ends the children. The lexer returns it as
+                    // a syntax error token that starts at the start of the preceding text, and
+                    // `parseJsxClosingElement` reports the missing `</` there. Its other missing
+                    // tokens are reported at the same position. The marker is not consumed: a
+                    // parent element rescans it, and a statement list skips it.
+                    if p.lexer.token == T::TSyntaxError
+                        && p.is_tolerant()
+                        && !p.lexer.is_log_disabled
+                    {
+                        let at = p.lexer.loc();
+                        let marker = p.lexer.range();
+                        p.lexer.ts_expected(marker, "</");
+                        let closing_tag = start_tag.map(|_| p.new_expr(E::Missing {}, at));
+                        let syntax = p.keep_jsx(closing_tag, opening_end, at, at, type_arguments);
+                        p.lexer.list_contexts = saved_contexts;
+                        return Ok(p.new_expr(
+                            E::JSXElement {
+                                tag: start_tag,
+                                children: ExprNodeList::move_from_list(children),
+                                properties,
+                                key_prop_index: key_prop_i,
+                                flags,
+                                close_tag_loc: at,
+                                syntax,
+                            },
+                            loc,
+                        ));
+                    }
                     p.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }
             }
         }
+    }
+
+    /// `finishNode` for an opening or closing tag. Call before its last `>` is consumed, or where
+    /// that `>` is reported as missing.
+    #[inline]
+    fn end_of_jsx_tag(p: &mut Self) -> bun_ast::Loc {
+        if p.lexer.token == T::TGreaterThan {
+            p.lexer.range().end()
+        } else {
+            Self::end_of_jsx_tag_without_greater_than(p)
+        }
+    }
+
+    /// Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn end_of_jsx_tag_without_greater_than(p: &mut Self) -> bun_ast::Loc {
+        if p.lexer.token == T::TEndOfFile && p.jsx_children_met_end_of_file {
+            p.lexer.loc()
+        } else {
+            p.lexer.full_start()
+        }
+    }
+
+    /// `parseList(PCJsxAttributes)`, at a token that is neither a JSX name nor a `{`. Returns true if the list continues.
+    #[cold]
+    #[inline(never)]
+    fn recover_jsx_attribute(p: &mut Self) -> crate::CrateResult<bool> {
+        // `isListElement`: `tokenIsIdentifierOrKeyword` holds for a private identifier too.
+        if p.lexer.token == T::TPrivateIdentifier {
+            p.lexer.scan_jsx_identifier();
+            return Ok(true);
+        }
+        // `isListTerminator`. A speculative parse must still fail on errors.
+        if matches!(p.lexer.token, T::TGreaterThan | T::TSlash | T::TEndOfFile)
+            || p.lexer.is_log_disabled
+        {
+            return Ok(false);
+        }
+        if p.lexer.is_identifier_or_keyword() {
+            // An identifier or keyword that was scanned as an ordinary token.
+            Self::rescan_inside_jsx_element(p)?;
+            return Ok(p.lexer.token == T::TIdentifier);
+        }
+        // `abortParsingListOrMoveToNextToken`
+        let (range, before) = (p.lexer.range(), p.lexer.prev_error_loc);
+        p.lexer.ts_error(range, 1003);
+        if p.is_in_some_parsing_context() {
+            p.lexer.put_up_with(before)?;
+            return Ok(false);
+        }
+        if p.lexer.is_less_than_slash() {
+            p.lexer.step();
+        }
+        p.lexer.next_inside_jsx_element()?;
+        Ok(true)
+    }
+
+    /// `scanJsxIdentifier`: rescans the current token as a token inside a JSX tag.
+    #[cold]
+    #[inline(never)]
+    fn rescan_inside_jsx_element(p: &mut Self) -> crate::CrateResult<()> {
+        let full_start = p.lexer.token_full_start;
+        p.lexer.current = p.lexer.start;
+        p.lexer.step();
+        p.lexer.next_inside_jsx_element()?;
+        p.lexer.token_full_start = full_start;
+        Ok(())
+    }
+
+    /// `parseJsxChild` at the end of the file: 17008 or 17014 at the opening tag, then 1005 for the missing `</`.
+    /// `start` is `TokenFullStart` of the `<` of the element.
+    #[cold]
+    #[inline(never)]
+    fn report_unclosed_jsx_element(p: &mut Self, start: bun_ast::Loc, tag: &JSXTag<'a>) {
+        p.jsx_children_met_end_of_file = true;
+        if tag.data.as_expr().is_some() {
+            p.lexer
+                .ts_error_about(tag.range, 17008, Self::jsx_tag_name_text(p, tag));
+        } else {
+            // The fragment's node starts at the full start of its `<`. It ends with its `>`, which
+            // is the position `JSXTag::parse` returns for the tag.
+            let len = tag.range.loc.start + 1 - start.start;
+            p.lexer.ts_error(bun_ast::Range { loc: start, len }, 17014);
+        }
+        let end_of_file = p.lexer.range();
+        p.lexer.ts_expected(end_of_file, "</");
+    }
+
+    /// `GetTextOfNodeFromSourceText` for the name of `tag`.
+    fn jsx_tag_name_text(p: &Self, tag: &JSXTag<'a>) -> &'a [u8] {
+        p.source
+            .contents()
+            .get(tag.range.loc.to_usize()..tag.range.end().to_usize())
+            .unwrap_or_default()
+    }
+
+    /// `parseJsxElementOrSelfClosingElementOrFragment`: the closing tag `end_tag`, just parsed,
+    /// does not name the element `tag`. `loc` is the `<` of the element, `after_slash` is the end
+    /// of the `</`. Returns true if the closing tag names the parent element, which then adopts it.
+    #[cold]
+    #[inline(never)]
+    fn report_jsx_tag_mismatch(
+        p: &mut Self,
+        loc: bun_ast::Loc,
+        tag: &JSXTag<'a>,
+        end_tag: &JSXTag<'a>,
+        parent_tag: Option<&'a [u8]>,
+        after_slash: bun_ast::Loc,
+    ) -> crate::CrateResult<bool> {
+        if end_tag.data.as_expr().is_none() {
+            // `parseJsxTagName`: `</>` has no name.
+            let range = p.lexer.range();
+            p.lexer.ts_error(range, 1003);
+        }
+        // `parseJsxClosingElement`
+        if p.lexer.token != T::TGreaterThan {
+            p.lexer.expected(T::TGreaterThan)?;
+        }
+        // The node of a tag name starts at the end of the preceding `<` or `</`.
+        if parent_tag.is_some_and(|parent| !parent.is_empty() && parent == end_tag.name) {
+            let start = bun_ast::Loc {
+                start: loc.start + 1,
+            };
+            let len = (tag.range.end().start - start.start).max(0);
+            let range = bun_ast::Range { loc: start, len };
+            p.lexer
+                .ts_error_about(range, 17008, Self::jsx_tag_name_text(p, tag));
+            return Ok(true);
+        }
+        let len = (end_tag.range.end().start - after_slash.start).max(0);
+        let opening = Self::jsx_tag_name_text(p, tag);
+        p.lexer.ts_error_about(
+            bun_ast::Range {
+                loc: after_slash,
+                len,
+            },
+            17002,
+            opening,
+        );
+        Ok(false)
     }
 }

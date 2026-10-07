@@ -1,4 +1,3 @@
-use crate::jsc::JSValue;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket};
@@ -281,27 +280,12 @@ impl MySQLConnection {
         }
     }
 
-    pub(crate) fn close(&mut self) {
-        self.socket.close(uws::CloseKind::Normal);
-        self.write_buffer = OffsetByteList::default();
+    pub(crate) fn socket(&self) -> Socket {
+        self.socket
     }
 
-    pub(crate) fn clean_queue_and_close(
-        &mut self,
-        js_reason: Option<JSValue>,
-        js_queries_array: JSValue,
-    ) {
-        // cleanup requests
-        self.queue.clean(
-            js_reason,
-            if !js_queries_array.is_empty() {
-                js_queries_array
-            } else {
-                JSValue::UNDEFINED
-            },
-        );
-
-        self.close();
+    pub(crate) fn discard_write_buffer(&mut self) {
+        self.write_buffer = OffsetByteList::default();
     }
 
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {

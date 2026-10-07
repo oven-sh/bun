@@ -1707,6 +1707,50 @@ for (const side of ["client", "server"]) {
       server.destroy();
     }
   });
+
+  // A transport can complete a write and pass on the peer's close_notify in one callback. The socket then has not
+  // heard of the completed write, and it still holds the write that it queued behind it.
+  test(`over a Duplex: a ${side} completes the write behind one that its transport completes in the callback that delivers the peer's close_notify`, async () => {
+    const pair = stallingPair(side, { peerStaysOpen: true });
+    const { client, server, writer, reader } = await connectOver(pair, side);
+    const log = [];
+    let received = "";
+    const bothReceived = Promise.withResolvers();
+    const bothWritten = Promise.withResolvers();
+    reader.on("data", chunk => {
+      received += chunk;
+      if (received.length === 2) bothReceived.resolve();
+    });
+    writer.resume();
+    writer.on("error", err => log.push(`'error': ${err.message}`));
+    reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+    try {
+      pair.stall();
+      writer.write("x", err => log.push(`write callback: ${err?.message}`));
+      writer.write("y", err => {
+        log.push(`queued write callback: ${err?.message}`);
+        bothWritten.resolve();
+      });
+      await turn();
+      pair.gather();
+      // The peer ends its transport after its close_notify.
+      const closeNotifyLeft = new Promise(resolve =>
+        pair.sides[side === "client" ? "server" : "client"].once("finish", resolve),
+      );
+      reader.end();
+      await closeNotifyLeft;
+      pair.release();
+      pair.deliver();
+
+      await bothWritten.promise;
+      assert.deepStrictEqual(log, ["write callback: undefined", "queued write callback: undefined"]);
+      await bothReceived.promise;
+      assert.strictEqual(received, "xy");
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
 }
 
 test("over a Duplex: what the peer sends behind its close_notify is not kept while a write is in flight", async () => {

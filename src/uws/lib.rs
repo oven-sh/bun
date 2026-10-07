@@ -357,8 +357,7 @@ pub mod ssl_wrapper {
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
-        /// The peer's close_notify arrived while the transport had a write in
-        /// flight: [`SSLWrapper::answer_peer_close`] ends the session.
+        /// The answer to the peer's close_notify waits for a write in flight: see [`SSLWrapper::answer_peer_close`].
         peer_close_waits: Cell<bool>,
         ciphertext: Ciphertext,
     }
@@ -513,12 +512,9 @@ pub mod ssl_wrapper {
         pub on_keylog: Option<fn(T, &[u8])>,
         /// The name check of the verify step. `None`: the owner checks after the handshake.
         pub server_identity: Option<fn(T, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity>,
-        /// Whether the transport has a write that it has not completed. While it
-        /// has one, the peer's close_notify does not end the session: see
-        /// [`SSLWrapper::answer_peer_close`]. `None`: the session ends at once.
+        /// A transport write is in flight: the answer to the peer's close_notify would fail it, so it waits. `None`: no wait.
         pub write_in_flight: Option<fn(T) -> bool>,
-        /// The peer's close_notify began to wait for [`Self::write_in_flight`].
-        /// No more data arrives: the owner reports the end of its read side now.
+        /// That wait began. The peer sends no more data, so the owner reports the end of its read side.
         pub on_peer_close_waits: Option<fn(T)>,
     }
 
@@ -843,10 +839,7 @@ pub mod ssl_wrapper {
             ret == 1 // truly closed
         }
 
-        /// The transport of an owner with [`Handlers::write_in_flight`] completed
-        /// its writes, and the owner wrote what it held behind them. Answers the
-        /// close_notify that waited and closes, unless a write is in flight again.
-        /// An answer at the close_notify would fail every write the owner holds.
+        /// The transport is idle: answers the close_notify that waited, and closes. No-op while a write is in flight.
         pub fn answer_peer_close(&self) {
             if self.peer_close_waits.get() && !self.write_in_flight() {
                 let _ = self.shutdown(false);

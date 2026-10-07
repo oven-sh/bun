@@ -48,6 +48,8 @@ pub(crate) struct UpgradedDuplex {
     pub on_write_done_callback: Cell<JSValue>,
     /// Those calls whose `cb` has not run.
     pub in_flight: Cell<u32>,
+    /// The last `cb` ran and the socket has not heard: it still holds what it parked behind that call.
+    pub wake_pending: Cell<bool>,
     pub event_loop_timer: JsCell<EventLoopTimer>,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
@@ -379,7 +381,8 @@ impl UpgradedDuplex {
 
     fn write_in_flight(this: *mut Self) -> bool {
         // SAFETY: see handler note above.
-        !unsafe { &*this }.transport_idle()
+        let this = unsafe { &*this };
+        !this.transport_idle() || this.wake_pending.get()
     }
 
     /// Node reports the EOF at the close_notify too, and keeps the socket open for its writes.
@@ -494,6 +497,7 @@ impl UpgradedDuplex {
             on_close_callback: Cell::new(JSValue::ZERO),
             on_write_done_callback: Cell::new(JSValue::ZERO),
             in_flight: Cell::new(0),
+            wake_pending: Cell::new(false),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::UpgradedDuplex,
             )),
@@ -767,6 +771,7 @@ impl UpgradedDuplex {
             }
         }
         self.in_flight.set(0);
+        self.wake_pending.set(false);
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_close.set(false);
@@ -854,13 +859,16 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 // Node's errnoException(errCode, 'write').
                 err.message = bun_core::String::create_format(format_args!("write {}", err.code));
                 (this.handlers.on_error)(this.handlers.ctx, err.to_error_instance(global));
-            } else if this.in_flight.get() == 0 {
-                let peer_close_waits = this.wrapper_ref().is_some_and(|w| w.peer_close_waits());
-                (this.handlers.on_writable)(this.handlers.ctx);
-                // That ran JS, which can close this duplex: `teardown` clears the function data.
-                if peer_close_waits && host_fn::get_function_data(function).is_some() {
-                    if let Some(w) = this.wrapper_ref() {
-                        w.answer_peer_close();
+            } else {
+                this.wake_pending.set(false);
+                if this.in_flight.get() == 0 {
+                    let peer_close_waits = this.wrapper_ref().is_some_and(|w| w.peer_close_waits());
+                    (this.handlers.on_writable)(this.handlers.ctx);
+                    // That ran JS, which can close this duplex: `teardown` clears the function data.
+                    if peer_close_waits && host_fn::get_function_data(function).is_some() {
+                        if let Some(w) = this.wrapper_ref() {
+                            w.answer_peer_close();
+                        }
                     }
                 }
             }
@@ -873,6 +881,7 @@ fn on_write_done(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             let errno = JSValue::js_number_from_int32(write_errno(global, err)? as i32);
             JSValue::call_next_tick_1(function, global, errno)?;
         } else if in_flight == 0 {
+            this.wake_pending.set(true);
             JSValue::call_next_tick_1(function, global, JSValue::js_number_from_int32(0))?;
         }
     }

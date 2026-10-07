@@ -332,8 +332,9 @@ describe("HTTP/2 upgrade — ALPN negotiation", () => {
     // The server answers from its handshake callback and ends the socket. Its
     // transport still has that write when the end arrives.
     const h2Server = http2.createSecureServer(TLS);
+    const ended = Promise.withResolvers<void>();
     h2Server.on("error", () => {});
-    h2Server.on("session", () => assert.fail("a client without ALPN must not get a session"));
+    h2Server.on("session", () => ended.reject(new Error("a client without ALPN must not get a session")));
     const clientSide: Duplex = new Duplex({
       read() {},
       write(chunk, _encoding, callback) {
@@ -359,10 +360,9 @@ describe("HTTP/2 upgrade — ALPN negotiation", () => {
       let received = "";
       client.on("data", chunk => (received += chunk));
       client.on("error", () => {});
-      await new Promise(resolve => {
-        client.once("end", resolve);
-        client.once("close", resolve);
-      });
+      client.once("end", () => ended.resolve());
+      client.once("close", () => ended.resolve());
+      await ended.promise;
       assert.match(received, /^HTTP\/1\.0 403 Forbidden\r\n[^]*Missing ALPN Protocol, expected `h2` to be available\./);
     } finally {
       client.destroy();

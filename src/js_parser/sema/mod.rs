@@ -479,7 +479,6 @@ pub fn summarize<'s>(
             options.features.no_macros = true;
             options.features.top_level_await = true;
             options.features.standard_decorators = !experimental_decorators;
-            options.suppress_warnings_about_weird_code = true;
             options.tolerant = true;
             // `initializeState`
             options.is_javascript = is_js || is_json;

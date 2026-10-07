@@ -7630,23 +7630,6 @@ pub mod bv2_impl {
             }
 
             match &mut parse_result.value {
-                parse_task::ResultValue::Empty {
-                    source_index: empty_source_index,
-                } => {
-                    let empty_idx = (*empty_source_index).get() as usize;
-                    this.graph.input_files.items_side_effects_mut()[empty_idx] =
-                        bun_ast::SideEffects::NoSideEffectsEmptyAst;
-                    if cfg!(debug_assertions) {
-                        bun_core::scoped_log!(
-                            Bundle,
-                            "onParse({}, {}) = empty",
-                            empty_idx,
-                            bstr::BStr::new(
-                                &this.graph.input_files.items_source()[empty_idx].path.text
-                            )
-                        );
-                    }
-                }
                 parse_task::ResultValue::Success(result) => {
                     // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                     result

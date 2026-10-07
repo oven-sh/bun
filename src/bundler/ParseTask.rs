@@ -162,13 +162,11 @@ impl bun_event_loop::Taskable for Result {
 pub(crate) enum ResultValue {
     Success(Success),
     Err(ResultError),
-    Empty { source_index: Index },
 }
 
 impl ResultValue {
     pub(crate) fn source_index(&self) -> u32 {
         match self {
-            ResultValue::Empty { source_index } => source_index.get(),
             ResultValue::Err(data) => data.source_index.get(),
             ResultValue::Success(val) => val.source.index.0,
         }
@@ -2841,13 +2839,6 @@ pub mod parse_worker {
                     break 'value ResultValue::Success(ast);
                 }
                 Err(e) => {
-                    if e == crate::Error::EmptyAST {
-                        drop(log);
-                        break 'value ResultValue::Empty {
-                            source_index: this.source_index,
-                        };
-                    }
-
                     break 'value ResultValue::Err(ResultError {
                         err: e,
                         step,
@@ -2931,7 +2922,6 @@ pub mod parse_worker {
         match &mut result.value {
             ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
-            ResultValue::Empty { .. } => {}
         }
     }
 

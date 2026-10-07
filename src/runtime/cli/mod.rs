@@ -587,15 +587,10 @@ pub(crate) use cli as Cli;
 pub(crate) mod help_command {
     use super::*;
 
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(crate) enum Reason {
-        Explicit,
-        InvalidCommand,
-    }
-
     #[cold]
     pub(crate) fn exec() -> crate::Result<()> {
-        exec_with_reason(Reason::Explicit)
+        print(false);
+        Global::exit(0);
     }
 
     // someone will get mad at me for this
@@ -629,17 +624,14 @@ pub(crate) mod help_command {
     ];
     const PACKAGES_TO_CREATE_FILLER: &[&str] = &["next-app", "vite", "astro", "svelte", "elysia"];
 
-    /// Emits the `pretty!`/`pretty_error!` call directly instead of
+    /// Emits the `pretty!` call directly instead of
     /// expanding to a bare literal — `pretty!` captures its template as
     /// `$fmt:expr`, which is opaque to the `pretty_fmt!` proc-macro, so a
     /// nested `cli_helptext_fmt!()` inside `concat!()` would never be flattened.
-    /// Taking the printer macro (and per-reason prefix line) as parameters keeps
-    /// a single source of truth for the 35-line help body across both
-    /// `Reason::Explicit` (stdout) and `Reason::InvalidCommand` (stderr).
     /// The spacing between commands is intentional.
     macro_rules! print_cli_helptext {
-        ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
-            $printer!(
+        ($prefix:literal, $args:expr $(, $extra:expr)*) => {
+            pretty!(
                 concat!($prefix, "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
 
@@ -682,9 +674,7 @@ pub(crate) mod help_command {
         };
     }
 
-    // Tag/Reason lack `ConstParamTy` in lower-tier crates, so `reason` is a
-    // runtime arg.
-    pub(crate) fn print_with_reason(reason: Reason, show_all_flags: bool) {
+    pub(crate) fn print(show_all_flags: bool) {
         let mut rand = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
         );
@@ -710,45 +700,24 @@ pub(crate) mod help_command {
             PACKAGES_TO_CREATE_FILLER[package_create_i],
         );
 
-        match reason {
-            Reason::Explicit => {
-                print_cli_helptext!(
-                    pretty,
-                    "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({})<r>\n\n",
-                    args,
-                    Global::package_json_version_with_revision
-                );
-                if show_all_flags {
-                    pretty!("\n<b>Flags:<r>");
-                    bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS);
-                    pretty!(
-                        "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",
-                    );
-                }
-                pretty!(
-                    "\nLearn more about Bun:            <magenta>https://bun.com/docs<r>\n\
-Join our Discord community:      <blue>https://bun.com/discord<r>\n"
-                );
-            }
-            Reason::InvalidCommand => {
-                print_cli_helptext!(
-                    pretty_error,
-                    "<r><red>Uh-oh<r> not sure what to do with that command.\n\n",
-                    args
-                );
-            }
+        print_cli_helptext!(
+            "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>({})<r>\n\n",
+            args,
+            Global::package_json_version_with_revision
+        );
+        if show_all_flags {
+            pretty!("\n<b>Flags:<r>");
+            bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS);
+            pretty!(
+                "\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n",
+            );
         }
+        pretty!(
+            "\nLearn more about Bun:            <magenta>https://bun.com/docs<r>\n\
+Join our Discord community:      <blue>https://bun.com/discord<r>\n"
+        );
 
         Output::flush();
-    }
-
-    #[cold]
-    fn exec_with_reason(reason: Reason) -> ! {
-        print_with_reason(reason, false);
-        if reason == Reason::InvalidCommand {
-            Global::exit(1);
-        }
-        Global::exit(0);
     }
 }
 pub(crate) use help_command as HelpCommand;
@@ -1997,7 +1966,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // `{}` prints the raw markup.
         match cmd {
             Tag::AutoCommand | Tag::HelpCommand => {
-                HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, show_all_flags);
+                HelpCommand::print(show_all_flags);
             }
             Tag::RunCommand | Tag::RunAsNodeCommand => {
                 run_command::RunCommand::print_help(None);
@@ -2341,7 +2310,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
                 );
                 Output::flush();
             }
-            _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
+            _ => HelpCommand::print(false),
         }
     }
 

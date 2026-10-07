@@ -3,7 +3,6 @@
     clippy::disallowed_methods,
     reason = "ported from facebook/react upstream; uses std collections by design"
 )]
-#![allow(unreachable_pub)]
 #![allow(
     clippy::assigning_clones,
     clippy::clone_on_copy,

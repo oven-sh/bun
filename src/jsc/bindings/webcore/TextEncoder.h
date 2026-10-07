@@ -36,7 +36,6 @@ namespace WebCore {
 class TextEncoder : public RefCounted<TextEncoder> {
 public:
     static Ref<TextEncoder> create() { return adoptRef(*new TextEncoder); }
-    String encoding() const;
 
 private:
     TextEncoder() {};

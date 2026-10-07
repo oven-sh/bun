@@ -6,8 +6,6 @@
 
 namespace WebCore {
 
-typedef HashMap<void*, JSC::Weak<JSC::JSObject>> DOMObjectWrapperMap;
-
 class DOMWrapperWorld : public RefCounted<DOMWrapperWorld> {
 public:
     enum class Type {
@@ -22,8 +20,6 @@ public:
     }
     WEBCORE_EXPORT ~DOMWrapperWorld();
 
-    DOMObjectWrapperMap& wrappers() { return m_wrappers; }
-
     Type type() const { return m_type; }
     bool isNormal() const { return m_type == Type::Normal; }
 
@@ -36,7 +32,6 @@ protected:
 
 private:
     JSC::VM& m_vm;
-    DOMObjectWrapperMap m_wrappers;
 
     String m_name;
     Type m_type { Type::Internal };

@@ -64,9 +64,11 @@ declare function add(a: number, b: number = -1): number;
 
 The code generator emits a C++ thunk that validates and coerces the JS
 arguments, then calls the Rust implementation. On the Rust side bindgen emits
-nothing: the matching module is hand-written in
-`src/jsc/bindings/GeneratedBindings.rs` and is reachable as
-`crate::r#gen::<basename>` (for `bindgen_test.bind.ts`, that's
+nothing; both the dispatch shim the thunk calls
+(`bindgen_Bindgen_test_dispatchAdd1` in `src/runtime/hw_exports.rs`, which
+calls `add`) and the `create_*_callback` module in
+`src/jsc/bindings/GeneratedBindings.rs` are hand-written. The module is
+reachable as `crate::r#gen::<basename>` (for `bindgen_test.bind.ts`, that's
 `crate::r#gen::bindgen_test`). To construct a `JSFunction` wrapping the
 native implementation, use `generated::create_add_callback(global)`:
 
@@ -77,7 +79,8 @@ let js_fn: JSValue = generated::create_add_callback(global);
 ```
 
 In JS files in `src/js/`, `$bindgenFn("bindgen_test.bind.ts", "add")` returns
-a handle to the implementation.
+a handle to the implementation, through a hand-written
+`js2native_bindgen_<basename>_<fn>` export in `src/runtime/hw_exports.rs`.
 
 Exported bindgen functions are snake_cased on the Rust side
 (`requiredAndOptionalArg` → `required_and_optional_arg`). The hand-written

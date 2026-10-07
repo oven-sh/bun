@@ -40,6 +40,7 @@ pub struct Route {
     pub path: BunString,
     pub r#type: RouteType,
     pub script_line: i32,
+    /// Unused; always null/0 (kept for the C++ layout).
     pub param_names: *mut BunString,
     pub param_names_len: usize,
     pub file_path: BunString,
@@ -69,22 +70,6 @@ impl Default for Route {
             script_id: BunString::EMPTY,
             script_url: BunString::EMPTY,
         }
-    }
-}
-
-impl Drop for Route {
-    fn drop(&mut self) {
-        if !self.param_names.is_null() {
-            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
-            // SAFETY: param_names was allocated via the global (mimalloc) allocator as a
-            // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
-            // element (deref) and frees the backing storage.
-            drop(unsafe { bun_core::heap::take(slice) });
-            self.param_names = core::ptr::null_mut();
-            self.param_names_len = 0;
-        }
-        // path, file_path, script_id, script_url are dropped (deref'd) automatically via
-        // bun_core::String's Drop impl.
     }
 }
 

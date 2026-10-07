@@ -8,12 +8,12 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Touch {
+pub(crate) struct Touch {
     pub(crate) state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -21,7 +21,7 @@ pub enum State {
     Done,
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
@@ -95,7 +95,7 @@ impl Touch {
                     Action::Schedule(exec.args_start)
                 }
             }
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -233,7 +233,7 @@ impl OutputTaskVTable for Touch {
 }
 
 /// utimes() the path (creating it on ENOENT) on a worker thread.
-pub struct ShellTouchTask {
+pub(crate) struct ShellTouchTask {
     pub(crate) cmd: NodeId,
     pub(crate) filepath: Vec<u8>,
     pub(crate) cwd_path: Vec<u8>,
@@ -265,15 +265,17 @@ impl ShellTouchTask {
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
-        // We have to give an absolute path.
-        let mut buf = bun_paths::PathBuffer::uninit();
+        // We have to give an absolute path. An operand that does not fit the
+        // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
+        // for it like for any other operand.
+        let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
-            // Re-terminate into the path buffer (`filepath` is the bare argv
-            // bytes without the trailing NUL).
-            resolve_path::join_z_buf::<platform::Auto>(buf.as_mut_slice(), &[&this.filepath])
+            // Re-terminate (`filepath` is the bare argv bytes without the
+            // trailing NUL).
+            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
         } else {
-            resolve_path::join_z_buf::<platform::Auto>(
-                buf.as_mut_slice(),
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
                 &[&this.cwd_path, &this.filepath],
             )
         };
@@ -330,6 +332,10 @@ impl bun_event_loop::Taskable for ShellTouchTask {
             drop(bun_core::heap::take(this));
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
@@ -345,7 +351,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {

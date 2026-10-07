@@ -96,14 +96,7 @@ pub(crate) fn to_have_been_nth_called_with(
     }
 
     // The call existed but didn't match. Show a diff.
-    let diff_format = DiffFormatter {
-        expected: Some(expected_args_js_array),
-        received: Some(nth_call_value),
-        expected_string: None,
-        received_string: None,
-        global_this: Some(global),
-        not: false,
-    };
+    let diff_format = DiffFormatter::new(global, nth_call_value, expected_args_js_array, false)?;
     throw!(
         this,
         global,

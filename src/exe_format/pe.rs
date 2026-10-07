@@ -28,16 +28,12 @@ pub enum Error {
     TooManySections,
     #[error("SectionExists")]
     SectionExists,
-    #[error("InputIsSigned")]
-    InputIsSigned,
     #[error("InvalidSecurityDirectory")]
     InvalidSecurityDirectory,
     #[error("SecurityDirInsideImage")]
     SecurityDirInsideImage,
     #[error("UnexpectedOverlayPresent")]
     UnexpectedOverlayPresent,
-    #[error("InsufficientSpace")]
-    InsufficientSpace,
 }
 
 /// Windows PE Binary manipulation for codesigning standalone executables
@@ -147,7 +143,7 @@ pub(crate) struct SectionHeader {
     pub characteristics: u32,         // Characteristics
 }
 
-const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
+pub(crate) const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
 const DOS_SIGNATURE: u16 = 0x5A4D; // "MZ"
 const OPTIONAL_HEADER_MAGIC_64: u16 = 0x020B;
 

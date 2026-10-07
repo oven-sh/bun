@@ -57,17 +57,6 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
     return ptr;
 }
 
-JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, HistogramData&& existingHistogramData)
-{
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(existingHistogramData));
-    ptr->finishCreation(vm);
-    if (ptr->m_histogramData.histogram) {
-        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
-        vm.heap.reportExtraMemoryAllocated(ptr, ptr->m_extraMemorySizeForGC);
-    }
-    return ptr;
-}
-
 void JSNodePerformanceHooksHistogram::destroy(JSCell* cell)
 {
     static_cast<JSNodePerformanceHooksHistogram*>(cell)->~JSNodePerformanceHooksHistogram();
@@ -107,7 +96,7 @@ void JSNodePerformanceHooksHistogram::analyzeHeap(JSCell* cell, HeapAnalyzer& an
 
 JSC::Structure* JSNodePerformanceHooksHistogram::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 bool JSNodePerformanceHooksHistogram::record(int64_t value)

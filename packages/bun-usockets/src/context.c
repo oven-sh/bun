@@ -35,15 +35,6 @@
 
 // clang-format off
 
-/* Forward-declared so this file does not depend on OpenSSL headers. */
-/* Opaque SSL_CTX ref helpers — defined in crypto/openssl.c so this file
- * stays free of OpenSSL headers. */
-
-int us_internal_raw_root_certs(struct us_cert_string_t** out);
-int us_raw_root_certs(struct us_cert_string_t**out){
-    return us_internal_raw_root_certs(out);
-}
-
 /* ── Group lifecycle ────────────────────────────────────────────────────── */
 
 void us_socket_group_init(struct us_socket_group_t *group, struct us_loop_t *loop,
@@ -59,9 +50,13 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
      * low-prio count must be zero or some socket/listener/DNS request still
      * holds s->group / c->group / ls->accept_group into us — that's a UAF the
      * caller must close_all() away first. iterator != NULL means we're inside
-     * a dispatch on this very group; the on_close that triggers deinit is fine
-     * (unlink_socket already advanced iterator), but a re-entrant deinit from
-     * inside on_timeout/on_data would tear the floor out from under the sweep. */
+     * a dispatch on this very group. Never deinit from inside a dispatch of one
+     * of the group's own sockets, on_close included: the lists survive that
+     * one (unlink_socket already advanced iterator), but close_raw and
+     * us_internal_ssl_on_close read s->group->loop again when the handler
+     * returns (us_internal_ssl_detach), and a deinit from inside
+     * on_timeout/on_data would tear the floor out from under the sweep. Defer
+     * it until the dispatch has unwound. */
     US_ASSERT(group->head_sockets == NULL);
     US_ASSERT(group->head_connecting_sockets == NULL);
     US_ASSERT(group->head_listen_sockets == NULL);
@@ -100,38 +95,23 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
      * us_internal_socket_group_unlink_socket advances group->iterator past any
      * socket it unlinks, so parking the next pointer there lets a handler free
      * it without leaving us a dangling step (same pattern as the timeout sweep
-     * in loop.c). */
+     * in loop.c). A socket a handler opens links in at the head, behind the
+     * walk: it is not this call's to close, so a handler that always dials
+     * again cannot keep the walk going. */
     group->iterator = group->head_sockets;
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        if (us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) {
-            /* In-flight connect — close_raw skips dispatch for SEMI_SOCKET
-             * (on_close without on_open is wrong), so the Zig wrapper's
-             * `socket = .connected` would never detach and finalize() UAFs
-             * after drainClosedSockets(). Deliver the same on_connect_error
-             * the natural failure path would have, which detaches the
-             * wrapper. The handler then closes; if it doesn't, the
-             * force-drain below catches it. */
-            us_dispatch_connect_error(s, ECONNABORTED);
-            if (!us_socket_is_closed(s)) {
-                us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-            }
-        } else {
-            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* A TLS socket may have *deferred* that: us_internal_ssl_close with
+         * code==0 sends close_notify and, on WANT_READ, waits for the peer's
+         * reply. Callers (e.g. Listener.deinit) free the embedding storage
+         * next, which would leave s->group dangling. */
+        if (!us_socket_is_closed(s)) {
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
         }
     }
     group->iterator = 0;
-
-    /* TLS sockets may have *deferred* the close above: us_internal_ssl_close
-     * with code==0 sends close_notify and, on WANT_READ, leaves the socket
-     * open in head_sockets waiting for the peer's reply. Callers of close_all
-     * (e.g. Listener.deinit) free the embedding storage immediately after, so
-     * any survivor's s->group becomes a dangling pointer. The graceful walk
-     * already flushed close_notify; force-drain the rest synchronously now. */
-    while (group->head_sockets) {
-        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-    }
 
     /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets
      * (the queue reuses prev/next), so they'd survive the walk above and later
@@ -328,6 +308,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             us_internal_socket_group_link_connecting_socket(group, c);
         }
     }
+    if (old_group != group && new_s->ssl) {
+        us_internal_ssl_socket_left_group(new_s);
+    }
     new_s->group = group;
     new_s->kind = kind;
     new_s->timeout = 255;
@@ -335,6 +318,7 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
 
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
+        if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = new_s;
         if (!new_s->prev) loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
 
@@ -365,7 +349,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
-    s->fin_deferred = 0;
+    s->hangup_closes_unsent = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -379,6 +363,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->on_server_name = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
+    ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -545,7 +530,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
-    s->fin_deferred = 0;
+    s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }
@@ -760,7 +745,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (result->error) {
         /* Preserve the getaddrinfo failure so the connect-error callback can
          * report the resolver error (ENOTFOUND, ...) instead of the fabricated
-         * ECONNABORTED that us_connecting_socket_close fills in when `error`
+         * ECANCELED that us_connecting_socket_close fills in when `error`
          * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
          * codes and errnos overlap numerically. */
         c->error = result->error;
@@ -793,6 +778,12 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
                 default: {
+                    /* The probe only says the socket is not connected
+                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
+                    int so_error = us_socket_get_error(s);
+                    if (so_error > 0) {
+                        error = so_error;
+                    }
                     break;
                 }
             }
@@ -814,15 +805,14 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 if (opened == 0 && c->connecting_head == NULL) {
                     /* Every resolved address failed to connect. Without this,
                      * us_connecting_socket_close defaults c->error to
-                     * ECONNABORTED (caller abort) and never invalidates the
+                     * ECANCELED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
                     c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }
         } else {
-            us_dispatch_connect_error(s, error);
-            // It's expected that close is called by the caller
+            us_internal_socket_connect_failed(s, error);
         }
     } else {
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);

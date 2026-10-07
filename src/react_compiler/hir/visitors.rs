@@ -1004,12 +1004,6 @@ impl ScopeBlockTraversal {
     }
 }
 
-impl Default for ScopeBlockTraversal {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // =============================================================================
 // Convenience wrappers: extract IdentifierIds from Places
 // =============================================================================

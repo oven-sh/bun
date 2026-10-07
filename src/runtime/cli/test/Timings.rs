@@ -16,8 +16,9 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::{Fd, File};
 
 use super::parallel::file_range::FileRange;
+use bun_collections::index_sort;
 
-pub struct Timings {
+pub(crate) struct Timings {
     /// The first `--timings` path; `--update-timings` writes here.
     path: Box<[u8]>,
     /// Posix-separator paths relative to the project root → milliseconds; loaded entries overlaid with this run's.
@@ -30,14 +31,14 @@ pub struct Timings {
 
 impl Timings {
     /// Missing files are not an error (the first `--update-timings` run creates one); malformed ones are.
-    pub fn load(paths: &[Box<[u8]>]) -> Timings {
+    pub(crate) fn load(paths: &[Box<[u8]>]) -> Timings {
         let mut map: StringArrayHashMap<u32> = StringArrayHashMap::new();
         for path in paths {
             Self::load_one(path, &mut map);
         }
         let median = {
             let mut known: Vec<u32> = map.values().to_vec();
-            known.sort_unstable();
+            index_sort::sort_slice_unstable_by(&mut known, |a, b| a.cmp(b));
             known.get(known.len() / 2).copied().unwrap_or(0)
         };
         Timings {
@@ -103,7 +104,7 @@ impl Timings {
         bun_ast::Stmt::data_store_reset();
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.map.count() == 0
     }
 
@@ -117,17 +118,17 @@ impl Timings {
     }
 
     /// Recorded duration for a test file, if the table has one.
-    pub fn get(&self, abs_path: &[u8]) -> Option<u32> {
+    pub(crate) fn get(&self, abs_path: &[u8]) -> Option<u32> {
         self.map.get(&Self::key_for(abs_path)).copied()
     }
 
-    pub fn record(&mut self, abs_path: &[u8], ms: u32) {
+    pub(crate) fn record(&mut self, abs_path: &[u8], ms: u32) {
         let key = Self::key_for(abs_path);
         let _ = self.map.put(&key, ms);
         let _ = self.measured.put(&key, ms);
     }
 
-    pub fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {
+    pub(crate) fn record_since(&mut self, abs_path: &[u8], started_ms: i64) {
         let elapsed = (bun_core::time::milli_timestamp() - started_ms).max(0);
         self.record(abs_path, u32::try_from(elapsed).unwrap_or(u32::MAX));
     }
@@ -136,7 +137,7 @@ impl Timings {
         u64::from(self.get(abs_path).unwrap_or(self.median).max(1))
     }
 
-    pub fn costs(&self, files: &[Interned]) -> Vec<u64> {
+    pub(crate) fn costs(&self, files: &[Interned]) -> Vec<u64> {
         files.iter().map(|f| self.cost(f.as_bytes())).collect()
     }
 
@@ -145,7 +146,7 @@ impl Timings {
     /// of their imports) land in the same process and hit its module cache;
     /// by duration so a directory of slow integration tests is spread over
     /// several runs instead of becoming one shard's tail.
-    pub fn partition(&self, files: &[Interned], k: u32) -> Vec<FileRange> {
+    pub(crate) fn partition(&self, files: &[Interned], k: u32) -> Vec<FileRange> {
         let costs = self.costs(files);
         let n = files.len() as u32;
         let mut remaining: u64 = costs.iter().sum();
@@ -172,8 +173,8 @@ impl Timings {
 
     /// Keeps shard `index` of `count` (see [`partition`]) compacted to the
     /// front of `files`; returns how many were kept.
-    pub fn select_shard(&self, files: &mut [Interned], shard: Shard) -> usize {
-        files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+    pub(crate) fn select_shard(&self, files: &mut [Interned], shard: Shard) -> usize {
+        index_sort::sort_slice_by(files, |a, b| strings::order(a.as_bytes(), b.as_bytes()));
         let r = self.partition(files, shard.count)[(shard.index - 1) as usize];
         files.copy_within(r.lo as usize..r.hi as usize, 0);
         (r.hi - r.lo) as usize
@@ -181,18 +182,27 @@ impl Timings {
 
     /// Slowest first; files with no recorded duration go before everything
     /// else so an unknown (possibly slow) file never becomes the tail.
-    pub fn sort_slowest_first(&self, files: &mut [Interned]) {
-        files.sort_by_cached_key(|f| {
-            let known = self.get(f.as_bytes()).map_or(u64::MAX, u64::from);
-            (core::cmp::Reverse(known), f.as_bytes().to_vec())
+    pub(crate) fn sort_slowest_first(&self, files: &mut [Interned]) {
+        let known: Vec<u64> = files
+            .iter()
+            .map(|f| self.get(f.as_bytes()).map_or(u64::MAX, u64::from))
+            .collect();
+        let mut order = index_sort::identity(files.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            known[b as usize].cmp(&known[a as usize]).then_with(|| {
+                files[a as usize]
+                    .as_bytes()
+                    .cmp(files[b as usize].as_bytes())
+            })
         });
+        index_sort::apply_permutation_in_place(files, &mut order);
     }
 
     /// Slowest-first (ties by path) so the file doubles as a "what's slow"
     /// report. `only_measured` (set under `--shard`) writes just the files this
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
-    pub fn write(&mut self, only_measured: bool) {
+    pub(crate) fn write(&mut self, only_measured: bool) {
         let map = if only_measured {
             &mut self.measured
         } else {

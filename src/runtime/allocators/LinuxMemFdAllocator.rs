@@ -15,22 +15,16 @@
 //! the virtual memory. So we should only really use this for large blobs of
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_void;
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_alloc::StdAllocator;
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_alloc::{Alignment, AllocatorVTable};
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys as sys;
 use bun_sys::FdExt;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
@@ -41,46 +35,27 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
 // flavor would data-race on ref/deref.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
-pub struct LinuxMemFdAllocator {
+pub(crate) struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub(crate) fd: Fd,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) size: usize,
 }
 
-impl LinuxMemFdAllocator {
-    /// Close the fd, then free the allocation.
-    ///
-    /// # Safety
-    /// Refcount hit 0; `this` came from `heap::alloc` in `RefPtr::new`.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: sole owner — close fd before reclaiming the Box.
-        unsafe { (*this).fd.close() };
-        // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
-        drop(unsafe { bun_core::heap::take(this) });
+impl Drop for LinuxMemFdAllocator {
+    fn drop(&mut self) {
+        self.fd.close();
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             fd,
             size,
         })
-    }
-
-    pub fn ref_(&self) {
-        // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
-        // touches the interior-mutable atomic `ref_count` field.
-        unsafe {
-            bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
-        };
     }
 
     /// # Safety
@@ -93,7 +68,7 @@ impl LinuxMemFdAllocator {
     // allocation via `heap::take(self as *const _ as *mut _)` is UB —
     // it materializes `&mut Self` (via `Drop`) while a shared `&self`
     // borrow is still live.
-    pub unsafe fn deref(this: *mut Self) {
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and Box-allocated; forwards
         // to the intrusive refcount which runs `destructor` on zero.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
@@ -105,7 +80,6 @@ impl LinuxMemFdAllocator {
     /// `free` will call [`Self::deref`] on it, which on the final ref drops
     /// the `Box`. A `*mut Self` derived from `&self` (SharedReadOnly
     /// provenance) would make that `heap::take` UB.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) unsafe fn allocator(this: *mut Self) -> StdAllocator {
         StdAllocator {
             ptr: this.cast::<c_void>(),
@@ -113,7 +87,6 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn from(alloc: StdAllocator) -> Option<*mut Self> {
         if core::ptr::eq(alloc.vtable, allocator_interface::VTABLE) {
             Some(alloc.ptr.cast::<Self>())
@@ -126,7 +99,6 @@ impl LinuxMemFdAllocator {
     /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
     /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
     /// embedded allocator); the caller must NOT consume that ref separately.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) unsafe fn alloc(
         this: *mut Self,
         len: usize,
@@ -175,7 +147,6 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn should_use(bytes: &[u8]) -> bool {
         if !sys::can_use_memfd() {
             return false;
@@ -190,7 +161,6 @@ impl LinuxMemFdAllocator {
         bytes.len() >= 1024 * 1024 * 8
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
         let mut label_buf = [0u8; 128];
         let label: &core::ffi::CStr = {
@@ -249,23 +219,13 @@ impl LinuxMemFdAllocator {
             }
         }
 
-        // `Self::new` returns refcount=1; `into_raw()` extracts the
-        // `heap::alloc` pointer and transfers the +1 to us (RefPtr has no
-        // `Drop`). On `Ok` that ref moves into `res.allocator`; on `Err`
-        // we `deref` it explicitly.
-        let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
-
-        // SAFETY: `memfd` is the `heap::alloc` pointer
-        // (full provenance) with one live ref — required by `Self::alloc`.
-        match unsafe { Self::alloc(memfd, bytes.len(), 0, libc::MAP_SHARED) } {
-            Ok(res) => Ok(res),
-            Err(err) => {
-                // SAFETY: we still own the +1 from `into_raw()`; release it
-                // (closes the fd and frees the Box on hitting zero).
-                unsafe { Self::deref(memfd) };
-                Err(err)
-            }
-        }
+        let memfd = Self::new(fd, bytes.len());
+        // SAFETY: `memfd` is the `heap::alloc` pointer (full provenance) with
+        // one live ref — required by `Self::alloc`.
+        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len(), 0, libc::MAP_SHARED) }?;
+        // That ref now lives in `res.allocator`.
+        let _ = memfd.into_raw();
+        Ok(res)
     }
 }
 
@@ -273,7 +233,6 @@ impl LinuxMemFdAllocator {
 // The vtable functions are kept as raw-ptr free functions so that `free`
 // retains the `heap::alloc` *mut provenance it needs to drop `self`.
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 mod allocator_interface {
     use super::*;
 

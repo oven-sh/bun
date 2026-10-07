@@ -4,7 +4,7 @@ const PublicArray = globalThis.Array;
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values },
+  symbols: { _strings, _values, _flags },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
@@ -363,8 +363,8 @@ interface QueryNormalizationAdapter {
   placeholder(index: number): string;
   /** Pushes a plain bound value and returns its SQL fragment (always consumes one binding index). */
   bindParam(value: unknown, binding_values: unknown[], index: number): string;
-  /** Shifts the "$N" of a `sql.unsafe` fragment with `count` values past `offset` earlier bindings; "?" is a no-op. */
-  offsetFragmentPlaceholders(fragment: string, offset: number, count: number): string;
+  /** Throws unless a nested `sql.unsafe` whose `count` values follow `offset` bound ones numbers them for the whole query. */
+  checkFragmentPlaceholders(text: string, offset: number, count: number): void;
   /** Detects the SQL command preceding a helper, throwing if helpers are not allowed there. */
   getHelperCommand(query: string): SQLCommand;
   /** Whether the UPDATE helper should omit the SET keyword (MySQL upsert). */
@@ -426,18 +426,23 @@ function normalizeQuery(
         if (value instanceof Query) {
           const q = value as QueryType<any, any>;
           const sub_strings = q[_strings];
-          let [sub_query, sub_values] = normalizeQuery(adapter, sub_strings, q[_values], binding_idx);
-          const sub_values_count = sub_values.length;
-          if (typeof sub_strings === "string" && sub_values_count > 0) {
-            // sql.unsafe(text, params) numbers its placeholders from $1 as if it ran on its own
-            sub_query = adapter.offsetFragmentPlaceholders(sub_query, binding_idx - 1, sub_values_count);
+          const [sub_query, sub_values] = normalizeQuery(adapter, sub_strings, q[_values], binding_idx);
+
+          if (typeof sub_strings === "string") {
+            if (!$isArray(sub_values)) {
+              throw new SyntaxError("Nested sql.unsafe() values must be an array");
+            }
+            const count = sub_values.length;
+            if (count > 0 && binding_idx > 1 && q[_flags] & SQLQueryFlags.unsafe) {
+              adapter.checkFragmentPlaceholders(sub_query, binding_idx - 1, count);
+            }
           }
 
           query += sub_query;
-          for (let j = 0; j < sub_values_count; j++) {
+          for (let j = 0; j < sub_values.length; j++) {
             binding_values.push(sub_values[j]);
           }
-          binding_idx += sub_values_count;
+          binding_idx += sub_values.length;
         } else if (value instanceof SQLHelper) {
           const command = adapter.getHelperCommand(query);
           const { columns, value: items } = value as SQLHelper<any>;
@@ -1015,10 +1020,6 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return pushBindParam(this, value, binding_values, index);
   }
 
-  offsetFragmentPlaceholders(fragment: string, _offset: number, _count: number): string {
-    return fragment;
-  }
-
   isUpsertUpdate(_query: string): boolean {
     return false;
   }
@@ -1028,6 +1029,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       throw new SyntaxError("Update needs to have at least one column");
     }
   }
+
+  // MySQL's "?" binds by position, so a nested fragment always reads the values pushed with it.
+  checkFragmentPlaceholders(_text: string, _offset: number, _count: number): void {}
 
   normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
     return normalizeQuery(this, strings, values, binding_idx);

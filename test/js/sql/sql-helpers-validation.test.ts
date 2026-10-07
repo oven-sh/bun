@@ -75,6 +75,100 @@ describe.each(adapters)("%s helper validation", (_adapter, makeSql) => {
       expect(err.message).toBe("Update needs to have at least one column");
     }
   });
+
+  test("a nested sql.unsafe rejects values that are not an array", async () => {
+    // The object form is what sqlite accepts for a top-level sql.unsafe. Nested, its values were dropped and
+    // the count of the parameters after it became NaN.
+    await using sql = makeSql();
+    const outcomes: string[] = [];
+    for (const query of [
+      () => sql`SELECT ${1} AS a, ${sql.unsafe("$b AS b", { $b: 2 })}`,
+      () => sql`SELECT ${sql.unsafe("$b AS b", { $b: 2 })}, ${1} AS a`,
+      () => sql`SELECT ${sql.unsafe("1 AS b", "abc" as any)}`,
+    ]) {
+      outcomes.push(
+        await query().then(
+          () => "resolved",
+          e => `${e.name}: ${e.message}`,
+        ),
+      );
+    }
+    expect(outcomes).toEqual(new Array(3).fill("SyntaxError: Nested sql.unsafe() values must be an array"));
+  });
+});
+
+// On PostgreSQL `$N` in a nested sql.unsafe() is the N-th parameter of the whole query. A fragment that has
+// values and follows other parameters must name its own last slot. Numbered from $1 it reads the earlier
+// values: `owner = ${7} and ${sql.unsafe("id = $1", [99])}` was sent as `owner = $1 and id = $1` with [7, 99].
+describe("postgres nested sql.unsafe with values", () => {
+  const makeSql = () => new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+  const outcome = (query: PromiseLike<unknown>) =>
+    query.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  const notNumbered = (own: string, last: number) =>
+    `SyntaxError: Nested sql.unsafe() parameters are numbered for the whole query: this fragment's ${own} here, but its text does not reference $${last}. Renumber it or use a sql\`\` fragment`;
+  const unchecked =
+    'SyntaxError: Nested sql.unsafe() with values cannot contain quotes, comments or a "$" that is not a $N parameter when it follows other parameters. Use a sql`` fragment for the values';
+
+  test("a fragment numbered from $1 behind other parameters is rejected", async () => {
+    await using sql = makeSql();
+    const reused = sql.unsafe("id = $1", [99]);
+    expect({
+      "behind a value": await outcome(sql`delete from t where owner = ${7} and ${sql.unsafe("id = $1", [99])}`),
+      // The first fragment is in front of every parameter, so its $1 is its own value.
+      "second of two fragments": await outcome(
+        sql`delete from t where ${sql.unsafe("owner = $1", [7])} and ${sql.unsafe("id = $1", [99])}`,
+      ),
+      "inside a nested template": await outcome(
+        sql`select * from t where ${sql`a = ${1} and ${sql.unsafe("b = $1", [2])}`}`,
+      ),
+      "one fragment used twice": await outcome(sql`select * from t where ${reused} or ${reused}`),
+      "behind an IN helper": await outcome(
+        sql`select * from t where id in ${sql([1, 2, 3])} and ${sql.unsafe("b = $1", [4])}`,
+      ),
+      "string values": await outcome(sql`select * from t where a = ${"a"} and ${sql.unsafe("b = $1", ["b"])}`),
+      "two values": await outcome(sql`select * from t where a = ${1} and ${sql.unsafe("b = $1 and c = $2", [2, 3])}`),
+      "only the first of two values": await outcome(
+        sql`select * from t where a = ${1} and ${sql.unsafe("b = $2", [2, 3])}`,
+      ),
+      "$20 is not $2": await outcome(sql`select * from t where a = ${1} and ${sql.unsafe("b = $20", [2])}`),
+      "values() on the outer query": await outcome(
+        sql`delete from t where owner = ${7} and ${sql.unsafe("id = $1", [99])}`.values(),
+      ),
+    }).toEqual({
+      "behind a value": notNumbered("value is $2", 2),
+      "second of two fragments": notNumbered("value is $2", 2),
+      "inside a nested template": notNumbered("value is $2", 2),
+      "one fragment used twice": notNumbered("value is $2", 2),
+      "behind an IN helper": notNumbered("value is $4", 4),
+      "string values": notNumbered("value is $2", 2),
+      "two values": notNumbered("values are $2..$3", 3),
+      "only the first of two values": notNumbered("values are $2..$3", 3),
+      "$20 is not $2": notNumbered("value is $2", 2),
+      "values() on the outer query": notNumbered("value is $2", 2),
+    });
+  });
+
+  test("a fragment behind other parameters is rejected when a $N in its text may not be a parameter", async () => {
+    await using sql = makeSql();
+    const texts = [
+      "what = 'x' and id = $2",
+      '"id" = $2',
+      "id = $2 -- the id",
+      "id = $2 /* the id */",
+      "id = $2 and what = $$x$$",
+      "id = $2 and what = $q$x$q$",
+      "col$2 = $2",
+      "id = $2x",
+    ];
+    const outcomes: Record<string, string> = {};
+    for (const text of texts) {
+      outcomes[text] = await outcome(sql`delete from t where owner = ${7} and ${sql.unsafe(text, [99])}`);
+    }
+    expect(outcomes).toEqual(Object.fromEntries(texts.map(text => [text, unchecked])));
+  });
 });
 
 const distributedAdapters: [string, () => SQL][] = [
@@ -174,5 +268,12 @@ describe("sqlite helper behavior preserved", () => {
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([{ id: null }, { id: 1 }], "id")}`).toEqual([{ num: 1 }]);
     // a null item without a column binds NULL
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([null, 1])}`).toEqual([{ num: 1 }]);
+  });
+
+  test("nested sql.unsafe with positional values still binds its own values", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    expect(await sql`SELECT ${1} AS a, ${sql.unsafe("? AS b, ? AS c", [2, 3])}, ${4} AS d`).toEqual([
+      { a: 1, b: 2, c: 3, d: 4 },
+    ]);
   });
 });

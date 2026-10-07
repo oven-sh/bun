@@ -360,6 +360,7 @@ export default {
     _handle,
     _strings,
     _values,
+    _flags,
     _results,
   },
 };

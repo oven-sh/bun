@@ -251,205 +251,81 @@ function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: str
   return new PostgresError(error.message, error);
 }
 
-// prettier-ignore
 const enum Char {
-  TAB = 9,              // \t
-  LINE_FEED = 10,       // \n
-  VERTICAL_TAB = 11,    // \v
-  FORM_FEED = 12,       // \f
-  CARRIAGE_RETURN = 13, // \r
-  SPACE = 32,           // ' '
-  DOUBLE_QUOTE = 34,    // "
-  DOLLAR = 36,          // $
-  SINGLE_QUOTE = 39,    // '
-  ASTERISK = 42,        // *
-  MINUS = 45,           // -
-  FORWARD_SLASH = 47,   // /
-  ZERO = 48,            // 0
-  NINE = 57,            // 9
-  UPPER_A = 65,         // A
-  UPPER_E = 69,         // E
-  UPPER_Z = 90,         // Z
-  BACKSLASH = 92,       // \
-  UNDERSCORE = 95,      // _
-  LOWER_A = 97,         // a
-  LOWER_E = 101,        // e
-  LOWER_Z = 122,        // z
+  DOUBLE_QUOTE = 34, // "
+  DOLLAR = 36, // $
+  SINGLE_QUOTE = 39, // '
+  ASTERISK = 42, // *
+  MINUS = 45, // -
+  SLASH = 47, // /
+  ZERO = 48, // 0
+  NINE = 57, // 9
+  UPPER_A = 65, // A
+  UPPER_Z = 90, // Z
+  UNDERSCORE = 95, // _
+  LOWER_A = 97, // a
+  LOWER_Z = 122, // z
 }
 
-// Every predicate rejects the NaN charCodeAt yields past the end, so the scanning loops need no bounds checks.
-function isDigit(c: number) {
-  return c >= Char.ZERO && c <= Char.NINE;
-}
-
-// ident_start in the server's lexer: letters, underscore and every non-ASCII character
-function isIdentStart(c: number) {
+// What continues an identifier in the server's lexer. False for the NaN that charCodeAt returns outside the text.
+function isIdentifierChar(c: number): boolean {
   return (
     (c >= Char.LOWER_A && c <= Char.LOWER_Z) ||
     (c >= Char.UPPER_A && c <= Char.UPPER_Z) ||
+    (c >= Char.ZERO && c <= Char.NINE) ||
     c === Char.UNDERSCORE ||
+    c === Char.DOLLAR ||
     c >= 0x80
   );
 }
 
-// ident_cont additionally allows digits and `$`, which is what makes `col$1` a single identifier
-function isIdentCont(c: number) {
-  return isIdentStart(c) || isDigit(c) || c === Char.DOLLAR;
-}
-
-// The tag of a `$tag$` delimiter is ident_cont minus `$`
-function isDollarQuoteTagChar(c: number) {
-  return isIdentStart(c) || isDigit(c);
-}
-
-/** `i` is the index right after an opening quote; returns the index right after the matching closing quote. */
-function skipQuoted(text: string, i: number, quote: number, backslashEscapes: boolean): number {
-  const len = text.length;
-  while (i < len) {
-    const c = text.charCodeAt(i++);
-    if (c === quote) {
-      if (text.charCodeAt(i) !== quote) {
-        return i;
-      }
-      // a doubled quote is part of the content
-      i++;
-    } else if (backslashEscapes && c === Char.BACKSLASH) {
-      i++;
-    }
-  }
-  return len;
-}
-
-/** `i` is the index right after `--`; returns the index of the line end, which to the server is `\n` or `\r`. */
-function skipLineComment(text: string, i: number): number {
-  const len = text.length;
-  while (i < len) {
-    const c = text.charCodeAt(i);
-    if (c === Char.LINE_FEED || c === Char.CARRIAGE_RETURN) {
-      break;
-    }
-    i++;
-  }
-  return i;
-}
-
-/** `skipQuoted` for a string constant, also covering the parts it may be continued with on the following lines. */
-function skipStringConstant(text: string, i: number, backslashEscapes: boolean): number {
-  for (;;) {
-    i = skipQuoted(text, i, Char.SINGLE_QUOTE, backslashEscapes);
-    // the server joins 'a' newline 'b' into one constant, so an E'' prefix keeps escaping inside the later parts too
-    let j = i;
-    let sawNewline = false;
-    for (;;) {
-      const c = text.charCodeAt(j);
-      if (c === Char.LINE_FEED || c === Char.CARRIAGE_RETURN) {
-        sawNewline = true;
-      } else if (c === Char.MINUS && text.charCodeAt(j + 1) === Char.MINUS) {
-        j = skipLineComment(text, j + 2);
-        continue;
-      } else if (c !== Char.SPACE && c !== Char.TAB && c !== Char.FORM_FEED && c !== Char.VERTICAL_TAB) {
-        break;
-      }
-      j++;
-    }
-    if (!sawNewline || text.charCodeAt(j) !== Char.SINGLE_QUOTE) {
-      return i;
-    }
-    i = j + 1;
-  }
-}
-
-/** `i` is the index right after a comment opener; returns the index right after the closer. Block comments nest. */
-function skipBlockComment(text: string, i: number): number {
-  const len = text.length;
-  let depth = 1;
-  while (i < len && depth > 0) {
-    const c = text.charCodeAt(i);
-    const next = text.charCodeAt(i + 1);
-    if (c === Char.FORWARD_SLASH && next === Char.ASTERISK) {
-      depth++;
-      i += 2;
-    } else if (c === Char.ASTERISK && next === Char.FORWARD_SLASH) {
-      depth--;
-      i += 2;
-    } else {
-      i++;
-    }
-  }
-  return i;
-}
-
-/** Rewrites each `$k` of a `sql.unsafe` fragment with `count` values to `$(k + offset)`, tokenized like the server. */
-function offsetParameterReferences(fragment: string, offset: number, count: number): string {
-  const len = fragment.length;
-  let out = "";
-  let copied = 0;
+/**
+ * `$N` in a nested `sql.unsafe` is the N-th parameter of the whole query. A fragment whose `count` values follow
+ * `offset` bound ones must name its last slot, `$(offset + count)`: numbered from `$1` it would read earlier values.
+ * Text in which a `$N` may not be a parameter (a quote, a comment, a `$` that is not a lone `$N`) is refused, not lexed.
+ */
+function checkNestedUnsafePlaceholders(text: string, offset: number, count: number): void {
+  const last = offset + count;
+  const length = text.length;
+  let namesLast = false;
   let i = 0;
-  while (i < len) {
-    const c = fragment.charCodeAt(i);
-    switch (c) {
-      case Char.DOLLAR: {
-        let j = i + 1;
-        if (isDigit(fragment.charCodeAt(j))) {
-          while (isDigit(fragment.charCodeAt(j))) j++;
-          const k = Number(fragment.slice(i + 1, j));
-          if (k < 1 || k > count) {
-            // shifted, it would silently read one of the enclosing query's values
-            throw new SyntaxError(
-              `Nested sql.unsafe fragment references $${k} but was given ${count} parameter${count === 1 ? "" : "s"}`,
-            );
-          }
-          out += fragment.slice(copied, i + 1) + (k + offset);
-          copied = i = j;
-          break;
-        }
-        if (isIdentStart(fragment.charCodeAt(j))) {
-          j++;
-          while (isDollarQuoteTagChar(fragment.charCodeAt(j))) j++;
-        }
-        if (fragment.charCodeAt(j) === Char.DOLLAR) {
-          // `$$` or `$tag$` opens a string that runs until the same delimiter appears again
-          const delimiter = fragment.slice(i, j + 1);
-          const end = fragment.indexOf(delimiter, j + 1);
-          i = end === -1 ? len : end + delimiter.length;
-        } else {
-          i = j;
-        }
-        break;
+  while (i < length) {
+    const c = text.charCodeAt(i++);
+    if (c === Char.DOLLAR) {
+      const digits = i;
+      let n = 0;
+      let next = text.charCodeAt(i);
+      while (next >= Char.ZERO && next <= Char.NINE) {
+        n = n * 10 + (next - Char.ZERO);
+        next = text.charCodeAt(++i);
       }
-      case Char.SINGLE_QUOTE:
-        i = skipStringConstant(fragment, i + 1, false);
-        break;
-      case Char.DOUBLE_QUOTE:
-        i = skipQuoted(fragment, i + 1, c, false);
-        break;
-      case Char.MINUS:
-        if (fragment.charCodeAt(i + 1) === Char.MINUS) {
-          i = skipLineComment(fragment, i + 2);
-        } else {
-          i++;
-        }
-        break;
-      case Char.FORWARD_SLASH:
-        if (fragment.charCodeAt(i + 1) === Char.ASTERISK) {
-          i = skipBlockComment(fragment, i + 2);
-        } else {
-          i++;
-        }
-        break;
-      default:
-        if (!isIdentStart(c)) {
-          i++;
-        } else if ((c === Char.UPPER_E || c === Char.LOWER_E) && fragment.charCodeAt(i + 1) === Char.SINGLE_QUOTE) {
-          // E'...' is the one string form in which a backslash escapes the following character
-          i = skipStringConstant(fragment, i + 2, true);
-        } else {
-          i++;
-          while (isIdentCont(fragment.charCodeAt(i))) i++;
-        }
+      if (i === digits || isIdentifierChar(next) || isIdentifierChar(text.charCodeAt(digits - 2))) {
+        throw uncheckedNestedUnsafeError();
+      }
+      if (n === last) {
+        namesLast = true;
+      }
+    } else if (
+      c === Char.SINGLE_QUOTE ||
+      c === Char.DOUBLE_QUOTE ||
+      (c === Char.MINUS && text.charCodeAt(i) === Char.MINUS) ||
+      (c === Char.SLASH && text.charCodeAt(i) === Char.ASTERISK)
+    ) {
+      throw uncheckedNestedUnsafeError();
     }
   }
-  return copied === 0 ? fragment : out + fragment.slice(copied);
+  if (!namesLast) {
+    const own = count === 1 ? `value is $${last}` : `values are $${offset + 1}..$${last}`;
+    throw new SyntaxError(
+      `Nested sql.unsafe() parameters are numbered for the whole query: this fragment's ${own} here, but its text does not reference $${last}. Renumber it or use a sql\`\` fragment`,
+    );
+  }
+}
+
+function uncheckedNestedUnsafeError(): SyntaxError {
+  return new SyntaxError(
+    'Nested sql.unsafe() with values cannot contain quotes, comments or a "$" that is not a $N parameter when it follows other parameters. Use a sql`` fragment for the values',
+  );
 }
 
 initPostgres(
@@ -722,16 +598,16 @@ class PostgresAdapter
     return "$" + index;
   }
 
+  checkFragmentPlaceholders(text: string, offset: number, count: number): void {
+    checkNestedUnsafePlaceholders(text, offset, count);
+  }
+
   bindParam(value: unknown, binding_values: unknown[], index: number): string {
     if (value instanceof SQLArrayParameter) {
       binding_values.push(value.serializedValues);
       return `$${index}::${value.arrayType}[] `;
     }
     return pushBindParam(this, value, binding_values, index);
-  }
-
-  offsetFragmentPlaceholders(fragment: string, offset: number, count: number): string {
-    return offsetParameterReferences(fragment, offset, count);
   }
 
   #listener: ListenConnection | null = null;

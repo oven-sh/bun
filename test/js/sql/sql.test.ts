@@ -1452,6 +1452,41 @@ if (isDockerEnabled()) {
       expect(result[0].x).toBe(1);
     });
 
+    test("sql.unsafe with values nested behind a parameter is numbered for the whole query", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const docs = sql("nested_unsafe_" + randomUUIDv7("hex").replaceAll("-", ""));
+      await sql`create temporary table ${docs} (owner int, id int, what text)`;
+
+      // Deletes "document 99 of owner 7" twice: with the fragment numbered from $1, then with the fragment
+      // numbered for the whole query.
+      async function deleteTwice(handle: Bun.SQL) {
+        await handle`truncate ${docs}`;
+        await handle`insert into ${docs} values (7, 7, 'keep me'), (7, 99, 'delete me'), (8, 99, 'of another owner')`;
+        const left = async () => (await handle`select what from ${docs} order by owner, id`).map(row => row.what);
+
+        // Sent as written this is `owner = $1 and id = $1` with [7, 99] bound: it deletes 'keep me'.
+        const fromOne = await handle`delete from ${docs} where owner = ${7} and ${handle.unsafe("id = $1", [99])}`.then(
+          () => "resolved",
+          e => e.name,
+        );
+        const afterFromOne = await left();
+        await handle`delete from ${docs} where owner = ${7} and ${handle.unsafe("id = $2", [99])}`;
+        return { fromOne, afterFromOne, afterWholeQuery: await left() };
+      }
+      const expected = {
+        fromOne: "SyntaxError",
+        afterFromOne: ["keep me", "delete me", "of another owner"],
+        afterWholeQuery: ["keep me", "of another owner"],
+      };
+
+      expect(await deleteTwice(sql)).toEqual(expected);
+      expect(await sql.begin(tx => deleteTwice(tx))).toEqual(expected);
+      {
+        using reserved = await sql.reserve();
+        expect(await deleteTwice(reserved)).toEqual(expected);
+      }
+    });
+
     test("Undefined values throws", async () => {
       // in bun case undefined is null should we fix this? null is a better DX
 

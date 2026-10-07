@@ -119,7 +119,9 @@ impl Plan {
             .collect();
         let mut spared: Vec<usize> = Vec::new();
         for (idx, folder) in self.folders.iter().enumerate() {
-            let (FolderKind::NodeModules, Some(dir)) = (&folder.kind, &folder.dir) else {
+            let (FolderKind::NodeModules | FolderKind::Scope { .. }, Some(dir)) =
+                (&folder.kind, &folder.dir)
+            else {
                 continue;
             };
             if sys::fstat(dir.fd())
@@ -133,19 +135,29 @@ impl Plan {
         if spared.is_empty() {
             return;
         }
-        // The folders of the packages in a spared folder go with it.
+        // The `node_modules` of a package in a spared folder goes with it. A link on the way down, a workspace's for one, leads out of the folder.
         let led_to = spared.len();
         for (idx, folder) in self.folders.iter().enumerate() {
-            let is_below = |above: &[u8]| {
-                folder.path.len() > above.len()
-                    && folder.path.starts_with(above)
-                    && folder.path[above.len()] == SEP
+            if !matches!(folder.kind, FolderKind::NodeModules) {
+                continue;
+            }
+            let is_inside = |at: usize| {
+                let above = &self.folders[at];
+                let (Some(dir), Some(below)) = (
+                    &above.dir,
+                    folder
+                        .path
+                        .strip_prefix(&*above.path)
+                        .and_then(|rest| rest.strip_prefix(&[SEP])),
+                ) else {
+                    return false;
+                };
+                (0..below.len())
+                    .filter(|&end| below[end] == SEP)
+                    .chain(core::iter::once(below.len()))
+                    .all(|end| lstat_kind(dir, &below[..end]) == EntryKind::Directory)
             };
-            if matches!(folder.kind, FolderKind::NodeModules)
-                && spared[..led_to]
-                    .iter()
-                    .any(|&at| is_below(&self.folders[at].path))
-            {
+            if spared[..led_to].iter().any(|&at| is_inside(at)) {
                 spared.push(idx);
             }
         }
@@ -154,11 +166,11 @@ impl Plan {
         }
         let folders = &self.folders;
         self.removals.retain(|removal| {
-            let folder = match folders[removal.folder].kind {
+            let parent = match folders[removal.folder].kind {
                 FolderKind::Scope { parent } => parent,
                 _ => removal.folder,
             };
-            !spared.contains(&folder)
+            !spared.contains(&removal.folder) && !spared.contains(&parent)
         });
     }
 

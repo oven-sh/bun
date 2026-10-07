@@ -3470,6 +3470,39 @@ test.concurrent("isolated: the root keeps what an install wrote into it through 
   expect(exitCode).toBe(1);
 });
 
+// The link leads to the root's folder. `b` is a real folder beside it and is pruned as in any other run.
+test.concurrent("hoisted: a workspace linked to the root's folder does not stop the pruning of a sibling", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } }, b: { dependencies: { "no-deps": "2.0.0" } } },
+  });
+  symlinkSync(join(dir, "node_modules"), join(dir, "packages", "a", "node_modules"), "junction");
+  const rootStray = plant(dir, "node_modules/stray-root");
+  const siblingStray = plant(dir, "packages/b/node_modules/stray-b");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+  expect(lines(stdout).slice(2)).toEqual(["- stray-b (node_modules/b/node_modules)", REMOVED(1, 7)]);
+  expect({ root: existsSync(rootStray), sibling: existsSync(siblingStray) }).toEqual({ root: true, sibling: false });
+  expect(exitCode).toBe(1);
+});
+
+// The link leads to a scope folder of the root, so the entries of that scope folder are not pruned.
+test.concurrent("hoisted: a workspace node_modules that is a link to a scope folder of the root", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "@types/is-number": "1.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  symlinkSync(join(dir, "node_modules", "@types"), join(dir, "packages", "a", "node_modules"), "junction");
+  const stray = plant(dir, "node_modules/@types/stray");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+  expect(lines(stdout).at(-1)).toBe(NOTHING_ELSE(4, 1));
+  expect(existsSync(stray)).toBeTrue();
+  expect(exitCode).toBe(1);
+});
+
 // `a`'s one-dep has its own no-deps below it. Through the link that copy lands below `b`'s one-dep, in a folder of its own.
 test.concurrent(
   "hoisted: a folder below a sibling's package keeps what an install wrote into it through a link",

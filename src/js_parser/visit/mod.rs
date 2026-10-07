@@ -706,17 +706,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             None
         };
-        let (inliner, macro_args) = if self.macro_.in_args {
-            (&mut self.macro_.consts, &mut self.const_values)
-        } else {
-            (&mut self.const_values, &mut self.macro_.consts)
-        };
-        if inlinable {
-            inliner.put(r#ref, value).expect("oom");
-        }
-        if let Some(value) = for_macro_args {
-            macro_args.put(r#ref, value).expect("oom");
-        }
+        self.macro_.put_const(
+            &mut self.const_values,
+            r#ref,
+            inlinable.then_some(value),
+            for_macro_args,
+        );
     }
 
     /// `visit_decl` for an identifier binding in a file that imports a macro.

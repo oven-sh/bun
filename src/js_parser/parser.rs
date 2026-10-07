@@ -1596,6 +1596,28 @@ impl<'a> MacroState<'a> {
             inlining_outside_args: false,
         }
     }
+
+    /// Inside the swap the two tables trade places. Out of line: one copy for every `P`.
+    #[inline(never)]
+    pub(crate) fn put_const(
+        &mut self,
+        const_values: &mut bun_ast::ast_result::ConstValuesMap,
+        r#ref: Ref,
+        for_inliner: Option<Expr>,
+        for_macro_args: Option<Expr>,
+    ) {
+        let (inliner, macro_args) = if self.in_args {
+            (&mut self.consts, const_values)
+        } else {
+            (const_values, &mut self.consts)
+        };
+        if let Some(value) = for_inliner {
+            inliner.put(r#ref, value).expect("oom");
+        }
+        if let Some(value) = for_macro_args {
+            macro_args.put(r#ref, value).expect("oom");
+        }
+    }
 }
 
 pub struct Jest {

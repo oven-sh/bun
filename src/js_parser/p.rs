@@ -274,6 +274,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) await_was_refused: bool,
     /// Tolerant mode: the loop of `reparseTopLevelAwait` continues to the end of the file.
     pub(crate) reparses_rest_of_file: bool,
+    /// Tolerant mode: a computed name in the top-level statement being parsed has `await` as an
+    /// identifier.
+    pub(crate) await_in_computed_name: bool,
+    /// Tolerant mode: the top-level statements that have one and that `reparseTopLevelAwait`
+    /// parses again for another `await`. Those listed before the parse starts are parsed that way.
+    pub(crate) statements_with_await_in_names: Vec<bun_ast::Loc>,
     /// Tolerant mode: the decorators saved by `note_stray_decorators`, until the statement list
     /// being parsed takes them.
     pub(crate) stray_decorators: Vec<Expr>,
@@ -9953,6 +9959,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             has_es_module_syntax: false,
             await_was_refused: false,
             reparses_rest_of_file: false,
+            await_in_computed_name: false,
+            statements_with_await_in_names: Vec::new(),
             stray_decorators: Vec::new(),
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

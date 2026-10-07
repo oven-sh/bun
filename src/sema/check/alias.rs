@@ -29,18 +29,30 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getUnionTypeFromSortedList`: the members of `union`, with `origin` and no alias.
-    pub(super) fn with_origin(&self, union: TypeId, origin: OriginKey<'_>) -> TypeId {
+    /// The type of `key` with `alias` as `Type.alias` and `origin` as `UnionType.origin`.
+    pub(super) fn intern_key_with_alias(
+        &self,
+        key: TypeKey<'_>,
+        alias: Option<(Sym, &[TypeId])>,
+        origin: OriginKey<'_>,
+    ) -> TypeId {
+        let is_enum =
+            alias.is_some_and(|(alias, _)| self.files().flags(alias).intersects(SymFlags::ENUM));
         self.types().intern_key_with(
-            TypeKey::Data(self.data(union)),
+            key,
             &ProvenanceKey {
-                alias: None,
+                alias,
                 origin,
-                is_enum: false,
+                is_enum,
                 stored_under: None,
                 is_array_literal: false,
             },
         )
+    }
+
+    /// `getUnionTypeFromSortedList`: the members of `union`, with `origin` and no alias.
+    pub(super) fn with_origin(&self, union: TypeId, origin: OriginKey<'_>) -> TypeId {
+        self.intern_key_with_alias(TypeKey::Data(self.data(union)), None, origin)
     }
 
     /// The alias stored in `ty`.
@@ -51,16 +63,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `ty` with `alias` and `type_arguments` as `Type.alias`.
     pub(super) fn with_alias(&self, ty: TypeId, alias: Sym, type_arguments: &[TypeId]) -> TypeId {
-        self.types().intern_key_with(
-            TypeKey::Data(self.data(ty)),
-            &ProvenanceKey {
-                alias: Some((alias, type_arguments)),
-                origin: self.origin(ty).into(),
-                is_enum: self.files().flags(alias).intersects(SymFlags::ENUM),
-                stored_under: None,
-                is_array_literal: false,
-            },
-        )
+        let key = TypeKey::Data(self.data(ty));
+        self.intern_key_with_alias(key, Some((alias, type_arguments)), self.origin(ty).into())
     }
 
     /// The end of `getUnionTypeWorker`, given an alias. `created` is the union without one. A named

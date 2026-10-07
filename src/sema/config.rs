@@ -624,23 +624,25 @@ fn validate_specs(
         .collect()
 }
 
-/// The same, with `over` applied after everything in the configuration file: the options a command
-/// line adds to it, which may depend on whether the file has `references`. The result owns its
+/// `GetParsedCommandLineOfConfigFilePath`. `over` is applied after everything in the configuration
+/// file: the options a command line adds to it, which may depend on whether the file has
+/// `references`. `Err`: the file cannot be read, and there is no project. The result owns its
 /// memory: `session` only holds what is of no use afterwards.
 pub fn load_overriding(
     host: &dyn Host,
     session: &Session,
     path: &[u8],
     over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
-) -> Project {
+) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
-    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors);
-    let mut raw = raw.unwrap_or_default();
+    let Some(mut raw) = parse_config(host, session, path, &mut Vec::new(), &mut errors) else {
+        return Err(errors);
+    };
     let base = dirname::<Posix>(path);
     let references = get_project_references(&raw.references, base);
     let has_references = references.is_some_and(|list| !list.is_empty());
     merge_compiler_options(&mut raw.compiler, over(has_references), &[]);
-    project_from_raw(host, session, path, base, raw, errors)
+    Ok(project_from_raw(host, session, path, base, raw, errors))
 }
 
 /// The project consisting of `files` only, or of everything under `dir` if `files` is empty, with

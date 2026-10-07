@@ -514,7 +514,7 @@ impl<'p, 's> Checker<'p, 's> {
             flags,
             |printer| {
                 printer
-                    .try_reuse_type_node(file, node)
+                    .try_reuse_type_node(file, node, 0)
                     .map(|node| node.text)
             },
         )
@@ -1949,10 +1949,18 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `DeclarationNameToString`. The source text is used only for what `node.Text()` lacks, the escapes of an identifier. A name is not
     /// always at `start` (the name of an `@overload` is at the tag), and a missing name still has a token at that position.
     fn declaration_name_to_string(&self, file: FileId, name: hir::Node) -> Vec<u8> {
-        match self.get_text_of_node(file, name) {
+        let text = match self.get_text_of_node(file, name) {
             written if bun_core::strings::contains_char(written, b'\\') => written.to_vec(),
             _ => self.property_key_text(file, name),
+        };
+        let hir = self.c.hir(file);
+        if hir.jsdoc_asterisks.is_empty() {
+            return text;
         }
+        // `GetTextOfNode` does not skip the `*` before the name.
+        let (start, end) = (hir.start(name), self.c.end_of_node(file, name));
+        let from = super::spans::start_of_error_range(hir, start, end);
+        [&hir.text[from as usize..start as usize], &text[..]].concat()
     }
 
     /// The same for a clone of the name, which the printer emits as its `node.Text()`: an
@@ -3579,9 +3587,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 }
                 self.visited_types.push(ty);
                 // `tryReuseExistingNonParameterTypeNode`: `getTypeFromTypeNode(existing, true)` is
-                // nil if the mapper changes the type.
+                // nil if the mapper changes the type. `existing` is the query, inside any
+                // parentheses.
                 let reused = match declared == ty {
-                    true => self.try_reuse_type_node(file, node),
+                    true => self.try_reuse_type_node(file, node, self.c.hir(file)[node].pos),
                     false => None,
                 };
                 self.visited_types.retain(|&visited| visited != ty);
@@ -3626,6 +3635,14 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     return self.symbol_to_type_node(target, false, Vec::new());
                 }
                 Identity::Instance(target)
+            }
+            TypeData::Synth(shape) => {
+                if let Some(symbol) = shape.symbol
+                    && self.should_emit_type_of_symbol(symbol, SymFlags::VALUE)
+                {
+                    return self.symbol_to_type_node(symbol, true, Vec::new());
+                }
+                Identity::Type(ty)
             }
             _ => Identity::Type(ty),
         };
@@ -3980,10 +3997,10 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                     });
                 }
                 let last = &properties[properties.len() - 1];
-                self.add_property_to_element_list(ty, last, mapper, &mut elements);
+                self.add_property_to_element_list(last, mapper, &mut elements);
                 break;
             }
-            self.add_property_to_element_list(ty, property, mapper, &mut elements);
+            self.add_property_to_element_list(property, mapper, &mut elements);
         }
         elements
     }
@@ -4191,54 +4208,84 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         members.collect()
     }
 
-    /// The syntax of the name in each declaration of `prop`.
-    fn property_name_syntaxes(&mut self, prop: &Prop, out: &mut Vec<PropertyNameSyntax>) {
+    /// `isStringNamed` and `isSingleQuotedStringNamed` for a declaration that is not a member of
+    /// an object literal.
+    fn name_syntax_of_declaration(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+    ) -> PropertyNameSyntax {
+        let hir = self.c.hir(file);
         let plain = PropertyNameSyntax {
             is_string: false,
             is_single_quoted: false,
             is_computed: false,
         };
+        // `ast.IsStringLiteral(name)` for a name whose first token is at `start`.
+        let name_at = |start: u32| {
+            let first = hir.text.get(start as usize).copied();
+            PropertyNameSyntax {
+                is_string: matches!(first, Some(b'"' | b'\'')),
+                is_single_quoted: first == Some(b'\''),
+                is_computed: false,
+            }
+        };
+        // `name.Expression()` of a `ComputedPropertyName`, or `ArgumentExpression` of an
+        // `ElementAccessExpression`.
+        let (key, is_computed) = match declaration {
+            Decl::Member(member) => match hir[member].key {
+                PropKey::Computed(e) => (e, true),
+                _ => {
+                    return PropertyNameSyntax {
+                        is_string: hir[member].flags.contains(Flags::STRING_NAME),
+                        ..name_at(hir[member].name_pos)
+                    };
+                }
+            },
+            Decl::Expando(e) | Decl::ThisProperty(e) | Decl::ExportsProperty(e) => {
+                let PropKey::Computed(name) = self.c.key_of_assignment_declaration(file, e) else {
+                    return plain;
+                };
+                // `GetElementOrPropertyAccessName`, which skips parentheses.
+                if crate::bind::string_literal_text(hir, name).is_some()
+                    || matches!(hir[name].kind, ExprKind::Number(_))
+                {
+                    return name_at(hir[name].pos);
+                }
+                (name, false)
+            }
+            _ => {
+                let node = hir.node(declaration);
+                let name = hir.name(node);
+                match hir.key_of(node) {
+                    (PropKey::Computed(e), _) => (e, true),
+                    (_, NameKind::ComputedString) => {
+                        return PropertyNameSyntax {
+                            is_string: true,
+                            ..plain
+                        };
+                    }
+                    _ if name.is_some() => return name_at(hir.start(name)),
+                    _ => return plain,
+                }
+            }
+        };
+        let key = self.c.type_of_expr(file, key);
+        PropertyNameSyntax {
+            is_string: self.c.is_string_like(key),
+            is_computed,
+            ..plain
+        }
+    }
+
+    /// The syntax of the name in each declaration of `prop`.
+    fn property_name_syntaxes(&mut self, prop: &Prop, out: &mut Vec<PropertyNameSyntax>) {
         for_each_declared(prop, &mut |prop| {
             match &prop.source {
                 PropSource::Symbol(symbol) => {
-                    let list = self.c.members_of_symbol(*symbol);
-                    let assignments = match list.is_empty() {
-                        true => self.c.assignments_of_symbol(*symbol),
-                        false => smallvec::SmallVec::new(),
-                    };
-                    if list.is_empty() && assignments.is_empty() {
-                        out.push(plain);
-                    }
-                    for &declaration in assignments.iter() {
-                        let hir = self.c.hir(symbol.file);
-                        let is_string = match hir[declaration].kind {
-                            ExprKind::Assign { target, .. } => match hir[target].kind {
-                                ExprKind::Index { index, .. } => {
-                                    let key = self.c.type_of_expr(symbol.file, index);
-                                    self.c.is_string_like(key)
-                                }
-                                _ => false,
-                            },
-                            _ => false,
-                        };
-                        out.push(PropertyNameSyntax { is_string, ..plain });
-                    }
-                    for &(file, member) in list.iter() {
-                        let hir = self.c.hir(file);
-                        let member = &hir[member];
-                        let (is_string, is_computed) = match member.key {
-                            PropKey::Computed(e) => {
-                                let key = self.c.type_of_expr(file, e);
-                                (self.c.is_string_like(key), true)
-                            }
-                            _ => (member.flags.contains(Flags::STRING_NAME), false),
-                        };
-                        out.push(PropertyNameSyntax {
-                            is_string,
-                            is_single_quoted: hir.text.get(member.name_pos as usize)
-                                == Some(&b'\''),
-                            is_computed,
-                        });
+                    let declarations = self.c.declarations_of_property(*symbol);
+                    for &(file, declaration) in declarations.iter() {
+                        out.push(self.name_syntax_of_declaration(file, declaration));
                     }
                 }
                 PropSource::Literal(file, written) => {
@@ -4655,15 +4702,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
     /// `addPropertyToElementList`
     fn add_property_to_element_list(
         &mut self,
-        owner: TypeId,
         prop: &Prop,
         mapper: MapperId,
         elements: &mut Vec<Vec<u8>>,
     ) {
-        let reverse_mapped = if matches!(self.c.data(owner), TypeData::ReverseMapped { .. }) {
-            Some(self.reverse_mapped_property(owner, prop.name))
-        } else {
-            None
+        let reverse_mapped = match prop.source {
+            PropSource::ReverseMapped(of, _) => Some(self.reverse_mapped_property(of, prop.name)),
+            _ => None,
         };
         let uses_placeholder = reverse_mapped
             .as_ref()
@@ -4681,10 +4726,9 @@ impl<'p, 's> Printer<'_, 'p, 's> {
         if self.c.atoms().is_symbol_name(prop.name) {
             self.track_late_bound_name(prop);
         }
-        let declared = if reverse_mapped.is_some() {
-            self.property_with_declarations(owner, prop.name)
-        } else {
-            None
+        let declared = match &reverse_mapped {
+            Some(property) => self.property_with_declarations(property.owner, prop.name),
+            None => None,
         };
         let name = match declared {
             Some(mut declared) => {
@@ -4778,7 +4822,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             if let Some(property) = reverse_mapped {
                 self.reverse_mapped_stack.push(property);
             }
-            let node = self.serialize_type_of_property(owner, prop, property_type);
+            let node = self.serialize_type_of_property(prop, property_type);
             if reverse_mapped.is_some() {
                 self.reverse_mapped_stack.pop();
             }

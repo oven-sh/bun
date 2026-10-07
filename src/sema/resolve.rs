@@ -365,6 +365,14 @@ impl ScriptKind {
     }
 }
 
+/// Whether `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.
+pub fn is_jsx_file_name(path: &[u8]) -> bool {
+    strings::last_index_of_char(path, b'.').is_some_and(|dot| {
+        let extension = &path[dot..];
+        extension.eq_ignore_ascii_case(b".tsx") || extension.eq_ignore_ascii_case(b".jsx")
+    })
+}
+
 /// The LANGUAGE of a file: `is_javascript`, unless the host knows better than the name. What goes
 /// by the NAME of a file asks `is_javascript`: which files `include` finds, and which files are
 /// tried for `./a.js`.
@@ -422,9 +430,9 @@ pub struct Options {
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.
     pub custom_conditions: Vec<Vec<u8>>,
-    /// `getNodeResolutionFeatures`: the `exports` and the `imports` of a `package.json` are
-    /// honored. Only bundler resolution can disable this.
+    /// `GetResolvePackageJsonExports`. The resolver asks `has_exports_feature`.
     pub resolve_package_json_exports: bool,
+    /// `GetResolvePackageJsonImports`. The resolver asks `has_imports_feature`.
     pub resolve_package_json_imports: bool,
     /// `rootDirs`, as absolute paths: directories that are treated as one directory when a relative
     /// specifier is resolved.
@@ -617,6 +625,17 @@ impl Options {
         ancestors(&self.base_dir)
             .map(|dir| join(dir, b"node_modules/@types"))
             .collect()
+    }
+
+    /// `NodeResolutionFeaturesExports` in `newResolutionState`: the `exports` of a `package.json`
+    /// are honored. Only bundler resolution asks the option (`getNodeResolutionFeatures`).
+    fn has_exports_feature(&self) -> bool {
+        self.resolves_like_node || self.resolve_package_json_exports
+    }
+
+    /// `NodeResolutionFeaturesImports`, likewise.
+    fn has_imports_feature(&self) -> bool {
+        self.resolves_like_node || self.resolve_package_json_imports
     }
 
     /// `importSyntaxAffectsModuleResolution`
@@ -826,9 +845,9 @@ impl Options {
             resolution.as_deref(),
             Some(b"node16" | b"nodenext" | b"bundler")
         );
-        // `getNodeResolutionFeatures`
         let like_node = options.resolves_like_node;
-        let is_not_off = |name: &[u8]| like_node || specified(name) != Some(false);
+        // `IsTrueOrUnknown`
+        let is_not_off = |name: &[u8]| specified(name) != Some(false);
         options.resolve_package_json_exports = is_not_off(b"resolvePackageJsonExports");
         options.resolve_package_json_imports = is_not_off(b"resolvePackageJsonImports");
         // `GetResolveJsonModule`
@@ -1636,7 +1655,7 @@ pub struct Resolver<'h> {
     /// digit, and the specifier. No directory contains `//`.
     resolved: ShardedMap<&'h [u8], Option<ResolvedModule<'h>>>,
     /// `parseTaskData.packageId`, by the `tspath.Path` of `ResolvedFileName`: the first id that a
-    /// resolution to the file has.
+    /// task for the file has.
     package_ids: ShardedMap<&'h [u8], PackageId<'h>>,
     /// `resolutionState.diagnostics` of all lookups: whether it concerns `imports`, the entry, and
     /// the `package.json`.
@@ -2247,7 +2266,6 @@ impl<'h> Resolver<'h> {
             let is_project_reference_redirect = source.is_some();
             // `parseTask.addSubTask`: the program has a file under its normalized name.
             let file_name = self.keep(&source.unwrap_or_else(|| normalize_path(path)));
-            self.propagate_package_id(file_name, package_id);
             ResolvedModule {
                 is_project_reference_redirect,
                 file_name,
@@ -2306,8 +2324,10 @@ impl<'h> Resolver<'h> {
         })
     }
 
-    /// `filesParser.start`: "Propagate packageId to data if we have one and data doesn't yet".
-    fn propagate_package_id(&self, file_name: &[u8], package_id: Option<PackageId<'h>>) {
+    /// `filesParser.start`, for a task with `package_id` for the file at `file_name`: "Propagate
+    /// packageId to data if we have one and data doesn't yet". A resolution that makes no task, as
+    /// that of the name of a module augmentation, gives the file no id.
+    pub fn propagate_package_id(&self, file_name: &[u8], package_id: Option<PackageId<'h>>) {
         let Some(package_id) = package_id else {
             return;
         };
@@ -2350,7 +2370,7 @@ impl<'h> Resolver<'h> {
         };
         if !(look.outcome.found_package.get()
             && !look.is_config_lookup
-            && self.options.resolve_package_json_exports
+            && self.options.has_exports_feature()
             && !look.ignores_exports
             && (look.typescript || look.declarations)
             && !is_relative(spec)
@@ -2427,7 +2447,7 @@ impl<'h> Resolver<'h> {
         }
         // Tries each location in turn until one produces a result.
         let mut found = Found::No;
-        if self.options.resolve_package_json_imports && spec.starts_with(b"#") {
+        if self.options.has_imports_feature() && spec.starts_with(b"#") {
             found = self.package_imports(spec, from_dir, look);
         }
         if let Found::No = found {
@@ -2533,7 +2553,7 @@ impl<'h> Resolver<'h> {
     }
 
     /// `parseTaskData.packageId` of the file at `path`, as a key: `collectFiles` has one file in
-    /// the program for all that have the same. `None`: no resolution to the file has an id.
+    /// the program for all that have the same. `None`: no task for the file has an id.
     pub fn package_id(&self, path: &[u8]) -> Option<Vec<u8>> {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.host.is_case_sensitive(), &mut buffer[..]);
@@ -3357,7 +3377,7 @@ impl<'h> Resolver<'h> {
             };
         }
         let package = self.package(&package_dir);
-        let respects_exports = self.options.resolve_package_json_exports && !look.ignores_exports;
+        let respects_exports = self.options.has_exports_feature() && !look.ignores_exports;
         let exports = package
             .and_then(|p| p.json.get(b"exports"))
             .filter(|_| respects_exports);

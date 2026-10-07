@@ -260,9 +260,8 @@ pub struct Program<'s> {
     untyped_signatures_in_js: ByNode<(FileId, FnId), bool, Buffered, &'s Session>,
     declared_types: ByNode<Sym, (TypeId, bool), Buffered, &'s Session>,
     shapes: ByIdIndirect<TypeId, shape::Resolved<'s>, Buffered, &'s Session>,
-    /// `intersectionTypes`, for sets that contain a union. The key: the set, and
-    /// `IntersectionFlagsNoConstraintReduction`.
-    distributed_intersections: ByKey<(Box<[TypeId]>, bool), (TypeId, bool), Buffered, &'s Session>,
+    /// `intersectionTypes`, for sets that contain a union.
+    distributed_intersections: ByKey<unions::IntersectionKey, TypeId, Buffered, &'s Session>,
     sig_params: ByIdIndirect<SigId, ArenaBox<'s, [SigParam]>, Buffered, &'s Session>,
     sig_type_params: ByIdIndirect<SigId, ArenaBox<'s, [TypeId]>, Buffered, &'s Session>,
     /// `Signature.resolvedReturnType` of a signature with a `target`.
@@ -699,6 +698,7 @@ impl<'s> Program<'s> {
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
             defaults_in_progress: Vec::new(),
+            identical_base_types_in_progress: Vec::new(),
             generic_object_flags: FxHashMap::default(),
             names_of_small_numbers: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
@@ -753,6 +753,7 @@ impl<'s> Program<'s> {
             widening_contexts: Vec::new(),
             widened_types: Default::default(),
             iteration_types_cache: Default::default(),
+            reported_iteration_requests: Vec::new(),
             iife_resolving: Vec::new(),
             any_signature_reads: 0,
             any_signature_read_at: 0,
@@ -766,7 +767,7 @@ impl<'s> Program<'s> {
             apparent_types_of_intersections: Default::default(),
             deferred_nodes: Default::default(),
             deferred_type_parameters: Vec::new(),
-            checked_class_expressions: Vec::new(),
+            emit_helpers_checked_early: Vec::new(),
             unresolved_identifiers: Vec::new(),
             unknown_symbols: Default::default(),
             is_deferred_node: Default::default(),
@@ -1017,6 +1018,10 @@ struct QueryFrame {
     /// members there are then, so no type is stored here either. Not set where there is no next
     /// visit: see `note_members_in_place_read_above`.
     has_read_members_in_place: bool,
+    /// `getNarrowableTypeForReference` has come to `isConstraintPosition` under it: whether the
+    /// constraints are substituted depends on the check mode and on the contextual type. See
+    /// `is_rechecked`.
+    may_substitute_constraints: bool,
     /// `Checker::current_source_element` when it was pushed.
     source_element: Option<CurrentNode>,
 }
@@ -1314,6 +1319,10 @@ pub struct Checker<'p, 's> {
     /// The type parameters whose `resolvedDefaultType` is `resolvingDefaultType`, each with the
     /// height of `stack` when that began. `true`: it has become `circularConstraintType`.
     defaults_in_progress: Vec<(TypeId, usize, bool)>,
+    /// The type references for which `getSingleBaseForNonAugmentingSubtype` has set
+    /// `ObjectFlagsIdenticalBaseTypeCalculated` and has not returned, each with the height of
+    /// `stack` when that began.
+    identical_base_types_in_progress: Vec<(TypeId, usize)>,
     /// The mapped types with an `as` clause for which `isGenericMappedType` is in progress.
     /// `ObjectFlagsIsGenericTypeComputed` with the two flags, of unions and intersections.
     generic_object_flags: FxHashMap<TypeId, (bool, bool)>,
@@ -1417,6 +1426,9 @@ pub struct Checker<'p, 's> {
     /// `iterationTypesCache`, by the type and `IterationUse::cache_flags`. The flag: tsgo has the
     /// entry too (`iterable_types`).
     iteration_types_cache: FxHashMap<(TypeId, u8), (symbols::Iter3, bool)>,
+    /// The keys of the entries whose request has reported something that a frame in progress may
+    /// still drop, each with `work` at that time, in that order (`settle_iteration_requests`).
+    reported_iteration_requests: Vec<(u64, (TypeId, u8))>,
     /// The calls of immediately invoked function expressions whose arguments are being checked to
     /// type the parameters.
     iife_resolving: Vec<(FileId, ExprId)>,
@@ -1447,10 +1459,11 @@ pub struct Checker<'p, 's> {
     /// The class expressions that have two entries in `deferred_nodes`, the first for their type
     /// parameters, and whether `checkDeferredNodes` has come to the first.
     deferred_type_parameters: Vec<(ExprId, bool)>,
-    /// With `importHelpers`: the class expressions without a name of the file being checked, in the
-    /// order in which `checkClassExpression` first came to them, each with
-    /// `current_source_element` at that time. Until `check_external_emit_helpers`.
-    checked_class_expressions: Vec<(FileId, ExprId, Option<CurrentNode>)>,
+    /// With `importHelpers`: the expressions of the file being checked whose check calls
+    /// `checkExternalEmitHelpers` and came before their regular order, because something asked for
+    /// a type. In the order of those checks, each with `emit_helpers_order_of_early_check`. Until
+    /// `check_external_emit_helpers`.
+    emit_helpers_checked_early: Vec<(FileId, ExprId, (u32, u32))>,
     /// The identifiers `getResolvedSymbol` could not resolve, until
     /// `report_unresolved_identifiers`.
     unresolved_identifiers: Vec<(FileId, ExprId, Atom)>,
@@ -1481,8 +1494,8 @@ pub struct Checker<'p, 's> {
     /// `getTypeFromBindingElement` has checked: `checkExpressionWithContextualType` stores no type.
     checked_with_contextual_type: Vec<(FileId, ExprId)>,
     /// `getContextualSignature` as `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` got
-    /// it, before the inference context instantiates it, for the functions in which
-    /// `check_empty_binding_pattern` asks for it.
+    /// it, before the inference context instantiates it, for the functions for which
+    /// `contextual_param_type_at_check` is asked.
     contextual_signatures_at_check: Vec<((FileId, FnId), SigId)>,
     /// `discriminatedContextualTypes`: the result of `discriminate_by_object_members` for an object
     /// literal and a union, where it is final.
@@ -1530,7 +1543,8 @@ pub struct Checker<'p, 's> {
     /// `note_parameter_types_resolved`.
     resolved_parameter_types: crate::util::FxHashSet<(SigId, u32)>,
     /// Ranges of `stack`: the resolutions of declarations whose initializer
-    /// `getQuickTypeOfExpression` is evaluating. See `is_flow_loop_visible`.
+    /// `getQuickTypeOfExpression` is evaluating, and those of a `...rest`. See
+    /// `is_flow_loop_visible`.
     quick_initializers: Vec<(usize, usize)>,
     /// `NodeCheckFlagsInCheckIdentifier`: the patterns for which `getNarrowedTypeOfSymbol` is in
     /// progress.
@@ -1790,6 +1804,7 @@ impl<'p, 's> Checker<'p, 's> {
             incomplete_flow,
             is_stored_by_nested_visit: false,
             has_read_members_in_place: false,
+            may_substitute_constraints: false,
             source_element: self.current_source_element,
         });
         true
@@ -1979,10 +1994,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` sets
         // `NodeCheckFlagsContextChecked` before it assigns the parameter types. The function
         // expression is checked again, and has its type at once.
-        if let Query::Expr(file, e) = q
-            && let ExprKind::Fn(func) = self.hir(file)[e].kind
-            && self.context_checking.iter().any(|c| c.0 == (file, func))
-        {
+        if self.is_function_in_context_check(q) {
             return false;
         }
         // `getConditionalTypeInstantiation` has no re-entrancy check and caches its result only when it returns, so the conditional type
@@ -2012,9 +2024,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `checkExpression`, `checkPropertyAssignment`, `getTypeFromTypeNode` and, for a declaration
         // whose name is a pattern, `getTypeForVariableLikeDeclaration` have no re-entrancy guard. The
         // second visit takes `any` for the return type that is being resolved, does without the
-        // base constraint that is being resolved, or finds the members in place or the
-        // intersection as it is, and closes no cycle. Nor does it below a stale entry, where
-        // `findResolutionCycleStartIndex` stops.
+        // base constraint that is being resolved, or finds the members in place, the intersection
+        // as it is, no equivalent base type or a function that has its type at once, and closes no
+        // cycle. Nor does it below a stale entry, where `findResolutionCycleStartIndex` stops.
         // Or it comes to the `typeToStringEx` call that led here, with no type resolution on the way,
         // and prints one serialization level higher. That can close a cycle through what the first
         // call is resolving. At `maxSerializationLevel` the printer returns "?" and resolves nothing.
@@ -2031,6 +2043,8 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.ends_at_members_in_place(i)
                 || self.ends_at_reduction_in_progress(i)
                 || self.ends_at_default_in_progress(i)
+                || self.ends_at_identical_base_type_in_progress(i)
+                || self.ends_at_function_in_context_check(i)
                 || self.is_below_stale_resolution(i))
         {
             return false;
@@ -2135,11 +2149,16 @@ impl<'p, 's> Checker<'p, 's> {
         if self.never_in_progress_from.is_empty() {
             return false;
         }
-        let mut from_here = self.stack[i..].iter();
-        let resolution = from_here.position(|&q| self.is_resolution(q));
-        let resolution = resolution.map_or(self.stack.len(), |at| i + at);
+        let resolution = self.first_resolution_from(i);
         let mut began = self.never_in_progress_from.iter();
         began.any(|&height| height > i && height <= resolution)
+    }
+
+    /// The index in `stack` of the first resolution from `stack[i]` up. `stack.len()`: none.
+    fn first_resolution_from(&self, i: usize) -> usize {
+        let mut from_here = self.stack[i..].iter();
+        let resolution = from_here.position(|&q| self.is_resolution(q));
+        resolution.map_or(self.stack.len(), |at| i + at)
     }
 
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at a type
@@ -2149,11 +2168,42 @@ impl<'p, 's> Checker<'p, 's> {
         if self.defaults_in_progress.is_empty() {
             return false;
         }
-        let mut from_here = self.stack[i..].iter();
-        let resolution = from_here.position(|&q| self.is_resolution(q));
-        let resolution = resolution.map_or(self.stack.len(), |at| i + at);
+        let resolution = self.first_resolution_from(i);
         let mut began = self.defaults_in_progress.iter();
         began.any(|&(_, height, _)| height > i && height <= resolution)
+    }
+
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at a type
+    /// reference whose base types `getSingleBaseForNonAugmentingSubtype` has requested: it sets
+    /// `ObjectFlagsIdenticalBaseTypeCalculated` first, and returns nil the next time.
+    fn ends_at_identical_base_type_in_progress(&self, i: usize) -> bool {
+        if self.identical_base_types_in_progress.is_empty() {
+            return false;
+        }
+        let resolution = self.first_resolution_from(i);
+        let mut began = self.identical_base_types_in_progress.iter();
+        began.any(|&(_, height)| height > i && height <= resolution)
+    }
+
+    /// Whether `q` is the check of a function expression or of a method of an object literal for
+    /// which `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` has set
+    /// `NodeCheckFlagsContextChecked` and has not returned.
+    fn is_function_in_context_check(&self, q: Query) -> bool {
+        matches!(q, Query::Expr(file, e)
+            if matches!(self.hir(file)[e].kind, ExprKind::Fn(func)
+                if self.context_checking.iter().any(|c| c.0 == (file, func))))
+    }
+
+    /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at such a
+    /// function: it has its type at once, and neither its parameters nor its return type are asked
+    /// for again. Not for a request that tsgo may not make (`eager`).
+    fn ends_at_function_in_context_check(&self, i: usize) -> bool {
+        if self.context_checking.is_empty() || self.eager.iter().any(|&from| from > i) {
+            return false;
+        }
+        let resolution = self.first_resolution_from(i);
+        let mut before_first_resolution = self.stack[i..resolution].iter();
+        before_first_resolution.any(|&q| self.is_function_in_context_check(q))
     }
 
     /// Whether repeating the path from `stack[i]` ends before it reaches a resolution, at members
@@ -2553,7 +2603,8 @@ impl<'p, 's> Checker<'p, 's> {
             ),
             CurrentNode::TypeNode(file, node) => (
                 file,
-                self.hir(file)[node].pos,
+                self.hir(file)
+                    .skip_trivia_of_node_at(self.hir(file)[node].pos),
                 self.end_of_type_node(file, node),
             ),
             CurrentNode::Node(file, node) => {
@@ -3169,7 +3220,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.lowest_taint = self.lowest_taint.min(depth);
         self.note_taint_event(depth);
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
-        // which checks the callee with the loops visible.
+        // which checks the callee with the loops visible, and the type of a `...rest`.
         let quick = &self.quick_initializers;
         for (i, frame) in self.frames[depth..].iter_mut().enumerate() {
             if quick

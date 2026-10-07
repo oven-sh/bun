@@ -616,6 +616,23 @@ impl<'p, 's> Checker<'p, 's> {
                 self.intern_key(TypeKey::Fns { decls, mapper: new })
             }
             TypeData::Synth(shape) => {
+                // `getObjectTypeInstantiation` of an `InstantiationExpressionType`: `newMapper` maps
+                // `links.outerTypeParameters`, and `instantiateAnonymousType` instantiates the
+                // members of `target` with it, whatever else they mention.
+                let (mut shape, mut mapper, mut target) = (shape, mapper, None);
+                if shape.instantiation_expression.is_some() {
+                    let new_mapper = self.map_mapper(shape.mapper, mapper);
+                    if new_mapper == shape.mapper {
+                        return ty;
+                    }
+                    let created = shape.instantiation_target.unwrap_or(ty);
+                    if let TypeData::Synth(as_created) = self.data(created) {
+                        if new_mapper == as_created.mapper {
+                            return created;
+                        }
+                        (shape, mapper, target) = (as_created, new_mapper, Some(created));
+                    }
+                }
                 let scope = self.begin_scope();
                 let mut new = Shape {
                     literal: shape.literal,
@@ -655,6 +672,7 @@ impl<'p, 's> Checker<'p, 's> {
                         .map(|&s| self.instantiate_sig(s, mapper)),
                 );
                 new.symbol_declared_at = shape.symbol_declared_at;
+                new.symbol = shape.symbol;
                 new.spread_rank = shape.spread_rank;
                 new.spread_of = shape.spread_of.map(|(left, right)| {
                     (
@@ -664,6 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
                 // `instantiateAnonymousType`
                 new.instantiation_expression = shape.instantiation_expression;
+                new.instantiation_target = target;
                 new.is_js_literal = shape.is_js_literal;
                 new.mapper = self.map_mapper(shape.mapper, mapper);
                 let stored = self.end_scope_by_counters(scope);

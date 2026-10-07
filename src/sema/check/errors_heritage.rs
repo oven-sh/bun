@@ -21,7 +21,7 @@ struct IndexConstraints<'a> {
     ty: TypeId,
     /// `getIndexInfosOfType(t)`
     infos: &'a [IndexInfo],
-    /// The members declared directly in the declarations of `t`.
+    /// The members declared directly in the declarations of `t.symbol`.
     locals: &'a [(FileId, Span<MemberId>)],
     /// `interfaceDeclaration`, for a property and an index signature that come from different base
     /// interfaces.
@@ -385,22 +385,41 @@ impl Checker<'_, '_> {
         declarations
     }
 
-    /// `getTargetSymbol`. `createUnionOrIntersectionProperty` returns `singleProp` where the
-    /// members of an intersection all have that symbol, or instantiations of it that
-    /// `compareProperties` finds equal.
-    fn target_symbol<'a>(&mut self, prop: &'a Prop<'a>) -> &'a Prop<'a> {
-        if let PropSource::Intersected(_, parts) = &prop.source
-            && let Some((single_prop, others)) = parts.split_first()
-            && others
-                .iter()
-                .all(|other| other.source == single_prop.source)
-        {
-            let ty = self.type_of_prop(single_prop, MapperId::IDENTITY);
-            if (others.iter()).all(|other| self.type_of_prop(other, MapperId::IDENTITY) == ty) {
-                return self.target_symbol(single_prop);
-            }
+    /// `singleProp` of `createUnionOrIntersectionProperty`, where the members of an intersection
+    /// all have that symbol, or instantiations of it that `compareProperties` finds equal. With
+    /// `mergedInstantiations`: the property is a clone of it, one per intersection.
+    fn single_prop<'a, 'b>(&mut self, prop: &'a Prop<'b>) -> Option<(&'a Prop<'b>, bool)> {
+        let PropSource::Intersected(_, parts) = &prop.source else {
+            return None;
+        };
+        let (single_prop, others) = parts.split_first()?;
+        if (others.iter()).any(|other| other.source != single_prop.source) {
+            return None;
         }
-        prop
+        let ty = self.type_of_prop(single_prop, MapperId::IDENTITY);
+        if (others.iter()).any(|other| self.type_of_prop(other, MapperId::IDENTITY) != ty) {
+            return None;
+        }
+        let PropSource::Symbol(symbol) = single_prop.source else {
+            return Some((single_prop, false));
+        };
+        let is_generic = (self.files().parent_of_symbol(symbol))
+            .is_some_and(|parent| !self.local_type_params_of_symbol(parent).is_empty());
+        // `prop != singleProp`
+        let merged_instantiations = is_generic && {
+            let instantiation = self.instantiation_of_member(symbol, single_prop.mapper);
+            (others.iter())
+                .any(|other| self.instantiation_of_member(symbol, other.mapper) != instantiation)
+        };
+        Some((single_prop, merged_instantiations))
+    }
+
+    /// `getTargetSymbol`
+    fn target_symbol<'a>(&mut self, prop: &'a Prop<'a>) -> &'a Prop<'a> {
+        match self.single_prop(prop) {
+            Some((single_prop, false)) => self.target_symbol(single_prop),
+            _ => prop,
+        }
     }
 
     /// `prop.Flags&SymbolFlagsClassMember`. It has `SymbolFlagsMethod` for
@@ -426,6 +445,9 @@ impl Checker<'_, '_> {
             PropSource::Copy(_, of, true) => self.kinds_of_prop(&of[0]),
             // `createUnionOrIntersectionProperty`: `propFlags` and `syntheticFlag`.
             PropSource::Intersected(_, parts) => {
+                if let Some((single_prop, _)) = self.single_prop(prop) {
+                    return self.kinds_of_prop(single_prop);
+                }
                 let (mut flags, mut is_method) = (SymFlags::empty(), true);
                 for part in parts.iter() {
                     let of_part = self.kinds_of_prop(part);
@@ -455,13 +477,15 @@ impl Checker<'_, '_> {
         base_declaration_flags: Flags,
     ) -> bool {
         let declarations = self.declarations_of_prop(base);
+        // `CheckFlagsSynthetic`
+        let is_synthetic =
+            matches!(base.source, PropSource::Intersected(..)) && self.single_prop(base).is_none();
         let is_abstract_or_interface = |&declaration: &(FileId, Decl)| {
             self.is_property_abstract_or_interface(declaration, base_declaration_flags)
         };
-        // `CheckFlagsSynthetic`
-        match base.source {
-            PropSource::Intersected(..) => declarations.iter().any(is_abstract_or_interface),
-            _ => declarations.iter().all(is_abstract_or_interface),
+        match is_synthetic {
+            true => declarations.iter().any(is_abstract_or_interface),
+            false => declarations.iter().all(is_abstract_or_interface),
         }
     }
 
@@ -670,10 +694,16 @@ impl Checker<'_, '_> {
         let Some(&(of, uninitialized)) = uninitialized else {
             return false;
         };
-        // `SymbolFlagsTransient`: `lateBindMember` created the symbol.
-        if members.iter().any(|&(f, m)| {
-            matches!(self.hir(f)[m].key, PropKey::Computed(name) if is_dynamic_name(self.hir(f), name))
-        }) || (declarations.iter()).any(|&(f, d)| self.hir(f).is_ambient(self.hir(f).node(d)))
+        // `SymbolFlagsTransient`: the checker created the symbol. `cloneSymbol` sets the flag, and
+        // `lateBindMember` created the symbol of a dynamic name.
+        let PropSource::Symbol(symbol) = derived.source else {
+            return false;
+        };
+        if self.files().flags(symbol).contains(SymFlags::TRANSIENT)
+            || members.iter().any(|&(f, m)| {
+                matches!(self.hir(f)[m].key, PropKey::Computed(name) if is_dynamic_name(self.hir(f), name))
+            })
+            || (declarations.iter()).any(|&(f, d)| self.hir(f).is_ambient(self.hir(f).node(d)))
         {
             return false;
         }
@@ -865,14 +895,22 @@ impl Checker<'_, '_> {
                 ..*i
             })
             .collect();
+        // The static side of a class whose base constructor is a type variable is an intersection.
+        let is_object = self.is_object_type(ty);
         let cx = IndexConstraints {
             file,
             ty,
             infos: &infos,
-            locals,
+            locals: if is_object { locals } else { &[] },
             interface,
         };
-        for prop in &members.shape().props {
+        // `getPropertiesOfObjectType(t)`
+        let props: &[Prop] = if is_object {
+            &members.shape().props[..]
+        } else {
+            &[]
+        };
+        for prop in props {
             if !(is_static && prop.name == known::prototype) {
                 let prop_type = self.type_of_prop_as_read(prop, members.mapper);
                 self.check_index_constraint_for_property(&cx, prop, None, prop_type);
@@ -895,7 +933,7 @@ impl Checker<'_, '_> {
                             | MemberKind::Getter
                             | MemberKind::Setter
                     )
-                    || self.member_name(f, member.key).is_some()
+                    || self.declared_member_name(f, member.key).is_some()
                 {
                     continue;
                 }

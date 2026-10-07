@@ -1847,6 +1847,9 @@ pub struct FileIn<S: Storage> {
     /// The spans of the JSDoc comments of a JavaScript file. Sorted. A node whose position is
     /// inside one is synthesized from a tag.
     pub jsdoc_comments: S::Few<(u32, u32)>,
+    /// `TokenFlagsPrecedingJSDocLeadingAsterisks`: the `*` at the start of a line of a type in a
+    /// JSDoc comment, which the scanner passed over as trivia of the next token. Sorted.
+    pub jsdoc_asterisks: S::Few<u32>,
     /// The nodes that have JSDoc comments, in a JavaScript file in which one has a `@satisfies`
     /// tag. Sorted by `token`.
     pub jsdoc_hosts: S::Few<JsDocHost>,
@@ -1864,6 +1867,9 @@ pub struct FileIn<S: Storage> {
     /// `checkUnmatchedJSDocParameters` calls `containsArgumentsReference`. Those of
     /// `jsdoc_param_errors` are among them, in the same order.
     pub functions_with_param_tags: S::Few<FnId>,
+    /// `checkGrammarClassDeclarationHeritageClauses`: the classes with an `@augments` tag that does
+    /// not name the class of the `extends` clause, and the start of the 8023 in `diagnostics`.
+    pub unmatched_augments_tags: S::Few<(ClassId, u32)>,
 
     pub ids: S::List<u32>,
     pub numbers: S::List<f64>,
@@ -2323,12 +2329,14 @@ impl FileBuilder {
             jsx_expressions: copy_to_arena(&mut self.jsx_expressions, arena),
             jsx_pragmas: self.jsx_pragmas,
             jsdoc_comments: few_to_arena(self.jsdoc_comments, arena),
+            jsdoc_asterisks: few_to_arena(self.jsdoc_asterisks, arena),
             jsdoc_hosts: few_to_arena(self.jsdoc_hosts, arena),
             jsdoc_types: few_to_arena(self.jsdoc_types, arena),
             jsdoc_modifiers: few_to_arena(self.jsdoc_modifiers, arena),
             jsdoc_member_comments: Cow::Owned(self.jsdoc_member_comments),
             jsdoc_param_errors: Cow::Owned(self.jsdoc_param_errors),
             functions_with_param_tags: few_to_arena(self.functions_with_param_tags, arena),
+            unmatched_augments_tags: few_to_arena(self.unmatched_augments_tags, arena),
             ids: copy_to_arena(&mut self.ids, arena),
             numbers: copy_to_arena(&mut self.numbers, arena),
             exprs: copy_to_arena(&mut self.exprs, arena),

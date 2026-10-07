@@ -431,7 +431,8 @@ impl Checker<'_, '_> {
             }
         } else if hir[func].ret.is_some() {
             let ret = hir[func].ret;
-            let at = (file, hir[ret].pos, self.end_of_type_node(file, ret));
+            let start = start_of_type(hir, ret);
+            let at = (file, start, self.end_of_type_node_from(file, ret, start));
             let err = self.new_diagnostic(at, 2577, &[]);
             self.add_diagnostic_of(owner, err);
         } else if no_implicit_any

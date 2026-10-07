@@ -22,9 +22,10 @@ use crate::config::compare_strings_case_insensitive;
 use crate::json::Json;
 use crate::program::source_file_may_be_emitted;
 use crate::resolve::{
-    JsxEmit, contains_path, ensure_path_is_non_module_name, get_relative_path_from_directory,
-    get_root_length, is_declaration_file_name, is_relative, is_rooted_disk_path, join,
-    known_extension, node_module_path_parts, path_is_relative, remove_file_extension,
+    JsxEmit, ancestors, contains_path, ensure_path_is_non_module_name,
+    get_relative_path_from_directory, get_root_length, is_declaration_file_name, is_relative,
+    is_rooted_disk_path, join, known_extension, node_module_path_parts, path_is_relative,
+    remove_file_extension,
 };
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -6353,8 +6354,12 @@ impl<'p, 's> Checker<'p, 's> {
             let is_internal = |path: &[u8]| contains_path(project_directory, path, true);
             // The import crosses the directory of the configuration file, or goes from one package to another.
             return if is_internal(source_directory) != is_internal(module_file_name)
-                || files.module(importing).package_json_directory
-                    != files.module(target).package_json_directory
+                || self.package_json_directory(importing)
+                    != self.nearest_ancestor_directory_with_package_json(
+                        module_file_name,
+                        target,
+                        importing,
+                    )
             {
                 maybe_non_relative
             } else {
@@ -6369,6 +6374,42 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             maybe_non_relative
         }
+    }
+
+    /// `GetNearestAncestorDirectoryWithPackageJson` of the directory of `file`. Empty: none.
+    fn package_json_directory(&self, file: FileId) -> &'p [u8] {
+        let directory = self.files().module(file).package_json_directory;
+        if directory.is_some() {
+            self.atoms().bytes(directory)
+        } else {
+            b""
+        }
+    }
+
+    /// `GetNearestAncestorDirectoryWithPackageJson(GetDirectoryPath(path))` of a path that leads to
+    /// `target`, for an import in `importing`. For another path than the name of `target` (through
+    /// a link, of a copy of its package) the file system is not at hand: it is the nearest
+    /// directory that is known to have a `package.json`, which are those of the two files, the keys
+    /// of `package_jsons`, and the package in `node_modules` that `path` is in. Empty: none.
+    fn nearest_ancestor_directory_with_package_json<'a>(
+        &'a self,
+        path: &'a [u8],
+        target: FileId,
+        importing: FileId,
+    ) -> &'a [u8] {
+        let of_target = self.package_json_directory(target);
+        if path == self.files().module(target).file_name() {
+            return of_target;
+        }
+        let of_files = [of_target, self.package_json_directory(importing)];
+        let package_root = node_module_path_parts(path).map(|parts| parts.2);
+        ancestors(dirname::<Posix>(path))
+            .find(|&directory| {
+                of_files.contains(&directory)
+                    || package_root == Some(directory.len())
+                    || self.files().package_jsons.contains_key(directory)
+            })
+            .unwrap_or_default()
     }
 
     /// `tryGetModuleNameFromRootDirs`

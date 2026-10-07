@@ -1490,13 +1490,24 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether an entry of `flow_loops` pushed when `stack` had `depth` frames is on `flowLoopStack` now. `checkExpressionCached`
     /// empties `flowLoopStack`, and it computes what a resolution caches: a resolution entered since the push hides the entry.
-    /// Not while `checkDeclarationInitializer` has the type from `getQuickTypeOfExpression`, which checks the callee uncached.
+    /// Not while `checkDeclarationInitializer` has the type from `getQuickTypeOfExpression`, which checks the callee uncached, nor
+    /// in the resolution of a `...rest`, for which it checks the initializer uncached (`CheckModeRestBindingElement`).
     pub(super) fn is_flow_loop_visible(&self, depth: usize) -> bool {
         let depth = depth.min(self.stack.len());
         !self.stack[depth..].iter().enumerate().any(|(i, &q)| {
             let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&(depth + i));
             self.is_resolution(q) && !self.quick_initializers.iter().any(is_quick)
         })
+    }
+
+    /// The entry of `quick_initializers` for a declaration whose resolutions are right below
+    /// `stack[to]`.
+    pub(super) fn resolutions_below(&self, to: usize) -> (usize, usize) {
+        let mut below = self.stack[..to].iter();
+        let from = below
+            .rposition(|&q| !self.is_resolution(q))
+            .map_or(0, |i| i + 1);
+        (from, to)
     }
 
     /// The depth of `stack` when the top of `flowLoopStack` was pushed, if that was after
@@ -4378,6 +4389,9 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return declared;
         }
+        if let Some(frame) = self.frames.last_mut() {
+            frame.may_substitute_constraints = true;
+        }
         if !self.is_constraint_position(file, e, declared) {
             // `hasContextualTypeWithNoGenericTypes`
             let context_flags = if check_mode.contains(CheckMode::REST_BINDING_ELEMENT) {
@@ -4594,16 +4608,19 @@ impl<'p, 's> Checker<'p, 's> {
             && container_of(e) == container_of(assignment)
     }
 
-    /// The type of `e`, the initializer of a variable or a parameter declared by a binding pattern
-    /// without a type annotation, for the `...rest` of the pattern
-    /// (`CheckModeRestBindingElement`). `None`: the same type the other elements see.
-    pub(super) fn type_of_reference_for_rest(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let ordinary = self.type_of_expr(file, e);
-        if self.is_any(ordinary) {
-            return None;
+    /// `checkDeclarationInitializer(declaration, CheckModeRestBindingElement, nil)`, before it pads
+    /// the type: `e` is the initializer of a variable or a parameter declared by a binding pattern
+    /// without a type annotation, and the type is for the `...rest` of the pattern. Under that mode
+    /// `checkExpressionCachedEx` assigns no `links.resolvedType` and leaves `flowLoopStack` as it is.
+    pub(super) fn check_declaration_initializer_for_rest(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+    ) -> TypeId {
+        match self.quick_type_of_expr(file, e) {
+            Some(quick) => quick,
+            None => self.check_expression_cached_ex(file, e, CheckMode::REST_BINDING_ELEMENT),
         }
-        let ty = self.check_expression_cached_ex(file, e, CheckMode::REST_BINDING_ELEMENT);
-        (ty != ordinary).then_some(ty)
     }
 
     /// Whether `e` is the `x` of `x!`. Not of `(x)!`: only the direct syntactic parent counts.

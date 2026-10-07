@@ -733,6 +733,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.equivalent_base_types.get(&self.task, &ty) {
             return known;
         }
+        // `ObjectFlagsIdenticalBaseTypeCalculated` is set before the base types are requested, so a recursive query gets nil.
+        let mut in_progress = self.identical_base_types_in_progress.iter();
+        if in_progress.any(|it| it.0 == ty) {
+            return None;
+        }
         let (mut has_heritage_clause, mut extends_entity_name, mut has_members) =
             (false, true, false);
         for &(file, decl) in self.files().decls_of(target).iter() {
@@ -770,7 +775,19 @@ impl<'p, 's> Checker<'p, 's> {
         {
             (None, true)
         } else {
-            let bases = self.base_types(target);
+            self.identical_base_types_in_progress
+                .push((ty, self.stack.len()));
+            let was_resolving = self.is_resolving(Query::Bases(target));
+            // With one checker they are resolved by now, and this is that resolution over again. Whether it began here, with the flag
+            // set, only the task of the declaring file knows, which reports 2310 if not. `checkClassLikeDeclaration` begins here: it
+            // checks the type arguments of the heritage clause first. So this is taken for a recursive query.
+            let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
+            let bases = if is_repeated {
+                List::default()
+            } else {
+                self.base_types(target)
+            };
+            let found_cycle = was_resolving && !is_repeated && self.found_cycle;
             let base = match bases[..] {
                 [mut base] if !has_members => {
                     let args = self.type_arguments(ty);
@@ -788,10 +805,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => None,
             };
-            // `base_types` returns an empty list while that query is in progress on this checker, so `base` can be provisional. It is
-            // final only if it was computed from the cached base types.
+            self.identical_base_types_in_progress.pop();
+            // Where `pushTypeResolution` fails, `getBaseTypes` returns `resolvedBaseTypes` as it is, and what follows from that stays.
+            // Otherwise `base` is final only if it was computed from the cached base types.
             let cached = self.p.base_types.get_ref(&self.task, &target);
-            let is_final = has_members || cached.map(|it| &it[..]) == Some(&bases[..]);
+            let is_final =
+                has_members || found_cycle || cached.map(|it| &it[..]) == Some(&bases[..]);
             (base, is_final)
         };
         match self.end_scope_as(scope, !is_final) {

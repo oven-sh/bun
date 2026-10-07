@@ -1218,6 +1218,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if Self::IS_TYPESCRIPT_ENABLED
             // `tryParseTypeArgumentsInExpression`
             && !p.lexer.is_javascript_file()
+            // Only `parseMemberExpressionRest` and `parseCallExpressionRest` call it.
+            && !(p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left))
             && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
@@ -1338,6 +1340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if Self::IS_TYPESCRIPT_ENABLED
             && !p.lexer.is_javascript_file()
             && !is_jsx_element
+            && !(p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left))
             && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);

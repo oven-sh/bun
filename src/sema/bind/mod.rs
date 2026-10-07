@@ -143,7 +143,8 @@ pub enum Decl {
     Member(MemberId),
     /// `IsParameterPropertyDeclaration`: the property.
     ParameterProperty(ParamId),
-    /// `this.name = value` in a member of a class, in JavaScript: the assignment.
+    /// `this.name = value` in a member of a class, or in a method or an accessor of an object
+    /// literal, in JavaScript: the assignment.
     ThisProperty(ExprId),
     /// A member of an object literal or an attribute of a JSX element.
     Property(PropId),
@@ -674,6 +675,16 @@ impl PatParent {
             PatParent::Prop(_, prop) => hir[prop].default,
             PatParent::Elem(_, elem) => hir[elem].default,
             PatParent::None => ExprId::NONE,
+        }
+    }
+
+    /// `hasDotDotDotToken` of the binding element.
+    #[inline]
+    pub fn has_dot_dot_dot_token(self, hir: &File) -> bool {
+        match self {
+            PatParent::Prop(_, prop) => hir[prop].is_rest,
+            PatParent::Elem(_, elem) => hir[elem].is_rest,
+            PatParent::Var(_) | PatParent::Param(_) | PatParent::None => false,
         }
     }
 }

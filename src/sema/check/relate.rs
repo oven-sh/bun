@@ -448,7 +448,7 @@ pub(super) fn is_object_literal_kind(data: &TypeData) -> bool {
             origin: Origin::ObjectLiteral(..),
             ..
         } => true,
-        TypeData::Synth(shape) => shape.literal.is_of_expression(),
+        TypeData::Synth(shape) => shape.literal.is_of_expression() || shape.literal.is_of_pattern(),
         _ => false,
     }
 }

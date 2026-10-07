@@ -456,12 +456,13 @@ pub fn summarize<'s>(
     use bun_sema::resolve::ScriptKind;
     let by_name = script_kind.is_none();
     let is_declaration_file = by_name && bun_sema::resolve::is_declaration_file_name(path);
-    let is_js = script_kind.map_or_else(
-        || bun_sema::resolve::is_javascript(path),
-        ScriptKind::is_javascript,
-    );
-    let is_json = by_name && path.ends_with(b".json");
-    let is_tsx = script_kind.map_or_else(|| path.ends_with(b".tsx"), |it| it == ScriptKind::Tsx);
+    // `GetScriptKindFromFileName`: whatever the case of the extension.
+    let script_kind = script_kind.or_else(|| ScriptKind::from_file_name(path));
+    let is_js = script_kind.is_some_and(ScriptKind::is_javascript);
+    let is_json = by_name
+        && (path.len().checked_sub(b".json".len()))
+            .is_some_and(|dot| path[dot..].eq_ignore_ascii_case(b".json"));
+    let is_tsx = script_kind == Some(ScriptKind::Tsx);
     // `getLanguageVariant`: JSX is enabled in all JavaScript files, and in JSON.
     let loader = if is_js || is_tsx || is_json {
         bun_ast::Loader::Tsx
@@ -470,52 +471,55 @@ pub fn summarize<'s>(
     };
     // Parses the file once. Also returns whether it must be parsed again with `await` as an
     // identifier at the top level.
-    let parse =
-        |await_is_a_name: bool, arena: &bun_alloc::Arena| -> (bun_sema::hir::FileBuilder, bool) {
-            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-            let _ast_scope = ast_memory_allocator.enter();
-            let source = bun_ast::Source::init_path_string(path, text);
-            let mut options = crate::ParserOptions::init(Default::default(), loader);
-            options.features.no_macros = true;
-            options.features.top_level_await = true;
-            options.features.standard_decorators = !experimental_decorators;
-            options.suppress_warnings_about_weird_code = true;
-            options.tolerant = true;
-            // `initializeState`
-            options.is_javascript = is_js || is_json;
-            let define = crate::Define::default();
-            let mut log = bun_ast::Log::init();
-            let (file, awaited) =
-                match crate::Parser::init(options, &mut log, &source, &define, arena) {
-                    Ok(parser) => parser.parse_for_sema(
-                        atoms,
-                        is_declaration_file,
-                        is_json,
-                        await_is_a_name,
-                        &parsing,
-                    ),
-                    Err(_) => (
-                        bun_sema::hir::FileBuilder {
-                            has_errors: true,
-                            ..Default::default()
-                        },
-                        false,
-                    ),
-                };
-            // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await] context at its top level.
-            let parse_again = awaited
-                && !await_is_a_name
-                && !every_file_is_a_module
-                && !file.has_module_syntax
-                && ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
-                    .iter()
-                    .any(|e| path.ends_with(e))
-                && !file
-                    .exprs
-                    .iter()
-                    .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
-            (file, parse_again)
+    let parse = |await_is_a_name: bool,
+                 statements: &mut Vec<bun_ast::Loc>,
+                 arena: &bun_alloc::Arena|
+     -> (bun_sema::hir::FileBuilder, bool) {
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
+        let source = bun_ast::Source::init_path_string(path, text);
+        let mut options = crate::ParserOptions::init(Default::default(), loader);
+        options.features.no_macros = true;
+        options.features.top_level_await = true;
+        options.features.standard_decorators = !experimental_decorators;
+        options.suppress_warnings_about_weird_code = true;
+        options.tolerant = true;
+        // `initializeState`
+        options.is_javascript = is_js || is_json;
+        let define = crate::Define::default();
+        let mut log = bun_ast::Log::init();
+        let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, arena)
+        {
+            Ok(parser) => parser.parse_for_sema(
+                atoms,
+                is_declaration_file,
+                is_json,
+                await_is_a_name,
+                statements,
+                &parsing,
+            ),
+            Err(_) => (
+                bun_sema::hir::FileBuilder {
+                    has_errors: true,
+                    ..Default::default()
+                },
+                false,
+            ),
         };
+        // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await] context at its top level.
+        let parse_again = awaited
+            && !await_is_a_name
+            && !every_file_is_a_module
+            && !file.has_module_syntax
+            && ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
+                .iter()
+                .any(|e| path.ends_with(e))
+            && !file
+                .exprs
+                .iter()
+                .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
+        (file, parse_again)
+    };
     // What a file leaves in the arena is garbage. The arena is reset after this much source, not
     // after every file.
     const SOURCE_AT_MOST: usize = 256 << 10;
@@ -526,9 +530,11 @@ pub fn summarize<'s>(
             *parsed = 0;
         }
         *parsed += text.len();
-        let (file, parse_again) = parse(false, arena);
+        let mut statements = Vec::new();
+        let (file, parse_again) = parse(false, &mut statements, arena);
         match parse_again {
-            true => parse(true, arena).0,
+            true => parse(true, &mut Vec::new(), arena).0,
+            false if !statements.is_empty() => parse(false, &mut statements, arena).0,
             false => file,
         }
     });

@@ -2274,6 +2274,18 @@ impl<'s> File<'s> {
         }
     }
 
+    /// `SkipTrivia(text, node.Pos())` for a node whose first token is at `token`, as
+    /// `GetErrorRangeForNode` and `GetTextOfNode` call it: without `InJSDoc`, so it stops at the `*`
+    /// before the token (`jsdoc_asterisks`), which `GetTokenPosOfNode` passes over. Not for an
+    /// identifier, which starts at its token (`createIdentifierWithDiagnostic`).
+    pub fn skip_trivia_of_node_at(&self, token: u32) -> u32 {
+        let before = self.jsdoc_asterisks.partition_point(|&at| at < token);
+        match before.checked_sub(1).map(|last| self.jsdoc_asterisks[last]) {
+            Some(asterisk) if self.token_after(asterisk + 1) == token => asterisk,
+            _ => token,
+        }
+    }
+
     /// The start of the name of a `MetaProperty` whose keyword ends at `end`. 0 if there is no dot.
     fn token_after_dot(&self, end: u32) -> u32 {
         let dot = self.token_after(end);
@@ -2307,6 +2319,15 @@ impl<'s> File<'s> {
                 self[t].pos
             }
             (Part::Head | Part::Keyword | Part::Opening, NodeData::Expr(e)) => self[e].pos,
+            (Part::Closing, _) => self.jsx_at(row).map_or(0, |jsx| jsx.close_pos),
+            // 0 if there are none.
+            (Part::Attributes, _) => {
+                let first = self.jsx_at(row).and_then(|jsx| jsx.attrs.iter().next());
+                first.map_or(0, |first| self[first].start)
+            }
+            (Part::JsxExpression, NodeData::Expr(e)) => {
+                jsx_expression_around(self, e).map_or(0, |braces| braces.0)
+            }
             (Part::Keyword, NodeData::Type(t)) => self[t].pos,
             (Part::Namespace, _) => self.start(self.parent_of_part(row.with(part))),
             (Part::LocalName, _) => {

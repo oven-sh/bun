@@ -134,8 +134,30 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `(string) => void` was meant to be `(arg0: string) => void`. `IsTypeNodeKind`
-    pub(super) fn is_name_of_a_type(&self, file: FileId, func: FnId, name: Atom) -> bool {
+    /// `reportImplicitAny`, `case KindParameter`: the name of the parameter `p`, if it is an
+    /// identifier and `p.Parent` is a call signature, a method signature or a function type.
+    pub(super) fn identifier_of_signature_parameter(
+        &self,
+        file: FileId,
+        p: ParamId,
+    ) -> Option<Atom> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let func = bound.param_fn[p.idx()];
+        let PatKind::Ident(name) = hir[hir[p].pat].kind else {
+            return None;
+        };
+        let is_signature = func.is_some()
+            && match hir[func].kind {
+                FnKind::CallSignature | FnKind::FunctionType => true,
+                FnKind::Method => matches!(bound.fns[func.idx()].owner, FnOwner::Member(m)
+                    if !matches!(bound.member_owner[m.idx()], MemberOwner::Class(_))),
+                _ => false,
+            };
+        is_signature.then_some(name)
+    }
+
+    /// `IsTypeNodeKind(IdentifierToKeywordKind(name))`
+    pub(super) fn is_type_node_keyword(&self, name: Atom) -> bool {
         const KEYWORDS: [&[u8]; 12] = [
             b"any",
             b"unknown",
@@ -150,7 +172,12 @@ impl Checker<'_, '_> {
             b"never",
             b"intrinsic",
         ];
-        if KEYWORDS.contains(&self.atoms().bytes(name)) {
+        KEYWORDS.contains(&self.atoms().bytes(name))
+    }
+
+    /// `(string) => void` was meant to be `(arg0: string) => void`. `check_unused` notes the use.
+    pub(super) fn is_name_of_a_type(&self, file: FileId, func: FnId, name: Atom) -> bool {
+        if self.is_type_node_keyword(name) {
             return true;
         }
         let scope = self.bound(file).fns[func.idx()].scope;

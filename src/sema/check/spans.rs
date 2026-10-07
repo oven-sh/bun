@@ -290,6 +290,21 @@ pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
     }
 }
 
+/// `GetErrorRangeForNode`: `SkipTrivia(text, errorNode.Pos())` for the error node whose tokens are
+/// `start..end`. One word is taken for an identifier: a caller that reports at another node of one
+/// word (a keyword, a type reference, a parameter) skips the trivia itself.
+pub(super) fn start_of_error_range(hir: &File, start: u32, end: u32) -> u32 {
+    if hir.jsdoc_asterisks.is_empty() {
+        return start;
+    }
+    let (text, at) = (&hir.text[..], start as usize);
+    let is_number = text.get(at).is_some_and(u8::is_ascii_digit);
+    if !is_number && identifier_end(text, at) == end as usize {
+        return start;
+    }
+    hir.skip_trivia_of_node_at(start)
+}
+
 /// The same for a name that may be private.
 pub(super) fn word_end(text: &[u8], at: usize) -> usize {
     if text.get(at) == Some(&b'#') {
@@ -1703,6 +1718,14 @@ impl Checker<'_, '_> {
             NodeData::Part(Part::NamedBindings, _) if hir.name(node).is_some() => {
                 self.get_error_range_for_node(file, hir.name(node))
             }
+            NodeData::Type(_)
+            | NodeData::Param(_)
+            | NodeData::TypeParam(_)
+            | NodeData::TupleElem(_)
+            | NodeData::Modifier(_) => (
+                hir.skip_trivia_of_node_at(hir.start(node)),
+                self.end_of_node(file, node),
+            ),
             _ => (hir.start(node), self.end_of_node(file, node)),
         }
     }

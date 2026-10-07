@@ -135,7 +135,9 @@ impl Checker<'_, '_> {
             |s| matches!(s.kind, StmtKind::Return(e) if e.is_some() && u.is_in_unchecked_return(e)),
         );
         let index = self.exprs_by_kind(file);
-        u.note_references(&index);
+        self.note_identifiers(file, &index, &mut u);
+        u.note_references();
+        self.note_untyped_signature_parameters(file, &mut u);
         let links = &self.p.symbol_reference_links;
         for (i, kinds) in u.referenced.iter_mut().enumerate() {
             let id = SymbolId(i as u32);
@@ -181,6 +183,95 @@ impl Checker<'_, '_> {
             }
         }
         self.check_unused_identifiers(&u);
+    }
+
+    /// `getResolvedSymbol` of every identifier that is checked: `Resolve` with `isUse`.
+    fn note_identifiers(&mut self, file: FileId, index: &ExprsByKind, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for &e in index.of(ExprTag::Ident) {
+            let i = e.idx();
+            let symbol = bound.expr_symbol[i];
+            if symbol.is_none()
+                || u.referenced[symbol.idx()] & VALUE != 0
+                || bound.is_unchecked(i)
+                || u.is_unchecked(e)
+                || u.is_write_only(e)
+                || u.is_inside_declaration_of(e, symbol)
+            {
+                continue;
+            }
+            // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It does not check the
+            // initializer, so it does not resolve the callee.
+            if let Parent::Expr(call) = bound.expr_parent[i]
+                && call.is_some()
+                && let Parent::VarInit(d) = bound.expr_parent[call.idx()]
+                && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
+                && bound.required_by(hir, hir[d].pat).is_some()
+            {
+                continue;
+            }
+            if bound.symbols[symbol.idx()]
+                .flags
+                .intersects(SymFlags::VALUE)
+            {
+                u.referenced[symbol.idx()] |= VALUE;
+                continue;
+            }
+            // `getSymbol` finds an alias only if its target has the meaning. Otherwise the search
+            // goes on in the outer scopes.
+            let ExprKind::Ident(name) = hir[e].kind else {
+                continue;
+            };
+            let Ok(at) = bound.alias_idents.binary_search_by_key(&e, |alias| alias.0) else {
+                continue;
+            };
+            let found = u.resolve_use_with(
+                bound.alias_idents[at].1,
+                name,
+                SymFlags::VALUE | SymFlags::EXPORT_VALUE,
+                &mut |held, meaning| self.get_symbol(held, meaning),
+            );
+            if let Some(found) = found {
+                u.note_use(found, VALUE);
+            }
+        }
+    }
+
+    /// `reportImplicitAny`, `case KindParameter`: `resolveName` of the name as a type, with `isUse`,
+    /// also where the message is only a suggestion. `checkParameter` requests the type of every
+    /// parameter, and `getTypeForVariableLikeDeclaration` has none for one of a signature that has
+    /// neither an annotation nor an initializer.
+    fn note_untyped_signature_parameters(&self, file: FileId, u: &mut Unused) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.is_js && !self.is_check_js(file) {
+            return;
+        }
+        for (i, param) in hir.params.iter().enumerate() {
+            if param.ty.is_some() || param.default.is_some() {
+                continue;
+            }
+            let Some(name) = self.identifier_of_signature_parameter(file, ParamId(i as u32)) else {
+                continue;
+            };
+            let signature = &bound.fns[bound.param_fn[i].idx()];
+            let within = match signature.owner {
+                FnOwner::Type(node) => node,
+                FnOwner::Member(m) => match bound.member_owner[m.idx()] {
+                    MemberOwner::TypeLiteral(node) => node,
+                    _ => TypeNodeId::NONE,
+                },
+                _ => TypeNodeId::NONE,
+            };
+            if signature.scope.is_none()
+                || self.is_type_node_keyword(name)
+                || within.is_some() && bound.is_unchecked_type(within.idx())
+                || hir.is_in_with(param.pos)
+                || u.is_never_checked(param.pos)
+            {
+                continue;
+            }
+            u.note_name(signature.scope, name, SymFlags::TYPE, TYPE);
+        }
     }
 
     /// `RuntimeSyntaxTransformer` writes `x || (x = {})` for an enum or a namespace `x`. In a file
@@ -1642,32 +1733,8 @@ pub(super) fn is_thisless_type(hir: &hir::File, t: TypeNodeId) -> bool {
 impl Unused<'_, '_> {
     // ───────────────────────────── references ─────────────────────────────
 
-    fn note_references(&mut self, index: &ExprsByKind) {
+    fn note_references(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
-        for &e in index.of(ExprTag::Ident) {
-            let i = e.idx();
-            let symbol = bound.expr_symbol[i];
-            if symbol.is_none()
-                || self.referenced[symbol.idx()] & VALUE != 0
-                || bound.is_unchecked(i)
-                || self.is_unchecked(e)
-                || self.is_write_only(e)
-                || self.is_inside_declaration_of(e, symbol)
-            {
-                continue;
-            }
-            // `checkVariableLikeDeclaration` only validates the alias that `const x = require("m")` declares. It does not check the
-            // initializer, so it does not resolve the callee.
-            if let Parent::Expr(call) = bound.expr_parent[i]
-                && call.is_some()
-                && let Parent::VarInit(d) = bound.expr_parent[call.idx()]
-                && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
-                && bound.required_by(hir, hir[d].pat).is_some()
-            {
-                continue;
-            }
-            self.referenced[symbol.idx()] |= VALUE;
-        }
         for i in 0..hir.types.len() {
             let scope = bound.type_scope[i];
             let TypeNodeKind::Ref { name, .. } = hir.types[i].kind else {
@@ -1779,9 +1846,9 @@ impl Unused<'_, '_> {
         scope
     }
 
-    /// The statement, member, parameter, function type or variable declaration that has `at` in
-    /// the trivia before its first token, where its JSDoc comments are (`withJSDoc`). Those are the
-    /// nodes with comments that are passed to `checkSourceElement`.
+    /// The statement, member, parameter, function type, named tuple member or variable declaration
+    /// that has `at` in the trivia before its first token, where its JSDoc comments are
+    /// (`withJSDoc`). Those are the nodes with comments that are passed to `checkSourceElement`.
     fn jsdoc_host_at(&self, at: u32) -> Option<JSDocHost> {
         let (hir, bound) = (self.hir, self.bound);
         // The range of a node is empty if the parser did not record it.
@@ -1797,6 +1864,18 @@ impl Unused<'_, '_> {
         let is_checked = |i: usize| !matches!(bound.stmt_parent[i], Parent::None);
         let mut statements = hir.stmts.iter().enumerate();
         if let Some((i, s)) = statements.find(|&(i, s)| follows(s.loc, s.start) && is_checked(i)) {
+            let is_host = match s.kind {
+                // `parseExpressionOrLabeledStatement`, `hasParen`: the comments belong to the
+                // `ParenthesizedExpression` alone, which `checkSourceElement` never visits.
+                StmtKind::Expr(_) => hir.text.get(s.start as usize) != Some(&b'('),
+                // `checkTryStatement` and `checkCatchClause` call `checkBlock` themselves.
+                StmtKind::Block(_) => !matches!(bound.stmt_parent[i], Parent::Stmt(outer)
+                    if outer.is_some() && matches!(hir[outer].kind, StmtKind::Try { .. })),
+                _ => true,
+            };
+            if !is_host {
+                return None;
+            }
             return host(
                 s.loc,
                 s.start,
@@ -1828,17 +1907,27 @@ impl Unused<'_, '_> {
             };
             return host(p.loc, p.pos, scope, true);
         }
-        // `parseFunctionOrConstructorType`. `node.Pos()` of a type is not stored.
+        // `parseFunctionOrConstructorType`, `parseTupleElementNameOrTupleElementType`: the first
+        // token, `node.End()`, a type that is checked if the node is, and the scope. `node.Pos()`
+        // is stored for neither.
         let function_types = (hir.types.iter().enumerate()).filter_map(|(i, t)| match t.kind {
-            TypeNodeKind::Fn(f) if t.pos > at => Some((i, t, f)),
+            TypeNodeKind::Fn(f) => Some((t.pos, t.end, i, bound.fns[f.idx()].scope)),
             _ => None,
         });
-        if let Some((i, t, f)) = function_types.min_by_key(|it| it.1.pos) {
-            let pos = skip_trivia_back(&hir.text, t.pos as usize) as u32;
+        let named_tuple_members = (hir.tuple_elems.iter())
+            .filter(|member| member.name.is_some() && member.written.is_some())
+            .map(|member| {
+                let written = member.written.idx();
+                (member.start, member.end, written, bound.type_scope[written])
+            });
+        let after = function_types
+            .chain(named_tuple_members)
+            .filter(|node| node.0 > at);
+        if let Some((start, end, ty, scope)) = after.min_by_key(|node| node.0) {
+            let pos = skip_trivia_back(&hir.text, start as usize) as u32;
             if pos <= at {
-                let is_checked = !bound.is_unchecked_type(i) && !self.is_never_checked(t.pos);
-                let loc = TextRange { pos, end: t.end };
-                return host(loc, t.pos, bound.fns[f.idx()].scope, false).filter(|_| is_checked);
+                let is_checked = !bound.is_unchecked_type(ty) && !self.is_never_checked(start);
+                return host(TextRange { pos, end }, start, scope, false).filter(|_| is_checked);
             }
         }
         let mut declarations = hir.var_decls.iter().enumerate();
@@ -1848,38 +1937,32 @@ impl Unused<'_, '_> {
         if s.is_none() || !matches!(hir[s].kind, StmtKind::Var(_)) {
             return None;
         }
-        let scope = match bound.stmt_scope[s.idx()] {
-            ScopeId::NONE => self.scope_of_statement(s),
-            scope => scope,
-        };
-        host(d.loc, hir[d.pat].pos, scope, true)
+        host(d.loc, hir[d.pat].pos, bound.stmt_scope[s.idx()], true)
     }
 
-    /// The scope of the declaration that `s` is. For any other statement, the scope of the
-    /// innermost enclosing function or namespace.
-    fn scope_of_statement(&self, mut s: StmtId) -> ScopeId {
+    /// `Resolve` from a child of `s` that is not a statement: the scope that `s` creates, or else
+    /// the scope it is in.
+    fn scope_of_statement(&self, s: StmtId) -> ScopeId {
         let (hir, bound) = (self.hir, self.bound);
-        match hir[s].kind {
+        let inside = match hir[s].kind {
             StmtKind::Fn(f) => return bound.fns[f.idx()].scope,
             StmtKind::Class(class) => return bound.class_scope[class.idx()],
             StmtKind::Interface(id) => return bound.interface_scope[id.idx()],
             StmtKind::TypeAlias(alias) => return bound.alias_scope[alias.idx()],
             StmtKind::Enum(e) => return bound.enum_scope[e.idx()],
             StmtKind::Module(m) => return bound.module_scope[m.idx()],
-            _ => {}
-        }
-        loop {
-            match bound.stmt_parent[s.idx()] {
-                Parent::Stmt(outer) if outer.is_some() => s = outer,
-                Parent::Case(case) if bound.case_stmt[case.idx()].is_some() => {
-                    s = bound.case_stmt[case.idx()]
-                }
-                Parent::FnBody(f) => return bound.fns[f.idx()].scope,
-                Parent::Module(m) => return bound.module_scope[m.idx()],
-                Parent::File => return ScopeId(0),
-                _ => return ScopeId::NONE,
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+                if body.is_some() =>
+            {
+                body
             }
-        }
+            // An empty block declares nothing.
+            StmtKind::Block(list) => hir.ids(list).next().unwrap_or(s),
+            _ => s,
+        };
+        bound.stmt_scope[inside.idx()]
     }
 
     /// `GetHostSignatureFromJSDoc`: the scope of the signature that `m` is, or that is the type of
@@ -1968,13 +2051,27 @@ impl Unused<'_, '_> {
     /// `Resolve`: what the name resolves to, if that is declared in the file.
     fn resolve_use(&self, from: ScopeId, name: Atom, meaning: SymFlags) -> Option<Use> {
         let files = self.files;
+        self.resolve_use_with(from, name, meaning, &mut |held, meaning| {
+            held.filter(|&sym| files.means(sym, meaning))
+        })
+    }
+
+    /// The same. `get_symbol`: `getSymbol`, given the entry of a table for the name.
+    fn resolve_use_with(
+        &self,
+        from: ScopeId,
+        name: Atom,
+        meaning: SymFlags,
+        get_symbol: &mut dyn FnMut(Option<Sym>, SymFlags) -> Option<Sym>,
+    ) -> Option<Use> {
+        let files = self.files;
         // The most recently searched scope.
         let mut found_in = ScopeId::NONE;
         let lookup = &mut |table: SymbolTable, held: Option<Sym>, meaning: SymFlags| {
             if let SymbolTable::Locals(_, scope) = table {
                 found_in = scope;
             }
-            held.filter(|&sym| files.means(sym, meaning))
+            get_symbol(held, meaning)
         };
         let start = self.bound.scope_to_resolve_from(from, name);
         let found = files

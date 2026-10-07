@@ -32,7 +32,7 @@ pub(crate) struct Lower<'p, 'a> {
     /// `TokenFullStart` of the end of the file.
     end_of_file_full_start: u32,
     stack_check: bun_core::StackCheck,
-    /// The JSDoc comments of a JavaScript file. None for TypeScript.
+    /// The JSDoc comments of a JavaScript file. In TypeScript, `Lexer::jsdoc_read_by_checker`.
     pub(super) jsdoc: std::rc::Rc<Comments>,
     /// Which of them are attached to a node.
     pub(super) jsdoc_is_attached: Vec<bool>,
@@ -67,9 +67,13 @@ impl<'p, 'a> Lower<'p, 'a> {
         is_declaration_file: bool,
     ) -> hir::FileBuilder {
         let end_of_file_full_start = p.lexer.token_full_start as u32;
-        // `withJSDoc`: tags are only processed in JavaScript files.
-        let (mut syntax, jsdoc) = if syntax.has_jsdoc {
-            super::jsdoc::read_comments(p, syntax)
+        let wanted = if syntax.has_jsdoc {
+            super::comments::flags::JSDOC_LIKE
+        } else {
+            p.lexer.jsdoc_read_by_checker(is_declaration_file)
+        };
+        let (mut syntax, jsdoc) = if wanted != 0 {
+            super::jsdoc::read_comments(p, syntax, wanted)
         } else {
             (syntax, Comments::default())
         };
@@ -780,7 +784,7 @@ impl<'p, 'a> Lower<'p, 'a> {
     }
 
     /// `withJSDoc` for the node `host` whose first token is at `token`, if the parser recorded its
-    /// full start.
+    /// full start. For an expression it does so in JavaScript only (`P::pos_for_jsdoc`).
     fn with_noted_jsdoc(
         &mut self,
         full_start: Option<u32>,
@@ -788,9 +792,14 @@ impl<'p, 'a> Lower<'p, 'a> {
         with_trailing: bool,
         host: &mut Host,
     ) {
-        if !self.jsdoc.list.is_empty()
-            && let Some(full_start) = full_start
-        {
+        if self.jsdoc.list.is_empty() {
+            return;
+        }
+        let full_start = match full_start {
+            None if !self.b.is_js => self.first_comment_before(token),
+            _ => full_start,
+        };
+        if let Some(full_start) = full_start {
             self.with_jsdoc(token, full_start, with_trailing, host);
         }
     }
@@ -2242,9 +2251,16 @@ impl<'p, 'a> Lower<'p, 'a> {
                 ExprKind::Fn(func)
             }
             Data::EClass(e) => {
-                let class = self.class(e, Flags::empty(), pos, self.declaration_start(expr.loc));
-                let full_start = self.full_start_of(expr.loc);
-                self.with_noted_jsdoc(full_start, pos, false, &mut Host::Class(class));
+                let start = self.declaration_start(expr.loc);
+                let class = self.class(e, Flags::empty(), pos, start);
+                // `parseDecoratedExpression`: its comments are those before the decorators. The
+                // parser records the full start of `class`.
+                let full_start = if start == pos {
+                    self.full_start_of(expr.loc)
+                } else {
+                    self.first_comment_before(start)
+                };
+                self.with_noted_jsdoc(full_start, start, false, &mut Host::Class(class));
                 ExprKind::Class(class)
             }
             Data::EDot(e) => {

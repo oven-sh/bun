@@ -280,12 +280,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// `parseComputedPropertyName`, between the brackets: any expression.
     /// `checkGrammarComputedPropertyName` reports a comma. `parsePropertyName` restores
     /// `statementHasAwaitIdentifier`, so `reparseTopLevelAwait` parses no statement again for an
-    /// `await` in a name: at the top level it is read outside the await context.
+    /// `await` in a name: at the top level it is read outside the await context, unless the
+    /// statement is parsed again for another `await`. One that comes after the name is only known
+    /// at the end of the statement (`statements_with_await_in_names`).
     #[cold]
     #[inline(never)]
     fn parse_expression_of_computed_name(&mut self) -> crate::CrateResult<Expr> {
         let old_await = self.fn_or_arrow_data_parse.allow_await;
-        if self.fn_or_arrow_data_parse.is_top_level && old_await == AwaitOrYield::AllowExpr {
+        if self.fn_or_arrow_data_parse.is_top_level
+            && old_await == AwaitOrYield::AllowExpr
+            && !self.lexer.await_name_seen
+        {
             self.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
         }
         let expression = self.parse_expr(Level::Lowest);

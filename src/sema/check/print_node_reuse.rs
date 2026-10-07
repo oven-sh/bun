@@ -61,13 +61,8 @@ impl<'p> Printer<'_, 'p, '_> {
         self.type_to_node(this)
     }
 
-    /// `addPropertyToElementList`: the type `ty` of the property `prop` of `owner`.
-    pub(super) fn serialize_type_of_property(
-        &mut self,
-        owner: TypeId,
-        prop: &Prop,
-        ty: TypeId,
-    ) -> Node {
+    /// `addPropertyToElementList`: the type `ty` of the property `prop`.
+    pub(super) fn serialize_type_of_property(&mut self, prop: &Prop, ty: TypeId) -> Node {
         if let Some((file, declaration)) = self.value_declaration_of_property(prop) {
             // `t.symbol == symbol`: a symbol derived from the declared one (`getSpreadSymbol`,
             // `createSymbolWithType`) is not the symbol of its `unique symbol` type.
@@ -78,7 +73,7 @@ impl<'p> Printer<'_, 'p, '_> {
             }
             // `symbol.Flags&SymbolFlagsOptional != 0 && ReverseMappedSymbolLinks.Has(symbol)`
             let is_optional_reverse_mapped = prop.flags.contains(PropFlags::OPTIONAL)
-                && matches!(self.c.data(owner), TypeData::ReverseMapped { .. });
+                && matches!(prop.source, PropSource::ReverseMapped(..));
             return self.serialize_type_for_declaration(
                 file,
                 declaration,
@@ -169,11 +164,13 @@ impl<'p> Printer<'_, 'p, '_> {
                 (file, variable @ Decl::Var(_)) => Some((file, self.c.hir(file).node(variable))),
                 // Among assignment declarations, the first annotated one determines the type.
                 (file, Decl::Expando(first) | Decl::ThisProperty(first)) => {
-                    let (hir, list) = (self.c.hir(file), self.c.assignments_of_symbol(*symbol));
-                    let annotated = list
-                        .iter()
-                        .find(|&&e| hir.jsdoc_type(JsDocTypeOwner::Assign(e)).is_some());
-                    Some((file, self.c.hir(file).node(*annotated.unwrap_or(&first))))
+                    let list = self.c.assignments_of_symbol(*symbol);
+                    let annotated = list.iter().copied().find(|&(of, e)| {
+                        let annotation = self.c.hir(of).jsdoc_type(JsDocTypeOwner::Assign(e));
+                        annotation.is_some()
+                    });
+                    let (file, declaration) = annotated.unwrap_or((file, first));
+                    Some((file, self.c.hir(file).node(declaration)))
                 }
                 _ => None,
             },
@@ -882,13 +879,19 @@ impl<'p> Printer<'_, 'p, '_> {
         }
     }
 
-    /// `reuseNode` for a type node. The outermost `ParenthesizedType` around `node` is that node.
-    pub(super) fn try_reuse_type_node(&mut self, file: FileId, node: TypeNodeId) -> Option<Node> {
-        let outermost = self.c.parenthesized_types_around(file, node, 0).last();
+    /// `reuseNode` for a type node: the outermost `ParenthesizedType` around `node` that opens at
+    /// `floor` or later, `node` itself if there is none. 0 for an annotation.
+    pub(super) fn try_reuse_type_node(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        floor: u32,
+    ) -> Option<Node> {
+        let outermost = (self.c.parenthesized_types_around(file, node, floor)).last();
         let start = outermost.map_or_else(|| self.c.hir(file)[node].pos, |start| start as u32);
-        let existing = (start, self.c.end_of_type_node_from(file, node, 0));
+        let existing = (start, self.c.end_of_type_node_from(file, node, floor));
         let reused = self.try_reuse_existing_node_helper(file, existing, |printer| {
-            printer.visit_existing_type_node(file, node, 0)
+            printer.visit_existing_type_node(file, node, floor)
         })?;
         if self.c.hir(file).text.is_empty() {
             self.approximate_length += reused.text.len() + 1;
@@ -901,7 +904,7 @@ impl<'p> Printer<'_, 'p, '_> {
         if node.is_none() {
             return Node::simple(b"any");
         }
-        match self.try_reuse_type_node(file, node) {
+        match self.try_reuse_type_node(file, node, 0) {
             Some(reused) => reused,
             None => {
                 self.report_inference_fallback(file, self.c.hir(file).node(node));
@@ -1681,7 +1684,7 @@ impl<'p> Printer<'_, 'p, '_> {
         self.is_transformer = false;
         // `TryJSTypeNodeToTypeNode`
         let reused = match is_annotated {
-            true => self.try_reuse_type_node(file, annotation),
+            true => self.try_reuse_type_node(file, annotation, 0),
             false => None,
         };
         let ty = match (reused, hir.function_of(node).some()) {
@@ -1933,33 +1936,49 @@ impl<'p> Printer<'_, 'p, '_> {
 
     /// `trackExistingEntityName` for the name after `typeof` in `query`, which starts with `this`:
     /// whether the symbol of `getThisContainer` is accessible where the name is printed. A member
-    /// has no symbol: it is as accessible as its container (`getContainersOfSymbol`).
+    /// is in no table: it is as accessible as its container (`getContainersOfSymbol`), which for
+    /// a literal is the variable of `getVariableDeclarationOfObjectLiteral`.
     fn is_this_container_accessible(&mut self, file: FileId, query: TypeNodeId) -> bool {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let (hir, bound, files) = (self.c.hir(file), self.c.bound(file), self.c.files());
         let TypeNodeKind::Typeof { expr, .. } = hir[query].kind else {
             return false;
         };
         let scope = bound.type_scope[query.idx()];
-        let this = first_identifier(hir, expr);
-        let symbol = match self.c.this_container(file, this) {
-            Some(Ok(f)) => match bound.fns[f.idx()].owner {
-                FnOwner::Stmt(_) => bound.fn_symbol[f.idx()],
-                FnOwner::Member(m) => match bound.member_owner[m.idx()] {
-                    MemberOwner::Class(c) => bound.class_symbol[c.idx()],
-                    MemberOwner::Interface(i) => bound.interface_symbol[i.idx()],
-                    _ => SymbolId::NONE,
-                },
-                _ => SymbolId::NONE,
+        let this = hir.node(first_identifier(hir, expr));
+        let declared = |symbol: SymbolId| symbol.is_some().then(|| files.sym(file, symbol));
+        let symbol = match hir.data(hir.get_this_container(this, false, false)) {
+            // A script has no symbol, and a module can be named by an `import` type.
+            NodeData::File => return true,
+            NodeData::Stmt(s) => match hir[s].kind {
+                StmtKind::Fn(f) => declared(bound.fn_symbol[f.idx()]),
+                StmtKind::Module(m) => declared(bound.module_symbol[m.idx()]),
+                StmtKind::Enum(e) => declared(bound.enum_symbol[e.idx()]),
+                _ => None,
             },
-            Some(Err((c, _))) => bound.class_symbol[c.idx()],
-            _ => SymbolId::NONE,
+            // It has no symbol.
+            NodeData::Member(m) if hir[m].kind == MemberKind::StaticBlock => return true,
+            NodeData::Member(m) => match bound.member_owner[m.idx()] {
+                MemberOwner::Class(c) => declared(bound.class_symbol[c.idx()]),
+                MemberOwner::Interface(i) => declared(bound.interface_symbol[i.idx()]),
+                MemberOwner::TypeLiteral(literal) => {
+                    let literal = Decl::TypeLiteral(literal);
+                    self.c.variable_declaration_of_object_literal(file, literal)
+                }
+                MemberOwner::None => None,
+            },
+            NodeData::Prop(p) => {
+                let literal = Decl::ObjectLiteral(bound.prop_owner[p.idx()]);
+                self.c.variable_declaration_of_object_literal(file, literal)
+            }
+            // The symbol of a function expression is in no table and has no parent.
+            _ => None,
         };
-        symbol.is_some() && scope.is_some() && {
-            let symbol = self.c.files().sym(file, symbol);
-            let at = Enclosing::at_scope(file, scope);
-            self.c
-                .is_symbol_accessible_at(symbol, SymFlags::VALUE, false, at)
-        }
+        let Some(symbol) = symbol.filter(|_| scope.is_some()) else {
+            return false;
+        };
+        let at = Enclosing::at_scope(file, scope);
+        self.c
+            .is_symbol_accessible_at(symbol, SymFlags::VALUE, false, at)
     }
 
     /// `tryVisitTypeReference`

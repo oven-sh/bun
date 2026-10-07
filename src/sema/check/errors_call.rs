@@ -950,8 +950,7 @@ impl Checker<'_, '_> {
                 return false;
             }
         }
-        // `getTypeAtPosition(signature, i)` for every argument.
-        let params = self.sig_params_up_to(sig, args.len());
+        let mut params = self.sig_params(sig);
         let rest = self.non_array_rest_type(&params);
         let count = if rest.is_some() {
             (self.parameter_count(&params) - 1).min(args.len())
@@ -962,6 +961,11 @@ impl Checker<'_, '_> {
             let node = arg.node();
             if matches!(hir[node].kind, ExprKind::Missing) {
                 continue;
+            }
+            // `getTypeAtPosition(signature, i)`: a cycle through the type of a parameter is found
+            // here, and not for a parameter after the first argument that fails.
+            if let List::Own(_) = params {
+                params = self.sig_params_up_to(sig, i + 1);
             }
             let Some(expected) = self.param_type_at(&params, i) else {
                 continue;
@@ -982,6 +986,7 @@ impl Checker<'_, '_> {
             if self.related(actual, expected, relation) {
                 continue;
             }
+            self.note_parameter_types_resolved(sig, &params, i + 1);
             if report {
                 let check_node = self.effective_check_node(file, node);
                 let error_node = match decorator {
@@ -1021,6 +1026,7 @@ impl Checker<'_, '_> {
             }
             return false;
         }
+        self.note_parameter_types_resolved(sig, &params, args.len());
         if let Some(rest) = rest {
             let actual = self.spread_argument_type(file, args, count, rest, None, check_mode);
             if !self.related(actual, rest, relation) {
@@ -1375,7 +1381,7 @@ impl Checker<'_, '_> {
         }
         let end = self.end_of_type_argument_list(file, type_args);
         self.add_diagnostic(Reported::new(
-            (file, hir[first].pos, end),
+            (file, start_of_type(hir, first), end),
             code,
             held(counts),
         ));

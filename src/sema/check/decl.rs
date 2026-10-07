@@ -1852,6 +1852,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `instantiateSignatureEx`, the mapper assigned to a cloned type parameter: the mappings of
     /// `around`, plus the clones for the type parameters declared in the same list as `tp`.
+    /// `getUniqueTypeParameters`: its mapper has the renamed type parameters only. The others are
+    /// the clones for `around` without the new names.
     fn clone_mapper(&self, file: FileId, tp: TypeParamId, around: MapperId) -> MapperId {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let scope = bound.type_param_scope[tp.idx()];
@@ -1861,14 +1863,27 @@ impl<'p, 's> Checker<'p, 's> {
             Some(ScopeKind::Interface(i)) => hir[i].type_params,
             _ => Span::new(tp.0, 1),
         };
+        let mapping = self.types().mapping(around);
+        let is_new_name =
+            |pair: &(TypeId, TypeId)| matches!(self.data(pair.0), TypeData::StringLit { .. });
+        let before_renaming = if mapping.iter().any(is_new_name) {
+            let kept = (mapping.iter().copied())
+                .filter(|pair| !is_new_name(pair))
+                .collect();
+            self.types().mapper(kept)
+        } else {
+            around
+        };
         let fresh: SmallVec<[(TypeId, TypeId); 4]> = list
             .iter()
             .map(|t| {
                 let declared = self.type_param(file, t);
+                let keeps_name = before_renaming != around
+                    && self.new_type_param_name(hir[t].name, around).is_none();
+                let around = if keeps_name { before_renaming } else { around };
                 (declared, self.cloned_type_param(file, t, around))
             })
             .collect();
-        let mapping = self.types().mapping(around);
         let mut pairs = Vec::with_capacity(mapping.len() + fresh.len());
         pairs.extend(
             mapping
@@ -3189,7 +3204,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Sym> {
         let found = self.resolve_entity_name(file, scope, name, SymFlags::TYPE, ignore_errors)?;
         // `resolveEntityName` resolves an alias to the first symbol in the chain that has a type meaning.
-        let target = match self.combined_symbol_of_alias(found) {
+        let target = match self.combined_symbol_of_resolved_alias(found) {
             Some(combined) => combined,
             None => self.files().resolve_alias_as(found, SymFlags::TYPE)?,
         };
@@ -3287,7 +3302,10 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(most);
         }
         let at = match node {
-            Ok(node) => (file, hir[node].pos, self.end_of_type_node(file, node)),
+            Ok(node) => {
+                let (start, end) = self.get_error_range_for_node(file, hir.node(node));
+                (file, start, end)
+            }
             // Type arguments from an `@extends` tag are located elsewhere in the source.
             Err(class) => {
                 let start = self.start_of(file, hir[class].extends);
@@ -3475,8 +3493,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sym) if self.has_this_type(sym) => self.intern(TypeData::ThisParam(sym)),
             Some(_) => TypeId::ERROR,
             None => {
-                let at = self.place_of_token(file, self.hir(file)[node].pos);
-                self.error_at(at, 2526, &[]);
+                self.error(file, node, 2526, &[]);
                 TypeId::ERROR
             }
         }
@@ -3637,8 +3654,8 @@ impl<'p, 's> Checker<'p, 's> {
         Some(alias)
     }
 
-    /// `type_reference` for a type reference node.
-    fn type_reference_of_node(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
+    /// `type_reference` for a type reference node, or for the `extends` clause of a class.
+    pub(super) fn type_reference_of_node(&mut self, sym: Sym, args: &[TypeId]) -> TypeId {
         if !self
             .files()
             .flags(sym)
@@ -4169,8 +4186,15 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        let crate::bind::FnOwner::Expr(e) = bound.fns[func.idx()].owner else {
-            return true;
+        // The parent of a method or an accessor of an object literal is the literal, for which
+        // `getContextualType` has no case.
+        let e = match bound.fns[func.idx()].owner {
+            crate::bind::FnOwner::Expr(e)
+                if matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow) =>
+            {
+                e
+            }
+            _ => return true,
         };
         if let Some(known) = (self.p.untyped_signatures_in_js).get(&self.task, &(file, func)) {
             return known;
@@ -4208,6 +4232,13 @@ impl<'p, 's> Checker<'p, 's> {
         let params = self.sig_params(sig);
         self.note_parameter_types_resolved(sig, &params, count);
         params
+    }
+
+    /// The same request for one parameter of a list that `sig_params` could not store.
+    pub(super) fn request_type_of_parameter(&mut self, parameter: &SigParam) {
+        if let Some((file, p)) = parameter.declaration {
+            self.type_of_param(file, p);
+        }
     }
 
     /// tsgo has assigned `links.resolvedType` of the first `count` of `params`, the parameters of
@@ -4579,7 +4610,15 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
             SigData::Synth {
                 ref of, is_union, ..
-            } if of.len() > 1 => return self.union_or_intersection_type_predicate(of, is_union),
+            } => {
+                return match of[..] {
+                    [] => None,
+                    // `cloneSignature`, `instantiateSignatureEx`: the declaration, the target and
+                    // the mapper are those of the signature it was made from.
+                    [only] => self.sig_predicate(only),
+                    _ => self.union_or_intersection_type_predicate(of, is_union),
+                };
+            }
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };

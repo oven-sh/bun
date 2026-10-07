@@ -2879,8 +2879,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let is_reparsing = eend == T::TEndOfFile && p.reparses_rest_of_file;
                 // `parseToplevelStatement`
                 if eend == T::TEndOfFile && !is_reparsing {
-                    p.lexer.await_name_seen = false;
+                    p.lexer.await_name_seen =
+                        p.statements_with_await_in_names.contains(&p.lexer.loc());
                     p.await_was_refused = false;
+                    p.await_in_computed_name = false;
                 }
                 if !is_reparsing {
                     match p.classify_list_token(list)? {
@@ -2896,6 +2898,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let outer_modifiers_base = p.begin_statement();
             let mut stmt = p.parse_stmt(&mut current_opts)?;
             p.end_statement(outer_modifiers_base, &mut stmt.loc);
+            if p.is_tolerant()
+                && p.await_in_computed_name
+                && p.lexer.await_name_seen
+                && eend == T::TEndOfFile
+            {
+                p.await_in_computed_name = false;
+                p.statements_with_await_in_names.push(stmt_start);
+            }
             if p.reparses_rest_of_file && eend == T::TEndOfFile && p.lexer.loc() == stmt_start {
                 p.lexer.next()?;
             }
@@ -3457,18 +3467,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if Self::IS_TYPESCRIPT_ENABLED
                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
-                        match p
-                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            )? {
+                        let opts = ParenExprOpts {
+                            is_async: true,
+                            full_start: async_full_start,
+                            is_after_question_and_before_colon: p.is_tolerant()
+                                && flags == EFlags::AfterQuestionAndBeforeColon,
+                            ..Default::default()
+                        };
+                        // `isParenthesizedArrowFunctionExpression`: without JSX the arrow function
+                        // is only tried. If none is there, "<" follows the name "async".
+                        let skipped = if p.is_tolerant()
+                            && !p.lexer.is_log_disabled
+                            && !p.is_jsx_enabled()
+                            && !Self::pfx_is_name_in_angle_brackets(p)
+                        {
+                            if level.lte(Level::Assign)
+                                && let Some(arrow) =
+                                    p.try_parse_generic_arrow_fn(async_range.loc, level, opts)?
+                            {
+                                return Ok(arrow);
+                            }
+                            SkipTypeParameterResult::DidNotSkipAnything
+                        } else {
+                            p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()?
+                        };
+                        match skipped {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 let type_parameters = p.saved_type_parameters(result);
                                 let opts = ParenExprOpts {
-                                    is_async: true,
-                                    full_start: async_full_start,
                                     force_arrow_fn: result
                                         == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                    ..Default::default()
+                                    ..opts
                                 };
                                 let mut expr = if !opts.force_arrow_fn
                                     && p.is_tolerant()

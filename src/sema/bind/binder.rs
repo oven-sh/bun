@@ -89,6 +89,12 @@ pub(super) struct Binder<'f, 's> {
     cur_member: MemberId,
     /// `thisContainer`, if it is a member of a class.
     this_member: MemberId,
+    /// `thisContainer`, if it is a method or an accessor of an object literal.
+    this_property: PropId,
+    /// `GetContainingClass`, applied repeatedly to the node being bound. The innermost is the last.
+    containing_classes: Vec<ClassId>,
+    /// The node being bound is in a decorator of the last of `containing_classes` itself.
+    is_in_class_decorator: bool,
     returns: Vec<u32>,
     yields: Vec<u32>,
     /// `seenThisKeyword`
@@ -209,6 +215,9 @@ impl<'f, 's> Binder<'f, 's> {
             cur_fn: FnId::NONE,
             cur_member: MemberId::NONE,
             this_member: MemberId::NONE,
+            this_property: PropId::NONE,
+            containing_classes: Vec::new(),
+            is_in_class_decorator: false,
             returns: Vec::new(),
             yields: Vec::new(),
             seen_this: false,
@@ -408,15 +417,10 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `GetContainingClass` for the declaration being bound.
     fn containing_class(&self) -> ClassId {
-        let mut scope = self.scope;
-        while scope.is_some() {
-            let s = &self.b.scopes[scope.idx()];
-            if let ScopeKind::Class(class) = s.kind {
-                return class;
-            }
-            scope = s.parent;
-        }
-        ClassId::NONE
+        self.containing_classes
+            .last()
+            .copied()
+            .unwrap_or(ClassId::NONE)
     }
 
     /// Notes `decl`, which no class declares, if its name `key` is an `#x`.
@@ -3063,11 +3067,20 @@ impl<'f, 's> Binder<'f, 's> {
         let saved_this =
             std::mem::replace(&mut self.seen_this, std::mem::take(&mut self.this_in_name));
         let outer_member = std::mem::replace(&mut self.cur_member, MemberId::NONE);
-        let outer_this = self.this_member;
+        let outer_this = (self.this_member, self.this_property);
         if f.kind != FnKind::Arrow {
             self.this_member = match owner {
                 FnOwner::Member(m) if is_class_member => m,
                 _ => MemberId::NONE,
+            };
+            self.this_property = match (owner, f.kind) {
+                (FnOwner::Expr(e), FnKind::Method | FnKind::Getter | FnKind::Setter) => {
+                    match self.b.expr_parent[e.idx()] {
+                        Parent::Prop(p) => p,
+                        _ => PropId::NONE,
+                    }
+                }
+                _ => PropId::NONE,
             };
         }
         // `requiresScopeChangeWorker` does not descend into functions, but visits a static block
@@ -3298,7 +3311,7 @@ impl<'f, 's> Binder<'f, 's> {
         };
         self.seen_this = saved_this || propagates && self.seen_this;
         self.cur_member = outer_member;
-        self.this_member = outer_this;
+        (self.this_member, self.this_property) = outer_this;
         self.scope_change_of = outer_scope_change;
         self.associated_declaration = outer_associated;
         (
@@ -3329,6 +3342,8 @@ impl<'f, 's> Binder<'f, 's> {
     fn class(&mut self, id: ClassId, owner: ClassOwner) {
         let c = &self.f[id];
         self.b.class_owner[id.idx()] = owner;
+        self.containing_classes.push(id);
+        let in_class_decorator = std::mem::replace(&mut self.is_in_class_decorator, false);
         // `Resolve`, `KindDecorator`: only from a decorator of a class declaration does the search
         // skip the class. A decorator of a class expression sees its name and type parameters.
         if let ClassOwner::Stmt(_) = owner {
@@ -3393,12 +3408,15 @@ impl<'f, 's> Binder<'f, 's> {
         if has_own_name {
             self.pop_scope();
         }
+        self.is_in_class_decorator = in_class_decorator;
+        self.containing_classes.pop();
     }
 
     /// The decorators among `modifiers`, which are the modifiers of `of`: `class`, a member of it
     /// or a parameter of a member.
     fn decorators(&mut self, modifiers: Span<ModifierId>, class: ClassId, of: DecoratorOwner) {
         let owner = self.b.class_owner[class.idx()];
+        self.is_in_class_decorator = matches!(of, DecoratorOwner::Class(_));
         for modifier in modifiers.iter() {
             if let ModifierKind::Decorator(e) = self.f[modifier].kind {
                 self.expr(e, Parent::Decorator(class, of));
@@ -3407,6 +3425,7 @@ impl<'f, 's> Binder<'f, 's> {
                 }
             }
         }
+        self.is_in_class_decorator = false;
     }
 
     /// The decorators of the member `m` of `class`, or of its parameter `of`. `Resolve`,
@@ -3581,7 +3600,7 @@ impl<'f, 's> Binder<'f, 's> {
                 self.exception_target = FlowId::NONE;
             }
             // `ContainerFlagsIsThisContainer`
-            let outer_this = self.this_member;
+            let outer_this = (self.this_member, self.this_property);
             if is_initialized_property
                 || class.is_some()
                     && matches!(
@@ -3593,7 +3612,7 @@ impl<'f, 's> Binder<'f, 's> {
                             | MemberKind::StaticBlock
                     )
             {
-                self.this_member = m;
+                (self.this_member, self.this_property) = (m, PropId::NONE);
             }
             // `bindEachChild`: the decorators and the name are the first children of the member.
             let has_decorators = class.is_some() && self.has_decorators(member.modifiers);
@@ -3705,7 +3724,7 @@ impl<'f, 's> Binder<'f, 's> {
                 self.pop_scope();
             }
             self.cur_member = outer_member;
-            self.this_member = outer_this;
+            (self.this_member, self.this_property) = outer_this;
         }
     }
 
@@ -4041,21 +4060,20 @@ impl<'f, 's> Binder<'f, 's> {
     }
 
     /// `lookupSymbolForPrivateIdentifierDeclaration`: the innermost enclosing class that declares
-    /// `#name`, static or not.
+    /// `#name`, static or not. `getContainingClassExcludingClassDecorators`: only the search that
+    /// starts in a decorator of a class skips that class.
     fn private_name(&mut self, id: ExprId, name: Atom) {
-        let mut scope = self.scope;
-        while scope.is_some() {
-            let s = &self.b.scopes[scope.idx()];
-            if let ScopeKind::Class(class) = s.kind
-                && self.f[class]
-                    .members
-                    .iter()
-                    .any(|m| self.f[m].key == PropKey::Private(name))
-            {
-                self.b.private_class.insert(id, class);
-                return;
-            }
-            scope = s.parent;
+        let searched = self.containing_classes.len() - usize::from(self.is_in_class_decorator);
+        let declares = |class: &&ClassId| {
+            let mut members = self.f[**class].members.iter();
+            members.any(|m| self.f[m].key == PropKey::Private(name))
+        };
+        if let Some(&class) = self.containing_classes[..searched]
+            .iter()
+            .rev()
+            .find(declares)
+        {
+            self.b.private_class.insert(id, class);
         }
     }
 
@@ -4492,26 +4510,57 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
-    /// `bindThisPropertyAssignment`, `getThisClassAndSymbolTable`
+    /// `getThisClassAndSymbolTable`
+    fn get_this_class_and_symbol_table(&mut self) -> Option<(SymbolId, TableId)> {
+        let (class, is_static) = if self.this_property.is_some() {
+            let is_static = self.f.is_static(self.f.node(self.this_property));
+            (self.symbol_of_literal_around(self.this_property), is_static)
+        } else if self.this_member.is_some()
+            && let MemberOwner::Class(c) = self.b.member_owner[self.this_member.idx()]
+        {
+            let member = &self.f[self.this_member];
+            let is_static =
+                member.flags.contains(Flags::STATIC) || member.kind == MemberKind::StaticBlock;
+            (self.b.class_symbol[c.idx()], is_static)
+        } else {
+            return None;
+        };
+        let table = if is_static {
+            self.get_exports(class)
+        } else {
+            self.get_members(class)
+        };
+        Some((class, table))
+    }
+
+    /// `node.Symbol()` of the object literal whose member `p` is being bound. A literal without a
+    /// symbol gets it on this request, with the members that are declared by now: those up to `p`.
+    fn symbol_of_literal_around(&mut self, p: PropId) -> SymbolId {
+        let literal = self.b.prop_owner[p.idx()];
+        if self.b.expr_symbol[literal.idx()].is_none() {
+            let container = self.bind_object_literal(literal);
+            if let ExprKind::Object(props) = self.f[literal].kind {
+                for declared in props.iter().take_while(|&declared| declared <= p) {
+                    self.bind_literal_member(container, declared);
+                }
+            }
+        }
+        self.b.expr_symbol[literal.idx()]
+    }
+
+    /// `bindThisPropertyAssignment`
     fn bind_this_property_assignment(&mut self, e: ExprId) {
         let decl = Decl::ThisProperty(e);
-        if self.this_member.is_none()
+        if self.this_member.is_none() && self.this_property.is_none()
             || assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty
             || matches!(self.f[e].kind, ExprKind::Assign { target, .. }
                 if matches!(self.f[target].kind, ExprKind::Dot { name_pos, .. } if is_private_name_at(self.f, name_pos)))
         {
             return;
         }
-        let MemberOwner::Class(c) = self.b.member_owner[self.this_member.idx()] else {
+        let Some((class, table)) = self.get_this_class_and_symbol_table() else {
             return;
         };
-        let (class, member) = (self.b.class_symbol[c.idx()], &self.f[self.this_member]);
-        let table =
-            if member.flags.contains(Flags::STATIC) || member.kind == MemberKind::StaticBlock {
-                self.get_exports(class)
-            } else {
-                self.get_members(class)
-            };
         let mut flags = SymFlags::PROPERTY | SymFlags::ASSIGNMENT;
         let mut is_computed_name = IsComputedName::No;
         // `HasDynamicName`. `node.Symbol` ends up as the symbol declared last.
@@ -4776,27 +4825,40 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    /// `bindAnonymousDeclaration(node, SymbolFlagsObjectLiteral, InternalSymbolNameObject)`
+    fn bind_object_literal(&mut self, literal: ExprId) -> SymbolId {
+        let (decl, flags) = (Decl::ObjectLiteral(literal), SymFlags::OBJECT_LITERAL);
+        let container = self.bind_anonymous_declaration(decl, flags, known::object_literal);
+        self.get_members(container);
+        container
+    }
+
+    /// `bindPropertyOrMethodOrAccessor` for the member `p` of the literal whose symbol is `container`.
+    fn bind_literal_member(&mut self, container: SymbolId, p: PropId) {
+        if let Some((includes, excludes)) = flags_of_property(self.f[p].kind) {
+            let members = self.get_members(container);
+            self.declare_symbol(members, container, Decl::Property(p), includes, excludes);
+        }
+    }
+
     fn props(&mut self, props: Span<PropId>, owner: ExprId) {
-        // Only where a name occurs twice or is computed: `PropSource::Literal` is the symbol of any
-        // other.
+        // Only where a name occurs twice or is computed, or `symbol_of_literal_around` asks for it:
+        // `PropSource::Literal` is the symbol of any other.
         let names: SmallVec<[PropKey; 16]> = props.iter().map(|p| self.f[p].key).collect();
         let written = names.iter().filter_map(|key| key.name());
         if names.iter().any(|key| matches!(key, PropKey::Computed(_)))
             || !number_repeated(&written.collect::<SmallVec<[Atom; 16]>>()).is_empty()
         {
-            let (decl, flags) = (Decl::ObjectLiteral(owner), SymFlags::OBJECT_LITERAL);
-            let container = self.bind_anonymous_declaration(decl, flags, known::object_literal);
-            let members = self.get_members(container);
-            for p in props.iter() {
-                if let Some((includes, excludes)) = flags_of_property(self.f[p].kind) {
-                    self.declare_symbol(members, container, Decl::Property(p), includes, excludes);
-                }
-            }
+            self.bind_object_literal(owner);
         }
         let in_pattern = self.in_assignment_pattern;
         let is_literal = matches!(self.f[owner].kind, ExprKind::Object(_));
         for p in props.iter() {
             self.b.prop_owner[p.idx()] = owner;
+            let container = self.b.expr_symbol[owner.idx()];
+            if container.is_some() {
+                self.bind_literal_member(container, p);
+            }
             self.jsdoc_type(JsDocTypeOwner::Prop(p));
             let prop = &self.f[p];
             self.note_private_name(Decl::Property(p), prop.key);
@@ -4809,12 +4871,13 @@ impl<'f, 's> Binder<'f, 's> {
                 let method = self.f.function_of(self.f.node(p));
                 if method.is_some() {
                     let head = self.enter_function_head(true);
-                    // `thisContainer` is the method, which is no member of a class.
-                    let outer_this = std::mem::replace(&mut self.this_member, MemberId::NONE);
+                    // `thisContainer` is the method.
+                    let outer_this = (self.this_member, self.this_property);
+                    (self.this_member, self.this_property) = (MemberId::NONE, p);
                     self.push_scope(ScopeKind::FunctionName(method), SymbolId::NONE);
                     self.expr(key, Parent::MethodKey(p));
                     self.pop_scope();
-                    self.this_member = outer_this;
+                    (self.this_member, self.this_property) = outer_this;
                     self.leave_function_head(head);
                 } else {
                     self.expr(

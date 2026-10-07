@@ -145,7 +145,7 @@ pub struct Module<'s> {
     /// The `package.json` in `PackageJsonDirectory`, if it has no `PackageJsonType`. `NONE`
     /// otherwise, and unless `module` is `node16` or `node18`: nothing else reads it.
     pub package_json_without_type: Atom,
-    /// `SourceFileMetaData.PackageJsonDirectory`: the directory of the `package.json` nearest to
+    /// `GetNearestAncestorDirectoryWithPackageJson`: the directory of the `package.json` nearest to
     /// the file. None: there is none.
     pub package_json_directory: Atom,
     /// The specifiers that resolve to JavaScript without type declarations, with the resolution
@@ -352,20 +352,6 @@ impl Module<'_> {
     /// neither imports nor exports.
     pub fn is_commonjs(&self) -> bool {
         self.bound.commonjs_indicator.is_some()
-    }
-
-    /// The file that `spec` resolves to in this file, for callers that know the specifier but not
-    /// its position: its resolution for a plain `import`, or else for whatever use requests it
-    /// there. Same lookup as `Files::module_of_specifier`.
-    pub fn imported_file(&self, spec: Atom) -> Option<FileId> {
-        [
-            self.default_mode,
-            ResolutionMode::Import,
-            ResolutionMode::Require,
-            ResolutionMode::None,
-        ]
-        .into_iter()
-        .find_map(|mode| self.imports.get(&(spec, mode)).copied())
     }
 }
 
@@ -576,6 +562,8 @@ pub struct Files<'s> {
     no_module_links: ModuleSymbolLinks<'s>,
     /// The symbol merge is done: symbols no longer change.
     is_merged: bool,
+    /// Some alias has a `combined_symbol`.
+    has_symbols_to_combine: bool,
     memo: Memo<'s>,
     /// The file order in which declarations of one symbol in several files are considered: it
     /// determines the order of overloads.
@@ -643,6 +631,9 @@ pub struct ExportCollision {
     /// The `export *` that exported it first. `specifierText` is its specifier.
     pub first: (FileId, StmtId),
     pub name: Atom,
+    /// `targetSymbol` and `sourceSymbol`, where only types tell whether `resolveSymbol` of both is
+    /// one symbol (`Resolve::may_need_types_to_resolve`). If it is, there is no error.
+    pub symbols: Option<(Sym, Sym)>,
 }
 
 /// `ModuleSymbolLinks`. In the arena of the thread that computes them.
@@ -773,8 +764,10 @@ struct Loaded<'s, 'r> {
     /// the program does not support: its span, the file, and the error of `parseTask.load`. The
     /// file is not read.
     unsupported_libs: Vec<(u32, u32, &'r [u8], u32)>,
-    /// `typeResolutionsTrace`, then `resolutionsTrace`
-    traces: Vec<DiagAndArgs>,
+    /// `typeResolutionsTrace`
+    type_resolutions_trace: Vec<DiagAndArgs>,
+    /// `resolutionsTrace`
+    resolutions_trace: Vec<DiagAndArgs>,
 }
 
 /// A file that `Files::load` has found.
@@ -1316,15 +1309,20 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     lookup_table.insert(name, node);
                     continue;
                 };
+                let is_one_symbol = self.resolve_symbol(target) == self.resolve_symbol(source);
                 // The module's own exports take precedence.
-                if self.resolve_symbol(target) != self.resolve_symbol(source)
-                    && name != known::export_equals
-                    && !symbols.contains_key(name)
-                {
+                if name == known::export_equals || symbols.contains_key(name) {
+                    continue;
+                }
+                let needs_types = target != source
+                    && (self.may_need_types_to_resolve(target)
+                        || self.may_need_types_to_resolve(source));
+                if needs_types || !is_one_symbol {
                     visit.export_collisions.push(ExportCollision {
                         duplicate: node,
                         first: lookup_table[&name],
                         name,
+                        symbols: needs_types.then_some((target, source)),
                     });
                 }
             }
@@ -1352,6 +1350,30 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         } else {
             Some(symbol)
         }
+    }
+
+    /// Whether `resolveSymbol(sym)` may be a symbol that the tables do not have, which
+    /// `Checker::resolve_alias` finds from types: for `sym` or an alias on the chain to its target,
+    /// `resolveESModuleSymbol` or `combineValueAndTypeSymbols` may create one, or the target may be
+    /// a property.
+    fn may_need_types_to_resolve(&self, mut sym: Sym) -> bool {
+        for _ in 0..32 {
+            if !self.is_non_local_alias(sym) {
+                return false;
+            }
+            if matches!(
+                self.declaration_of_alias_symbol(sym),
+                Some((_, Decl::ImportNamespace(_) | Decl::ExportStarAs(_)))
+            ) || self.is_named_import_from_export_equals(sym)
+            {
+                return true;
+            }
+            match self.alias_target(sym) {
+                Some(next) if next != sym => sym = next,
+                next => return next.is_none(),
+            }
+        }
+        false
     }
 
     /// `typeOnlyExportStarMap[name]` of `module`: the `export type *` that is the only path through
@@ -2194,6 +2216,33 @@ fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> Vec<u8> {
     lib_file(options, lib)
 }
 
+/// `pathForLibFile`, as far as `traceResolution` shows it. The first time it is asked for `lib`, the
+/// lookups of the resolution go through `cache`, and `libResolution.trace` is put into
+/// `resolutions` (`pathForLibFileResolutions`), which is in the order of its keys.
+fn trace_path_for_lib_file(
+    host: &dyn Host,
+    resolver: &Resolver,
+    options: &Options,
+    lib: &[u8],
+    cache: &mut PackageJsonInfoCache,
+    resolutions: &mut Vec<(Vec<u8>, Vec<DiagAndArgs>)>,
+) {
+    // `name != "lib.d.ts"`
+    if !options.lib_replacement || lib.is_empty() {
+        return;
+    }
+    let (name, from) = library_name_and_resolve_from(options, lib);
+    let key = to_path(&from, host.is_case_sensitive()).into_owned();
+    let Err(at) = resolutions.binary_search_by(|known| known.0.cmp(&key)) else {
+        return;
+    };
+    let tracer = Tracer::default();
+    resolver.resolve_module_name_traced(&name, &from, ResolutionMode::Require, Some(&tracer));
+    let mut trace = tracer.into_traces();
+    cache.get_package_json_infos(host, &mut trace);
+    resolutions.insert(at, (key, trace));
+}
+
 /// The tasks of `processAllProgramFiles` for the libraries: for each of `Options::libs` its reason,
 /// `pathForLibFile`, and the error of `parseTask.load` for the extension of a file that replaces it.
 /// Such a file is not read.
@@ -2610,9 +2659,18 @@ pub(crate) fn mode_for_usage_location(
 fn implied_node_format_for_emit(
     resolver: &Resolver,
     path: &[u8],
+    is_lib: bool,
     emit_module_kind: ModuleKind,
 ) -> ResolutionMode {
     let by_extension = format_by_extension(path);
+    // `parseTask.load`: `SourceFileMetaData{ImpliedNodeFormat: ResolutionModeCommonJS}`
+    if is_lib {
+        return if emit_module_kind.is_node() || by_extension == ResolutionMode::Require {
+            ResolutionMode::Require
+        } else {
+            ResolutionMode::None
+        };
+    }
     if by_extension != ResolutionMode::None
         || !file_extension_is_one_of(path, &[b".ts", b".tsx", b".js", b".jsx"])
     {
@@ -2690,10 +2748,12 @@ fn get_resolution_diagnostic(options: &Options, extension: Extension, file: &Fil
 /// `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with
 /// helpers imports `tslib`.
 fn imports_helpers(options: &Options, hir: &File) -> bool {
+    // A JSON file is bound as a module, and has no `ExternalModuleIndicator`.
+    let is_external_module = hir.has_module_syntax && hir.kind != FileKind::Json;
     options.import_helpers
         && (hir.is_js
             || hir.kind != FileKind::Declaration
-                && (options.isolated_modules || hir.has_module_syntax))
+                && (options.isolated_modules || is_external_module))
 }
 
 /// `addRootFileTask`: the file that is read for the root file `root`, or else the error.
@@ -2840,7 +2900,7 @@ impl Included<'_, '_> {
         if imports_helpers(options, hir) {
             specifiers.push((known::tslib, module.default_mode, 1395, 0, 0));
         }
-        if (module.file_name().ends_with(b".tsx") || module.file_name().ends_with(b".jsx"))
+        if crate::resolve::is_jsx_file_name(module.file_name())
             && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
         {
             specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
@@ -3389,8 +3449,9 @@ fn implied_format_reason(
     if !module.is_module() {
         return None;
     }
-    // `loadSourceFileMetaData`
+    // `loadSourceFileMetaData`, which `parseTask.load` does not call for a library.
     let scope = ancestors(dirname::<Posix>(module.file_name()))
+        .filter(|_| !module.is_lib)
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
         .map(|(json, dir)| (join(dir, b"package.json"), json));
     let is_type_recorded = options.resolves_like_node
@@ -3966,6 +4027,21 @@ impl<'s> Files<'s> {
         // `subTasks` of one file. Reused for the next.
         let mut sub_tasks: Vec<SubTask> = Vec::new();
         let mut package_json_info_cache = PackageJsonInfoCache::default();
+        // `pathForLibFileResolutions`. The libraries of the options are resolved while `rootTasks`
+        // is made.
+        let mut lib_resolutions: Vec<(Vec<u8>, Vec<DiagAndArgs>)> = Vec::new();
+        if options.trace_resolution && has_root_files {
+            for lib in &options.libs {
+                trace_path_for_lib_file(
+                    host,
+                    &resolver,
+                    options,
+                    lib_file_stem(lib),
+                    &mut package_json_info_cache,
+                    &mut lib_resolutions,
+                );
+            }
+        }
         // The last of `rootTasks` runs first.
         let mut automatic_traces = automatic_tracer
             .map(Tracer::into_traces)
@@ -4162,9 +4238,28 @@ impl<'s> Files<'s> {
                         if !is_lib {
                             package_json_info_cache.load_source_file_meta_data(host, path);
                         }
-                        package_json_info_cache.get_package_json_infos(host, &mut loaded.traces);
+                        let mut of_file = std::mem::take(&mut loaded.type_resolutions_trace);
+                        package_json_info_cache.get_package_json_infos(host, &mut of_file);
+                        for &(kind, value, ..) in &loaded.module.hir.references {
+                            if kind == ReferenceKind::Lib
+                                && !options.no_lib
+                                && let Some(lib) = referenced_lib(host, options, atoms.bytes(value))
+                            {
+                                trace_path_for_lib_file(
+                                    host,
+                                    &resolver,
+                                    options,
+                                    &lib,
+                                    &mut package_json_info_cache,
+                                    &mut lib_resolutions,
+                                );
+                            }
+                        }
+                        let of_imports = &mut loaded.resolutions_trace;
+                        package_json_info_cache.get_package_json_infos(host, of_imports);
+                        of_file.append(of_imports);
                         traces.resize_with(traces.len().max(id.idx() + 1), Vec::new);
-                        traces[id.idx()] = std::mem::take(&mut loaded.traces);
+                        traces[id.idx()] = of_file;
                     }
                     loaded.module.path = all_found.files[id.idx()].path;
                     modules[id.idx()] = Some(loaded.module);
@@ -4361,41 +4456,6 @@ impl<'s> Files<'s> {
             for start in &mut starts {
                 *start = renumber(*start);
             }
-        }
-        // `pathForLibFileResolutions`, in the order of its keys.
-        let mut lib_traces = Vec::new();
-        if options.trace_resolution && options.lib_replacement && has_root_files {
-            let mut libs: Vec<Vec<u8>> = (options.libs.iter())
-                .map(|lib| lib_file_stem(lib).to_vec())
-                .collect();
-            for module in modules.iter().flatten().filter(|_| !options.no_lib) {
-                for &(kind, value, ..) in &module.hir.references {
-                    if kind != ReferenceKind::Lib {
-                        continue;
-                    }
-                    libs.extend(referenced_lib(host, options, atoms.bytes(value)));
-                }
-            }
-            let mut lookups: Vec<_> = (libs.iter())
-                .filter(|lib| !lib.is_empty())
-                .map(|lib| library_name_and_resolve_from(options, lib))
-                .map(|(name, from)| {
-                    let path = to_path(&from, host.is_case_sensitive()).into_owned();
-                    (path, name, from)
-                })
-                .collect();
-            lookups.sort();
-            lookups.dedup();
-            let tracer = Tracer::default();
-            for (_, name, from) in &lookups {
-                resolver.resolve_module_name_traced(
-                    name,
-                    from,
-                    ResolutionMode::Require,
-                    Some(&tracer),
-                );
-            }
-            lib_traces = tracer.into_traces();
         }
         for (module, &depth) in modules.iter_mut().flatten().zip(&depths) {
             module.is_from_external_library = depth > 0;
@@ -4724,6 +4784,7 @@ impl<'s> Files<'s> {
             is_linked: false,
             no_module_links: ModuleSymbolLinks::empty_in(arena),
             is_merged: false,
+            has_symbols_to_combine: false,
             memo,
             order: &[],
             ranks: &[],
@@ -4744,9 +4805,12 @@ impl<'s> Files<'s> {
         let merging = Spent::on(host, Phase::Merge);
         files.order = slice_in(&files.declaration_order(&starts), arena);
         if options.trace_resolution {
-            package_json_info_cache.get_package_json_infos(host, &mut lib_traces);
             let mut all = log;
-            all.extend(lib_traces);
+            all.extend(
+                lib_resolutions
+                    .into_iter()
+                    .flat_map(|resolution| resolution.1),
+            );
             files.resolution_trace = session.keep(all);
         }
         let ranks = arena.alloc_slice_fill_copy(files.modules.len(), u32::MAX);
@@ -5000,14 +5064,17 @@ impl<'s> Files<'s> {
         is_lib: bool,
         text: Cow<'static, [u8]>,
     ) -> Loaded<'s, 'r> {
+        // `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
+        // whatever `package.json` is above it.
         // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, regardless of its
         // package.
-        let specifies_esm = !path.ends_with(b".json")
+        let specifies_esm = !is_lib
+            && !path.ends_with(b".json")
             && (options.resolves_like_node || strings::contains(path, b"/node_modules/"))
             && resolver.is_ecmascript_module(path);
         let is_esm = options.resolves_like_node && specifies_esm;
         let package_json_without_type =
-            if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
+            if !is_lib && matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
                 resolver
                     .package_json_without_type(path)
                     .map_or(Atom::NONE, |found| atoms.intern(&found))
@@ -5031,7 +5098,8 @@ impl<'s> Files<'s> {
         let options = resolver.options();
         let mut referenced = of_program.referenced_options.iter();
         let redirect_for_resolution = referenced.find(|&it| std::ptr::eq(it, options));
-        let implied_format = implied_node_format_for_emit(program_resolver, path, options.module);
+        let implied_format =
+            implied_node_format_for_emit(program_resolver, path, is_lib, options.module);
         let default_mode = options.default_mode(implied_format);
         let mut extensionless_imports = Vec::new();
         // `moduleNames`, each with the mode it is resolved in, and whether it is a synthetic import
@@ -5045,7 +5113,7 @@ impl<'s> Files<'s> {
         let runtime = jsx_runtime_of(options, &hir, atoms);
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
         // Only a file that can contain JSX tags, according to its file name, imports their runtime.
-        let runtime = runtime.filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"));
+        let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
         // Each entry of `moduleNames` is resolved, also one that repeats another.
         let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
         if of_program.trace_resolution {
@@ -5218,6 +5286,9 @@ impl<'s> Files<'s> {
                 && get_resolution_diagnostic(options, extension, &hir).is_none()
                 && !options.no_resolve
                 && !(is_js_file && !options.allow_js);
+            if should_add_file {
+                resolver.propagate_package_id(found, resolved.package_id);
+            }
             // `parseTask.load`: the declaration file is read in place of a source of a referenced
             // project. Any other file needs an extension that the program supports.
             let redirect = of_program.parse_file_redirect(found);
@@ -5361,14 +5432,13 @@ impl<'s> Files<'s> {
             && module.bound.umd_globals.is_empty()
             // `make_module_clones`: it adds a symbol to the file of what it imports.
             && !(module.hir.imports.iter()).any(|import| import.namespace.is_some());
-        let mut traces = types_tracer.into_traces();
-        traces.extend(tracer.into_traces());
         Loaded {
             module,
             imports,
             references,
             unsupported_libs,
-            traces,
+            type_resolutions_trace: types_tracer.into_traces(),
+            resolutions_trace: tracer.into_traces(),
         }
     }
 
@@ -5393,7 +5463,7 @@ impl<'s> Files<'s> {
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        if !module.file_name().ends_with(b".tsx") && !module.file_name().ends_with(b".jsx") {
+        if !crate::resolve::is_jsx_file_name(module.file_name()) {
             return None;
         }
         let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;
@@ -5957,6 +6027,7 @@ impl<'s> Files<'s> {
     fn make_transient_symbols(&mut self) {
         for &file in self.order {
             let created = self.transient_symbols_of(file);
+            self.has_symbols_to_combine |= created.iter().any(|it| it.0.is_combined);
             add_transient_symbols(&mut self.modules[file.idx()], created);
         }
     }
@@ -7443,6 +7514,26 @@ impl<'s> Files<'s> {
     /// property of that name.
     pub fn combined_symbol(&self, alias: Sym) -> Option<Sym> {
         self.transient_symbol_of_alias(alias, true)
+    }
+
+    /// Whether `alias`, or an alias on the chain to its target, has a `combined_symbol`: only the
+    /// types tell what `resolveAlias` and `getSymbolFlags` give for it.
+    pub fn has_symbol_to_combine(&self, mut alias: Sym) -> bool {
+        let mut links_followed = 0;
+        while self.has_symbols_to_combine
+            && links_followed < 32
+            && self.flags(alias).contains(SymFlags::ALIAS)
+        {
+            if self.combined_symbol(alias).is_some() {
+                return true;
+            }
+            let Some(next) = self.alias_links(alias).immediate_target else {
+                return false;
+            };
+            alias = next;
+            links_followed += 1;
+        }
+        false
     }
 
     /// `exportTypeLinks.target` of a symbol that `cloneTypeAsModuleType` created.

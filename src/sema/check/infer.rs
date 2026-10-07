@@ -78,8 +78,6 @@ pub(super) struct Inference {
     calls: u32,
     /// The parameter type an inference started from.
     original_target: TypeId,
-    /// The source is the type implied by a binding pattern (`patternForType`).
-    pub(super) from_pattern: bool,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
     /// inferences is `any`.
     pub(super) any_default: bool,
@@ -133,7 +131,6 @@ impl Inference {
             depth: 0,
             calls: 0,
             original_target: TypeId::NEVER,
-            from_pattern: false,
             any_default: false,
             around_source: MapperId::IDENTITY,
             around: MapperId::IDENTITY,
@@ -1971,13 +1968,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let keys = match self.data(source) {
                     // `patternForType`, `IndexFlagsNoIndexSignatures`: the `...rest` of a pattern
                     // is not a key.
-                    TypeData::Synth(shape)
-                        if n.from_pattern
-                            || matches!(
-                                shape.literal,
-                                Literalness::Pattern | Literalness::PatternWithComputedNames
-                            ) =>
-                    {
+                    TypeData::Synth(shape) if shape.literal.is_of_pattern() => {
                         let mut keys = Vec::with_capacity(shape.props.len());
                         for prop in &shape.props {
                             keys.extend(self.key_type_of_name(prop.name));

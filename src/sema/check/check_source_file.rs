@@ -190,8 +190,7 @@ impl<'s> Checker<'_, 's> {
         }
         self.check_source_elements(file, self.hir(file).body);
         self.check_deferred_nodes(file);
-        // `checkFunctionOrConstructorSymbol`, which compares an implementation with its overloads.
-        self.check_overloads(file);
+        self.check_merged_symbols(file);
         self.check_exprs_visited_by_queries(file);
         if hir.kind != FileKind::Declaration {
             self.check_unused_renamed_binding_elements(file);
@@ -697,6 +696,7 @@ impl<'s> Checker<'_, 's> {
         }
         let hir = self.hir(file);
         self.check_signature_declaration(file, func);
+        self.check_function_or_constructor_symbols_of(file, Decl::Fn(func));
         self.check_function_body(file, func);
         self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
         if hir[func].ret.is_none()
@@ -1105,6 +1105,9 @@ impl<'s> Checker<'_, 's> {
             {
                 self.check_expression(file, key);
             }
+            if member.kind == MemberKind::Method {
+                self.check_function_or_constructor_symbols_of(file, Decl::Member(m));
+            }
             // `checkAccessorDeclaration`: `getTypeOfAccessors` comes before the body, whose `return`
             // asks for the return type of the signature, which is another resolution.
             if matches!(member.kind, MemberKind::Getter | MemberKind::Setter)
@@ -1118,6 +1121,7 @@ impl<'s> Checker<'_, 's> {
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, member.func);
             }
             if member.kind == MemberKind::Constructor {
+                self.check_function_or_constructor_symbols_of(file, Decl::Member(m));
                 self.check_super_call_in_constructor(file, m);
             }
             // `checkVariableLikeDeclaration`: `getTypeOfSymbol` comes before

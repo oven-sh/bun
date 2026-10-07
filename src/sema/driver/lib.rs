@@ -1190,7 +1190,7 @@ fn dependencies_not_installed(
 /// some, and each is loaded once.
 #[derive(Default)]
 struct Projects {
-    loaded: FxHashMap<Vec<u8>, config::Project>,
+    loaded: FxHashMap<Vec<u8>, Result<config::Project, Vec<ConfigError>>>,
     /// `Project::files`, to look a file up in.
     files: FxHashMap<Vec<u8>, FxHashSet<Vec<u8>>>,
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
@@ -1199,14 +1199,21 @@ struct Projects {
 }
 
 impl Projects {
-    fn load(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &config::Project {
+    /// `None`: `config` cannot be read.
+    fn load(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Option<&config::Project> {
         // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
         // `tsc -b` has no such option.
-        self.loaded.entry(config.to_vec()).or_insert_with(|| {
+        let loaded = self.loaded.entry(config.to_vec()).or_insert_with(|| {
             config::load_overriding(disk, &Session::new(), config, &|_| {
                 overriding_options(request, false)
             })
-        })
+        });
+        loaded.as_ref().ok()
     }
 
     /// `config`, or else the first of the projects that it references, directly or not, that has
@@ -1227,7 +1234,7 @@ impl Projects {
         seen.push(config.to_vec());
         let is_new = !self.files.contains_key(config);
         let counts_javascript = self.counts_javascript;
-        let project = self.load(disk, request, config);
+        let project = self.load(disk, request, config)?;
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
             .collect();
@@ -1240,7 +1247,9 @@ impl Projects {
                         options.push((b"allowJs".to_vec(), Json::Bool(true)));
                         options
                     };
-                    config::load_overriding(disk, &Session::new(), config, &with_javascript).files
+                    config::load_overriding(disk, &Session::new(), config, &with_javascript)
+                        .map(|it| it.files)
+                        .unwrap_or_default()
                 }
             };
             let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
@@ -1268,7 +1277,9 @@ impl Projects {
             return;
         }
         seen.push(config.to_vec());
-        let project = self.load(disk, request, config);
+        let Some(project) = self.load(disk, request, config) else {
+            return;
+        };
         files.extend(project.files.iter().cloned());
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
@@ -1298,7 +1309,8 @@ impl Projects {
             return Ok(Some(owner));
         }
         let project = self.load(disk, request, &nearest);
-        let is_solution = project.files.is_empty() && !project.references.is_empty();
+        let is_solution =
+            project.is_some_and(|it| it.files.is_empty() && !it.references.is_empty());
         Err((!is_solution).then_some(nearest))
     }
 }
@@ -1560,8 +1572,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             let top = (config.as_deref().map(dirname::<Posix>))
                 .filter(is_below)
                 .unwrap_or(path);
-            let files = match &config {
-                Some(config) => projects.load(disk, request, config).files_under(disk, top),
+            // One that cannot be read excludes nothing. `check_project_of` reports it.
+            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
+            let files = match project {
+                Some(project) => project.files_under(disk, top),
                 None => project_without_config(disk, request, &cwd, &[]).files_under(disk, top),
             };
             let (mut included, mut others) = (Vec::new(), Vec::new());
@@ -1664,13 +1678,28 @@ fn check_project_of(
     request: &Request,
     projects: &mut Projects,
     of: OfProject<'_>,
-    report: Report,
+    mut report: Report,
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
         Some(config) => {
             projects.load(disk, request, config);
-            projects.loaded.remove(config).expect("loaded above")
+            match projects.loaded.remove(config).expect("loaded above") {
+                Ok(project) => project,
+                // `tscCompilation`: "these are unrecoverable errors--exit to report them as
+                // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
+                Err(errors) => {
+                    let errors = errors.iter().map(|it| of_config_error(disk, config, it));
+                    match request.build {
+                        true => report
+                            .diagnostics
+                            .push(global(6053, &[displayed_path(config)])),
+                        false => report.diagnostics.extend(errors),
+                    }
+                    report.load_time = started.elapsed();
+                    return report;
+                }
+            }
         }
         None => {
             let cwd = host::from_native(request.cwd);
@@ -1789,10 +1818,11 @@ impl Graph<'_> {
             if self.tasks.contains_key(&path) {
                 continue;
             }
-            let resolved = self.host.is_file(&config).then(|| {
-                let over = |_: bool| self.overrides.clone();
-                config::load_overriding(self.host, self.session, &config, &over)
-            });
+            let over = |_: bool| self.overrides.clone();
+            let resolved = match self.host.is_file(&config) {
+                true => config::load_overriding(self.host, self.session, &config, &over).ok(),
+                false => None,
+            };
             if let Some(project) = &resolved {
                 queued.extend(referenced(project));
             }

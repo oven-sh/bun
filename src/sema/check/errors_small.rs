@@ -14,6 +14,8 @@ use crate::bind::{
 pub(super) enum SymbolAtLocation<'p> {
     /// `getMergedSymbol` of a symbol of the binder.
     Symbol(Sym),
+    /// What `instantiateSymbol` made of that member for the table of that type.
+    Instantiated(Sym, TypeId),
     /// A property that has no symbol of the binder. The properties of a mapped type have one
     /// source.
     Property(&'p PropSource<'p>, Atom),
@@ -26,6 +28,17 @@ pub(super) enum SymbolAtLocation<'p> {
     ThisParameter(FileId, FnId),
     /// `__object`, `__type`, `__function`: the symbol that only that node declares.
     Anonymous(FileId, Node),
+}
+
+impl SymbolAtLocation<'_> {
+    /// The symbol, if the binder or the merge of the files made it.
+    pub(super) fn of_binder(&self) -> Option<Sym> {
+        if let SymbolAtLocation::Symbol(symbol) = *self {
+            Some(symbol)
+        } else {
+            None
+        }
+    }
 }
 
 /// `a == b`
@@ -409,6 +422,11 @@ impl<'p> Checker<'p, '_> {
             NodeData::Expr(e) => match hir[e].kind {
                 // `getSymbolOfNameOrPropertyAccessExpression`
                 ExprKind::Ident(name) => {
+                    if hir.is_jsx_tag_name(node)
+                        && let Some(prop_name) = self.jsx_intrinsic_tag_name(file, e)
+                    {
+                        return self.get_intrinsic_tag_symbol(file, parent, prop_name);
+                    }
                     let symbol = self.resolve_identifier(file, e, name, true).ok()??;
                     Some(SymbolAtLocation::Symbol(files.canonical(symbol)))
                 }
@@ -501,17 +519,81 @@ impl<'p> Checker<'p, '_> {
                 let &(file, function) = decls.first()?;
                 SymbolAtLocation::Anonymous(file, self.hir(file).node(function))
             }
+            TypeData::Synth(ref shape) => SymbolAtLocation::Symbol(shape.symbol?),
             _ => return None,
         })
     }
 
     /// `getPropertyOfType(ty, name)`
     fn symbol_of_property(&mut self, ty: TypeId, name: Atom) -> Option<SymbolAtLocation<'p>> {
-        let (prop, _) = self.get_property_of_type(ty, name)?;
+        let (prop, mapper) = self.get_property_of_type(ty, name)?;
         Some(match prop.source {
-            PropSource::Symbol(symbol) => SymbolAtLocation::Symbol(self.files().canonical(symbol)),
+            PropSource::Symbol(symbol) => {
+                let symbol = self.files().canonical(symbol);
+                let mapper = self.compose(prop.mapper, mapper);
+                match self.instantiation_of_member(symbol, mapper) {
+                    Some(instantiation) => SymbolAtLocation::Instantiated(symbol, instantiation),
+                    None => SymbolAtLocation::Symbol(symbol),
+                }
+            }
             ref source => SymbolAtLocation::Property(source, name),
         })
+    }
+
+    /// `instantiateSymbolTable`: the instantiation of the class, the interface or the type literal
+    /// that declares `member` whose table has an instantiated symbol for it, where `mapper` is
+    /// what a property with that symbol is read with. `None`: the table has `member` itself. The
+    /// type of `member` counts as resolved by then.
+    pub(super) fn instantiation_of_member(
+        &mut self,
+        member: Sym,
+        mapper: MapperId,
+    ) -> Option<TypeId> {
+        if mapper == MapperId::IDENTITY {
+            return None;
+        }
+        let files = self.files();
+        let parent = files.parent_of_symbol(member)?;
+        let declared = if (files.flags(parent)).intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
+            let this = self.intern(TypeData::ThisParam(parent));
+            let declared = self.declared_type(parent);
+            self.type_with_this_argument(declared, this)
+        } else if let Some(&(file, Decl::TypeLiteral(node))) = files.decls_of(parent).first() {
+            self.type_from_node(file, node)
+        } else {
+            return None;
+        };
+        let instantiation = self.instantiate(declared, mapper);
+        // `slices.Equal(typeParameters, typeArguments)`, `mappingThisOnly && isThisless(symbol)`
+        if instantiation == declared || self.is_thisless_for_this_mapper(member) {
+            return None;
+        }
+        // `instantiateSymbol`: nothing has asked for `links.writeType` of a setter.
+        let is_setter = (self.flags_of_property(member)).contains(SymFlags::SET_ACCESSOR);
+        let ty = self.type_of_symbol(member);
+        (is_setter || self.could_contain_type_variables(ty)).then_some(instantiation)
+    }
+
+    /// `getIntrinsicTagSymbol` of `node`, whose tag has the name `prop_name`. `None`:
+    /// `unknownSymbol`. `check_jsx` reports.
+    fn get_intrinsic_tag_symbol(
+        &mut self,
+        file: FileId,
+        node: Node,
+        prop_name: Atom,
+    ) -> Option<SymbolAtLocation<'p>> {
+        let intrinsic_elements_type = self.jsx_type(file, node, known::IntrinsicElements)?;
+        if let Some(intrinsic_prop) = self.symbol_of_property(intrinsic_elements_type, prop_name) {
+            return Some(intrinsic_prop);
+        }
+        let index_symbol = self.get_applicable_index_symbol(intrinsic_elements_type, prop_name);
+        if index_symbol.is_some() {
+            return index_symbol;
+        }
+        // `getTypeOfPropertyOrIndexSignatureOfType`
+        let members = self.members_for_index_infos(intrinsic_elements_type)?;
+        self.applicable_index_info_for_name(&members, prop_name)?;
+        self.symbol_of_type(intrinsic_elements_type)
     }
 
     /// `links.resolvedSymbol` of the property access or the qualified name `e`, as
@@ -525,8 +607,17 @@ impl<'p> Checker<'p, '_> {
         if let Some(property) = self.symbol_of_property(ty, name) {
             return Some(property);
         }
-        // `getApplicableIndexSymbol`: there is one only if an index signature is declared.
-        let ty = self.reduced(receiver);
+        self.get_applicable_index_symbol(receiver, name)
+    }
+
+    /// `getApplicableIndexSymbol(ty, getStringLiteralType(name))`: there is one only if an index
+    /// signature is declared.
+    fn get_applicable_index_symbol(
+        &mut self,
+        ty: TypeId,
+        name: Atom,
+    ) -> Option<SymbolAtLocation<'p>> {
+        let ty = self.reduced(ty);
         let ty = self.apparent_type(ty);
         let members = self.members(ty)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
@@ -618,12 +709,16 @@ impl<'p> Checker<'p, '_> {
         if enums.len() < 2 {
             return;
         }
-        // "Only perform this check once per symbol": where `getSymbolOfDeclaration` first answers
-        // it. The local symbol of an exported declaration lists that declaration too.
-        let first_checked = enums
-            .iter()
-            .find(|&&(f, e)| files.sym(f, self.bound(f).enum_symbol[e.idx()]) == enum_symbol);
-        if first_checked != Some(&(file, e)) {
+        // "Only perform this check once per symbol": at the first declaration that
+        // `checkSourceElement` reaches and `getSymbolOfDeclaration` answers it for. The local
+        // symbol of an exported declaration lists that declaration too.
+        let name_pos = self.hir(file)[e].name_pos;
+        let is_checked_before = |&(f, other): &(FileId, EnumId)| {
+            files.sym(f, self.bound(f).enum_symbol[other.idx()]) == enum_symbol
+                && self.is_checked_no_later_than(f, file)
+                && (f != file || self.hir(f)[other].name_pos < name_pos)
+        };
+        if enums.iter().any(is_checked_before) {
             return;
         }
         let enum_is_const = self.hir(file)[e].flags.contains(Flags::CONST);

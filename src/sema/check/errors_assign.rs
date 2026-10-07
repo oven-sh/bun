@@ -415,18 +415,16 @@ impl Checker<'_, '_> {
                 declared
             };
         }
-        // Resolving the parameter also resolves the enclosing call, whose signature `open_contextual_signature` reads.
+        // Resolving the parameter also resolves the enclosing call, which checks the function.
         let resolved = self.type_of_pat(file, param.pat);
         let func = bound.param_fn[p.idx()];
         if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
             return resolved;
         }
-        // A binding pattern is compared with `getWidenedTypeForVariableLikeDeclaration`, not with the type of a symbol.
-        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters the first time the function is checked, so
-        // `getContextuallyTypedParameterType` sees the callee's signature before its type arguments are inferred. The adjustments of
-        // `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
+        // A binding pattern is compared with `getWidenedTypeForVariableLikeDeclaration`, not with the type of a symbol. The
+        // adjustments of `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
         let index = (p.0 - hir[func].params.start) as usize;
-        let Some(ty) = self.contextual_param_type(file, func, index) else {
+        let (Some(ty), _) = self.contextual_param_type_at_check(file, func, index) else {
             return resolved;
         };
         let ty = if is_optional { self.optional(ty) } else { ty };
@@ -475,7 +473,8 @@ impl Checker<'_, '_> {
         }
         // For a JSDoc type assertion the error node is the type node.
         let (at, end) = if hir.is_in_jsdoc(hir[ty].pos) {
-            (hir[ty].pos, self.end_of_type_node(file, ty))
+            let start = start_of_type(hir, ty);
+            (start, self.end_of_type_node_from(file, ty, start))
         } else {
             (
                 self.start_inside_parentheses(file, e),
@@ -837,7 +836,8 @@ impl Checker<'_, '_> {
         };
         let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
         if at.is_some() && !self.is_assignable(ty, keys) {
-            let error_node = (file, hir[at].pos, self.end_of_type_node(file, at));
+            let start = start_of_type(hir, at);
+            let error_node = (file, start, self.end_of_type_node_from(file, at, start));
             self.check_type_assignable_to(ty, keys, Some(error_node), None);
         }
     }

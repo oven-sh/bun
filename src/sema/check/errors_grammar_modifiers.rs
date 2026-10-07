@@ -165,6 +165,36 @@ impl Checker<'_, '_> {
         });
     }
 
+    /// `checkGrammarClassDeclarationHeritageClauses` returns at its first error. The front end
+    /// reports the `@augments` tags of a class (8023) apart from its clauses: this takes back what
+    /// the original does not get to. No query may be in progress.
+    pub(super) fn check_grammar_augments_tags(&mut self, file: FileId) {
+        let hir = self.hir(file);
+        for &(class, tag) in hir.unmatched_augments_tags.iter() {
+            let node = hir.node(class);
+            let body = match hir[class].members.iter().next() {
+                Some(first) => hir[first].loc.pos,
+                None => self.end_of_node(file, node),
+            };
+            let (clauses, extends) = (hir.start(node)..body, hir[hir[class].extends].pos);
+            // It reads the tags once the first `extends` clause has passed 1172, 1173 and 1174.
+            let returns_before = self.reported.iter().any(|d| {
+                d.file == file
+                    && clauses.contains(&d.start)
+                    && (matches!(d.code, 1173 | 1174) || d.code == 1175 && d.start < extends)
+            });
+            if returns_before || self.grammar_error_in_modifiers(file, class).is_some() {
+                self.reported
+                    .retain(|d| d.file != file || d.code != 8023 || d.start != tag);
+                continue;
+            }
+            self.take_back_grammar_errors_of_heritage_clauses(file, node);
+            // `.. || c.checkGrammarTypeParameterList(..)`
+            self.reported
+                .retain(|d| d.file != file || d.code != 1098 || !clauses.contains(&d.start));
+        }
+    }
+
     /// `checkGrammarTypeParameterList`: `<>` after the name of a class, or after `class`.
     fn check_grammar_type_parameter_list_of_class(&mut self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);

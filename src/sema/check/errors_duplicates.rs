@@ -226,7 +226,8 @@ impl Checker<'_, '_> {
             // A member name can be a string literal or a computed name, so the range covers the whole name node.
             Decl::Member(_) | Decl::Property(_) | Decl::EnumMember(_) => {
                 let start = self.declaration_name_start(file, decl)?;
-                return Some((start, self.end_of_name_at(file, start)));
+                let end = self.end_of_name_at(file, start);
+                return Some((super::spans::start_of_error_range(hir, start, end), end));
             }
             _ => self.declaration_name_start(file, decl)?,
         };
@@ -900,6 +901,8 @@ impl Checker<'_, '_> {
                 let first = declarations.first().copied();
                 let first = first.and_then(|(of, first)| self.place_of_declaration(of, first));
                 let (of, from, to) = first.unwrap_or(place);
+                // `GetTextOfNode` does not skip the `*` before the name.
+                let from = super::spans::start_of_error_range(self.hir(of), from, to);
                 let text = Arg::Bytes(&self.hir(of).text[from as usize..to as usize]);
                 self.error_at(place, code, &[text]);
             }

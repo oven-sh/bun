@@ -370,6 +370,7 @@ impl Checker<'_, '_> {
             return None;
         }
         self.settle_place(&mut d);
+        d.start = super::spans::start_of_error_range(hir, d.start, d.end);
         Some(d)
     }
 
@@ -2138,7 +2139,7 @@ impl SuggestionLookup for Checker<'_, '_> {
         let files = self.files();
         // As for `get_symbol_flags`: the symbol tables have the target, unless types are needed.
         if let Some(target) = files.resolve_alias(candidate)
-            && files.combined_symbol(candidate).is_none()
+            && !files.has_symbol_to_combine(candidate)
         {
             return Some(files.flags(target));
         }
@@ -2470,6 +2471,7 @@ impl Checker<'_, '_> {
             // value. A name that none of them declares is reported as missing on the type of the
             // right operand as it is.
             ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
+                self.note_external_emit_helpers_check(file, left);
                 if !self.bound(file).private_class.contains_key(&left)
                     && !self.enclosing_classes(file, left).is_empty()
                 {

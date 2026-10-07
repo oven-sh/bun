@@ -618,6 +618,9 @@ pub struct Shape<'s> {
     /// when there is an index signature): the file and the position, by which `CompareTypes`
     /// orders, and the object literal, if it is one.
     pub symbol_declared_at: Option<(FileId, u32, ExprId)>,
+    /// `t.symbol` of a type that `getRestType` creates for a destructuring assignment: that of the
+    /// type that is destructured.
+    pub symbol: Option<Sym>,
     /// In declaration order, own before inherited.
     pub props: ArenaVec<'s, Prop<'s>>,
     pub call: ArenaVec<'s, SigId>,
@@ -634,6 +637,9 @@ pub struct Shape<'s> {
     pub is_js_literal: bool,
     /// For a type created by `getInstantiationExpressionType`.
     pub instantiation_expression: Option<InstantiationExpression>,
+    /// `t.target` of an instantiation of such a type: `getObjectTypeInstantiation` instantiates
+    /// the members of the type as created.
+    pub instantiation_target: Option<TypeId>,
     /// For a type created by `createDefaultPropertyWrapperForModule`: `originalSymbol`, the module,
     /// which is the `Parent` of its `default`.
     pub default_of: Option<Sym>,
@@ -722,6 +728,15 @@ impl Literalness {
                 | Literalness::Partial
         )
     }
+
+    /// `patternForType[t] != nil` for a type that no expression has.
+    #[inline]
+    pub fn is_of_pattern(self) -> bool {
+        matches!(
+            self,
+            Literalness::Pattern | Literalness::PatternWithComputedNames
+        )
+    }
 }
 
 impl<'s> Shape<'s> {
@@ -729,6 +744,7 @@ impl<'s> Shape<'s> {
     pub fn new_in(arena: &'s Arena) -> Shape<'s> {
         Shape {
             symbol_declared_at: None,
+            symbol: None,
             props: ArenaVec::new_in(arena),
             call: ArenaVec::new_in(arena),
             construct: ArenaVec::new_in(arena),
@@ -738,6 +754,7 @@ impl<'s> Shape<'s> {
             contains_widening_type: false,
             is_js_literal: false,
             instantiation_expression: None,
+            instantiation_target: None,
             default_of: None,
             spread_of: None,
             spread_rank: 0,
@@ -2997,6 +3014,7 @@ follow_enum!(InstantiationExpression {
 });
 follow_struct!(Shape<'_> {
     symbol_declared_at,
+    symbol,
     props,
     call,
     construct,
@@ -3006,6 +3024,7 @@ follow_struct!(Shape<'_> {
     contains_widening_type,
     is_js_literal,
     instantiation_expression,
+    instantiation_target,
     default_of,
     spread_of,
     spread_rank,
@@ -3238,6 +3257,7 @@ clone_in_struct!(Prop {
 });
 clone_in_struct!(Shape {
     symbol_declared_at,
+    symbol,
     props,
     call,
     construct,
@@ -3247,6 +3267,7 @@ clone_in_struct!(Shape {
     contains_widening_type,
     is_js_literal,
     instantiation_expression,
+    instantiation_target,
     default_of,
     spread_of,
     spread_rank,

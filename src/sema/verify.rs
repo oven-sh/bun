@@ -272,7 +272,7 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool
 /// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
 /// transitively, each with the configuration file that references it. `resolved`:
 /// `configToProjectReference`, the project of the configuration file with a `tspath.Path`, if the
-/// file exists.
+/// file can be read.
 pub fn verify_project_references<'a>(
     root: &'a Project,
     resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,

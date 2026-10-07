@@ -183,7 +183,9 @@ impl Checker<'_, '_> {
         if name.is_none() || hir.is_missing(name) {
             return b"(Missing)".to_vec();
         }
-        let written = self.source_text(file, hir.start(name), self.end_of_node(file, name));
+        let (start, end) = (hir.start(name), self.end_of_node(file, name));
+        let start = super::spans::start_of_error_range(hir, start, end);
+        let written = self.source_text(file, start, end);
         // The text of the default library is not retained.
         match hir.text(name) {
             text if written.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),

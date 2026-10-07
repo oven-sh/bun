@@ -292,8 +292,9 @@ pub struct Lexer<'a> {
     /// `skipJSDocLeadingAsterisks`: a type in a JSDoc comment is being scanned, where the first `*` of a line is trivia. Set for the
     /// type checker only.
     pub(crate) skips_jsdoc_asterisks: bool,
-    /// End of the `*` most recently skipped as trivia.
-    jsdoc_asterisk_end: usize,
+    /// `TokenFlagsPrecedingJSDocLeadingAsterisks`: where a `*` was skipped as trivia. A speculative
+    /// parse that is repeated lists it again.
+    pub(crate) jsdoc_asterisks: Vec<u32>,
 }
 
 impl<'a> LexerLog<'a> for Lexer<'a> {
@@ -2823,15 +2824,15 @@ impl<'a> Lexer<'a> {
         }
         // Only whitespace since the previously skipped `*`, which was in the leading trivia of the
         // same token.
-        if self.jsdoc_asterisk_end != 0
+        if let Some(&skipped) = self.jsdoc_asterisks.last()
             && self
                 .contents
-                .get(self.jsdoc_asterisk_end..self.start)
+                .get(skipped as usize + 1..self.start)
                 .is_some_and(|between| trailing_whitespace_len(between) == between.len())
         {
             return false;
         }
-        self.jsdoc_asterisk_end = self.end;
+        self.jsdoc_asterisks.push(self.start as u32);
         true
     }
 
@@ -3348,7 +3349,7 @@ impl<'a> Lexer<'a> {
             comment_directives: Vec::new(),
             last_line_start: 0,
             skips_jsdoc_asterisks: false,
-            jsdoc_asterisk_end: 0,
+            jsdoc_asterisks: Vec::new(),
         }
     }
 

@@ -459,13 +459,24 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let text = self.atoms().bytes(prop.name);
         let (file, (key, name_kind)) = match &prop.source {
-            PropSource::Symbol(sym)
-                if let Some((file, Decl::Member(member))) =
-                    self.files().value_declaration(*sym) =>
-            {
-                let hir = self.hir(file);
-                (file, hir.key_of(hir.node(member)))
-            }
+            PropSource::Symbol(sym) => match self.files().value_declaration(*sym) {
+                Some((file, Decl::Member(member))) => {
+                    let hir = self.hir(file);
+                    (file, hir.key_of(hir.node(member)))
+                }
+                Some((
+                    file,
+                    Decl::Expando(e) | Decl::ThisProperty(e) | Decl::ExportsProperty(e),
+                )) => {
+                    let key = self.key_of_assignment_declaration(file, e);
+                    (file, (key, Default::default()))
+                }
+                // An alias: `export { x as "0" }`.
+                None if !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX) => {
+                    return Some(self.string_literal(prop.name, false));
+                }
+                _ => return self.key_type_of_name(prop.name),
+            },
             PropSource::Literal(file, written) => {
                 let written = &self.hir(*file)[*written];
                 (*file, (written.key, written.name_kind))
@@ -493,6 +504,23 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(ty);
         }
         self.key_type_of_name(prop.name)
+    }
+
+    /// `GetNonAssignedNameOfDeclaration` of the assignment or the call `e`, which declares a
+    /// property, as the name of a member: the `a` of `f.a = v`, and `[k]` for `f[k] = v` and for
+    /// `Object.defineProperty(f, k, d)`. A `k` that is no literal gives the symbol its `nameType`.
+    pub(super) fn key_of_assignment_declaration(&self, file: FileId, e: ExprId) -> PropKey {
+        let hir = self.hir(file);
+        let argument = if let ExprKind::Assign { target, .. } = hir[e].kind {
+            match hir[target].kind {
+                ExprKind::Dot { name, .. } => return PropKey::Name(name),
+                ExprKind::Index { index, .. } => Some(index),
+                _ => None,
+            }
+        } else {
+            crate::bind::define_property_call(hir, e).map(|call| call.1)
+        };
+        argument.map_or(PropKey::None, PropKey::Computed)
     }
 
     /// The same for the property that represents `props`, the properties of one name in the members
@@ -809,11 +837,10 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             },
             AccessNode::IndexedAccessType(file, node) => match self.hir(file)[node].kind {
-                TypeNodeKind::IndexedAccess { index, .. } => Some((
-                    file,
-                    self.hir(file)[index].pos,
-                    self.end_of_type_node(file, index),
-                )),
+                TypeNodeKind::IndexedAccess { index, .. } => {
+                    let start = start_of_type(self.hir(file), index);
+                    Some((file, start, self.end_of_type_node_from(file, index, start)))
+                }
                 _ => None,
             },
             // For a computed name, the expression in the brackets. `["a"]` is stored as the name

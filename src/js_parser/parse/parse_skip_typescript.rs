@@ -1568,6 +1568,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.lexer.unescape_keyword();
     }
 
+    /// `parseExpected` of the "?" and the ":" in `parseType`. No speculative parse of TypeScript's
+    /// fails for want of them: the error is kept if it succeeds.
+    #[inline]
+    fn expect_in_conditional_type(&mut self, token: T) -> Result<(), Error> {
+        if self.lexer.token != token && self.lexer.is_log_disabled && self.is_tolerant() {
+            self.lexer.swallowed += 1;
+            return Ok(());
+        }
+        Ok(self.lexer.expect(token)?)
+    }
+
     /// In keep mode a type is emitted as soon as its kind is known, which may be before its last
     /// token is consumed. It is finished (`finish_last_type`) at a point where no token after its
     /// last has been consumed yet: before each postfix or operator, and on return.
@@ -2916,13 +2927,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
                         )?;
                         let extends = self.last_type();
-                        self.lexer.expect(T::TQuestion)?;
+                        self.expect_in_conditional_type(T::TQuestion)?;
                         self.skip_nested_type::<true>(
                             Level::Lowest,
                             SkipTypeOptionsBitset::empty(),
                         )?;
                         let yes = self.last_type();
-                        self.lexer.expect(T::TColon)?;
+                        self.expect_in_conditional_type(T::TColon)?;
                         self.skip_nested_type::<true>(
                             Level::Lowest,
                             SkipTypeOptionsBitset::empty(),

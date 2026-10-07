@@ -252,6 +252,7 @@ impl Checker<'_, '_> {
             Decl::Var(pat) | Decl::Param(pat) => (hir[pat].pos, self.end_of_pat(file, pat)),
             _ => return,
         };
+        let start = super::spans::start_of_error_range(hir, start, end);
         // `DeclarationNameToString`
         let (at, name) = (
             (file, start, end),

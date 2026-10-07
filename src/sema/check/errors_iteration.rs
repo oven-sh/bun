@@ -344,6 +344,7 @@ impl Checker<'_, '_> {
                 self.error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
                 return;
             }
+            self.note_external_emit_helpers_check(file, node);
             // A name that is not numeric omits the property of that name and no other. Any other
             // name omits by its type.
             let (mut names, mut keys) = (Vec::new(), Vec::new());
@@ -358,7 +359,11 @@ impl Checker<'_, '_> {
                 }
             }
             let keys = self.union(&keys);
-            let rest = self.rest_of_object(object_literal_type, &names, keys, None);
+            // `objectLiteralType.symbol`
+            let assigned_symbol = self.symbol_of_type(object_literal_type);
+            let assigned_symbol = assigned_symbol.and_then(|it| it.of_binder());
+            let rest =
+                self.rest_of_object(object_literal_type, &names, keys, None, assigned_symbol);
             // `checkGrammarForDisallowedTrailingComma`
             let end = self.end_of_prop(file, p);
             self.grammar_error_on_token_after(file, end, b',', 1013);
@@ -558,11 +563,42 @@ impl Checker<'_, '_> {
         contextual: SigId,
     ) {
         let hir = self.hir(file);
-        let mut parameters = hir[func].params.iter();
-        if parameters.any(|p| Self::is_pattern_without_names(hir, hir[p].pat)) {
+        // `needCheckInitializer || needCheckWidenedType`
+        let is_asked_for = hir[func].params.iter().any(|p| {
+            matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
+                && (hir[p].default.is_some() || Self::is_pattern_without_names(hir, hir[p].pat))
+        });
+        if is_asked_for {
             self.contextual_signatures_at_check
                 .push(((file, func), contextual));
         }
+    }
+
+    /// `getContextuallyTypedParameterType` for parameter `index` of `func`, asked by
+    /// `checkVariableLikeDeclaration`: `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`
+    /// checks the parameters while `getContextualSignature` still returns the signature that the
+    /// inference context then instantiates. The flag is false if another task has checked the
+    /// function: only the instantiated signature is stored, and the type is read from that one.
+    pub(super) fn contextual_param_type_at_check(
+        &mut self,
+        file: FileId,
+        func: FnId,
+        index: usize,
+    ) -> (Option<TypeId>, bool) {
+        let assigned = self.contextual_param_type(file, func, index);
+        if assigned.is_none() || self.iife_param_type(file, func, index).is_some() {
+            return (assigned, true);
+        }
+        let mut noted = self.contextual_signatures_at_check.iter();
+        if let Some(sig) = noted.rfind(|it| it.0 == (file, func)).map(|it| it.1) {
+            return (self.contextual_param_type_in(file, func, index, sig), true);
+        }
+        let sig = self.assigned_contextual_signature(file, func);
+        let is_as_declared = sig.is_some_and(|sig| {
+            matches!(*self.types().sig(sig), SigData::Decl { mapper, .. }
+                if !self.is_instantiating(mapper))
+        });
+        (assigned, is_as_declared)
     }
 
     /// `checkVariableLikeDeclaration`, "For a binding pattern, validate the initializer and exit",
@@ -613,30 +649,11 @@ impl Checker<'_, '_> {
                 .param_type_of_full_signature(file, func, index)
                 .is_none()
             {
-                contextually_typed = self.contextual_param_type(file, func, index);
-            }
-            // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters
-            // while `getContextualSignature` still returns the signature that the inference
-            // context then instantiates.
-            if contextually_typed.is_some() && self.iife_param_type(file, func, index).is_none() {
-                let mut noted = self.contextual_signatures_at_check.iter();
-                match noted.rfind(|it| it.0 == (file, func)).map(|it| it.1) {
-                    Some(sig) => {
-                        contextually_typed = self.contextual_param_type_in(file, func, index, sig);
-                    }
-                    // Another task has checked the function. Only the instantiated signature is
-                    // stored.
-                    None => {
-                        let assigned = self.assigned_contextual_signature(file, func);
-                        let is_as_declared = assigned.is_some_and(|sig| {
-                            matches!(*self.types().sig(sig), SigData::Decl { mapper, .. }
-                                if !self.is_instantiating(mapper))
-                        });
-                        if !is_as_declared {
-                            return;
-                        }
-                    }
+                let (ty, is_known) = self.contextual_param_type_at_check(file, func, index);
+                if !is_known {
+                    return;
                 }
+                contextually_typed = ty;
             }
             if hir[q].flags.contains(Flags::OPTIONAL) {
                 contextually_typed = contextually_typed.map(|ty| self.optional(ty));

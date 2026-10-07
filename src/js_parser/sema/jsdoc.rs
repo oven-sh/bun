@@ -221,6 +221,8 @@ pub(crate) struct Comments {
     pub(crate) list: Vec<JsDoc>,
     /// The HIR nodes of the types in them.
     pub(crate) types: super::clone_types::CommentTypes,
+    /// `File::jsdoc_asterisks`
+    pub(crate) asterisks: Vec<u32>,
 }
 
 impl Comments {
@@ -250,11 +252,13 @@ fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, ty: ts::TypeId) 
     }
 }
 
-/// Parses every JSDoc comment recorded by the lexer of `p`. `syntax` is the type syntax the parser
-/// saved for the file. The types in the comments become nodes of a separate HIR.
+/// Parses every comment recorded by the lexer of `p` that has one of the `comments::flags` in
+/// `wanted`. `syntax` is the type syntax the parser saved for the file. The types in the comments
+/// become nodes of a separate HIR.
 pub(crate) fn read_comments<'a>(
     p: &mut P<'a, true, false, true>,
     mut syntax: TypeSyntax<'a>,
+    wanted: u8,
 ) -> (TypeSyntax<'a>, Comments) {
     let mut comments = Comments::default();
     if !syntax.save_types || !p.is_tolerant() {
@@ -272,10 +276,10 @@ pub(crate) fn read_comments<'a>(
         &mut p.lexer.list_contexts,
         1 << ListKind::JsxChildren as u32,
     );
-    for range in &ranges {
+    for (range, &reported) in ranges.iter().zip(&flags) {
         let (start, end) = (range.loc.to_usize(), range.end_i().min(source.len()));
         let comment = &source[start.min(end)..end];
-        if !is_jsdoc_like(comment)
+        if reported & wanted == 0
             || !comment.ends_with(b"*/")
             || !bun_core::strings::contains_char(comment, b'@')
         {
@@ -295,6 +299,9 @@ pub(crate) fn read_comments<'a>(
     p.lexer.comment_flags = flags;
     p.lexer.list_contexts = outer_contexts;
     p.lexer.skips_jsdoc_asterisks = false;
+    comments.asterisks = core::mem::take(&mut p.lexer.jsdoc_asterisks);
+    comments.asterisks.sort_unstable();
+    comments.asterisks.dedup();
     let mut syntax = *p.type_syntax.take().expect("set above");
     comments.types.file = core::mem::replace(&mut syntax.b.file, file);
     comments.types.pending = core::mem::replace(&mut syntax.b.pending, pending);
@@ -1130,6 +1137,12 @@ impl<'p, 'a> Reader<'p, 'a> {
                     state = State::SavingComments;
                     indent += self.token_len();
                 }
+                Token::OpenBrace if !in_fenced_code_block => {
+                    state = State::SavingComments;
+                    if !self.link() {
+                        indent += self.token_len();
+                    }
+                }
                 Token::At | Token::OpenBrace => {
                     state = State::saving(in_fenced_code_block);
                     indent += self.token_len();
@@ -1281,6 +1294,18 @@ impl<'p, 'a> Reader<'p, 'a> {
                     indent += self.token_len();
                     is_text = false;
                 }
+                Token::OpenBrace if !in_fenced_code_block => {
+                    state = State::SavingComments;
+                    let start = self.start;
+                    if self.link() {
+                        is_text = false;
+                        has_text = true;
+                        if self.saves_comment_text {
+                            self.comment_text
+                                .extend_from_slice(&self.text[start..self.end]);
+                        }
+                    }
+                }
                 Token::At | Token::OpenBrace => state = State::saving(in_fenced_code_block),
                 Token::Backtick => {
                     backticks += 1;
@@ -1326,6 +1351,65 @@ impl<'p, 'a> Reader<'p, 'a> {
             && self.next_jsdoc() == Token::At
             && self.next_jsdoc() == Token::Word
             && matches!(self.token_value(), b"link" | b"linkcode" | b"linkplain")
+    }
+
+    /// `parseJSDocLink`, up to the `}`, the line break or the end that closes it. False: there is
+    /// none, and nothing is consumed.
+    fn link(&mut self) -> bool {
+        let mark = self.mark();
+        if !self.is_at_link() {
+            self.rewind(&mark);
+            return false;
+        }
+        self.next_jsdoc();
+        self.skip_whitespace();
+        self.link_name();
+        while !matches!(
+            self.token,
+            Token::CloseBrace | Token::NewLine | Token::EndOfFile
+        ) {
+            self.next_jsdoc();
+        }
+        true
+    }
+
+    /// `parseJSDocLinkName`
+    fn link_name(&mut self) {
+        if self.token != Token::Word {
+            return;
+        }
+        self.link_identifier(true);
+        while self.eat(Token::Dot) {
+            // `createMissingIdentifier`
+            if !self.is_at_private_identifier() {
+                self.link_identifier(true);
+            }
+        }
+        while self.is_at_private_identifier() {
+            // `ReScanHashToken`
+            self.reset_pos(self.start + 1);
+            self.next_jsdoc();
+            self.link_identifier(false);
+        }
+    }
+
+    /// `parseIdentifierName`, or `parseIdentifier` unless `allows_reserved_words`. A missing name is
+    /// reported, and the token is not consumed.
+    fn link_identifier(&mut self, allows_reserved_words: bool) {
+        let is_word = self.token == Token::Word && !self.is_at_private_identifier();
+        let is_reserved_word = is_word && crate::lexer::keyword(self.token_value()).is_some();
+        if is_word && (allows_reserved_words || !is_reserved_word) {
+            self.next_token();
+        } else if self.token == Token::EndOfFile {
+            self.error(self.full_start(), 0, 1003);
+        } else {
+            self.error_at_token(if is_reserved_word { 1359 } else { 1003 });
+        }
+    }
+
+    /// `KindPrivateIdentifier`, which only `Scan` returns.
+    fn is_at_private_identifier(&self) -> bool {
+        self.is_in_lexer && self.p.lexer.token == T::TPrivateIdentifier
     }
 
     // ───────────────────────────── tags ─────────────────────────────

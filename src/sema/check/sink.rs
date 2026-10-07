@@ -507,7 +507,12 @@ impl Checker<'_, '_> {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);
             }
+        } else {
+            return;
         }
+        let requests = &self.reported_iteration_requests;
+        let since_entered = requests.partition_point(|request| request.0 < frame.serial);
+        self.settle_iteration_requests(since_entered, frame.drops_reported);
     }
 
     /// `settle_reported` for the innermost frame if it stores nothing under its query, before

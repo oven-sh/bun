@@ -549,7 +549,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasCorrectArity`
-    pub(super) fn has_correct_arity(&mut self, s: &CallState<'_>, params: &[SigParam]) -> bool {
+    pub(super) fn has_correct_arity(
+        &mut self,
+        s: &CallState<'_>,
+        params: &List<'_, SigParam>,
+    ) -> bool {
         let (file, call, node, args) = (s.file, s.call, s.node, s.args);
         // The attributes are a single argument, regardless of the component's other parameters.
         if matches!(node, CallLike::Jsx(_)) {
@@ -561,21 +565,27 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let spread = args.iter().position(|a| a.is_spread());
         let is_incomplete = self.is_call_incomplete(file, call, node);
-        self.has_correct_arity_for_count(params, actual, spread, is_incomplete)
+        let is_open = matches!(params, List::Own(_));
+        self.has_correct_arity_for_count(params, is_open, actual, spread, is_incomplete)
     }
 
     /// `hasCorrectArity` for a call with `actual` arguments. `spread`: the first spread argument.
-    pub(super) fn has_correct_arity_for_count(
+    /// `is_open`: `sig_params` could not store `params`, so a cycle through the type of a parameter
+    /// is found where tsgo asks for that type.
+    fn has_correct_arity_for_count(
         &mut self,
         params: &[SigParam],
+        is_open: bool,
         actual: usize,
         spread: Option<usize>,
         is_incomplete: bool,
     ) -> bool {
         // Which parameters accept `void` only matters where a required one is omitted. That
-        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern.
+        // `getMinArgumentCount` asks only matters for `get_type_of_parameter` of a pattern, and
+        // where `is_open`.
         let rest = params.last().filter(|p| p.rest);
-        if spread.is_none()
+        if !is_open
+            && spread.is_none()
             && !rest.is_some_and(|p| self.is_tuple(p.ty))
             && !params.iter().any(SigParam::is_named_by_pattern)
         {
@@ -589,6 +599,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let count = self.parameter_count(params);
         let least = self.min_argument_count(params);
+        if is_open {
+            // `getParameterCount`, then `getMinArgumentCount`: from the last required parameter
+            // down to one that does not accept `void`.
+            let required = &params[..Self::min_args(params)];
+            let asked = required.iter().skip(least.saturating_sub(1)).rev();
+            for param in rest.into_iter().chain(asked) {
+                self.request_type_of_parameter(param);
+            }
+        }
         let has_rest = self.has_effective_rest_parameter(params);
         // The spread argument comes after all required parameters, and either reaches a rest
         // parameter or at least starts within the parameter list.
@@ -604,6 +623,9 @@ impl<'p, 's> Checker<'p, 's> {
         // `acceptsVoid`: only a parameter that accepts `void` may be omitted. For a parameter whose
         // type is not known this cannot be determined.
         for i in actual..least {
+            if is_open && let Some(param) = params.get(i) {
+                self.request_type_of_parameter(param);
+            }
             let Some(ty) = self.param_type_at(params, i) else {
                 return false;
             };
@@ -1304,7 +1326,6 @@ impl<'p, 's> Checker<'p, 's> {
                     let mut return_context =
                         Inference::for_params(&context.params, Some(signature));
                     return_context.any_default = context.any_default;
-                    return_context.from_pattern = is_from_binding_pattern;
                     let return_source_type = match outer_context {
                         Some(level) => {
                             self.instantiate_with_outer_return_mapper(level, contextual_type)
@@ -1317,14 +1338,6 @@ impl<'p, 's> Checker<'p, 's> {
                         inference_target_type,
                         0,
                     );
-                    // `nonInferrableAnyType`: the names in a pattern can have any type, and nothing
-                    // is inferred from that.
-                    if is_from_binding_pattern {
-                        for c in &mut return_context.candidates {
-                            c.covariant.retain(|t| !self.has_any_flag(*t));
-                            c.contravariant.retain(|t| !self.has_any_flag(*t));
-                        }
-                    }
                     context.return_context = Self::clone_inferred_part_of_context(&return_context);
                 }
             }
@@ -1426,7 +1439,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getSignatureInstantiationWithoutFillingInTypeArguments(signature, signature.typeParameters)`
-    fn without_filling_in_type_arguments(&mut self, generic: SigId) -> SigId {
+    pub(super) fn without_filling_in_type_arguments(&mut self, generic: SigId) -> SigId {
         let (params, ret, this) = (
             self.sig_params(generic),
             self.sig_return(generic),
@@ -1437,7 +1450,7 @@ impl<'p, 's> Checker<'p, 's> {
             params: self.list(&params),
             ret,
             this,
-            of: ArenaBox::empty(),
+            of: self.list(&[generic]),
             is_union: true,
         })
     }
@@ -1529,15 +1542,7 @@ impl<'p, 's> Checker<'p, 's> {
         });
         let returned_type = self.sig_return(sig);
         let ret = self.single_signature_type(generalized, construct, returned_type, mapper);
-        let (params, this) = (self.sig_params(sig), self.sig_this_type(sig));
-        self.types().intern_sig(SigData::Synth {
-            type_params: ArenaBox::empty(),
-            params: self.list(&params),
-            ret,
-            this,
-            of: ArenaBox::empty(),
-            is_union: true,
-        })
+        self.types().intern_sig(SigData::WithReturn { sig, ret })
     }
 
     /// `addImplementationSuccessElaboration`: the implementation of the overload `failed`, if
@@ -1696,7 +1701,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `createUnionOfSignaturesForOverloadFailure`: it accepts what any of `sigs` accepts, and
     /// returns what all of them return.
     pub(super) fn union_of_signatures_for_overload_failure(&mut self, sigs: &[SigId]) -> SigId {
-        let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&sig| self.sig_params(sig)).collect();
+        // `tryGetTypeAtPosition` for every position, and `tryGetRestTypeOfSignature`.
+        let lists: Vec<List<'p, SigParam>> = (sigs.iter())
+            .map(|&sig| self.sig_params_up_to(sig, usize::MAX))
+            .collect();
         // `getNonRestParameterCount`
         let plain =
             |list: &[SigParam]| list.len() - usize::from(list.last().is_some_and(|p| p.rest));
@@ -2680,7 +2688,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The name that the mapper `around` of a clone gives the type parameter declared as
     /// `declared`: see `unique_type_params`.
-    fn new_type_param_name(&self, declared: Atom, around: MapperId) -> Option<Atom> {
+    pub(super) fn new_type_param_name(&self, declared: Atom, around: MapperId) -> Option<Atom> {
         if around == MapperId::IDENTITY {
             return None;
         }
@@ -2724,9 +2732,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getUniqueTypeParameters`: `own`, with a renamed clone for each type parameter whose name occurs in `inferred` or earlier in
     /// `own`. The mapper of a renamed clone (`cloneTypeParameter`) maps the fresh string literal type of the declared name to the string
     /// literal type of the new name. Instantiation only looks up type parameters, so that entry never reaches a type.
-    /// `clone_mapper` resolves the siblings of a clone with the mapper of the clone, so if a type parameter is renamed, its siblings
-    /// (those of the same function, class or interface with the same mapper) are cloned with the same mapper, and those that keep
-    /// their name only change identity.
+    /// A type parameter that keeps its declared name stays as it is: its constraint and its default name the old siblings.
+    /// `clone_mapper` resolves the renamed siblings of a clone (those of the same function, class or interface with the same mapper)
+    /// with the mapper of the clone, so one that an earlier call renamed is cloned again with the same mapper.
     /// `None`: the renamed clones cannot be represented.
     pub(super) fn unique_type_params(
         &self,
@@ -2803,7 +2811,9 @@ impl<'p, 's> Checker<'p, 's> {
                 .filter(|rename| sibling_sets[rename.0] == sibling_sets[i])
                 .map(|rename| (rename.1, rename.2))
                 .collect();
-            if renames_of_siblings.is_empty() {
+            let has_new_name =
+                renames.iter().any(|rename| rename.0 == i) || self.is_renamed_type_param(param);
+            if renames_of_siblings.is_empty() || !has_new_name {
                 unique.push(param);
                 continue;
             }

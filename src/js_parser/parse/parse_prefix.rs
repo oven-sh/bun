@@ -329,6 +329,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     {
                         return Self::pfx_misplaced_await(p, name_range, raw, level);
                     }
+                    // Outside the await context of the top level of a module: a computed name, or the
+                    // initializer of a field, which stays outside it.
+                    p.await_in_computed_name |=
+                        p.is_tolerant() && p.fn_or_arrow_data_parse.is_top_level;
                     p.lexer.prev_token_was_await_keyword = !p.is_tolerant();
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                     // `isUpdateExpression`: `await` does not start one even where it is an
@@ -1453,6 +1457,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+                            is_after_question_and_before_colon: p.is_tolerant()
+                                && flags == EFlags::AfterQuestionAndBeforeColon,
                             open_paren,
                             full_start,
                             ..Default::default()
@@ -1516,7 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// of an arrow function and as the type of a type assertion: it need not be parsed twice.
     #[cold]
     #[inline(never)]
-    fn pfx_is_name_in_angle_brackets(p: &mut Self) -> bool {
+    pub(super) fn pfx_is_name_in_angle_brackets(p: &mut Self) -> bool {
         p.look_ahead(|p| {
             p.step() && p.is_identifier_in_context() && p.step() && p.lexer.token == T::TGreaterThan
         })

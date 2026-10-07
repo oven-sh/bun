@@ -107,34 +107,6 @@ describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd"
     });
   }
 
-  // The replaced inode keeps a link, so the file watch cannot tell that the
-  // path now names another file. Only the parent-directory watch reports it.
-  test.concurrent("--hot a module outside cwd that has a second hard link", async () => {
-    await using dir = tempDir("watch-outside-cwd-hardlink", {
-      "app/entry.ts": counterEntry("../shared/lib.ts"),
-      "shared/lib.ts": `export const sh = "V0";\n`,
-    });
-    const appDir = join(String(dir), "app");
-    const sharedLib = join(String(dir), "shared", "lib.ts");
-    await link(sharedLib, sharedLib + ".hardlink");
-
-    await using proc = spawn({
-      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
-      cwd: appDir,
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    const iter = forEachLine(proc.stdout);
-
-    expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
-
-    await renameSave(sharedLib, `export const sh = "V1";\n`);
-    expect(await nextEval(iter)).toBe("EVAL g=2 shared=V1");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
-  });
-
   // A module reached through a directory symlink is watched under its real
   // path, which is outside cwd here.
   test.concurrent("--hot via an in-cwd directory symlink to an out-of-cwd dir", async () => {
@@ -209,7 +181,37 @@ describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd"
   }
 });
 
-describe.skipIf(isWindows)("file watch", () => {
+// kqueue reports a replaced or moved file in another way, and its directory
+// events carry no names. These cases pin what the inotify backend reports.
+describe.skipIf(!isLinux)("inotify watcher", () => {
+  // The replaced inode keeps a link, so the file watch cannot tell that the
+  // path now names another file. Only the parent-directory watch reports it.
+  test.concurrent("--hot a module outside cwd that has a second hard link", async () => {
+    await using dir = tempDir("watch-outside-cwd-hardlink", {
+      "app/entry.ts": counterEntry("../shared/lib.ts"),
+      "shared/lib.ts": `export const sh = "V0";\n`,
+    });
+    const appDir = join(String(dir), "app");
+    const sharedLib = join(String(dir), "shared", "lib.ts");
+    await link(sharedLib, sharedLib + ".hardlink");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+      cwd: appDir,
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const iter = forEachLine(proc.stdout);
+
+    expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
+
+    await renameSave(sharedLib, `export const sh = "V1";\n`);
+    expect(await nextEval(iter)).toBe("EVAL g=2 shared=V1");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+
   // The inode only gets another name and then its name back. Its watch must
   // survive the first move, or nothing reports the second.
   test.concurrent("--hot reloads when a dependency is moved away and then back", async () => {
@@ -333,7 +335,7 @@ describe.skipIf(isWindows)("file watch", () => {
   // The shim makes every directory watch fail with ENOSPC, which is what
   // inotify returns when fs.inotify.max_user_watches is used up.
   const cc = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
-  describe.skipIf(!isLinux || !cc)("when no directory can be watched", () => {
+  describe.skipIf(!cc)("when no directory can be watched", () => {
     async function startWithoutDirectoryWatches() {
       const dir = tempDir("watch-dir-watch-fails", {
         "shim.c": `

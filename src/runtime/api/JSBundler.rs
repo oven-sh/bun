@@ -116,6 +116,7 @@ pub(crate) mod js_bundler {
         pub(crate) dir: OwnedString,
         pub(crate) outdir: OwnedString,
         pub(crate) rootdir: OwnedString,
+        pub(crate) tsconfig_override: OwnedString,
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
@@ -149,6 +150,8 @@ pub(crate) mod js_bundler {
         /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
         pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
+        /// `check`: see `BundleOptions::type_check`.
+        pub(crate) check: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -180,6 +183,7 @@ pub(crate) mod js_bundler {
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
                 rootdir: OwnedString::default(),
+                tsconfig_override: OwnedString::default(),
                 jsx: api::Jsx {
                     factory: Box::default(),
                     fragment: Box::default(),
@@ -216,6 +220,7 @@ pub(crate) mod js_bundler {
                 min_chunk_size: None,
                 fold_chunks: true,
                 module_preload: true,
+                check: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -741,6 +746,11 @@ pub(crate) mod js_bundler {
                 drop(slice);
             }
 
+            if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                this.tsconfig_override.append_slice_exact(slice.slice())?;
+                drop(slice);
+            }
+
             if let Some(slice) = config.get_optional_slice(global_this, b"banner")? {
                 this.banner.append_slice_exact(slice.slice())?;
                 drop(slice);
@@ -886,6 +896,9 @@ pub(crate) mod js_bundler {
             }
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
+            }
+            if let Some(check) = config.get_boolean_loose(global_this, "check")? {
+                this.check = check;
             }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =

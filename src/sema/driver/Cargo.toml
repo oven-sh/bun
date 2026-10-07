@@ -1,0 +1,21 @@
+[package]
+name = "bun_sema_driver"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_sema.workspace = true
+bun_js_parser.workspace = true
+bun_core.workspace = true
+bun_ast.workspace = true
+bun_parsers.workspace = true
+bun_paths.workspace = true
+bstr.workspace = true
+bun_threading.workspace = true
+bun_sys.workspace = true
+
+[lints]
+workspace = true

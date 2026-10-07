@@ -3787,7 +3787,10 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
 
 /// `Fs.Path.loader(&jsc_vm.transpiler.options.loaders)` — re-spelt against
 /// `bun_ast::LoaderHashTable` (= `StringArrayHashMap<bun_ast::Loader>`).
-fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> Option<Loader> {
+pub(crate) fn loader_for_path(
+    path: &Fs::Path<'_>,
+    loaders: &bun_ast::LoaderHashTable,
+) -> Option<Loader> {
     if path.is_data_url() {
         return Some(Loader::Dataurl);
     }

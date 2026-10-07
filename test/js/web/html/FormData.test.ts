@@ -394,6 +394,7 @@ describe("FormData", () => {
           [`form-data; name= "x; name=admin"`, [{ key: "x; name=admin", string: "v" }]],
           [`form-data; name= "x; filename=evil.sh"`, [{ key: "x; filename=evil.sh", string: "v" }]],
           [`form-data; foo= "a;b"; name=k`, [{ key: "k", string: "v" }]],
+          // OpenAPI Generator's cpp-ue4 client writes a blank on both sides of `=`.
           [`form-data; name = "k"`, [{ key: "k", string: "v" }]],
         ] as const)("%s", async (disposition, expected) => {
           expect(await parse(C, disposition)).toEqual(expected);
@@ -446,6 +447,47 @@ describe("FormData", () => {
         file: { name: "test.jpg", size: 102404, type: "image/jpeg", isFile: true },
       });
     });
+
+    // OpenAPI Generator's cpp-ue4 client (helpers-source.mustache, AddStringPart)
+    // writes `name = "..."` for a string field and ends the body with no CRLF.
+    for (const C of [Response, Request] as const) {
+      it(`parses an OpenAPI Generator cpp-ue4 upload with ${C.name}`, async () => {
+        const b = "AQsMCQ0PAAUKCgQEBAgADQ";
+        const body = Buffer.concat([
+          Buffer.from(
+            `--${b}\r\n` +
+              `Content-Disposition: form-data; name = "playerId"\r\n` +
+              `Content-Type: text/plain; charset=utf-8\r\n` +
+              `\r\n` +
+              `42\r\n` +
+              `--${b}\r\n` +
+              `Content-Disposition: form-data; name = "comment"\r\n` +
+              `Content-Type: text/plain; charset=utf-8\r\n` +
+              `\r\n` +
+              `hello\r\n` +
+              `--${b}\r\n` +
+              `Content-Disposition: form-data; name="file"; filename="a.bin"\r\n` +
+              `Content-Type: application/octet-stream\r\n` +
+              `\r\n`,
+          ),
+          Buffer.from([0, 1, 2, 3, 255]),
+          Buffer.from(`\r\n--${b}--`),
+        ]);
+        const headers = { "Content-Type": `multipart/form-data; boundary=${b}` };
+        const req =
+          C === Response
+            ? new Response(body, { headers })
+            : new Request("http://x/", { method: "POST", body, headers });
+        const fd = await req.formData();
+        expect(
+          [...fd].map(([k, v]) => (typeof v === "string" ? [k, v] : [k, { name: v.name, size: v.size, type: v.type }])),
+        ).toEqual([
+          ["playerId", "42"],
+          ["comment", "hello"],
+          ["file", { name: "a.bin", size: 5, type: "application/octet-stream" }],
+        ]);
+      });
+    }
   });
 
   test("FormData.from (URLSearchParams)", () => {

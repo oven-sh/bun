@@ -316,7 +316,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                     let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
                     let mut quoted = value.starts_with(b"\"");
-                    // RFC 822 §3.1.4 allows SP/HTAB after `=`: `name= "k"`. Serializers write none.
+                    // SP/HTAB may follow `=` (RFC 822 §3.1.4). `name="k"` skips the trim.
                     if !quoted {
                         value = strings::trim_left(value, b" \t");
                         quoted = value.starts_with(b"\"");

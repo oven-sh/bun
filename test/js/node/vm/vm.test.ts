@@ -1887,8 +1887,9 @@ describe("defineProperty errors use vm-realm global", () => {
 // The DFG and the FTL call a native accessor directly. They passed it the global object of the function whose code
 // the access belongs to, where every other path passes the global object of the realm that holds the accessor. A
 // function that belongs to a context, inlined into a function of the Bun global, then handed the context's global
-// object to an accessor of a Bun object, and Bun's accessors read their own global through that argument.
-describe.concurrent("a native accessor of a Bun object read by a function that belongs to a context", () => {
+// object to an accessor of an object of the main realm, and Bun's accessors read their own global through that
+// argument.
+describe.concurrent("a native accessor of a main-realm object read by a function that belongs to a context", () => {
   // Compile on the main thread so that the tier-up point does not depend on scheduling.
   const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
   // With one level of inlining the wrong call needs the FTL. At this threshold (64000 by default) the FTL compiles the
@@ -1944,6 +1945,22 @@ describe.concurrent("a native accessor of a Bun object read by a function that b
         console.log(headers instanceof Headers);
       `,
       "true",
+    ],
+    [
+      // An accessor of JavaScriptCore itself, so no Bun global is involved: the getter throws a TypeError unless the
+      // RegExp constructor it is read from belongs to the realm it is called with.
+      "RegExp.$1",
+      ftl,
+      /*js*/ `
+        const vm = require("node:vm");
+        const read = vm.runInNewContext("(function (constructor) { return constructor.$1; })");
+        const call = constructor => read(constructor);
+        /(host)/.test("host");
+        let last;
+        for (let i = 0; i < ${iterations}; i++) last = call(RegExp);
+        console.log(last);
+      `,
+      "host",
     ],
     [
       // A plain custom accessor, which the DFG calls through another node than the generated getters.

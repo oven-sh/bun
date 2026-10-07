@@ -1014,7 +1014,7 @@ describe("response stream ends without FIN", () => {
   // promises that the server did no application processing (RFC 9114 section
   // 8.1), so only that code may re-send the request, as h2 retries only
   // REFUSED_STREAM. Any other code fails the request without a second copy.
-  async function postToServerThatResetsWith(errorCode: number) {
+  async function postToServerThatResetsWith(errorCode: number, body: string | Uint8Array = "payload") {
     const requests: string[] = [];
     const origin = await listenOrigin(function (headers) {
       requests.push(`${headers[":method"]} ${headers[":path"]}`);
@@ -1030,7 +1030,7 @@ describe("response stream ends without FIN", () => {
       const result = await fetch(`https://127.0.0.1:${origin.address.port}/submit`, {
         ...h3,
         method: "POST",
-        body: "payload",
+        body,
       }).then(
         async res => ({ resolved: `${res.status} ${await res.text()}` }),
         (e: Error & { code?: string }) => ({ rejected: e.code }),
@@ -1043,6 +1043,15 @@ describe("response stream ends without FIN", () => {
 
   test("RESET_STREAM(H3_REQUEST_REJECTED) before the headers re-sends the request once", async () => {
     expect(await postToServerThatResetsWith(0x10b)).toEqual({
+      result: { resolved: "200 second attempt" },
+      requests: ["POST /submit", "POST /submit"],
+    });
+  });
+
+  // The reset arrives while the client still sends the body, so its own send
+  // half is open. The code the client reads must still be the server's.
+  test("RESET_STREAM(H3_REQUEST_REJECTED) during the body upload re-sends the request once", async () => {
+    expect(await postToServerThatResetsWith(0x10b, Buffer.alloc(8 * 1024 * 1024, "a"))).toEqual({
       result: { resolved: "200 second attempt" },
       requests: ["POST /submit", "POST /submit"],
     });

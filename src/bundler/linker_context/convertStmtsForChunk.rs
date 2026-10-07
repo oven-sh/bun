@@ -286,7 +286,6 @@ pub(crate) fn convert_stmts_for_chunk(
                                         stmt.loc,
                                     ),
                                     flag.is_async_or_has_async_dependency,
-                                    c.promise_ref,
                                 )?;
                             }
                         }

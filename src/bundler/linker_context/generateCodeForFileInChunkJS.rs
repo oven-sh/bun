@@ -88,6 +88,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
             }
 
+            debug_assert!(!stmts.inside_wrapper_prefix.has_joined());
             let main_stmts_len =
                 stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len();
             let all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.len() + 1;
@@ -521,15 +522,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
     stmts
-        .all_stmts
-        .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
-    stmts
-        .all_stmts
-        .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
+        .inside_wrapper_prefix
+        .finish(c.promise_ref, temp_arena, &mut stmts.all_stmts);
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
-    stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
     if c.options.minify_syntax {

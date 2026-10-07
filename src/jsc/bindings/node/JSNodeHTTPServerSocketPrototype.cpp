@@ -272,7 +272,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
 
     thisObject->flushResponseBytesAhead();
     auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, &thisObject->bytesWritten, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
-    // The conversion of the chunk can run JavaScript that closes the socket.
+    // The conversion of the chunk can throw, and it can run JavaScript that closes the socket.
+    if (JSValue::decode(result).isEmpty()) {
+        return result;
+    }
     if (thisObject->isClosed()) {
         return JSValue::encode(JSC::jsNumber(0));
     }

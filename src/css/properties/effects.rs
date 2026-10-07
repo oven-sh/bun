@@ -69,22 +69,20 @@ impl Filter {
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Arguments equal to the function's default are omitted, as lightningcss does.
+        // Arguments are always printed, even when they equal the function's default.
+        // Older engines read an omitted argument inconsistently, and CEF 49 crashes
+        // on `-webkit-filter: brightness()` (lightningcss#251).
         let amount =
             |name: &str, v: &NumberOrPercentage, dest: &mut Printer| -> Result<(), PrintErr> {
                 dest.write_str(name)?;
                 dest.write_char(b'(')?;
-                if v.into_f32() != 1.0 {
-                    v.to_css(dest)?;
-                }
+                v.to_css(dest)?;
                 dest.write_char(b')')
             };
         match self {
             Filter::Blur(val) => {
                 dest.write_str("blur(")?;
-                if *val != Length::zero() {
-                    val.to_css(dest)?;
-                }
+                val.to_css(dest)?;
                 dest.write_char(b')')
             }
             Filter::Brightness(v) => amount("brightness", v, dest),
@@ -92,9 +90,7 @@ impl Filter {
             Filter::Grayscale(v) => amount("grayscale", v, dest),
             Filter::HueRotate(val) => {
                 dest.write_str("hue-rotate(")?;
-                if !val.is_zero() {
-                    val.to_css(dest)?;
-                }
+                val.to_css(dest)?;
                 dest.write_char(b')')
             }
             Filter::Invert(v) => amount("invert", v, dest),

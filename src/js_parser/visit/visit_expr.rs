@@ -2132,21 +2132,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.should_fold_typescript_constant_expressions;
             let old_is_control_flow_dead = p.is_control_flow_dead;
 
-            // We want to forcefully fold constants inside of
-            // certain calls even when minification is disabled, so
-            // that if we have an import based on a string template,
-            // it does not cause a bundle error. This is relevant for
-            // macros, as they require constant known values, but also
-            // for `require` and `require.resolve`, as they go through
-            // the module resolver.
-            if is_macro_ref
-                || matches!(e_.target.data, Data::ERequireCallTarget)
-                || matches!(e_.target.data, Data::ERequireResolveCallTarget)
-            {
-                p.options.ignore_dce_annotations = true;
-                p.should_fold_typescript_constant_expressions = true;
-            }
-
             // When a value is targeted by `--drop`, it will be removed.
             // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
             let mut method_call_should_be_replaced_with_undefined =
@@ -2166,6 +2151,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         method_call_should_be_replaced_with_undefined = false;
                     }
                 }
+            }
+
+            // We want to forcefully fold constants inside of
+            // certain calls even when minification is disabled, so
+            // that if we have an import based on a string template,
+            // it does not cause a bundle error. This is relevant for
+            // macros, as they require constant known values, but also
+            // for `require` and `require.resolve`, as they go through
+            // the module resolver.
+            if is_macro_ref
+                || matches!(e_.target.data, Data::ERequireCallTarget)
+                || matches!(e_.target.data, Data::ERequireResolveCallTarget)
+            {
+                p.options.ignore_dce_annotations = true;
+                p.should_fold_typescript_constant_expressions = true;
             }
 
             // A call that runs a macro visits its arguments with the macro's const table.

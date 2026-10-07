@@ -10,12 +10,12 @@ the 11 shipped targets, plus overrides for enum variants whose discriminants
 are external code tables).
 
 Hawk needs a `bin` product to root the analysis, but Bun's product crate
-(`src/runtime`) ships as a `staticlib` linked by the C++ build. Adding an
-`rlib`/`[[bin]]` permanently would disable fat LTO on the shipped staticlib,
-so the root is applied only for the duration of a run:
+(`src/runtime`) is a library whose rlib the native build links with the C++
+objects. A `[[bin]]` there would be one more unit for every build to plan, so
+the root is applied only for the duration of a run:
 
 ```sh
-git apply tools/hawk/analysis-root.patch      # adds rlib + a throwaway [[bin]] to src/runtime
+git apply tools/hawk/analysis-root.patch      # adds a throwaway [[bin]] to src/runtime
 printf 'fn main() {}\n' > src/runtime/hawk_root.rs
 export BUN_CODEGEN_DIR="$PWD/build/debug/codegen"   # run `bun bd --configure-only` + codegen first
 cargo hawk check --jobs "$(nproc)" --output-format=json > hawk-report.json

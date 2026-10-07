@@ -76,8 +76,6 @@ slow_path:
 
     while (cursor < end) {
         if (*cursor == '%') {
-            // A '%' without two hex digits after it is not an escape. Keep it and
-            // continue with the next byte, the same as URLSearchParams does.
             if (cursor + 2 >= end) {
                 result.append('%');
                 cursor++;

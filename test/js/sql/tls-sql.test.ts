@@ -1,8 +1,17 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer, isDockerEnabled, tls as tlsCert } from "harness";
+import net from "node:net";
 import path from "node:path";
-import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
+import tls from "node:tls";
+import {
+  listeningServer,
+  pgAuthenticationCleartextPassword,
+  pgAuthenticationOk,
+  pgReadyForQuery,
+  pgSSLRequest,
+  pgSSLResponse,
+} from "./wire-frames";
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
@@ -453,3 +462,52 @@ test("postgres client aborts the connection when the server declines TLS that wa
     }
   }
 });
+
+// Reads the client's TLS records off the wire, which a container cannot show. A PostgreSQL server
+// logs "could not receive data from client" for a TLS connection that ends without a close_notify.
+test.each(["idleTimeout", "maxLifetime"])(
+  "postgres sends a close_notify when %s closes a TLS connection",
+  async option => {
+    // TLS 1.2 leaves a record's type in the clear.
+    const ALERT = 21;
+    const terminator = tls.createServer({ ...tlsCert, maxVersion: "TLSv1.2" }, socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
+    });
+    await new Promise<void>(resolve => terminator.listen(0, "127.0.0.1", resolve));
+
+    let records = Buffer.alloc(0);
+    const closed = Promise.withResolvers<void>();
+    const { port, server } = await listeningServer(client => {
+      client.on("error", () => {});
+      client.on("close", () => closed.resolve());
+      client.once("data", () => {
+        client.write(pgSSLResponse("S"));
+        const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
+        upstream.on("error", () => {});
+        client.on("data", chunk => {
+          records = Buffer.concat([records, chunk]);
+        });
+        client.pipe(upstream).pipe(client);
+      });
+    });
+
+    try {
+      await using sql = new SQL({
+        url: `postgres://postgres@127.0.0.1:${port}/bun_sql_test`,
+        max: 1,
+        tls: { rejectUnauthorized: false },
+        [option]: 0.05,
+      });
+      await sql.connect();
+      await closed.promise;
+
+      const types: number[] = [];
+      for (let i = 0; i + 5 <= records.length; i += 5 + records.readUInt16BE(i + 3)) types.push(records[i]);
+      expect(types.at(-1)).toBe(ALERT);
+    } finally {
+      server.close();
+      terminator.close();
+    }
+  },
+);

@@ -2,22 +2,64 @@
 use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
+use crate::parse::lists::{ListKind, ListStep};
 use crate::parser::{
     FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+};
+use crate::sema::keep::{BracketKind, ObjectTypeBuilder, Postfix, TypeMemberParts};
+use crate::sema::ts_syntax::{
+    Flags, Modifier, Name, Param, PatternElement, PatternId, PatternProperty, PropertyKey,
+    ResolutionMode, SignatureKind, TupleElement, TupleMemberType, TypeId, TypeParam,
 };
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
+use bun_ast::StoreStr;
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
+use bun_sema::hir::{JSDocTypeKind, TypeNodeKind};
 
 // Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+/// `allowDecorators` of `parseModifiersEx`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum AllowDecorators {
+    No,
+    Yes,
+}
+
+/// `permitConstAsModifier` of `parseModifiersEx`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum PermitConstAsModifier {
+    No,
+    Yes,
+}
+
+/// Whether no token of the type that `option` was passed for has been skipped yet. `opts` alone
+/// does not determine this: it propagates to the operands of "|" and "&".
+#[inline(always)]
+fn is_at_start_of(
+    option: SkipTypeOptions,
+    opts: SkipTypeOptionsBitset,
+    level: Level,
+    leading_operator: Option<T>,
+) -> bool {
+    opts.contains(option) && level == Level::Lowest && leading_operator.is_none()
+}
+
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     #[inline]
     pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
+        if self.should_save_types() {
+            return self.parse_and_keep_type(
+                Level::Lowest,
+                SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
+            );
+        }
         self.skip_type_script_type_with_opts::<false>(
             Level::Lowest,
             SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
@@ -39,7 +81,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
         self.mark_type_script_only();
+        if self.should_save_types() {
+            return self.parse_and_keep_type(level, SkipTypeOptionsBitset::empty());
+        }
         self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::empty(), None)
+    }
+
+    /// Keep mode entry point: parses the type like `skip_type_script_type`, and builds its node, which is the last type.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_and_keep_type(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+    ) -> Result<(), Error> {
+        let start = self.lexer.loc().start;
+        let (type_stack_len, name_stack_len) = {
+            let syntax = self.type_syntax_mut();
+            (syntax.type_stack.len(), syntax.name_stack.len())
+        };
+        let result = self.skip_type_script_type_impl::<false, true>(level, opts, None);
+        // An error can leave unfinished lists on the shared stacks.
+        let syntax = self.type_syntax_mut();
+        syntax.type_stack.truncate(type_stack_len);
+        syntax.name_stack.truncate(name_stack_len);
+        syntax.last_type_start = start;
+        result
+    }
+
+    /// Parses a type nested inside another type.
+    #[inline]
+    fn skip_nested_type<const KEEP: bool>(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+    ) -> Result<(), Error> {
+        self.skip_type_script_type_impl::<false, KEEP>(level, opts, None)
     }
 
     #[inline]
@@ -64,39 +141,112 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
         }
+        // Keep mode stores the result in `TypeSyntax::last_binding`.
+        let keeps = self.should_save_types();
+        let pos = if keeps { self.token_start() } else { 0 };
         match self.lexer.token {
-            T::TIdentifier | T::TThis => {
+            // `parseIdentifierOrPattern`: for TypeScript "this" is no name. `parseParameterEx`
+            // takes it as the name of a parameter before it parses one.
+            T::TIdentifier | T::TThis
+                if self.lexer.token == T::TIdentifier || !self.is_tolerant() =>
+            {
+                if keeps {
+                    self.emit_identifier_binding();
+                }
                 self.lexer.next()?;
             }
             T::TOpenBracket => {
                 self.lexer.next()?;
+                let mut elements: Vec<PatternElement> = Vec::new();
 
                 // "[, , a]"
                 while self.lexer.token == T::TComma {
+                    if keeps {
+                        elements.push(self.emit_array_hole());
+                    }
                     self.lexer.next()?;
                 }
                 // "[a, b]"
                 while self.lexer.token != T::TCloseBracket {
+                    // "[a, , b]": `parseArrayBindingElement` produces an omitted element wherever a
+                    // comma appears.
+                    if self.lexer.token == T::TComma && self.is_tolerant() {
+                        if keeps {
+                            elements.push(self.emit_array_hole());
+                        }
+                        self.lexer.next()?;
+                        continue;
+                    }
+
                     // "[...a]"
+                    let loc = self.lexer.loc();
+                    let is_rest = self.lexer.token == T::TDotDotDot;
                     if self.lexer.token == T::TDotDotDot {
                         self.lexer.next()?;
                     }
 
                     self.skip_type_script_binding()?;
+                    let pattern = if keeps {
+                        self.type_syntax_mut().last_binding
+                    } else {
+                        PatternId::NONE
+                    };
+                    // "[a = 1]"
+                    let mut default = None;
+                    if self.lexer.token == T::TEquals && self.is_tolerant() {
+                        default = Some(self.skip_initializer_in_signature()?);
+                    }
+                    if keeps {
+                        elements.push(PatternElement {
+                            pattern,
+                            default,
+                            is_rest,
+                            loc,
+                            end: self.lexer.full_start(),
+                        });
+                    }
 
                     if self.lexer.token != T::TComma {
                         break;
+                    }
+                    if is_rest && self.is_tolerant() {
+                        self.check_comma_after_rest_element(T::TCloseBracket);
                     }
                     self.lexer.next()?;
                 }
 
                 self.lexer.expect(T::TCloseBracket)?;
+                if keeps {
+                    self.emit_array_binding(&elements, pos);
+                }
             }
             T::TOpenBrace => {
                 self.lexer.next()?;
+                let mut properties: Vec<PatternProperty> = Vec::new();
 
                 while self.lexer.token != T::TCloseBrace {
                     let mut found_identifier = false;
+                    let loc = self.lexer.loc();
+                    // "{...x: y}": `parseObjectBindingElement` parses what follows the dots like
+                    // any other element.
+                    let is_rest = self.lexer.token == T::TDotDotDot && self.is_tolerant();
+                    if is_rest {
+                        self.lexer.next()?;
+                    }
+                    // Filled in as the property is parsed. Only used in keep mode.
+                    let mut property = PatternProperty {
+                        key: if keeps {
+                            self.simple_property_key()
+                        } else {
+                            PropertyKey::None
+                        },
+                        value: PatternId::NONE,
+                        default: None,
+                        is_rest,
+                        loc,
+                        key_loc: self.lexer.loc(),
+                        end: bun_ast::Loc::EMPTY,
+                    };
 
                     match self.lexer.token {
                         T::TIdentifier => {
@@ -105,7 +255,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // "{...x}"
-                        T::TDotDotDot => {
+                        T::TDotDotDot if !self.lexer.tolerant => {
                             self.lexer.next()?;
 
                             if self.lexer.token != T::TIdentifier {
@@ -122,6 +272,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.lexer.next()?;
                         }
 
+                        // "{1n: y}": `isLiteralPropertyName`
+                        T::TBigIntegerLiteral if self.lexer.tolerant => {
+                            self.lexer.next()?;
+                        }
+
+                        // "{[x]: y}"
+                        T::TOpenBracket if self.lexer.tolerant => {
+                            property.key =
+                                PropertyKey::Computed(self.skip_computed_property_name()?);
+                        }
+
                         _ => {
                             if self.lexer.is_identifier_or_keyword() {
                                 // "{if: x}"
@@ -135,17 +296,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.token == T::TColon || !found_identifier {
                         self.lexer.expect(T::TColon)?;
                         self.skip_type_script_binding()?;
+                    } else if keeps {
+                        // "{x}", "{...x}": the name is the binding. After dots it is no property
+                        // name.
+                        self.emit_shorthand_binding(&property);
+                        if is_rest {
+                            property.key = PropertyKey::None;
+                        }
+                    }
+                    if keeps {
+                        property.value = self.type_syntax_mut().last_binding;
+                    }
+                    // "{a = 1}", "{a: b = 1}"
+                    if self.lexer.token == T::TEquals && self.is_tolerant() {
+                        property.default = Some(self.skip_initializer_in_signature()?);
+                    }
+                    if keeps {
+                        property.end = self.lexer.full_start();
+                        properties.push(property);
                     }
 
                     if self.lexer.token != T::TComma {
                         break;
+                    }
+                    if is_rest {
+                        self.check_comma_after_rest_element(T::TCloseBrace);
                     }
 
                     self.lexer.next()?;
                 }
 
                 self.lexer.expect(T::TCloseBrace)?;
+                if keeps {
+                    self.emit_object_binding(&properties, pos);
+                }
             }
+            _ if self.starts_no_binding_name() => self.skip_missing_binding_name(true)?,
             _ => {
                 self.lexer.unexpected()?;
                 return Err(crate::Error::SyntaxError);
@@ -154,40 +340,475 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// Whether `skip_missing_binding_name` applies: no identifier or pattern starts here. A speculative parse must still fail.
+    #[inline]
+    fn starts_no_binding_name(&self) -> bool {
+        self.is_tolerant()
+            && !self.lexer.is_log_disabled
+            && !matches!(
+                self.lexer.token,
+                T::TIdentifier | T::TOpenBracket | T::TOpenBrace
+            )
+    }
+
+    /// `parseIdentifierOrPattern` in a type-level signature, where neither starts: reports it and records a missing name.
+    /// `has_modifiers`: see `parse_missing_parameter_name`.
+    #[cold]
+    #[inline(never)]
+    fn skip_missing_binding_name(&mut self, has_modifiers: bool) -> Result<(), Error> {
+        let is_private = self.lexer.token == T::TPrivateIdentifier;
+        let name = self.parse_missing_parameter_name(has_modifiers)?;
+        let keeps = self.should_save_types();
+        // `createIdentifierWithDiagnostic`: a private name is reported and used as the name.
+        if is_private {
+            if keeps {
+                self.emit_identifier_binding();
+            }
+            self.lexer.next()?;
+            return Ok(());
+        }
+        if keeps {
+            self.emit_missing_binding(name.loc);
+        }
+        Ok(())
+    }
+
     pub(crate) fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
         self.lexer.expect(T::TOpenParen)?;
+        self.skip_typescript_fn_args_after_open_paren()
+    }
 
+    fn skip_typescript_fn_args_after_open_paren(&mut self) -> Result<(), Error> {
+        if !self.is_tolerant() {
+            return self.skip_typescript_fn_args_in_context();
+        }
+        // `parseParametersWorker(ParseFlagsType)`
+        let outer = self.replace_await_and_yield([crate::AwaitOrYield::AllowIdent; 2]);
+        let skipped = self.skip_typescript_fn_args_in_context();
+        self.replace_await_and_yield(outer);
+        skipped
+    }
+
+    fn skip_typescript_fn_args_in_context(&mut self) -> Result<(), Error> {
+        // Keep mode stores the result in `TypeSyntax::last_params`.
+        let keeps = self.should_save_types();
+        let mut parameters: Vec<Param> = Vec::new();
+        let mut is_usable = true;
+
+        // `parseDelimitedList(PCParameters)`
+        let saved_contexts = self.enter_list(ListKind::Parameters);
         while self.lexer.token != T::TCloseParen {
+            if !self.skip_to_list_element(ListKind::Parameters)? {
+                break;
+            }
+            let parameter_start = self.lexer.loc();
+            let mut parameter = Param::at(parameter_start);
+            parameter.full_start = self.lexer.full_start();
+            // "(public a)", "(@a b)": `parseParameterEx` accepts modifiers on every parameter, and
+            // the checker reports them.
+            let mut first_modifier = None;
+            if self.is_tolerant() && (self.lexer.token == T::TAt || self.is_modifier_kind()) {
+                first_modifier = self.skip_parameter_modifiers(&mut parameter)?;
+            }
+            let has_modifiers = first_modifier.is_some();
+            // "(this: any)": `parseParameterEx` parses the name and a type annotation, no more.
+            let is_this = self.lexer.token == T::TThis && self.is_tolerant();
             // "(...a)"
             if self.lexer.token == T::TDotDotDot {
+                parameter.rest_loc = self.lexer.loc();
                 self.lexer.next()?;
+                parameter.flags |= Flags::REST;
             }
 
-            self.skip_type_script_binding()?;
+            if is_this {
+                self.skip_this_as_parameter_name()?;
+            } else if self.starts_no_binding_name() {
+                self.skip_missing_binding_name(has_modifiers)?;
+            } else {
+                self.skip_type_script_binding()?;
+            }
+            if keeps {
+                parameter.pattern = self.type_syntax_mut().last_binding;
+            }
 
             // "(a?)"
-            if self.lexer.token == T::TQuestion {
+            if self.lexer.token == T::TQuestion && !is_this {
+                parameter.question_loc = self.lexer.loc();
                 self.lexer.next()?;
+                parameter.flags |= Flags::OPTIONAL;
             }
 
             // "(a: any)"
+            let mut is_complete = true;
             if self.lexer.token == T::TColon {
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    parameter.ty = self.last_type();
+                    is_complete = parameter.ty.is_some();
+                }
+            }
+            if is_this && let Some(first_modifier) = first_modifier {
+                self.lexer.ts_error(first_modifier, 1433);
+            }
+            // "(a = 1)": `parseParameterEx` accepts an initializer on every parameter, and the
+            // checker reports it (2371).
+            if self.lexer.token == T::TEquals && self.is_tolerant() && !is_this {
+                parameter.default = Some(self.skip_initializer_in_signature()?);
+            }
+            if keeps {
+                parameter.end = self.lexer.full_start();
+                if is_complete && parameter.pattern.is_some() {
+                    parameters.push(parameter);
+                } else {
+                    is_usable = false;
+                }
             }
 
             // "(a, b)"
             if self.lexer.token != T::TComma {
+                if self.recover_missing_comma(ListKind::Parameters, parameter_start)? {
+                    continue;
+                }
                 break;
             }
 
             self.lexer.next()?;
         }
+        self.lexer.list_contexts = saved_contexts;
 
         self.lexer.expect(T::TCloseParen)?;
+        if keeps {
+            self.finish_params(is_usable.then_some(&parameters[..]));
+        }
         Ok(())
+    }
+
+    /// `isIndexSignature`, at the "[" of a member of a type or a class. Lookahead only.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_unambiguously_index_signature(&mut self) -> bool {
+        let (here, swallowed) = (self.lexer.snapshot(), self.lexer.swallowed);
+        self.lexer.is_log_disabled = true;
+        let found = self
+            .next_is_unambiguously_index_signature()
+            .unwrap_or(false);
+        self.lexer.restore(&here);
+        self.lexer.swallowed = swallowed;
+        found
+    }
+
+    /// `nextIsUnambiguouslyIndexSignature`
+    fn next_is_unambiguously_index_signature(&mut self) -> Result<bool, Error> {
+        self.lexer.next()?;
+        if matches!(self.lexer.token, T::TDotDotDot | T::TCloseBracket) {
+            return Ok(true);
+        }
+        if self.is_modifier_kind() {
+            self.lexer.next()?;
+            if self.is_identifier_in_context() {
+                return Ok(true);
+            }
+        } else if !self.is_identifier_in_context() {
+            return Ok(false);
+        } else {
+            self.lexer.next()?;
+        }
+        if matches!(self.lexer.token, T::TColon | T::TComma) {
+            return Ok(true);
+        }
+        if self.lexer.token != T::TQuestion {
+            return Ok(false);
+        }
+        self.lexer.next()?;
+        Ok(matches!(
+            self.lexer.token,
+            T::TColon | T::TComma | T::TCloseBracket
+        ))
+    }
+
+    /// Keep mode stores the parameters in `TypeSyntax::last_params`, and returns the error to
+    /// report for them. `member`: the start of the signature.
+    #[cold]
+    #[inline(never)]
+    fn skip_index_signature_parameter_list(
+        &mut self,
+        member: u32,
+    ) -> Result<[Option<(u32, u32)>; 2], Error> {
+        self.lexer.expect(T::TOpenBracket)?;
+        let keeps = self.should_save_types();
+        let mut parameters: Vec<Param> = Vec::new();
+        let mut is_usable = true;
+        let mut trailing_comma = None;
+
+        let saved_contexts = self.enter_list(ListKind::Parameters);
+        while self.lexer.token != T::TCloseBracket {
+            if !self.skip_to_list_element(ListKind::Parameters)? {
+                break;
+            }
+            trailing_comma = None;
+            let parameter_start = self.lexer.loc();
+            let mut parameter = Param::at(parameter_start);
+            parameter.full_start = self.lexer.full_start();
+            let mut first_modifier = None;
+            if self.lexer.token == T::TAt || self.is_modifier_kind() {
+                first_modifier = self.skip_parameter_modifiers(&mut parameter)?;
+            }
+            let is_this = self.lexer.token == T::TThis;
+            if self.lexer.token == T::TDotDotDot {
+                parameter.rest_loc = self.lexer.loc();
+                self.lexer.next()?;
+                parameter.flags |= Flags::REST;
+            }
+
+            if is_this
+                || matches!(
+                    self.lexer.token,
+                    T::TIdentifier | T::TOpenBracket | T::TOpenBrace
+                )
+            {
+                if is_this {
+                    self.skip_this_as_parameter_name()?;
+                } else {
+                    self.skip_type_script_binding()?;
+                }
+                if keeps {
+                    parameter.pattern = self.type_syntax_mut().last_binding;
+                }
+            } else {
+                // `parseNameOfParameter`: the name is missing, and the token is not consumed.
+                if keeps {
+                    parameter.pattern = self.emit_array_hole().pattern;
+                }
+                self.lexer.expect(T::TIdentifier)?;
+            }
+            if self.lexer.token == T::TQuestion && !is_this {
+                parameter.question_loc = self.lexer.loc();
+                self.lexer.next()?;
+                parameter.flags |= Flags::OPTIONAL;
+            }
+            let mut is_complete = true;
+            if self.lexer.token == T::TColon {
+                self.lexer.next()?;
+                self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    parameter.ty = self.last_type();
+                    is_complete = parameter.ty.is_some();
+                }
+            }
+            if is_this && let Some(first_modifier) = first_modifier {
+                self.lexer.ts_error(first_modifier, 1433);
+            }
+            if self.lexer.token == T::TEquals && !is_this {
+                parameter.default = Some(self.skip_initializer_in_signature()?);
+            }
+            if keeps {
+                parameter.end = self.lexer.full_start();
+                if is_complete && parameter.pattern.is_some() {
+                    parameters.push(parameter);
+                } else {
+                    is_usable = false;
+                }
+            }
+
+            if self.lexer.token != T::TComma {
+                if self.recover_missing_comma(ListKind::Parameters, parameter_start)? {
+                    continue;
+                }
+                break;
+            }
+            trailing_comma = Some(self.lexer.loc());
+            self.lexer.next()?;
+        }
+        self.lexer.list_contexts = saved_contexts;
+
+        self.lexer.expect(T::TCloseBracket)?;
+        if !keeps {
+            return Ok([None; 2]);
+        }
+        self.finish_params(is_usable.then_some(&parameters[..]));
+        Ok(self.type_syntax_mut().b.check_index_signature_parameters(
+            &parameters,
+            trailing_comma,
+            member,
+        ))
+    }
+
+    /// `createIdentifier(true)` at the "this" that `parseParameterEx` takes as the name of a
+    /// parameter. Keep mode stores it in `TypeSyntax::last_binding`.
+    #[cold]
+    #[inline(never)]
+    fn skip_this_as_parameter_name(&mut self) -> Result<(), Error> {
+        if self.should_save_types() {
+            self.emit_identifier_binding();
+        }
+        self.lexer.next()?;
+        Ok(())
+    }
+
+    /// The modifiers of `parseParameterEx`. Returns `Loc` of the first.
+    #[cold]
+    #[inline(never)]
+    fn skip_parameter_modifiers(
+        &mut self,
+        parameter: &mut Param,
+    ) -> Result<Option<bun_ast::Range>, Error> {
+        let mut modifiers: Vec<Modifier> = Vec::new();
+        let first = self.skip_modifiers(
+            AllowDecorators::Yes,
+            PermitConstAsModifier::No,
+            &mut modifiers,
+        )?;
+        for modifier in &modifiers {
+            parameter.flags |= modifier.flag;
+        }
+        if self.should_save_types() {
+            parameter.modifiers = self.add_param_modifiers(&modifiers);
+        }
+        Ok(first)
+    }
+
+    /// `parseModifiersEx(allowDecorators, permitConstAsModifier, false)`. Returns `Loc` of the
+    /// first modifier.
+    #[cold]
+    #[inline(never)]
+    fn skip_modifiers(
+        &mut self,
+        allow_decorators: AllowDecorators,
+        permit_const_as_modifier: PermitConstAsModifier,
+        modifiers: &mut Vec<Modifier>,
+    ) -> Result<Option<bun_ast::Range>, Error> {
+        let allow_decorators = allow_decorators == AllowDecorators::Yes;
+        let permit_const_as_modifier = permit_const_as_modifier == PermitConstAsModifier::Yes;
+        let full_start = self.lexer.full_start();
+        let mut first = None;
+        let mut has_leading_modifier = false;
+        let mut has_trailing_decorator = false;
+        let mut has_trailing_modifier = false;
+        let mut has_static = false;
+        loop {
+            if allow_decorators && self.lexer.token == T::TAt && !has_trailing_modifier {
+                let decorators = self.parse_detached(|p| p.parse_type_script_decorators())?;
+                for &decorator in decorators.iter() {
+                    let at_sign = self.noted(decorator.loc, crate::sema::Mark::AtSign);
+                    let end = self.noted(decorator.loc, crate::sema::Mark::DecoratorEnd);
+                    modifiers.push(Modifier {
+                        flag: Flags::empty(),
+                        loc: bun_ast::usize2loc(at_sign.unwrap_or_default() as usize),
+                        decorator: Some(decorator),
+                    });
+                    first.get_or_insert_with(|| bun_ast::Range {
+                        loc: full_start,
+                        len: end.unwrap_or_default() as i32 - full_start.start,
+                    });
+                }
+                has_trailing_decorator |= has_leading_modifier;
+                continue;
+            }
+            // `tryParseModifier`
+            let is_modifier = if self.lexer.token == T::TConst && permit_const_as_modifier {
+                // `nextTokenIsOnSameLineAndCanFollowModifier`
+                self.next_token_matches(|p| {
+                    !p.lexer.has_newline_before
+                        && (p.lexer.is_identifier_or_keyword()
+                            || matches!(
+                                p.lexer.token,
+                                T::TPrivateIdentifier
+                                    | T::TOpenBracket
+                                    | T::TOpenBrace
+                                    | T::TAsterisk
+                                    | T::TDotDotDot
+                                    | T::TStringLiteral
+                                    | T::TNumericLiteral
+                                    | T::TBigIntegerLiteral
+                            ))
+                })
+            } else {
+                self.is_at_modifier(has_static)
+            };
+            if !is_modifier {
+                break;
+            }
+            let flag = self.modifier_flag_here();
+            has_static |= flag == Flags::STATIC;
+            modifiers.push(Modifier {
+                flag,
+                loc: self.lexer.loc(),
+                decorator: None,
+            });
+            self.lexer.next_token()?;
+            first.get_or_insert_with(|| self.lexer.range_from(full_start));
+            has_trailing_modifier |= has_trailing_decorator;
+            has_leading_modifier |= !has_trailing_decorator;
+        }
+        Ok(first)
+    }
+
+    /// Runs `parse` on an expression or a function body that appears inside a type, and returns the
+    /// result. It is not part of the AST. Keep mode stores it for the lowering pass.
+    /// Speculative parsing only restores the lexer when it backtracks. So during a speculative
+    /// parse, everything `parse` did to the parser's state is undone immediately, except for the
+    /// lexer's position.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_detached<R>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<R, Error>,
+    ) -> Result<R, Error> {
+        if !self.lexer.is_log_disabled {
+            return parse(self);
+        }
+        let snapshot = self.parser_snapshot();
+        let result = parse(self);
+        let mut after = self.lexer.snapshot();
+        self.restore_parser_snapshot_but_for_notes(snapshot);
+        let result = result?;
+        // The comments scanned along the way are discarded with the rest.
+        after.all_comments_len = self.lexer.all_comments.len();
+        after.comments_to_preserve_before_len = self.lexer.comments_to_preserve_before.len();
+        self.lexer.restore(&after);
+        Ok(result)
+    }
+
+    /// Called on the token after the "[" of an object type member. False for an index signature ("[key: string]",
+    /// `isUnambiguouslyIndexSignature`) and for a mapped type ("[K in T]"), which `can_be_mapped_type` allows (`isStartOfMappedType`).
+    #[cold]
+    fn is_start_of_computed_member_name(&mut self, can_be_mapped_type: bool) -> bool {
+        match self.lexer.token {
+            T::TCloseBracket | T::TDotDotDot => false,
+            _ if self.lexer.is_identifier_or_keyword() => !self.next_token_matches(|p| {
+                matches!(p.lexer.token, T::TColon | T::TComma | T::TQuestion)
+                    || p.lexer.token == T::TIn && can_be_mapped_type
+                    || p.lexer.token != T::TIn && p.lexer.is_identifier_or_keyword()
+            }),
+            _ => true,
+        }
+    }
+
+    /// `parseComputedPropertyName`: any expression, including the comma operator and `in`.
+    #[cold]
+    #[inline(never)]
+    fn skip_computed_property_name(&mut self) -> Result<bun_ast::Expr, Error> {
+        self.lexer.expect(T::TOpenBracket)?;
+        let name = self.parse_detached(|p| {
+            let old_allow_in = core::mem::replace(&mut p.allow_in, true);
+            let name = p.parse_expr(Level::Lowest);
+            p.allow_in = old_allow_in;
+            name
+        })?;
+        self.lexer.expect(T::TCloseBracket)?;
+        Ok(name)
+    }
+
+    /// `parseInitializer`, at the `=`. TypeScript's parser accepts an initializer where a signature
+    /// or a type cannot use one, and its checker reports it.
+    #[cold]
+    #[inline(never)]
+    fn skip_initializer_in_signature(&mut self) -> Result<bun_ast::Expr, Error> {
+        self.lexer.expect(T::TEquals)?;
+        self.parse_detached(|p| p.parse_expr(Level::Comma))
     }
 
     /// This is a spot where the TypeScript grammar is highly ambiguous. Here are
@@ -209,34 +830,748 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// let x = (y: any): asserts y is (y) => {};
     /// ```
     ///
-    pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
+    pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool, const KEEP: bool>(
         &mut self,
         result: Option<&mut Metadata>,
+        allow_fn_type: bool,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
+        let open_paren = if KEEP { self.token_start() } else { 0 };
+        let head = if KEEP {
+            self.type_syntax_mut().pending_fn_type_head.take()
+        } else {
+            None
+        };
 
-        if self.try_skip_type_script_arrow_args_with_backtracking() {
+        if allow_fn_type
+            && (self.try_skip_type_script_arrow_args_with_backtracking(head.is_some())?
+                || (self.is_tolerant()
+                    && !self.lexer.is_log_disabled
+                    && self.skip_fn_type_args_without_arrow(head.is_some())?))
+        {
+            let parameters = if KEEP {
+                self.type_syntax_mut().last_params.take()
+            } else {
+                None
+            };
             self.skip_typescript_return_type()?;
             if GET_METADATA {
                 *result.expect("infallible: GET_METADATA implies Some") = Metadata::MFunction;
             }
+            if KEEP {
+                self.emit_fn_type(head, open_paren, parameters);
+            }
         } else {
             self.lexer.expect(T::TOpenParen)?;
             if GET_METADATA {
-                *result.expect("infallible: GET_METADATA implies Some") =
-                    self.skip_type_script_type_with_metadata(Level::Lowest)?;
+                let result = result.expect("infallible: GET_METADATA implies Some");
+                *result = Metadata::DEFAULT;
+                self.skip_type_script_type_impl::<true, KEEP>(
+                    Level::Lowest,
+                    SkipTypeOptionsBitset::empty(),
+                    Some(result),
+                )?;
             } else {
-                self.skip_type_script_type(Level::Lowest)?;
+                self.skip_type_script_type_impl::<false, KEEP>(
+                    Level::Lowest,
+                    SkipTypeOptionsBitset::empty(),
+                    None,
+                )?;
             }
             self.lexer.expect(T::TCloseParen)?;
         }
         Ok(())
     }
 
+    /// `parseFunctionOrConstructorType`, where the speculative parse of "(..) =>" failed. Whether a
+    /// "(" starts a function type is decided by lookahead, not by the "=>"
+    /// (`isStartOfFunctionTypeOrConstructorType`). After "new" or "<T>" (`has_head`) it always
+    /// does. If it does, the parameters are skipped, a missing "=>" is reported
+    /// (`shouldParseReturnType`), and the return type comes next.
+    #[cold]
+    #[inline(never)]
+    fn skip_fn_type_args_without_arrow(&mut self, has_head: bool) -> Result<bool, Error> {
+        if self.lexer.token != T::TOpenParen {
+            if !has_head {
+                return Ok(false);
+            }
+            // `parseParameters`: without a "(" the list is missing, and the token is not consumed.
+            self.lexer.expect(T::TOpenParen)?;
+            if self.should_save_types() {
+                self.finish_params(Some(&[]));
+            }
+        } else if has_head || self.is_unambiguously_start_of_function_type() {
+            self.skip_typescript_fn_args()?;
+        } else {
+            return Ok(false);
+        }
+        self.lexer.expect(T::TEqualsGreaterThan)?;
+        Ok(true)
+    }
+
+    /// Lookahead with `nextIsUnambiguouslyStartOfFunctionType`, at a "(".
+    #[cold]
+    #[inline(never)]
+    fn is_unambiguously_start_of_function_type(&mut self) -> bool {
+        let (here, swallowed) = (self.lexer.snapshot(), self.lexer.swallowed);
+        // `skipParameterStart` parses a whole binding pattern.
+        let noted = self.type_syntax_checkpoint();
+        self.lexer.is_log_disabled = true;
+        let found = self
+            .next_is_unambiguously_start_of_function_type()
+            .unwrap_or(false);
+        self.lexer.restore(&here);
+        self.rewind_type_syntax(&noted);
+        self.lexer.swallowed = swallowed;
+        found
+    }
+
+    /// `nextIsUnambiguouslyStartOfFunctionType`
+    fn next_is_unambiguously_start_of_function_type(&mut self) -> Result<bool, Error> {
+        self.lexer.next()?;
+        // "( )", "( ..."
+        if matches!(self.lexer.token, T::TCloseParen | T::TDotDotDot) {
+            return Ok(true);
+        }
+        // `skipParameterStart`
+        if self.is_modifier_kind() {
+            self.skip_modifiers(
+                AllowDecorators::No,
+                PermitConstAsModifier::No,
+                &mut Vec::new(),
+            )?;
+        }
+        if self.lexer.token == T::TDotDotDot {
+            self.lexer.next()?;
+        }
+        if self.is_identifier_in_context() || self.lexer.token == T::TThis {
+            self.lexer.next()?;
+        } else if matches!(self.lexer.token, T::TOpenBracket | T::TOpenBrace) {
+            // Only a binding pattern without errors counts.
+            let swallowed = self.lexer.swallowed;
+            self.skip_type_script_binding()?;
+            if self.lexer.swallowed != swallowed {
+                return Ok(false);
+            }
+        } else {
+            return Ok(false);
+        }
+        // "( xxx :", "( xxx ,", "( xxx ?", "( xxx ="
+        if matches!(
+            self.lexer.token,
+            T::TColon | T::TComma | T::TQuestion | T::TEquals
+        ) {
+            return Ok(true);
+        }
+        // "( xxx ) =>"
+        if self.lexer.token == T::TCloseParen {
+            self.lexer.next()?;
+            return Ok(self.lexer.token == T::TEqualsGreaterThan);
+        }
+        Ok(false)
+    }
+
+    /// `parseFunctionOrConstructorTypeToError`, at the token after a "|" (`in_union`) or a "&". If
+    /// a function or constructor type starts here, returns the error to report after it has been
+    /// skipped: its position (the type's full start) and its code.
+    #[cold]
+    #[inline(never)]
+    fn fn_type_after_operator_error(&mut self, in_union: bool) -> Option<(bun_ast::Loc, u32)> {
+        // `isStartOfFunctionTypeOrConstructorType`
+        let token = self.lexer.token;
+        let is_constructor = match token {
+            T::TLessThan => false,
+            T::TOpenParen if self.is_unambiguously_start_of_function_type() => false,
+            T::TNew => true,
+            T::TIdentifier
+                if self.lexer.is_contextual_keyword(b"abstract")
+                    && self.next_token_matches(|p| p.lexer.token == T::TNew) =>
+            {
+                true
+            }
+            _ => return None,
+        };
+        let code = match (is_constructor, in_union) {
+            (false, true) => 1385,
+            (true, true) => 1386,
+            (false, false) => 1387,
+            (true, false) => 1388,
+        };
+        Some((self.lexer.full_start(), code))
+    }
+
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
     pub(crate) fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+        result: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        self.skip_type_script_type_impl::<GET_METADATA, false>(level, opts, result)
+    }
+
+    /// `parseTypeOperator` leaves DisallowConditionalTypesContext unchanged, so that an "infer"
+    /// right after "keyof" or "readonly" in an "extends" type keeps its constraint.
+    #[inline]
+    fn type_operand_opts(&self, opts: SkipTypeOptionsBitset) -> SkipTypeOptionsBitset {
+        if opts.contains(SkipTypeOptions::DisallowConditionalTypes) && self.is_tolerant() {
+            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes)
+        } else {
+            SkipTypeOptionsBitset::empty()
+        }
+    }
+
+    /// A reserved word that `isStartOfType` does not list. It names a type where one is required
+    /// (`parseTypeReference`), but is not an element of a list of types (`isListElement`).
+    #[inline]
+    fn is_reserved_word_that_starts_no_type(&self) -> bool {
+        self.lexer.token.is_reserved_word()
+            && !matches!(
+                self.lexer.token,
+                T::TVoid
+                    | T::TNull
+                    | T::TThis
+                    | T::TTypeof
+                    | T::TNew
+                    | T::TTrue
+                    | T::TFalse
+                    | T::TImport
+                    | T::TFunction
+            )
+    }
+
+    /// `createIdentifierWithDiagnostic(Type_expected)`: where a type is required and none starts,
+    /// the result is a type reference whose name is missing. The token is not consumed.
+    #[cold]
+    #[inline(never)]
+    fn missing_type(&mut self) -> Result<(), Error> {
+        if self.should_save_types() {
+            let pos = self.token_start();
+            self.emit_type_ref(StoreStr::EMPTY, pos);
+        }
+        self.report_type_expected()
+    }
+
+    /// `createIdentifierWithDiagnostic(Type_expected)`, where no name starts: the error.
+    fn report_type_expected(&mut self) -> Result<(), Error> {
+        // During a speculative parse nothing is reported. If it succeeds, it is run again to report
+        // its errors.
+        if self.lexer.is_log_disabled {
+            self.lexer.swallowed += 1;
+            return Ok(());
+        }
+        // At the end of the file the error is at the end of the previous token.
+        if self.lexer.token == T::TEndOfFile {
+            let loc = self.lexer.full_start();
+            self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1110);
+            return Ok(());
+        }
+        let (range, before) = (self.lexer.range(), self.lexer.prev_error_loc);
+        self.lexer.ts_error(range, 1110);
+        self.lexer.put_up_with(before)?;
+        Ok(())
+    }
+
+    /// `parseTypeReference`, the default case of `parseNonArrayType`.
+    /// `parseEntityNameOfTypeReference` accepts a reserved word or a private identifier as the name,
+    /// also during speculative parsing. Any other token yields a reference with a missing name.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_reference_to_any_word(&mut self) -> Result<(), Error> {
+        let keeps = self.should_save_types();
+        if !self.is_identifier_or_keyword() {
+            self.missing_type()?;
+        } else {
+            if keeps {
+                let (name, pos) = (self.token_text(), self.token_start());
+                self.emit_type_ref(name, pos);
+            }
+            self.lexer.next()?;
+        }
+        // `parseTypeArgumentsOfTypeReference`
+        if !self.lexer.has_newline_before {
+            let reference = if keeps { self.take_reference() } else { None };
+            let has_arguments = self.skip_type_script_type_arguments::<false, false>()?;
+            if keeps {
+                self.attach_type_args(reference, has_arguments);
+            }
+        }
+        Ok(())
+    }
+
+    /// `parseEntityName` of a type reference, after a dot that is not followed by an identifier or
+    /// keyword, and `parseTypeArgumentsOfTypeReference`.
+    #[cold]
+    #[inline(never)]
+    fn skip_missing_name_after_dot<const KEEP: bool>(&mut self) -> Result<(), Error> {
+        // "A.<T>": the name ends before the dot, and the type arguments belong to it.
+        let jsdoc_dot = (self.lexer.token == T::TLessThan).then(|| bun_ast::Loc {
+            start: self.lexer.full_start().start - 1,
+        });
+        if jsdoc_dot.is_none() {
+            self.skip_right_side_of_dot::<KEEP>()?;
+        }
+        let reference = if KEEP { self.take_reference() } else { None };
+        let has_arguments = !self.lexer.has_newline_before
+            && self.skip_type_script_type_arguments::<false, false>()?;
+        if has_arguments && let Some(loc) = jsdoc_dot {
+            // `checkTypeReferenceNode`
+            self.lexer
+                .ts_grammar_error(bun_ast::Range { loc, len: 1 }, 8020);
+        }
+        if KEEP {
+            self.attach_type_args(reference, has_arguments);
+        }
+        Ok(())
+    }
+
+    /// `parseRightSideOfDot` without `allowPrivateIdentifiers`, at a private identifier: it is
+    /// consumed, and the name is reported as missing (1003) after it. Returns the missing name.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn skip_private_identifier_after_dot(&mut self) -> Result<Name, Error> {
+        let loc = bun_ast::usize2loc(self.lexer.end);
+        self.lexer.next()?;
+        self.lexer.ts_error(bun_ast::Range { loc, len: 0 }, 1003);
+        Ok(Name {
+            text: StoreStr::EMPTY,
+            loc,
+        })
+    }
+
+    /// `parseIdentifierName`. A missing name (1003) is an empty one, and the token is not consumed.
+    fn skip_identifier_name(&mut self) -> Result<Name, Error> {
+        if self.is_identifier_or_keyword() {
+            let name = Name {
+                text: self.token_text(),
+                loc: self.lexer.loc(),
+            };
+            self.lexer.next()?;
+            return Ok(name);
+        }
+        self.lexer.expect(T::TIdentifier)?;
+        Ok(Name {
+            text: StoreStr::EMPTY,
+            loc: self.lexer.full_start(),
+        })
+    }
+
+    /// `parseTypeQuery`, after the "typeof" at `pos`. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_query<const KEEP: bool>(&mut self, pos: u32) -> Result<(), Error> {
+        let names = if KEEP {
+            self.type_syntax_mut().name_stack.len()
+        } else {
+            0
+        };
+        // `parseEntityName(allowReservedWords)`
+        let mut name = self.skip_identifier_name()?;
+        loop {
+            if KEEP {
+                self.type_syntax_mut().name_stack.push(name);
+            }
+            if self.lexer.token != T::TDot {
+                break;
+            }
+            self.lexer.next()?;
+            // "a.<T>": the name ends before the dot. Only `checkTypeReferenceNode` reports the dot.
+            if self.lexer.token == T::TLessThan {
+                break;
+            }
+            // `parseRightSideOfDot`
+            name = if self.lexer.has_newline_before && self.is_name_after_dot_missing() {
+                Name {
+                    text: StoreStr::EMPTY,
+                    loc: self.lexer.full_start(),
+                }
+            } else if self.lexer.token == T::TPrivateIdentifier {
+                self.skip_private_identifier_after_dot()?
+            } else {
+                self.skip_identifier_name()?
+            };
+        }
+        // `parseTypeArguments` does not rescan "<<" or "<=".
+        let has_arguments = !self.lexer.has_newline_before
+            && self.lexer.token == T::TLessThan
+            && self.skip_type_script_type_arguments::<false, false>()?;
+        if KEEP {
+            self.emit_typeof_type(names, has_arguments, pos);
+        }
+        Ok(())
+    }
+
+    /// `parseRightSideOfDot`, at the first token of the line after a dot: two identifiers or
+    /// keywords on one line start a different construct, so the name is reported as missing (1003)
+    /// right after the dot, and the token is not consumed.
+    #[cold]
+    #[inline(never)]
+    fn is_name_after_dot_missing(&mut self) -> bool {
+        if !self.is_identifier_or_keyword()
+            || !self
+                .next_token_matches(|p| p.is_identifier_or_keyword() && !p.lexer.has_newline_before)
+        {
+            return false;
+        }
+        let after_dot = bun_ast::Range {
+            loc: self.lexer.full_start(),
+            len: 0,
+        };
+        self.lexer.ts_error(after_dot, 1003);
+        true
+    }
+
+    /// `parseRightSideOfDot(allowIdentifierNames, !allowPrivateIdentifiers)`. In keep mode the name
+    /// extends the last parsed type. A missing name is an empty one.
+    fn skip_right_side_of_dot<const KEEP: bool>(&mut self) -> Result<(), Error> {
+        if !(self.lexer.has_newline_before && self.is_name_after_dot_missing()) {
+            if self.lexer.is_identifier_or_keyword() {
+                if KEEP {
+                    self.append_qualified_name();
+                }
+                self.lexer.next()?;
+                return Ok(());
+            }
+            if self.lexer.token == T::TPrivateIdentifier {
+                self.skip_private_identifier_after_dot()?;
+            } else {
+                // The token is not consumed.
+                self.lexer.expect(T::TIdentifier)?;
+            }
+        }
+        if KEEP {
+            self.append_missing_qualified_name();
+        }
+        Ok(())
+    }
+
+    /// `parseImportType`, after the ")": the qualifier and the type arguments. `checkImportType`
+    /// makes none of the grammar checks of `checkTypeReferenceNode` (8020, 1009, 1099).
+    #[inline(never)]
+    fn skip_import_type_qualifier<const KEEP: bool>(&mut self) -> Result<(), Error> {
+        if self.lexer.token == T::TDot {
+            self.lexer.next()?;
+            // `parseEntityNameOfTypeReference`: `parseIdentifierNameWithDiagnostic(Type_expected)`
+            if self.is_identifier_or_keyword() {
+                if KEEP {
+                    self.append_qualified_name();
+                }
+                self.lexer.next()?;
+            } else {
+                self.report_type_expected()?;
+                // `NodeIsMissing(n.Qualifier)`: a missing name that none follows is no qualifier.
+                if KEEP
+                    && self.lexer.token == T::TDot
+                    && self.next_token_matches(|p| p.lexer.token != T::TLessThan)
+                {
+                    self.append_missing_qualified_name();
+                }
+            }
+            while self.lexer.token == T::TDot {
+                self.lexer.next()?;
+                // "A.<T>"
+                if self.lexer.token == T::TLessThan {
+                    break;
+                }
+                self.skip_right_side_of_dot::<KEEP>()?;
+            }
+        }
+        // `parseTypeArgumentsOfTypeReference`
+        if !self.lexer.has_newline_before {
+            let reference = if KEEP { self.take_reference() } else { None };
+            let has_arguments =
+                self.skip_type_script_type_arguments_unchecked::<false, false>(&mut None)?;
+            if KEEP {
+                self.attach_type_args(reference, has_arguments);
+            }
+        }
+        Ok(())
+    }
+
+    /// `parseImportType`, after the comma that follows the specifier: "{ with: { name: value } }".
+    /// A missing token is reported and the current token is not consumed, so the ")" and the
+    /// qualifier are not found either. Returns the resolution mode (`getResolutionModeOverride`),
+    /// the position of "assert" if it is used instead of "with", and the attributes.
+    #[cold]
+    #[inline(never)]
+    fn skip_import_type_attributes(
+        &mut self,
+    ) -> Result<crate::sema::keep::ImportTypeAttributes, Error> {
+        let open_brace = self.lexer.loc();
+        self.lexer.expect(T::TOpenBrace)?;
+        let keeps = self.should_save_types();
+        let keyword_loc = self.lexer.loc();
+        let mut assert_keyword_loc = None;
+        if self.lexer.is_keyword(T::TWith) {
+            self.lexer.next_token()?;
+        } else if self.lexer.is_contextual_keyword(b"assert") {
+            // Reported when the type is cloned (2880).
+            assert_keyword_loc = Some(self.lexer.loc());
+            self.lexer.next_token()?;
+        } else if self.lexer.is_log_disabled {
+            return Err(crate::Error::Backtrack);
+        } else {
+            // 'with' expected.
+            let (range, before) = (self.lexer.range(), self.lexer.prev_error_loc);
+            self.lexer.ts_expected(range, "with");
+            self.lexer.put_up_with(before)?;
+        }
+        self.lexer.expect(T::TColon)?;
+
+        let attributes_loc = self.lexer.loc();
+        let (object, mode) = self.parse_import_attribute_list(keeps)?;
+        // `parseEmptyNodeList`: without a "{" there are attributes, and their list is empty.
+        let attributes = keeps.then(|| crate::sema::ts_syntax::ImportAttributes {
+            keyword_loc,
+            object: object
+                .unwrap_or_else(|| self.new_expr(bun_ast::E::Object::default(), attributes_loc)),
+        });
+
+        if self.lexer.token == T::TComma {
+            self.lexer.next()?;
+        }
+        self.lexer.expect_close_brace_of_attributes(open_brace)?;
+        Ok((mode, assert_keyword_loc, attributes))
+    }
+
+    /// `nextIsStartOfType`
+    #[cold]
+    #[inline(never)]
+    fn next_token_starts_a_type(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let result = self.lexer.next().is_ok() && self.is_start_of_type(false);
+        self.lexer.restore(&old_lexer);
+        result
+    }
+
+    /// `parseJSDocNullableType`, `parseJSDocNonNullableType`, `parseJSDocAllType`, at a "?", "??",
+    /// "!", "*" or "*=" where a type starts. TypeScript's parser accepts them, and its checker
+    /// reports them (17020, 8020).
+    #[cold]
+    #[inline(never)]
+    fn skip_jsdoc_prefix_type<const KEEP: bool>(
+        &mut self,
+        opts: SkipTypeOptionsBitset,
+    ) -> Result<(), Error> {
+        let (token, pos) = (self.lexer.token, self.token_start());
+        match token {
+            // `ReScanQuestionToken`, `ReScanAsteriskEqualsToken`: only the first character is
+            // consumed.
+            T::TQuestionQuestion => self.lexer.split_token(T::TQuestion),
+            T::TAsteriskEquals => self.lexer.split_token(T::TEquals),
+            _ => self.lexer.next()?,
+        }
+        if matches!(token, T::TAsterisk | T::TAsteriskEquals) {
+            if KEEP {
+                self.emit_jsdoc_all_type(pos);
+            }
+            return Ok(());
+        }
+        // `parseTypeOperatorOrHigher`
+        let operand_opts = self.type_operand_opts(opts);
+        self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
+        if KEEP {
+            let kind = if token == T::TExclamation {
+                JSDocTypeKind::NonNullable
+            } else {
+                JSDocTypeKind::Nullable
+            };
+            self.emit_jsdoc_type(kind, Postfix::No, pos);
+        }
+        Ok(())
+    }
+
+    /// `scanStartOfNamedTupleElement`
+    #[cold]
+    #[inline(never)]
+    fn is_start_of_named_tuple_element(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let result = (self.lexer.token != T::TDotDotDot || self.lexer.next().is_ok())
+            && self.is_identifier_or_keyword()
+            && self.lexer.next().is_ok()
+            // `nextTokenIsColonOrQuestionColon`
+            && (self.lexer.token == T::TColon
+                || self.lexer.token == T::TQuestion
+                    && self.lexer.next().is_ok()
+                    && self.lexer.token == T::TColon);
+        self.lexer.restore(&old_lexer);
+        result
+    }
+
+    /// `parseTupleType` in tolerant mode: the elements, up to the position where the "]" is
+    /// expected.
+    #[cold]
+    #[inline(never)]
+    fn skip_tuple_elements<const KEEP: bool>(
+        &mut self,
+        elements: &mut Vec<TupleElement>,
+    ) -> Result<(), Error> {
+        let saved_contexts = self.enter_list(ListKind::TupleElementTypes);
+        while self.lexer.token != T::TCloseBracket {
+            if self.lexer.is_log_disabled {
+                // A speculative parse fails at the missing "]".
+                if !self.is_list_element(ListKind::TupleElementTypes, false) {
+                    break;
+                }
+            } else {
+                match self.classify_list_token(ListKind::TupleElementTypes)? {
+                    ListStep::Element => {}
+                    ListStep::Skipped => continue,
+                    ListStep::Over => break,
+                }
+            }
+            let element_start = self.lexer.loc();
+            let element = self.skip_tuple_element::<KEEP>()?;
+            if KEEP {
+                elements.push(element);
+            }
+            if self.lexer.token != T::TComma {
+                if self.recover_missing_comma(ListKind::TupleElementTypes, element_start)? {
+                    continue;
+                }
+                break;
+            }
+            self.lexer.next()?;
+        }
+        self.lexer.list_contexts = saved_contexts;
+        Ok(())
+    }
+
+    /// `parseTupleElementNameOrTupleElementType`
+    fn skip_tuple_element<const KEEP: bool>(&mut self) -> Result<TupleElement, Error> {
+        let mut element = TupleElement {
+            ty: TypeId::NONE,
+            written: TypeId::NONE,
+            member_type: TupleMemberType::Plain,
+            label: None,
+            is_optional: false,
+            is_rest: false,
+            loc: self.lexer.loc(),
+            end: bun_ast::Loc::EMPTY,
+        };
+        let is_named = self.is_start_of_named_tuple_element();
+        if is_named {
+            if self.lexer.token == T::TDotDotDot {
+                element.is_rest = true;
+                self.lexer.next()?;
+            }
+            element.label = Some(self.token_text());
+            self.lexer.next()?;
+            if self.lexer.token == T::TQuestion {
+                element.is_optional = true;
+                self.lexer.next()?;
+            }
+            self.lexer.expect(T::TColon)?;
+        }
+        // `parseTupleElementType`
+        let type_loc = self.lexer.loc();
+        let has_dots = self.lexer.token == T::TDotDotDot;
+        if has_dots {
+            self.lexer.next()?;
+        }
+        self.skip_nested_type::<KEEP>(Level::Lowest, SkipTypeOptionsBitset::empty())?;
+        if KEEP {
+            let pos = type_loc.start.max(0) as u32;
+            if has_dots {
+                // "label: ...T" is reported by the checker (5087).
+                if is_named {
+                    element.member_type = TupleMemberType::Rest;
+                    element.written = self.last_type();
+                    self.emit_rest_type(pos);
+                } else {
+                    element.is_rest = true;
+                }
+            } else if let Some(ty) = self.optional_tuple_element_type() {
+                // "label: T?" is reported by the checker (5086).
+                if is_named {
+                    element.member_type = TupleMemberType::Optional;
+                    element.written = ty;
+                    self.emit_optional_type(ty, pos);
+                } else {
+                    element.is_optional = true;
+                    self.type_syntax_mut().last_type = ty;
+                }
+            }
+            self.finish_last_type();
+            element.ty = self.last_type();
+            element.end = self.lexer.full_start();
+        }
+        Ok(element)
+    }
+
+    #[inline(always)]
+    fn skip_type_script_type_impl<const GET_METADATA: bool, const KEEP: bool>(
+        &mut self,
+        level: Level,
+        opts: SkipTypeOptionsBitset,
+        result: Option<&mut Metadata>,
+    ) -> Result<(), Error> {
+        if !KEEP {
+            return self.skip_unfinished_type::<GET_METADATA, KEEP>(level, opts, result);
+        }
+        // `parseType`
+        let outer = self.replace_await_and_yield([crate::AwaitOrYield::AllowIdent; 2]);
+        let skipped = self.skip_unfinished_type::<GET_METADATA, KEEP>(level, opts, result);
+        self.replace_await_and_yield(outer);
+        self.finish_last_type();
+        skipped
+    }
+
+    /// `setContextFlags` for `[NodeFlagsAwaitContext, NodeFlagsYieldContext]`. Returns the contexts
+    /// that were in effect. `AllowIdent`: outside the context.
+    #[inline]
+    fn replace_await_and_yield(
+        &mut self,
+        [allow_await, allow_yield]: [crate::AwaitOrYield; 2],
+    ) -> [crate::AwaitOrYield; 2] {
+        let data = &mut self.fn_or_arrow_data_parse;
+        [
+            core::mem::replace(&mut data.allow_await, allow_await),
+            core::mem::replace(&mut data.allow_yield, allow_yield),
+        ]
+    }
+
+    /// At a reserved word written with an escape, where a type starts. `parseNonArrayType` and
+    /// `isStartOfFunctionTypeOrConstructorType` take these as the keyword. Any other is the name of
+    /// a type reference, and so are these where they are the name of a tuple element or of the
+    /// parameter of an index signature.
+    #[cold]
+    #[inline(never)]
+    fn unescape_keyword_of_type(&mut self, opts: SkipTypeOptionsBitset) {
+        let starts_type = matches!(
+            crate::lexer::keyword(self.lexer.identifier),
+            Some(
+                T::TVoid
+                    | T::TNull
+                    | T::TTrue
+                    | T::TFalse
+                    | T::TThis
+                    | T::TTypeof
+                    | T::TImport
+                    | T::TNew
+            )
+        );
+        if !starts_type || !self.is_tolerant() {
+            return;
+        }
+        let can_be_name = opts.contains(SkipTypeOptions::AllowTupleLabels)
+            || opts.contains(SkipTypeOptions::IsIndexSignature);
+        if can_be_name
+            && self.next_token_matches(|p| matches!(p.lexer.token, T::TColon | T::TQuestion))
+        {
+            return;
+        }
+        self.lexer.unescape_keyword();
+    }
+
+    /// In keep mode a type is emitted as soon as its kind is known, which may be before its last
+    /// token is consumed. It is finished (`finish_last_type`) at a point where no token after its
+    /// last has been consumed yet: before each postfix or operator, and on return.
+    fn skip_unfinished_type<const GET_METADATA: bool, const KEEP: bool>(
         &mut self,
         level: Level,
         opts: SkipTypeOptionsBitset,
@@ -251,7 +1586,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::StackOverflow);
         }
 
+        // `parseTypeOperatorOrHigher`: the operand of a type operator cannot be a function or constructor type.
+        let allow_fn_type = !self.is_tolerant() || level != Level::Prefix;
+        // The leading "|" or "&" skipped before the type. For "| &", the "&".
+        let mut leading_operator: Option<T> = None;
+        // The error to report once the function type that starts right after a "|" or "&" has been
+        // skipped. Tolerant mode only.
+        let mut fn_type_error: Option<(bun_ast::Loc, u32)> = None;
+
+        // Start offsets of the whole type, of its first intersection, and of the current operand.
+        let start = if KEEP { self.token_start() } else { 0 };
+        let mut intersection_start = start;
+        let mut pos = start;
+        // Index into `TypeSyntax::type_stack` where the pending union and intersection start. `usize::MAX` if there is none.
+        let mut union_base = usize::MAX;
+        let mut intersection_base = usize::MAX;
+        // Whether the type has a leading "|", and its first intersection a leading "&".
+        let mut has_leading_bar = false;
+        let mut has_leading_ampersand = false;
+        // Saw "abstract" directly before "new".
+        let mut is_abstract = false;
+        let mut abstract_pos = 0;
+        // Offset of the "typeof" directly before "import".
+        let mut typeof_pos = None;
+        // The type starts with "(". Parentheses have no node.
+        let mut is_parenthesized = false;
+        // `skip_import_type_qualifier` has skipped all the names.
+        let mut is_import_type = false;
+        // `skip_jsdoc_prefix_type` has skipped it. "*" is kept as the keyword "any", a name.
+        let mut is_jsdoc_prefix_type = false;
+        // `parsePostfixTypeOrHigher`: whether what was skipped last is its operand. The result of
+        // an operator ("keyof", "infer", "|", "extends") is not.
+        let mut allows_postfix = true;
+        // Returns from the function, closing any pending union or intersection first.
+        macro_rules! finish {
+            () => {{
+                if KEEP {
+                    self.finish_union_and_intersection(
+                        &mut intersection_base,
+                        intersection_start,
+                        &mut has_leading_ampersand,
+                        &mut union_base,
+                        start,
+                        &mut has_leading_bar,
+                    );
+                }
+                return Ok(());
+            }};
+        }
+
         loop {
+            if self.lexer.token == T::TEscapedKeyword {
+                self.unescape_keyword_of_type(opts);
+            }
+            if KEEP {
+                pos = self.token_start();
+                self.emit_single_token_type();
+            }
             match self.lexer.token {
                 T::TNumericLiteral => {
                     self.lexer.next()?;
@@ -302,6 +1693,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TConst => {
+                    // `isListElement(PCTupleElementTypes)`: no element of a tuple starts with it.
+                    if is_at_start_of(
+                        SkipTypeOptions::AllowTupleLabels,
+                        opts,
+                        level,
+                        leading_operator,
+                    ) && self.is_tolerant()
+                    {
+                        return self.missing_type();
+                    }
+
                     let r = self.lexer.range();
                     self.lexer.next()?;
 
@@ -312,6 +1714,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.log()
                             .add_range_error(Some(self.source), r, b"Unexpected \"const\"");
                     }
+
+                    // `parseTypeReference`: "const" is a name like any other.
+                    if self.is_tolerant() && !self.lexer.has_newline_before {
+                        let reference = if KEEP { self.take_reference() } else { None };
+                        let has_arguments =
+                            self.skip_type_script_type_arguments::<false, false>()?;
+                        if KEEP {
+                            self.attach_type_args(reference, has_arguments);
+                        }
+                    }
                 }
 
                 T::TThis => {
@@ -319,7 +1731,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "function check(): this is boolean"
                     if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
-                        self.lexer.next()?;
+                        self.lexer.next_token()?;
+                        if KEEP {
+                            self.take_back_single_token_type();
+                            self.skip_nested_type::<true>(
+                                Level::Lowest,
+                                SkipTypeOptionsBitset::empty(),
+                            )?;
+                            self.emit_type_predicate(StoreStr::new(b"this"), false, pos);
+                            return Ok(());
+                        }
                         self.skip_type_script_type(Level::Lowest)?;
                         return Ok(());
                     }
@@ -331,9 +1752,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TMinus => {
+                    // `parseNonArrayType`: a type only if the next token is a number.
+                    if self.is_tolerant()
+                        && !opts.contains(SkipTypeOptions::IsIndexSignature)
+                        && !self.next_token_matches(|p| {
+                            matches!(p.lexer.token, T::TNumericLiteral | T::TBigIntegerLiteral)
+                        })
+                    {
+                        self.missing_type()?;
+                        break;
+                    }
+
                     // "-123"
                     // "-123n"
                     self.lexer.next()?;
+                    if KEEP {
+                        self.emit_negative_literal_type(pos);
+                    }
 
                     if self.lexer.token == T::TBigIntegerLiteral {
                         self.lexer.next()?;
@@ -354,8 +1789,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 T::TAmpersand | T::TBar => {
+                    // `parseUnionOrIntersectionType`: a union may have one leading "|", and each
+                    // intersection in it one leading "&".
+                    // Any other "|" or "&" is at the position of a missing type and is the operator
+                    // that follows it.
+                    let is_operator_after_nothing = if self.lexer.token == T::TBar {
+                        leading_operator.is_some() || level.gte(Level::BitwiseOr)
+                    } else {
+                        leading_operator == Some(T::TAmpersand) || level.gte(Level::BitwiseAnd)
+                    };
+                    if is_operator_after_nothing && self.is_tolerant() {
+                        self.missing_type()?;
+                        break;
+                    }
+
                     // Support things like "type Foo = | A | B" and "type Foo = & A & B"
+                    leading_operator = Some(self.lexer.token);
                     self.lexer.next()?;
+                    if self.is_tolerant() {
+                        fn_type_error =
+                            self.fn_type_after_operator_error(leading_operator == Some(T::TBar));
+                    }
+                    if KEEP && leading_operator == Some(T::TBar) {
+                        has_leading_bar = true;
+                        intersection_start = self.token_start();
+                    } else if KEEP {
+                        has_leading_ampersand = true;
+                    }
                     continue;
                 }
                 T::TImport => {
@@ -371,13 +1831,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.expect(T::TOpenParen)?;
-                    self.lexer.expect(T::TStringLiteral)?;
+                    let mut specifier = if KEEP {
+                        self.import_type_specifier()
+                    } else {
+                        None
+                    };
+                    let mut argument = TypeId::NONE;
+                    // From its first token to its last: a `ParenthesizedType` has no node.
+                    let mut argument_range = (self.token_start(), 0);
+                    if self.is_tolerant() {
+                        // `parseImportType`: any type is accepted. The checker reports all but a
+                        // string literal (1141).
+                        self.skip_nested_type::<KEEP>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                        )?;
+                        if KEEP && !self.take_back_import_type_specifier(specifier) {
+                            argument = self.last_type();
+                            argument_range.1 = self.lexer.full_start().start as u32;
+                            specifier = None;
+                        }
+                    } else {
+                        self.lexer.expect(T::TStringLiteral)?;
+                    }
 
                     // "import('./foo.json', { assert: { type: 'json' } })"
                     // "import('./foo.json', { with: { type: 'json' } })"
-                    if self.lexer.token == T::TComma {
+                    let mut attributes = Some((ResolutionMode::None, None, None));
+                    if self.lexer.token == T::TComma && self.is_tolerant() {
+                        self.lexer.next()?;
+                        attributes = Some(self.skip_import_type_attributes()?);
+                    } else if self.lexer.token == T::TComma {
                         self.lexer.next()?;
                         self.skip_type_script_object_type()?;
+                        if KEEP {
+                            attributes = self.import_type_attributes();
+                        }
 
                         // "import('./foo.json', { assert: { type: 'json' } }, )"
                         // "import('./foo.json', { with: { type: 'json' } }, )"
@@ -387,8 +1876,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     self.lexer.expect(T::TCloseParen)?;
+                    if KEEP {
+                        // The syntax that follows, such as "[K]", applies to the whole of "typeof
+                        // import(..)".
+                        let is_typeof = typeof_pos.is_some();
+                        pos = typeof_pos.take().unwrap_or(pos);
+                        self.emit_import_type(
+                            specifier,
+                            (argument, argument_range),
+                            attributes,
+                            is_typeof,
+                            pos,
+                        );
+                    }
+                    // Ordinary builds leave the qualifier to the loop over the suffixes of a type,
+                    // and reject "import('./foo')<T>".
+                    if self.is_tolerant() {
+                        self.skip_import_type_qualifier::<KEEP>()?;
+                        is_import_type = true;
+                    }
                 }
-                T::TNew => {
+                T::TNew if allow_fn_type => {
                     // "new () => Foo"
                     // "new <T>() => Foo<T>"
                     self.lexer.next()?;
@@ -401,31 +1909,98 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(());
                     }
 
-                    let _ = self.skip_type_script_type_parameters(
+                    let fn_type_start = if KEEP { self.token_start() } else { 0 };
+                    let type_parameters = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    if KEEP {
+                        let flags = if is_abstract {
+                            Flags::ABSTRACT
+                        } else {
+                            Flags::empty()
+                        };
+                        self.set_fn_type_head(
+                            SignatureKind::ConstructorType,
+                            flags,
+                            type_parameters,
+                            fn_type_start,
+                            if is_abstract { abstract_pos } else { pos },
+                        );
+                    }
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA, KEEP>(
+                        result.as_deref_mut(),
+                        allow_fn_type,
+                    )?;
                 }
-                T::TLessThan => {
+                T::TLessThan if allow_fn_type => {
                     // "<T>() => Foo<T>"
-                    let _ = self.skip_type_script_type_parameters(
+                    let type_parameters = self.skip_type_script_type_parameters(
                         TypeParameterFlag::ALLOW_CONST_MODIFIER,
                     )?;
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    if KEEP {
+                        self.set_fn_type_head(
+                            SignatureKind::FunctionType,
+                            Flags::empty(),
+                            type_parameters,
+                            pos,
+                            pos,
+                        );
+                    }
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA, KEEP>(
+                        result.as_deref_mut(),
+                        allow_fn_type,
+                    )?;
                 }
                 T::TOpenParen => {
                     // "(number | string)"
-                    self.skip_type_script_paren_or_fn_type::<GET_METADATA>(result.as_deref_mut())?;
+                    self.skip_type_script_paren_or_fn_type::<GET_METADATA, KEEP>(
+                        result.as_deref_mut(),
+                        allow_fn_type,
+                    )?;
+                    if KEEP {
+                        is_parenthesized = true;
+                    }
                 }
                 T::TIdentifier => {
                     let kind =
                         kind_for_identifier(self.lexer.identifier).unwrap_or(TsIdentKind::Normal);
 
                     let mut check_type_parameters = true;
+                    // "asserts x": the "x" was skipped as well.
+                    let mut asserts_name = false;
+                    // The parameter name of a type predicate: this identifier, or the one after
+                    // "asserts".
+                    let mut predicate_subject = if KEEP {
+                        StoreStr::new(self.lexer.identifier)
+                    } else {
+                        StoreStr::EMPTY
+                    };
+                    // Until the next token shows whether the word is a keyword or a name.
+                    let escaped_word = self.lexer.escaped_word();
 
                     match kind {
-                        TsIdentKind::PrefixKeyof => {
+                        // `parseTypeOrTypePredicate` runs before `parseType`: in "(keyof): keyof is
+                        // T" the word is the parameter name.
+                        TsIdentKind::PrefixKeyof
+                        | TsIdentKind::PrefixReadonly
+                        | TsIdentKind::Infer
+                        | TsIdentKind::Unique
+                        | TsIdentKind::Asserts
+                            if is_at_start_of(
+                                SkipTypeOptions::IsReturnType,
+                                opts,
+                                level,
+                                leading_operator,
+                            ) && self.is_tolerant()
+                                && self.next_token_matches(|p| {
+                                    p.lexer.is_contextual_keyword(b"is")
+                                        && !p.lexer.has_newline_before
+                                }) =>
+                        {
                             self.lexer.next()?;
+                        }
+                        TsIdentKind::PrefixKeyof => {
+                            self.lexer.next_token()?;
 
                             // Valid:
                             //   "[keyof: string]"
@@ -442,7 +2017,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
-                                self.skip_type_script_type(Level::Prefix)?;
+                                let operand_opts = self.type_operand_opts(opts);
+                                self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
+                                if KEEP {
+                                    let ty = self.last_type();
+                                    self.emit_type_if_complete(&[ty], TypeNodeKind::Keyof(ty), pos);
+                                }
                             }
 
                             if GET_METADATA {
@@ -452,10 +2032,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     Metadata::MObject;
                             }
 
+                            allows_postfix = false;
                             break;
                         }
                         TsIdentKind::PrefixReadonly => {
-                            self.lexer.next()?;
+                            self.lexer.next_token()?;
 
                             if (self.lexer.token != T::TColon
                                 && self.lexer.token != T::TQuestion
@@ -463,7 +2044,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
-                                self.skip_type_script_type(Level::Prefix)?;
+                                let operand_opts = self.type_operand_opts(opts);
+                                self.skip_type_script_type_impl::<false, KEEP>(
+                                    Level::Prefix,
+                                    operand_opts,
+                                    None,
+                                )?;
+                                if KEEP {
+                                    let ty = self.last_type();
+                                    self.emit_type_if_complete(
+                                        &[ty],
+                                        TypeNodeKind::Readonly(ty),
+                                        pos,
+                                    );
+                                }
                             }
 
                             // assume array or tuple literal
@@ -474,10 +2068,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     Metadata::MArray;
                             }
 
+                            allows_postfix = false;
                             break;
                         }
                         TsIdentKind::Infer => {
-                            self.lexer.next()?;
+                            self.lexer.next_token()?;
 
                             // "type Foo = Bar extends [infer T] ? T : null"
                             // "type Foo = Bar extends [infer T extends string] ? T : null"
@@ -490,32 +2085,72 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
+                                let (name, name_pos) = if KEEP {
+                                    (StoreStr::new(self.lexer.identifier), self.token_start())
+                                } else {
+                                    (StoreStr::EMPTY, 0)
+                                };
                                 self.lexer.expect(T::TIdentifier)?;
-                                if self.lexer.token == T::TExtends {
-                                    let _ = self
+                                let mut has_constraint = false;
+                                if self.lexer.is_keyword(T::TExtends) {
+                                    has_constraint = self
                                         .try_skip_type_script_constraint_of_infer_type_with_backtracking(
                                             opts,
-                                        );
+                                        )?;
+                                }
+                                if KEEP {
+                                    self.emit_infer_type(name, name_pos, has_constraint, pos);
                                 }
                             }
 
+                            allows_postfix = false;
                             break;
                         }
                         TsIdentKind::Unique => {
-                            self.lexer.next()?;
+                            self.lexer.next_token()?;
 
                             // "let foo: unique symbol"
-                            if self.lexer.is_contextual_keyword(b"symbol") {
+                            if self.lexer.is_contextual_keyword(b"symbol") && !self.is_tolerant() {
                                 self.lexer.next()?;
+                                if KEEP {
+                                    self.emit_type(TypeNodeKind::UniqueSymbol, pos);
+                                }
                                 break;
+                            }
+                            // `parseTypeOperator`: "unique" is an operator regardless of the next
+                            // token, like "keyof".
+                            if self.is_tolerant()
+                                && ((self.lexer.token != T::TColon
+                                    && self.lexer.token != T::TQuestion
+                                    && self.lexer.token != T::TIn)
+                                    || (!opts.contains(SkipTypeOptions::IsIndexSignature)
+                                        && !opts.contains(SkipTypeOptions::AllowTupleLabels)))
+                            {
+                                let operand_pos = if KEEP { self.token_start() } else { 0 };
+                                let operand_opts = self.type_operand_opts(opts);
+                                self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
+                                if KEEP {
+                                    self.emit_unique_type(operand_pos, pos);
+                                }
+                                allows_postfix = false;
+                                break;
+                            }
+                            if KEEP {
+                                self.emit_type_ref(predicate_subject, pos);
                             }
                         }
                         TsIdentKind::Abstract => {
                             self.lexer.next()?;
 
                             // "let foo: abstract new () => {}" added in TypeScript 4.2
-                            if self.lexer.token == T::TNew {
+                            if self.lexer.token == T::TNew && allow_fn_type {
+                                self.lexer.keyword_was_taken(escaped_word);
+                                is_abstract = true;
+                                abstract_pos = pos;
                                 continue;
+                            }
+                            if KEEP {
+                                self.emit_type_ref(predicate_subject, pos);
                             }
                         }
                         TsIdentKind::Asserts => {
@@ -523,12 +2158,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // "function assert(x: boolean): asserts x"
                             // "function assert(x: boolean): asserts x is boolean"
-                            if opts.contains(SkipTypeOptions::IsReturnType)
+                            // TypeScript's parser (`parseNonArrayType`) accepts this in any type position and leaves the error to the
+                            // checker, so tolerant mode does the same.
+                            if (opts.contains(SkipTypeOptions::IsReturnType) || self.is_tolerant())
                                 && !self.lexer.has_newline_before
                                 && (self.lexer.token == T::TIdentifier
                                     || self.lexer.token == T::TThis)
                             {
+                                self.lexer.keyword_was_taken(escaped_word);
+                                if KEEP {
+                                    predicate_subject = if self.lexer.token == T::TThis {
+                                        StoreStr::new(b"this")
+                                    } else {
+                                        StoreStr::new(self.lexer.identifier)
+                                    };
+                                    self.emit_predicate_of(
+                                        predicate_subject,
+                                        TypeId::NONE,
+                                        true,
+                                        pos,
+                                    );
+                                }
                                 self.lexer.next()?;
+                                asserts_name = true;
+                            } else if KEEP {
+                                self.emit_type_ref(predicate_subject, pos);
                             }
                         }
                         TsIdentKind::PrimitiveAny => {
@@ -646,15 +2300,53 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // "function assert(x: any): x is boolean"
-                    if self.lexer.is_contextual_keyword(b"is") && !self.lexer.has_newline_before {
-                        self.lexer.next()?;
+                    if self.lexer.is_contextual_keyword(b"is")
+                        && (if self.is_tolerant() {
+                            // `parseAssertsTypePredicate` accepts the "is" after "asserts x" on any
+                            // line.
+                            // `parseTypeOrTypePredicate`: any other "is" is only accepted directly
+                            // after the first word of a return type, on the same line.
+                            asserts_name
+                                || (!self.lexer.has_newline_before
+                                    && is_at_start_of(
+                                        SkipTypeOptions::IsReturnType,
+                                        opts,
+                                        level,
+                                        leading_operator,
+                                    ))
+                        } else {
+                            !self.lexer.has_newline_before
+                        })
+                    {
+                        self.lexer.next_token()?;
+                        if KEEP {
+                            self.take_back_single_token_type();
+                            self.skip_nested_type::<true>(
+                                Level::Lowest,
+                                SkipTypeOptionsBitset::empty(),
+                            )?;
+                            self.emit_type_predicate(predicate_subject, asserts_name, pos);
+                            return Ok(());
+                        }
                         self.skip_type_script_type(Level::Lowest)?;
                         return Ok(());
                     }
 
+                    // `parseKeywordTypeNode`, which `parseNonArrayType` undoes before a dot.
+                    if !check_type_parameters && self.lexer.token != T::TDot {
+                        self.lexer.keyword_was_taken(escaped_word);
+                    }
+
                     // "let foo: any \n <number>foo" must not become a single type
                     if check_type_parameters && !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        if KEEP {
+                            let reference = self.take_reference();
+                            let has_arguments =
+                                self.skip_type_script_type_arguments::<false, false>()?;
+                            self.attach_type_args(reference, has_arguments);
+                        } else {
+                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        }
                     }
                 }
                 T::TTypeof => {
@@ -677,11 +2369,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if self.lexer.token == T::TImport {
                         // "typeof import('fs')"
+                        typeof_pos = Some(pos);
                         continue;
+                    } else if self.is_tolerant() {
+                        self.skip_type_query::<KEEP>(pos)?;
                     } else {
                         // "typeof x"
                         if !self.lexer.is_identifier_or_keyword() {
                             self.lexer.expected(T::TIdentifier)?;
+                        }
+                        let names = if KEEP {
+                            self.type_syntax_mut().name_stack.len()
+                        } else {
+                            0
+                        };
+                        if KEEP {
+                            self.push_typeof_name();
                         }
                         self.lexer.next()?;
 
@@ -695,11 +2398,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 self.lexer.expected(T::TIdentifier)?;
                             }
+                            if KEEP {
+                                self.push_typeof_name();
+                            }
                             self.lexer.next()?;
                         }
 
+                        let mut has_arguments = false;
                         if !self.lexer.has_newline_before {
-                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                            has_arguments =
+                                self.skip_type_script_type_arguments::<false, false>()?;
+                        }
+                        if KEEP {
+                            self.emit_typeof_type(names, has_arguments, pos);
                         }
                     }
                 }
@@ -714,21 +2425,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: GET_METADATA implies Some") = Metadata::MArray;
                     }
 
+                    let mut elements: Vec<TupleElement> = Vec::new();
                     while self.lexer.token != T::TCloseBracket {
+                        if self.is_tolerant() {
+                            self.skip_tuple_elements::<KEEP>(&mut elements)?;
+                            break;
+                        }
+                        let element_loc = self.lexer.loc();
+                        let mut element_opts =
+                            SkipTypeOptionsBitset::only(SkipTypeOptions::AllowTupleLabels);
+                        let rest = self.lexer.token == T::TDotDotDot;
                         if self.lexer.token == T::TDotDotDot {
                             self.lexer.next()?;
+                            // `scanStartOfNamedTupleElement`, `parseTupleElementType`: after "..." any word is a label or
+                            // the name of a type.
+                            if self.is_reserved_word_that_starts_no_type() && self.is_tolerant() {
+                                element_opts = SkipTypeOptionsBitset::empty();
+                            }
                         }
-                        self.skip_type_script_type_with_opts::<false>(
-                            Level::Lowest,
-                            SkipTypeOptionsBitset::only(SkipTypeOptions::AllowTupleLabels),
-                            None,
-                        )?;
+                        // Used as the label if a ":" follows.
+                        let word = (KEEP && self.lexer.is_identifier_or_keyword())
+                            .then(|| self.token_text());
+                        self.skip_nested_type::<KEEP>(Level::Lowest, element_opts)?;
+                        let optional = self.lexer.token == T::TQuestion;
                         if self.lexer.token == T::TQuestion {
                             self.lexer.next()?;
                         }
+                        let has_label = self.lexer.token == T::TColon;
                         if self.lexer.token == T::TColon {
                             self.lexer.next()?;
-                            self.skip_type_script_type(Level::Lowest)?;
+                            self.skip_nested_type::<KEEP>(
+                                Level::Lowest,
+                                SkipTypeOptionsBitset::empty(),
+                            )?;
+                        }
+                        if KEEP {
+                            elements.push(TupleElement {
+                                ty: self.last_type(),
+                                written: TypeId::NONE,
+                                member_type: TupleMemberType::Plain,
+                                label: word.filter(|_| has_label),
+                                is_optional: optional,
+                                is_rest: rest,
+                                loc: element_loc,
+                                end: self.lexer.full_start(),
+                            });
                         }
                         if self.lexer.token != T::TComma {
                             break;
@@ -736,9 +2477,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.lexer.next()?;
                     }
                     self.lexer.expect(T::TCloseBracket)?;
+                    if KEEP {
+                        self.emit_tuple_type(&elements, pos);
+                    }
                 }
                 T::TOpenBrace => {
                     self.skip_type_script_object_type()?;
+                    if KEEP {
+                        self.emit_object_type(pos);
+                    }
                     if GET_METADATA {
                         **result
                             .as_mut()
@@ -747,15 +2494,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TTemplateHead => {
                     // "`${'a' | 'b'}-${'c' | 'd'}`"
+                    let mut texts: Vec<Option<StoreStr>> = Vec::new();
+                    let mut types: Vec<TypeId> = Vec::new();
+                    if KEEP {
+                        texts.push(self.string_token_text());
+                    }
                     loop {
                         self.lexer.next()?;
-                        self.skip_type_script_type(Level::Lowest)?;
+                        self.skip_nested_type::<KEEP>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                        )?;
+                        if KEEP {
+                            types.push(self.last_type());
+                        }
+                        // `parseLiteralOfTemplateSpan`: without the "}" the template ends here, and
+                        // the token is not consumed.
+                        if self.lexer.token != T::TCloseBrace && self.is_tolerant() {
+                            self.lexer.expect(T::TCloseBrace)?;
+                            if KEEP {
+                                types.push(TypeId::NONE);
+                            }
+                            break;
+                        }
                         self.lexer.rescan_close_brace_as_template_token()?;
+                        if KEEP {
+                            texts.push(self.string_token_text());
+                        }
 
                         if self.lexer.token == T::TTemplateTail {
                             self.lexer.next()?;
                             break;
                         }
+                    }
+                    if KEEP {
+                        self.emit_template_type(&texts, &types, pos);
                     }
                     if GET_METADATA {
                         **result
@@ -765,6 +2538,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 _ => {
+                    // TypeScript does not parse the contents of a type member's brackets as a type.
+                    if self.is_tolerant() && !opts.contains(SkipTypeOptions::IsIndexSignature) {
+                        // `isListElement(PCTupleElementTypes)`: no tuple element starts with such a
+                        // word, whether or not it is a label.
+                        if is_at_start_of(
+                            SkipTypeOptions::AllowTupleLabels,
+                            opts,
+                            level,
+                            leading_operator,
+                        ) && self.is_reserved_word_that_starts_no_type()
+                        {
+                            return self.missing_type();
+                        }
+                        if matches!(
+                            self.lexer.token,
+                            T::TQuestion
+                                | T::TQuestionQuestion
+                                | T::TExclamation
+                                | T::TAsterisk
+                                | T::TAsteriskEquals
+                        ) {
+                            self.skip_jsdoc_prefix_type::<KEEP>(opts)?;
+                            is_jsdoc_prefix_type = true;
+                            break;
+                        }
+                        self.skip_type_reference_to_any_word()?;
+                        break;
+                    }
+
                     // "[function: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
                         && self.lexer.is_identifier_or_keyword()
@@ -786,15 +2588,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             break;
         }
+        if let Some((at, code)) = fn_type_error.take() {
+            self.lexer.ts_error(self.lexer.range_from(at), code);
+        }
 
         loop {
+            if KEEP {
+                self.finish_last_type();
+            }
+            if !allows_postfix
+                && self.is_tolerant()
+                && matches!(
+                    self.lexer.token,
+                    T::TExclamation | T::TQuestion | T::TDot | T::TOpenBracket
+                )
+            {
+                finish!();
+            }
             match self.lexer.token {
                 T::TBar => {
                     if level.gte(Level::BitwiseOr) {
-                        return Ok(());
+                        finish!();
                     }
 
+                    if KEEP {
+                        self.finish_intersection(
+                            &mut intersection_base,
+                            intersection_start,
+                            &mut has_leading_ampersand,
+                        );
+                    }
                     self.lexer.next()?;
+                    if self.is_tolerant() {
+                        fn_type_error = self.fn_type_after_operator_error(true);
+                    }
+                    if KEEP {
+                        self.begin_type_list(&mut union_base);
+                    }
 
                     if GET_METADATA {
                         let mut left = (**result
@@ -808,13 +2638,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             **result
                                 .as_mut()
                                 .expect("infallible: GET_METADATA implies Some") = final_;
-                            self.skip_type_script_type_with_opts::<false>(
+                            self.skip_type_script_type_impl::<false, KEEP>(
                                 Level::BitwiseOr,
                                 opts,
                                 None,
                             )?;
                         } else {
-                            self.skip_type_script_type_with_opts::<GET_METADATA>(
+                            self.skip_type_script_type_impl::<GET_METADATA, KEEP>(
                                 Level::BitwiseOr,
                                 opts,
                                 result.as_deref_mut(),
@@ -827,19 +2657,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                     } else {
-                        self.skip_type_script_type_with_opts::<false>(
+                        self.skip_type_script_type_impl::<false, KEEP>(
                             Level::BitwiseOr,
                             opts,
                             None,
                         )?;
                     }
+                    if let Some((at, code)) = fn_type_error.take() {
+                        self.lexer.ts_error(self.lexer.range_from(at), code);
+                    }
+                    if KEEP {
+                        self.push_type_list_item();
+                    }
+                    allows_postfix = false;
                 }
                 T::TAmpersand => {
                     if level.gte(Level::BitwiseAnd) {
-                        return Ok(());
+                        finish!();
                     }
 
                     self.lexer.next()?;
+                    if self.is_tolerant() {
+                        fn_type_error = self.fn_type_after_operator_error(false);
+                    }
+                    if KEEP {
+                        self.begin_type_list(&mut intersection_base);
+                    }
 
                     if GET_METADATA {
                         let mut left = (**result
@@ -853,13 +2696,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             **result
                                 .as_mut()
                                 .expect("infallible: GET_METADATA implies Some") = final_;
-                            self.skip_type_script_type_with_opts::<false>(
+                            self.skip_type_script_type_impl::<false, KEEP>(
                                 Level::BitwiseAnd,
                                 opts,
                                 None,
                             )?;
                         } else {
-                            self.skip_type_script_type_with_opts::<GET_METADATA>(
+                            self.skip_type_script_type_impl::<GET_METADATA, KEEP>(
                                 Level::BitwiseAnd,
                                 opts,
                                 result.as_deref_mut(),
@@ -872,12 +2715,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                     } else {
-                        self.skip_type_script_type_with_opts::<false>(
+                        self.skip_type_script_type_impl::<false, KEEP>(
                             Level::BitwiseAnd,
                             opts,
                             None,
                         )?;
                     }
+                    if let Some((at, code)) = fn_type_error.take() {
+                        self.lexer.ts_error(self.lexer.range_from(at), code);
+                    }
+                    if KEEP {
+                        self.push_type_list_item();
+                    }
+                    allows_postfix = false;
                 }
                 T::TExclamation => {
                     // A postfix "!" is allowed in JSDoc types in TypeScript, which are only
@@ -886,14 +2736,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // compiler. It turns out parsing this is important for correctness for
                     // "as" casts because the "!" token must still be consumed.
                     if self.lexer.has_newline_before {
-                        return Ok(());
+                        finish!();
                     }
 
                     self.lexer.next()?;
+                    if KEEP {
+                        self.emit_jsdoc_type(JSDocTypeKind::NonNullable, Postfix::Yes, pos);
+                    }
+                }
+                T::TQuestion => {
+                    // `parsePostfixTypeOrHigher`: JSDoc's "T?", unless a type follows, which makes
+                    // it the "?" of a conditional type. The checker reports it (17019).
+                    if !self.is_tolerant()
+                        || self.lexer.has_newline_before
+                        || opts.contains(SkipTypeOptions::IsIndexSignature)
+                        || self.next_token_starts_a_type()
+                    {
+                        finish!();
+                    }
+
+                    self.lexer.next()?;
+                    if KEEP {
+                        self.emit_jsdoc_type(JSDocTypeKind::Nullable, Postfix::Yes, pos);
+                    }
                 }
                 T::TDot => {
+                    // `parseEntityName`: a dot only continues a name. After any other type it is
+                    // not consumed.
+                    if is_import_type
+                        || is_jsdoc_prefix_type
+                        || KEEP
+                            && self.is_tolerant()
+                            && (is_parenthesized || !self.last_type_takes_qualifier())
+                    {
+                        finish!();
+                    }
                     self.lexer.next()?;
+                    if self.lexer.has_newline_before
+                        && self.is_tolerant()
+                        && self.is_name_after_dot_missing()
+                    {
+                        if KEEP {
+                            self.append_missing_qualified_name();
+                        }
+                        continue;
+                    }
                     if !self.lexer.is_identifier_or_keyword() {
+                        if self.is_tolerant() {
+                            self.skip_missing_name_after_dot::<KEEP>()?;
+                            continue;
+                        }
                         self.lexer.expect(T::TIdentifier)?;
                     }
 
@@ -924,25 +2816,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
+                    if KEEP {
+                        self.append_qualified_name();
+                    }
                     self.lexer.next()?;
 
                     // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
                     if !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        if KEEP {
+                            let reference = self.take_reference();
+                            let has_arguments =
+                                self.skip_type_script_type_arguments::<false, false>()?;
+                            self.attach_type_args(reference, has_arguments);
+                        } else {
+                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
+                        }
                     }
                 }
                 T::TOpenBracket => {
                     // "{ ['x']: string \n ['y']: string }" must not become a single type
                     if self.lexer.has_newline_before {
-                        return Ok(());
+                        finish!();
                     }
+                    let object = if KEEP { self.last_type() } else { TypeId::NONE };
                     self.lexer.next()?;
                     let mut skipped = false;
-                    if self.lexer.token != T::TCloseBracket {
+                    // `parsePostfixTypeOrHigher`: before a token that cannot start a type, it is an
+                    // array type whose "]" is missing.
+                    if self.lexer.token != T::TCloseBracket
+                        && !(self.is_tolerant() && !self.is_start_of_type(false))
+                    {
                         skipped = true;
-                        self.skip_type_script_type(Level::Lowest)?;
+                        if KEEP {
+                            self.skip_nested_type::<true>(
+                                Level::Lowest,
+                                SkipTypeOptionsBitset::empty(),
+                            )?;
+                        } else {
+                            self.skip_type_script_type(Level::Lowest)?;
+                        }
                     }
                     self.lexer.expect(T::TCloseBracket)?;
+                    if KEEP {
+                        if skipped {
+                            let index = self.last_type();
+                            let access = TypeNodeKind::IndexedAccess { obj: object, index };
+                            self.emit_type_if_complete(&[object, index], access, pos);
+                        } else {
+                            self.emit_type_if_complete(&[object], TypeNodeKind::Array(object), pos);
+                        }
+                    }
 
                     if GET_METADATA {
                         let r = result
@@ -965,10 +2888,55 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if self.lexer.has_newline_before
                         || opts.contains(SkipTypeOptions::DisallowConditionalTypes)
                     {
-                        return Ok(());
+                        finish!();
                     }
+                    // In "A | B extends C ? D : E" the check type is all of "A | B", so a nested operand returns here and lets the
+                    // outermost call build the conditional type. The same tokens are consumed either way.
+                    if KEEP && level != Level::Lowest {
+                        finish!();
+                    }
+                    allows_postfix = false;
 
-                    self.lexer.next()?;
+                    if KEEP {
+                        self.finish_union_and_intersection(
+                            &mut intersection_base,
+                            intersection_start,
+                            &mut has_leading_ampersand,
+                            &mut union_base,
+                            start,
+                            &mut has_leading_bar,
+                        );
+                    }
+                    self.lexer.next_token()?;
+
+                    if KEEP {
+                        let check = self.last_type();
+                        self.skip_nested_type::<true>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
+                        )?;
+                        let extends = self.last_type();
+                        self.lexer.expect(T::TQuestion)?;
+                        self.skip_nested_type::<true>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                        )?;
+                        let yes = self.last_type();
+                        self.lexer.expect(T::TColon)?;
+                        self.skip_nested_type::<true>(
+                            Level::Lowest,
+                            SkipTypeOptionsBitset::empty(),
+                        )?;
+                        let no = self.last_type();
+                        let conditional = TypeNodeKind::Cond {
+                            check,
+                            extends,
+                            yes,
+                            no,
+                        };
+                        self.emit_type_if_complete(&[check, extends, yes, no], conditional, start);
+                        continue;
+                    }
 
                     // The type following "extends" is not permitted to be another conditional type
                     let mut extends_type = if GET_METADATA {
@@ -1015,7 +2983,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 _ => {
-                    return Ok(());
+                    if self.lexer.token == T::TEscapedKeyword && self.lexer.is_keyword(T::TExtends)
+                    {
+                        continue;
+                    }
+                    finish!();
                 }
             }
         }
@@ -1024,49 +2996,162 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
+        if self.lexer.token != T::TOpenBrace && self.is_tolerant() {
+            return self.skip_missing_object_type();
+        }
         self.lexer.expect(T::TOpenBrace)?;
+        // Keep mode stores the result in `TypeSyntax::last_object_type`.
+        let keeps = self.should_save_types();
+        let mut kept = ObjectTypeBuilder::default();
+        // Applies to these braces only, not to object types nested in them.
+        let is_interface_body =
+            keeps && core::mem::take(&mut self.type_syntax_mut().next_braces_are_interface_body);
 
+        let tolerant = self.is_tolerant();
+        let mut starts_mapped_type =
+            tolerant && !is_interface_body && self.is_start_of_mapped_type();
+        let saved_contexts = self.enter_list(ListKind::TypeMembers);
         while self.lexer.token != T::TCloseBrace {
+            if keeps {
+                kept.end_member(self.lexer.full_start());
+            }
+            // `parseMappedType` parses "[K in T]: X" itself, before the member list.
+            if core::mem::take(&mut starts_mapped_type) {
+                let member = self.skip_mapped_type_head()?;
+                if keeps {
+                    self.finish_type_member(&member, &mut kept);
+                }
+                // `parseSemicolon`, which takes no comma.
+                self.lexer.expect_or_insert_semicolon()?;
+                continue;
+            }
+            match self.classify_list_token(ListKind::TypeMembers)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            // Filled in as the member is parsed. Only used in keep mode.
+            let mut member = TypeMemberParts::default();
+            if keeps {
+                member.start = self.token_start();
+                member.full_start = self.lexer.token_full_start as u32;
+            }
+
             // "{ -readonly [K in keyof T]: T[K] }"
             // "{ +readonly [K in keyof T]: T[K] }"
             if self.lexer.token == T::TPlus || self.lexer.token == T::TMinus {
+                member.leading_sign = Some(self.lexer.token == T::TPlus);
                 self.lexer.next()?;
             }
 
             // Skip over modifiers and the property identifier
             let mut found_key = false;
+            // `parsePropertyOrMethodSignature`: "= value" may follow a property, not a method.
+            let mut takes_initializer = true;
+            // `parseSignatureMember(KindConstructSignature)`
+            if self.lexer.token == T::TEscapedKeyword
+                && tolerant
+                && self.lexer.identifier == b"new"
+                && self
+                    .next_token_matches(|p| matches!(p.lexer.token, T::TOpenParen | T::TLessThan))
+            {
+                self.lexer.unescape_keyword();
+            }
+            // The only member that may have a body.
+            let is_accessor = tolerant && self.skip_type_member_head(&mut member)?;
             while self.lexer.is_identifier_or_keyword()
                 || self.lexer.token == T::TStringLiteral
                 || self.lexer.token == T::TNumericLiteral
+                // `isLiteralPropertyName`. The checker reports it (1539).
+                || (self.lexer.token == T::TBigIntegerLiteral && tolerant)
+                // `parsePropertyName`. The checker reports it (18016).
+                || (self.lexer.token == T::TPrivateIdentifier && tolerant)
             {
+                if keeps {
+                    member.name = Some(self.read_member_word());
+                }
                 self.lexer.next()?;
                 found_key = true;
+                // `parsePropertyName`: one name. `skip_type_member_head` took what precedes it.
+                if tolerant {
+                    break;
+                }
+            }
+            // The name is either a word or in brackets.
+            let is_at_bracket = self.lexer.token == T::TOpenBracket && !(tolerant && found_key);
+
+            if is_at_bracket && tolerant && !is_accessor && self.is_unambiguously_index_signature()
+            {
+                self.skip_index_signature(&mut member)?;
+                if keeps {
+                    self.finish_type_member(&member, &mut kept);
+                }
+                self.skip_type_member_separator()?;
+                continue;
             }
 
-            if self.lexer.token == T::TOpenBracket {
+            if is_at_bracket {
                 // Index signature or computed property
+                if keeps {
+                    member.bracket_pos = self.token_start();
+                }
                 self.lexer.next()?;
-                self.skip_type_script_type_with_opts::<false>(
-                    Level::Lowest,
-                    SkipTypeOptionsBitset::only(SkipTypeOptions::IsIndexSignature),
-                    None,
-                )?;
+                if keeps {
+                    member.bracket_kind = BracketKind::Computed;
+                    member.bracket_name = self.read_member_word();
+                }
+                let can_be_mapped_type =
+                    !is_interface_body && kept.is_empty() && member.has_only_readonly();
+                // `parseTypeMember`: a member that is not an index signature has a computed name.
+                if keeps && (tolerant || self.is_start_of_computed_member_name(can_be_mapped_type))
+                {
+                    // `parseComputedPropertyName`
+                    member.computed_name = Some(self.parse_detached(|p| {
+                        let old_allow_in = core::mem::replace(&mut p.allow_in, true);
+                        let name = p.parse_expr(Level::Lowest);
+                        p.allow_in = old_allow_in;
+                        name
+                    })?);
+                } else {
+                    self.skip_type_script_type_with_opts::<false>(
+                        Level::Lowest,
+                        SkipTypeOptionsBitset::only(SkipTypeOptions::IsIndexSignature),
+                        None,
+                    )?;
+                }
 
                 // "{ [key: string]: number }"
                 // "{ readonly [K in keyof T]: T[K] }"
+                // `parseComputedPropertyName`: only "]" can follow the expression.
+                let is_computed_name = tolerant && member.computed_name.is_some();
                 match self.lexer.token {
-                    T::TColon => {
+                    T::TColon if !is_computed_name => {
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
+                        if keeps {
+                            member.bracket_kind = BracketKind::Index(self.last_type());
+                        }
                     }
-                    T::TIn => {
+                    T::TIn if !is_computed_name => {
                         self.lexer.next()?;
                         self.skip_type_script_type(Level::Lowest)?;
+                        // `parseMappedTypeParameter`: it ends at the end of its constraint.
+                        let (constraint, parameter_end) = if keeps {
+                            (self.last_type(), self.lexer.full_start())
+                        } else {
+                            (TypeId::NONE, bun_ast::Loc::EMPTY)
+                        };
+                        let mut name_type = Some(TypeId::NONE);
                         if self.lexer.is_contextual_keyword(b"as") {
                             // "{ [K in keyof T as `get-${K}`]: T[K] }"
-                            self.lexer.next()?;
+                            self.lexer.next_token()?;
                             self.skip_type_script_type(Level::Lowest)?;
+                            if keeps {
+                                name_type = Some(self.last_type()).filter(|ty| ty.is_some());
+                            }
                         }
+                        member.bracket_kind =
+                            BracketKind::Mapped(constraint, name_type, parameter_end);
                     }
                     _ => {}
                 }
@@ -1076,7 +3161,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "{ [K in keyof T]+?: T[K] }"
                 // "{ [K in keyof T]-?: T[K] }"
                 match self.lexer.token {
-                    T::TPlus | T::TMinus => {
+                    // `skip_mapped_type_head` takes those of a mapped type.
+                    T::TPlus | T::TMinus if !tolerant => {
                         self.lexer.next()?;
                     }
                     _ => {}
@@ -1088,16 +3174,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "?" indicates an optional property
             // "!" indicates an initialization assertion
             if found_key
-                && (self.lexer.token == T::TQuestion || self.lexer.token == T::TExclamation)
+                && !is_accessor
+                && (self.lexer.token == T::TQuestion
+                    // `parsePropertyOrMethodSignature` takes none.
+                    || (self.lexer.token == T::TExclamation && !tolerant))
             {
+                member.is_optional = true;
                 self.lexer.next()?;
             }
 
             // Type parameters come right after the optional mark
-            let _ =
+            let type_parameters =
                 self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            if keeps && type_parameters != SkipTypeParameterResult::DidNotSkipAnything {
+                member.type_parameters = Some(self.type_syntax_mut().last_type_params.take());
+            }
+            // `parseAccessorDeclaration`, and `parsePropertyOrMethodSignature` after type parameters:
+            // `parseParameters` comes next.
+            let is_signature =
+                is_accessor || type_parameters != SkipTypeParameterResult::DidNotSkipAnything;
 
             match self.lexer.token {
+                token if is_signature && token != T::TOpenParen && tolerant => {
+                    takes_initializer = false;
+                    self.skip_signature_without_parameters(&mut member)?;
+                }
                 T::TColon => {
                     // Regular property
                     if !found_key {
@@ -1106,22 +3207,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     self.lexer.next()?;
                     self.skip_type_script_type(Level::Lowest)?;
+                    if keeps {
+                        member.ty = Some(self.last_type());
+                    }
                 }
                 T::TOpenParen => {
                     // Method signature
+                    takes_initializer = false;
+                    if keeps {
+                        member.open_paren = self.token_start();
+                    }
                     self.skip_typescript_fn_args()?;
+                    if keeps {
+                        member.parameters = Some(self.type_syntax_mut().last_params.take());
+                    }
 
                     if self.lexer.token == T::TColon {
                         self.lexer.next()?;
                         self.skip_typescript_return_type()?;
+                        if keeps {
+                            member.ty = Some(self.last_type());
+                        }
+                    } else if self.lexer.token == T::TEqualsGreaterThan && tolerant && !is_accessor
+                    {
+                        self.skip_return_type_after_arrow(&mut member)?;
                     }
                 }
                 _ => {
                     if !found_key {
-                        self.lexer.unexpected()?;
-                        return Err(crate::Error::SyntaxError);
+                        if tolerant {
+                            // `parsePropertyName` after modifiers: the name is missing, and the
+                            // token is not consumed.
+                            self.lexer.expect(T::TIdentifier)?;
+                        } else {
+                            self.lexer.unexpected()?;
+                            return Err(crate::Error::SyntaxError);
+                        }
                     }
                 }
+            }
+            if self.lexer.token == T::TEquals && takes_initializer && tolerant {
+                // The checker reports that it is not allowed here (1246, 1247).
+                member.initializer = Some(self.skip_initializer_in_signature()?);
+            }
+            if keeps {
+                self.finish_type_member(&member, &mut kept);
             }
             match self.lexer.token {
                 T::TCloseBrace => {}
@@ -1129,15 +3259,303 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
                 }
                 _ => {
+                    if is_accessor && self.lexer.token == T::TOpenBrace {
+                        // `parseFunctionBlockOrSemicolon`: no separator is required between a body
+                        // and the next member.
+                        let body = self.skip_accessor_body_in_type()?;
+                        if keeps {
+                            self.add_accessor_body(&kept, &body);
+                        }
+                        continue;
+                    }
                     if !self.lexer.has_newline_before {
+                        if tolerant {
+                            self.skip_type_member_separator()?;
+                            continue;
+                        }
                         self.lexer.unexpected()?;
                         return Err(crate::Error::SyntaxError);
                     }
                 }
             }
         }
+        self.lexer.list_contexts = saved_contexts;
+        if keeps {
+            kept.end_member(self.lexer.full_start());
+        }
         self.lexer.expect(T::TCloseBrace)?;
+        if keeps {
+            self.finish_object_type(kept);
+        }
         Ok(())
+    }
+
+    /// `parseObjectTypeMembers` without the "{": the missing "{" is reported, the member list is
+    /// empty, and no "}" is expected.
+    #[cold]
+    #[inline(never)]
+    fn skip_missing_object_type(&mut self) -> Result<(), Error> {
+        self.lexer.expect(T::TOpenBrace)?;
+        if self.should_save_types() {
+            self.type_syntax_mut().next_braces_are_interface_body = false;
+            self.finish_object_type(ObjectTypeBuilder::default());
+        }
+        Ok(())
+    }
+
+    /// `parseMappedType`, from the token after the "{" up to the `parseSemicolon` that precedes the
+    /// member list. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn skip_mapped_type_head(&mut self) -> Result<TypeMemberParts, Error> {
+        let keeps = self.should_save_types();
+        let mut member = TypeMemberParts::default();
+        if keeps {
+            member.start = self.token_start();
+            member.full_start = self.lexer.token_full_start as u32;
+        }
+        let has_sign = matches!(self.lexer.token, T::TPlus | T::TMinus);
+        if has_sign {
+            member.leading_sign = Some(self.lexer.token == T::TPlus);
+            self.lexer.next()?;
+        }
+        if self.lexer.is_contextual_keyword(b"readonly") {
+            member.modifiers.push(Modifier {
+                flag: Flags::READONLY,
+                loc: self.lexer.loc(),
+                decorator: None,
+            });
+        }
+        if has_sign || !member.modifiers.is_empty() {
+            self.lexer.expect_contextual_keyword(b"readonly")?;
+        }
+        if keeps {
+            member.bracket_pos = self.token_start();
+        }
+        self.lexer.expect(T::TOpenBracket)?;
+
+        // `parseMappedTypeParameter`: it ends at the end of its constraint.
+        if keeps {
+            member.bracket_name = self.read_member_word();
+        }
+        if self.lexer.is_identifier_or_keyword() {
+            self.lexer.next()?;
+        } else {
+            self.lexer.expect(T::TIdentifier)?;
+        }
+        self.lexer.expect(T::TIn)?;
+        self.skip_type_script_type(Level::Lowest)?;
+        let (constraint, parameter_end) = if keeps {
+            (self.last_type(), self.lexer.full_start())
+        } else {
+            (TypeId::NONE, bun_ast::Loc::EMPTY)
+        };
+
+        let mut name_type = Some(TypeId::NONE);
+        if self.lexer.is_contextual_keyword(b"as") {
+            self.lexer.next_token()?;
+            self.skip_type_script_type(Level::Lowest)?;
+            if keeps {
+                name_type = Some(self.last_type()).filter(|ty| ty.is_some());
+            }
+        }
+        member.bracket_kind = BracketKind::Mapped(constraint, name_type, parameter_end);
+        self.lexer.expect(T::TCloseBracket)?;
+
+        if matches!(self.lexer.token, T::TPlus | T::TMinus) {
+            member.trailing_sign = Some(self.lexer.token == T::TPlus);
+            self.lexer.next()?;
+            member.is_optional = self.lexer.token == T::TQuestion;
+            self.lexer.expect(T::TQuestion)?;
+        } else if self.lexer.token == T::TQuestion {
+            member.is_optional = true;
+            self.lexer.next()?;
+        }
+
+        // `parseTypeAnnotation`
+        if self.lexer.token == T::TColon {
+            self.lexer.next()?;
+            self.skip_type_script_type(Level::Lowest)?;
+            if keeps {
+                member.ty = Some(self.last_type());
+            }
+        }
+        Ok(member)
+    }
+
+    /// `nextIsStartOfMappedType`, at the token after the "{". Lookahead only.
+    #[cold]
+    #[inline(never)]
+    fn is_start_of_mapped_type(&mut self) -> bool {
+        if !matches!(self.lexer.token, T::TPlus | T::TMinus | T::TOpenBracket)
+            && !self.lexer.is_contextual_keyword(b"readonly")
+        {
+            return false;
+        }
+        let (here, swallowed) = (self.lexer.snapshot(), self.lexer.swallowed);
+        self.lexer.is_log_disabled = true;
+        let found = self.scan_start_of_mapped_type().unwrap_or(false);
+        self.lexer.restore(&here);
+        self.lexer.swallowed = swallowed;
+        found
+    }
+
+    fn scan_start_of_mapped_type(&mut self) -> Result<bool, Error> {
+        if matches!(self.lexer.token, T::TPlus | T::TMinus) {
+            self.lexer.next()?;
+            return Ok(self.lexer.is_contextual_keyword(b"readonly"));
+        }
+        if self.lexer.is_contextual_keyword(b"readonly") {
+            self.lexer.next()?;
+        }
+        if self.lexer.token != T::TOpenBracket {
+            return Ok(false);
+        }
+        self.lexer.next()?;
+        if !self.is_identifier_in_context() {
+            return Ok(false);
+        }
+        self.lexer.next()?;
+        Ok(self.lexer.is_keyword(T::TIn))
+    }
+
+    /// `parseTypeMemberSemicolon`. A missing separator is reported, and the token is not consumed.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_member_separator(&mut self) -> Result<(), Error> {
+        if matches!(self.lexer.token, T::TComma | T::TSemicolon) {
+            self.lexer.next()?;
+        } else if !self.can_parse_semicolon() {
+            self.lexer.expect(T::TSemicolon)?;
+        }
+        Ok(())
+    }
+
+    /// `parseIndexSignatureDeclaration`, at the "[", up to the separator.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn skip_index_signature(
+        &mut self,
+        member: &mut TypeMemberParts,
+    ) -> Result<(), Error> {
+        let keeps = self.should_save_types();
+        if keeps {
+            member.bracket_pos = self.token_start();
+        }
+        member.index_signature_errors = self.skip_index_signature_parameter_list(member.start)?;
+        if keeps {
+            member.bracket_kind = BracketKind::IndexParameters;
+            member.parameters = Some(self.type_syntax_mut().last_params.take());
+        }
+        if self.lexer.token == T::TColon {
+            self.lexer.next()?;
+            self.skip_type_script_type(Level::Lowest)?;
+            if keeps {
+                member.ty = Some(self.last_type());
+            }
+        }
+        Ok(())
+    }
+
+    /// `parseParameters` after type parameters that no "(" follows: the missing "(" is reported,
+    /// the parameter list is empty, and no ")" is expected.
+    /// Then the return type.
+    #[cold]
+    #[inline(never)]
+    fn skip_signature_without_parameters(
+        &mut self,
+        member: &mut TypeMemberParts,
+    ) -> Result<(), Error> {
+        let keeps = self.should_save_types();
+        if keeps {
+            member.open_paren = self.token_start();
+            member.parameters = Some(Some(Default::default()));
+        }
+        self.lexer.expect(T::TOpenParen)?;
+        if self.lexer.token == T::TColon {
+            self.lexer.next()?;
+            self.skip_typescript_return_type()?;
+            if keeps {
+                member.ty = Some(self.last_type());
+            }
+        } else if self.lexer.token == T::TEqualsGreaterThan && member.accessor.is_none() {
+            self.skip_return_type_after_arrow(member)?;
+        }
+        Ok(())
+    }
+
+    /// `shouldParseReturnType(":", isType)`: "=>" after the parameters of a signature in a type is
+    /// reported and treated as the ":".
+    #[cold]
+    #[inline(never)]
+    fn skip_return_type_after_arrow(&mut self, member: &mut TypeMemberParts) -> Result<(), Error> {
+        self.lexer.expect(T::TColon)?;
+        self.lexer.next()?;
+        self.skip_typescript_return_type()?;
+        if self.should_save_types() {
+            member.ty = Some(self.last_type());
+        }
+        Ok(())
+    }
+
+    /// `parseTypeMember`, up to the name of the member: `parseModifiers`, and
+    /// `parseContextualModifier` of "get" and "set". Returns whether the member is an accessor.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_member_head(&mut self, member: &mut TypeMemberParts) -> Result<bool, Error> {
+        if self.is_modifier_kind() {
+            self.skip_modifiers(
+                AllowDecorators::No,
+                PermitConstAsModifier::No,
+                &mut member.modifiers,
+            )?;
+        }
+        if !self.is_at_accessor_in_type() {
+            return Ok(false);
+        }
+        member.accessor = Some(if self.lexer.is_contextual_keyword(b"get") {
+            SignatureKind::Getter
+        } else {
+            SignatureKind::Setter
+        });
+        self.lexer.next_token()?;
+        Ok(true)
+    }
+
+    /// `parseContextualModifier(get | set)`, without consuming anything: the word starts an
+    /// accessor when a property name follows, on any line.
+    fn is_at_accessor_in_type(&mut self) -> bool {
+        (self.lexer.is_contextual_keyword(b"get") || self.lexer.is_contextual_keyword(b"set"))
+            && self.next_token_matches(|p| {
+                p.lexer.is_identifier_or_keyword()
+                    || matches!(
+                        p.lexer.token,
+                        T::TStringLiteral
+                            | T::TNumericLiteral
+                            | T::TBigIntegerLiteral
+                            | T::TPrivateIdentifier
+                            | T::TOpenBracket
+                    )
+            })
+    }
+
+    /// `parseFunctionBlock`: the body of an accessor in a type is parsed like any other, and the
+    /// checker reports it (1183).
+    #[cold]
+    #[inline(never)]
+    fn skip_accessor_body_in_type(&mut self) -> Result<bun_ast::G::FnBody, Error> {
+        self.parse_detached(|p| {
+            // `parse_fn_body` requires the parameter scope to enclose the body scope and to start
+            // before it.
+            let before_body = bun_ast::Loc {
+                start: p.lexer.loc().start - 1,
+            };
+            let scope_index =
+                p.push_scope_for_parse_pass(bun_ast::scope::Kind::FunctionArgs, before_body)?;
+            let body = p.parse_fn_body(&mut FnOrArrowDataParse::default())?;
+            p.pop_and_discard_scope(scope_index);
+            Ok(body)
+        })
     }
 
     // This is the type parameter declarations that go with other symbol
@@ -1153,12 +3571,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut result = SkipTypeParameterResult::CouldBeTypeCast;
+        let less_than = self.lexer.loc();
         self.lexer.next()?;
+        if self.is_tolerant() {
+            return self.skip_type_parameters_tolerant(flags, less_than);
+        }
+        // Keep mode stores the result in `TypeSyntax::last_type_params`.
+        let keeps = self.should_save_types();
+        let mut kept: Vec<TypeParam> = Vec::new();
+        let mut is_complete = true;
 
         if self.lexer.token == T::TGreaterThan
             && flags.contains(TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS)
         {
             self.lexer.next()?;
+            if keeps {
+                self.finish_type_params(Some(&kept));
+            }
             return Ok(SkipTypeParameterResult::DefinitelyTypeParameters);
         }
 
@@ -1166,6 +3595,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_in = false;
             let mut has_out = false;
             let mut expect_identifier = true;
+            let mut parameter = TypeParam {
+                name: StoreStr::EMPTY,
+                loc: bun_ast::Loc::EMPTY,
+                start: self.lexer.loc(),
+                end: bun_ast::Loc::EMPTY,
+                constraint: TypeId::NONE,
+                default: TypeId::NONE,
+                flags: Flags::empty(),
+                modifiers: crate::sema::ts_syntax::Span::EMPTY,
+            };
+            // Offset of the last "out". It is the parameter's name if no identifier follows.
+            let mut out_pos = 0;
 
             let mut invalid_modifier_range = bun_ast::Range::NONE;
 
@@ -1186,6 +3627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     result = SkipTypeParameterResult::DefinitelyTypeParameters;
                     self.lexer.next()?;
                     expect_identifier = true;
+                    parameter.flags |= Flags::CONST;
                     continue;
                 }
 
@@ -1206,11 +3648,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
                     has_in = true;
                     expect_identifier = true;
+                    parameter.flags |= Flags::IN;
                     continue;
                 }
 
                 if self.lexer.is_contextual_keyword(b"out") {
                     let r = self.lexer.range();
+                    // A second "out" means the previous one was a modifier.
+                    if has_out {
+                        parameter.flags |= Flags::OUT;
+                    }
+                    out_pos = r.loc.start.max(0) as u32;
                     if invalid_modifier_range.len == 0
                         && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
                     {
@@ -1261,7 +3709,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // expectIdentifier => Mandatory identifier (e.g. after "type Foo <in ___")
             // !expectIdentifier => Optional identifier (e.g. after "type Foo <out ___" since "out" may be the identifier)
             if expect_identifier || self.lexer.token == T::TIdentifier {
+                if keeps {
+                    if has_out {
+                        parameter.flags |= Flags::OUT;
+                    }
+                    parameter.name = StoreStr::new(self.lexer.identifier);
+                    parameter.loc = self.lexer.loc();
+                    is_complete &= self.lexer.token == T::TIdentifier;
+                }
                 self.lexer.expect(T::TIdentifier)?;
+            } else {
+                if keeps {
+                    parameter.name = StoreStr::new(b"out");
+                    parameter.loc = bun_ast::Loc {
+                        start: out_pos as i32,
+                    };
+                }
             }
 
             // "class Foo<T extends number> {}"
@@ -1269,6 +3732,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 result = SkipTypeParameterResult::DefinitelyTypeParameters;
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    parameter.constraint = self.last_type();
+                    is_complete &= parameter.constraint.is_some();
+                }
             }
 
             // "class Foo<T = void> {}"
@@ -1276,6 +3743,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 result = SkipTypeParameterResult::DefinitelyTypeParameters;
                 self.lexer.next()?;
                 self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    parameter.default = self.last_type();
+                    is_complete &= parameter.default.is_some();
+                }
+            }
+            if keeps {
+                kept.push(parameter);
             }
 
             if self.lexer.token != T::TComma {
@@ -1291,21 +3765,225 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.lexer.expect_greater_than::<false>()?;
+        if keeps {
+            self.finish_type_params(is_complete.then_some(&kept[..]));
+        }
         Ok(result)
+    }
+
+    /// `parseBracketedList(PCTypeParameters, parseTypeParameter, "<", ">")`, after the "<" at `less_than`. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_parameters_tolerant(
+        &mut self,
+        flags: TypeParameterFlag,
+        less_than: bun_ast::Loc,
+    ) -> Result<SkipTypeParameterResult, Error> {
+        // TypeScript's scanner scans every ">" as a separate token.
+        let is_at_greater_than = |p: &Self| {
+            matches!(
+                p.lexer.token,
+                T::TGreaterThan
+                    | T::TGreaterThanEquals
+                    | T::TGreaterThanGreaterThan
+                    | T::TGreaterThanGreaterThanEquals
+                    | T::TGreaterThanGreaterThanGreaterThan
+                    | T::TGreaterThanGreaterThanGreaterThanEquals
+            )
+        };
+        let keeps = self.should_save_types();
+        let mut kept: Vec<TypeParam> = Vec::new();
+        let mut is_complete = true;
+        let mut result = SkipTypeParameterResult::CouldBeTypeCast;
+
+        if is_at_greater_than(self) {
+            // "<>" is not a parse error. It never starts an arrow function
+            // (`isParenthesizedArrowFunctionExpression`).
+            if self.lexer.is_log_disabled
+                && !flags.contains(TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS)
+            {
+                self.lexer.expected(T::TIdentifier)?;
+            }
+            // `checkGrammarClassLikeDeclaration` looks at the heritage clauses first: `parse_class`
+            // reports it. The checker finds the empty list of a function in the source text.
+            if keeps
+                && flags.contains(
+                    TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
+                        | TypeParameterFlag::ALLOW_CONST_MODIFIER,
+                )
+            {
+                let list = bun_ast::Range {
+                    loc: less_than,
+                    len: self.lexer.start as i32 + 1 - less_than.start,
+                };
+                self.type_syntax_mut().empty_class_type_params = Some(list);
+            }
+            self.lexer.expect_greater_than::<false>()?;
+            if keeps {
+                self.finish_type_params(Some(&kept));
+            }
+            return Ok(SkipTypeParameterResult::DefinitelyTypeParameters);
+        }
+
+        let saved_contexts = self.enter_list(ListKind::TypeParameters);
+        let mut is_empty = true;
+        while !is_at_greater_than(self) {
+            // The modifiers that are reserved words.
+            if self.lexer.token == T::TEscapedKeyword && !self.lexer.is_keyword(T::TIn) {
+                self.lexer.is_keyword(T::TConst);
+            }
+            match self.classify_list_token(ListKind::TypeParameters)? {
+                ListStep::Element => {}
+                ListStep::Skipped => continue,
+                ListStep::Over => break,
+            }
+            let element_start = self.lexer.loc();
+            is_empty = false;
+            let parameter = self.skip_type_parameter_tolerant(&mut result)?;
+            if keeps {
+                is_complete &= parameter.is_some();
+                kept.extend(parameter);
+            }
+
+            if self.lexer.token != T::TComma {
+                if !is_at_greater_than(self)
+                    && self.recover_missing_comma(ListKind::TypeParameters, element_start)?
+                {
+                    continue;
+                }
+                break;
+            }
+            self.lexer.next()?;
+            // "<T,>"
+            if is_at_greater_than(self) {
+                result = SkipTypeParameterResult::DefinitelyTypeParameters;
+            }
+        }
+        self.lexer.list_contexts = saved_contexts;
+        // `checkGrammarTypeParameterList`
+        if is_empty {
+            self.lexer.ts_grammar_error(
+                bun_ast::Range {
+                    loc: less_than,
+                    len: self.lexer.start as i32 + 1 - less_than.start,
+                },
+                1098,
+            );
+        }
+
+        self.lexer.expect_greater_than::<false>()?;
+        if keeps {
+            self.finish_type_params(is_complete.then_some(&kept[..]));
+        }
+        Ok(result)
+    }
+
+    /// `parseTypeParameter`. `None` if its constraint or default is unusable.
+    #[cold]
+    #[inline(never)]
+    fn skip_type_parameter_tolerant(
+        &mut self,
+        result: &mut SkipTypeParameterResult,
+    ) -> Result<Option<TypeParam>, Error> {
+        let keeps = self.should_save_types();
+        let mut is_complete = true;
+        let mut parameter = TypeParam {
+            name: StoreStr::EMPTY,
+            loc: bun_ast::Loc::EMPTY,
+            start: self.lexer.loc(),
+            end: bun_ast::Loc::EMPTY,
+            constraint: TypeId::NONE,
+            default: TypeId::NONE,
+            flags: Flags::empty(),
+            modifiers: crate::sema::ts_syntax::Span::EMPTY,
+        };
+
+        if self.is_modifier_kind() {
+            let mut modifiers: Vec<Modifier> = Vec::new();
+            self.skip_modifiers(
+                AllowDecorators::No,
+                PermitConstAsModifier::Yes,
+                &mut modifiers,
+            )?;
+            for modifier in &modifiers {
+                parameter.flags |= modifier.flag & (Flags::CONST | Flags::IN | Flags::OUT);
+            }
+            if parameter.flags.contains(Flags::CONST) {
+                *result = SkipTypeParameterResult::DefinitelyTypeParameters;
+            }
+            if keeps && !modifiers.is_empty() {
+                parameter.modifiers = self.add_param_modifiers(&modifiers);
+            }
+        }
+
+        // `parseIdentifier`
+        if self.is_identifier_in_context() {
+            parameter.name = StoreStr::new(self.lexer.identifier);
+            parameter.loc = self.lexer.loc();
+            self.lexer.next()?;
+        } else {
+            // The missing name is at the end of the previous token, and the current token is not
+            // consumed. Without a modifier the type parameter is nothing but the missing name.
+            parameter.loc = self.lexer.full_start();
+            if parameter.start == self.lexer.loc() {
+                parameter.start = parameter.loc;
+            }
+            self.lexer.expect(T::TIdentifier)?;
+        }
+
+        if self.lexer.is_keyword(T::TExtends) {
+            *result = SkipTypeParameterResult::DefinitelyTypeParameters;
+            self.lexer.next_token()?;
+            if self.is_start_of_type(false) || !self.is_start_of_expression() {
+                self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    parameter.constraint = self.last_type();
+                    is_complete &= parameter.constraint.is_some();
+                }
+            } else {
+                // An expression is parsed as an expression, and `checkTypeParameter` expects a
+                // type.
+                let expression = self.lexer.range();
+                self.parse_detached(|p| p.parse_expr(Level::Prefix))?;
+                self.lexer.ts_grammar_error(expression, 1110);
+            }
+        }
+
+        if self.lexer.token == T::TEquals {
+            *result = SkipTypeParameterResult::DefinitelyTypeParameters;
+            self.lexer.next()?;
+            self.skip_type_script_type(Level::Lowest)?;
+            if keeps {
+                parameter.default = self.last_type();
+                is_complete &= parameter.default.is_some();
+            }
+        }
+        parameter.end = self.lexer.full_start();
+        Ok(is_complete.then_some(parameter))
     }
 
     pub(crate) fn skip_type_script_type_stmt(
         &mut self,
         opts: &mut ParseStatementOptions,
+        keyword_loc: bun_ast::Loc,
     ) -> Result<(), Error> {
         if opts.is_export {
             match self.lexer.token {
                 T::TOpenBrace => {
                     // "export type {foo}"
                     // "export type {foo} from 'bar'"
+                    self.note_type_only_export();
                     let _ = self.parse_export_clause()?;
                     if self.lexer.is_contextual_keyword(b"from") {
-                        self.lexer.next()?;
+                        self.lexer.next_token()?;
+                        let _ = self.parse_path()?;
+                    } else if self.lexer.token == T::TStringLiteral
+                        && self.is_tolerant()
+                        && !self.lexer.has_newline_before
+                    {
+                        // `parseExportDeclaration`: a string on the same line is the specifier
+                        // after a missing "from" (1005).
+                        self.lexer.expect_contextual_keyword(b"from")?;
                         let _ = self.parse_path()?;
                     }
                     self.lexer.expect_or_insert_semicolon()?;
@@ -1315,12 +3993,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // https://github.com/microsoft/TypeScript/pull/52217
                     // - export type * as Foo from 'bar';
                     // - export type Foo from 'bar';
+                    self.note_type_only_export();
+                    self.note_star();
                     self.lexer.next()?;
                     if self.lexer.is_contextual_keyword(b"as") {
                         // "export type * as ns from 'path'"
-                        self.lexer.next()?;
-                        let _ = self.parse_clause_alias(b"export")?;
-                        self.lexer.next()?;
+                        self.lexer.next_token()?;
+                        self.parse_namespace_export()?;
+                    } else {
+                        self.note_namespace_export(None);
                     }
                     self.lexer.expect_contextual_keyword(b"from")?;
                     let _ = self.parse_path()?;
@@ -1332,44 +4013,102 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let name = self.lexer.identifier;
+        let name_loc = self.lexer.loc();
         self.lexer.expect(T::TIdentifier)?;
 
         if opts.scope.is_module() {
             self.local_type_names.put(name, true)?;
         }
 
-        let _ = self.skip_type_script_type_parameters(
+        let type_parameters = self.skip_type_script_type_parameters(
             TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                 | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
         )?;
+        let keeps = self.should_save_types();
+        let type_parameters = if keeps {
+            self.take_type_params(type_parameters)
+        } else {
+            None
+        };
 
         self.lexer.expect(T::TEquals)?;
-        self.skip_type_script_type(Level::Lowest)?;
+        // `nextIsNotDot`
+        if self.is_tolerant()
+            && self.lexer.is_contextual_keyword(b"intrinsic")
+            && self.next_token_matches(|p| p.lexer.token != T::TDot)
+        {
+            self.skip_intrinsic_keyword()?;
+        } else {
+            self.skip_type_script_type(Level::Lowest)?;
+        }
+        if keeps {
+            let name = Name {
+                text: StoreStr::new(name),
+                loc: name_loc,
+            };
+            self.emit_type_alias(name, type_parameters, keyword_loc);
+        }
         self.lexer.expect_or_insert_semicolon()?;
+        Ok(())
+    }
+
+    /// `parseKeywordTypeNode`, at the "intrinsic" that is the whole type of an alias.
+    #[cold]
+    #[inline(never)]
+    fn skip_intrinsic_keyword(&mut self) -> Result<(), Error> {
+        let keeps = self.should_save_types();
+        if keeps {
+            self.emit_intrinsic_keyword();
+        }
+        self.lexer.next_token()?;
+        if keeps {
+            self.finish_last_type();
+        }
         Ok(())
     }
 
     pub(crate) fn skip_type_script_interface_stmt(
         &mut self,
         opts: &mut ParseStatementOptions,
+        keyword_loc: bun_ast::Loc,
     ) -> Result<(), Error> {
         let name = self.lexer.identifier;
+        let name_loc = self.lexer.loc();
         self.lexer.expect(T::TIdentifier)?;
 
         if opts.scope.is_module() {
             self.local_type_names.put(name, true)?;
         }
 
-        let _ = self.skip_type_script_type_parameters(
+        let type_parameters = self.skip_type_script_type_parameters(
             TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                 | TypeParameterFlag::ALLOW_EMPTY_TYPE_PARAMETERS,
         )?;
+        let keeps = self.should_save_types();
+        let type_parameters = if keeps {
+            self.take_type_params(type_parameters)
+        } else {
+            None
+        };
+        let mut extends: Vec<TypeId> = Vec::new();
+        let mut other_heritage: Vec<TypeId> = Vec::new();
+        let mut heritage_errors = [None; 2];
+        // It consumes every clause, so the two blocks below find nothing.
+        let _ = self.is_tolerant()
+            && self.skip_interface_heritage_clauses(
+                &mut extends,
+                &mut other_heritage,
+                &mut heritage_errors,
+            )?;
 
         if self.lexer.token == T::TExtends {
             self.lexer.next()?;
 
             loop {
                 self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    extends.push(self.last_type());
+                }
                 if self.lexer.token != T::TComma {
                     break;
                 }
@@ -1377,10 +4116,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if self.lexer.is_contextual_keyword(b"implements") {
+        let has_implements_clause = self.lexer.is_contextual_keyword(b"implements");
+        if has_implements_clause {
             self.lexer.next()?;
             loop {
                 self.skip_type_script_type(Level::Lowest)?;
+                if keeps {
+                    other_heritage.push(self.last_type());
+                }
                 if self.lexer.token != T::TComma {
                     break;
                 }
@@ -1388,36 +4131,354 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if self.should_save_types() {
+            self.type_syntax_mut().next_braces_are_interface_body = true;
+        }
         self.skip_type_script_object_type()?;
+        if keeps {
+            let name = Name {
+                text: StoreStr::new(name),
+                loc: name_loc,
+            };
+            self.emit_interface(
+                name,
+                type_parameters,
+                &extends,
+                &other_heritage,
+                heritage_errors,
+                keyword_loc,
+            );
+        }
         Ok(())
     }
 
+    /// `parseHeritageClauses` of an interface in tolerant mode: any number of clauses, in any
+    /// order. `extends` receives the types of the first "extends" clause (`GetHeritageElements`).
+    /// `errors` receives what `checkGrammarInterfaceDeclaration` reports, except 1176, which the
+    /// checker finds in the source text. Returns whether there is an "implements" clause.
+    /// `others` receives the types of the other clauses.
+    #[cold]
+    #[inline(never)]
+    fn skip_interface_heritage_clauses(
+        &mut self,
+        extends: &mut Vec<TypeId>,
+        others: &mut Vec<TypeId>,
+        errors: &mut [Option<(bun_ast::Loc, u32)>; 2],
+    ) -> Result<bool, Error> {
+        // `parseHeritageClauses`: no list unless a clause starts here.
+        if !self.lexer.is_keyword(T::TExtends) && !self.lexer.is_contextual_keyword(b"implements") {
+            return Ok(false);
+        }
+        let keeps = self.should_save_types();
+        let (mut seen_extends, mut seen_implements) = (false, false);
+        // The checker returns after 1172 or 1176.
+        let mut stop_checking = false;
+        let saved_clauses = self.enter_list(ListKind::HeritageClauses);
+        loop {
+            if !self.lexer.is_keyword(T::TExtends)
+                && !self.lexer.is_contextual_keyword(b"implements")
+            {
+                // A speculative parse fails at the missing "{".
+                if self.lexer.is_log_disabled
+                    || self.classify_list_token(ListKind::HeritageClauses)? != ListStep::Skipped
+                {
+                    break;
+                }
+                continue;
+            }
+            let keyword = self.lexer.range();
+            let is_extends = self.lexer.token == T::TExtends;
+            let is_first_extends = is_extends && !seen_extends;
+            if !is_first_extends && !stop_checking {
+                stop_checking = true;
+                if is_extends {
+                    errors[1] = Some((keyword.loc, 1172));
+                }
+            }
+            seen_extends |= is_extends;
+            seen_implements |= !is_extends;
+            self.lexer.next_token()?;
+
+            // `parseHeritageClause`
+            let saved_elements = self.enter_list(ListKind::HeritageClauseElement);
+            let (mut is_empty, mut trailing_comma) = (true, None);
+            // `checkGrammarExpressionWithTypeArguments`, of the first element that has an error.
+            let mut element_error: Option<(bun_ast::Range, u32)> = None;
+            loop {
+                if self.lexer.is_log_disabled {
+                    if !self.is_list_element(ListKind::HeritageClauseElement, false) {
+                        break;
+                    }
+                } else if !self.skip_to_list_element(ListKind::HeritageClauseElement)? {
+                    break;
+                }
+                let element_start = self.lexer.loc();
+                let grammar_error = self.skip_heritage_element(is_first_extends, 2499)?;
+                element_error = element_error.or(grammar_error);
+                if keeps {
+                    let clause = if is_first_extends {
+                        &mut *extends
+                    } else {
+                        &mut *others
+                    };
+                    clause.push(self.last_type());
+                }
+                is_empty = false;
+                trailing_comma = None;
+                if self.lexer.token == T::TComma {
+                    trailing_comma = Some(self.lexer.loc());
+                    self.lexer.next()?;
+                    continue;
+                }
+                if !self.recover_missing_comma(ListKind::HeritageClauseElement, element_start)? {
+                    break;
+                }
+            }
+            self.lexer.list_contexts = saved_elements;
+
+            // `checkGrammarHeritageClause`
+            if !stop_checking {
+                if let Some(comma) = trailing_comma {
+                    errors[0] = Some((comma, 1009));
+                } else if is_empty {
+                    errors[0] = Some((keyword.end(), 1097));
+                } else if let Some((range, 1326)) = element_error {
+                    // `checkTypeReferenceNode` has reported any other.
+                    self.lexer.ts_grammar_error(range, 1326);
+                }
+            }
+        }
+        self.lexer.list_contexts = saved_clauses;
+        Ok(seen_implements)
+    }
+
+    /// `parseExpressionWithTypeArguments` in a heritage clause whose elements are types: any clause
+    /// of an interface, `implements` of a class. In keep mode the last type is the reference
+    /// `A.B<C>`, or `HeritageExpression` for any other expression, which the checker reports
+    /// (`not_entity_name`: 2499, 2500). `is_checked`: `checkInterfaceDeclaration` or
+    /// `checkClassLikeDeclaration` visits the element (`checkTypeReferenceNode`). Returns what
+    /// `checkGrammarExpressionWithTypeArguments` reports for it. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn skip_heritage_element(
+        &mut self,
+        is_checked: bool,
+        not_entity_name: u32,
+    ) -> Result<Option<(bun_ast::Range, u32)>, Error> {
+        let keeps = self.should_save_types();
+        let (start, pos) = (self.lexer.loc().start, self.token_start());
+        let mut grammar_error = None;
+        if !self.is_at_entity_name_expression() {
+            let scope_index = self.scopes_in_order.len();
+            let (expression, _) =
+                self.parse_expression_with_type_arguments(is_checked, &mut grammar_error)?;
+            self.discard_scopes_up_to(scope_index);
+            if keeps {
+                self.emit_heritage_expression(expression, pos);
+                self.finish_last_type();
+            }
+            return Ok(grammar_error);
+        }
+        if keeps {
+            let name = self.token_text();
+            self.emit_type_ref(name, pos);
+        }
+        let mut name_end = self.lexer.range().end();
+        self.lexer.next()?;
+        let mut is_optional_chain = false;
+        while matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
+            is_optional_chain |= self.lexer.token == T::TQuestionDot;
+            self.lexer.next()?;
+            if keeps {
+                self.append_qualified_name();
+            }
+            name_end = self.lexer.range().end();
+            self.lexer.next()?;
+        }
+        // `IsOptionalChain(expr)`
+        if is_optional_chain && is_checked {
+            let expression = bun_ast::Range {
+                loc: bun_ast::Loc { start },
+                len: name_end.start - start,
+            };
+            self.ts_checker_error(expression, not_entity_name);
+        }
+        let reference = if keeps { self.take_reference() } else { None };
+        // `tryParseTypeArgumentsInExpression` rescans "<<".
+        let has_arguments =
+            if self.lexer.token == T::TLessThanLessThan && !self.lexer.is_javascript_file() {
+                self.try_skip_type_script_type_arguments_with_backtracking()?
+            } else {
+                self.skip_type_arguments_of_heritage_element(is_checked, &mut grammar_error)?
+            };
+        if keeps {
+            self.attach_type_args(reference, has_arguments);
+            self.finish_last_type();
+        }
+        Ok(grammar_error)
+    }
+
+    /// `parseExpressionWithTypeArguments`: the expression, and whether type arguments follow it,
+    /// which are then the last ones parsed. Those that the expression consumed itself are noted on
+    /// it. `grammar_error` receives what `checkGrammarExpressionWithTypeArguments` reports.
+    /// `is_checked`: see `skip_type_arguments_of_heritage_element`. Tolerant mode only.
+    pub(crate) fn parse_expression_with_type_arguments(
+        &mut self,
+        is_checked: bool,
+        grammar_error: &mut Option<(bun_ast::Range, u32)>,
+    ) -> Result<(bun_ast::Expr, bool), Error> {
+        let (start, is_at_import) = (self.lexer.loc(), self.lexer.token == T::TImport);
+        // `parseLeftHandSideExpressionOrHigher`
+        let mut expression = self.parse_detached(|p| p.parse_expr(Level::New))?;
+        let has_arguments =
+            self.skip_type_arguments_of_heritage_element(is_checked, grammar_error)?;
+        // The keyword `import` by itself is a missing expression.
+        if is_at_import && matches!(expression.data, bun_ast::ExprData::EMissing(_)) {
+            let keyword_end = bun_ast::Loc {
+                start: start.start + b"import".len() as i32,
+            };
+            self.note_end(&mut expression.loc, keyword_end);
+            if has_arguments {
+                *grammar_error = Some((self.lexer.range_from(start), 1326));
+            }
+        }
+        Ok((expression, has_arguments))
+    }
+
+    /// `parseTypeArguments`, which does not rescan "<<" or "<=". `grammar_error` receives what
+    /// `checkGrammarTypeArguments` reports for the list, which is logged if `is_checked`.
+    fn skip_type_arguments_of_heritage_element(
+        &mut self,
+        is_checked: bool,
+        grammar_error: &mut Option<(bun_ast::Range, u32)>,
+    ) -> Result<bool, Error> {
+        if self.lexer.token != T::TLessThan {
+            return Ok(false);
+        }
+        let has_arguments =
+            self.skip_type_script_type_arguments_unchecked::<false, false>(grammar_error)?;
+        if is_checked && let Some((range, code)) = *grammar_error {
+            self.lexer.ts_grammar_error(range, code);
+        }
+        Ok(has_arguments)
+    }
+
+    /// `IsEntityNameExpression`: whether the expression that starts here is `A.B.C` and nothing
+    /// more, but for type arguments at its end.
+    fn is_at_entity_name_expression(&mut self) -> bool {
+        if self.lexer.token != T::TIdentifier {
+            return false;
+        }
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let mut is_name = self.lexer.next().is_ok();
+        while is_name && matches!(self.lexer.token, T::TDot | T::TQuestionDot) {
+            is_name = self.lexer.next().is_ok()
+                && self.lexer.is_identifier_or_keyword()
+                && self.lexer.next().is_ok();
+        }
+        // `tryParseTypeArgumentsInExpression`: type arguments are part of the expression if
+        // `canFollowTypeArgumentsInExpression` accepts the token after them.
+        if is_name
+            && matches!(self.lexer.token, T::TLessThan | T::TLessThanLessThan)
+            && !self.lexer.is_javascript_file()
+        {
+            let (noted, swallowed) = (self.type_syntax_checkpoint(), self.lexer.swallowed);
+            let is_part_of_expression = self
+                .skip_type_script_type_arguments_with_backtracking(false)
+                .is_ok();
+            self.rewind_type_syntax(&noted);
+            self.lexer.swallowed = swallowed;
+            if !is_part_of_expression {
+                self.lexer.restore(&old_lexer);
+                return true;
+            }
+        }
+        // `parseMemberExpressionRest` and `parseCallExpressionRest` continue at these tokens.
+        let continues = match self.lexer.token {
+            T::TOpenParen
+            | T::TOpenBracket
+            | T::TDot
+            | T::TQuestionDot
+            | T::TNoSubstitutionTemplateLiteral
+            | T::TTemplateHead => true,
+            T::TExclamation => !self.lexer.has_newline_before,
+            _ => false,
+        };
+        self.lexer.restore(&old_lexer);
+        is_name && !continues
+    }
+
+    #[inline]
     pub(crate) fn skip_type_script_type_arguments<
         const IS_INSIDE_JSX_ELEMENT: bool,
         const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
     >(
         &mut self,
     ) -> Result<bool, Error> {
+        let mut grammar_error = None;
+        let has_arguments = self.skip_type_script_type_arguments_unchecked::<
+            IS_INSIDE_JSX_ELEMENT,
+            IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION,
+        >(&mut grammar_error)?;
+        if let Some((range, code)) = grammar_error {
+            self.lexer.ts_grammar_error(range, code);
+        }
+        Ok(has_arguments)
+    }
+
+    /// `parseTypeArguments`. `grammar_error` receives what `checkGrammarTypeArguments` reports for
+    /// the list. Whether the checker calls it depends on the node that has the list.
+    #[inline]
+    pub(crate) fn skip_type_script_type_arguments_unchecked<
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+    >(
+        &mut self,
+        grammar_error: &mut Option<(bun_ast::Range, u32)>,
+    ) -> Result<bool, Error> {
         self.mark_type_script_only();
         match self.lexer.token {
-            T::TLessThan
-            | T::TLessThanEquals
-            | T::TLessThanLessThan
-            | T::TLessThanLessThanEquals => {}
+            T::TLessThan | T::TLessThanLessThan => {}
+            // `ReScanLessThanToken` splits "<<" only.
+            T::TLessThanEquals | T::TLessThanLessThanEquals if !self.is_tolerant() => {}
             _ => {
                 return Ok(false);
             }
         }
 
+        let less_than = self.lexer.loc().start;
         self.lexer.expect_less_than::<false>()?;
+        let keeps = self.should_save_types();
+        let args_base = if keeps {
+            self.type_syntax_mut().type_stack.len()
+        } else {
+            0
+        };
 
+        let mut is_first = true;
+        let saved_contexts = self.enter_list(ListKind::TypeArguments);
         loop {
-            self.skip_type_script_type(Level::Lowest)?;
+            // `parseDelimitedList(PCTypeArguments)`: the list ends before any token that is neither
+            // a comma nor the start of a type, in TypeScript's own speculative parses too. So it
+            // may be empty ("<>") and may end with a comma ("<T,>").
+            if self.is_tolerant() && !self.is_list_element(ListKind::TypeArguments, false) {
+                *grammar_error = Some(self.check_end_of_type_arguments(is_first, less_than));
+                break;
+            }
+            if keeps {
+                self.skip_nested_type::<true>(Level::Lowest, SkipTypeOptionsBitset::empty())?;
+                self.push_type_list_item();
+            } else {
+                self.skip_type_script_type(Level::Lowest)?;
+            }
+            is_first = false;
             if self.lexer.token != T::TComma {
                 break;
             }
             self.lexer.next()?;
         }
+        self.lexer.list_contexts = saved_contexts;
 
         // This type argument list must end with a ">"
         if !IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION {
@@ -1438,65 +4499,157 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.expect(T::TGreaterThan)?;
             }
         }
+        if keeps {
+            self.finish_type_args(args_base);
+        }
         Ok(true)
+    }
+
+    /// `checkGrammarTypeArguments`, where a list of type arguments ends and no element starts: "<>" (1099 at the "<", which is at
+    /// `less_than`) or "<T,>" (1009 at the comma, which is the previous token).
+    #[cold]
+    #[inline(never)]
+    fn check_end_of_type_arguments(&self, is_empty: bool, less_than: i32) -> (bun_ast::Range, u32) {
+        // 1099: the span ends after the token that follows the empty list.
+        let (start, end, code) = if is_empty {
+            (less_than, self.lexer.start as i32 + 1, 1099)
+        } else {
+            let comma_end = self.lexer.full_start().start;
+            (comma_end - 1, comma_end, 1009)
+        };
+        let range = bun_ast::Range {
+            loc: bun_ast::Loc { start },
+            len: end - start,
+        };
+        (range, code)
     }
 
     // ───────────────────────── Backtracking ─────────────────────────
     // Two concrete helpers covering the actual call patterns:
-    //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns bool
+    //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns whether the attempt succeeded
     //   - `lexer_backtracker_result` — fn returns Result<SkipTypeParameterResult>
+    // Both return `Err` only for stack and memory exhaustion, which are not properties of the attempt. If they counted as a failed
+    // attempt, the caller would parse the same text another way, and where that way needs less stack per level it would end in an
+    // ordinary syntax error for valid code.
 
     #[inline]
-    fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> bool
+    fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> Result<bool, Error>
     where
-        F: FnOnce(&mut Self) -> Result<R, Error>,
+        F: Fn(&mut Self) -> Result<R, Error>,
     {
         self.mark_type_script_only();
         // The Lexer
         // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
+        let noted = self.type_syntax_checkpoint();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let old_swallowed = self.lexer.swallowed;
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
+        let mut exhausted = None;
         match func(self) {
             Ok(_) => {}
-            Err(_) => {
+            Err(err) => {
                 backtrack = true;
+                if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+                    exhausted = Some(err);
+                }
             }
         }
 
         if backtrack {
             self.lexer.restore(&old_lexer);
+            self.rewind_type_syntax(&noted);
+            // `rewind` drops the errors.
+            self.lexer.swallowed = old_swallowed;
         }
         self.lexer.is_log_disabled = old_log_disabled;
+        if let Some(err) = exhausted {
+            return Err(err);
+        }
 
-        !backtrack
+        // Only changes in tolerant mode.
+        if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
+            // The rerun produces everything again.
+            self.rewind_type_syntax(&noted);
+            self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
+        }
+        if !backtrack {
+            self.release_type_syntax_checkpoint(&noted);
+        }
+
+        Ok(!backtrack)
     }
 
     #[inline]
-    fn lexer_backtracker_result<F>(&mut self, func: F) -> SkipTypeParameterResult
+    fn lexer_backtracker_result<F>(&mut self, func: F) -> Result<SkipTypeParameterResult, Error>
     where
-        F: FnOnce(&mut Self) -> Result<SkipTypeParameterResult, Error>,
+        F: Fn(&mut Self) -> Result<SkipTypeParameterResult, Error>,
     {
         self.mark_type_script_only();
         let old_lexer = self.lexer.snapshot();
+        let noted = self.type_syntax_checkpoint();
         let old_log_disabled = self.lexer.is_log_disabled;
+        let old_swallowed = self.lexer.swallowed;
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
+        let mut exhausted = None;
         let result = match func(self) {
             Ok(r) => r,
-            Err(_) => {
+            Err(err) => {
                 backtrack = true;
+                if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+                    exhausted = Some(err);
+                }
                 SkipTypeParameterResult::DidNotSkipAnything
             }
         };
 
         if backtrack {
             self.lexer.restore(&old_lexer);
+            self.rewind_type_syntax(&noted);
+            // `rewind` drops the errors.
+            self.lexer.swallowed = old_swallowed;
         }
         self.lexer.is_log_disabled = old_log_disabled;
+        if let Some(err) = exhausted {
+            return Err(err);
+        }
 
-        result
+        // Only changes in tolerant mode.
+        if self.lexer.swallowed != old_swallowed && !backtrack && !old_log_disabled {
+            // The rerun produces everything again.
+            self.rewind_type_syntax(&noted);
+            self.log_errors_of_successful_trial(&old_lexer, &|p: &mut Self| func(p).is_ok());
+        }
+        if !backtrack {
+            self.release_type_syntax_checkpoint(&noted);
+        }
+
+        Ok(result)
+    }
+
+    /// `mark`, `rewind`: TypeScript keeps the errors of a speculative parse that succeeds. `trial`
+    /// succeeded from `start` on with the log disabled, so it is rerun with the log enabled.
+    #[cold]
+    #[inline(never)]
+    fn log_errors_of_successful_trial(
+        &mut self,
+        start: &crate::lexer::LexerSnapshot<'a>,
+        trial: &dyn Fn(&mut Self) -> bool,
+    ) {
+        let end = self.lexer.start;
+        self.lexer.restore(start);
+        let snapshot = self.parser_snapshot();
+        if trial(self) && self.lexer.start == end {
+            return self.release_parser_snapshot(&snapshot);
+        }
+        // Error recovery, which is off while the log is disabled, took a different path. Keeps the
+        // result of the first run, without errors.
+        self.restore_parser_snapshot(snapshot);
+        self.lexer.is_log_disabled = true;
+        let _ = trial(self);
+        self.lexer.is_log_disabled = false;
     }
 
     pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
@@ -1516,11 +4669,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: SkipTypeOptionsBitset,
     ) -> Result<bool, Error> {
         self.lexer.expect(T::TExtends)?;
-        self.skip_type_script_type_with_opts::<false>(
-            Level::Prefix,
-            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes),
-            None,
-        )?;
+        // `tryParseConstraintOfInferType`: the constraint is a whole type, and the lookahead for
+        // the "?" comes after all of it.
+        let level = if self.is_tolerant() {
+            Level::Lowest
+        } else {
+            Level::Prefix
+        };
+        let constraint_opts =
+            SkipTypeOptionsBitset::only(SkipTypeOptions::DisallowConditionalTypes);
+        if self.should_save_types() {
+            self.skip_nested_type::<true>(level, constraint_opts)?;
+        } else {
+            self.skip_type_script_type_with_opts::<false>(level, constraint_opts, None)?;
+        }
 
         if !flags.contains(SkipTypeOptions::DisallowConditionalTypes)
             && self.lexer.token == T::TQuestion
@@ -1531,8 +4693,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    pub(crate) fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
-        self.skip_typescript_fn_args()?;
+    /// `has_head`: "new" or type parameters precede the "(".
+    pub(crate) fn skip_type_script_arrow_args_with_backtracking(
+        &mut self,
+        has_head: bool,
+    ) -> Result<bool, Error> {
+        self.lexer.expect(T::TOpenParen)?;
+        // `skipParameterStart` parses no decorators.
+        if self.lexer.token == T::TAt && !has_head {
+            return Err(crate::Error::Backtrack);
+        }
+        self.skip_typescript_fn_args_after_open_paren()?;
         if self.lexer.expect(T::TEqualsGreaterThan).is_err() {
             return Err(crate::Error::Backtrack);
         }
@@ -1540,14 +4711,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
+    /// `is_optional_chain`: the expression before the type arguments is part of an optional chain.
     pub(crate) fn skip_type_script_type_arguments_with_backtracking(
         &mut self,
+        is_optional_chain: bool,
     ) -> Result<bool, Error> {
-        if self.skip_type_script_type_arguments::<false, true>()? {
+        let mut grammar_error = None;
+        if self.skip_type_script_type_arguments_unchecked::<false, true>(&mut grammar_error)? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
                 return Err(crate::Error::Backtrack);
             }
+        }
+        // `checkTaggedTemplateExpression`: `checkGrammarTypeArguments` is not called once
+        // `checkGrammarTaggedTemplateChain` has reported the template.
+        let is_tag_of_reported_template = is_optional_chain
+            && matches!(
+                self.lexer.token,
+                T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
+            );
+        if let Some((range, code)) = grammar_error
+            && !is_tag_of_reported_template
+        {
+            self.lexer.ts_grammar_error(range, code);
         }
 
         Ok(true)
@@ -1557,13 +4743,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
     ) -> Result<(), Error> {
         self.lexer.expect(T::TColon)?;
+        let type_start = self.lexer.loc();
 
         self.skip_typescript_return_type()?;
         // Check the token after this and backtrack if it's the wrong one
+        if self.lexer.token != T::TEqualsGreaterThan || self.is_tolerant() {
+            return self.check_token_after_arrow_return_type(type_start);
+        }
+        Ok(())
+    }
+
+    /// `parseParenthesizedArrowFunctionExpression` without `allowAmbiguity`, after the return type that starts at `type_start`.
+    #[cold]
+    #[inline(never)]
+    fn check_token_after_arrow_return_type(
+        &mut self,
+        type_start: bun_ast::Loc,
+    ) -> Result<(), Error> {
+        if self.is_tolerant() {
+            if self.return_type_blocks_arrow_function(type_start) {
+                return Err(crate::Error::Backtrack);
+            }
+            // "(x): T {" is an arrow function whose arrow is missing.
+            if self.lexer.token == T::TOpenBrace {
+                return Ok(());
+            }
+        }
         if self.lexer.token != T::TEqualsGreaterThan {
             return Err(crate::Error::Backtrack);
         }
         Ok(())
+    }
+
+    /// `typeHasArrowFunctionBlockingParseError`, for the type just parsed starting at `type_start`.
+    fn return_type_blocks_arrow_function(&mut self, type_start: bun_ast::Loc) -> bool {
+        // A missing type has an empty span.
+        if self.lexer.loc() == type_start {
+            return true;
+        }
+        self.should_save_types() && self.type_syntax_mut().last_type_blocks_arrow_function()
     }
 
     /// Whether the ":" after a parenthesized expression that sits between the
@@ -1602,7 +4820,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result: Result<(), Error> = (|| {
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
-            self.parse_arrow_body(&mut [], &mut data)?;
+            self.parse_arrow_body_with_flags(
+                &mut [],
+                &mut data,
+                bun_ast::expr::EFlags::AfterQuestionAndBeforeColon,
+            )?;
             // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
             Ok(())
@@ -1632,28 +4854,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
-    ) -> SkipTypeParameterResult {
+    ) -> Result<SkipTypeParameterResult, Error> {
         self.lexer_backtracker_result(
             Self::skip_type_script_type_parameters_then_open_paren_with_backtracking,
         )
     }
 
-    pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
-        self.lexer_backtracker_bool(Self::skip_type_script_type_arguments_with_backtracking)
+    pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
+        self.try_skip_type_script_type_arguments_in_chain_with_backtracking(false)
     }
 
-    pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
+    /// `is_optional_chain`: the expression before the type arguments is part of an optional chain.
+    pub(crate) fn try_skip_type_script_type_arguments_in_chain_with_backtracking(
+        &mut self,
+        is_optional_chain: bool,
+    ) -> Result<bool, Error> {
+        self.lexer_backtracker_bool(|p| {
+            p.skip_type_script_type_arguments_with_backtracking(is_optional_chain)
+        })
+    }
+
+    pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_return_type_with_backtracking)
     }
 
-    pub(crate) fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
-        self.lexer_backtracker_bool(Self::skip_type_script_arrow_args_with_backtracking)
+    pub(crate) fn try_skip_type_script_arrow_args_with_backtracking(
+        &mut self,
+        has_head: bool,
+    ) -> Result<bool, Error> {
+        self.lexer_backtracker_bool(|p| p.skip_type_script_arrow_args_with_backtracking(has_head))
     }
 
     pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
         &mut self,
         flags: SkipTypeOptionsBitset,
-    ) -> bool {
+    ) -> Result<bool, Error> {
         // The outcome of this attempt depends only on the position of the `extends`
         // token and on whether conditional types are allowed, so an attempt that
         // already backtracked here can be skipped. Each backtracked constraint gets
@@ -1672,12 +4911,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .binary_search(&memo_key)
             .is_ok()
         {
-            return false;
+            return Ok(false);
         }
 
         let skipped = self.lexer_backtracker_bool(|p| {
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
-        });
+        })?;
         if !skipped {
             // Re-search for the insertion point: attempts nested inside the one that
             // just failed may have added entries of their own.
@@ -1686,6 +4925,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .insert(insert_at, memo_key);
             }
         }
-        skipped
+        Ok(skipped)
     }
 }

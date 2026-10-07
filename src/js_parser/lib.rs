@@ -23,6 +23,7 @@ pub mod parse;
 pub mod react_compiler_host;
 pub(crate) mod repl_transforms;
 pub mod scan;
+pub mod sema;
 pub mod typescript;
 pub mod visit;
 
@@ -241,8 +242,8 @@ pub enum AlreadyBundled {
 }
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
-impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
-    for crate::p::P<'a, IS_TS, SCAN>
+impl<'a, const IS_TS: bool, const SCAN: bool, const SEMA: bool> bun_ast::expr::EqlParser
+    for crate::p::P<'a, IS_TS, SCAN, SEMA>
 {
     #[inline]
     fn arena(&self) -> &bun_alloc::Arena {

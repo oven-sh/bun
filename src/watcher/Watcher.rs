@@ -649,15 +649,9 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
-            match self.platform.watch_dir(path) {
-                Ok(eventlist_index) => eventlist_index,
-                Err(err) => {
-                    if !stored_fd.is_valid() {
-                        let _ = bun_sys::close(fd);
-                    }
-                    return Err(err.with_path(file_path));
-                }
-            }
+            self.platform
+                .watch_dir(path)
+                .map_err(|e| e.with_path(file_path))?
         };
 
         self.watchlist.append_assume_capacity(WatchItem {
@@ -723,14 +717,22 @@ impl Watcher {
             .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
             .unwrap_or_else(|_| bun_core::out_of_memory());
 
-        if autowatch_parent_dir && parent_watch_item.is_none() {
-            // Only recovers a replaced file: the file watch must not depend on it.
-            let _ = self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
-                dir_fd,
-                parent_dir,
-                parent_dir_hash,
-            );
+        if autowatch_parent_dir {
+            parent_watch_item = Some(match parent_watch_item {
+                Some(v) => v,
+                None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                    dir_fd,
+                    parent_dir,
+                    parent_dir_hash,
+                ) {
+                    Err(err) => {
+                        return Err(err.with_path(parent_dir));
+                    }
+                    Ok(r) => r,
+                },
+            });
         }
+        let _ = parent_watch_item;
 
         match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
             fd,
@@ -769,14 +771,7 @@ impl Watcher {
 
     #[inline]
     fn is_eligible_directory(&self, dir: &[u8]) -> bool {
-        if strings::contains(dir, b"node_modules") {
-            return false;
-        }
-        if cfg!(windows) {
-            // ReadDirectoryChangesW is cwd-rooted; POSIX has no such restriction.
-            return strings::contains(dir, self.top_level_dir());
-        }
-        true
+        strings::contains(dir, self.top_level_dir()) && !strings::contains(dir, b"node_modules")
     }
 
     #[inline]
@@ -959,7 +954,12 @@ impl Watcher {
     }
 
     pub(crate) fn on_maybe_watch_directory(&mut self, file_path: &[u8], dir_fd: Fd) {
-        if self.is_eligible_directory(file_path) {
+        // We don't want to watch:
+        // - Directories outside the root directory
+        // - Directories inside node_modules
+        if !strings::contains(file_path, b"node_modules")
+            && strings::contains(file_path, self.top_level_dir())
+        {
             let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }

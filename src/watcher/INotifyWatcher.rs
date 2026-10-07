@@ -5,7 +5,7 @@ use core::ffi::c_int;
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::{ZStr, env_var, output as Output};
+use bun_core::{ZStr, env_var, output as Output, strings};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
@@ -74,6 +74,12 @@ impl Default for INotifyWatcher {
 
 pub(crate) type EventListIndex = c_int;
 
+/// IN_ATTRIB reports the link-count change of an inode that a rename replaces: see `file_was_replaced`.
+const WATCH_FILE_MASK: u32 = {
+    use bun_sys::linux::IN;
+    IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY | IN::ATTRIB
+};
+
 #[repr(C)]
 pub struct Event {
     pub watch_descriptor: EventListIndex,
@@ -127,19 +133,11 @@ impl Event {
 
 impl INotifyWatcher {
     pub(crate) fn watch_path(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
-        use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        // IN_ATTRIB is how `watched_inode_is_unlinked` learns of a link-count change.
-        let watch_file_mask = IN::EXCL_UNLINK
-            | IN::MOVE_SELF
-            | IN::DELETE_SELF
-            | IN::MOVED_TO
-            | IN::MODIFY
-            | IN::ATTRIB;
         // SAFETY: fd is a valid inotify fd (loaded == true), pathname is NUL-terminated.
         let rc = unsafe {
-            bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), watch_file_mask)
+            bun_sys::linux::inotify_add_watch(self.fd.native(), pathname.as_ptr(), WATCH_FILE_MASK)
         };
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
@@ -458,7 +456,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             };
             let mut watch_event = watch_event_from_inotify_event(event, idx);
             if (event.mask & bun_sys::linux::IN::ATTRIB) != 0 {
-                if watched_inode_is_unlinked(this, idx, event.watch_descriptor) {
+                if file_was_replaced(this, idx, event.watch_descriptor) {
                     watch_event.op |= Op::DELETE;
                 } else if watch_event.op.is_empty() {
                     events_processed += 1;
@@ -538,21 +536,36 @@ fn process_inotify_event_batch(
     Ok(())
 }
 
-/// The kernel holds back IN_DELETE_SELF while the watchlist's fd keeps a replaced or removed inode open.
-fn watched_inode_is_unlinked(this: &Watcher, index: WatchItemIndex, wd: EventListIndex) -> bool {
-    use crate::watcher_impl::WatchItemColumns;
-    let _guard = this.mutex.lock_guard();
-    // `index` is from this cycle's snapshot; an eviction since then can have moved another item there.
-    if this
-        .watchlist
-        .items_eventlist_index()
-        .get(usize::from(index))
-        != Some(&wd)
-    {
-        return false;
-    }
-    let fd = this.watchlist.items_fd()[usize::from(index)];
-    fd.is_valid() && bun_sys::fstat(fd).is_ok_and(|stat| stat.st_nlink == 0)
+/// inotify returns another watch descriptor for the path of a watched file once that path names another inode.
+fn file_was_replaced(this: &Watcher, index: WatchItemIndex, wd: EventListIndex) -> bool {
+    use crate::watcher_impl::{WatchItemColumns, WatchItemKind};
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path = {
+        let _guard = this.mutex.lock_guard();
+        let i = usize::from(index);
+        // `index` is from this cycle's snapshot; an eviction since then can have moved another item there.
+        if this.watchlist.items_eventlist_index().get(i) != Some(&wd)
+            || this.watchlist.items_kind()[i] != WatchItemKind::File
+        {
+            return false;
+        }
+        let file_path: &[u8] = &this.watchlist.items_file_path()[i];
+        if file_path.len() >= buf.len() || strings::contains(file_path, b"node_modules") {
+            return false;
+        }
+        buf[..file_path.len()].copy_from_slice(file_path);
+        buf[file_path.len()] = 0;
+        ZStr::from_buf(&buf[..], file_path.len())
+    };
+    // SAFETY: the inotify fd stays open until this thread stops it; `path` is NUL-terminated.
+    let now = unsafe {
+        bun_sys::linux::inotify_add_watch(
+            this.platform.fd.native(),
+            path.as_ptr(),
+            WATCH_FILE_MASK | bun_sys::linux::IN::MASK_ADD,
+        )
+    };
+    now >= 0 && now != wd
 }
 
 fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {

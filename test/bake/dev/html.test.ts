@@ -1,4 +1,5 @@
 // HTML tests are tests relating to HTML files themselves.
+import { renameSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -442,5 +443,36 @@ devTest("editing a file imported from outside the project root hot-reloads", {
       `,
     );
     await c.expectMessage("three");
+  },
+});
+devTest("replacing a file imported from outside the project root by rename hot-reloads", {
+  // This pins the inotify watcher. The Windows watcher does not watch files outside the project directory.
+  skip: ["win32", "darwin"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { value } from "../outside/dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    const dep = dev.join("outside/dep.ts");
+    for (const value of ["two", "three"]) {
+      {
+        await using _batch = await dev.batchChanges();
+        writeFileSync(dep + ".next", `export const value = "${value}";`);
+        renameSync(dep + ".next", dep);
+      }
+      await c.expectMessage(value);
+    }
   },
 });

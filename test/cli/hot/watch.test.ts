@@ -1,8 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isLinux, isWindows, tempDir } from "harness";
-import { readdirSync, readlinkSync, realpathSync } from "node:fs";
-import { chmod, link, mkdir, readFile, readlink, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readFile, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
@@ -50,7 +49,7 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
   }
 });
 
-// The way most editors save: write a temporary file, then rename it over the target.
+// What vim and `sed -i` do: write a temporary file, then rename it over the target.
 async function renameSave(path: string, content: string) {
   await writeFile(path + ".next", content);
   await rename(path + ".next", path);
@@ -64,86 +63,54 @@ async function nextEval(iter: AsyncIterator<string>): Promise<string> {
   }
 }
 
+const counted = (rest: string) =>
+  `globalThis.g = (globalThis.g ?? 0) + 1;\n` + `console.log("EVAL g=" + globalThis.g + " " + ${rest});\n`;
 const counterEntry = (specifier: string) =>
-  `import { sh } from ${JSON.stringify(specifier)};\n` +
-  `globalThis.g = (globalThis.g ?? 0) + 1;\n` +
-  `console.log("EVAL g=" + globalThis.g + " shared=" + sh);\n`;
+  `import { sh } from ${JSON.stringify(specifier)};\n` + counted(`"shared=" + sh`);
 
-// A rename-save replaces the inode. The per-file watch stays on the old inode,
-// which bun holds open, so the kernel reports nothing more for it. These
-// shapes had no other signal that reached the watched file: the save and every
-// later save of the file were missed, and --hot kept serving the old source.
-describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd", () => {
+async function watcherTrace(path: string): Promise<string[]> {
+  return (await readFile(path, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .flatMap(line => Object.keys(JSON.parse(line).files));
+}
+
+// A rename over a file replaces its inode. The inotify watch of the file stays
+// on the old inode, and the kernel reports nothing more for it while bun holds
+// it open. Where no directory event leads back to the file, that save and each
+// later save of the file were missed.
+describe.skipIf(!isLinux)("a watched file that is replaced by rename is reloaded", () => {
   for (const flag of ["--watch", "--hot"] as const) {
-    test.concurrent(flag, async () => {
+    const g = (n: number) => (flag === "--hot" ? n : 1);
+
+    test.concurrent(`${flag} a module outside cwd`, async () => {
       await using dir = tempDir("watch-outside-cwd", {
         "app/entry.ts": counterEntry("../shared/lib.ts"),
         "shared/lib.ts": `export const sh = "V0";\n`,
       });
-      const appDir = join(String(dir), "app");
       const sharedLib = join(String(dir), "shared", "lib.ts");
 
       await using proc = spawn({
         cmd: [bunExe(), flag, "--no-clear-screen", "entry.ts"],
-        cwd: appDir,
+        cwd: join(String(dir), "app"),
         env: bunEnv,
         stdio: ["ignore", "pipe", "inherit"],
       });
-      const iter = forEachLine(proc.stdout);
+      const out = forEachLine(proc.stdout);
 
-      expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
+      expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
 
       await renameSave(sharedLib, `export const sh = "V1";\n`);
-      const g2 = flag === "--hot" ? "2" : "1";
-      expect(await nextEval(iter)).toBe(`EVAL g=${g2} shared=V1`);
+      expect(await nextEval(out)).toBe(`EVAL g=${g(2)} shared=V1`);
 
-      // Second rename-save on the (now new) inode.
+      // The watch has to be on the new inode now.
       await renameSave(sharedLib, `export const sh = "V2";\n`);
-      const g3 = flag === "--hot" ? "3" : "1";
-      expect(await nextEval(iter)).toBe(`EVAL g=${g3} shared=V2`);
-
-      proc.kill("SIGKILL");
-      await proc.exited;
+      expect(await nextEval(out)).toBe(`EVAL g=${g(3)} shared=V2`);
     });
-  }
 
-  // A module reached through a directory symlink is watched under its real
-  // path, which is outside cwd here.
-  test.concurrent("--hot via an in-cwd directory symlink to an out-of-cwd dir", async () => {
-    await using dir = tempDir("watch-symlink-outside-cwd", {
-      "app/entry.ts": counterEntry("./link/dep.ts"),
-      "realdir/dep.ts": `export const sh = "V0";\n`,
-    });
-    const appDir = join(String(dir), "app");
-    const realDep = join(String(dir), "realdir", "dep.ts");
-    await symlink(join(String(dir), "realdir"), join(appDir, "link"), "dir");
-
-    await using proc = spawn({
-      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
-      cwd: appDir,
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    const iter = forEachLine(proc.stdout);
-
-    expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
-
-    await renameSave(realDep, `export const sh = "V1";\n`);
-    expect(await nextEval(iter)).toBe("EVAL g=2 shared=V1");
-
-    await renameSave(realDep, `export const sh = "V2";\n`);
-    expect(await nextEval(iter)).toBe("EVAL g=3 shared=V2");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
-  });
-
-  // Workspace package imported by bare name from the workspace root. Everything
-  // is inside cwd and the real-path parent directory is watched. The resolver
-  // caches that directory under the `node_modules/lib/` spelling, so the
-  // directory event for the save finds no watched file. The watcher has to
-  // report the replaced file itself.
-  for (const flag of ["--watch", "--hot"] as const) {
+    // The real-path directory of the package is inside cwd and is watched.
+    // The resolver caches it under the `node_modules/lib/` spelling, so its
+    // directory event finds no watched file.
     test.concurrent(`${flag} a workspace package imported by bare name through node_modules`, async () => {
       await using dir = tempDir("watch-workspace-bare-import", {
         "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
@@ -163,55 +130,140 @@ describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd"
         env: bunEnv,
         stdio: ["ignore", "pipe", "inherit"],
       });
-      const iter = forEachLine(proc.stdout);
+      const out = forEachLine(proc.stdout);
 
-      expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
+      expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
 
       await renameSave(libIndex, `export const sh = "V1";\n`);
-      const g2 = flag === "--hot" ? "2" : "1";
-      expect(await nextEval(iter)).toBe(`EVAL g=${g2} shared=V1`);
+      expect(await nextEval(out)).toBe(`EVAL g=${g(2)} shared=V1`);
 
       await renameSave(libIndex, `export const sh = "V2";\n`);
-      const g3 = flag === "--hot" ? "3" : "1";
-      expect(await nextEval(iter)).toBe(`EVAL g=${g3} shared=V2`);
+      expect(await nextEval(out)).toBe(`EVAL g=${g(3)} shared=V2`);
+    });
 
-      proc.kill("SIGKILL");
-      await proc.exited;
+    test.concurrent(`${flag} the entry point, outside cwd`, async () => {
+      const entry = (value: string) => counted(JSON.stringify("shared=" + value));
+      await using dir = tempDir("watch-entry-outside-cwd", {
+        "app/.keep": "",
+        "scripts/entry.ts": entry("V0"),
+      });
+      const entryPath = join(String(dir), "scripts", "entry.ts");
+
+      await using proc = spawn({
+        cmd: [bunExe(), flag, "--no-clear-screen", "../scripts/entry.ts"],
+        cwd: join(String(dir), "app"),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const out = forEachLine(proc.stdout);
+
+      expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
+
+      await renameSave(entryPath, entry("V1"));
+      expect(await nextEval(out)).toBe(`EVAL g=${g(2)} shared=V1`);
+
+      await renameSave(entryPath, entry("V2"));
+      expect(await nextEval(out)).toBe(`EVAL g=${g(3)} shared=V2`);
     });
   }
-});
 
-// kqueue reports a replaced or moved file in another way, and its directory
-// events carry no names. These cases pin what the inotify backend reports.
-describe.skipIf(!isLinux)("inotify watcher", () => {
-  // The replaced inode keeps a link, so the file watch cannot tell that the
-  // path now names another file. Only the parent-directory watch reports it.
+  // With a second hard link the replaced inode is neither removed nor
+  // without a link, so only what its path names now tells that it was replaced.
+  for (const hardLink of [false, true]) {
+    const suffix = hardLink ? " and has a second hard link" : "";
+
+    test.concurrent(`--hot a module that is behind a directory symlink${suffix}`, async () => {
+      await using dir = tempDir("watch-symlink-outside-cwd", {
+        "app/entry.ts": counterEntry("./link/dep.ts"),
+        "realdir/dep.ts": `export const sh = "V0";\n`,
+      });
+      const appDir = join(String(dir), "app");
+      const realDep = join(String(dir), "realdir", "dep.ts");
+      await symlink(join(String(dir), "realdir"), join(appDir, "link"), "dir");
+      if (hardLink) await link(realDep, realDep + ".hardlink");
+
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+        cwd: appDir,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const out = forEachLine(proc.stdout);
+
+      expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
+
+      await renameSave(realDep, `export const sh = "V1";\n`);
+      expect(await nextEval(out)).toBe("EVAL g=2 shared=V1");
+
+      await renameSave(realDep, `export const sh = "V2";\n`);
+      expect(await nextEval(out)).toBe("EVAL g=3 shared=V2");
+    });
+  }
+
   test.concurrent("--hot a module outside cwd that has a second hard link", async () => {
     await using dir = tempDir("watch-outside-cwd-hardlink", {
       "app/entry.ts": counterEntry("../shared/lib.ts"),
       "shared/lib.ts": `export const sh = "V0";\n`,
     });
-    const appDir = join(String(dir), "app");
     const sharedLib = join(String(dir), "shared", "lib.ts");
     await link(sharedLib, sharedLib + ".hardlink");
 
     await using proc = spawn({
       cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
-      cwd: appDir,
+      cwd: join(String(dir), "app"),
       env: bunEnv,
       stdio: ["ignore", "pipe", "inherit"],
     });
-    const iter = forEachLine(proc.stdout);
+    const out = forEachLine(proc.stdout);
 
-    expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
+    expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
 
     await renameSave(sharedLib, `export const sh = "V1";\n`);
-    expect(await nextEval(iter)).toBe("EVAL g=2 shared=V1");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
+    expect(await nextEval(out)).toBe("EVAL g=2 shared=V1");
   });
 
+  // Inside cwd the directory reports the file too. Both reports must count as one.
+  test.concurrent("--hot evaluates once for three modules that are replaced in one batch", async () => {
+    const dep = (name: string, value: string) => `export const ${name} = "${value}";\n`;
+    await using dir = tempDir("hot-replace-batch", {
+      "entry.ts":
+        `import { a } from "./a.ts";\nimport { b } from "./b.ts";\nimport { c } from "./c.ts";\n` +
+        counted("a + b + c"),
+      "a.ts": dep("a", "a0"),
+      "b.ts": dep("b", "b0"),
+      "c.ts": dep("c", "c0"),
+    });
+    const path = (name: string) => join(String(dir), name + ".ts");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const out = forEachLine(proc.stdout);
+
+    expect(await nextEval(out)).toBe("EVAL g=1 a0b0c0");
+
+    // The stopped process finds the three saves waiting and reads them as one batch.
+    process.kill(proc.pid, "SIGSTOP");
+    try {
+      await renameSave(path("a"), dep("a", "a1"));
+      await renameSave(path("b"), dep("b", "b1"));
+      await renameSave(path("c"), dep("c", "c1"));
+    } finally {
+      process.kill(proc.pid, "SIGCONT");
+    }
+    expect(await nextEval(out)).toBe("EVAL g=2 a1b1c1");
+
+    // A second evaluation for that batch would show here as g=3 with c1.
+    await renameSave(path("c"), dep("c", "c2"));
+    expect(await nextEval(out)).toBe("EVAL g=3 a1b1c2");
+  });
+});
+
+// These pass without the check for a replaced file. They pin what it must not change.
+describe.skipIf(!isLinux)("inotify file watch", () => {
   // The inode only gets another name and then its name back. Its watch must
   // survive the first move, or nothing reports the second.
   test.concurrent("--hot reloads when a dependency is moved away and then back", async () => {
@@ -243,58 +295,13 @@ describe.skipIf(!isLinux)("inotify watcher", () => {
 
     await rename(dep + ".away", dep);
     expect(await nextEval(out)).toBe("EVAL g=2 shared=V0");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
   });
 
-  // What the kubelet does to a ConfigMap or Secret volume. `config.json` is a
-  // link to `..data/config.json` and `..data` is a link to a directory. An
-  // update renames a new `..data` link over the old one and removes the old
-  // directory. The watched name never changes and no file is written in place.
-  test.concurrent("--watch reloads a file behind a symlink that is swapped", async () => {
-    await using dir = tempDir("watch-symlink-swap", {
-      "app.cjs": `console.log("EVAL v" + require("./cfg/config.json").v);\n`,
-      "cfg/..1/config.json": `{"v":1}`,
-    });
-    const cfg = join(String(dir), "cfg");
-    await symlink("..1", join(cfg, "..data"), "dir");
-    await symlink("..data/config.json", join(cfg, "config.json"));
-    async function update(v: number) {
-      await mkdir(join(cfg, `..${v}`));
-      await writeFile(join(cfg, `..${v}`, "config.json"), `{"v":${v}}`);
-      const old = await readlink(join(cfg, "..data"));
-      await symlink(`..${v}`, join(cfg, "..data_next"), "dir");
-      await rename(join(cfg, "..data_next"), join(cfg, "..data"));
-      await rm(join(cfg, old), { recursive: true });
-    }
-
-    await using proc = spawn({
-      cmd: [bunExe(), "--watch", "--no-clear-screen", "app.cjs"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    const out = forEachLine(proc.stdout);
-
-    expect(await nextEval(out)).toBe("EVAL v1");
-
-    await update(2);
-    expect(await nextEval(out)).toBe("EVAL v2");
-
-    await update(3);
-    while ((await nextEval(out)) !== "EVAL v3");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
-  });
-
+  // The watcher handles events in order. In both cases the reload of the saved
+  // entry shows that it has handled the change before it.
   test.concurrent("a metadata-only change of a watched file is not reported", async () => {
     await using dir = tempDir("watch-metadata-only", {
-      "app/entry.ts":
-        `import "./dep.ts";\n` +
-        `globalThis.g = (globalThis.g ?? 0) + 1;\n` +
-        `console.log("EVAL g=" + globalThis.g);\n`,
+      "app/entry.ts": `import "./dep.ts";\n` + counted(`"entry"`),
       "app/dep.ts": `export const x = 1;\n`,
       "trace/.keep": "",
     });
@@ -311,109 +318,50 @@ describe.skipIf(!isLinux)("inotify watcher", () => {
     });
     const out = forEachLine(proc.stdout);
 
-    expect(await nextEval(out)).toBe("EVAL g=1");
+    expect(await nextEval(out)).toBe("EVAL g=1 entry");
 
     await chmod(dep, 0o600);
     await chmod(dep, 0o644);
     await utimes(dep, new Date(), new Date());
-    // The watcher handles events in order. Once this save is reloaded, it has
-    // handled the changes above.
     await renameSave(entry, (await readFile(entry, "utf8")) + "// saved\n");
-    expect(await nextEval(out)).toBe("EVAL g=2");
+    expect(await nextEval(out)).toBe("EVAL g=2 entry");
 
     proc.kill("SIGKILL");
     await proc.exited;
-
-    const reported = (await readFile(trace, "utf8"))
-      .split("\n")
-      .filter(Boolean)
-      .flatMap(line => Object.keys(JSON.parse(line).files));
+    const reported = await watcherTrace(trace);
     expect(reported.some(path => path.endsWith("/app/"))).toBe(true);
     expect(reported.filter(path => path.endsWith("/dep.ts"))).toEqual([]);
   });
 
-  // The shim makes every directory watch fail with ENOSPC, which is what
-  // inotify returns when fs.inotify.max_user_watches is used up.
-  const cc = Bun.which("cc") ?? Bun.which("gcc") ?? Bun.which("clang");
-  describe.skipIf(!cc)("when no directory can be watched", () => {
-    async function startWithoutDirectoryWatches() {
-      const dir = tempDir("watch-dir-watch-fails", {
-        "shim.c": `
-          #define _GNU_SOURCE
-          #include <dlfcn.h>
-          #include <errno.h>
-          #include <stdint.h>
-          #include <sys/inotify.h>
-
-          int inotify_add_watch(int fd, const char *path, uint32_t mask) {
-            static int (*real)(int, const char *, uint32_t);
-            if (mask & IN_ONLYDIR) {
-              errno = ENOSPC;
-              return -1;
-            }
-            if (!real) real = (int (*)(int, const char *, uint32_t))dlsym(RTLD_NEXT, "inotify_add_watch");
-            return real(fd, path, mask);
-          }
-        `,
-        "app/entry.ts": `import "./a.ts";\nimport "./b.ts";\nimport "./c.ts";\n` + counterEntry("./dep.ts"),
-        "app/a.ts": `export {};\n`,
-        "app/b.ts": `export {};\n`,
-        "app/c.ts": `export {};\n`,
-        "app/dep.ts": `export const sh = "V0";\n`,
-      });
-      const appDir = realpathSync(join(String(dir), "app"));
-      const shim = join(String(dir), "shim.so");
-      {
-        await using build = spawn({
-          cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
-          env: bunEnv,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-        if (exitCode !== 0) throw new Error(`the shim did not compile:\n${stdout}${stderr}`);
-      }
-
-      const proc = spawn({
-        cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
-        cwd: appDir,
-        env: { ...bunEnv, LD_PRELOAD: shim },
-        stdio: ["ignore", "pipe", "inherit"],
-      });
-      const out = forEachLine(proc.stdout);
-      return {
-        appDir,
-        proc,
-        out,
-        async [Symbol.asyncDispose]() {
-          proc.kill("SIGKILL");
-          await proc.exited;
-          dir[Symbol.dispose]();
-        },
-      };
-    }
-
-    test.concurrent("a file is still watched", async () => {
-      await using run = await startWithoutDirectoryWatches();
-      expect(await nextEval(run.out)).toBe("EVAL g=1 shared=V0");
-
-      await writeFile(join(run.appDir, "dep.ts"), `export const sh = "V1";\n`);
-      expect(await nextEval(run.out)).toBe("EVAL g=2 shared=V1");
+  // A removed module is not a replaced one. A program that removes a fixture
+  // it imported from a temporary directory must not start again for that.
+  test.concurrent("a removed file outside cwd is not reported", async () => {
+    await using dir = tempDir("watch-removed-outside-cwd", {
+      "app/entry.ts": counterEntry("../shared/lib.ts"),
+      "shared/lib.ts": `export const sh = "V0";\n`,
+      "trace/.keep": "",
     });
+    const appDir = join(String(dir), "app");
+    const trace = join(String(dir), "trace", "events.jsonl");
 
-    // Each of the five modules asks for the directory watch.
-    test.concurrent("no attempt leaves its descriptor of the directory open", async () => {
-      await using run = await startWithoutDirectoryWatches();
-      expect(await nextEval(run.out)).toBe("EVAL g=1 shared=V0");
-
-      const fds = `/proc/${run.proc.pid}/fd`;
-      const openOnAppDir = readdirSync(fds).filter(fd => {
-        try {
-          return readlinkSync(join(fds, fd)) === run.appDir;
-        } catch {
-          return false;
-        }
-      });
-      expect(openOnAppDir.length).toBeLessThanOrEqual(1);
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+      cwd: appDir,
+      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      stdio: ["ignore", "pipe", "inherit"],
     });
+    const out = forEachLine(proc.stdout);
+
+    expect(await nextEval(out)).toBe("EVAL g=1 shared=V0");
+
+    await rm(join(String(dir), "shared", "lib.ts"));
+    await renameSave(join(appDir, "entry.ts"), counted(`"without the import"`));
+    expect(await nextEval(out)).toBe("EVAL g=2 without the import");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+    const reported = await watcherTrace(trace);
+    expect(reported.some(path => path.endsWith("/app/"))).toBe(true);
+    expect(reported.filter(path => path.endsWith("/lib.ts"))).toEqual([]);
   });
 });

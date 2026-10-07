@@ -1466,11 +1466,12 @@ differential("what is not JSON in a configuration file", async () => {
   const root = String(dir);
   const results: { text: string; bun: string[]; tsc: string[] }[] = [];
   await inTurns([...cases.entries()], async ([i, text]) => {
-    // With `references`, `bun check` is `tsc -b`, which refuses `--skipLibCheck`.
-    const project = text.includes(`"references"`) ? ["-b", `c${i}`] : ["-p", `c${i}`, "--skipLibCheck"];
+    // `tsc -b` refuses `--skipLibCheck`.
+    const build = text.includes(`"references"`);
+    const project = [build ? "-b" : "-p", `c${i}`];
     const [bun, typescript] = await Promise.all([
-      linesOf([bunExe(), "check", "-p", `c${i}`, "--skipLibCheck"], root, root),
-      linesOf([tsc!, ...project, "--noEmit", "--pretty", "false"], root, root),
+      linesOf([bunExe(), "check", ...project, "--skipLibCheck"], root, root),
+      linesOf([tsc!, ...project, ...(build ? [] : ["--skipLibCheck"]), "--noEmit", "--pretty", "false"], root, root),
     ]);
     results.push({ text, bun, tsc: typescript });
   });
@@ -1528,7 +1529,7 @@ differential("the errors of the projects of a build", async () => {
   await inTurns([...combinations.keys()], async index => {
     const cwd = join(root, String(index));
     // In this order: `tsc -b` writes files.
-    const ours = await linesOf([bunExe(), "check"], cwd, root);
+    const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
     const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
     expect(theirs.length).toBeGreaterThan(0);
     if (!Bun.deepEquals(theirs, ours)) different[JSON.stringify(combinations[index])] = { theirs, ours };
@@ -1583,7 +1584,7 @@ differential("what a project with references imports, and whether it may", async
     async index => {
       const cwd = join(root, String(index));
       // In this order: `tsc -b` writes files.
-      const ours = await linesOf([bunExe(), "check"], cwd, root);
+      const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
       const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
       expect(theirs.length).toBeGreaterThan(0);
       if (!Bun.deepEquals(theirs, ours)) different[JSON.stringify(combinations[index])] = { theirs, ours };
@@ -1876,7 +1877,7 @@ aboutCase("project references that differ only in case", async () => {
   await inTurns([...combinations.keys()], async index => {
     const cwd = join(root, String(index), "app");
     // In this order: `tsc -b` writes files.
-    const ours = await linesOf([bunExe(), "check"], cwd, root);
+    const ours = await linesOf([bunExe(), "check", "-b"], cwd, root);
     const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], cwd, root);
     expect(theirs.length).toBeGreaterThan(0);
     if (!Bun.deepEquals(theirs, ours)) different[combinations[index].join(" ")] = { theirs, ours };

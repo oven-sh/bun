@@ -329,7 +329,10 @@ describe.concurrent("bun check", () => {
       "two/tsconfig.json": composite,
       "two/a.ts": files["a.ts"],
     });
-    const [projects, file] = await Promise.all([check(solution), run(String(solution), ["--check", "one/b.ts"])]);
+    const [projects, file] = await Promise.all([
+      check(solution, ["-b"]),
+      run(String(solution), ["--check", "one/b.ts"]),
+    ]);
     expect(projects.stdout).toContain("two/a.ts(1,14): error TS2322");
     expect(projects.stdout).not.toContain("one/a.ts");
     expect(note(projects.stderr)).toEqual(stoppedBefore("2 files"));
@@ -1419,11 +1422,7 @@ describe.concurrent("bun check", () => {
         "tools/index.ts": implicitAny,
         "scripts/build.ts": implicitAny,
       });
-      const [{ stdout, stderr, exitCode }, here, packages] = await Promise.all([
-        check(dir),
-        check(dir, ["."]),
-        check(dir, ["packages"]),
-      ]);
+      const [{ stdout, stderr, exitCode }, packages] = await Promise.all([check(dir, ["."]), check(dir, ["packages"])]);
       expect(stdout).toMatchInlineSnapshot(`
         "packages/strict/index.ts(3,19): error TS7006: Parameter 'x' implicitly has an 'any' type.
         scripts/build.ts(1,19): error TS7006: Parameter 'x' implicitly has an 'any' type."
@@ -1435,7 +1434,6 @@ describe.concurrent("bun check", () => {
           1  scripts/build.ts:1"
       `);
       expect(exitCode).toBe(1);
-      expect([here.stdout, here.stderr]).toEqual([stdout, stderr]);
       expect(packages.stdout).toBe(
         `packages/strict/index.ts(3,19): error TS7006: Parameter 'x' implicitly has an 'any' type.`,
       );
@@ -14566,7 +14564,7 @@ export function f<T>(rest: T) {
         );
       }
       const [whole, ...results] = await Promise.all([
-        run(root, ["check"]),
+        run(root, ["check", "."]),
         ...commands.map(([, cwd, cmd]) => run(cwd, cmd)),
       ]);
       const all = reported(root, whole.stdout);

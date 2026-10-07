@@ -531,8 +531,7 @@ impl MySQLQuery {
         self.status == Status::Pending
     }
 
-    /// Nothing of this request is on the wire. The request that wrote a
-    /// COM_STMT_PREPARE is pending too, until the server answers.
+    /// Nothing of this request is on the wire, not even the COM_STMT_PREPARE of its statement.
     #[inline]
     pub(crate) fn is_unwritten(&self) -> bool {
         self.status == Status::Pending && !self.flags.prepare_written()

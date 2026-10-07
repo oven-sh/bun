@@ -677,8 +677,7 @@ const SQL = function SQL(
       internalQueries.add(query);
       return query;
     }
-    // close() cancels the queries of the caller only. A cancelled COMMIT or ROLLBACK never reaches
-    // the server, and begin() then releases a connection that is still inside the transaction.
+    // A cancelled COMMIT or ROLLBACK is never sent, and begin() then releases a connection inside the transaction.
     function cancelQueries() {
       for (const query of state.queries) {
         if (!internalQueries.has(query)) (query as Query<any, any>).cancel();

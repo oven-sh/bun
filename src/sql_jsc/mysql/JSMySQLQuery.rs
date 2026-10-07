@@ -45,8 +45,7 @@ pub struct JSMySQLQuery {
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
-    /// `run()` is encoding this query. That runs the getters and `toJSON` of its
-    /// values, and they can call `cancel()` on it.
+    /// `run()` is encoding this query, which runs user code that can call `cancel()` on it.
     encoding: Cell<bool>,
 }
 
@@ -181,8 +180,7 @@ impl JSMySQLQuery {
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // The server stops a query that it has only with KILL QUERY on a second
-        // connection. A query that is being encoded is written next.
+        // MySQL stops a query that it has only with KILL QUERY on a second connection.
         if this.encoding.get() || !this.query.get().is_unwritten() {
             return Ok(JSValue::UNDEFINED);
         }

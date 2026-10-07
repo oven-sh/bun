@@ -39,7 +39,7 @@ fn parsed_list(value: &Json) -> Option<&[Json]> {
 }
 
 /// `IsIdentifierText`
-fn is_identifier_text(text: &[u8]) -> bool {
+pub(crate) fn is_identifier_text(text: &[u8]) -> bool {
     let (first, size) = lexer::char_and_size(text, 0);
     lexer::is_identifier_start(first as u32)
         && lexer::end_of_run(text, size, lexer::is_type_script_identifier_part) == text.len()

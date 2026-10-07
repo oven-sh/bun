@@ -346,7 +346,23 @@ impl<'p, 's> Checker<'p, 's> {
                         ElemFlags::REQUIRED
                     });
                 }
-                Some(self.tuple(&types, &flags, false))
+                let result = self.tuple(&types, &flags, false);
+                if for_context == IncludePatternInType::No {
+                    return Some(result);
+                }
+                // `cloneTypeReference`, `patternForType`
+                Some(self.types().intern_key_with(
+                    TypeKey::Data(self.data(result)),
+                    &ProvenanceKey {
+                        alias: None,
+                        origin: OriginKey::None,
+                        is_enum: false,
+                        stored_under: None,
+                        is_array_literal: false,
+                        is_array_pattern: true,
+                        has_other_instantiation: false,
+                    },
+                ))
             }
             // `getTypeFromObjectBindingPattern`
             PatKind::Object(props) => {
@@ -411,6 +427,7 @@ impl<'p, 's> Checker<'p, 's> {
                     (shape.literal, shape.is_regular) = (Literalness::Literal, true);
                 }
                 shape.has_no_instantiable_symbol = true;
+                shape.pattern_at = Some((file, hir[pat].pos));
                 Some(self.synth(shape))
             }
         }
@@ -483,7 +500,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(file, e, ..),
                 ..
-            } if self.is_definite_assignment_target(file, e) => {
+            } if self.is_assignment_target(file, e) => {
                 let hir = self.hir(file);
                 let ExprKind::Object(props) = hir[e].kind else {
                     return None;
@@ -504,25 +521,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `patternForType[t] != nil` for `t`, the contextual type of `e`.
-    fn is_expected_by_pattern(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        t: TypeId,
-        context_flags: ContextFlags,
-    ) -> bool {
-        if self.pattern_of_type(t).is_some() {
-            return true;
-        }
-        // A tuple carries no mark. It was created from an array pattern if it differs from the
-        // contextual type computed with binding patterns skipped.
-        if !self.is_tuple(t) || context_flags.contains(ContextFlags::SKIP_BINDING_PATTERNS) {
-            return false;
-        }
-        let regardless =
-            self.contextual_type(file, e, context_flags | ContextFlags::SKIP_BINDING_PATTERNS);
-        regardless != Some(t)
+    /// `patternForType[t] != nil`
+    fn is_expected_by_pattern(&mut self, t: TypeId) -> bool {
+        self.types().is_array_pattern(t) || self.pattern_of_type(t).is_some()
     }
 
     fn type_implied_by_pattern_with_elements(
@@ -1774,11 +1775,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // type of the left operand is.
                 BinOp::Or | BinOp::Nullish => {
                     let context = self.contextual_type(file, parent, context_flags);
-                    if e == right
-                        && context.is_none_or(|t| {
-                            self.is_expected_by_pattern(file, parent, t, context_flags)
-                        })
-                    {
+                    if e == right && context.is_none_or(|t| self.is_expected_by_pattern(t)) {
                         return Some(self.get_type_of_expression(file, left));
                     }
                     context
@@ -1843,9 +1840,14 @@ impl<'p, 's> Checker<'p, 's> {
                 if hir.ids(args).nth(1) != Some(e) {
                     return Some(TypeId::ANY);
                 }
-                let name = self.atoms().lookup(b"ImportCallOptions")?;
-                let sym = self.global_type_symbol(name)?;
-                Some(self.declared_type(sym))
+                // `getGlobalImportCallOptionsType`
+                let name = self.atoms().lookup(b"ImportCallOptions");
+                Some(
+                    match name.and_then(|name| self.get_global_type(name, 0, false)) {
+                        Some(sym) => self.declared_type(sym),
+                        None => TypeId::EMPTY_OBJECT,
+                    },
+                )
             }
             // `getContextualTypeForChildJsxExpression`
             ExprKind::Jsx(j) => {
@@ -1998,6 +2000,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // "We have an assignment declaration 'this.xxx = expr' with no (synthetic) type
                     // annotation"
                     let symbol = bound.symbol_of_declaration(Decl::ThisProperty(assignment));
+                    let symbol = bound.computed_symbol_in_table(symbol);
                     if symbol.is_some()
                         && let Some((of, declaration)) = self
                             .files()
@@ -2010,8 +2013,9 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
-        // `getTypeOfExpression(left)`
-        Some(self.get_type_of_expression(file, target))
+        let ty = self.get_type_of_expression(file, target);
+        self.requested_assignment_target = Some((file, target));
+        Some(ty)
     }
 
     /// `getContextualTypeForElementExpression`. `length`: the number of elements, if known.

@@ -742,7 +742,10 @@ impl<'p, 'a> Lower<'p, 'a> {
                 if !import.has_clause {
                     return;
                 }
-                self.note_checker_errors(tag.pos, import.end);
+                // `checkImportDeclaration` returns after `checkGrammarModuleElementContext`.
+                if self.is_in_appropriate_context {
+                    self.note_checker_errors(tag.pos, import.end);
+                }
                 if let Some(module) = import.module {
                     self.unchecked_parts_of_module_specifier(module);
                 }
@@ -793,6 +796,7 @@ impl<'p, 'a> Lower<'p, 'a> {
                     clause_end: import.clause_end,
                     namespace_start: import.namespace_start,
                     named: self.b.file.add_import_specs(&named),
+                    has_named_imports: import.has_named_imports,
                     type_only: true,
                     is_deferred: false,
                     mode,

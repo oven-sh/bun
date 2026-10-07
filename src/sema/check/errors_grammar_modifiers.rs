@@ -198,7 +198,12 @@ impl Checker<'_, '_> {
     /// `checkGrammarTypeParameterList`: `<>` after the name of a class, or after `class`.
     fn check_grammar_type_parameter_list_of_class(&mut self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);
-        let (text, name) = (&hir.text[..], hir[class].name_pos as usize);
+        let text = &hir.text[..];
+        let name = match hir[class].modifiers.iter().next_back() {
+            _ if hir[class].name.is_some() => hir[class].name_pos as usize,
+            Some(last) => skip_trivia(text, self.end_of_node(file, hir.node(last)) as usize),
+            None => hir[class].start as usize,
+        };
         let open = skip_trivia(text, name + word_at(text, name).len());
         let close = skip_trivia(text, open + 1);
         text.get(open) == Some(&b'<')
@@ -648,7 +653,9 @@ impl Checker<'_, '_> {
                     ) {
                         return error(1242, ["", ""]);
                     }
-                    if !class.is_some_and(|class| hir[class].flags.contains(Flags::ABSTRACT)) {
+                    if !class.is_some_and(|class| hir[class].flags.contains(Flags::ABSTRACT))
+                        || hir.kind(hir.parent(location)) != Kind::ClassDeclaration
+                    {
                         let is_property = kind == Kind::PropertyDeclaration;
                         return error(if is_property { 1253 } else { 1244 }, ["", ""]);
                     }

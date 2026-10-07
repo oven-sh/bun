@@ -133,6 +133,7 @@ impl Lower<'_, '_> {
             clause_end: pos(import.clause_end),
             namespace_start,
             named,
+            has_named_imports: import.specifiers.is_some(),
             type_only: import.is_type_only,
             is_deferred: import.is_deferred,
             mode,

@@ -395,7 +395,7 @@ fn compiler_option_from_flag(
     name: &[u8],
     value: Option<&[u8]>,
 ) -> Result<CompilerOption, FlagError> {
-    use bun_sema::config_options::{choices, choices_of_list, from_text, possible_option};
+    use bun_sema::config_options::{choices, from_text, invalid_enum_type, possible_option};
     // What `tsc` does instead of compiling. A configuration file may have them, to no effect.
     if [&b"all"[..], b"init", b"version"]
         .iter()
@@ -418,16 +418,8 @@ fn compiler_option_from_flag(
         }
         None => return Err(FlagError::Unknown),
     };
-    if let Some(allowed) = allowed
-        && !allowed.iter().any(|a| a.eq_ignore_ascii_case(value))
-    {
-        return Err(FlagError::BadValue(match is_boolean {
-            true => Vec::new(),
-            false => allowed.to_vec(),
-        }));
-    }
     match from_text(name, value) {
-        Some((name, value)) => match choices_of_list(name, &value) {
+        Some((name, value)) => match invalid_enum_type(name, &value) {
             Some(allowed) => Err(FlagError::BadValue(allowed)),
             None => Ok(CompilerOption(name.to_vec(), value)),
         },
@@ -2680,12 +2672,17 @@ fn check_named_files(
     if let Some(loaded) = request.loaded {
         loaded(program);
     }
-    if is_true(b"explainFiles") {
+    let explains_files = is_true(b"explainFiles");
+    let explain_files = |has_made_diagnostics: bool| {
         let cwd = host::from_native(request.cwd);
-        report.listed_files = program.files.explain_files(host, &|file_name: &[u8]| {
+        let to_relative_file_name = |file_name: &[u8]| {
             get_relative_path_from_directory(&cwd, file_name, COMPARE_PATHS_CASE_SENSITIVE)
-        });
-    } else if is_true(b"listFiles") || is_true(b"listFilesOnly") {
+        };
+        program
+            .files
+            .explain_files(host, has_made_diagnostics, &to_relative_file_name)
+    };
+    if !explains_files && (is_true(b"listFiles") || is_true(b"listFilesOnly")) {
         let file_name = |&file: &FileId| program.files.module(file).file_name();
         let file_names = program.files.order.iter().map(file_name);
         report.listed_files = file_names
@@ -2710,8 +2707,10 @@ fn check_named_files(
             match module.hir.kind {
                 // Only parse errors are reported for JSON files.
                 FileKind::Json => module.hir.has_parse_diagnostics,
-                _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
-                FileKind::Declaration => !skip_lib_check,
+                // `SkipTypeChecking`, and nothing is emitted for a declaration file.
+                FileKind::Declaration => {
+                    !skip_lib_check && !(skip_default_lib_check && module.is_lib)
+                }
                 FileKind::Ts | FileKind::Tsx => true,
             }
         })
@@ -3299,11 +3298,21 @@ fn check_named_files(
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
             if !syntactic.is_empty() {
+                // `GetProgramDiagnostics` is not called. An incremental program asks for them when
+                // `Emit` writes its build info (`ensureHasErrorsForState`).
+                if explains_files {
+                    let is_incremental = options.is_incremental || options.is_build;
+                    report.listed_files = explain_files(is_incremental && !lists_files_only);
+                }
                 report.diagnostics.extend(syntactic);
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
+        }
+        // Before a file is checked, which can free its HIR.
+        if explains_files {
+            report.listed_files = explain_files(true);
         }
         report.diagnostics.append(&mut about_options);
         // `ListFilesOnly`: no checker is asked for anything, and `Emit` is not called.

@@ -40,6 +40,7 @@ impl Checker<'_, '_> {
                 || unchecked.contain(start)
                 || self.cached_by_emit.contains(&e)
                 || self.is_never_checked(start)
+                || self.is_computed_name_never_checked(file, e)
             {
                 continue;
             }
@@ -376,7 +377,7 @@ pub(super) fn fully_qualified_name(
 ) -> Vec<u8> {
     // `combineValueAndTypeSymbols`: `result.Parent` is that of the value symbol, if it has one.
     if let Some((alias, true)) = c.files().alias_of_transient_symbol(sym)
-        && let Some((object, name, _)) = c.symbol_from_variable(alias)
+        && let Some((object, name)) = c.symbol_from_variable(alias)
         && let (qualified, true) = fully_qualified_name_of_property(c, object, name)
     {
         return qualified;

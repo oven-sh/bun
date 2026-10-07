@@ -872,8 +872,9 @@ impl Checker<'_, '_> {
             return reported;
         };
         let more_than_one_real_children = valid_children.next().is_some();
-        // Where there is no `Iterable`, a list is an array-like or tuple-like type.
-        let has_iterable = self.global_type_symbol(known::Iterable).is_some();
+        // `getGlobalIterableType() != emptyGenericType`. Where there is no such `Iterable`, a list is
+        // an array-like or tuple-like type.
+        let has_iterable = self.global_type_of_arity(known::Iterable, 3).is_some();
         let any_iterable = self.global_ref(
             known::Iterable,
             &[TypeId::ANY, TypeId::VOID, TypeId::UNDEFINED],

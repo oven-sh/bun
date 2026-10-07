@@ -445,9 +445,29 @@ impl<'p> Checker<'p, '_> {
                 }
                 _ => None,
             },
-            // `IsRightSideOfQualifiedNameOrPropertyAccess`: `links.resolvedSymbol` of the access.
-            NodeData::Part(Part::Name, access) => match hir.data(access) {
-                NodeData::Expr(e) => self.symbol_at_name(file, e),
+            NodeData::Part(Part::Name, named) => match hir.data(named) {
+                NodeData::Expr(e) => match hir[e].kind {
+                    // `checkNewTargetMetaProperty(parent).symbol`. The `meta` of `import.meta` is a
+                    // symbol of its own, and no other meta property has one.
+                    ExprKind::NewTarget(name) if self.atoms().bytes(name) == b"target" => {
+                        let ty = self.type_of_expr(file, e);
+                        self.symbol_of_type(ty)
+                    }
+                    // `IsRightSideOfQualifiedNameOrPropertyAccess`: `links.resolvedSymbol` of the
+                    // access.
+                    _ => self.symbol_at_name(file, e),
+                },
+                // `name.Parent.Kind == KindTypePredicate`
+                NodeData::Type(predicate) => {
+                    let TypeNodeKind::Predicate { param, .. } = hir[predicate].kind else {
+                        return None;
+                    };
+                    let meaning = SymFlags::FUNCTION_SCOPED_VARIABLE;
+                    let scope = bound.type_scope[predicate.idx()];
+                    let symbol = files.resolve_name(file, scope, param, meaning)?;
+                    let symbol = files.resolve_alias_as(symbol, meaning)?;
+                    Some(SymbolAtLocation::Symbol(files.canonical(symbol)))
+                }
                 _ => None,
             },
             // `{ name: local }`: the property of the type of the pattern.
@@ -505,8 +525,11 @@ impl<'p> Checker<'p, '_> {
                 Origin::ClassStatic(symbol)
                 | Origin::Function(symbol)
                 | Origin::EnumObject(symbol)
-                | Origin::Module(symbol)
-                | Origin::Namespace { module: symbol, .. } => SymbolAtLocation::Symbol(symbol),
+                | Origin::Module(symbol) => SymbolAtLocation::Symbol(symbol),
+                // `cloneTypeAsModuleType`
+                Origin::Namespace {
+                    originating_import, ..
+                } => SymbolAtLocation::Symbol(self.module_clone(originating_import)),
                 Origin::ObjectLiteral(file, e, ..) | Origin::WidenedLiteral(file, e, ..) => {
                     SymbolAtLocation::Anonymous(file, self.hir(file).node(e))
                 }
@@ -517,9 +540,20 @@ impl<'p> Checker<'p, '_> {
             },
             TypeData::Fns { ref decls, .. } => {
                 let &(file, function) = decls.first()?;
-                SymbolAtLocation::Anonymous(file, self.hir(file).node(function))
+                // A name in a function expression resolves to `node.Symbol`.
+                match self.bound(file).fn_symbol[function.idx()].some() {
+                    Some(symbol) => SymbolAtLocation::Symbol(files.sym(file, symbol)),
+                    None => SymbolAtLocation::Anonymous(file, self.hir(file).node(function)),
+                }
             }
-            TypeData::Synth(ref shape) => SymbolAtLocation::Symbol(shape.symbol?),
+            TypeData::Synth(ref shape) => match (shape.symbol, shape.symbol_declared_at) {
+                (Some(symbol), _) => SymbolAtLocation::Symbol(symbol),
+                // `getSpreadType`, `getWidenedTypeOfObjectLiteral`
+                (None, Some((file, _, literal))) if literal.is_some() => {
+                    SymbolAtLocation::Anonymous(file, self.hir(file).node(literal))
+                }
+                _ => return None,
+            },
             _ => return None,
         })
     }

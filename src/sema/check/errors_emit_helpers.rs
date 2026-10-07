@@ -10,7 +10,8 @@
 //! the requesting positions are collected and sorted in the order it visits them: source order,
 //! except for nodes that `checkNodeDeferred` defers until everything else is checked. An expression
 //! that is checked early, because a type is requested, is placed where that happened
-//! (`note_external_emit_helpers_check`).
+//! (`note_external_emit_helpers_check`). If that was in the check of an earlier file, the task of
+//! that file reports (`check_external_emit_helpers_of_later_files`).
 
 use super::sink::held;
 use super::*;
@@ -79,6 +80,19 @@ struct Request {
     start: u32,
     end: u32,
     helpers: u32,
+    /// The expression whose check makes it (`note_external_emit_helpers_check`). `NONE`: the check
+    /// of something else, which only `checkSourceFile` of the file comes to.
+    expression: ExprId,
+}
+
+/// A diagnostic of `checkExternalEmitHelpers` in `file`, which the check of an earlier file, the one
+/// with `rank`, has reported at `start`.
+pub(super) struct EarlierEmitHelperError {
+    pub(super) file: FileId,
+    pub(super) code: u32,
+    pub(super) args: super::sink::Args,
+    pub(super) rank: u32,
+    pub(super) start: u32,
 }
 
 /// `Request::order` of the request that the check of `expression` makes. `regular`: the number of
@@ -108,24 +122,90 @@ struct AllAccessorDeclarations {
 impl Checker<'_, '_> {
     pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
         let checked = std::mem::take(&mut self.emit_helpers_checked_early);
-        let files = self.files();
-        let (options, module) = (&files.options, files.module(file));
-        // `IsEffectiveExternalModule`. All of a declaration file is ambient.
-        let is_commonjs_module = module.is_commonjs()
-            && (options.module == ModuleKind::CommonJs || options.module.is_node());
-        if !options.import_helpers
-            || module.hir.kind == FileKind::Declaration
-            || !(module.hir.has_module_syntax || is_commonjs_module)
-        {
+        if !self.files().options.import_helpers {
             return;
         }
-        let mut requests = self.emit_helpers_requests(file, &checked);
-        requests.sort_by_key(|request| request.order);
+        self.check_external_emit_helpers_of_later_files(file);
+        if self.emit_helpers_is_effective_external_module(file) {
+            let mut requests = self.emit_helpers_requests(file, &checked);
+            requests.sort_by_key(|request| request.order);
+            self.emit_helpers_check_requests(file, requests);
+        }
+    }
+
+    /// `IsEffectiveExternalModule`. All of a declaration file is ambient.
+    fn emit_helpers_is_effective_external_module(&self, file: FileId) -> bool {
+        let files = self.files();
+        let (options, module) = (&files.options, files.module(file));
+        let is_commonjs_module = module.is_commonjs()
+            && (options.module == ModuleKind::CommonJs || options.module.is_node());
+        module.hir.kind != FileKind::Declaration
+            && (module.hir.has_module_syntax || is_commonjs_module)
+    }
+
+    /// `checkExternalEmitHelpers` where the check of `visited` has come to an expression of a file
+    /// that is checked later: `requestedExternalEmitHelpers` belongs to the file of the location,
+    /// so that file does not report the same again. Its task does not see this one:
+    /// `finish_file` takes back what it has reported instead.
+    fn check_external_emit_helpers_of_later_files(&mut self, visited: FileId) {
+        let elsewhere = std::mem::take(&mut self.emit_helpers_checked_elsewhere);
+        let mut later: Vec<FileId> = elsewhere.iter().map(|it| it.0).collect();
+        later.sort_unstable();
+        later.dedup();
+        for file in later {
+            if !self.emit_helpers_is_effective_external_module(file)
+                || self.emit_helpers_lacks_none(file)
+            {
+                continue;
+            }
+            // In the order of the checks.
+            let place = |request: &Request| {
+                let mut checks = elsewhere.iter();
+                checks.position(|&it| it == (file, request.expression))
+            };
+            let requests = self.emit_helpers_requests(file, &[]).into_iter();
+            let mut requests: Vec<(usize, Request)> = requests
+                .filter_map(|request| Some((place(&request)?, request)))
+                .collect();
+            requests.sort_by_key(|it| (it.0, it.1.order));
+            let from = self.reported.len();
+            self.emit_helpers_check_requests(file, requests.into_iter().map(|it| it.1).collect());
+            let rank = self.files().rank_of_file(visited);
+            let reported = self.reported[from..].iter().filter(|d| d.file == file);
+            let reported = reported.map(|d| EarlierEmitHelperError {
+                file,
+                code: d.code,
+                args: d.args.clone(),
+                rank,
+                start: d.start,
+            });
+            (self.p.emit_helper_errors_of_earlier_files.lock()).extend(reported);
+        }
+    }
+
+    /// FOR SPEED. Whether `checkExternalEmitHelpers` reports nothing in `file`, whatever is asked
+    /// for: its `tslib` has every helper.
+    fn emit_helpers_lacks_none(&mut self, file: FileId) -> bool {
+        let files = self.files();
+        let mode = files.module(file).default_mode;
+        match files.module_of_specifier_as(file, known::tslib, mode) {
+            Some(helpers_module) => (0..u32::BITS).all(|bit| {
+                self.emit_helpers_errors_of(helpers_module, 1 << bit)
+                    .is_empty()
+            }),
+            None => false,
+        }
+    }
+
+    /// `checkExternalEmitHelpers` for each of `requests` of `file`, in that order. Nothing has been
+    /// requested before.
+    fn emit_helpers_check_requests(&mut self, file: FileId, requests: Vec<Request>) {
+        let hir = self.hir(file);
         // `externalHelpersModule`, `requestedExternalEmitHelpers`
         let (mut resolved, mut requested) = (None, 0);
         for request in requests {
             // `checkWithStatement` does not check the body.
-            if module.hir.is_in_with(request.start) {
+            if hir.is_in_with(request.start) {
                 continue;
             }
             let found = *resolved
@@ -137,38 +217,45 @@ impl Checker<'_, '_> {
             requested |= request.helpers;
             let helpers = (0..u32::BITS).map(|bit| 1u32 << bit);
             for helper in helpers.filter(|&helper| unchecked & helper != 0) {
-                for &name in helper_names(helper, options.experimental_decorators) {
-                    let symbol = files
-                        .atoms
-                        .lookup(name.as_bytes())
-                        .and_then(|name| files.module_export(helpers_module, name))
-                        .filter(|&symbol| files.means(symbol, SymFlags::VALUE));
-                    let mut args = vec![TSLIB.as_bytes().to_vec(), name.as_bytes().to_vec()];
-                    let code = match symbol {
-                        None => 2343,
-                        Some(symbol) => {
-                            let arity = match helper {
-                                CLASS_PRIVATE_FIELD_GET => 3,
-                                CLASS_PRIVATE_FIELD_SET => 4,
-                                _ => continue,
-                            };
-                            if self
-                                .emit_helpers_has_signature_with_arity_greater_than(symbol, arity)
-                            {
-                                continue;
-                            }
-                            args.push(super::sink::number_text(arity + 1));
-                            2807
-                        }
-                    };
-                    self.add_diagnostic(Reported::new(
-                        (file, request.start, request.end),
-                        code,
-                        held(args),
-                    ));
+                for (code, args) in self.emit_helpers_errors_of(helpers_module, helper) {
+                    let at = (file, request.start, request.end);
+                    self.add_diagnostic(Reported::new(at, code, held(args)));
                 }
             }
         }
+    }
+
+    /// What `checkExternalEmitHelpers` reports where `helper` is first asked of `helpers_module`:
+    /// the codes and the arguments.
+    fn emit_helpers_errors_of(
+        &mut self,
+        helpers_module: Sym,
+        helper: u32,
+    ) -> Vec<(u32, Vec<Vec<u8>>)> {
+        let files = self.files();
+        let mut errors = Vec::new();
+        for &name in helper_names(helper, files.options.experimental_decorators) {
+            let symbol = files
+                .atoms
+                .lookup(name.as_bytes())
+                .and_then(|name| files.module_export(helpers_module, name))
+                .filter(|&symbol| files.means(symbol, SymFlags::VALUE));
+            let arity = match (symbol, helper) {
+                (None, _) => None,
+                (Some(_), CLASS_PRIVATE_FIELD_GET) => Some(3),
+                (Some(_), CLASS_PRIVATE_FIELD_SET) => Some(4),
+                (Some(_), _) => continue,
+            };
+            let mut args = vec![TSLIB.as_bytes().to_vec(), name.as_bytes().to_vec()];
+            if let (Some(symbol), Some(arity)) = (symbol, arity) {
+                if self.emit_helpers_has_signature_with_arity_greater_than(symbol, arity) {
+                    continue;
+                }
+                args.push(super::sink::number_text(arity + 1));
+            }
+            errors.push((if arity.is_some() { 2807 } else { 2343 }, args));
+        }
+        errors
     }
 
     /// `resolveHelpersModule`
@@ -421,6 +508,7 @@ impl Checker<'_, '_> {
                 start,
                 end,
                 helpers,
+                expression: ExprId::NONE,
             });
         }
         for &e in index.of(ExprTag::Yield) {
@@ -436,6 +524,7 @@ impl Checker<'_, '_> {
                     start,
                     end: self.error_end_inside_parentheses(file, e),
                     helpers: AWAIT | ASYNC_DELEGATOR | ASYNC_VALUES,
+                    expression: e,
                 });
             }
         }
@@ -467,12 +556,13 @@ impl Checker<'_, '_> {
                     start,
                     end,
                     helpers,
+                    expression: ExprId::NONE,
                 });
             };
             match stmt.kind {
                 StmtKind::Import(x) if is_module_element => {
                     let import = hir[x];
-                    if !self.emit_helpers_import_clause_is_checked(file, s, &import) {
+                    if !self.emit_helpers_import_clause_is_checked(file, s, x) {
                         continue;
                     }
                     let whole = (stmt.start, self.end_of_stmt(file, s));
@@ -584,29 +674,15 @@ impl Checker<'_, '_> {
         &self,
         file: FileId,
         s: StmtId,
-        import: &Import,
+        import: ImportId,
     ) -> bool {
         let hir = self.hir(file);
-        if import.spec.is_none() || !self.emit_helpers_has_only_string_attributes(file, s) {
+        if hir[import].spec.is_none() || !self.emit_helpers_has_only_string_attributes(file, s) {
             return false;
         }
         // `grammarErrorOnNode` reports nothing in a file with parse errors, and then no check bails
         // out.
-        if has_parse_diagnostics(hir) {
-            return true;
-        }
-        if import.type_only {
-            let has_bindings = import.namespace.is_some() || !import.named.is_empty();
-            return !(import.default.is_some() && has_bindings)
-                && !import.named.iter().any(|spec| hir[spec].type_only);
-        }
-        !import.is_deferred
-            || import.default.is_none()
-                && import.namespace.is_some()
-                && matches!(
-                    self.files().options.module,
-                    ModuleKind::EsNext | ModuleKind::Preserve
-                )
+        has_parse_diagnostics(hir) || self.grammar_error_of_import_clause(file, import).is_none()
     }
 
     /// `checkExternalImportOrExportDeclaration`: every import attribute of the statement `s` is given as a string literal.
@@ -666,6 +742,7 @@ impl Checker<'_, '_> {
                     start,
                     end,
                     helpers: REST,
+                    expression: ExprId::NONE,
                 });
             }
         }
@@ -693,6 +770,7 @@ impl Checker<'_, '_> {
                 start,
                 end: self.end_of_expr(file, last.value),
                 helpers: REST,
+                expression: e,
             });
         }
     }
@@ -806,11 +884,19 @@ impl Checker<'_, '_> {
                 continue;
             }
             let (start, end) = self.emit_helpers_range_of_decorator(file, e);
+            // `checkDecorators(node)` comes before anything else that the check of `node` asks for,
+            // and modifiers can precede the first decorator.
+            let node = match owner {
+                DecoratorOwner::Class(class) => hir.node(class),
+                DecoratorOwner::Member(m) => hir.node(m),
+                DecoratorOwner::Param(p) => hir.node(p),
+            };
             requests.push(Request {
-                order: (deferred, start, 0),
+                order: (deferred, start.min(hir.start(node)), 0),
                 start,
                 end,
                 helpers,
+                expression: ExprId::NONE,
             });
         }
     }
@@ -954,6 +1040,15 @@ impl Checker<'_, '_> {
     /// request.
     pub(super) fn note_external_emit_helpers_check(&mut self, file: FileId, node: ExprId) {
         if self.files().options.import_helpers
+            && !self.is_type_checked
+            && let Some(visited) = self.task.file
+            && visited != file
+            && self.emit_helpers_checked_elsewhere.last() != Some(&(file, node))
+            && self.is_checked_no_later_than(visited, file)
+        {
+            self.emit_helpers_checked_elsewhere.push((file, node));
+        }
+        if self.files().options.import_helpers
             && self.task.file == Some(file)
             && !self.is_type_checked
             && let current = self.current_source_element
@@ -991,6 +1086,12 @@ impl Checker<'_, '_> {
         let node = match current {
             // `checkSourceFile` has not begun.
             None => return Some((0, 0)),
+            // `checkExpressionEx` has set it: an assignment is never deferred.
+            Some(CurrentNode::Expr(of, x))
+                if of == file && matches!(hir[x].kind, ExprKind::Assign { .. }) =>
+            {
+                Self::emit_helpers_source_element(hir, hir.node(x)).0
+            }
             Some(CurrentNode::Expr(of, x)) if of == file => hir.node(x),
             Some(CurrentNode::TypeNode(of, t)) if of == file => hir.node(t),
             Some(CurrentNode::Node(of, node)) if of == file => node,
@@ -1156,22 +1257,17 @@ impl Checker<'_, '_> {
             let Some((start, end)) = location else {
                 continue;
             };
-            // The check of an earlier file has come to it.
-            let order = if self.p.deferred_nodes.get(&self.task, &(file, e)).is_some() {
-                (0, 0, 0)
-            } else {
-                order_of_expression((file, e), (deferred, class.name_pos), checked)
-            };
             let helpers = if has_computed_name {
                 SET_FUNCTION_NAME | PROP_KEY
             } else {
                 SET_FUNCTION_NAME
             };
             requests.push(Request {
-                order,
+                order: order_of_expression((file, e), (deferred, class.name_pos), checked),
                 start,
                 end,
                 helpers,
+                expression: e,
             });
         }
     }
@@ -1209,6 +1305,7 @@ impl Checker<'_, '_> {
                     AssignmentKind::Definite => CLASS_PRIVATE_FIELD_SET,
                     AssignmentKind::Compound => CLASS_PRIVATE_FIELD_SET | CLASS_PRIVATE_FIELD_GET,
                 },
+                expression: e,
             });
         }
         for &e in index.of(ExprTag::Binary) {
@@ -1230,6 +1327,7 @@ impl Checker<'_, '_> {
                     start,
                     end: self.end_of_name_at(file, start),
                     helpers: CLASS_PRIVATE_FIELD_IN,
+                    expression: left,
                 });
             }
         }

@@ -41,9 +41,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut type_arguments = crate::sema::ts_syntax::Types::EMPTY;
         if TYPESCRIPT {
             // Pass a flag to the type argument skipper because we need to call
-            // `</` is one token for TypeScript. It opens no type arguments, and `parseTypeArguments` does not rescan `<<`. Nor are
-            // there any in a JavaScript file (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
-            if (!p.is_tolerant() || p.is_at_less_than_token())
+            // `parseTypeArguments` does not rescan `<<`. Nor are there any in a JavaScript file
+            // (`parseJsxOpeningOrSelfClosingElementOrOpeningFragment`).
+            if (!p.is_tolerant() || p.lexer.token == T::TLessThan)
                 && !p.lexer.is_javascript_file()
                 && p.skip_type_script_type_arguments::<true, false>()?
             {
@@ -738,9 +738,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.is_in_some_parsing_context() {
             p.lexer.put_up_with(before)?;
             return Ok(false);
-        }
-        if p.lexer.is_less_than_slash() {
-            p.lexer.step();
         }
         p.lexer.next_inside_jsx_element()?;
         Ok(true)

@@ -231,7 +231,6 @@ impl Checker<'_, '_> {
             && !options.emit_declaration_only
             && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             && !hir.is_js
-            && !module.is_lib
             && !module.is_from_external_library
     }
 
@@ -344,7 +343,6 @@ impl Checker<'_, '_> {
             || options.verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
-            || module.is_lib
             || module.is_from_external_library
         {
             return;
@@ -744,7 +742,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkAndReportErrorForResolvingImportAliasToTypeOnlySymbol`: 1379 1380
-    fn aliases_import_alias_of_type_only(
+    pub(super) fn aliases_import_alias_of_type_only(
         &mut self,
         file: FileId,
         x: ImportEqualsId,
@@ -1411,7 +1409,9 @@ impl Checker<'_, '_> {
             ExprTag::NewTarget,
         ] {
             for &e in index.of(tag) {
-                self.aliases_import_call_or_meta_property(file, e);
+                if !self.is_never_checked(self.hir(file)[e].pos) {
+                    self.aliases_import_call_or_meta_property(file, e);
+                }
             }
         }
     }

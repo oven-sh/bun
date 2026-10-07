@@ -512,6 +512,8 @@ impl<'p, 's> Checker<'p, 's> {
                 is_enum: false,
                 stored_under: None,
                 is_array_literal: false,
+                is_array_pattern: false,
+                has_other_instantiation: false,
             },
         )
     }
@@ -945,6 +947,8 @@ impl<'p, 's> Checker<'p, 's> {
                                 is_enum: false,
                                 stored_under: None,
                                 is_array_literal: false,
+                                is_array_pattern: false,
+                                has_other_instantiation: false,
                             },
                         );
                         // `ObjectFlagsPrimitiveUnion` is forwarded.
@@ -2016,9 +2020,10 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => 2,
             TypeData::Synth(ref shape) => u8::from(shape.is_regular),
-            // `createArrayLiteralType`
+            // `createArrayLiteralType`, `getTypeFromArrayBindingPattern`
             TypeData::Ref { .. } | TypeData::Tuple { .. } => {
                 u8::from(self.types().is_array_literal(t))
+                    + 2 * u8::from(self.types().is_array_pattern(t))
             }
             _ => 0,
         };
@@ -2198,7 +2203,26 @@ impl<'p, 's> Checker<'p, 's> {
                     })
             }
         };
-        by_structure.then_with(|| creation_step(a).cmp(&creation_step(b)))
+        // The calls of `checkObjectLiteral` for one literal, in the order in which they return.
+        let check_of_literal = |t: TypeId| match *self.data(t) {
+            TypeData::Anon {
+                origin:
+                    Origin::ObjectLiteral(_, _, _, created_by, ..)
+                    | Origin::WidenedLiteral(_, _, _, created_by, ..),
+                ..
+            } => match created_by {
+                // The call for a member contains those for the members after it.
+                ObjectLiteralCheck::ForThisParameter(member) => (0u8, !member.0),
+                ObjectLiteralCheck::ForParent | ObjectLiteralCheck::ForAssignmentDeclaration => {
+                    (1, 0)
+                }
+                ObjectLiteralCheck::ForThis => (2, 0),
+            },
+            _ => (1, 0),
+        };
+        by_structure
+            .then_with(|| check_of_literal(a).cmp(&check_of_literal(b)))
+            .then_with(|| creation_step(a).cmp(&creation_step(b)))
     }
 
     /// `CompareTypes`: the order of the constituents of a union, and of an origin that is a union. Where tsgo falls back to the type ids,

@@ -196,7 +196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     /// `GetIdentifierToken`: a reserved word also if it is written with an escape.
-    fn token(&self) -> T {
+    pub(crate) fn token(&self) -> T {
         match self.lexer.token {
             T::TEscapedKeyword => {
                 crate::lexer::keyword(self.lexer.identifier).unwrap_or(T::TIdentifier)
@@ -240,7 +240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// `IsModifierKind`
     pub(crate) fn is_modifier_kind(&self) -> bool {
-        match self.lexer.token {
+        match self.token() {
             T::TConst | T::TDefault | T::TExport | T::TIn => true,
             T::TIdentifier => match Modifier::find(self.word()) {
                 Some(Modifier::PGet | Modifier::PSet) => false,
@@ -281,19 +281,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn is_start_of_expression_or_shift_assign(&mut self) -> bool {
-        if self.is_at_less_than_slash_token() {
-            return false;
-        }
         self.is_start_of_expression()
             || matches!(
                 self.lexer.token,
                 T::TGreaterThanGreaterThanEquals | T::TGreaterThanGreaterThanGreaterThanEquals
             ) && self.lexer.start != self.lexer.rescanned_greater_than_at
-    }
-
-    /// `KindLessThanSlashToken`: `</` is one token in a file with JSX. It starts nothing.
-    fn is_at_less_than_slash_token(&self) -> bool {
-        self.lexer.token == T::TLessThan && self.is_jsx_enabled() && self.lexer.is_less_than_slash()
     }
 
     /// `isStartOfDeclaration` (lookahead with `scanStartOfDeclaration`).
@@ -553,7 +545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn is_start_of_type(&mut self, in_start_of_parameter: bool) -> bool {
-        match self.lexer.token {
+        match self.token() {
             T::TVoid
             | T::TNull
             | T::TThis
@@ -611,9 +603,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
     /// `isHeritageClause`
     fn is_heritage_clause(&self) -> bool {
-        self.lexer.token == T::TExtends
-            || self.word() == b"implements"
-            || (self.lexer.token == T::TEscapedKeyword && self.lexer.identifier == b"extends")
+        self.token() == T::TExtends || self.word() == b"implements"
     }
 
     /// `isHeritageClauseExtendsOrImplementsKeyword`
@@ -626,14 +616,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn is_list_element(&mut self, kind: ListKind, recovering: bool) -> bool {
-        let token = self.lexer.token;
+        let token = self.token();
         match kind {
             ListKind::SourceElements
             | ListKind::BlockStatements
             | ListKind::SwitchClauseStatements => {
                 !(token == T::TSemicolon && recovering) && self.is_start_of_statement()
             }
-            ListKind::SwitchClauses => matches!(self.token(), T::TCase | T::TDefault),
+            ListKind::SwitchClauses => matches!(token, T::TCase | T::TDefault),
             ListKind::TypeMembers => self.is_type_member_start(),
             ListKind::ClassMembers => {
                 self.is_class_member_start() || token == T::TSemicolon && !recovering
@@ -788,6 +778,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         found
     }
 
+    /// `newIdentifier`, at the name: `statementHasAwaitIdentifier`. An `await` that the first parse
+    /// of a top-level statement takes for a name has `reparseTopLevelAwait` parse the statement
+    /// again in the [Await] context (`statements_with_await_in_names`).
+    pub(crate) fn new_identifier(&mut self) {
+        if self.is_tolerant() && self.fn_or_arrow_data_parse.is_top_level && self.is_await_keyword()
+        {
+            self.lexer.await_name_seen = true;
+            self.await_read_as_identifier = true;
+            // `parse_for_sema` reparses a script, with `await` as an identifier, if this is set.
+            self.top_level_await_keyword = self.lexer.range();
+        }
+    }
+
     /// `await` where it is not an identifier (`isIdentifier`): in an [Await] context, which the top
     /// level of a module is when TypeScript reparses the statement.
     fn is_await_keyword(&self) -> bool {
@@ -858,9 +861,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if self.is_in_some_parsing_context() {
             self.lexer.put_up_with(before)?;
             return Ok(true);
-        }
-        if self.is_at_less_than_slash_token() {
-            self.lexer.step();
         }
         self.lexer.next()?;
         if !self.lexer.is_log_disabled {

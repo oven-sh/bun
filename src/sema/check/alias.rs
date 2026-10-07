@@ -38,6 +38,14 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let is_enum =
             alias.is_some_and(|(alias, _)| self.files().flags(alias).intersects(SymFlags::ENUM));
+        // `!isNonGenericTopLevelType`
+        let has_other_instantiation = alias.is_some_and(|(alias, type_arguments)| {
+            type_arguments.is_empty()
+                && self
+                    .types()
+                    .has_constituent_with_other_instantiation(key, origin)
+                && !self.is_non_generic_top_level_alias(alias)
+        });
         self.types().intern_key_with(
             key,
             &ProvenanceKey {
@@ -46,6 +54,8 @@ impl<'p, 's> Checker<'p, 's> {
                 is_enum,
                 stored_under: None,
                 is_array_literal: false,
+                is_array_pattern: false,
+                has_other_instantiation,
             },
         )
     }
@@ -89,12 +99,16 @@ impl<'p, 's> Checker<'p, 's> {
             return self.with_alias(created, alias, type_arguments);
         }
         let origin = [created];
+        let could_contain_type_variables = !self.is_non_generic_top_level_alias(alias)
+            && (self.parts(created).iter()).any(|&t| self.could_contain_type_variables(t));
         let provenance = ProvenanceKey {
             alias: Some((alias, type_arguments)),
             origin: OriginKey::Union(&origin),
             is_enum: false,
             stored_under: None,
             is_array_literal: false,
+            is_array_pattern: false,
+            has_other_instantiation: could_contain_type_variables,
         };
         (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance)
     }
@@ -303,13 +317,7 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
         alias: (Sym, &[TypeId]),
     ) -> TypeId {
-        if !self.has_type_variables(ty)
-            && !self.stored_alias(ty).is_some_and(|own| {
-                own.1
-                    .iter()
-                    .any(|&argument| self.has_type_variables(argument))
-            })
-        {
+        if !self.types().get_for_instantiation(ty).1 {
             return ty;
         }
         if self.hands_out_symbol_ids() {
@@ -425,7 +433,11 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let new = self.instantiate_all(types, mapper);
         let own = self.stored_alias(ty);
-        if new[..] == *types && alias.map(|alias| alias.0) == own.map(|own| own.0) {
+        // A declared type has no mapper in tsgo. Here it has one of identity pairs.
+        if new[..] == *types
+            && (alias.map(|alias| alias.0) == own.map(|own| own.0)
+                || alias.is_none() && !self.is_instantiating(mapper))
+        {
             return ty;
         }
         let instantiated;

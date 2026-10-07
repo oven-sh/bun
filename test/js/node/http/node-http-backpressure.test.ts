@@ -2334,7 +2334,9 @@ describe("backpressure", () => {
 
     // Where the server gets the socket from, and what the client sends to get it there.
     const sources = {
-      "the socket of 'connection'": { event: "connection", head: "" },
+      // An empty line, which a server ignores ahead of a request line (RFC 9112, 2.2). Bun's listener
+      // defers the accept until the client has sent a byte, or for one second.
+      "the socket of 'connection'": { event: "connection", head: "\r\n" },
       "req.socket in a 'request' listener": { event: "request", head: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n" },
       "the socket of 'connect'": {
         event: "connect",
@@ -2355,15 +2357,17 @@ describe("backpressure", () => {
     type Respond = (req: http.IncomingMessage, res: http.ServerResponse) => void;
 
     // Gives the server socket of one connection to `onSocket`. For 'request', `onSocket` also gets the
-    // response, which stays open unless `onSocket` ends it. The client of that connection reads
-    // nothing until read(). `respond` answers the requests of that connection that are not the source.
+    // response, which stays open unless `onSocket` ends it. The client of that connection sends
+    // `head` and reads nothing until read(). `respond` answers the requests of that connection that
+    // are not the source.
     async function open(
       protocol: Protocol,
       source: Source,
-      onSocket: (socket: Duplex, res?: http.ServerResponse) => void,
+      onSocket: (socket: Duplex, res: http.ServerResponse | undefined, server: http.Server) => void,
       respond: Respond = (req, res) => void res.end(),
+      head: string = sources[source].head,
     ) {
-      const { event, head } = sources[source];
+      const { event } = sources[source];
       const module = protocol === "https" ? https : http;
       const server: http.Server = protocol === "https" ? https.createServer(tlsOptions) : http.createServer();
       let given = false;
@@ -2371,7 +2375,7 @@ describe("backpressure", () => {
       const give = (socket: Duplex, res?: http.ServerResponse) => {
         if (given) return;
         given = true;
-        onSocket(socket, res);
+        onSocket(socket, res, server);
       };
       server.on("request", (req, res) => {
         if (req.url === "/turn") res.end();
@@ -2391,7 +2395,7 @@ describe("backpressure", () => {
       client.pause();
       client.on("error", () => {});
       await once(client, protocol === "https" ? "secureConnect" : "connect");
-      if (head) client.write(head);
+      client.write(head);
 
       return {
         client,
@@ -2671,9 +2675,8 @@ describe("backpressure", () => {
       return { filled, waits };
     }
 
-    // One order of calls behind a write that waits, on the socket of a plain http connection, and
-    // what the client then receives behind the bytes of fill(). `write` is the socket's write() from
-    // before the first write that waited.
+    // One order of calls behind a write that waits, and what the client then receives behind the
+    // bytes of fill(). `write` is the socket's write() from before the first write that waited.
     async function wire(
       source: Source,
       act: (
@@ -2681,18 +2684,26 @@ describe("backpressure", () => {
         done: (name: string) => (err?: Error | null) => void,
         res: http.ServerResponse | undefined,
         write: Duplex["write"],
+        server: http.Server,
       ) => void,
+      { protocol = "http", respond, head }: { protocol?: Protocol; respond?: Respond; head?: string } = {},
     ) {
       const callbacks: string[] = [];
       const done = (name: string) => (err?: Error | null) => void callbacks.push(err ? `${name}: error` : name);
       const filling = Promise.withResolvers<ReturnType<typeof fill>>();
-      const connection = await open("http", source, (socket, res) => {
-        socket.on("error", () => {});
-        const write = socket.write;
-        const result = fill(socket);
-        act(socket, done, res, write);
-        filling.resolve(result);
-      });
+      const connection = await open(
+        protocol,
+        source,
+        (socket, res, server) => {
+          socket.on("error", () => {});
+          const write = socket.write;
+          const result = fill(socket);
+          act(socket, done, res, write, server);
+          filling.resolve(result);
+        },
+        respond,
+        head,
+      );
       try {
         const { filled, waits } = await filling.promise;
         const { received, ended } = await connection.read();
@@ -2818,6 +2829,129 @@ describe("backpressure", () => {
           ended: true,
           callbacks: ["first", "second", "third"],
         });
+      });
+    });
+
+    // In Node a tunnel and the response to the request ahead of it leave through the stream of one socket.
+    describe.each(["http", "https"] as const)("%s: a tunnel write that waits for the client", protocol => {
+      const tunnel = "the socket of 'connect'";
+
+      it("the response to the request ahead of the tunnel arrives behind that write", async () => {
+        const tail = piece("tail", 1024);
+        let pending: http.ServerResponse;
+        const { waits, received, ended } = await wire(
+          tunnel,
+          socket => {
+            pending.end("response");
+            socket.end(tail);
+          },
+          {
+            protocol,
+            respond: (_req, res) => void (pending = res),
+            // The request and the CONNECT behind it arrive in one read.
+            head: "GET /pending HTTP/1.1\r\nHost: localhost\r\n\r\n" + sources[tunnel].head,
+          },
+        );
+        expect({
+          waits,
+          ...offsets(received, [response, "tail"]),
+          body: received.subarray(received.indexOf("\r\n\r\n") + 4, -tail.length).toString(),
+          ended,
+        }).toEqual({
+          waits: true,
+          [response]: 0,
+          tail: received.length - tail.length,
+          body: "response",
+          ended: true,
+        });
+      });
+
+      it("the tunnel still reads", async () => {
+        const got = Promise.withResolvers<string>();
+        const filling = Promise.withResolvers<ReturnType<typeof fill>>();
+        const connection = await open(protocol, tunnel, socket => {
+          socket.on("error", () => {});
+          socket.once("data", data => got.resolve(data.toString()));
+          filling.resolve(fill(socket));
+        });
+        try {
+          const { waits } = await filling.promise;
+          // After the listener: bytes in the read of the CONNECT head would be its `head` argument.
+          connection.client.write("from the client");
+          expect({ waits, data: await got.promise }).toEqual({ waits: true, data: "from the client" });
+        } finally {
+          connection.close();
+        }
+      });
+
+      it("server.close() leaves the tunnel to deliver it", async () => {
+        const last = piece("last", 1024);
+        const tail = piece("tail", 1024);
+        const { waits, received, ended, callbacks } = await wire(
+          tunnel,
+          (socket, done, _res, _write, server) => {
+            socket.write(last, done("write"));
+            socket.end(tail, done("end"));
+            server.close();
+          },
+          { protocol },
+        );
+        expect({ waits, bytes: received.length, ...offsets(received, ["last", "tail"]), ended, callbacks }).toEqual({
+          waits: true,
+          bytes: last.length + tail.length,
+          last: 0,
+          tail: last.length,
+          ended: true,
+          callbacks: ["write", "end"],
+        });
+      });
+    });
+
+    // In Node the bytes of res.write() wait in the stream of the socket, so end() on that socket
+    // finishes the stream behind them.
+    describe.each(["http", "https"] as const)("%s: res.socket.end() behind response bytes that wait", protocol => {
+      it("the end() callback and 'finish' wait until the client has read the bytes", async () => {
+        const events: string[] = [];
+        const ended = Promise.withResolvers<Duplex>();
+        const finished = Promise.withResolvers<void>();
+        const connection = await open(protocol, "req.socket in a 'request' listener", (socket, res) => {
+          res!.writeHead(200, { "Content-Length": TOTAL });
+          for (let i = 0; i < COUNT; i++) res!.write(CHUNK);
+          socket.on("finish", () => events.push("finish"));
+          socket.end(() => {
+            events.push("end callback");
+            finished.resolve();
+          });
+          ended.resolve(socket);
+        });
+        try {
+          const socket = await ended.promise;
+          await connection.turn();
+          await connection.turn();
+          const before = { events: [...events], writableFinished: socket.writableFinished };
+
+          // The client reads the head and the whole body, and then the stream finishes.
+          const { client } = connection;
+          const read = Promise.withResolvers<void>();
+          let received = 0;
+          let body = -1;
+          client.on("data", (chunk: Buffer) => {
+            if (body === -1 && (body = chunk.indexOf("\r\n\r\n")) !== -1) body += received + 4;
+            received += chunk.length;
+            if (body !== -1 && received - body === TOTAL) read.resolve();
+          });
+          client.resume();
+          await read.promise;
+          await finished.promise;
+          await connection.turn();
+          expect({ before, events, writableFinished: socket.writableFinished }).toEqual({
+            before: { events: [], writableFinished: false },
+            events: ["end callback", "finish"],
+            writableFinished: true,
+          });
+        } finally {
+          connection.close();
+        }
       });
     });
 

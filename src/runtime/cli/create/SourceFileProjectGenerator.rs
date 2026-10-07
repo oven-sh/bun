@@ -937,7 +937,7 @@ pub(crate) mod react_shadcn_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
-        TemplateFile::regenerate(
+        TemplateFile::keep(
             b"lib/utils.ts",
             include_bytes!("projects/react-shadcn-spa/lib/utils.ts"),
             Reason::Shadcn,

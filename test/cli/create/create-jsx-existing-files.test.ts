@@ -164,8 +164,8 @@ describe.concurrent.todoIf(isWindows)("bun create <component> and files that are
   });
 
   // An existing shadcn/ui project has these files already, and the template has a row for each name.
-  test("keeps the user's index.css and styles/globals.css beside a component of another name", async () => {
-    const mine = ["index.css", "styles/globals.css"];
+  test("keeps the user's index.css, styles/globals.css and lib/utils.ts beside a component of another name", async () => {
+    const mine = ["index.css", "styles/globals.css", "lib/utils.ts"];
     const content = (name: string) => `/* my own ${name} */\n`;
     using dir = tempDir("create-jsx-files", {
       "src/App.tsx": shadcnApp,

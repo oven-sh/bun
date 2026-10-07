@@ -5113,20 +5113,12 @@ pub struct StmtList {
 }
 
 /// The dependency statements that run inside a wrapper before the module
-/// body, in source order. An async dependency and every statement after it
+/// body, in source order. An async dependency and the statements after it
 /// share one `await`, so each one starts before the wrapper suspends:
-///
-/// ```text
-/// await Promise.all([init_a(), init_d()]);
-/// await Promise.all(function* () { yield init_a(); init_b(); ns = require_c(); }());
-/// ```
-///
-/// The generator is for a list with a statement that can throw. `Promise.all`
-/// takes one promise at a time from it, so a throw never leaves a promise
-/// that already started without a handler.
+/// `await Promise.all([init_a(), init_d()])`. When one of them can throw, the
+/// list is `function* () { yield init_a(); init_b(); }()`: `Promise.all` takes
+/// one promise at a time, so a throw leaves no started promise without a handler.
 pub struct InsideWrapperPrefix {
-    /// The statements before the first async dependency, and the `var ns;`
-    /// of a joined `var ns = require_x();`.
     pub(crate) stmts: Vec<Stmt>,
     joined: Vec<Joined>,
 }
@@ -5228,8 +5220,7 @@ impl InsideWrapperPrefix {
         ))
     }
 
-    /// Moves the statements to the end of `out`, the `await` of the joined
-    /// ones last.
+    /// Moves the statements to the end of `out`, the `await` last.
     pub(crate) fn finish(&mut self, promise_ref: Ref, bump: &Bump, out: &mut Vec<Stmt>) {
         out.append(&mut self.stmts);
 

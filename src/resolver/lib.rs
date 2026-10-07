@@ -2454,6 +2454,41 @@ pub mod cache {
 
 pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
+/// For a relative or absolute `specifier` that did not resolve from
+/// `source_dir`: the same specifier respelled with the on-disk name, when the
+/// cached listing holds a file that differs from it only in case. Cold path.
+pub fn case_near_miss(specifier: &[u8], source_dir: &[u8]) -> Option<Vec<u8>> {
+    if !(specifier.starts_with(b"./")
+        || specifier.starts_with(b"../")
+        || bun_paths::Platform::AUTO.is_absolute(specifier))
+        || bun_paths::Platform::AUTO.is_separator(*specifier.last()?)
+        || !fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire)
+        || source_dir.len().saturating_add(specifier.len()) >= bun_paths::MAX_PATH_BYTES
+    {
+        return None;
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let target = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        source_dir,
+        &mut buf[..],
+        &[specifier],
+    );
+    let target_dir =
+        bun_paths::strings::paths::without_trailing_slash_windows_path(bun_paths::dirname(target)?);
+    let target_base = bun_paths::basename(target);
+    let rfs = &mut fs::FileSystem::instance().fs;
+    let _guard = rfs.entries_mutex.lock_guard();
+    let actual = match rfs.entries.get(target_dir)? {
+        fs::EntriesOption::Entries(e) => e.case_near_miss(target_base)?,
+        fs::EntriesOption::Err(_) => return None,
+    };
+    let spec_base = bun_paths::basename(specifier);
+    let mut out = Vec::with_capacity(specifier.len() - spec_base.len() + actual.len());
+    out.extend_from_slice(&specifier[..specifier.len() - spec_base.len()]);
+    out.extend_from_slice(actual);
+    Some(out)
+}
+
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.
 pub mod options;

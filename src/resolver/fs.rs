@@ -728,6 +728,45 @@ impl DirEntry {
         }
     }
 
+    /// For a "not found" diagnostic: the on-disk name that `base` (or `base`
+    /// plus a common source extension) would have matched if case folded.
+    pub fn case_near_miss(&self, base: &[u8]) -> Option<&'static [u8]> {
+        Self::debug_assert_entries_mutex_held();
+        if self.case_verdict() != CaseVerdict::Exact {
+            return None;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let try_name = |name: &[u8]| -> Option<&'static [u8]> {
+            if name.is_empty() || name.len() > MAX_PATH_BYTES {
+                return None;
+            }
+            let mut lower = bun_paths::path_buffer_pool::get();
+            let key = strings::copy_lowercase_if_needed(name, &mut lower[..]);
+            let &entry = self.data.get(key)?;
+            // SAFETY: ARENA — EntryStore slot, never freed; `base_` is never
+            // mutated after construction.
+            let actual = unsafe { &*core::ptr::from_ref::<[u8]>((*entry).base()) };
+            (actual != name).then_some(actual)
+        };
+        if let Some(actual) = try_name(base) {
+            return Some(actual);
+        }
+        const EXTENSIONS: [&[u8]; 9] = [
+            b".tsx", b".ts", b".jsx", b".js", b".mjs", b".cjs", b".mts", b".cts", b".json",
+        ];
+        for ext in EXTENSIONS {
+            if base.len() + ext.len() > MAX_PATH_BYTES {
+                continue;
+            }
+            buf[..base.len()].copy_from_slice(base);
+            buf[base.len()..base.len() + ext.len()].copy_from_slice(ext);
+            if let Some(actual) = try_name(&buf[..base.len() + ext.len()]) {
+                return Some(actual);
+            }
+        }
+        None
+    }
+
     /// `Unknown` means a transient error; the next mismatched lookup asks again.
     #[cfg(windows)]
     fn probe_case_verdict(&self, _query: &[u8], _candidate: *mut Entry) -> CaseVerdict {

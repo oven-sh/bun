@@ -2115,6 +2115,77 @@ describe.concurrent("file name case", () => {
       expect(upperFirst).toEqual({ stdout: "from fooBar.ts from FooBar.ts", stderr: "", exitCode: 0 });
     });
 
+    // Every probe site shares the one lookup: the extension loop, the
+    // `index` probe, the `.js` to `.ts` rewrite, and the `exports` wildcard
+    // loops. Each row holds the file the old case-folded hit picked first
+    // and the file spelled like the specifier.
+    const sites: [string, Record<string, string>, string, string][] = [
+      [
+        "index probe",
+        { "lib/Index.tsx": `export const which = "upper";`, "lib/index.ts": `export const which = "lower";` },
+        "./lib",
+        "lib/index.ts",
+      ],
+      [
+        "js to ts rewrite",
+        { "Mod.ts": `export const which = "upper";`, "mod.tsx": `export const which = "lower";` },
+        "./mod.js",
+        "mod.tsx",
+      ],
+      [
+        "exports wildcard",
+        {
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*" } }),
+          "node_modules/pkg/dist/Foo.tsx": `export const which = "upper";`,
+          "node_modules/pkg/dist/foo.ts": `export const which = "lower";`,
+        },
+        "pkg/foo",
+        "node_modules/pkg/dist/foo.ts",
+      ],
+      [
+        "exports wildcard js to ts rewrite",
+        {
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*.js" } }),
+          "node_modules/pkg/dist/Mod.ts": `export const which = "upper";`,
+          "node_modules/pkg/dist/mod.tsx": `export const which = "lower";`,
+        },
+        "pkg/mod",
+        "node_modules/pkg/dist/mod.tsx",
+      ],
+    ];
+    it.each(sites)("%s picks the file spelled like the specifier", async (_site, files, specifier, expected) => {
+      using dir = tempDir("resolve-case-site", {
+        ...files,
+        "entry.ts": `
+          import { which } from ${JSON.stringify(specifier)};
+          console.log(which);
+          console.log(Bun.resolveSync(${JSON.stringify(specifier)}, import.meta.dir));
+        `,
+      });
+      const result = await runBun(String(dir), "entry.ts");
+      expect(result).toEqual({ stdout: `lower\n${join(String(dir), expected)}`, stderr: "", exitCode: 0 });
+    });
+
+    it("names the differently cased file in the error", async () => {
+      using dir = tempDir("resolve-case-hint", {
+        "Helper.ts": `export const x = 1;`,
+        "with-ext.ts": `import "./helper.ts";`,
+        "without-ext.ts": `import "./helper";`,
+        "build.ts": `import "./helper";`,
+      });
+      const [withExt, withoutExt, build] = await Promise.all([
+        runBun(String(dir), "with-ext.ts"),
+        runBun(String(dir), "without-ext.ts"),
+        runBun(String(dir), "build", "build.ts", "--outdir", "out"),
+      ]);
+      expect(withExt.stderr).toContain(
+        `Cannot find module './helper.ts' from '${join(String(dir), "with-ext.ts")}'. Did you mean './Helper.ts'? File names are case-sensitive on this filesystem`,
+      );
+      expect(withoutExt.stderr).toContain("Did you mean './Helper.ts'?");
+      expect(build.stderr).toContain(`Could not resolve: "./helper". Did you mean "./Helper.ts"?`);
+      expect([withExt.exitCode, withoutExt.exitCode, build.exitCode]).toEqual([1, 1, 1]);
+    });
+
     // The fixed-name probes (`package.json`, `tsconfig.json`) go through the
     // same lookup, so a `Package.json` is no longer mistaken for one.
     it("ignores a differently cased package.json and tsconfig.json", async () => {
@@ -2177,6 +2248,26 @@ describe.concurrent("file name case", () => {
       } else {
         expect(result).toEqual({ stdout: "bar.js", stderr: "", exitCode: 0 });
       }
+    });
+
+    // A specifier with a trailing slash still goes through the `.js` to `.ts`
+    // rewrite. The cached path must come from the entry, not the probed
+    // spelling, or every later import of `foo.ts` in the process breaks.
+    it("caches the on-disk path for a rewrite reached through a trailing slash", async () => {
+      using dir = tempDir("resolve-case-trailing-slash", {
+        "foo.ts": `export const which = "foo-ts";`,
+        "entry.ts": `
+          const dir = import.meta.dir;
+          console.log(Bun.resolveSync("./foo.js/", dir));
+          console.log(Bun.resolveSync("./foo.js", dir));
+          console.log(Bun.resolveSync("./foo.ts", dir));
+          const { which } = await import("./foo.ts");
+          console.log(which);
+        `,
+      });
+      const result = await runBun(String(dir), "entry.ts");
+      const fooTs = join(String(dir), "foo.ts");
+      expect(result).toEqual({ stdout: [fooTs, fooTs, fooTs, "foo-ts"].join("\n"), stderr: "", exitCode: 0 });
     });
 
     it("the exact spelling still resolves", async () => {

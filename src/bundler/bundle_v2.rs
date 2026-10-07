@@ -1866,6 +1866,22 @@ pub mod bv2_impl {
     /// log so `has_errors()` actually fires. Returns `true` when `err` is one
     /// of those; shared by `run_resolver` and `resolve_import_records`.
     #[cold]
+    /// Suffix for a "Could not resolve" error when the cached listing holds
+    /// a file that differs from the specifier only in case. Empty otherwise.
+    fn case_near_miss_hint(specifier: &[u8], source: Option<&bun_ast::Source>) -> Vec<u8> {
+        source
+            .and_then(|source| bun_paths::dirname(source.path.text))
+            .and_then(|dir| bun_resolver::case_near_miss(specifier, dir))
+            .map(|actual| {
+                format!(
+                    ". Did you mean \"{}\"? File names are case-sensitive on this filesystem",
+                    bstr::BStr::new(&actual)
+                )
+                .into_bytes()
+            })
+            .unwrap_or_default()
+    }
+
     pub(crate) fn log_unhandled_resolve_error(
         log: &mut bun_ast::Log,
         source: Option<&bun_ast::Source>,
@@ -2860,13 +2876,15 @@ pub mod bv2_impl {
                                         );
                                     }
                                 } else {
+                                    let hint = case_near_miss_hint(path_to_use, source);
                                     add_error(
                                         log,
                                         source,
                                         import_record.range,
                                         format_args!(
-                                            "Could not resolve: \"{}\"",
-                                            bstr::BStr::new(path_to_use)
+                                            "Could not resolve: \"{}\"{}",
+                                            bstr::BStr::new(path_to_use),
+                                            bstr::BStr::new(&hint)
                                         ),
                                         path_to_use,
                                         import_record.kind,
@@ -6986,13 +7004,16 @@ pub mod bv2_impl {
                                         } else {
                                             import_record.path.text
                                         };
+                                        let hint =
+                                            case_near_miss_hint(specifier_to_use, Some(source));
                                         add_error(
                                             log,
                                             Some(source),
                                             import_record.range,
                                             format_args!(
-                                                "Could not resolve: \"{}\"",
-                                                bstr::BStr::new(specifier_to_use)
+                                                "Could not resolve: \"{}\"{}",
+                                                bstr::BStr::new(specifier_to_use),
+                                                bstr::BStr::new(&hint)
                                             ),
                                             specifier_to_use,
                                             import_record.kind,

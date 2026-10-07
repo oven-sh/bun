@@ -10,12 +10,12 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Cat {
+pub(crate) struct Cat {
     pub(crate) state: CatState,
 }
 
 #[derive(Default)]
-pub enum CatState {
+pub(crate) enum CatState {
     #[default]
     Idle,
     ExecStdin {
@@ -405,7 +405,7 @@ impl Cat {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {}
+pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {

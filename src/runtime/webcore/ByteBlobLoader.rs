@@ -35,7 +35,7 @@ impl Default for ByteBlobLoader {
 }
 
 // A generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
-pub type Source = readable_stream::NewSource<ByteBlobLoader>;
+pub(crate) type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
     const NAME: &'static str = "Blob";

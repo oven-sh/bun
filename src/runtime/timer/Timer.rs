@@ -7,8 +7,6 @@
 //! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
 //! `impl super::All { … }` surface plus the C-ABI export thunks.
 
-#![allow(clippy::missing_safety_doc)]
-
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -43,9 +41,7 @@ impl All {
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
     // the raw pointer is intentional (avoids aliased-`&mut` across the
-    // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
-    // forwarding makes not_unsafe_ptr_arg_deref a false positive.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    // jsc/runtime crate cycle — see DateHeaderTimer.rs).
     pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
@@ -521,7 +517,7 @@ impl DateHeaderTimer {
 // these in `headers.h` as `(JSGlobalObject*, EncodedJSValue…) -> EncodedJSValue`.
 
 // HOST_EXPORT(Bun__Timer__setImmediate, c)
-pub fn set_immediate_export(
+pub(crate) fn set_immediate_export(
     global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
@@ -531,7 +527,7 @@ pub fn set_immediate_export(
 }
 
 // HOST_EXPORT(Bun__Timer__sleep, c)
-pub fn sleep_export(
+pub(crate) fn sleep_export(
     global: &JSGlobalObject,
     promise: JSValue,
     countdown: JSValue,
@@ -541,7 +537,7 @@ pub fn sleep_export(
 }
 
 // HOST_EXPORT(Bun__Timer__setTimeout, c)
-pub fn set_timeout_export(
+pub(crate) fn set_timeout_export(
     global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
@@ -552,7 +548,7 @@ pub fn set_timeout_export(
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
-pub fn set_interval_export(
+pub(crate) fn set_interval_export(
     global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
@@ -563,17 +559,17 @@ pub fn set_interval_export(
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)
-pub fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+pub(crate) fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
     All::clear_immediate(global, id)
 }
 
 // HOST_EXPORT(Bun__Timer__clearTimeout, c)
-pub fn clear_timeout_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+pub(crate) fn clear_timeout_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
     All::clear_timeout(global, id)
 }
 
 // HOST_EXPORT(Bun__Timer__clearInterval, c)
-pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+pub(crate) fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
     All::clear_interval(global, id)
 }
 

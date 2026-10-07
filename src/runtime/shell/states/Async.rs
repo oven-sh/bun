@@ -11,7 +11,7 @@ use crate::shell::yield_::Yield;
 
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
-pub struct Async {
+pub(crate) struct Async {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
     pub(crate) io: IO,

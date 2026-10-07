@@ -40,12 +40,6 @@ pub struct FileReader {
     pub(crate) done: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) pending_value: JsCell<Strong>, // Strong.Optional
-    // TODO(refactor): `&'static mut [u8]` forge — borrows a JS typed-array buffer
-    // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
-    // does not honour. `bun_ptr::Interned` is read-only by construction so
-    // does NOT cover this; tracked under the sibling `static-widen-mut`
-    // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
-    pub(crate) pending_view: JsCell<&'static mut [u8]>,
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
@@ -75,7 +69,6 @@ impl Default for FileReader {
             done: Cell::new(false),
             pending: JsCell::new(streams::Pending::default()),
             pending_value: JsCell::new(Strong::empty()),
-            pending_view: JsCell::new(&mut []),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
@@ -94,14 +87,14 @@ impl Default for FileReader {
     }
 }
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
-pub enum Lazy {
+pub(crate) enum Lazy {
     None,
     Blob(RefPtr<blob::Store>),
 }
 
-pub struct OpenedFileBlob {
+pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
@@ -122,7 +115,8 @@ impl Default for OpenedFileBlob {
 }
 
 unsafe extern "C" {
-    pub safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
+    #[cfg(not(windows))]
+    pub(crate) safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
 }
 
 impl Lazy {
@@ -593,8 +587,32 @@ impl FileReader {
         }
     }
 
+    /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
+    pub(crate) fn error_native_consumer(&self, reason: jsc::JSValue) {
+        // SAFETY: see `parent()`.
+        let _pin = unsafe { SourcePin::new(self.parent()) };
+        let global = self.parent_const().global_this();
+        let err = streams::StreamError::JSValue(jsc::strong::Optional::create(reason, global));
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            self.detach_sink(Some(&err));
+            sink.end(Some(err));
+        } else if self.pending.get().state == streams::PendingState::Pending {
+            self.pending
+                .with_mut(|p| p.result = streams::Result::Err(err));
+            self.pending.with_mut(|p| p.run());
+        }
+    }
+
     pub(crate) fn on_cancel(&self) {
+        // A sink still wired here must fail, not see an EOF and commit a truncated body.
+        let sink = *self.sink.get();
         self.unpipe_without_deref();
+        if sink.is_some() {
+            sink.end(Some(streams::StreamError::AbortReason(
+                jsc::CommonAbortReason::UserAbort,
+            )));
+        }
         if self.done.get() {
             return;
         }
@@ -759,7 +777,6 @@ impl FileReader {
         };
         self.pending_value
             .with_mut(|p| p.clear_without_deallocation());
-        self.pending_view.set(&mut []);
         // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         // SAFETY: see `parent()`.
         let _pin = unsafe { SourcePin::new(self.parent()) };
@@ -768,7 +785,7 @@ impl FileReader {
         ret && !self.done.get() && !self.reader().is_done()
     }
 
-    pub(crate) fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
+    pub(crate) fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -779,7 +796,6 @@ impl FileReader {
 
             self.pending_value
                 .with_mut(|p| p.clear_without_deallocation());
-            self.pending_view.set(&mut []);
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
@@ -849,7 +865,6 @@ impl FileReader {
         let buffer_len = buffer.len();
         let global = self.parent_global();
         self.pending_value.with_mut(|p| p.set(&global, array));
-        self.pending_view.set(buffer);
         #[cfg(windows)]
         if self.flowing.get() {
             self.reader().unpause();
@@ -1041,7 +1056,7 @@ impl FileReader {
     }
 }
 
-pub type Source = readable_stream::NewSource<FileReader>;
+pub(crate) type Source = readable_stream::NewSource<FileReader>;
 
 /// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
 /// user JS. Dropping it releases the ref and can free the source, so a pin must
@@ -1085,9 +1100,6 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_start(self)
     }
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
-        // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive
-        // by `arr` (see the lifetime note at the top of the file).
-        let buf = unsafe { &mut *std::ptr::from_mut::<[u8]>(buf) };
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) {

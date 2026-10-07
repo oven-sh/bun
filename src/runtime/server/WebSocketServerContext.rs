@@ -4,7 +4,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_core::comptime_string_map::ComptimeStringMap as _;
 use bun_uws as uws;
 
-pub struct WebSocketServerContext {
+pub(crate) struct WebSocketServerContext {
     pub(crate) handler: Handler,
 
     pub(crate) max_payload_length: u32, // default 16MB
@@ -17,7 +17,7 @@ pub struct WebSocketServerContext {
     pub(crate) close_on_backpressure_limit: bool,
 }
 
-pub struct Handler {
+pub(crate) struct Handler {
     pub(crate) on_open: JSValue,
     pub(crate) on_message: JSValue,
     pub on_close: JSValue,
@@ -113,7 +113,7 @@ impl Handler {
         Ok(())
     }
 
-    pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
+    pub(crate) fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {
         let mut handler = Handler {
             on_open: JSValue::ZERO,
             on_message: JSValue::ZERO,

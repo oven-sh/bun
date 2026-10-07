@@ -83,8 +83,8 @@ struct NSString : Ref {
     // Returns autoreleased; callers pass to ObjC methods that retain.
     static NSString fromWTF(const WTF::String &s)
     {
-        WTF::CString utf8 = s.utf8();
-        return msgCls<id>(cls, s_stringWithUTF8String, utf8.data());
+        WTF::UTF8CString utf8 = s.utf8();
+        return msgCls<id>(cls, s_stringWithUTF8String, utf8.legacyCStringPointer());
     }
     WTF::String toWTF() const
     {

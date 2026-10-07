@@ -3790,7 +3790,10 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
 
 /// `Fs.Path.loader(&jsc_vm.transpiler.options.loaders)` — re-spelt against
 /// `bun_ast::LoaderHashTable` (= `StringArrayHashMap<bun_ast::Loader>`).
-fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> Option<Loader> {
+pub(crate) fn loader_for_path(
+    path: &Fs::Path<'_>,
+    loaders: &bun_ast::LoaderHashTable,
+) -> Option<Loader> {
     if path.is_data_url() {
         return Some(Loader::Dataurl);
     }
@@ -4704,6 +4707,18 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr(),
             )
         },
+        bun_io::AllocatorType::SpawnSync => {
+            // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
+            let vm = unsafe { &mut *bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr() };
+            // SAFETY: shared, as is the borrow of the call that is waiting on the loop.
+            let event_loop = unsafe { &*vm.rare_data_ptr() }
+                .existing_spawn_sync_event_loop()
+                .expect("a FilePoll of the spawnSync loop outlived it")
+                .event_loop_ptr()
+                .cast::<bun_jsc::event_loop::EventLoop>();
+            // SAFETY: owned by the VM's `RareData`.
+            unsafe { (*event_loop).event_loop_ctx() }
+        }
         bun_io::AllocatorType::Mini => {
             // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
             // any caller asks for `AllocatorType::Mini` (the global mini loop

@@ -1225,7 +1225,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
 #if LAZY_LOAD_SQLITE
     auto requestedPath = sqliteStrValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    static CString sqlite3_lib_path_storage;
+    static UTF8CString sqlite3_lib_path_storage;
     static String selectedSQLitePath;
     auto requestedPathUTF8 = requestedPath.utf8();
     RETURN_IF_EXCEPTION(scope, {});
@@ -1239,7 +1239,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         } else {
             // Keep the selected path alive for the process-global SQLite handle.
             sqlite3_lib_path_storage = requestedPathUTF8;
-            sqlite3_lib_path = sqlite3_lib_path_storage.data();
+            sqlite3_lib_path = sqlite3_lib_path_storage.legacyCStringPointer();
             WTF::String msg;
             if (lazyLoadSQLiteUnlocked(&msg) == -1) {
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
@@ -1974,7 +1974,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return JSValue::encode(jsUndefined());
     }
 
-    CString fileNameStr;
+    UTF8CString fileNameStr;
 
     if (databaseFileName.isString()) {
         fileNameStr = databaseFileName.toWTFString(lexicalGlobalObject).utf8();
@@ -2013,7 +2013,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return {};
     }
 
-    int statusCode = sqlite3_file_control(db, fileNameStr.isNull() ? nullptr : fileNameStr.data(), op, resultPtr);
+    int statusCode = sqlite3_file_control(db, fileNameStr.isNull() ? nullptr : fileNameStr.legacyCStringPointer(), op, resultPtr);
 
     if (statusCode == SQLITE_ERROR) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));

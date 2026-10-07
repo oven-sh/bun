@@ -93,6 +93,8 @@ jobs:
         run: bun test
 ```
 
+To type check the tests in the same step, run `bun test --check`. See [Type check your tests](#type-check-your-tests).
+
 ### JUnit XML reports (GitLab, etc.)
 
 To write a JUnit XML report, pass `--reporter=junit` together with `--reporter-outfile`.
@@ -289,6 +291,16 @@ Like `bun run`, `bun test` accepts the `--watch` flag to watch for changes and r
 ```bash terminal icon="terminal"
 bun test --watch
 ```
+
+## Type check your tests
+
+`bun test` runs TypeScript tests without checking their types. Use the `--check` flag to type check the test files, and everything they import, before any test runs.
+
+```bash terminal icon="terminal"
+bun test --check
+```
+
+If there is a type error, Bun prints it, exits with code `1`, and runs no tests. See [`bun check`](/runtime/check#check-before-you-run-build-or-test).
 
 ## Lifecycle hooks
 

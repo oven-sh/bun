@@ -44,7 +44,12 @@ impl Flags {
     const SIMPLE: u8 = 1 << 1;
     const PIPELINED: u8 = 1 << 2;
     const RESULT_MODE_SHIFT: u8 = 3;
-    const RESULT_MODE_MASK: u8 = 0b11 << Self::RESULT_MODE_SHIFT; // SQLQueryResultMode is 2 bits (3 bool + 2 + 3 pad = 8)
+    const RESULT_MODE_MASK: u8 = 0b11 << Self::RESULT_MODE_SHIFT; // SQLQueryResultMode is 2 bits (4 bool + 2 + 2 pad = 8)
+    /// Set by [`MySQLQuery::discard_response`]: the query is already rejected,
+    /// but the server is still answering it. It stays in flight at the queue
+    /// head, and the rest of its response is skipped, until the terminator of
+    /// its last result set.
+    const DISCARD_RESPONSE: u8 = 1 << 5;
 
     #[inline]
     fn bigint(self) -> bool {
@@ -65,6 +70,14 @@ impl Flags {
         } else {
             self.0 &= !Self::PIPELINED;
         }
+    }
+    #[inline]
+    fn discard_response(self) -> bool {
+        self.0 & Self::DISCARD_RESPONSE != 0
+    }
+    #[inline]
+    fn set_discard_response(&mut self) {
+        self.0 |= Self::DISCARD_RESPONSE;
     }
     #[inline]
     fn result_mode(self) -> SQLQueryResultMode {
@@ -435,9 +448,16 @@ impl MySQLQuery {
         self.flags.set_result_mode(result_mode);
     }
 
+    /// Returns whether the caller has a result to deliver.
     #[inline]
     pub(crate) fn result(&mut self, is_last_result: bool) -> bool {
         if self.status == Status::Success || self.status == Status::Fail {
+            return false;
+        }
+        if self.flags.discard_response() {
+            if is_last_result {
+                self.status = Status::Fail;
+            }
             return false;
         }
         self.status = if is_last_result {
@@ -449,13 +469,37 @@ impl MySQLQuery {
         true
     }
 
+    /// Returns whether the caller has a rejection to deliver.
     pub(crate) fn fail(&mut self) -> bool {
         if self.status == Status::Fail || self.status == Status::Success {
             return false;
         }
         self.status = Status::Fail;
 
+        !self.flags.discard_response()
+    }
+
+    /// The client cannot decode a row of this query's result. The caller
+    /// rejects the query now, but the status stays in flight: the server is
+    /// still answering, and a `Fail` head would let `advance()` pop it and hand
+    /// the rest of its response to the next request. [`Self::result`] ends it
+    /// at its last terminator. Returns whether the caller has a rejection to
+    /// deliver.
+    pub(crate) fn discard_response(&mut self) -> bool {
+        if !self.is_running() {
+            return self.fail();
+        }
+        if self.flags.discard_response() {
+            return false;
+        }
+        self.flags.set_discard_response();
+
         true
+    }
+
+    #[inline]
+    pub(crate) fn is_discarding_response(&self) -> bool {
+        self.flags.discard_response()
     }
 
     #[inline]

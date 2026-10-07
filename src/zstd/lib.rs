@@ -158,6 +158,20 @@ pub mod c {
             dict: *const c_void,
             dict_size: usize,
         ) -> usize;
+        /// References `prefix` as the raw content dictionary of the next frame only. It is not
+        /// copied, so it has to outlive the decompression of that frame.
+        pub(crate) fn ZSTD_DCtx_refPrefix(
+            dctx: *mut ZSTD_DCtx,
+            prefix: *const c_void,
+            prefix_size: usize,
+        ) -> usize;
+        pub(crate) fn ZSTD_decompressDCtx(
+            dctx: *mut ZSTD_DCtx,
+            dst: *mut c_void,
+            dst_capacity: usize,
+            src: *const c_void,
+            src_size: usize,
+        ) -> usize;
         pub fn ZSTD_CCtx_setParameter(
             cctx: *mut ZSTD_CCtx,
             param: ZSTD_cParameter,
@@ -349,6 +363,56 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
         .map_err(|_| ZstdError::OutOfMemory)?;
 
     decompress_append(&mut output, src)?;
+    Ok(output)
+}
+
+/// Decompresses one frame that was compressed with `prefix` as its raw content dictionary, which is
+/// referenced and not copied. The size has to be in the header of the frame, and at most 16 MB.
+pub fn decompress_alloc_with_prefix(
+    src: &[u8],
+    prefix: &[u8],
+) -> core::result::Result<Vec<u8>, ZstdError> {
+    const MAX_SIZE: usize = 16 * 1024 * 1024;
+    let size = get_decompressed_size(src);
+    // Also if it is unknown or invalid, which are the two largest values.
+    if size > MAX_SIZE {
+        return Err(ZstdError::InvalidZstdData);
+    }
+    let mut output: Vec<u8> = Vec::new();
+    output
+        .try_reserve_exact(size)
+        .map_err(|_| ZstdError::OutOfMemory)?;
+    let dctx = c::ZSTD_createDCtx();
+    if dctx.is_null() {
+        return Err(ZstdError::OutOfMemory);
+    }
+    let spare = output.spare_capacity_mut();
+    // SAFETY: `dctx` is live until it is freed below. `prefix`, `src` and `spare` are valid for
+    // their lengths and outlive the calls, and at most `spare.len()` bytes are written to `spare`.
+    let rc = unsafe {
+        let rc = c::ZSTD_DCtx_refPrefix(dctx, prefix.as_ptr().cast::<c_void>(), prefix.len());
+        let rc = if c::ZSTD_isError(rc) != 0 {
+            rc
+        } else {
+            c::ZSTD_decompressDCtx(
+                dctx,
+                spare.as_mut_ptr().cast::<c_void>(),
+                spare.len(),
+                src.as_ptr().cast::<c_void>(),
+                src.len(),
+            )
+        };
+        c::ZSTD_freeDCtx(dctx);
+        rc
+    };
+    if c::ZSTD_isError(rc) != 0 {
+        return Err(ZstdError::for_decompression(
+            rc,
+            ZstdError::DecompressionFailed,
+        ));
+    }
+    // SAFETY: zstd has initialized `rc` bytes at the start of spare.
+    unsafe { bun_core::vec::commit_spare(&mut output, rc) };
     Ok(output)
 }
 

@@ -773,6 +773,10 @@ impl<'a> JSXTag<'a> {
             });
         }
 
+        if p.lexer().tolerant {
+            return Self::parse_tolerant(p);
+        }
+
         // The tag is an identifier
         let mut name: &'a [u8] = p.lexer().identifier;
         let mut tag_range = p.lexer().range();
@@ -850,6 +854,177 @@ impl<'a> JSXTag<'a> {
             range: tag_range,
             name,
         })
+    }
+
+    /// `parseJsxElementName`, for tolerant mode. Builds the same tree as `parse` for a valid name.
+    #[cold]
+    #[inline(never)]
+    fn parse_tolerant<P>(p: &mut P) -> crate::CrateResult<JSXTag<'a>>
+    where
+        P: crate::p::ParserLike<'a>,
+    {
+        let loc = p.lexer().loc();
+
+        // `parseJsxTagName`
+        let (first, mut tag_range) = Self::parse_identifier_name(p.lexer(), b"")?;
+        let mut name = Self::parse_namespaced_name(p.bump(), p.lexer(), first, &mut tag_range)?;
+
+        // `isJsxIntrinsicTagName`. A namespaced name cannot be followed by a member access.
+        if bun_core::strings::contains_char(name, b':')
+            || (p.lexer().token != T::TDot
+                && (bun_core::strings::contains_char(name, b'-')
+                    || name.first().is_some_and(u8::is_ascii_lowercase)))
+        {
+            return Ok(JSXTag {
+                data: JSXTagData::Tag(p.new_expr(E::String::init(name), loc)),
+                range: tag_range,
+                name,
+            });
+        }
+
+        let mut tag = if name.is_empty() {
+            p.new_expr(E::Missing {}, loc)
+        } else {
+            let ref_ = p.store_name_in_ref(name);
+            p.new_expr(
+                E::Identifier {
+                    ref_,
+                    ..Default::default()
+                },
+                loc,
+            )
+        };
+
+        while p.lexer().token == T::TDot {
+            p.lexer().next_inside_jsx_element()?;
+            let (member, member_range) = Self::parse_member_name(p.lexer())?;
+            name = Self::join_names(p.bump(), name, b'.', member);
+            tag_range.len = member_range.end().start - tag_range.loc.start;
+            tag = p.new_expr(
+                E::Dot {
+                    target: tag,
+                    name: member.into(),
+                    name_loc: member_range.loc,
+                    ..Default::default()
+                },
+                loc,
+            );
+        }
+
+        Ok(JSXTag {
+            data: JSXTagData::Tag(tag),
+            range: tag_range,
+            name,
+        })
+    }
+
+    /// `parseIdentifierNameErrorOnUnicodeEscapeSequence` in a JSX tag, tolerant mode only. TypeScript's scanner ends the name
+    /// before the first of `stops`. A missing name is empty, is reported (1003), and consumes nothing.
+    fn parse_identifier_name(
+        lexer: &mut js_lexer::Lexer<'a>,
+        stops: &[u8],
+    ) -> crate::CrateResult<(&'a [u8], bun_ast::Range)> {
+        if lexer.token == T::TPrivateIdentifier {
+            lexer.scan_jsx_identifier();
+        }
+        if lexer.token != T::TIdentifier {
+            if lexer.is_log_disabled {
+                return Err(crate::Error::Backtrack);
+            }
+            // `createIdentifierWithDiagnostic`
+            let missing = bun_ast::Range {
+                loc: lexer.full_start(),
+                len: 0,
+            };
+            let at = if lexer.token == T::TEndOfFile {
+                missing
+            } else {
+                lexer.range()
+            };
+            lexer.ts_error(at, 1003);
+            return Ok((b"".as_slice(), missing));
+        }
+        let mut name: &'a [u8] = lexer.identifier;
+        let mut range = lexer.range();
+        if let Some(index) = name.iter().position(|c| stops.contains(c))
+            && name.len() == lexer.raw().len()
+        {
+            name = &name[..index];
+            range.len = index as i32;
+            lexer.current = lexer.start + index;
+            lexer.step();
+        }
+        lexer.next_inside_jsx_element()?;
+        Ok((name, range))
+    }
+
+    /// `parseJsxTagName`, `parseJsxAttributeName`, tolerant mode only. The ":" and the name after
+    /// it are separate tokens, so whitespace and comments may surround the colon. `first` was just
+    /// consumed and is at `range`.
+    /// Returns "first:second", or `first` if no colon follows.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn parse_namespaced_name(
+        bump: &'a bun_alloc::Arena,
+        lexer: &mut js_lexer::Lexer<'a>,
+        first: &'a [u8],
+        range: &mut bun_ast::Range,
+    ) -> crate::CrateResult<&'a [u8]> {
+        let namespace = if let Some(namespace) = first.strip_suffix(b":") {
+            // The lexer scanned the colon as part of the name.
+            namespace
+        } else if !bun_core::strings::contains_char(first, b':')
+            && (lexer.token == T::TColon || (lexer.token == T::TSyntaxError && lexer.raw() == b":"))
+        {
+            lexer.next_inside_jsx_element()?;
+            first
+        } else {
+            return Ok(first);
+        };
+        let (second, second_range) = Self::parse_identifier_name(lexer, b":")?;
+        range.len = second_range.end().start - range.loc.start;
+        Ok(Self::join_names(bump, namespace, b':', second))
+    }
+
+    /// `parseRightSideOfDot` in a JSX tag, tolerant mode only. The name is an ordinary identifier, without "-" or ":".
+    fn parse_member_name(
+        lexer: &mut js_lexer::Lexer<'a>,
+    ) -> crate::CrateResult<(&'a [u8], bun_ast::Range)> {
+        if lexer.token == T::TSyntaxError && lexer.raw() == b"#" {
+            // Rescan it as an ordinary token.
+            lexer.current = lexer.start;
+            lexer.step();
+            lexer.next()?;
+        }
+        if lexer.token == T::TPrivateIdentifier {
+            if lexer.is_log_disabled {
+                return Err(crate::Error::Backtrack);
+            }
+            // The private name is consumed, and the missing name is at its end.
+            let missing = bun_ast::Range {
+                loc: lexer.range().end(),
+                len: 0,
+            };
+            lexer.next_inside_jsx_element()?;
+            lexer.ts_error(missing, 1003);
+            return Ok((b"".as_slice(), missing));
+        }
+        Self::parse_identifier_name(lexer, b"-:")
+    }
+
+    /// `left`, `separator` and `right` as one name, allocated in `bump`.
+    fn join_names(
+        bump: &'a bun_alloc::Arena,
+        left: &[u8],
+        separator: u8,
+        right: &[u8],
+    ) -> &'a [u8] {
+        let joined: &'a mut [u8] =
+            bump.alloc_slice_fill_default::<u8>(left.len() + 1 + right.len());
+        joined[..left.len()].copy_from_slice(left);
+        joined[left.len()] = separator;
+        joined[left.len() + 1..].copy_from_slice(right);
+        joined
     }
 }
 
@@ -1228,6 +1403,10 @@ pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
     pub(crate) is_after_question_and_before_colon: bool,
+    /// Position of the "(", if it is not at the given `loc` because type parameters come first.
+    pub(crate) open_paren: bun_ast::Loc,
+    /// `TokenFullStart` of the token at the given `loc`.
+    pub(crate) full_start: bun_ast::Loc,
 }
 
 #[repr(u8)]
@@ -1267,6 +1446,9 @@ pub struct FnOrArrowDataParse {
 
     /// Allow TypeScript decorators in function arguments
     pub(crate) allow_ts_decorators: bool,
+
+    /// Tolerant mode only: a missing "{" is reported as `'{' or ';' expected` (1144) instead of `'{' expected` (1005).
+    pub(crate) brace_or_semicolon: bool,
 }
 
 impl Default for FnOrArrowDataParse {
@@ -1288,6 +1470,7 @@ impl Default for FnOrArrowDataParse {
             track_arrow_arg_errors: false,
             allow_missing_body_for_type_script: false,
             allow_ts_decorators: false,
+            brace_or_semicolon: false,
         }
     }
 }
@@ -2001,4 +2184,8 @@ pub struct ParseBindingOptions {
     /// This will prevent parsing of destructuring patterns, as using statement
     /// is only allowed to be `using name, name2, name3`, nothing special.
     pub(crate) is_using_statement: bool,
+    /// `privateIdentifierDiagnosticMessage` of `parseIdentifierOrPatternWithDiagnostic`:
+    /// TypeScript's error code for a private name at this position; 0 means 18016. Only read where
+    /// an error is about to be logged, in tolerant mode.
+    pub(crate) private_name_code: u16,
 }

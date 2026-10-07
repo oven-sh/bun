@@ -1893,6 +1893,11 @@ impl PostgresSQLConnection {
             let req = ParentRef::from(self.requests.get()[offset].as_non_null());
             match req.status.get() {
                 QueryStatus::Pending => {
+                    debug_assert!(
+                        offset == 0
+                            || self.requests.get()[offset - 1].status.get() != QueryStatus::Pending,
+                        "advance() passed a request that is not written yet"
+                    );
                     // Optimistically account for this request leaving Pending; the
                     // few paths below that keep it Pending (can't execute yet /
                     // Parse written but not Bind / statement still Parsing) undo
@@ -2250,10 +2255,9 @@ impl PostgresSQLConnection {
                                     return;
                                 }
                                 StatementStatus::Parsing => {
-                                    // we are still parsing, lets wait for it to be prepared or failed
+                                    // Replies go to the requests in queue order: write nothing past this one.
                                     self.note_request_pending();
-                                    offset += 1;
-                                    continue;
+                                    break;
                                 }
                             }
                         } else {
@@ -2431,7 +2435,7 @@ impl PostgresSQLConnection {
                         return Err(err);
                     }
                     let js_err = self.undecodable_row_error(err)?;
-                    request.on_undecodable_row(js_err, self.global());
+                    request.reject_in_flight(js_err, self.global());
                     return Ok(());
                 }
 
@@ -2455,7 +2459,7 @@ impl PostgresSQLConnection {
                     Ok(result) => result,
                     Err(err) => {
                         let js_err = self.undecodable_row_error(err)?;
-                        request.on_undecodable_row(js_err, self.global());
+                        request.reject_in_flight(js_err, self.global());
                         return Ok(());
                     }
                 };
@@ -2995,9 +2999,8 @@ impl PostgresSQLConnection {
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.
 
-                self.finish_request(&request);
                 self.update_ref();
-                request.on_js_error(js_err, self.global());
+                request.reject_in_flight(js_err, self.global());
             }
             MessageType::PortalSuspended => {
                 reader.skip_message()?;

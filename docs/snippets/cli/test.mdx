@@ -6,6 +6,10 @@ bun test <patterns>
 
 ### Execution Control
 
+<ParamField path="--check" type="boolean">
+  Type check the test files and everything they import. No test runs if there are type errors
+</ParamField>
+
 <ParamField path="--timeout" type="number" default="5000">
   Set the per-test timeout in milliseconds (default 5000)
 </ParamField>

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
@@ -95,26 +96,54 @@ try {
 // through. The kernel does not fail that MOD either. The mode stands in for
 // any error that ends the writer inside write(), such as EBADF after other
 // code closed the writer's fd by number.
+//
+// FAIL_EPOLL_CTL=pidfd-add fails the EPOLL_CTL_ADD of a pidfd and nothing else:
+// the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
+// first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
+// what no mode fails, which is nearer to what running out of watches does.
+//
+// FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
+// kernel answers for a child that runs as another user by now (sudo, su).
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <signal.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 static long (*real_syscall)(long, ...);
 static int writer_mods;
+static int pidfd_adds;
+
+static int is_pidfd(int fd) {
+  char path[32], target[32];
+  snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+  ssize_t length = readlink(path, target, sizeof(target) - 1);
+  if (length < 0) return 0;
+  target[length] = 0;
+  return strstr(target, "pidfd") != NULL;
+}
 
 static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
   if (!mode) return op == EPOLL_CTL_ADD && (event->events & EPOLLOUT);
+  int writers_too = strcmp(mode, "pidfd-and-writer-add") == 0;
+  if (writers_too && op == EPOLL_CTL_ADD && (event->events & EPOLLOUT)) return 1;
+  if (writers_too || strcmp(mode, "pidfd-add") == 0) {
+    if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
+    const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
+    return pidfd_adds++ >= (skip ? atoi(skip) : 0);
+  }
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
   if (strcmp(mode, "pty-writer-mod") == 0) {
@@ -139,6 +168,16 @@ long syscall(long number, ...) {
   if (!real_syscall) real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
   return real_syscall(number, a1, a2, a3, a4, a5, a6);
 }
+
+int kill(pid_t pid, int signal) {
+  static int (*real_kill)(pid_t, int);
+  if (signal == SIGKILL && getenv("FAIL_SIGKILL")) {
+    errno = EPERM;
+    return -1;
+  }
+  if (!real_kill) real_kill = (int (*)(pid_t, int))dlsym(RTLD_NEXT, "kill");
+  return real_kill(pid, signal);
+}
 `;
 
 // The argument selects what to construct; the report is the error it threw
@@ -149,10 +188,26 @@ long syscall(long number, ...) {
 // pidfd once its exit is reaped, a wrapper that becomes collectable only then)
 // get a bounded window; whatever is still there when it lapses is reported.
 const FIXTURE = /* js */ `
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { heapStats } from "bun:jsc";
 const kind = process.argv[2];
 const openFds = () => readdirSync("/proc/self/fd").length;
+// Running or zombie. The kernel lists them per spawning thread, which is this one, unless it was built without
+// CONFIG_PROC_CHILDREN. Then every process is asked for its parent, the field after its parenthesized name and state.
+const children = () => {
+  try {
+    return readFileSync("/proc/self/task/" + process.pid + "/children", "utf8").split(" ").filter(Boolean);
+  } catch {}
+  return readdirSync("/proc").filter(pid => {
+    if (!/^\\d+$/.test(pid)) return false;
+    try {
+      const stat = readFileSync("/proc/" + pid + "/stat", "utf8");
+      return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] === String(process.pid);
+    } catch {
+      return false;
+    }
+  });
+};
 const wrappers = () => {
   const counts = heapStats().objectTypeCounts;
   return (counts.Subprocess ?? 0) + (counts.Terminal ?? 0);
@@ -169,6 +224,10 @@ if (kind !== "terminal") {
   globalThis.anchor.push(child);
   await child.exited;
 }
+// The first spawnSync of a process creates the loop it waits on, which stays. Without pipes: theirs are closed on
+// the work pool, some time after the call.
+const quiet = { cmd: ["true"], stdin: "ignore", stdout: "ignore", stderr: "ignore" };
+if (kind.includes("unwatchable") || kind.startsWith("sync-") || kind.endsWith("-running")) Bun.spawnSync(quiet);
 const fdBaseline = openFds();
 const wrapperBaseline = wrappers();
 
@@ -184,13 +243,66 @@ function writeToTerminal(writes) {
 
 let error = null;
 let write;
+let sync;
+let onExit;
+let shell;
 try {
   switch (kind) {
     case "stdin-pipe":
       Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
       break;
+    case "stdin-pipe-running":
+      Bun.spawn({ cmd: ["sleep", "1000"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      break;
     case "stdin-buffer":
       Bun.spawn({ cmd: ["true"], stdin: Buffer.from("data"), stdout: "ignore", stderr: "ignore" });
+      break;
+    case "stdin-buffer-running":
+      // Nobody dies of SIGURG.
+      Bun.spawn({
+        cmd: ["sleep", "1000"],
+        stdin: Buffer.from("data"),
+        stdout: "ignore",
+        stderr: "ignore",
+        killSignal: "SIGURG",
+      });
+      break;
+    case "sync-stdin-buffer":
+      // The child outlives the call unless the call ends it.
+      Bun.spawnSync({ cmd: ["sleep", "1000"], stdin: Buffer.from("data"), stdout: "pipe", stderr: "pipe" });
+      break;
+    // Each of these children outlives the call unless the call ends it, however late the call gets to watching it.
+    case "unwatchable":
+      await Bun.spawn({ cmd: ["sleep", "1000"], stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
+      break;
+    case "unwatchable-stdin-buffer":
+      onExit = 0;
+      Bun.spawn({
+        cmd: ["sleep", "1000"],
+        stdin: Buffer.from("data"),
+        stdout: "pipe",
+        stderr: "pipe",
+        onExit() {
+          onExit++;
+        },
+      });
+      break;
+    case "shell-unwatchable":
+      shell = (await Bun.$\`sleep 1000\`.nothrow().quiet()).exitCode;
+      break;
+    case "shell-stdin-buffer-running":
+      shell = (await Bun.$\`sleep 1000 < \${Buffer.from("data")}\`.nothrow().quiet()).exitCode;
+      break;
+    case "sync-unwatchable-stdin":
+      // More than its pipes hold, so that it is still being written.
+      Bun.spawnSync({ cmd: ["cat"], stdin: Buffer.alloc(4_000_000), stdout: "pipe", stderr: "pipe" });
+      break;
+    case "sync-unwatchable-output":
+      // More than a pipe holds.
+      Bun.spawnSync({ cmd: ["sh", "-c", "head -c 1000000 /dev/zero; exec sleep 1000"], stdout: "pipe", stderr: "pipe" });
+      break;
+    case "sync-unwatchable-timeout":
+      Bun.spawnSync({ cmd: ["sleep", "1000"], stdin: "ignore", stdout: "ignore", stderr: "ignore", timeout: 1 });
       break;
     case "terminal":
       new Bun.Terminal({});
@@ -208,12 +320,29 @@ try {
 } catch (e) {
   error = { code: e.code, message: e.message };
 }
+if (kind === "sync-stdin-buffer") {
+  // Read before anything else runs: spawnSync has no later moment to clean up in.
+  sync = {
+    children: children().length,
+    next: Bun.spawnSync({ cmd: ["echo", "next"], stderr: "pipe" }).stdout.toString(),
+  };
+} else if (kind === "stdin-buffer-running") {
+  // This one is watched, so the event loop is what reaps it.
+  const deadline = performance.now() + 2000;
+  while (children().length > 0 && performance.now() < deadline) await Bun.sleep(5);
+  sync = { children: children().length, next: Bun.spawnSync(quiet).exitCode };
+} else if (kind.includes("unwatchable") || kind.endsWith("-running")) {
+  // A call without pipes or a timeout waits for its child without registering it.
+  sync = { children: children().length, next: Bun.spawnSync(quiet).exitCode };
+}
+// What the call left behind. FAIL_SIGKILL=1 goes for this too.
+for (const pid of children()) process.kill(Number(pid), process.env.FAIL_SIGKILL ? "SIGTERM" : "SIGKILL");
 const deadline = performance.now() + 2000;
 while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -256,9 +385,24 @@ describe.skipIf(!isLinux || !cc)(
   () => {
     test.concurrent("Bun.spawn with stdin: 'pipe' closes the stdin pipe exactly once", async () => {
       expect(await runFixture("stdin-pipe")).toEqual({
-        // The spawn bindings report a failed stdin setup generically, so only
-        // the fact that it threw is pinned down here.
-        report: { error: { message: expect.any(String) }, leakedFds: 0, leakedWrappers: 0 },
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("Bun.spawn with stdin: 'pipe' ends its child", async () => {
+      expect(await runFixture("stdin-pipe-running")).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: 0 },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
         stderr: "",
         exitCode: 0,
       });
@@ -282,6 +426,35 @@ describe.skipIf(!isLinux || !cc)(
       },
     );
 
+    // The call throws, so nobody is handed the child to end it another way than with its killSignal.
+    test.concurrent("Bun.spawn with a buffer stdin ends a child that its killSignal does not", async () => {
+      expect(await runFixture("stdin-buffer-running", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: 0 },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // A sync Subprocess has no wrapper for the GC to finalize, and the call that made it is the only one that can reap
+    // its child. What it left registered on spawnSync's loop was still there for the next call.
+    test.concurrent("Bun.spawnSync with a buffer stdin ends its child and releases its pipes", async () => {
+      expect(await runFixture("sync-stdin-buffer", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: "next\n" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.concurrent("new Bun.Terminal() closes the pty fds exactly once", async () => {
       expect(await runFixture("terminal")).toEqual({
         report: { error: { message: "Failed to start terminal writer" }, leakedFds: 0, leakedWrappers: 0 },
@@ -291,6 +464,131 @@ describe.skipIf(!isLinux || !cc)(
     });
   },
 );
+
+// A child whose exit cannot be registered for was reported as exited with that error while it was still running, and
+// nothing reaped it afterwards. Bun.spawnSync blocked in wait4() instead, where nothing serves the child's stdio and
+// no timeout applies: a child that reads its stdin or fills a pipe never exits. Either way the child is ended now.
+describe.skipIf(!isLinux || !cc)(
+  "a child whose pidfd fails to register with the event loop is ended and reaped",
+  () => {
+    test.concurrent.each([
+      ["Bun.spawn", "unwatchable"],
+      ["Bun.spawnSync of a child that reads its stdin", "sync-unwatchable-stdin"],
+      ["Bun.spawnSync of a child that fills its stdout", "sync-unwatchable-output"],
+      ["Bun.spawnSync with a timeout", "sync-unwatchable-timeout"],
+    ])("%s", async (_, kind) => {
+      // The one let through is the fixture's own child, which it takes its baseline after.
+      const env = { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_SKIP: "1", BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" };
+      expect(await runFixture(kind, env)).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          sync: { children: 0, next: 0 },
+          leakedFds: 0,
+          leakedWrappers: 0,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// Both at once. The exit was reported, which runs onExit, with the writer's error already thrown: onExit's call took the
+// exception with it, and Bun.spawn returned nothing at all to a caller that went on to crash on it.
+test.skipIf(!isLinux || !cc)(
+  "Bun.spawn throws when neither its child's pidfd nor its stdin writer registers",
+  async () => {
+    const env = {
+      FAIL_EPOLL_CTL: "pidfd-and-writer-add",
+      FAIL_EPOLL_CTL_SKIP: "1",
+      BUN_FEATURE_FLAG_DISABLE_MEMFD: "1",
+    };
+    expect(await runFixture("unwatchable-stdin-buffer", env)).toEqual({
+      report: {
+        error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+        sync: { children: 0, next: 0 },
+        onExit: 1,
+        leakedFds: 0,
+        leakedWrappers: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+// The shell did not finish a command whose exit came with an error, and left one it gave up on starting to its SIGTERM
+// and unreaped.
+describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished", () => {
+  test.concurrent.each([
+    ["whose pidfd fails to register", "shell-unwatchable", { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_SKIP: "1" }],
+    ["whose stdin writer fails to register", "shell-stdin-buffer-running", { BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" }],
+  ])("%s", async (_, kind, env) => {
+    expect(await runFixture(kind, env)).toEqual({
+      report: { error: null, sync: { children: 0, next: 0 }, shell: 1, leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// The same goes for what the CLI runs: it reported the script as failed and exited, and the script ran on.
+describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with the event loop is ended", () => {
+  test.concurrent.each(["run --parallel forever", "run --filter=* forever", "install"])("bun %s", async args => {
+    using project = tempDir("unwatchable-script", { "watched": "" });
+    // By then its parent is somebody else, so it is told by its command line.
+    const watched = join(String(project), "watched");
+    const forever = `exec tail -f ${watched}`;
+    await Bun.write(
+      join(String(project), "package.json"),
+      JSON.stringify({ name: "unwatchable-script", scripts: { forever, postinstall: forever } }),
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args.split(" ")],
+      cwd: String(project),
+      env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    let exitCode: number | undefined;
+    let left: string[] = [];
+    try {
+      exitCode = await proc.exited;
+    } finally {
+      left = readdirSync("/proc").filter(pid => {
+        try {
+          return /^\d+$/.test(pid) && readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(watched);
+        } catch {
+          return false;
+        }
+      });
+      for (const pid of left) process.kill(Number(pid), "SIGKILL");
+    }
+    expect({ left: left.length, failed: exitCode !== 0 }).toEqual({ left: 0, failed: true });
+  });
+});
+
+// Ending such a child takes a SIGKILL, and reaping it a wait for that to take effect. One that cannot be signalled
+// would be waited for until it exits by itself, with the thread blocked or no deadline to end the wait: it is left.
+describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be signalled is not waited for", () => {
+  const unwatchable = { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_SKIP: "1" };
+  test.concurrent.each([
+    ["Bun.spawnSync of a child whose pidfd fails to register", "sync-unwatchable-timeout", unwatchable, 0],
+    ["Bun.spawnSync whose stdin writer fails to register", "sync-stdin-buffer", {}, "next\n"],
+  ])("%s", async (_, kind, env, next) => {
+    expect(await runFixture(kind, { ...env, FAIL_SIGKILL: "1", BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" })).toEqual({
+      report: {
+        error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+        sync: { children: 1, next },
+        leakedFds: 0,
+        leakedWrappers: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
 
 // The POSIX reader reports a failed registration by calling on_reader_error
 // from inside start(), and start() still returns Ok. Terminal's reader

@@ -151,6 +151,29 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
+        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+            // Nothing is bundled, so nothing has been resolved or read.
+            let entry_points = this_transpiler.options.entry_points.iter();
+            let checked = options::TypeChecked {
+                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
+                tsconfig: ctx.args.tsconfig_override.as_deref(),
+                conditions: &ctx.args.conditions,
+                loaders: &this_transpiler.options.loaders,
+                entry_points: &mut entry_points.map(|path| &**path),
+                sources: &mut core::iter::empty(),
+            };
+            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ))?;
+                Output::flush();
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+        } else if ctx.bundler_options.check {
+            this_transpiler.options.type_check =
+                Some(crate::cli::check_command::check_for_build_command);
+        }
+
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 

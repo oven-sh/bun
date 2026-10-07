@@ -1146,6 +1146,22 @@ impl fmt::Display for ElapsedFormatter {
 // either leaking raw escapes or stripping color, so callers must use
 // `print_elapsed` / `print_elapsed_stdout` (or `ElapsedFormatter` directly).
 
+/// What [`print_elapsed`] prints, for a caller that formats into a buffer.
+pub struct Elapsed {
+    pub colors: bool,
+    pub ms: f64,
+}
+
+impl fmt::Display for Elapsed {
+    fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (colors, ms) = (self.colors, self.ms);
+        match ms.round() as i64 {
+            0..=1500 => crate::write_pretty!(w, colors, "<r><d>[<b>{:>.2}ms<r><d>]<r>", ms),
+            _ => crate::write_pretty!(w, colors, "<r><d>[<b>{:>.2}s<r><d>]<r>", ms / 1000.0),
+        }
+    }
+}
+
 pub fn print_elapsed(elapsed: f64) {
     match elapsed.round() as i64 {
         0..=1500 => pretty_error!("<r><d>[<b>{:>.2}ms<r><d>]<r>", elapsed),

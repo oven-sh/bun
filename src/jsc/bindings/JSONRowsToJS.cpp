@@ -1,6 +1,6 @@
 // Builds JS values from the immutable JSON AST rows (`E::JsonTape`, see src/ast/e.rs) that the
 // JSON and XML parsers produce: one call for the whole document, keys and short values through
-// the VM's JSONAtomStringCache the way JSON.parse does it.
+// the VM's JSONCache the way JSON.parse does it.
 
 #include "root.h"
 
@@ -8,7 +8,7 @@
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSONAtomStringCacheInlines.h>
+#include <JavaScriptCore/JSONCacheInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/text/ASCIIFastPath.h>
 
@@ -165,10 +165,10 @@ private:
     ALWAYS_INLINE Identifier identifier(const RowStr& key)
     {
         if constexpr (encoding == RowEncoding::Utf16)
-            return Identifier::fromString(m_vm, m_vm.jsonAtomStringCache.makeIdentifier(utf16(key)));
+            return Identifier::fromString(m_vm, m_vm.jsonCache().makeIdentifier(m_vm, utf16(key)));
         else {
             if (encoding == RowEncoding::Latin1 || charactersAreAllASCII(key.span())) [[likely]]
-                return Identifier::fromString(m_vm, m_vm.jsonAtomStringCache.makeIdentifier(key.span()));
+                return Identifier::fromString(m_vm, m_vm.jsonCache().makeIdentifier(m_vm, key.span()));
             JSValue decoded = utf8(key);
             if (!decoded) [[unlikely]]
                 return {};
@@ -180,11 +180,11 @@ private:
     {
         JSString* result;
         if constexpr (encoding == RowEncoding::Utf16)
-            result = m_vm.jsonAtomStringCache.tryMakeJSString(utf16(s));
+            result = m_vm.jsonCache().tryMakeJSString(m_vm, utf16(s));
         else {
             if (encoding == RowEncoding::Utf8 && !charactersAreAllASCII(s.span())) [[unlikely]]
                 return utf8(s);
-            result = m_vm.jsonAtomStringCache.tryMakeJSString(s.span());
+            result = m_vm.jsonCache().tryMakeJSString(m_vm, s.span());
         }
         if (!result) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(m_vm);

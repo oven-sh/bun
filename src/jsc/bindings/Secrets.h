@@ -42,11 +42,11 @@ enum class Persist : uint8_t {
 
 // Sync platform-specific implementations (used by threadpool)
 // These use CString for thread safety - only called from threadpool
-Error setPassword(const WTF::CString& service, const WTF::CString& name, WTF::CString&& password, bool allowUnrestrictedAccess, Persist persist);
+Error setPassword(const WTF::UTF8CString& service, const WTF::UTF8CString& name, WTF::UTF8CString&& password, bool allowUnrestrictedAccess, Persist persist);
 
 // Use a WTF::Vector here so we can zero out the memory.
-std::optional<WTF::Vector<uint8_t>> getPassword(const WTF::CString& service, const WTF::CString& name, Error& error);
-bool deletePassword(const WTF::CString& service, const WTF::CString& name, Error& error);
+std::optional<WTF::Vector<uint8_t>> getPassword(const WTF::UTF8CString& service, const WTF::UTF8CString& name, Error& error);
+bool deletePassword(const WTF::UTF8CString& service, const WTF::UTF8CString& name, Error& error);
 
 } // namespace Secrets
 

@@ -1,0 +1,590 @@
+//! Use before declaration: 2448 2449 2450 2729.
+
+use super::*;
+use crate::bind::{ClassOwner, Decl, Parent, PatParent, SymbolId};
+use std::ops::ControlFlow::{Break, Continue};
+
+impl Checker<'_, '_> {
+    pub(super) fn check_use_before_declaration(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.kind == FileKind::Declaration {
+            return;
+        }
+        let index = self.exprs_by_kind(file);
+        // Indexed by symbol: the end of its declaring statement, plus one. Every branch of the rule
+        // accepts a use after that position, so most uses cost one comparison. 0: not computed yet.
+        let mut declared_by = vec![0u32; bound.symbols.len()];
+        for &e in index.of(ExprTag::Ident) {
+            let local = bound.expr_symbol[e.idx()];
+            if local.is_none() {
+                continue;
+            }
+            if declared_by[local.idx()] == 0 {
+                declared_by[local.idx()] = self.end_of_declaring_statement(file, local);
+            }
+            if declared_by[local.idx()] == 0 {
+                let result = self.files().sym(file, local);
+                let statement = hir
+                    .find_ancestor(self.block_scoped_declaration(file, result), |n| {
+                        matches!(hir.data(n), NodeData::Stmt(_))
+                    });
+                declared_by[local.idx()] = match hir.data(statement) {
+                    NodeData::Stmt(s) => hir[s].loc.end + 1,
+                    // No declaration, so no use can precede it.
+                    NodeData::None => 1,
+                    _ => u32::MAX,
+                };
+            }
+            if hir[e].pos + 1 < declared_by[local.idx()]
+                && !bound.is_unchecked(e.idx())
+                && !self.is_name_with_object_assignment_initializer(file, e)
+            {
+                let result = self.files().sym(file, local);
+                self.check_resolved_block_scoped_variable(file, result, hir.node(e));
+            }
+        }
+        // In a file without a class, only the contents of member initializers and static blocks are
+        // checked.
+        if hir.classes.is_empty() && !hir.members.iter().any(|m| m.init.is_some()) {
+            return;
+        }
+        // `isInPropertyInitializerOrClassStaticBlock` can only be true inside one of these.
+        let is_place =
+            |m: &&Member| matches!(m.kind, MemberKind::Property | MemberKind::StaticBlock);
+        let places = Places::new(hir.members.iter().filter(is_place).map(|m| m.loc));
+        for &e in index.of(ExprTag::Dot) {
+            if !bound.is_unchecked(e.idx()) {
+                let may_be_in_place = places.contain(hir[e].pos);
+                self.check_property_not_used_before_declaration(file, e, may_be_in_place);
+            }
+        }
+    }
+
+    /// The end of the statement that declares `local`, plus one, read from the binder's tables.
+    /// Only for a symbol with a single declaration that is a variable, a class statement or an
+    /// enum. 0: the tables do not determine it.
+    fn end_of_declaring_statement(&self, file: FileId, local: SymbolId) -> u32 {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = &bound.symbols[local.idx()];
+        let is_block_scoped = SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM;
+        if !symbol.flags.intersects(is_block_scoped) {
+            return 1;
+        }
+        let &[declaration] = &symbol.decls[..] else {
+            return 0;
+        };
+        // Cases that `block_scoped_declaration` handles specially.
+        let is_more = SymFlags::MERGED
+            | SymFlags::FUNCTION
+            | SymFlags::FUNCTION_SCOPED_VARIABLE
+            | SymFlags::ASSIGNMENT;
+        if symbol.flags.intersects(is_more) {
+            return 0;
+        }
+        let mut statement = match declaration {
+            Decl::Var(mut name) => loop {
+                match bound.pat_parent[name.idx()] {
+                    PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => name = outer,
+                    PatParent::Var(d) => break bound.var_stmt[d.idx()],
+                    PatParent::Param(_) | PatParent::None => return 0,
+                }
+            },
+            Decl::Class(c) => match bound.class_owner[c.idx()] {
+                ClassOwner::Stmt(s) => s,
+                ClassOwner::Expr(_) => return 0,
+            },
+            Decl::Enum(e) => hir[e].stmt,
+            _ => return 0,
+        };
+        if statement.is_none() {
+            return 0;
+        }
+        // The head of a `for` is in that statement.
+        if let Parent::Stmt(around) = bound.stmt_parent[statement.idx()]
+            && matches!(
+                hir[around].kind,
+                StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. }
+            )
+        {
+            statement = around;
+        }
+        hir[statement].loc.end + 1
+    }
+
+    /// The declaration `checkResolvedBlockScopedVariable` checks for `result`. `NONE`: it checks
+    /// none, or one in another file than `file`, where the order cannot be determined.
+    fn block_scoped_declaration(&self, file: FileId, result: Sym) -> Node {
+        let files = self.files();
+        let flags = files.flags(result);
+        let is_function =
+            SymFlags::FUNCTION | SymFlags::FUNCTION_SCOPED_VARIABLE | SymFlags::ASSIGNMENT;
+        if !flags.intersects(SymFlags::BLOCK_SCOPED_VARIABLE | SymFlags::CLASS | SymFlags::ENUM)
+            || flags.contains(SymFlags::CLASS) && flags.intersects(is_function)
+        {
+            return Node::NONE;
+        }
+        let declarations = files.decls_of(result);
+        let declaration = declarations
+            .iter()
+            .map(|&(of, d)| (of, files.hir(of).node(d)))
+            .find(|&(of, d)| {
+                let hir = files.hir(of);
+                hir.is_block_or_catch_scoped(d)
+                    || hir.kind(d).is_class_like()
+                    || hir.kind(d) == Kind::EnumDeclaration
+            });
+        match declaration {
+            Some((of, declaration)) if of == file => declaration,
+            _ => Node::NONE,
+        }
+    }
+
+    /// `checkResolvedBlockScopedVariable`
+    pub(super) fn check_resolved_block_scoped_variable(
+        &mut self,
+        file: FileId,
+        result: Sym,
+        error_location: Node,
+    ) {
+        let hir = self.hir(file);
+        let (flags, declaration) = (
+            self.files().flags(result),
+            self.block_scoped_declaration(file, result),
+        );
+        if declaration.is_none()
+            || hir.is_ambient(declaration)
+            || self.is_block_scoped_name_declared_before_use(file, declaration, error_location)
+        {
+            return;
+        }
+        let code = if flags.contains(SymFlags::BLOCK_SCOPED_VARIABLE) {
+            2448
+        } else if flags.contains(SymFlags::CLASS) {
+            2449
+        } else if flags.contains(SymFlags::REGULAR_ENUM) || self.p.files.options.isolated_modules {
+            2450
+        } else {
+            return;
+        };
+        let at = self.get_error_range_for_node(file, error_location);
+        let name = hir.start(hir.name(declaration));
+        self.report_use_before_declaration(file, at, code, name, declaration);
+    }
+
+    /// Reports the error `code` at `at`, with the source text at `name` as its argument, and the
+    /// related information `'{0}' is declared here.` at `declaration`.
+    fn report_use_before_declaration(
+        &mut self,
+        file: FileId,
+        at: (u32, u32),
+        code: u32,
+        name: u32,
+        declaration: Node,
+    ) {
+        let (from, to) = self.get_error_range_for_node(file, declaration);
+        let name = self.declaration_name_at(file, name);
+        let related = self.declared_here((file, from, to), name.clone());
+        self.error_at((file, at.0, at.1), code, &[Arg::Bytes(&name)])
+            .add_related_info(related);
+    }
+
+    /// `isBlockScopedNameDeclaredBeforeUse` for a declaration and a use in `file`.
+    pub(super) fn is_block_scoped_name_declared_before_use(
+        &mut self,
+        file: FileId,
+        declaration: Node,
+        usage: Node,
+    ) -> bool {
+        let hir = self.hir(file);
+        let emits_standard_class_fields = self.p.files.options.emit_standard_class_fields;
+        let has_legacy_decorators = self.p.files.options.experimental_decorators;
+        let container = hir.get_enclosing_block_scope_container(declaration);
+        if hir.is_in_jsdoc(hir.start(usage))
+            || hir.is_in_type_query(usage)
+            || hir.is_in_ambient_or_type_node(usage)
+        {
+            return true;
+        }
+        let kind = hir.kind(declaration);
+        let is_property = kind == Kind::PropertyDeclaration;
+        let is_same_class =
+            || hir.get_containing_class(declaration) == hir.get_containing_class(usage);
+        if hir.start(declaration) <= hir.start(usage)
+            && !(is_property
+                && hir.is_this_property(hir.parent(usage))
+                && hir.initializer(declaration).is_none()
+                && !hir.flags(declaration).contains(Flags::DEFINITE))
+        {
+            return match kind {
+                Kind::BindingElement => {
+                    let error_binding_element = hir.find_ancestor_kind(usage, Kind::BindingElement);
+                    if error_binding_element.is_some() {
+                        return error_binding_element != declaration
+                            || hir.start(declaration) < hir.start(error_binding_element);
+                    }
+                    let variable = hir.find_ancestor_kind(declaration, Kind::VariableDeclaration);
+                    self.is_block_scoped_name_declared_before_use(file, variable, usage)
+                }
+                Kind::VariableDeclaration => {
+                    !is_immediately_used_in_initializer_of_block_scoped_variable(
+                        hir,
+                        declaration,
+                        usage,
+                        container,
+                    )
+                }
+                _ if kind.is_class_like() => {
+                    let is_in_declaration = |n: Node, levels: u32| {
+                        (0..levels).fold(n, |n, _| hir.parent(n)) == declaration
+                    };
+                    let found = hir.find_ancestor(usage, |n| {
+                        let parent = hir.kind(hir.parent(n));
+                        n == declaration
+                            || hir.kind(n) == Kind::ComputedPropertyName && is_in_declaration(n, 2)
+                            || !has_legacy_decorators
+                                && hir.kind(n) == Kind::Decorator
+                                && (is_in_declaration(n, 1)
+                                    || matches!(
+                                        parent,
+                                        Kind::MethodDeclaration
+                                            | Kind::GetAccessor
+                                            | Kind::SetAccessor
+                                            | Kind::PropertyDeclaration
+                                    ) && is_in_declaration(n, 2)
+                                    || parent == Kind::Parameter && is_in_declaration(n, 3))
+                    });
+                    if found.is_none() || found == declaration {
+                        return true;
+                    }
+                    if hir.kind(found) != Kind::Decorator {
+                        return false;
+                    }
+                    let deferred = hir.find_ancestor(usage, |n| {
+                        n == found
+                            || hir.kind(n).is_function_like()
+                                && hir.get_immediately_invoked_function_expression(n).is_none()
+                    });
+                    deferred.is_some() && deferred != found
+                }
+                Kind::PropertyDeclaration => !self
+                    .is_property_immediately_referenced_within_declaration(
+                        file,
+                        declaration,
+                        usage,
+                        false,
+                    ),
+                _ if hir.is_parameter_property_declaration(declaration) => {
+                    !(emits_standard_class_fields
+                        && is_same_class()
+                        && self.is_used_in_function_or_instance_property(
+                            file,
+                            usage,
+                            declaration,
+                            container,
+                        ))
+                }
+                _ => true,
+            };
+        }
+        let is_export_equals = |n: Node| matches!(hir.data(n), NodeData::Stmt(s) if matches!(hir[s].kind, StmtKind::ExportAssign(_)));
+        if hir.kind(hir.parent(usage)) == Kind::ExportSpecifier
+            || is_export_equals(hir.parent(usage))
+            || is_export_equals(usage)
+        {
+            return true;
+        }
+        if !self.is_used_in_function_or_instance_property(file, usage, declaration, container) {
+            return false;
+        }
+        !(emits_standard_class_fields
+            && hir.get_containing_class(declaration).is_some()
+            && (is_property || hir.is_parameter_property_declaration(declaration))
+            && self.is_property_immediately_referenced_within_declaration(
+                file,
+                declaration,
+                usage,
+                true,
+            ))
+    }
+
+    /// `isUsedInFunctionOrInstanceProperty`
+    fn is_used_in_function_or_instance_property(
+        &mut self,
+        file: FileId,
+        usage: Node,
+        declaration: Node,
+        container: Node,
+    ) -> bool {
+        let hir = self.hir(file);
+        let is_property = hir.kind(declaration) == Kind::PropertyDeclaration;
+        let is_same_class =
+            || hir.get_containing_class(usage) == hir.get_containing_class(declaration);
+        let found = hir.find_ancestor_or_quit(usage, |current| {
+            if current == container {
+                return Break(false);
+            }
+            let is_found = |is_found: bool| if is_found { Break(true) } else { Continue(()) };
+            if hir.kind(current).is_function_like() {
+                return is_found(
+                    hir.get_immediately_invoked_function_expression(current)
+                        .is_none(),
+                );
+            }
+            if hir.kind(current) == Kind::ClassStaticBlockDeclaration {
+                return is_found(hir.start(declaration) < hir.start(usage));
+            }
+            let parent = hir.parent(current);
+            if hir.kind(parent) == Kind::PropertyDeclaration && hir.initializer(parent) == current {
+                if !hir.is_static(parent) {
+                    if !(is_property && !hir.is_static(declaration)) || !is_same_class() {
+                        return Break(true);
+                    }
+                } else if hir.kind(declaration) == Kind::MethodDeclaration
+                    || is_property
+                        && is_same_class()
+                        && matches!(
+                            hir.kind(hir.name(declaration)),
+                            Kind::Identifier | Kind::PrivateIdentifier
+                        )
+                        && self.is_property_initialized_in_static_blocks(
+                            file,
+                            declaration,
+                            hir.start(current),
+                        )
+                {
+                    return Break(true);
+                }
+            }
+            if hir.kind(parent) == Kind::Decorator && hir.expression(parent) == current {
+                let decorated = hir.parent(parent);
+                let class = match hir.kind(decorated) {
+                    Kind::Parameter => hir.parent(hir.parent(decorated)),
+                    Kind::MethodDeclaration => hir.parent(decorated),
+                    _ => return Continue(()),
+                };
+                return Break(self.is_used_in_function_or_instance_property(
+                    file,
+                    class,
+                    declaration,
+                    container,
+                ));
+            }
+            Continue(())
+        });
+        found.is_some()
+    }
+
+    /// `isPropertyInitializedInStaticBlocks` for the property `declaration` and the static blocks
+    /// of its class that start no later than `end`.
+    fn is_property_initialized_in_static_blocks(
+        &mut self,
+        file: FileId,
+        declaration: Node,
+        end: u32,
+    ) -> bool {
+        let hir = self.hir(file);
+        let NodeData::Member(member) = hir.data(declaration) else {
+            return false;
+        };
+        let name = hir.text(hir.name(declaration));
+        let class = hir.class_of(hir.parent(declaration));
+        let blocks = hir[class]
+            .members
+            .iter()
+            .filter(|&block| hir[block].kind == MemberKind::StaticBlock && hir[block].start <= end);
+        let mut ty = None;
+        for block in blocks {
+            let ty = *ty.get_or_insert_with(|| self.type_of_member_declaration(file, member));
+            if self.is_assigned_in_constructor(file, hir[block].func, name, ty) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `isPropertyImmediatelyReferencedWithinDeclaration`
+    fn is_property_immediately_referenced_within_declaration(
+        &self,
+        file: FileId,
+        declaration: Node,
+        usage: Node,
+        stop_at_any_property_declaration: bool,
+    ) -> bool {
+        let hir = self.hir(file);
+        if self.end_of_node(file, usage) > self.end_of_node(file, declaration) {
+            return false;
+        }
+        let mut node = usage;
+        while node.is_some() && node != declaration {
+            match hir.kind(node) {
+                Kind::ArrowFunction => return false,
+                Kind::PropertyDeclaration => {
+                    let class = hir.parent(declaration);
+                    return stop_at_any_property_declaration
+                        && (hir.kind(declaration) == Kind::PropertyDeclaration
+                            && hir.parent(node) == class
+                            || hir.is_parameter_property_declaration(declaration)
+                                && hir.parent(node) == hir.parent(class));
+                }
+                Kind::Block
+                    if matches!(
+                        hir.kind(hir.parent(node)),
+                        Kind::MethodDeclaration | Kind::GetAccessor | Kind::SetAccessor
+                    ) =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+            node = hir.parent(node);
+        }
+        true
+    }
+
+    /// `prop.ValueDeclaration`
+    fn value_declaration_of(&self, prop: &Prop) -> Option<(FileId, Node)> {
+        let (file, decl) = self.value_declaration_of_prop(prop)?;
+        Some((file, self.hir(file).node(decl)))
+    }
+
+    /// `checkPropertyNotUsedBeforeDeclaration` for the property access `e`.
+    fn check_property_not_used_before_declaration(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        may_be_in_place: bool,
+    ) {
+        let hir = self.hir(file);
+        let ExprKind::Dot {
+            obj,
+            name,
+            name_pos,
+            ..
+        } = hir[e].kind
+        else {
+            return;
+        };
+        let (node, right) = (hir.node(e), hir.name(hir.node(e)));
+        let is_in_place = may_be_in_place
+            && hir.is_in_property_initializer_or_class_static_block(node, false)
+            && !hir.kind(hir.expression(node)).is_access_expression();
+        // Elsewhere only a class declaration exported by a namespace is considered.
+        if !is_in_place && hir.classes.is_empty() {
+            return;
+        }
+        let object = self.type_of_expr(file, obj);
+        if !is_in_place
+            && !matches!(
+                self.data(object),
+                TypeData::Anon {
+                    origin: Origin::Module(_)
+                        | Origin::Namespace { .. }
+                        | Origin::ClassStatic(_)
+                        | Origin::Function(_)
+                        | Origin::EnumObject(_),
+                    ..
+                }
+            )
+        {
+            return;
+        }
+        let object = self.apparent_type(object);
+        let Some((prop, _)) = self.prop_ref(object, name) else {
+            return;
+        };
+        let Some((declared_in, declaration)) = self.value_declaration_of(prop) else {
+            return;
+        };
+        // A declaration in another file counts as declared.
+        if declared_in != file
+            || self.is_block_scoped_name_declared_before_use(file, declaration, right)
+        {
+            return;
+        }
+        let (kind, flags) = (hir.kind(declaration), hir.flags(declaration));
+        // `isOptionalPropertyDeclaration`
+        let is_optional = kind == Kind::PropertyDeclaration
+            && flags.contains(Flags::OPTIONAL)
+            && !flags.contains(Flags::ACCESSOR);
+        let code = if is_in_place
+            && !is_optional
+            && !(kind == Kind::MethodDeclaration && flags.contains(Flags::STATIC))
+            && (self.p.files.options.use_define_for_class_fields
+                || !self.is_property_declared_in_ancestor_class(file, declaration, name))
+        {
+            2729
+        } else if kind == Kind::ClassDeclaration && !hir.is_ambient(declaration) {
+            2449
+        } else {
+            return;
+        };
+        self.report_use_before_declaration(file, (name_pos, 0), code, name_pos, declaration);
+    }
+
+    /// `isPropertyDeclaredInAncestorClass` for the property `name` that `declaration` declares.
+    fn is_property_declared_in_ancestor_class(
+        &mut self,
+        file: FileId,
+        declaration: Node,
+        name: Atom,
+    ) -> bool {
+        let hir = self.hir(file);
+        let class = hir.class_of(hir.get_containing_class(declaration));
+        if class.is_none() {
+            return false;
+        }
+        let sym = self
+            .files()
+            .sym(file, self.bound(file).class_symbol[class.idx()]);
+        let Some(&base) = self.base_types(sym).first() else {
+            return false;
+        };
+        let base = self.apparent_type(base);
+        matches!(self.prop_ref(base, name), Some((property, _)) if Self::value_declaration(property).is_some())
+    }
+
+    /// `GetImmediatelyInvokedFunctionExpression(f) != nil`
+    pub(super) fn is_immediately_invoked(&self, file: FileId, f: FnId) -> bool {
+        self.bound(file)
+            .get_immediately_invoked_function_expression(self.hir(file), f)
+            .is_some()
+    }
+}
+
+/// `isImmediatelyUsedInInitializerOfBlockScopedVariable`
+fn is_immediately_used_in_initializer_of_block_scoped_variable(
+    hir: &File,
+    declaration: Node,
+    usage: Node,
+    container: Node,
+) -> bool {
+    let grandparent = hir.parent(hir.parent(declaration));
+    let kind = hir.kind(grandparent);
+    matches!(
+        kind,
+        Kind::VariableStatement | Kind::ForStatement | Kind::ForOfStatement
+    ) && is_same_scope_descendent_of(hir, usage, declaration, container)
+        || matches!(kind, Kind::ForInStatement | Kind::ForOfStatement)
+            && is_same_scope_descendent_of(hir, usage, hir.expression(grandparent), container)
+}
+
+/// `isSameScopeDescendentOf`
+fn is_same_scope_descendent_of(hir: &File, initial: Node, parent: Node, stop_at: Node) -> bool {
+    if parent.is_none() {
+        return false;
+    }
+    let found = hir.find_ancestor_or_quit(initial, |n| {
+        if n == parent {
+            return Break(true);
+        }
+        let is_deferred = || {
+            hir.get_immediately_invoked_function_expression(n).is_none()
+                || hir.flags(n).intersects(Flags::ASYNC | Flags::GENERATOR)
+        };
+        if n == stop_at || hir.kind(n).is_function_like() && is_deferred() {
+            return Break(false);
+        }
+        Continue(())
+    });
+    found.is_some()
+}

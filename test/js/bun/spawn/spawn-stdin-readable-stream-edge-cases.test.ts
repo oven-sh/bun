@@ -11,7 +11,7 @@
 
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 describe("spawn stdin ReadableStream edge cases", () => {
   test("ReadableStream with exception in pull", async () => {
@@ -475,5 +475,137 @@ describe("spawn stdin ReadableStream edge cases", () => {
       expect(stdout).toBe("test input");
       expect(await proc.exited).toBe(0);
     }
+  });
+
+  // A direct stream is pulled from while Bun.spawn attaches it, which is after the child was started. The call then
+  // fails with a child nobody was handed, which kept running.
+  test("a direct ReadableStream whose pull() throws inside Bun.spawn ends the child", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        try {
+          Bun.spawn({
+            cmd: [process.execPath, "-e", "setTimeout(() => {}, 30_000)"],
+            stdin: new ReadableStream({ type: "direct", pull() { throw new Error("from pull"); } }),
+            stdout: "ignore",
+            stderr: "inherit",
+          });
+        } catch (e) {
+          console.log(e.message);
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The child holds stderr as well, so that only ends once both are gone.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "from pull", stderr: "", exitCode: 0 });
+  });
+
+  // Nor is it a zombie. In the second case its pipes and its pidfd stayed open too.
+  describe.skipIf(!isLinux)("a direct ReadableStream that fails inside Bun.spawn leaves nothing behind", () => {
+    const spawnWith = (pull: string) => /* js */ `
+      Bun.spawn({
+        cmd: ["sleep", "1000"],
+        stdin: new ReadableStream({ type: "direct", pull() { ${pull} } }),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    `;
+    const prelude = /* js */ `
+      import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+      // Those a child's stdio and pidfd are, and none of what a thread's event loop opens.
+      const openFds = () =>
+        readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return /^socket:|pidfd/.test(readlinkSync("/proc/self/fd/" + fd));
+          } catch {
+            return false;
+          }
+        }).length;
+      const baseline = openFds();
+      // Running or zombie. The kernel lists them per thread, and hands those of a thread that ends to another one,
+      // unless it was built without CONFIG_PROC_CHILDREN. Then every process is asked for its parent, the field after
+      // its parenthesized name and state.
+      function children() {
+        let pids;
+        try {
+          pids = readdirSync("/proc/self/task").flatMap(tid =>
+            readFileSync("/proc/self/task/" + tid + "/children", "utf8").split(" ").filter(Boolean),
+          );
+        } catch {
+          pids = readdirSync("/proc").filter(pid => {
+            if (!/^\\d+$/.test(pid)) return false;
+            try {
+              const stat = readFileSync("/proc/" + pid + "/stat", "utf8");
+              return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1] === String(process.pid);
+            } catch {
+              return false;
+            }
+          });
+        }
+        for (const pid of pids) {
+          try {
+            process.kill(Number(pid), "SIGKILL");
+          } catch {}
+        }
+        return pids.length;
+      }
+      // Some are closed on the work pool, or by a collection.
+      async function leakedFds() {
+        const deadline = performance.now() + 2000;
+        while (openFds() > baseline && performance.now() < deadline) {
+          Bun.gc(true);
+          await Bun.sleep(5);
+        }
+        return openFds() - baseline;
+      }
+    `;
+
+    async function run(code: string) {
+      await using proc = spawn({ cmd: [bunExe(), "-e", prelude + code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    // Only an Error was taken for a failure. With anything else the call returned a Subprocess whose stdin never ended.
+    test.concurrent.each([`new Error("from pull")`, `42`, `"from pull"`, `{ code: "E" }`])(
+      "when pull() throws %s",
+      async thrown => {
+        const result = await run(/* js */ `
+          const thrown = ${thrown};
+          let caught;
+          try {
+            ${spawnWith(`throw thrown;`)}
+          } catch (e) {
+            caught = e === thrown;
+          }
+          console.log(JSON.stringify({ caught, children: children(), leakedFds: await leakedFds() }));
+        `);
+        expect(result).toEqual({
+          stdout: JSON.stringify({ caught: true, children: 0, leakedFds: 0 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.concurrent("when pull() ends the worker", async () => {
+      const result = await run(/* js */ `
+        import { Worker } from "node:worker_threads";
+        const worker = new Worker(${JSON.stringify(spawnWith(`process.exit(7);`))}, { eval: true });
+        const workerExitCode = await new Promise(resolve => worker.on("exit", resolve));
+        console.log(JSON.stringify({ workerExitCode, children: children(), leakedFds: await leakedFds() }));
+      `);
+      expect(result).toEqual({
+        stdout: JSON.stringify({ workerExitCode: 7, children: 0, leakedFds: 0 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });

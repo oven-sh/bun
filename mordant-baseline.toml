@@ -161,6 +161,9 @@
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
+[bun_sema]
+"parallel_vecs:src/sema/check/mod.rs" = 1
+
 [bun_simdutf_sys]
 "unused_pub:src/simdutf_sys/simdutf.rs" = 1
 

@@ -64,19 +64,19 @@ static CredentialFramework* credentialFramework()
 }
 
 // Convert CString to Windows wide string
-static std::vector<wchar_t> cstringToWideChar(const CString& str)
+static std::vector<wchar_t> cstringToWideChar(const UTF8CString& str)
 {
-    if (!str.data()) {
+    if (str.isNull()) {
         return std::vector<wchar_t>(1, L'\0');
     }
 
-    int wideLength = MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, nullptr, 0);
+    int wideLength = MultiByteToWideChar(CP_UTF8, 0, str.legacyCStringPointer(), -1, nullptr, 0);
     if (wideLength == 0) {
         return std::vector<wchar_t>(1, L'\0');
     }
 
     std::vector<wchar_t> result(wideLength);
-    MultiByteToWideChar(CP_UTF8, 0, str.data(), -1, result.data(), wideLength);
+    MultiByteToWideChar(CP_UTF8, 0, str.legacyCStringPointer(), -1, result.data(), wideLength);
     return result;
 }
 
@@ -154,7 +154,7 @@ static DWORD toCredPersist(Persist persist)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Persist persist)
+Error setPassword(const UTF8CString& service, const UTF8CString& name, UTF8CString&& password, bool allowUnrestrictedAccess, Persist persist)
 {
     Error err;
 
@@ -177,7 +177,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     }
 
     // Create target name as "service/name"
-    String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
     auto nameNameWide = cstringToWideChar(name);
@@ -196,12 +196,12 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     // Best-effort scrub of plaintext from memory.
     if (password.length())
-        SecureZeroMemory(const_cast<char*>(password.data()), password.length());
+        SecureZeroMemory(const_cast<char*>(password.legacyCStringPointer()), password.length());
 
     return err;
 }
 
-std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err)
+std::optional<WTF::Vector<uint8_t>> getPassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -212,7 +212,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
         return std::nullopt;
     }
 
-    String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 
@@ -238,7 +238,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     return result;
 }
 
-bool deletePassword(const CString& service, const CString& name, Error& err)
+bool deletePassword(const UTF8CString& service, const UTF8CString& name, Error& err)
 {
     err = Error {};
 
@@ -249,7 +249,7 @@ bool deletePassword(const CString& service, const CString& name, Error& err)
         return false;
     }
 
-    String targetName = makeString(String::fromUTF8(service.data()), "/"_s, String::fromUTF8(name.data()));
+    String targetName = makeString(String::fromUTF8(service.span()), "/"_s, String::fromUTF8(name.span()));
     auto targetNameUtf8 = targetName.utf8();
     auto targetNameWide = cstringToWideChar(targetNameUtf8);
 

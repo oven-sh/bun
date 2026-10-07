@@ -741,6 +741,23 @@ impl InitCommand {
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
+            // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
+            if !minimal && is_type_script_entry_point(&fields.entry_point) {
+                let mut scripts = dependency_map(object, b"scripts");
+                if scripts.get(b"typecheck").is_none() {
+                    // `bun check` runs a `check` script, if there is one.
+                    let command: &[u8] = match scripts.get(b"check") {
+                        Some(_) => b"bun --check",
+                        None => b"bun check",
+                    };
+                    scripts
+                        .data
+                        .as_e_object_mut()
+                        .put_string(&bump, b"typecheck", command)?;
+                    object.put(&bump, b"scripts", scripts)?;
+                }
+            }
+
             if needs_dependencies {
                 let mut dependencies_object = dependency_map(object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
@@ -874,23 +891,14 @@ impl InitCommand {
 
                 if steps.write_tsconfig {
                     'brk: {
-                        let extname = bun_paths::extension(&fields.entry_point);
-                        let loader = options::DEFAULT_LOADERS
-                            .get(extname)
-                            .copied()
-                            .unwrap_or(bun_ast::Loader::Ts);
-                        let filename: &[u8] = if loader.is_type_script() {
-                            b"tsconfig.json"
-                        } else {
-                            b"jsconfig.json"
-                        };
-                        if Assets::create_full(
-                            Assets::TSCONFIG_JSON,
-                            filename,
-                            " (for editor autocomplete)",
-                            &[],
-                        )
-                        .is_err()
+                        let (filename, what_for): (&[u8], _) =
+                            if is_type_script_entry_point(&fields.entry_point) {
+                                (b"tsconfig.json", " (for bun check and editor autocomplete)")
+                            } else {
+                                (b"jsconfig.json", " (for editor autocomplete)")
+                            };
+                        if Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[])
+                            .is_err()
                         {
                             break 'brk;
                         }
@@ -923,6 +931,10 @@ impl InitCommand {
                             "<cyan>bun run {}<r>\n\n",
                             bstr::BStr::new(&fields.entry_point),
                         );
+                    }
+
+                    if is_type_script_entry_point(&fields.entry_point) {
+                        bun_core::pretty!("To type check, run:\n\n    <cyan>bun check<r>\n\n");
                     }
                 }
 
@@ -1916,6 +1928,14 @@ fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Exp
         .get(key)
         .filter(|value| value.data.is_e_object())
         .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+}
+
+fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
+    options::DEFAULT_LOADERS
+        .get(bun_paths::extension(entry_point))
+        .copied()
+        .unwrap_or(bun_ast::Loader::Ts)
+        .is_type_script()
 }
 
 /// Refuse entry-point paths that would escape the project directory

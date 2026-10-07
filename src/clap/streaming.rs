@@ -63,6 +63,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
+    pub(crate) unknown_long_flags_are_positional: bool,
 }
 
 // ArgIterator is the
@@ -323,6 +324,20 @@ where
             }));
         }
         if full_arg.starts_with(b"--") {
+            if self.unknown_long_flags_are_positional {
+                let name = &full_arg[2..];
+                let name = &name[..strings::index_of_char_usize(name, b'=').unwrap_or(name.len())];
+                if !self
+                    .params
+                    .iter()
+                    .any(|param| param.names.matches_long(name))
+                {
+                    return Ok(Some(ArgInfo {
+                        arg: full_arg,
+                        kind: ArgKind::Positional,
+                    }));
+                }
+            }
             return Ok(Some(ArgInfo {
                 arg: &full_arg[2..],
                 kind: ArgKind::Long,
@@ -368,6 +383,7 @@ mod tests {
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
             short_aliases: &[],
+            unknown_long_flags_are_positional: false,
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -401,6 +417,7 @@ mod tests {
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
             short_aliases: &[],
+            unknown_long_flags_are_positional: false,
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -850,5 +867,47 @@ mod tests {
             &[b"--cc"],
             b"The argument '--cc' requires a value but none was supplied\n",
         );
+    }
+
+    #[test]
+    fn unknown_long_flags_are_positional() {
+        let params: [clap::Param<u8>; 2] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names {
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                takes_value: clap::Values::Many,
+                ..Default::default()
+            },
+        ];
+        let args: &[&[u8]] = &[b"--q", b"x", b"--aa", b"--q=1", b"--", b"--aa"];
+        let mut iter = args::SliceIterator { remain: args };
+        let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
+            unknown_long_flags_are_positional: true,
+            params: &params,
+            iter: &mut iter,
+            state: State::Normal,
+            positional: None,
+            diagnostic: None,
+        };
+        let mut seen: Vec<(u8, Option<&[u8]>)> = Vec::new();
+        while let Some(arg) = c.next().expect("unreachable") {
+            seen.push((arg.param.id, arg.value));
+        }
+        let expected: &[(u8, Option<&[u8]>)] = &[
+            (1, Some(b"--q")),
+            (1, Some(b"x")),
+            (0, None),
+            (1, Some(b"--q=1")),
+            (1, Some(b"--aa")),
+        ];
+        assert_eq!(expected, &seen[..]);
     }
 }

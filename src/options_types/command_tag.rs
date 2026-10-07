@@ -14,6 +14,7 @@ pub enum Tag {
     AutoCommand,
     BuildCommand,
     BunxCommand,
+    CheckCommand,
     CreateCommand,
     DiscordCommand,
     GetCompletionsCommand,
@@ -57,6 +58,7 @@ impl Tag {
             Tag::AutoCommand => b'a',
             Tag::BuildCommand => b'b',
             Tag::BunxCommand => b'B',
+            Tag::CheckCommand => b'K',
             Tag::CreateCommand => b'c',
             Tag::DiscordCommand => b'D',
             Tag::GetCompletionsCommand => b'g',
@@ -142,6 +144,7 @@ impl Tag {
         Self::AutoCommand,
         Self::BuildCommand,
         Self::BunxCommand,
+        Self::CheckCommand,
         Self::CreateCommand,
         Self::DiscordCommand,
         Self::GetCompletionsCommand,
@@ -261,6 +264,7 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::DedupeCommand as usize] = false;
     a[Tag::PruneCommand as usize] = false;
     a[Tag::BunxCommand as usize] = false;
+    a[Tag::CheckCommand as usize] = false;
     a[Tag::CreateCommand as usize] = false;
     a[Tag::InfoCommand as usize] = false;
     a[Tag::InstallCommand as usize] = false;

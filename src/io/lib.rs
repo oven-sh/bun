@@ -312,7 +312,7 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // `uv_loop_t` whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
 bun_dispatch::link_interface! {
-    pub EventLoopCtx[Js, Mini] {
+    pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
         // `alloc_file_poll() -> *mut FilePoll` was removed — it
@@ -415,10 +415,15 @@ impl EventLoopCtx {
         self.file_polls_mut().get_init(value)
     }
 
+    /// What a `FilePoll` keeps of the ctx it was made with; [`get_vm_ctx`] gives that ctx back.
     #[inline]
     #[cfg(not(windows))]
-    pub(crate) fn is_js(&self) -> bool {
-        self.is(EventLoopCtxKind::Js)
+    pub(crate) fn allocator_type(&self) -> AllocatorType {
+        match self.kind {
+            EventLoopCtxKind::Js => AllocatorType::Js,
+            EventLoopCtxKind::Mini => AllocatorType::Mini,
+            EventLoopCtxKind::SpawnSync => AllocatorType::SpawnSync,
+        }
     }
     #[inline]
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {

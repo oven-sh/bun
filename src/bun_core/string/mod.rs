@@ -1705,6 +1705,117 @@ pub mod lexer {
         is_identifier_continue(c)
     }
     pub use crate::string::identifier::{is_identifier, is_identifier_utf16};
+
+    use crate::strings::{self, CodePoint};
+
+    /// `peekUnicodeEscape`: the code point that the escape at `at`, a backslash, decodes to, and its
+    /// length in bytes.
+    #[cold]
+    pub fn peek_unicode_escape(contents: &[u8], at: usize) -> Option<(CodePoint, usize)> {
+        let t = &contents[at..];
+        if t.get(1) != Some(&b'u') {
+            return None;
+        }
+        let value = |digits: &[u8]| {
+            digits.iter().fold(0u32, |v, &d| {
+                v.saturating_mul(16).saturating_add(u32::from(
+                    crate::fmt::hex_digit_value_u32(u32::from(d)).unwrap_or(0),
+                ))
+            })
+        };
+        if t.get(2) == Some(&b'{') {
+            let n = t[3..].iter().take_while(|c| c.is_ascii_hexdigit()).count();
+            if n == 0 || t.get(3 + n) != Some(&b'}') {
+                return None;
+            }
+            let v = value(&t[3..3 + n]);
+            (v <= 0x10FFFF).then_some((v as CodePoint, n + 4))
+        } else {
+            let d = t.get(2..6)?;
+            d.iter()
+                .all(u8::is_ascii_hexdigit)
+                .then(|| (value(d) as CodePoint, 6))
+        }
+    }
+
+    #[inline]
+    pub fn is_whitespace(codepoint: CodePoint) -> bool {
+        // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
+        matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
+            || strings::is_unicode_space_separator(codepoint as u32)
+    }
+
+    /// `IsWhiteSpaceSingleLine`: accepts two more code points than ECMAScript's WhiteSpace.
+    pub fn is_white_space_single_line(codepoint: CodePoint) -> bool {
+        is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
+    }
+
+    /// `charAndSize`: the character at `at` and its length in bytes, 0 at the end. As in
+    /// `utf8.DecodeRuneInString`, a byte that starts no valid UTF-8 sequence is U+FFFD
+    /// (`utf8.RuneError`) with the length 1.
+    #[inline]
+    pub fn char_and_size(text: &[u8], at: usize) -> (CodePoint, usize) {
+        match text.get(at) {
+            None => (-1, 0),
+            Some(&first) if first < 0x80 => (first as CodePoint, 1),
+            Some(_) => {
+                let sequence = &text[at..text.len().min(at + 4)];
+                let valid = sequence.utf8_chunks().next().map_or("", |it| it.valid());
+                match valid.chars().next() {
+                    Some(c) => (c as CodePoint, c.len_utf8()),
+                    None => (strings::UNICODE_REPLACEMENT as CodePoint, 1),
+                }
+            }
+        }
+    }
+
+    /// `DecodeLastRuneInString`, and the offset where that character starts.
+    pub fn last_char(text: &[u8]) -> (CodePoint, usize) {
+        let start = text.iter().rposition(|&c| c & 0xC0 != 0x80).unwrap_or(0);
+        match char_and_size(text, start) {
+            (c, size) if start + size == text.len() => (c, start),
+            _ => (strings::UNICODE_REPLACEMENT as CodePoint, text.len() - 1),
+        }
+    }
+
+    /// End of the run of characters starting at `at` for which `is` returns true.
+    pub fn end_of_run(text: &[u8], mut at: usize, is: impl Fn(CodePoint) -> bool) -> usize {
+        loop {
+            match char_and_size(text, at) {
+                (c, size @ 1..) if is(c) => at += size,
+                _ => return at,
+            }
+        }
+    }
+
+    /// `IsLineBreak` of the first character of `text`.
+    pub fn starts_with_line_break(text: &[u8]) -> bool {
+        matches!(text.first(), Some(b'\n' | b'\r'))
+            || text.starts_with(b"\xE2\x80\xA8")
+            || text.starts_with(b"\xE2\x80\xA9")
+    }
+
+    /// TypeScript's `IsIdentifierPart`. Its table has U+30FB and U+FF65, which are ID_Continue
+    /// since Unicode 15.1 and which `is_identifier_part` leaves out on purpose
+    /// (`ID_Continue_mistake` in misctools/gen-unicode-table.ts).
+    #[inline]
+    pub fn is_type_script_identifier_part(c: CodePoint) -> bool {
+        is_identifier_part(c as u32) || matches!(c, 0x30FB | 0xFF65)
+    }
+
+    /// `scanIdentifierParts`: the end of the identifier that continues at `at`.
+    pub fn scan_identifier_parts(text: &[u8], mut at: usize) -> usize {
+        loop {
+            at = end_of_run(text, at, is_type_script_identifier_part);
+            if text.get(at) != Some(&b'\\') {
+                return at;
+            }
+            match peek_unicode_escape(text, at) {
+                Some((c, len)) if is_type_script_identifier_part(c) => at += len,
+                _ => return at,
+            }
+        }
+    }
 }
 
 pub mod lexer_tables {

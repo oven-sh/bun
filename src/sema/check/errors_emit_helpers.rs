@@ -1,0 +1,1186 @@
+//! Helpers that are imported instead of emitted: 2343 2354 2807, and 2306 for a `tslib` that is not
+//! a module.
+//!
+//! With `importHelpers`, syntax the target does not support is emitted as calls of functions
+//! imported from `tslib`, which must exist. Follows `checkExternalEmitHelpers`,
+//! `resolveHelpersModule`, `getHelperNames` and the callers of the first, of TypeScript 7.0.2's
+//! checker.go.
+//!
+//! A file requests each helper once, where `checkSourceFile` first reaches syntax that needs it. So
+//! the requesting positions are collected and sorted in the order it visits them: source order,
+//! except for nodes that `checkNodeDeferred` defers until everything else is checked. A class
+//! expression that is checked early, because its type is requested, is placed where that happened
+//! (`check_class_expression_external_helpers`). Any other expression is handled in its regular
+//! order.
+
+use super::sink::held;
+use super::*;
+use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
+use crate::resolve::{ModuleKind, ScriptTarget};
+
+// `ExternalEmitHelpers`, except the two that are never requested.
+const REST: u32 = 1 << 0;
+const DECORATE: u32 = 1 << 1;
+const METADATA: u32 = 1 << 2;
+const PARAM: u32 = 1 << 3;
+const AWAITER: u32 = 1 << 4;
+const AWAIT: u32 = 1 << 5;
+const ASYNC_GENERATOR: u32 = 1 << 6;
+const ASYNC_DELEGATOR: u32 = 1 << 7;
+const ASYNC_VALUES: u32 = 1 << 8;
+const EXPORT_STAR: u32 = 1 << 9;
+const IMPORT_STAR: u32 = 1 << 10;
+const IMPORT_DEFAULT: u32 = 1 << 11;
+const CLASS_PRIVATE_FIELD_GET: u32 = 1 << 13;
+const CLASS_PRIVATE_FIELD_SET: u32 = 1 << 14;
+const CLASS_PRIVATE_FIELD_IN: u32 = 1 << 15;
+const SET_FUNCTION_NAME: u32 = 1 << 16;
+const PROP_KEY: u32 = 1 << 17;
+const ADD_DISPOSABLE_RESOURCE_AND_DISPOSE_RESOURCES: u32 = 1 << 18;
+
+/// `externalHelpersModuleNameText`
+const TSLIB: &str = "tslib";
+
+/// `getHelperNames`
+fn helper_names(helper: u32, legacy_decorators: bool) -> &'static [&'static str] {
+    match helper {
+        REST => &["__rest"],
+        DECORATE if legacy_decorators => &["__decorate"],
+        DECORATE => &["__esDecorate", "__runInitializers"],
+        METADATA => &["__metadata"],
+        PARAM => &["__param"],
+        AWAITER => &["__awaiter"],
+        AWAIT => &["__await"],
+        ASYNC_GENERATOR => &["__asyncGenerator"],
+        ASYNC_DELEGATOR => &["__asyncDelegator"],
+        ASYNC_VALUES => &["__asyncValues"],
+        EXPORT_STAR => &["__exportStar"],
+        IMPORT_STAR => &["__importStar"],
+        IMPORT_DEFAULT => &["__importDefault"],
+        CLASS_PRIVATE_FIELD_GET => &["__classPrivateFieldGet"],
+        CLASS_PRIVATE_FIELD_SET => &["__classPrivateFieldSet"],
+        CLASS_PRIVATE_FIELD_IN => &["__classPrivateFieldIn"],
+        SET_FUNCTION_NAME => &["__setFunctionName"],
+        PROP_KEY => &["__propKey"],
+        ADD_DISPOSABLE_RESOURCE_AND_DISPOSE_RESOURCES => {
+            &["__addDisposableResource", "__disposeResources"]
+        }
+        _ => &[],
+    }
+}
+
+/// A call of `checkExternalEmitHelpers`.
+#[derive(Copy, Clone)]
+struct Request {
+    /// The number of deferrals on the way to it, and its position in the file.
+    order: (u32, u32),
+    /// `GetErrorRangeForNode` of the location.
+    start: u32,
+    end: u32,
+    helpers: u32,
+}
+
+/// `AllAccessorDeclarations`, without `GetAccessor`, which nothing here reads.
+struct AllAccessorDeclarations {
+    first_accessor: MemberId,
+    second_accessor: Option<MemberId>,
+    set_accessor: Option<MemberId>,
+}
+
+impl Checker<'_, '_> {
+    pub(super) fn check_external_emit_helpers(&mut self, file: FileId) {
+        let checked = std::mem::take(&mut self.checked_class_expressions);
+        let files = self.files();
+        let (options, module) = (&files.options, files.module(file));
+        // `IsEffectiveExternalModule`. All of a declaration file is ambient.
+        let is_commonjs_module = module.is_commonjs()
+            && (options.module == ModuleKind::CommonJs || options.module.is_node());
+        if !options.import_helpers
+            || module.hir.kind == FileKind::Declaration
+            || !(module.hir.has_module_syntax || is_commonjs_module)
+        {
+            return;
+        }
+        let mut requests = self.emit_helpers_requests(file, &checked);
+        requests.sort_by_key(|request| request.order);
+        // `externalHelpersModule`, `requestedExternalEmitHelpers`
+        let (mut resolved, mut requested) = (None, 0);
+        for request in requests {
+            // `checkWithStatement` does not check the body.
+            if module.hir.is_in_with(request.start) {
+                continue;
+            }
+            let found = *resolved
+                .get_or_insert_with(|| self.emit_helpers_resolve_helpers_module(file, request));
+            let Some(helpers_module) = found else {
+                return;
+            };
+            let unchecked = request.helpers & !requested;
+            requested |= request.helpers;
+            let helpers = (0..u32::BITS).map(|bit| 1u32 << bit);
+            for helper in helpers.filter(|&helper| unchecked & helper != 0) {
+                for &name in helper_names(helper, options.experimental_decorators) {
+                    let symbol = files
+                        .atoms
+                        .lookup(name.as_bytes())
+                        .and_then(|name| files.module_export(helpers_module, name))
+                        .filter(|&symbol| files.means(symbol, SymFlags::VALUE));
+                    let mut args = vec![TSLIB.as_bytes().to_vec(), name.as_bytes().to_vec()];
+                    let code = match symbol {
+                        None => 2343,
+                        Some(symbol) => {
+                            let arity = match helper {
+                                CLASS_PRIVATE_FIELD_GET => 3,
+                                CLASS_PRIVATE_FIELD_SET => 4,
+                                _ => continue,
+                            };
+                            if self
+                                .emit_helpers_has_signature_with_arity_greater_than(symbol, arity)
+                            {
+                                continue;
+                            }
+                            args.push(super::sink::number_text(arity + 1));
+                            2807
+                        }
+                    };
+                    self.add_diagnostic(Reported::new(
+                        (file, request.start, request.end),
+                        code,
+                        held(args),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// `resolveHelpersModule`
+    fn emit_helpers_resolve_helpers_module(
+        &mut self,
+        file: FileId,
+        request: Request,
+    ) -> Option<Sym> {
+        let mode = self.files().module(file).default_mode;
+        // `GetImportHelpersImportSpecifier`: the specifier of the synthetic import the loader
+        // added, which has no import clause and is nowhere in the text.
+        let location = SpecifierUse {
+            spec: known::tslib,
+            pos: u32::MAX,
+            kind: SpecifierKind::Import,
+            mode,
+        };
+        let error_node = (file, request.start, request.end);
+        let site = SpecifierSite::default();
+        if !self.resolve_external_module_at(file, location, site, error_node, Some(2354)) {
+            return None;
+        }
+        self.files()
+            .module_of_specifier_as(file, known::tslib, mode)
+    }
+
+    /// `hasSignatureWithArityGreaterThan` for the symbol `symbol` aliases (`resolveSymbol`).
+    fn emit_helpers_has_signature_with_arity_greater_than(
+        &mut self,
+        symbol: Sym,
+        arity: usize,
+    ) -> bool {
+        let files = self.files();
+        let target = if files.is_non_local_alias(symbol) {
+            files.resolve_alias(symbol)
+        } else {
+            Some(symbol)
+        };
+        let Some(target) = target else {
+            return false;
+        };
+        // `getSignaturesOfSymbol`
+        let decls = files.decls(target);
+        for (i, &(file, decl)) in decls.iter().enumerate() {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            if i > 0
+                && let (of, Decl::Fn(previous)) = decls[i - 1]
+                && of == file
+                && !matches!(self.hir(file)[f].body, FnBody::None)
+                && self.is_next_statement(file, previous, f)
+            {
+                continue;
+            }
+            let sig = self.sig_of_declaration(file, f);
+            let params = self.sig_params(sig);
+            if self.parameter_count(&params) > arity {
+                return true;
+            }
+        }
+        false
+    }
+
+    // ───────────────────────────── who asks ─────────────────────────────
+
+    /// `checked`: `Checker::checked_class_expressions`
+    fn emit_helpers_requests(
+        &mut self,
+        file: FileId,
+        checked: &[(FileId, ExprId, Option<CurrentNode>)],
+    ) -> Vec<Request> {
+        // `GetEmitScriptTarget`
+        let target = match self.files().options.target {
+            ScriptTarget::None => ScriptTarget::ES2025,
+            target => target,
+        };
+        let index = self.exprs_by_kind(file);
+        let mut requests = Vec::new();
+        self.emit_helpers_of_async_functions(file, target, &index, &mut requests);
+        self.emit_helpers_of_statements(file, target, &mut requests);
+        self.emit_helpers_of_rest_elements(file, target, &index, &mut requests);
+        self.emit_helpers_of_decorators(file, target, &mut requests);
+        self.emit_helpers_of_class_expressions(file, target, checked, &mut requests);
+        self.emit_helpers_of_private_names(file, target, &index, &mut requests);
+        requests
+    }
+
+    /// The number of times `checkNodeDeferred` defers a direct child of `at`. Deferred are the body
+    /// of a function expression, of an arrow function and of a method of an object literal, the
+    /// whole of an accessor of an object literal, the members of a class expression, the operand of
+    /// `void`, and the contents of a JSX element. `None`: it is ambient (`NodeFlagsAmbient`), or
+    /// it is in a type literal.
+    fn emit_helpers_span(&self, file: FileId, mut at: Parent) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut deferred = 0;
+        loop {
+            at = match at {
+                Parent::File => return Some(deferred),
+                Parent::Module(m) => {
+                    return (!hir[m].flags.contains(Flags::AMBIENT)).then_some(deferred);
+                }
+                Parent::VarInit(d) if hir[d].flags.contains(Flags::AMBIENT) => return None,
+                // `checkObjectLiteral` checks every computed name at once.
+                Parent::MethodKey(p) => Parent::Expr(bound.prop_owner[p.idx()]),
+                Parent::FnBody(f) => self.emit_helpers_out_of_fn(file, f, false, &mut deferred)?,
+                Parent::ParamDefault(p) | Parent::Decorator(_, DecoratorOwner::Param(p)) => {
+                    self.emit_helpers_out_of_fn(file, bound.param_fn[p.idx()], true, &mut deferred)?
+                }
+                Parent::MemberInit(m)
+                | Parent::MemberKey(m)
+                | Parent::Decorator(_, DecoratorOwner::Member(m)) => {
+                    if hir[m].flags.contains(Flags::AMBIENT) {
+                        return None;
+                    }
+                    let MemberOwner::Class(class) = bound.member_owner[m.idx()] else {
+                        at = self.parent_of_node(file, Parent::MemberInit(m));
+                        continue;
+                    };
+                    if let ClassOwner::Expr(_) = bound.class_owner[class.idx()] {
+                        deferred += 1;
+                    }
+                    Parent::ClassExtends(class)
+                }
+                Parent::EnumInit(m)
+                    if hir[bound.enum_member_owner[m.idx()]]
+                        .flags
+                        .contains(Flags::AMBIENT) =>
+                {
+                    return None;
+                }
+                Parent::ClassExtends(class)
+                | Parent::Decorator(class, DecoratorOwner::Class(_)) => {
+                    if hir[class].flags.contains(Flags::AMBIENT) {
+                        return None;
+                    }
+                    self.parent_of_node(file, Parent::ClassExtends(class))
+                }
+                Parent::None => return None,
+                Parent::Expr(e) if e.is_none() => return None,
+                Parent::Expr(e) => {
+                    deferred += match hir[e].kind {
+                        ExprKind::Unary { op: UnOp::Void, .. } => 1,
+                        ExprKind::Jsx(element) if hir[element].tag.is_some() => 1,
+                        _ => 0,
+                    };
+                    bound.expr_parent[e.idx()]
+                }
+                Parent::Stmt(s) if s.is_none() => return None,
+                other => self.parent_of_node(file, other),
+            };
+        }
+    }
+
+    /// `emit_helpers_span`, one step: out of the function `f`, from its parameters (`is_head`) or from its body.
+    fn emit_helpers_out_of_fn(
+        &self,
+        file: FileId,
+        f: FnId,
+        is_head: bool,
+        deferred: &mut u32,
+    ) -> Option<Parent> {
+        if f.is_none() {
+            return None;
+        }
+        let func = &self.hir(file)[f];
+        if func.flags.contains(Flags::AMBIENT) {
+            return None;
+        }
+        match self.bound(file).fns[f.idx()].owner {
+            FnOwner::Expr(e) => {
+                if !is_head || matches!(func.kind, FnKind::Getter | FnKind::Setter) {
+                    *deferred += 1;
+                }
+                Some(Parent::Expr(e))
+            }
+            FnOwner::Stmt(s) => Some(Parent::Stmt(s)),
+            FnOwner::Member(m) => Some(Parent::MemberInit(m)),
+            _ => None,
+        }
+    }
+
+    /// `checkSignatureDeclaration`, `checkYieldExpression`
+    fn emit_helpers_of_async_functions(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        index: &ExprsByKind,
+        requests: &mut Vec<Request>,
+    ) {
+        if target >= ScriptTarget::ES2018 {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for (i, func) in hir.fns.iter().enumerate() {
+            // `GetFunctionFlags`
+            if !func.flags.contains(Flags::ASYNC)
+                || !matches!(
+                    func.kind,
+                    FnKind::Decl | FnKind::Expr | FnKind::Method | FnKind::Arrow
+                )
+                || matches!(func.body, FnBody::None) && !func.flags.contains(Flags::MISSING_BODY)
+            {
+                continue;
+            }
+            let helpers = if func.flags.contains(Flags::GENERATOR) && func.kind != FnKind::Arrow {
+                AWAIT | ASYNC_GENERATOR
+            } else if target < ScriptTarget::ES2017 {
+                AWAITER
+            } else {
+                continue;
+            };
+            let f = FnId(i as u32);
+            let mut deferred = 0;
+            let Some(place) = self
+                .emit_helpers_out_of_fn(file, f, true, &mut deferred)
+                .and_then(|around| self.emit_helpers_span(file, around))
+            else {
+                continue;
+            };
+            let (start, end) = self.error_range_of_fn(file, f);
+            requests.push(Request {
+                order: (place + deferred, start),
+                start,
+                end,
+                helpers,
+            });
+        }
+        for &e in index.of(ExprTag::Yield) {
+            if matches!(hir[e].kind, ExprKind::Yield { star: true, .. })
+                && self
+                    .containing_generator(file, e)
+                    .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
+                && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
+            {
+                let start = self.error_start_inside_parentheses(file, e);
+                requests.push(Request {
+                    order: (deferred, start),
+                    start,
+                    end: self.error_end_inside_parentheses(file, e),
+                    helpers: AWAIT | ASYNC_DELEGATOR | ASYNC_VALUES,
+                });
+            }
+        }
+    }
+
+    /// `checkImportDeclaration`, `checkImportBinding`, `checkExportDeclaration`, `checkExportSpecifier`, `checkForOfStatement`,
+    /// `checkVariableDeclarationList`
+    fn emit_helpers_of_statements(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        requests: &mut Vec<Request>,
+    ) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        // `GetEmitModuleFormatOfFile(file) == ModuleKindCommonJS`
+        let is_commonjs = match files.module(file).implied_format {
+            ResolutionMode::Require => true,
+            ResolutionMode::Import => false,
+            ResolutionMode::None => files.options.module == ModuleKind::CommonJs,
+        };
+        for (i, stmt) in hir.stmts.iter().enumerate() {
+            let (s, around) = (StmtId(i as u32), bound.stmt_parent[i]);
+            // `checkGrammarModuleElementContext`, `checkExternalImportOrExportDeclaration`:
+            // elsewhere a module can only be referenced in an ambient context.
+            let is_module_element = is_commonjs && around == Parent::File;
+            let mut ask = |deferred: u32, (start, end): (u32, u32), helpers: u32| {
+                requests.push(Request {
+                    order: (deferred, stmt.start),
+                    start,
+                    end,
+                    helpers,
+                });
+            };
+            match stmt.kind {
+                StmtKind::Import(x) if is_module_element => {
+                    let import = hir[x];
+                    if !self.emit_helpers_import_clause_is_checked(file, s, &import) {
+                        continue;
+                    }
+                    let whole = (stmt.start, self.end_of_stmt(file, s));
+                    if import.namespace.is_some() {
+                        ask(0, whole, IMPORT_STAR);
+                        continue;
+                    }
+                    let mode = files.mode_of_import(file, import.mode);
+                    if files
+                        .module_of_specifier_as(file, import.spec, mode)
+                        .is_some()
+                    {
+                        for spec in import.named.iter() {
+                            let named = hir[spec];
+                            if named.imported == known::default {
+                                let name = named.pos.min(named.imported_pos);
+                                let start = self.emit_helpers_start_of_specifier(
+                                    file,
+                                    name,
+                                    named.type_only,
+                                );
+                                ask(
+                                    0,
+                                    (start, self.end_of_import_spec(file, spec)),
+                                    IMPORT_DEFAULT,
+                                );
+                            }
+                        }
+                    }
+                    if import.default.is_some() {
+                        ask(0, whole, IMPORT_DEFAULT);
+                    }
+                }
+                StmtKind::ExportNamed(x) if is_module_element && hir[x].spec.is_some() => {
+                    if !self.emit_helpers_has_only_string_attributes(file, s) {
+                        continue;
+                    }
+                    for spec in hir[x].items.iter() {
+                        let named = hir[spec];
+                        if named.local == known::default {
+                            let name = named.pos.min(named.local_pos);
+                            let start =
+                                self.emit_helpers_start_of_specifier(file, name, named.type_only);
+                            ask(
+                                0,
+                                (start, self.end_of_export_spec(file, spec)),
+                                IMPORT_DEFAULT,
+                            );
+                        }
+                    }
+                }
+                StmtKind::ExportStar { spec, alias, .. } if is_module_element && spec.is_some() => {
+                    if self.emit_helpers_has_only_string_attributes(file, s) {
+                        let whole = (stmt.start, self.end_of_stmt(file, s));
+                        ask(
+                            0,
+                            whole,
+                            if alias.is_some() {
+                                IMPORT_STAR
+                            } else {
+                                EXPORT_STAR
+                            },
+                        );
+                    }
+                }
+                StmtKind::ForOf { is_await: true, .. } if target < ScriptTarget::ES2018 => {
+                    // `getContainingFunctionOrClassStaticBlock`, `GetFunctionFlags`
+                    if self
+                        .enclosing_fn(file, around)
+                        .is_some_and(|f| hir[f].flags.contains(Flags::ASYNC))
+                        && let Some(deferred) = self.emit_helpers_span(file, around)
+                    {
+                        ask(
+                            deferred,
+                            (stmt.start, self.end_of_stmt(file, s)),
+                            ASYNC_VALUES,
+                        );
+                    }
+                }
+                StmtKind::Var(decls) if target < ScriptTarget::ESNext => {
+                    let Some(first) = decls.iter().next() else {
+                        continue;
+                    };
+                    if !matches!(hir[first].kind, VarKind::Using | VarKind::AwaitUsing) {
+                        continue;
+                    }
+                    let Some(deferred) = self.emit_helpers_span(file, Parent::VarInit(first))
+                    else {
+                        continue;
+                    };
+                    ask(
+                        deferred,
+                        (
+                            self.start_after_modifiers(file, s),
+                            self.end_of_var_decl_list(file, decls),
+                        ),
+                        ADD_DISPOSABLE_RESOURCE_AND_DISPOSE_RESOURCES,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether `checkImportDeclaration` reaches the bindings of the clause of `import`, the
+    /// top-level statement `s`: `checkExternalImportOrExportDeclaration` and
+    /// `checkGrammarImportClause` report no error for it.
+    fn emit_helpers_import_clause_is_checked(
+        &self,
+        file: FileId,
+        s: StmtId,
+        import: &Import,
+    ) -> bool {
+        let hir = self.hir(file);
+        if import.spec.is_none() || !self.emit_helpers_has_only_string_attributes(file, s) {
+            return false;
+        }
+        // `grammarErrorOnNode` reports nothing in a file with parse errors, and then no check bails
+        // out.
+        if has_parse_diagnostics(hir) {
+            return true;
+        }
+        if import.type_only {
+            let has_bindings = import.namespace.is_some() || !import.named.is_empty();
+            return !(import.default.is_some() && has_bindings)
+                && !import.named.iter().any(|spec| hir[spec].type_only);
+        }
+        !import.is_deferred
+            || import.default.is_none()
+                && import.namespace.is_some()
+                && matches!(
+                    self.files().options.module,
+                    ModuleKind::EsNext | ModuleKind::Preserve
+                )
+    }
+
+    /// `checkExternalImportOrExportDeclaration`: every import attribute of the statement `s` is given as a string literal.
+    fn emit_helpers_has_only_string_attributes(&self, file: FileId, s: StmtId) -> bool {
+        let hir = self.hir(file);
+        if hir.import_attributes.is_empty() {
+            return true;
+        }
+        let written = hir[s].start..self.end_of_stmt(file, s);
+        hir.import_attributes
+            .iter()
+            .filter(|attributes| written.contains(&attributes.0))
+            .all(|&(_, attributes)| match hir[attributes].kind {
+                ExprKind::Object(props) => props.iter().all(|p| {
+                    let value = hir[p].value;
+                    value.is_some() && matches!(hir[value].kind, ExprKind::String(_))
+                }),
+                _ => true,
+            })
+    }
+
+    /// Start of the import or export specifier whose first name is at `name`: its `type` modifier,
+    /// if it has one.
+    fn emit_helpers_start_of_specifier(&self, file: FileId, name: u32, type_only: bool) -> u32 {
+        let end = self.end_of_token_before(file, name) as usize;
+        let is_after_type =
+            type_only && end >= 4 && self.hir(file).text.get(end - 4..end) == Some(&b"type"[..]);
+        if is_after_type { end as u32 - 4 } else { name }
+    }
+
+    /// `checkVariableLikeDeclaration`, `checkObjectLiteralDestructuringPropertyAssignment`
+    fn emit_helpers_of_rest_elements(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        index: &ExprsByKind,
+        requests: &mut Vec<Request>,
+    ) {
+        if target >= ScriptTarget::ES2018 {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for (i, element) in hir.pat_props.iter().enumerate() {
+            let p = PatPropId(i as u32);
+            if element.is_rest
+                && let Some(deferred) = self
+                    .emit_helpers_span(file, self.parent_of_node(file, Parent::PatPropDefault(p)))
+            {
+                let (start, end) = self.error_range_of_pat_prop(file, p);
+                requests.push(Request {
+                    order: (deferred, start),
+                    start,
+                    end,
+                    helpers: REST,
+                });
+            }
+        }
+        for &e in index.of(ExprTag::Object) {
+            let ExprKind::Object(props) = hir[e].kind else {
+                continue;
+            };
+            // One that is not the last is rejected (2462).
+            let Some(last) = props.iter().next_back().map(|p| hir[p]) else {
+                continue;
+            };
+            if last.kind != PropKind::Spread
+                || last.value.is_none()
+                || !self.emit_helpers_is_destructured(file, e)
+            {
+                continue;
+            }
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+                continue;
+            };
+            let dots_end = self.end_of_token_before(file, self.start_of(file, last.value));
+            let start = dots_end.saturating_sub(3);
+            requests.push(Request {
+                order: (deferred, start),
+                start,
+                end: self.end_of_expr(file, last.value),
+                helpers: REST,
+            });
+        }
+    }
+
+    /// Whether `checkDestructuringAssignment` destructures the object literal `e`. Parenthesized,
+    /// it is an ordinary expression (`checkReferenceAssignment`).
+    fn emit_helpers_is_destructured(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut node = e;
+        loop {
+            if is_parenthesized(self.hir(file), node) {
+                return false;
+            }
+            match bound.expr_parent[node.idx()] {
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Assign {
+                        op: None, target, ..
+                    } => return target == node,
+                    ExprKind::Array(_) | ExprKind::Spread(_) => node = parent,
+                    _ => return false,
+                },
+                Parent::Prop(p) => {
+                    let owner = bound.prop_owner[p.idx()];
+                    if owner.is_none()
+                        || !matches!(hir[owner].kind, ExprKind::Object(_))
+                        || !matches!(hir[p].kind, PropKind::Init | PropKind::Spread)
+                    {
+                        return false;
+                    }
+                    node = owner;
+                }
+                // `for ({ ...rest } of list)`
+                Parent::Stmt(s) if s.is_some() => {
+                    return matches!(bound.stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+                        && matches!(hir[l].kind, StmtKind::ForOf { left, .. } if left == s));
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// The span from the `@` of the decorator whose expression is `e` to its end.
+    fn emit_helpers_range_of_decorator(&self, file: FileId, e: ExprId) -> (u32, u32) {
+        let written = self.decorator_position(file, e);
+        (written.at_sign, written.end)
+    }
+
+    /// `checkDecorators`, `markDecoratorAliasReferenced`
+    fn emit_helpers_of_decorators(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        requests: &mut Vec<Request>,
+    ) {
+        let (hir, bound, options) = (self.hir(file), self.bound(file), &self.files().options);
+        let mut decorated: Vec<DecoratorOwner> = Vec::new();
+        for &(owner, e) in hir.decorators.iter() {
+            // `firstDecorator`
+            if decorated.contains(&owner) {
+                continue;
+            }
+            decorated.push(owner);
+            // `NodeCanBeDecorated`
+            if bound.refused_decorators.contains(&e) {
+                continue;
+            }
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+                continue;
+            };
+            let mut helpers = 0;
+            if options.experimental_decorators {
+                helpers |= DECORATE;
+                if let DecoratorOwner::Param(_) = owner {
+                    helpers |= PARAM;
+                }
+            } else if target < ScriptTarget::ESNext {
+                helpers |= DECORATE;
+                match owner {
+                    DecoratorOwner::Class(class) => {
+                        if let ClassOwner::Stmt(_) = bound.class_owner[class.idx()]
+                            && (hir[class].name.is_none()
+                                || self
+                                    .emit_helpers_first_transformable_static_element(
+                                        file, class, target,
+                                    )
+                                    .is_some())
+                        {
+                            helpers |= SET_FUNCTION_NAME;
+                        }
+                    }
+                    DecoratorOwner::Member(m) => {
+                        let member = hir[m];
+                        if matches!(member.key, PropKey::Private(_))
+                            && (member.kind != MemberKind::Property
+                                || member.flags.contains(Flags::ACCESSOR))
+                        {
+                            helpers |= SET_FUNCTION_NAME;
+                        }
+                        if hir.text.get(member.name_pos as usize) == Some(&b'[') {
+                            helpers |= PROP_KEY;
+                        }
+                    }
+                    DecoratorOwner::Param(_) => {}
+                }
+            }
+            // `markLinkedReferences` does nothing under `verbatimModuleSyntax`.
+            if options.emit_decorator_metadata && !options.verbatim_module_syntax {
+                helpers |= METADATA;
+            }
+            if helpers == 0 {
+                continue;
+            }
+            let (start, end) = self.emit_helpers_range_of_decorator(file, e);
+            requests.push(Request {
+                order: (deferred, start),
+                start,
+                end,
+                helpers,
+            });
+        }
+    }
+
+    /// `GetAllAccessorDeclarations` for the accessor `accessor` of `class`.
+    fn get_all_accessor_declarations(
+        &self,
+        file: FileId,
+        class: ClassId,
+        accessor: MemberId,
+    ) -> AllAccessorDeclarations {
+        let hir = self.hir(file);
+        let node = hir[accessor];
+        let is_setter = node.kind == MemberKind::Setter;
+        let other_kind = if is_setter {
+            MemberKind::Getter
+        } else {
+            MemberKind::Setter
+        };
+        let name_of = |member: &Member| {
+            self.get_property_name_for_property_name_node(file, member.key, member.name_pos)
+        };
+        // "dynamic names can only be match up via checker symbol lookup"
+        let has_dynamic_name = matches!(node.key, PropKey::Computed(e) if is_dynamic_name(hir, e));
+        let other_accessor = if has_dynamic_name {
+            None
+        } else {
+            let accessor_name = name_of(&node);
+            let accessor_static = node.flags.contains(Flags::STATIC);
+            hir[class].members.iter().find(|&m| {
+                let member = &hir[m];
+                member.kind == other_kind
+                    && member.flags.contains(Flags::STATIC) == accessor_static
+                    && name_of(member) == accessor_name
+            })
+        };
+        // `GetAllAccessorDeclarationsForDeclaration`
+        let (first_accessor, second_accessor) = match other_accessor {
+            Some(other) if hir[other].start < node.start => (other, Some(accessor)),
+            _ => (accessor, other_accessor),
+        };
+        AllAccessorDeclarations {
+            first_accessor,
+            second_accessor,
+            set_accessor: if is_setter {
+                Some(accessor)
+            } else {
+                other_accessor
+            },
+        }
+    }
+
+    /// `ClassElementOrClassElementParameterIsDecorated` for the member `node` of the class
+    /// `parent`, with `useLegacyDecorators` as the options say: `refused_decorators` holds what
+    /// `NodeCanBeDecorated` answers for that.
+    fn class_element_or_class_element_parameter_is_decorated(
+        &self,
+        file: FileId,
+        node: MemberId,
+        parent: ClassId,
+    ) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let has_decorators = |accessor: &MemberId| {
+            let mut decorators = hir.decorators.iter();
+            decorators.any(|d| d.0 == DecoratorOwner::Member(*accessor))
+        };
+        let node_is_decorated = |of: DecoratorOwner| {
+            let mut decorators = hir.decorators.iter();
+            decorators.any(|d| d.0 == of && !bound.refused_decorators.contains(&d.1))
+        };
+        let parameters = match hir[node].kind {
+            MemberKind::Getter | MemberKind::Setter => {
+                let decls = self.get_all_accessor_declarations(file, parent, node);
+                let accessors = [Some(decls.first_accessor), decls.second_accessor];
+                let mut accessors = accessors.into_iter().flatten();
+                let first_accessor_with_decorators = accessors.find(has_decorators);
+                if first_accessor_with_decorators != Some(node) {
+                    return false;
+                }
+                decls
+                    .set_accessor
+                    .map_or(FnId::NONE, |setter| hir[setter].func)
+            }
+            MemberKind::Method => hir[node].func,
+            _ => FnId::NONE,
+        };
+        node_is_decorated(DecoratorOwner::Member(node))
+            || parameters.is_some()
+                && (hir[parameters].params.iter())
+                    .any(|parameter| node_is_decorated(DecoratorOwner::Param(parameter)))
+    }
+
+    /// `getFirstTransformableStaticClassElement`: `GetErrorRangeForNode` of it.
+    fn emit_helpers_first_transformable_static_element(
+        &self,
+        file: FileId,
+        class: ClassId,
+        target: ScriptTarget,
+    ) -> Option<(u32, u32)> {
+        // `willTransformPrivateElementsOrClassStaticBlocks`. Otherwise decorators are not transformed either.
+        if target >= ScriptTarget::ESNext {
+            return None;
+        }
+        let (hir, bound, options) = (self.hir(file), self.bound(file), &self.files().options);
+        // `NodeIsDecorated`
+        let decorator_of = |owner: DecoratorOwner| {
+            hir.decorators
+                .iter()
+                .find(|d| d.0 == owner && !bound.refused_decorators.contains(&d.1))
+                .map(|d| d.1)
+        };
+        // `willTransformStaticElementsOfDecoratedClass`
+        let of_class = if options.experimental_decorators {
+            None
+        } else {
+            decorator_of(DecoratorOwner::Class(class))
+        };
+        for m in hir[class].members.iter() {
+            let member = hir[m];
+            if let Some(first) = of_class
+                && self.class_element_or_class_element_parameter_is_decorated(file, m, class)
+            {
+                return Some(self.emit_helpers_range_of_decorator(file, first));
+            }
+            // `IsPrivateIdentifierClassElementDeclaration`, `IsInitializedProperty`
+            let is_transformed = member.kind == MemberKind::StaticBlock
+                || member.flags.contains(Flags::STATIC)
+                    && (matches!(member.key, PropKey::Private(_))
+                        || !options.emit_standard_class_fields
+                            && member.kind == MemberKind::Property
+                            && member.init.is_some());
+            if is_transformed {
+                return Some(self.error_range_of_member(file, m));
+            }
+        }
+        None
+    }
+
+    /// `checkClassExpressionExternalHelpers`, where `checkClassExpression` calls it for `node`,
+    /// which is `class`: notes when that is. `emit_helpers_of_class_expressions` makes the request.
+    pub(super) fn check_class_expression_external_helpers(
+        &mut self,
+        file: FileId,
+        node: ExprId,
+        class: ClassId,
+    ) {
+        if self.files().options.import_helpers
+            && self.task.file == Some(file)
+            && !self.is_type_checked
+            && self.hir(file)[class].name.is_none()
+            && !(self.checked_class_expressions.iter()).any(|it| (it.0, it.1) == (file, node))
+        {
+            let current = self.current_source_element;
+            self.checked_class_expressions.push((file, node, current));
+        }
+    }
+
+    /// `Request::order` of what is checked while `c.currentNode` is `current`, as
+    /// `checkSourceElement` or `checkDeferredNode` has set it, because something asks for its type.
+    /// `None`: `current` is the innermost such node around `e`, so `e` is checked in its regular
+    /// order.
+    fn emit_helpers_order_of_early_check(
+        &self,
+        file: FileId,
+        e: ExprId,
+        current: Option<CurrentNode>,
+    ) -> Option<(u32, u32)> {
+        let hir = self.hir(file);
+        let node = match current {
+            // `checkSourceFile` has not begun.
+            None => return Some((0, 0)),
+            Some(CurrentNode::Expr(of, x)) if of == file => hir.node(x),
+            Some(CurrentNode::TypeNode(of, t)) if of == file => hir.node(t),
+            Some(CurrentNode::Node(of, node)) if of == file => node,
+            Some(_) => return None,
+        };
+        // Of the nodes that the two are called with, those that can contain an expression.
+        let is_source_element = |n: Node| match hir.data(n) {
+            NodeData::Stmt(_)
+            | NodeData::VarDecl(_)
+            | NodeData::Param(_)
+            | NodeData::PatProp(_)
+            | NodeData::PatElem(_)
+            | NodeData::Member(_) => true,
+            NodeData::Prop(p) => matches!(
+                hir[p].kind,
+                PropKind::Method | PropKind::Getter | PropKind::Setter
+            ),
+            NodeData::Expr(x) => matches!(
+                hir[x].kind,
+                ExprKind::Fn(_)
+                    | ExprKind::Class(_)
+                    | ExprKind::Jsx(_)
+                    | ExprKind::Unary { op: UnOp::Void, .. }
+            ),
+            _ => false,
+        };
+        if hir.find_ancestor(hir.parent(hir.node(e)), is_source_element) == node {
+            return None;
+        }
+        let around = hir.find_ancestor(node, is_source_element);
+        let inside = match hir.data(around) {
+            NodeData::Stmt(s) => Parent::Stmt(s),
+            NodeData::VarDecl(d) => Parent::VarInit(d),
+            NodeData::Param(p) => Parent::ParamDefault(p),
+            NodeData::PatProp(p) => Parent::PatPropDefault(p),
+            NodeData::PatElem(p) => Parent::PatElemDefault(p),
+            NodeData::Member(m) => Parent::MemberInit(m),
+            NodeData::Prop(_) => Parent::FnBody(hir.function_of(around)),
+            NodeData::Expr(x) => match hir[x].kind {
+                ExprKind::Fn(f) => Parent::FnBody(f),
+                ExprKind::Class(class) => match hir[class].members.iter().next() {
+                    Some(m) => Parent::MemberInit(m),
+                    None => Parent::ClassExtends(class),
+                },
+                _ => Parent::Expr(x),
+            },
+            _ => Parent::File,
+        };
+        // Nothing is deferred in an ambient context.
+        let deferred = self.emit_helpers_span(file, inside).unwrap_or(0);
+        Some((deferred, hir.start(node)))
+    }
+
+    /// `checkClassExpressionExternalHelpers`. `checked`: `Checker::checked_class_expressions`.
+    fn emit_helpers_of_class_expressions(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        checked: &[(FileId, ExprId, Option<CurrentNode>)],
+        requests: &mut Vec<Request>,
+    ) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let is_identifier = |pat: PatId| matches!(hir[pat].kind, PatKind::Ident(_));
+        let is_computed_name_at = |pos: u32| hir.text.get(pos as usize) == Some(&b'[');
+        // Each with its rank in the order in which `checkClassExpression` came to them.
+        let mut found: Vec<(usize, Request)> = Vec::new();
+        for (i, class) in hir.classes.iter().enumerate() {
+            let ClassOwner::Expr(e) = bound.class_owner[i] else {
+                continue;
+            };
+            if class.name.is_some() || e.is_none() {
+                continue;
+            }
+            // `walkUpOuterExpressions`
+            let mut node = e;
+            while let Parent::Expr(outer) = bound.expr_parent[node.idx()]
+                && outer.is_some()
+                && matches!(
+                    hir[outer].kind,
+                    ExprKind::As { .. }
+                        | ExprKind::Satisfies { .. }
+                        | ExprKind::AsConst(_)
+                        | ExprKind::NonNull(_)
+                        | ExprKind::Instantiation { .. }
+                )
+            {
+                node = outer;
+            }
+            // `IsNamedEvaluationSource`, and whether the name source is a property with a computed
+            // name.
+            let has_computed_name = match bound.expr_parent[node.idx()] {
+                Parent::Prop(p) => {
+                    let (prop, owner) = (hir[p], bound.prop_owner[p.idx()]);
+                    let is_computed = is_computed_name_at(prop.pos);
+                    // `IsProtoSetter`
+                    let is_proto = !is_computed
+                        && matches!(prop.key, PropKey::Name(name) if self.atoms().bytes(name) == b"__proto__");
+                    if prop.kind != PropKind::Init
+                        || is_proto
+                        || owner.is_none()
+                        || !matches!(hir[owner].kind, ExprKind::Object(_))
+                    {
+                        continue;
+                    }
+                    is_computed
+                }
+                Parent::MemberInit(m) => is_computed_name_at(hir[m].name_pos),
+                Parent::VarInit(d) if is_identifier(hir[d].pat) => false,
+                Parent::ParamDefault(p)
+                    if is_identifier(hir[p].pat) && !hir[p].flags.contains(Flags::REST) =>
+                {
+                    false
+                }
+                Parent::PatPropDefault(p) if is_identifier(hir[p].value) && !hir[p].is_rest => {
+                    false
+                }
+                Parent::PatElemDefault(p) if is_identifier(hir[p].pat) && !hir[p].is_rest => false,
+                Parent::Expr(outer) if outer.is_some() => match hir[outer].kind {
+                    ExprKind::Assign {
+                        op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish),
+                        target: name,
+                        value,
+                    } if value == node
+                        && matches!(hir[name].kind, ExprKind::Ident(_))
+                        && !is_parenthesized(self.hir(file), name) =>
+                    {
+                        false
+                    }
+                    _ => continue,
+                },
+                Parent::Stmt(s)
+                    if s.is_some()
+                        && matches!(
+                            hir[s].kind,
+                            StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_)
+                        ) =>
+                {
+                    false
+                }
+                _ => continue,
+            };
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+                continue;
+            };
+            let id = ClassId(i as u32);
+            // `willTransformESDecorators`, `ClassOrConstructorParameterIsDecorated`
+            let decorator =
+                if files.options.experimental_decorators || target >= ScriptTarget::ESNext {
+                    None
+                } else {
+                    hir.decorators
+                        .iter()
+                        .find(|d| d.0 == DecoratorOwner::Class(id))
+                };
+            let location = match decorator {
+                Some(first) => Some(self.emit_helpers_range_of_decorator(file, first.1)),
+                None => self.emit_helpers_first_transformable_static_element(file, id, target),
+            };
+            let Some((start, end)) = location else {
+                continue;
+            };
+            let noted = checked.iter().position(|it| (it.0, it.1) == (file, e));
+            // The check of an earlier file has come to it.
+            let (rank, order) = if self.p.deferred_nodes.get(&self.task, &(file, e)).is_some() {
+                (0, (0, 0))
+            } else {
+                let early = noted
+                    .and_then(|at| self.emit_helpers_order_of_early_check(file, e, checked[at].2));
+                (
+                    noted.map_or(usize::MAX, |at| at + 1),
+                    early.unwrap_or((deferred, class.name_pos)),
+                )
+            };
+            let helpers = if has_computed_name {
+                SET_FUNCTION_NAME | PROP_KEY
+            } else {
+                SET_FUNCTION_NAME
+            };
+            found.push((
+                rank,
+                Request {
+                    order,
+                    start,
+                    end,
+                    helpers,
+                },
+            ));
+        }
+        // The sort by `order` is stable.
+        found.sort_by_key(|it| it.0);
+        requests.extend(found.into_iter().map(|it| it.1));
+    }
+
+    /// `checkPropertyAccessExpressionOrQualifiedName`, `checkInExpression`
+    fn emit_helpers_of_private_names(
+        &self,
+        file: FileId,
+        target: ScriptTarget,
+        index: &ExprsByKind,
+        requests: &mut Vec<Request>,
+    ) {
+        if target >= ScriptTarget::ESNext && self.files().options.use_define_for_class_fields {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for &e in index.of(ExprTag::Dot) {
+            let ExprKind::Dot { name_pos, .. } = hir[e].kind else {
+                continue;
+            };
+            if !is_private_name_at(hir, name_pos) {
+                continue;
+            }
+            let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()]) else {
+                continue;
+            };
+            let start = self.start_inside_parentheses(file, e);
+            requests.push(Request {
+                order: (deferred, start),
+                start,
+                end: self.end_inside_parentheses(file, e),
+                helpers: match bound.get_assignment_target_kind(hir, e) {
+                    AssignmentKind::None => CLASS_PRIVATE_FIELD_GET,
+                    AssignmentKind::Definite => CLASS_PRIVATE_FIELD_SET,
+                    AssignmentKind::Compound => CLASS_PRIVATE_FIELD_SET | CLASS_PRIVATE_FIELD_GET,
+                },
+            });
+        }
+        for &e in index.of(ExprTag::Binary) {
+            let ExprKind::Binary {
+                op: BinOp::In,
+                left,
+                ..
+            } = hir[e].kind
+            else {
+                continue;
+            };
+            let start = hir[left].pos;
+            if matches!(hir[left].kind, ExprKind::PrivateIdentifier(_))
+                && !is_parenthesized(self.hir(file), left)
+                && let Some(deferred) = self.emit_helpers_span(file, bound.expr_parent[e.idx()])
+            {
+                requests.push(Request {
+                    order: (deferred, start),
+                    start,
+                    end: self.end_of_name_at(file, start),
+                    helpers: CLASS_PRIVATE_FIELD_IN,
+                });
+            }
+        }
+    }
+}

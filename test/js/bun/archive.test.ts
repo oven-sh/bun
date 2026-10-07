@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { join } from "path";
 
@@ -86,6 +86,17 @@ function buildPaxTarball(entries: Array<{ name: string; data: Buffer | string }>
   const parts = entries.map((e, i) => paxEntry(e.name, e.data, i));
   parts.push(Buffer.alloc(1024));
   return new Uint8Array(Buffer.concat(parts));
+}
+
+// Every path below `dir`, sorted. A directory ends in "/" and a symlink in "@".
+function tree(dir: string, prefix = ""): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .flatMap(entry =>
+      entry.isDirectory()
+        ? [`${prefix}${entry.name}/`, ...tree(join(dir, entry.name), `${prefix}${entry.name}/`)]
+        : [prefix + entry.name + (entry.isSymbolicLink() ? "@" : "")],
+    )
+    .sort();
 }
 
 describe("Bun.Archive", () => {
@@ -2110,6 +2121,244 @@ describe("Bun.Archive", () => {
       const count = await archive.extract(String(dir), { glob: "**/*.ts" });
 
       expect(count).toBe(0);
+    });
+  });
+
+  describe("an entry that cannot be created", () => {
+    // The count, or what a caller reads from the rejection.
+    const outcome = (promise: Promise<number>) =>
+      promise.then(
+        count => ({ resolved: count }),
+        (error: NodeJS.ErrnoException) =>
+          error.code === undefined
+            ? { rejected: error.message }
+            : { rejected: { code: error.code, syscall: error.syscall, path: error.path } },
+      );
+    // The refused call has another errno on Windows.
+    const errno = (code: string) => (isWindows ? expect.any(String) : code);
+
+    // Both call forms get the same archive, and a destination of their own with the same obstacle.
+    async function extractBoth(root: string, archive: Bun.Archive, obstacle: (dest: string) => void) {
+      const results: Record<string, unknown> = {};
+      for (const [door, options] of Object.entries({ plain: undefined, glob: { glob: "**" } })) {
+        const dest = join(root, door);
+        mkdirSync(dest, { recursive: true });
+        obstacle(dest);
+        results[door] = { ...(await outcome(archive.extract(dest, options))), onDisk: tree(dest) };
+      }
+      return results;
+    }
+
+    test("rejects when a directory has the name of a file entry", async () => {
+      using dir = tempDir("archive-entry-name-taken", {});
+      const archive = new Bun.Archive({ "a.txt": "a", "taken": "t", "z.txt": "z" });
+
+      expect(await extractBoth(String(dir), archive, dest => mkdirSync(join(dest, "taken")))).toEqual({
+        plain: { rejected: "ReadError", onDisk: ["a.txt", "taken/"] },
+        glob: {
+          rejected: { code: errno("EISDIR"), syscall: "open", path: join(String(dir), "glob", "taken") },
+          onDisk: ["a.txt", "taken/"],
+        },
+      });
+    });
+
+    test("rejects when a file has the name of the directory of an entry", async () => {
+      using dir = tempDir("archive-entry-parent-taken", {});
+      const archive = new Bun.Archive({ "a.txt": "a", "sub/inside.txt": "inside", "z.txt": "z" });
+
+      expect(await extractBoth(String(dir), archive, dest => writeFileSync(join(dest, "sub"), "a file"))).toEqual({
+        plain: { rejected: "ReadError", onDisk: ["a.txt", "sub"] },
+        glob: {
+          rejected: {
+            code: errno("ENOTDIR"),
+            syscall: "open",
+            path: join(String(dir), "glob", "sub", "inside.txt"),
+          },
+          onDisk: ["a.txt", "sub"],
+        },
+      });
+    });
+
+    const long = Buffer.alloc(300, "n").toString();
+
+    test.skipIf(isWindows)("rejects when the name of a file entry is too long for the file system", async () => {
+      using dir = tempDir("archive-entry-name-too-long", {});
+      const archive = new Bun.Archive({ "a.txt": "a", [long]: "x", "z.txt": "z" });
+
+      expect(await extractBoth(String(dir), archive, () => {})).toEqual({
+        plain: { rejected: "ReadError", onDisk: ["a.txt"] },
+        glob: {
+          rejected: { code: "ENAMETOOLONG", syscall: "open", path: join(String(dir), "glob", long) },
+          onDisk: ["a.txt"],
+        },
+      });
+    });
+
+    test.skipIf(isWindows)("rejects when a write fails", async () => {
+      using dir = tempDir("archive-entry-write-fails", {
+        "extract.ts": `
+          const fs = require("node:fs");
+          const archive = new Bun.Archive({ "a.txt": "a", "big.txt": Buffer.alloc(100_000, "x"), "z.txt": "z" });
+          const result = {};
+          for (const [door, options] of Object.entries({ plain: undefined, glob: { glob: "**" } })) {
+            result[door] = await archive.extract(door, options).then(
+              count => ({ resolved: count }),
+              error => ({
+                rejected:
+                  error.code === undefined
+                    ? error.message
+                    : { code: error.code, syscall: error.syscall, path: error.path },
+              }),
+            );
+          }
+          result.globOnDisk = fs.readdirSync("glob").sort();
+          console.log(JSON.stringify(result));
+        `,
+      });
+
+      // A file size limit makes write() fail with EFBIG, as a full disk makes it fail with ENOSPC.
+      // SIGXFSZ is ignored, so the write returns the error and does not end the process.
+      // A debug build prints a warning for the failed write, so stderr is not compared.
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 8; exec "$@"`, "sh", bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+      expect(JSON.parse(stdout)).toEqual({
+        plain: { rejected: "ReadError" },
+        glob: { rejected: { code: "EFBIG", syscall: "write", path: join("glob", "big.txt") } },
+        // The incomplete file is removed, and the entries after it are not written.
+        globOnDisk: ["a.txt"],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Root ignores the permissions of a directory.
+    test.skipIf(isWindows || process.getuid?.() === 0)("rejects when the destination is not writable", async () => {
+      using dir = tempDir("archive-entry-read-only", {});
+      const readOnly = (dest: string) => chmodSync(dest, 0o555);
+
+      const flat = join(String(dir), "flat");
+      expect(await extractBoth(flat, new Bun.Archive({ "a.txt": "a" }), readOnly)).toEqual({
+        plain: { rejected: "ReadError", onDisk: [] },
+        glob: { rejected: { code: "EACCES", syscall: "open", path: join(flat, "glob", "a.txt") }, onDisk: [] },
+      });
+
+      // The rejection names the directory that could not be made, not the open that then finds no directory.
+      const nested = join(String(dir), "nested");
+      expect(await extractBoth(nested, new Bun.Archive({ "sub/inside.txt": "inside" }), readOnly)).toEqual({
+        plain: { rejected: "ReadError", onDisk: [] },
+        glob: { rejected: { code: "EACCES", syscall: "mkdir", path: join(nested, "glob", "sub") }, onDisk: [] },
+      });
+    });
+
+    const a = ustarEntry("a.txt", Buffer.from("a"));
+    const z = ustarEntry("z.txt", Buffer.from("z"));
+    const endOfArchive = Buffer.alloc(1024);
+    // A pax record gives the entry after it a name that no ustar header can hold.
+    const named = (name: string, header: Buffer) => Buffer.concat([paxEntry(name, "", 0).subarray(0, 1024), header]);
+
+    // A directory entry and a symlink entry with no place in a destination that holds the regular file "blocker".
+    const uncreatable = {
+      "a directory entry below a regular file": {
+        entry: ustarHeader("blocker/sub/", 0, "5"),
+        rejection: { code: "ENOTDIR", syscall: "mkdir", path: join("blocker", "sub") },
+      },
+      "a symlink entry below a regular file": {
+        entry: ustarHeader("blocker/link", 0, "2", { linkname: "a.txt" }),
+        rejection: { code: "ENOTDIR", syscall: "symlinkat", path: join("blocker", "link") },
+      },
+      "a directory entry with a name that is too long for the file system": {
+        entry: named(long + "/", ustarHeader("long", 0, "5")),
+        rejection: { code: "ENAMETOOLONG", syscall: "mkdir", path: long },
+      },
+      "a symlink entry with a name that is too long for the file system": {
+        entry: named(long, ustarHeader("long", 0, "2", { linkname: "a.txt" })),
+        rejection: { code: "ENAMETOOLONG", syscall: "symlinkat", path: long },
+      },
+    };
+
+    test.skipIf(isWindows).each(Object.entries(uncreatable))(
+      "extract() with a glob rejects at %s",
+      async (_, { entry, rejection }) => {
+        using dir = tempDir("archive-entry-uncreatable", { "blocker": "a file" });
+        const archive = new Bun.Archive(Buffer.concat([a, entry, z, endOfArchive]));
+
+        expect(await outcome(archive.extract(String(dir), { glob: "**" }))).toEqual({
+          rejected: { ...rejection, path: join(String(dir), rejection.path) },
+        });
+        expect(tree(String(dir))).toEqual(["a.txt", "blocker"]);
+      },
+    );
+
+    // The second call finds what the first call made.
+    const twice = async (archive: Bun.Archive, dest: string, options?: { glob: string }) => [
+      await outcome(archive.extract(dest, options)),
+      await outcome(archive.extract(dest, options)),
+    ];
+
+    test("a directory entry whose directory exists does not fail the call", async () => {
+      using dir = tempDir("archive-entry-directory-exists", {});
+      const archive = new Bun.Archive(
+        Buffer.concat([ustarHeader("d/", 0, "5"), ustarEntry("d/x.txt", Buffer.from("x")), endOfArchive]),
+      );
+
+      expect({
+        plain: await twice(archive, join(String(dir), "plain")),
+        glob: await twice(archive, join(String(dir), "glob"), { glob: "**" }),
+      }).toEqual({
+        plain: [{ resolved: 2 }, { resolved: 2 }],
+        glob: [{ resolved: 2 }, { resolved: 2 }],
+      });
+    });
+
+    test.skipIf(isWindows)("a symlink entry whose name is taken does not fail the call", async () => {
+      using dir = tempDir("archive-entry-symlink-taken", {});
+      const archive = new Bun.Archive(
+        Buffer.concat([a, ustarHeader("link", 0, "2", { linkname: "a.txt" }), z, endOfArchive]),
+      );
+
+      expect({
+        plain: await twice(archive, join(String(dir), "plain")),
+        glob: await twice(archive, join(String(dir), "glob"), { glob: "**" }),
+      }).toEqual({
+        plain: [{ resolved: 3 }, { resolved: 3 }],
+        // With a glob the count holds only the entries that the call created.
+        glob: [{ resolved: 3 }, { resolved: 2 }],
+      });
+    });
+
+    // Windows gives a file without the owner-write bit the read-only attribute, and refuses to open it for a write.
+    test.skipIf(!isWindows)("extract() with a glob overwrites a file without the owner-write bit", async () => {
+      using dir = tempDir("archive-entry-read-only-file", {});
+      const readOnlyFile = (data: string) =>
+        new Bun.Archive(
+          Buffer.concat([
+            ustarHeader("r.txt", data.length, "0", { mode: Buffer.from("0000444\0") }),
+            Buffer.from(data),
+            Buffer.alloc(512 - data.length),
+            endOfArchive,
+          ]),
+        );
+
+      expect([
+        await outcome(readOnlyFile("first").extract(String(dir), { glob: "**" })),
+        await outcome(readOnlyFile("second").extract(String(dir), { glob: "**" })),
+      ]).toEqual([{ resolved: 1 }, { resolved: 1 }]);
+      expect(await Bun.file(join(String(dir), "r.txt")).text()).toBe("second");
+    });
+
+    test("an entry that the glob leaves out cannot fail the call", async () => {
+      using dir = tempDir("archive-entry-left-out", {});
+      mkdirSync(join(String(dir), "taken"));
+      const archive = new Bun.Archive({ "a.txt": "a", "taken": "t", "z.txt": "z" });
+
+      expect(await outcome(archive.extract(String(dir), { glob: ["**", "!taken"] }))).toEqual({ resolved: 2 });
+      expect(tree(String(dir))).toEqual(["a.txt", "taken/", "z.txt"]);
     });
   });
 

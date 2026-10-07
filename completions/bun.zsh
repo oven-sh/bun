@@ -506,7 +506,7 @@ _bun_run_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--inspect[Activate Bun'"'"'s Debugger]:inspect' \
         '--inspect-wait[Activate Bun'"'"'s Debugger, wait for a connection before executing]:inspect-wait' \
-        '--inspect-brk[Activate Bun'"'"'s Debugger, set breakpoint on first line of code and wait]:inspect-brk' \
+        '--inspect-brk[Activate Bun'"'"'s Debugger, wait for a connection and pause before the first line of code]:inspect-brk' \
         '--hot[Enable auto reload in bun'"'"'s JavaScript runtime]' \
         '--watch[Automatically restart bun'"'"'s JavaScript runtime on file change]' \
         '--no-install[Disable auto install in bun'"'"'s JavaScript runtime]' \
@@ -832,7 +832,7 @@ _bun_test_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--inspect[Activate Bun'"'"'s Debugger]:inspect' \
         '--inspect-wait[Activate Bun'"'"'s Debugger, wait for a connection before executing]:inspect-wait' \
-        '--inspect-brk[Activate Bun'"'"'s Debugger, set breakpoint on first line of code and wait]:inspect-brk' \
+        '--inspect-brk[Activate Bun'"'"'s Debugger, wait for a connection and pause before the first line of code]:inspect-brk' \
         '--watch[Automatically restart bun'"'"'s JavaScript runtime on file change]' \
         '--timeout[Set the per-test timeout in milliseconds, default is 5000.]:timeout' \
         '--update-snapshots[Update snapshot files]' \

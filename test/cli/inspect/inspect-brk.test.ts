@@ -4,10 +4,13 @@
 // `Debugger.setPauseOnDebuggerStatements`. A client has to send `Debugger.enable` and
 // `Debugger.setBreakpointsActive{active:true}` before `Inspector.initialized`.
 import { spawn, type Subprocess } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import type { ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { realpathSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { WebSocketDebugAdapter } from "../../../packages/bun-debug-adapter-protocol";
 import { SocketFramer } from "./socket-framer";
 
 type Pause = {
@@ -273,6 +276,10 @@ class Session implements AsyncDisposable {
   }
 }
 
+// Every test starts a bun with its inspector. A debug build needs a second for that alone, and
+// the tests of this file start together.
+if (isDebug || isASAN) setDefaultTimeout(30_000);
+
 const where = ({ reason, file, line, column }: Pause) => ({ reason, file, line, column });
 const brk = "--inspect-brk=127.0.0.1:0";
 const start = "PauseOnNextStatement";
@@ -416,6 +423,16 @@ describe.concurrent("--inspect-brk", () => {
     expect(session.pauses).toHaveLength(1);
   });
 
+  test("an empty entry pauses once", async () => {
+    await using session = await Session.start({ "entry.mjs": "" }, [brk, "entry.mjs"]);
+    const pause = await session.paused();
+    expect({ reason: pause.reason, file: pause.file }).toEqual({ reason: start, file: "entry.mjs" });
+    expect(await session.finish()).toMatchObject({ stdout: "", exitCode: 0 });
+    expect(session.pauses).toHaveLength(1);
+  });
+});
+
+describe.concurrent("--inspect-brk: the code that runs before the entry", () => {
   test("a preload does not take the pause", async () => {
     await using session = await Session.start(
       { "preload.mjs": `globalThis.preloaded = 1;\n`, "entry.mjs": `console.log(globalThis.preloaded);\n` },
@@ -515,165 +532,262 @@ describe.concurrent("--inspect-brk", () => {
     await session.output("stdout", /^fourth$/m);
     expect(session.pauses).toHaveLength(1);
   });
+});
 
-  test("an empty entry pauses once", async () => {
-    await using session = await Session.start({ "entry.mjs": "" }, [brk, "entry.mjs"]);
-    const pause = await session.paused();
-    expect({ reason: pause.reason, file: pause.file }).toEqual({ reason: start, file: "entry.mjs" });
-    expect(await session.finish()).toMatchObject({ stdout: "", exitCode: 0 });
-    expect(session.pauses).toHaveLength(1);
+describe.concurrent("--inspect-brk: the handshake of the client", () => {
+  const files = { "entry.mjs": `debugger;\nconsole.log("done");\n` };
+
+  // Code has debug hooks only while breakpoints are active, so nothing can pause without them.
+  test.each([
+    ["Debugger.setBreakpointsActive{active:false}", false],
+    ["no Debugger.setBreakpointsActive", null],
+  ])("%s: no pause", async (_name, breakpointsActive) => {
+    await using session = await Session.start(files, [brk, "entry.mjs"], { handshake: { breakpointsActive } });
+    expect(await session.finish(false)).toEqual({ stdout: "done\n", exitCode: 0, pauses: [] });
   });
 
-  describe("handshake", () => {
-    const files = { "entry.mjs": `debugger;\nconsole.log("done");\n` };
-
-    // Code has debug hooks only while breakpoints are active, so nothing can pause without them.
-    test.each([
-      ["Debugger.setBreakpointsActive{active:false}", false],
-      ["no Debugger.setBreakpointsActive", null],
-    ])("%s: no pause", async (_name, breakpointsActive) => {
-      await using session = await Session.start(files, [brk, "entry.mjs"], { handshake: { breakpointsActive } });
-      expect(await session.finish(false)).toEqual({ stdout: "done\n", exitCode: 0, pauses: [] });
-    });
-
-    test("without Debugger.setPauseOnDebuggerStatements, a debugger statement of the program does not pause", async () => {
-      await using session = await Session.start(files, [brk, "entry.mjs"]);
-      await session.paused();
-      expect(await session.finish()).toEqual({
-        stdout: "done\n",
-        exitCode: 0,
-        pauses: [{ reason: start, file: "entry.mjs", line: 1, column: 1 }],
-      });
-    });
-
-    test("with Debugger.setPauseOnDebuggerStatements, a debugger statement on line 1 pauses after the start pause", async () => {
-      await using session = await Session.start(files, [brk, "entry.mjs"], {
-        handshake: { pauseOnDebuggerStatements: true },
-      });
-      await session.paused();
-      expect(where(await session.resumeToPause())).toEqual({
-        reason: "DebuggerStatement",
-        file: "entry.mjs",
-        line: 1,
-        column: 1,
-      });
-      expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
-      expect(session.pauses).toHaveLength(2);
+  test("without Debugger.setPauseOnDebuggerStatements, a debugger statement of the program does not pause", async () => {
+    await using session = await Session.start(files, [brk, "entry.mjs"]);
+    await session.paused();
+    expect(await session.finish()).toEqual({
+      stdout: "done\n",
+      exitCode: 0,
+      pauses: [{ reason: start, file: "entry.mjs", line: 1, column: 1 }],
     });
   });
 
-  describe("after the pause", () => {
-    const files = { "entry.mjs": `const a = 1;\nconst b = a + 1;\nconsole.log(a + b);\n` };
-
-    test("a step goes to the second statement", async () => {
-      await using session = await Session.start(files, [brk, "entry.mjs"]);
-      const first = await session.paused();
-      const second = await session.resumeToPause("Debugger.stepNext");
-      // The first statement ran and the second did not: the step did not stop at 1:1 again.
-      expect([await session.evaluate(second, "a"), await session.evaluate(second, "b")]).toEqual([
-        "1",
-        "ReferenceError",
-      ]);
-      const third = await session.resumeToPause("Debugger.stepNext");
-      expect([first, second, third].map(({ line, column }) => `${line}:${column}`)).toEqual(["1:1", "2:1", "3:1"]);
-      expect(await session.finish()).toMatchObject({ stdout: "3\n", exitCode: 0 });
+  test("with Debugger.setPauseOnDebuggerStatements, a debugger statement on line 1 pauses after the start pause", async () => {
+    await using session = await Session.start(files, [brk, "entry.mjs"], {
+      handshake: { pauseOnDebuggerStatements: true },
     });
-
-    // A client that puts a breakpoint at the start of a script (the VS Code extension does, to
-    // hold the script until its breakpoints are in place) can still tell the pause it asked for.
-    test("a breakpoint on the first line is the same pause, with the reason of the start pause", async () => {
-      await using session = await Session.start(files, [brk, "entry.mjs"], {
-        handshake: { breakpoints: [{ file: "entry.mjs", line: 1 }] },
-      });
-      const pause = await session.paused();
-      expect(where(pause)).toEqual({ reason: start, file: "entry.mjs", line: 1, column: 1 });
-      expect(await session.evaluate(pause, "typeof a")).toBe("ReferenceError");
-      expect(await session.finish()).toMatchObject({ stdout: "3\n", exitCode: 0 });
-      expect(session.pauses).toHaveLength(1);
+    await session.paused();
+    expect(where(await session.resumeToPause())).toEqual({
+      reason: "DebuggerStatement",
+      file: "entry.mjs",
+      line: 1,
+      column: 1,
     });
-
-    test("a breakpoint on the line of a CommonJS module's function does not rename the pause", async () => {
-      await using session = await Session.start(
-        { "entry.cjs": `globalThis.ran = 1;\nconsole.log("done");\n` },
-        [brk, "entry.cjs"],
-        { handshake: { breakpoints: [{ file: "entry.cjs", line: 1 }] } },
-      );
-      // The program that makes the module's function is on that line too, and it is not the entry's code.
-      const program = await session.paused();
-      expect({ reason: program.reason, file: program.file, line: program.line }).toEqual({
-        reason: "Breakpoint",
-        file: "entry.cjs",
-        line: 1,
-      });
-      const pause = await session.resumeToPause();
-      expect({ reason: pause.reason, file: pause.file, line: pause.line }).toEqual({
-        reason: start,
-        file: "entry.cjs",
-        line: 1,
-      });
-      expect(await session.evaluate(pause, "[typeof module, typeof globalThis.ran]")).toBe("object,undefined");
-      expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
-      expect(session.pauses).toHaveLength(2);
-    });
-
-    test("an entry that started with breakpoints inactive does not pause later", async () => {
-      await using session = await Session.start(
-        {
-          "entry.cjs": `console.log("started");\nconst timer = setInterval(() => {\n  if (!globalThis.breakpointsAreBack) return;\n  clearInterval(timer);\n  console.log("ran on");\n}, 1);\n`,
-        },
-        [brk, "entry.cjs"],
-        { handshake: { breakpoints: [{ file: "entry.cjs", line: 1 }] } },
-      );
-      // The breakpoint stops in the program that makes the module's function, before the entry starts.
-      expect((await session.paused()).reason).toBe("Breakpoint");
-      await session.send("Debugger.setBreakpointsActive", { active: false });
-      await session.send("Debugger.resume");
-      await session.output("stdout", /^started$/m);
-      // The timer callback is a function of the entry, and it is compiled again with debug hooks.
-      await session.send("Debugger.setBreakpointsActive", { active: true });
-      await session.send("Runtime.evaluate", { expression: "globalThis.breakpointsAreBack = true" });
-      const outcome = await Promise.race([
-        session.output("stdout", /^ran on$/m).then(() => "ran on"),
-        session.paused().then(where),
-      ]);
-      expect(outcome).toBe("ran on");
-      expect(await session.finish(false)).toMatchObject({ exitCode: 0 });
-      expect(session.pauses).toHaveLength(1);
-    });
-
-    test("the program runs on when the debugger disconnects", async () => {
-      await using session = await Session.start(files, [brk, "entry.mjs"]);
-      await session.paused();
-      session.disconnect();
-      expect(await session.finish(false)).toMatchObject({ stdout: "3\n", exitCode: 0 });
-    });
-
-    // https://github.com/oven-sh/bun/issues/32591
-    test("the entry has the text it has under --inspect-wait, so a breakpoint by line stops on that line", async () => {
-      await using session = await Session.start({ "entry.mjs": fiveLines }, [brk, "entry.mjs"], {
-        handshake: { breakpoints: [{ file: "entry.mjs", line: 5 }] },
-      });
-      const first = await session.paused();
-      expect((await session.scriptSource(first)).split("\n").slice(0, 5)).toEqual([
-        `const label = "x";`,
-        `const values = [2, 3, 5];`,
-        `const total = values.reduce((s, v) => s + v, 0);`,
-        `const payload = { label: "x", values, total };`,
-        `console.log(payload.total);`,
-      ]);
-      const atBreakpoint = await session.resumeToPause();
-      expect(where(atBreakpoint)).toEqual({ reason: "Breakpoint", file: "entry.mjs", line: 5, column: 1 });
-      // Line 4 ran: the bug was a pause one statement early, with `payload` not initialised.
-      expect(await session.evaluate(atBreakpoint, "payload.total")).toBe("10");
-      expect(await session.finish()).toMatchObject({ stdout: "10\n", exitCode: 0 });
-      expect(session.pauses).toHaveLength(2);
-    });
+    expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(2);
   });
 });
 
-// After the block above: each of these writes and runs an executable of the size of bun.
+describe.concurrent("--inspect-brk: after the pause", () => {
+  const files = { "entry.mjs": `const a = 1;\nconst b = a + 1;\nconsole.log(a + b);\n` };
+
+  test("a step goes to the second statement", async () => {
+    await using session = await Session.start(files, [brk, "entry.mjs"]);
+    const first = await session.paused();
+    const second = await session.resumeToPause("Debugger.stepNext");
+    // The first statement ran and the second did not: the step did not stop at 1:1 again.
+    expect([await session.evaluate(second, "a"), await session.evaluate(second, "b")]).toEqual(["1", "ReferenceError"]);
+    const third = await session.resumeToPause("Debugger.stepNext");
+    expect([first, second, third].map(({ line, column }) => `${line}:${column}`)).toEqual(["1:1", "2:1", "3:1"]);
+    expect(await session.finish()).toMatchObject({ stdout: "3\n", exitCode: 0 });
+  });
+
+  // A client that puts a breakpoint at the start of a script (the VS Code extension does, to
+  // hold the script until its breakpoints are in place) can still tell the pause it asked for.
+  test("a breakpoint on the first line is the same pause, with the reason of the start pause", async () => {
+    await using session = await Session.start(files, [brk, "entry.mjs"], {
+      handshake: { breakpoints: [{ file: "entry.mjs", line: 1 }] },
+    });
+    const pause = await session.paused();
+    expect(where(pause)).toEqual({ reason: start, file: "entry.mjs", line: 1, column: 1 });
+    expect(await session.evaluate(pause, "typeof a")).toBe("ReferenceError");
+    expect(await session.finish()).toMatchObject({ stdout: "3\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(1);
+  });
+
+  test("a breakpoint on the line of a CommonJS module's function does not rename the pause", async () => {
+    await using session = await Session.start(
+      { "entry.cjs": `globalThis.ran = 1;\nconsole.log("done");\n` },
+      [brk, "entry.cjs"],
+      { handshake: { breakpoints: [{ file: "entry.cjs", line: 1 }] } },
+    );
+    // The program that makes the module's function is on that line too, and it is not the entry's code.
+    const program = await session.paused();
+    expect({ reason: program.reason, file: program.file, line: program.line }).toEqual({
+      reason: "Breakpoint",
+      file: "entry.cjs",
+      line: 1,
+    });
+    const pause = await session.resumeToPause();
+    expect({ reason: pause.reason, file: pause.file, line: pause.line }).toEqual({
+      reason: start,
+      file: "entry.cjs",
+      line: 1,
+    });
+    expect(await session.evaluate(pause, "[typeof module, typeof globalThis.ran]")).toBe("object,undefined");
+    expect(await session.finish()).toMatchObject({ stdout: "done\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(2);
+  });
+
+  test("an entry that started with breakpoints inactive does not pause later", async () => {
+    await using session = await Session.start(
+      {
+        "entry.cjs": `console.log("started");\nconst timer = setInterval(() => {\n  if (!globalThis.breakpointsAreBack) return;\n  clearInterval(timer);\n  console.log("ran on");\n}, 1);\n`,
+      },
+      [brk, "entry.cjs"],
+      { handshake: { breakpoints: [{ file: "entry.cjs", line: 1 }] } },
+    );
+    // The breakpoint stops in the program that makes the module's function, before the entry starts.
+    expect((await session.paused()).reason).toBe("Breakpoint");
+    await session.send("Debugger.setBreakpointsActive", { active: false });
+    await session.send("Debugger.resume");
+    await session.output("stdout", /^started$/m);
+    // The timer callback is a function of the entry, and it is compiled again with debug hooks.
+    await session.send("Debugger.setBreakpointsActive", { active: true });
+    // The program ends right after this. It can exit before the answer arrives.
+    session.send("Runtime.evaluate", { expression: "globalThis.breakpointsAreBack = true" }).catch(() => {});
+    const outcome = await Promise.race([
+      session.output("stdout", /^ran on$/m).then(() => "ran on"),
+      session.paused().then(where),
+    ]);
+    expect(outcome).toBe("ran on");
+    expect(await session.finish(false)).toMatchObject({ exitCode: 0 });
+    expect(session.pauses).toHaveLength(1);
+  });
+
+  test("the program runs on when the debugger disconnects", async () => {
+    await using session = await Session.start(files, [brk, "entry.mjs"]);
+    await session.paused();
+    session.disconnect();
+    expect(await session.finish(false)).toMatchObject({ stdout: "3\n", exitCode: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/32591
+  test("the entry has the text it has under --inspect-wait, so a breakpoint by line stops on that line", async () => {
+    await using session = await Session.start({ "entry.mjs": fiveLines }, [brk, "entry.mjs"], {
+      handshake: { breakpoints: [{ file: "entry.mjs", line: 5 }] },
+    });
+    const first = await session.paused();
+    expect((await session.scriptSource(first)).split("\n").slice(0, 5)).toEqual([
+      `const label = "x";`,
+      `const values = [2, 3, 5];`,
+      `const total = values.reduce((s, v) => s + v, 0);`,
+      `const payload = { label: "x", values, total };`,
+      `console.log(payload.total);`,
+    ]);
+    const atBreakpoint = await session.resumeToPause();
+    expect(where(atBreakpoint)).toEqual({ reason: "Breakpoint", file: "entry.mjs", line: 5, column: 1 });
+    // Line 4 ran: the bug was a pause one statement early, with `payload` not initialised.
+    expect(await session.evaluate(atBreakpoint, "payload.total")).toBe("10");
+    expect(await session.finish()).toMatchObject({ stdout: "10\n", exitCode: 0 });
+    expect(session.pauses).toHaveLength(2);
+  });
+});
+
+/**
+ * Runs `program` with the debug adapter of the VS Code extension and `"stopOnEntry": true`, the
+ * way VS Code drives it, and resumes at each stop. Returns what the user sees: every stop until
+ * the program prints `lastOutput`.
+ */
+async function stopsInDebugAdapter(
+  files: Record<string, string>,
+  program: string,
+  lastOutput: string,
+  /** 0 for no breakpoint. */
+  breakpointLine: number,
+) {
+  using dir = tempDir("inspect-brk-adapter", files);
+  const cwd = realpathSync(String(dir));
+  const adapter = new WebSocketDebugAdapter();
+  const stops: { reason: string; line: number }[] = [];
+  const ended = Promise.withResolvers<void>();
+  let debuggee: ChildProcess | undefined;
+  adapter.on("Process.spawned", subprocess => {
+    debuggee = subprocess;
+  });
+  const pending = new Map<number, (response: any) => void>();
+  let seq = 0;
+  const request = (command: string, args: object = {}) => {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    pending.set(++seq, resolve);
+    adapter.emit("Adapter.request", { seq, type: "request", command, arguments: args } as any);
+    return promise;
+  };
+  adapter.on("Adapter.response", (response: any) => {
+    pending.get(response.request_seq)?.(response);
+    pending.delete(response.request_seq);
+  });
+  adapter.on("Adapter.event", async (event: any) => {
+    try {
+      if (event.event === "initialized") {
+        if (breakpointLine) {
+          await request("setBreakpoints", {
+            source: { path: join(cwd, program) },
+            breakpoints: [{ line: breakpointLine }],
+          });
+        }
+        // No filter: the "Debugger Statements" box of VS Code is not checked.
+        await request("setExceptionBreakpoints", { filters: [] });
+        await request("configurationDone");
+      } else if (event.event === "stopped") {
+        const { threadId } = event.body;
+        const { body } = await request("stackTrace", { threadId });
+        stops.push({ reason: event.body.reason, line: body.stackFrames[0].line });
+        await request("continue", { threadId });
+      } else if (event.event === "output" && String(event.body.output).includes(lastOutput)) {
+        ended.resolve();
+      } else if (event.event === "terminated") {
+        ended.reject(new Error(`the program ended before it printed ${lastOutput}`));
+      }
+    } catch (error) {
+      ended.reject(error);
+    }
+  });
+  try {
+    await request("initialize", {
+      clientID: "vscode",
+      adapterID: "bun",
+      linesStartAt1: true,
+      columnsStartAt1: true,
+      pathFormat: "path",
+      supportsConfigurationDoneRequest: true,
+    });
+    await request("launch", {
+      runtime: bunExe(),
+      program: join(cwd, program),
+      cwd,
+      stopOnEntry: true,
+      env: bunEnv,
+      strictEnv: true,
+    });
+    await ended.promise;
+  } finally {
+    // The adapter keeps the program alive after its last statement, and close() kills it.
+    const exited = debuggee?.exitCode === null && debuggee.signalCode === null ? once(debuggee, "exit") : undefined;
+    adapter.close();
+    await exited;
+  }
+  return stops;
+}
+
+// The extension puts a breakpoint of its own at the start of a file that has breakpoints, and it
+// resumes when that one pauses. The stop on entry must not look like that breakpoint.
+describe.concurrent("--inspect-brk through the debug adapter of the VS Code extension", () => {
+  const source = `const a = 1;\nconst b = a + 1;\nconsole.log("sum " + (a + b));\n`;
+
+  const entryStop = { reason: "pause", line: 1 };
+
+  test.each([
+    ["entry.ts", 0, [entryStop]],
+    ["entry.ts", 1, [entryStop]],
+    ["entry.ts", 3, [entryStop, { reason: "breakpoint", line: 3 }]],
+    ["entry.cjs", 3, [entryStop, { reason: "breakpoint", line: 3 }]],
+  ])(
+    "stopOnEntry in %s with a breakpoint on line %i (0: none)",
+    async (program, breakpointLine, stops) => {
+      expect(await stopsInDebugAdapter({ [program]: source }, program, "sum 3", breakpointLine)).toEqual(stops);
+    },
+    // The adapter waits for the program to announce itself before it connects.
+    30_000,
+  );
+});
+
+// Nothing transpiles the entry of an executable, with or without its bytecode.
 describe.concurrent("--inspect-brk in a compiled executable", () => {
-  // Nothing transpiles the entry of an executable, with or without its bytecode.
   test.each([[[] as string[]], [["--bytecode", "--format=esm"]]])(
     "BUN_INSPECT=<url>?break=1 pauses in a bun build --compile %j executable",
     async flags => {
@@ -702,6 +816,7 @@ describe.concurrent("--inspect-brk in a compiled executable", () => {
       await session.output("stdout", /^done$/m);
       expect(session.pauses).toHaveLength(1);
     },
+    // It writes and runs an executable of the size of bun.
     60_000,
   );
 });

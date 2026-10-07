@@ -62,6 +62,7 @@ pub enum PropertyIdTag {
     Stroke,
     CaretColor,
     Caret,
+    CaretShape,
     Display,
     Visibility,
     Width,
@@ -381,6 +382,7 @@ impl PropertyIdTag {
             PropertyIdTag::Stroke => b"stroke",
             PropertyIdTag::CaretColor => b"caret-color",
             PropertyIdTag::Caret => b"caret",
+            PropertyIdTag::CaretShape => b"caret-shape",
             PropertyIdTag::Display => b"display",
             PropertyIdTag::Visibility => b"visibility",
             PropertyIdTag::Width => b"width",
@@ -653,6 +655,7 @@ pub enum PropertyId {
     Stroke,
     CaretColor,
     Caret,
+    CaretShape,
     Display,
     Visibility,
     Width,
@@ -942,6 +945,7 @@ impl PropertyId {
             PropertyId::Stroke => PropertyIdTag::Stroke,
             PropertyId::CaretColor => PropertyIdTag::CaretColor,
             PropertyId::Caret => PropertyIdTag::Caret,
+            PropertyId::CaretShape => PropertyIdTag::CaretShape,
             PropertyId::Display => PropertyIdTag::Display,
             PropertyId::Visibility => PropertyIdTag::Visibility,
             PropertyId::Width => PropertyIdTag::Width,
@@ -1328,6 +1332,7 @@ impl PropertyId {
                 b"stroke" => (VendorPrefix::NONE, |_| PropertyId::Stroke),
                 b"caret-color" => (VendorPrefix::NONE, |_| PropertyId::CaretColor),
                 b"caret" => (VendorPrefix::NONE, |_| PropertyId::Caret),
+                b"caret-shape" => (VendorPrefix::NONE, |_| PropertyId::CaretShape),
                 b"display" => (VendorPrefix::NONE, |_| PropertyId::Display),
                 b"visibility" => (VendorPrefix::NONE, |_| PropertyId::Visibility),
                 b"width" => (VendorPrefix::NONE, |_| PropertyId::Width),
@@ -1618,6 +1623,7 @@ pub enum Property {
     Stroke(svg::SVGPaint),
     CaretColor(ui::ColorOrAuto),
     Caret(ui::Caret),
+    CaretShape(ui::CaretShape),
     Display(display::Display),
     Visibility(display::Visibility),
     Width(size::Size),
@@ -1939,6 +1945,7 @@ impl Property {
             Property::Stroke(..) => PropertyId::Stroke,
             Property::CaretColor(..) => PropertyId::CaretColor,
             Property::Caret(..) => PropertyId::Caret,
+            Property::CaretShape(..) => PropertyId::CaretShape,
             Property::Display(..) => PropertyId::Display,
             Property::Visibility(..) => PropertyId::Visibility,
             Property::Width(..) => PropertyId::Width,
@@ -2215,6 +2222,7 @@ impl Property {
             Property::Stroke(v) => css::generic::to_css(v, dest),
             Property::CaretColor(v) => css::generic::to_css(v, dest),
             Property::Caret(v) => css::generic::to_css(v, dest),
+            Property::CaretShape(v) => css::generic::to_css(v, dest),
             Property::Display(v) => css::generic::to_css(v, dest),
             Property::Visibility(v) => css::generic::to_css(v, dest),
             Property::Width(v) => css::generic::to_css(v, dest),
@@ -2579,6 +2587,11 @@ impl Property {
             PropertyId::Caret => {
                 if let Some(c) = parse_value::<ui::Caret>(input, options) {
                     return Ok(Property::Caret(c));
+                }
+            }
+            PropertyId::CaretShape => {
+                if let Some(c) = parse_value::<ui::CaretShape>(input, options) {
+                    return Ok(Property::CaretShape(c));
                 }
             }
             PropertyId::Display => {
@@ -3988,6 +4001,7 @@ impl Property {
             Property::Stroke(v) => Property::Stroke(css::generic::deep_clone(v, arena)),
             Property::CaretColor(v) => Property::CaretColor(css::generic::deep_clone(v, arena)),
             Property::Caret(v) => Property::Caret(css::generic::deep_clone(v, arena)),
+            Property::CaretShape(v) => Property::CaretShape(css::generic::deep_clone(v, arena)),
             Property::Display(v) => Property::Display(css::generic::deep_clone(v, arena)),
             Property::Visibility(v) => Property::Visibility(css::generic::deep_clone(v, arena)),
             Property::Width(v) => Property::Width(css::generic::deep_clone(v, arena)),
@@ -4577,6 +4591,7 @@ impl Property {
             (Property::Stroke(a), Property::Stroke(b)) => css::generic::eql(a, b),
             (Property::CaretColor(a), Property::CaretColor(b)) => css::generic::eql(a, b),
             (Property::Caret(a), Property::Caret(b)) => css::generic::eql(a, b),
+            (Property::CaretShape(a), Property::CaretShape(b)) => css::generic::eql(a, b),
             (Property::Display(a), Property::Display(b)) => css::generic::eql(a, b),
             (Property::Visibility(a), Property::Visibility(b)) => css::generic::eql(a, b),
             (Property::Width(a), Property::Width(b)) => css::generic::eql(a, b),

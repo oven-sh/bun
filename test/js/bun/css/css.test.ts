@@ -1939,6 +1939,12 @@ describe("css tests", () => {
 
     minify_test(".foo { caret-color: auto }", ".foo{caret-color:auto}");
     minify_test(".foo { caret-color: yellow }", ".foo{caret-color:#ff0}");
+    for (const shape of ["auto", "bar", "block", "underscore"]) {
+      minify_test(`.foo { caret-shape: ${shape} }`, `.foo{caret-shape:${shape}}`);
+    }
+    // Typed, so keywords are normalized; anything else still passes through as written.
+    minify_test(".foo { caret-shape: BLOCK }", ".foo{caret-shape:block}");
+    minify_test(".foo { caret-shape: banana }", ".foo{caret-shape:banana}");
     minify_test(".foo { caret: yellow block }", ".foo{caret:#ff0 block}");
     minify_test(".foo { caret: block yellow }", ".foo{caret:#ff0 block}");
     minify_test(".foo { caret: block }", ".foo{caret:block}");

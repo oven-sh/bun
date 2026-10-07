@@ -237,7 +237,9 @@ impl ColorOrAuto {
 }
 
 /// A value for the [caret-shape](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret-shape) property.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash,
+)]
 pub enum CaretShape {
     /// The UA determines the caret shape.
     Auto,

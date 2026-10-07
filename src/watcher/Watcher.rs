@@ -45,7 +45,6 @@ pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
 pub type WatchItemIndex = u16;
-pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
@@ -122,8 +121,7 @@ pub struct Watcher {
     /// thread) after the loop exits.
     pub(crate) close_descriptors: bun_core::AtomicCell<bool>,
 
-    pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
-    pub(crate) evict_list_i: WatchItemIndex,
+    pub(crate) evict_list: Vec<WatchItemIndex>,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
@@ -202,8 +200,7 @@ impl Watcher {
             thread: None,
             running: bun_core::AtomicCell::new(true),
             close_descriptors: bun_core::AtomicCell::new(false),
-            evict_list: [0; MAX_EVICTION_COUNT],
-            evict_list_i: 0,
+            evict_list: Vec::new(),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
@@ -378,7 +375,7 @@ impl Watcher {
     }
 
     pub fn flush_evictions(&mut self) {
-        if self.evict_list_i == 0 {
+        if self.evict_list.is_empty() {
             return;
         }
         // The close+swap_remove below must be serialized against the JS
@@ -397,12 +394,10 @@ impl Watcher {
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
         );
-        let evict_list_i = self.evict_list_i as usize;
-
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed
         // So if we just sort the list by the biggest index first, that should be fine
-        index_sort::sort_slice_by(&mut self.evict_list[0..evict_list_i], |a, b| b.cmp(a));
+        index_sort::sort_slice_by(&mut self.evict_list, |a, b| b.cmp(a));
 
         // reshaped for borrowck — capture fds.len() before loop
         let slice = self.watchlist.slice();
@@ -410,7 +405,7 @@ impl Watcher {
         let fds_len = fds.len();
         let mut last_item = NO_WATCH_ITEM;
 
-        for &item in &self.evict_list[0..evict_list_i] {
+        for &item in &self.evict_list {
             // catch duplicates, since the list is sorted, duplicates will appear right after each other
             if item == last_item {
                 continue;
@@ -433,7 +428,7 @@ impl Watcher {
 
         last_item = NO_WATCH_ITEM;
         // This is split into two passes because reading the slice while modified is potentially unsafe.
-        for i in 0..evict_list_i {
+        for i in 0..self.evict_list.len() {
             let item = self.evict_list[i];
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
@@ -458,7 +453,7 @@ impl Watcher {
             last_item = item;
         }
 
-        self.evict_list_i = 0;
+        self.evict_list.clear();
     }
 
     fn watch_loop(&mut self) -> sys::Result<()> {
@@ -557,6 +552,9 @@ impl Watcher {
             // so we must copy into a NUL-terminated scratch buffer (mirrors the
             // directory branch below) instead of pointing at the caller's slice.
             let mut buf = bun_paths::path_buffer_pool::get();
+            if file_path.len() >= buf.len() {
+                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+            }
             let slice: &ZStr = if CLONE_FILE_PATH {
                 buf[0..file_path.len()].copy_from_slice(file_path);
                 buf[file_path.len()] = 0;
@@ -631,6 +629,9 @@ impl Watcher {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             let mut buf = bun_paths::path_buffer_pool::get();
+            if file_path.len() >= buf.len() {
+                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+            }
             let path: &ZStr = if CLONE_FILE_PATH
                 && !file_path.is_empty()
                 && file_path[file_path.len() - 1] == 0
@@ -926,14 +927,12 @@ impl Watcher {
 
         debug_assert!(index != NO_WATCH_ITEM);
 
-        self.evict_list[self.evict_list_i as usize] = index;
-        self.evict_list_i += 1;
+        self.evict_list.push(index);
 
         if kind == WatchItemKind::Directory {
             for &parent in parents {
                 if parent == hash {
-                    self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
-                    self.evict_list_i += 1;
+                    self.evict_list.push(parent as WatchItemIndex);
                 }
             }
         }
@@ -963,6 +962,66 @@ impl Watcher {
             let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }
+}
+
+// ─── directory events ─────────────────────────────────────────────────────
+
+/// The `parent_hash` of the files in `dir`: the hash of `dir` with a trailing separator.
+fn parent_hash_of(dir: &[u8], dir_hash: HashType) -> HashType {
+    if dir.last() == Some(&bun_paths::SEP) {
+        return dir_hash;
+    }
+    let mut hasher = bun_wyhash::Wyhash::init(0);
+    hasher.update(dir);
+    hasher.update(&[bun_paths::SEP]);
+    hasher.final_() as HashType
+}
+
+/// The `parent_hash` of the files in the folder at `folder_index`, then that of its other spellings.
+pub fn folder_hashes(watchlist: &WatchList, folder_index: usize) -> (HashType, Vec<HashType>) {
+    let file_paths = watchlist.items_file_path();
+    let hashes = watchlist.items_hash();
+    let folder = parent_hash_of(&file_paths[folder_index], hashes[folder_index]);
+    // One inotify watch per inode: the first spelling of a folder gets its events.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let other_folders = {
+        let kinds = watchlist.items_kind();
+        let watch_descriptors = watchlist.items_eventlist_index();
+        let mut other_folders: Vec<HashType> = Vec::new();
+        for (other_index, other) in watch_descriptors.iter().enumerate() {
+            if *other != watch_descriptors[folder_index]
+                || kinds[other_index] != WatchItemKind::Directory
+            {
+                continue;
+            }
+            let other_folder = parent_hash_of(&file_paths[other_index], hashes[other_index]);
+            if other_folder != folder && !other_folders.contains(&other_folder) {
+                other_folders.push(other_folder);
+            }
+        }
+        other_folders
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let other_folders = Vec::new();
+    (folder, other_folders)
+}
+
+/// Whether a directory event that names `changed_names` names the file at `path`, whatever the ASCII letter case.
+#[inline]
+pub fn names_file(changed_names: &[ChangedFilePath], path: &[u8]) -> bool {
+    for changed_name in changed_names.iter().flatten() {
+        let changed_name = changed_name.as_bytes();
+        let Some(name_at) = path.len().checked_sub(changed_name.len()) else {
+            continue;
+        };
+        if name_at > 0
+            && path[name_at - 1] == bun_paths::SEP
+            && path[name_at..].eq_ignore_ascii_case(changed_name)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 // ─── WatchEvent ───────────────────────────────────────────────────────────
@@ -1137,5 +1196,82 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
         self.items::<"eventlist_index", platform::EventListIndex>()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(path: &'static [u8], kind: WatchItemKind, watch_descriptor: i32) -> WatchItem {
+        let _ = watch_descriptor;
+        WatchItem {
+            file_path: Cow::Borrowed(path),
+            hash: Watcher::get_hash(path),
+            fd: Fd::INVALID,
+            count: 0,
+            parent_hash: Watcher::get_hash(
+                bun_paths::fs::PathName::init(path).dir_with_trailing_slash(),
+            ),
+            kind,
+            package_json: None,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            eventlist_index: watch_descriptor,
+        }
+    }
+
+    fn watchlist(items: Vec<WatchItem>) -> WatchList {
+        let mut list = WatchList::default();
+        for item in items {
+            list.append(item).unwrap();
+        }
+        list
+    }
+
+    #[test]
+    fn folder_hashes_is_the_parent_hash_of_the_files_in_the_folder() {
+        use WatchItemKind::{Directory, File};
+        let list = watchlist(vec![
+            item(b"/p/lib", Directory, 1),
+            item(b"/p/lib/a.ts", File, 2),
+            item(b"/p/src/", Directory, 3),
+            item(b"/p/src/b.ts", File, 4),
+        ]);
+        let parents = list.items_parent_hash();
+        assert_eq!(folder_hashes(&list, 0), (parents[1], vec![]));
+        assert_eq!(folder_hashes(&list, 2), (parents[3], vec![]));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn folder_hashes_adds_the_other_spellings_that_share_the_watch_descriptor() {
+        use WatchItemKind::{Directory, File};
+        let list = watchlist(vec![
+            item(b"/p/link/", Directory, 1),
+            item(b"/p/link", Directory, 1),
+            item(b"/p/real/", Directory, 1),
+            item(b"/p/real/a.ts", File, 1),
+            item(b"/p/other/", Directory, 5),
+            item(b"/p/other/b.ts", File, 6),
+        ]);
+        let parents = list.items_parent_hash();
+        let link = Watcher::get_hash(b"/p/link/");
+        assert_eq!(folder_hashes(&list, 0), (link, vec![parents[3]]));
+        assert_eq!(folder_hashes(&list, 1), (link, vec![parents[3]]));
+        assert_eq!(folder_hashes(&list, 2), (parents[3], vec![link]));
+        assert_eq!(folder_hashes(&list, 4), (parents[5], vec![]));
+    }
+
+    #[test]
+    fn names_file_compares_the_last_component_of_the_path() {
+        let names: [ChangedFilePath; 3] = [None, Some(zstr!("b.ts")), Some(zstr!("Page.TSX"))];
+        assert!(names_file(&names, b"/p/lib/b.ts"));
+        assert!(names_file(&names, b"/p/lib/page.tsx"));
+        assert!(!names_file(&names, b"/p/lib/ab.ts"));
+        assert!(!names_file(&names, b"/p/lib/b.tsx"));
+        assert!(!names_file(&names, b"/p/lib/b.ts/"));
+        assert!(!names_file(&names, b"b.ts"));
+        assert!(!names_file(&[], b"/p/lib/b.ts"));
+        assert!(!names_file(&[Some(zstr!(""))], b"/p/lib/b.ts"));
     }
 }

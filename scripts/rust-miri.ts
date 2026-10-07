@@ -53,6 +53,7 @@ const MIRI_CRATES = [
   "bun_shell_parser",
   "bun_threading",
   "bun_url",
+  "bun_watcher",
   "bun_wyhash",
 ];
 

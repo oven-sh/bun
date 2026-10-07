@@ -903,9 +903,6 @@ pub mod fs {
     }
 
     impl EntriesOption {
-        // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
-        bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
-
         pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
             match self {
                 EntriesOption::Entries(entries) => Some(&**entries),
@@ -1005,7 +1002,7 @@ pub mod fs {
             // Cross-thread exclusion is provided by the mutex asserted above.
             unsafe { &mut *entries_option_map() }
         }
-        pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
+        pub(crate) fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {
             self.inner().get(key)
         }
         pub(crate) fn get_or_put(&mut self, key: &[u8]) -> crate::CrateResult<bun_alloc::Result> {
@@ -1052,7 +1049,7 @@ pub mod fs {
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
-        pub entries: EntriesMap,
+        pub(crate) entries: EntriesMap,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,

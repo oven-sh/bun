@@ -1,7 +1,19 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -928,3 +940,324 @@ it.each([
     stderr: [],
   });
 });
+
+// Reads the standard output of a watched program.
+function stdoutOf(proc: { stdout: ReadableStream<Uint8Array> }) {
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  return {
+    async until(needle: string) {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`the program exited, output so far: ${JSON.stringify(output)}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    },
+    async toEnd() {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return output;
+        output += decoder.decode(value, { stream: true });
+      }
+    },
+  };
+}
+
+// Returns once the watcher thread has handled every event made before the call. The watcher logs
+// a batch of events, handles it, then reads the next batch. So once it logs a batch that was made
+// after another one, it has handled the other one. `fence` is a watched folder.
+async function watcherHandled(trace: string, fence: string) {
+  for (let i = 0; i < 2; i++) {
+    const from = statSync(trace).size;
+    const name = crypto.randomUUID();
+    mkdirSync(join(fence, name));
+    // kqueue does not log the changed name, only the watched path.
+    const logged = isLinux ? name : '/fence/"';
+    while (!readFileSync(trace, "latin1").slice(from).includes(logged)) await Bun.sleep(1);
+  }
+}
+
+// One save can reload the program more than once.
+const withoutRepeats = (output: string) => output.split("\n").filter((line, i, lines) => line !== lines[i - 1]);
+
+// The resolver caches a failed read of a directory (any errno but ENOENT) in
+// the place of its listing. The reloader used to read that cache for each
+// directory event, and aborted on the failed read:
+// "EntriesOption::entries on non-Entries variant".
+//
+// The fixture makes the read fail with no permission and no descriptor limit.
+// It moves `lib` away and puts a plain file at its path, so a listing of `lib`
+// is ENOTDIR. The watch stays on the folder that moved, so a change in it is a
+// directory event for `lib`.
+const readErrorFixture = {
+  "trace.log": "",
+  "src/lib/a.ts": `export const v = 1;`,
+  "src/fence/f.ts": `export {};`,
+  "src/main.ts": `import { v } from "./lib/a.ts";
+import "./fence/f.ts";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+console.log("RUN", v);
+if (v !== 1) process.exit(0);
+const trace = process.env.BUN_WATCHER_TRACE;
+// The same wait as watcherHandled() in the test file.
+const handled = async () => {
+  for (let i = 0; i < 2; i++) {
+    const from = statSync(trace).size;
+    const name = crypto.randomUUID();
+    mkdirSync("fence/" + name);
+    const logged = process.platform === "linux" ? name : '/fence/"';
+    while (!readFileSync(trace, "latin1").slice(from).includes(logged)) await Bun.sleep(1);
+  }
+};
+renameSync("lib", "lib.away");
+writeFileSync("lib", "");
+await handled();
+// The lookup fails, so the resolver lists lib again and caches ENOTDIR.
+await import("./lib/b.ts").then(
+  () => console.log("IMPORT ok"),
+  () => console.log("IMPORT failed"),
+);
+if (process.env.THEN === "remove") {
+  rmSync("lib.away", { recursive: true });
+  await handled();
+  console.log("REMOVED");
+} else {
+  writeFileSync("lib.away/" + process.env.THEN, "");
+  await handled();
+  rmSync("lib");
+  renameSync("lib.away", "lib");
+  await handled();
+  console.log("HEALED");
+}
+setInterval(() => {}, 1e6);
+`,
+};
+for (const [flag, what, then] of [
+  ["--hot", "a new file in the folder", "c.ts"],
+  ["--watch", "a new file in the folder", "c.ts"],
+  // The reloader did not look up a dot name, but it kept the cache entry for the next event.
+  ["--hot", "a dot file in the folder", ".env"],
+  ["--watch", "a dot file in the folder", ".env"],
+  // kqueue names no entry. It takes the watched files that are gone when the folder is deleted.
+  ["--hot", "the removal of the folder", "remove"],
+]) {
+  // The Windows watcher reports each changed file itself. Its directory events only drop the cache.
+  it.skipIf(isWindows)(
+    `${flag} survives ${what} whose cached listing is a read error`,
+    async () => {
+      using dir = tempDir("hot-dir-read-error", readErrorFixture);
+      const cwd = join(String(dir), "src");
+      await using proc = spawn({
+        cmd: [bunExe(), flag, "--no-clear-screen", "main.ts"],
+        cwd,
+        // The trace file is outside the watched directories so that writes to it cause no events.
+        env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(dir), "trace.log"), THEN: then },
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const stdout = stdoutOf(proc);
+
+      if (then === "remove") {
+        await stdout.until("REMOVED\n");
+        writeFileSync(join(cwd, "main.ts"), `console.log("RUN", 2);\nprocess.exit(0);\n`);
+      } else {
+        await stdout.until("HEALED\n");
+        // A save that replaces the inode: the directory event is the only signal for it on Linux.
+        writeFileSync(join(cwd, "lib", "a.ts.tmp"), `export const v = 2;`);
+        renameSync(join(cwd, "lib", "a.ts.tmp"), join(cwd, "lib", "a.ts"));
+      }
+      expect(await stdout.toEnd()).toBe(`RUN 1\nIMPORT failed\n${then === "remove" ? "REMOVED" : "HEALED"}\nRUN 2\n`);
+      expect(await proc.exited).toBe(0);
+    },
+    timeout,
+  );
+}
+
+// Both come from the length of a path in a PATH_MAX buffer of the watcher thread. Only inotify
+// names the changed entry, and PATH_MAX is 1024 on macOS.
+for (const [what, name] of [
+  // A directory event joined the folder and the name with no bound:
+  // "range end index 4097 out of range for slice of length 4096".
+  ["a new file whose path is longer than PATH_MAX", Buffer.alloc(247, "n") + ".ts"],
+  // The watch of an imported file wrote a NUL behind its path:
+  // "index out of bounds: the len is 4096 but the index is 4096".
+  ["an import whose path is PATH_MAX long", Buffer.alloc(245, "n") + ".png"],
+]) {
+  it.skipIf(!isLinux)(
+    `--hot survives ${what}`,
+    async () => {
+      using dir = tempDir("hot-long-path", {});
+      // A folder of 3846 bytes is under PATH_MAX, so bun runs in it. Folder + separator + name is
+      // 4097 bytes with the name of 250 bytes and 4096 bytes with the name of 249 bytes.
+      const folderLength = 3846;
+      let cwd = realpathSync(String(dir));
+      while (folderLength - cwd.length > 256) cwd = join(cwd, Buffer.alloc(200, "d").toString());
+      cwd = join(cwd, Buffer.alloc(folderLength - cwd.length - 1, "e").toString());
+      mkdirSync(cwd, { recursive: true });
+      // The absolute path does not fit in PATH_MAX, so only a relative name reaches the file.
+      const create = `require("node:fs").writeFileSync("${name}", "");`;
+      if (name.endsWith(".png")) {
+        expect(spawnSync({ cmd: [bunExe(), "-e", create], cwd, env: bunEnv }).exitCode).toBe(0);
+      }
+      writeFileSync(
+        join(cwd, "main.ts"),
+        name.endsWith(".png")
+          ? `import asset from "./${name}";
+console.log("RUN", asset.length === 4096 ? 1 : asset);
+console.log("READY");
+setInterval(() => {}, 1e6);
+`
+          : `console.log("RUN", 1);
+${create}
+console.log("READY");
+setInterval(() => {}, 1e6);
+`,
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const stdout = stdoutOf(proc);
+
+      await stdout.until("READY\n");
+      writeFileSync(join(cwd, "main.ts"), `console.log("RUN", 2);\nprocess.exit(0);\n`);
+      expect(await stdout.toEnd()).toBe("RUN 1\nREADY\nRUN 2\n");
+      expect(await proc.exited).toBe(0);
+    },
+    timeout,
+  );
+}
+
+// The entry point has a watch of its own, which a delete takes away. The reloader then takes a
+// directory event that names the entry as its reload. It compared the folder of the event with
+// the folder of the entry by the hash of one spelling.
+for (const [spelling, lookup] of [
+  ["without a trailing separator", "../app/missing.js"],
+  ["through a symlink", "../applink/missing.js"],
+]) {
+  it.skipIf(isWindows)(
+    `--hot reloads a recreated entry point whose folder was first watched ${spelling}`,
+    async () => {
+      using dir = tempDir("hot-entry-folder-spelling", {
+        "trace.log": "",
+        // A lookup that fails watches the folder under the spelling of the lookup.
+        "src/pre/setup.js": `try { require("${lookup}"); } catch {}\n`,
+        "src/fence/f.js": `export {};`,
+        "src/app/entry.js": `import "../fence/f.js";\nconsole.log("EVAL", 1);\nsetInterval(() => {}, 1e6);\n`,
+      });
+      const cwd = join(String(dir), "src");
+      symlinkSync("app", join(cwd, "applink"), "dir");
+      const trace = join(String(dir), "trace.log");
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "--no-clear-screen", "--preload", "./pre/setup.js", "app/entry.js"],
+        cwd,
+        env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const stdout = stdoutOf(proc);
+
+      await stdout.until("EVAL 1\n");
+      rmSync(join(cwd, "app", "entry.js"));
+      // The delete is handled in a batch of its own: the entry is off the watchlist.
+      await watcherHandled(trace, join(cwd, "fence"));
+      writeFileSync(join(cwd, "app", "entry.js"), `console.log("EVAL", 2);\nprocess.exit(0);\n`);
+      expect(await stdout.toEnd()).toBe("EVAL 1\nEVAL 2\n");
+      expect(await proc.exited).toBe(0);
+    },
+    // A reload that does not come is a hang, so the limit is finite on a debug build too.
+    30_000,
+  );
+}
+
+// The reloader took only a name that has a loader and no leading dot from a directory event,
+// whatever the watchlist held.
+it.skipIf(isWindows)(
+  "--hot reloads a dot-named module and a text import that are saved by rename",
+  async () => {
+    using dir = tempDir("hot-dir-event-any-name", {
+      "lib/.config.ts": `export const v = 1;`,
+      "lib/notes.md": `one`,
+      "main.ts": `import { v } from "./lib/.config.ts";
+import notes from "./lib/notes.md" with { type: "text" };
+console.log("RUN", v, notes);
+if (v === 2 && notes === "two") process.exit(0);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = stdoutOf(proc);
+    const renameOver = (name: string, contents: string) => {
+      writeFileSync(join(cwd, "lib", name + ".tmp"), contents);
+      renameSync(join(cwd, "lib", name + ".tmp"), join(cwd, "lib", name));
+    };
+
+    await stdout.until("RUN 1 one\n");
+    renameOver(".config.ts", `export const v = 2;`);
+    await stdout.until("RUN 2 one\n");
+    renameOver("notes.md", `two`);
+    expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1 one", "RUN 2 one", "RUN 2 two", ""]);
+    expect(await proc.exited).toBe(0);
+  },
+  30_000,
+);
+
+// https://github.com/oven-sh/bun/issues/30436, for an import: a Bun.build() in the entry lists
+// the folder again, and the new listing does not know which of its files are loaded.
+it.skipIf(isWindows)(
+  "--hot reloads an import that is saved by rename after a Bun.build() in the entry",
+  async () => {
+    using dir = tempDir("hot-dir-event-after-build", {
+      "a.ts": `export const v = 1;`,
+      "app.ts": `import { v } from "./a.ts";
+console.log("RUN", v);
+if (v === 3) process.exit(0);
+if (!globalThis.built) {
+  globalThis.built = true;
+  try {
+    await Bun.build({ entrypoints: ["nonexistent.ts"] });
+  } catch {}
+  console.log("BUILT");
+}
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "app.ts"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = stdoutOf(proc);
+    const renameOver = (contents: string) => {
+      writeFileSync(join(cwd, "a.ts.tmp"), contents);
+      renameSync(join(cwd, "a.ts.tmp"), join(cwd, "a.ts"));
+    };
+
+    await stdout.until("BUILT\n");
+    renameOver(`export const v = 2;`);
+    await stdout.until("RUN 2\n");
+    renameOver(`export const v = 3;`);
+    expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1", "BUILT", "RUN 2", "RUN 3", ""]);
+    expect(await proc.exited).toBe(0);
+  },
+  30_000,
+);

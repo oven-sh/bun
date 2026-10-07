@@ -414,7 +414,7 @@ const kSessionFlags = Symbol("sessionFlags");
 enum SessionFlags {
   // Set when the session takes its connected socket (node's setupHandle). Never cleared.
   Ready = 1 << 0,
-  // Set by close().
+  // Set by close() only. destroy() leaves it clear.
   Closed = 1 << 1,
   // Set when destroy() starts, before any stream is torn down (node's closeSession).
   Destroyed = 1 << 2,
@@ -1938,11 +1938,12 @@ abstract class Http2Session extends EventEmitter {
   }
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1520-L1523
   get state() {
-    const parser = this[bunHTTP2Native];
-    if (!parser || (this[kSessionFlags] & (SessionFlags.Ready | SessionFlags.Destroyed)) !== SessionFlags.Ready) {
-      return {};
+    if ((this[kSessionFlags] & (SessionFlags.Ready | SessionFlags.Destroyed)) === SessionFlags.Ready) {
+      // A socket 'close' drops the parser just before it destroys the session.
+      const parser = this[bunHTTP2Native];
+      if (parser) return parser.getCurrentState();
     }
-    return parser.getCurrentState();
+    return {};
   }
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {

@@ -2730,6 +2730,86 @@ describe.concurrent("http2 session lifecycle getters", () => {
       server.close();
     }
   });
+
+  it("client: a socket that goes away before the session is ready is reported like node", async () => {
+    const { server, port } = await h2cServer();
+    // Accepts the connection and closes it at once.
+    const hangup = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.end();
+    });
+    const hangupPort = await listen(hangup);
+    // The codes of the 'error' events a session emits until its 'close'.
+    async function errorCodes(client) {
+      const codes = [];
+      client.on("error", error => codes.push(error.code));
+      await once(client, "close");
+      return codes;
+    }
+    try {
+      const destroyedEarly = http2.connect(`http://127.0.0.1:${port}`);
+      const destroyedEarlyCodes = errorCodes(destroyedEarly);
+      destroyedEarly.destroy();
+
+      // The socket is up, so the session is ready when the peer hangs up.
+      const peerHangup = http2.connect(`http://127.0.0.1:${hangupPort}`);
+      const peerHangupCodes = errorCodes(peerHangup);
+
+      let socket;
+      const socketDestroyed = http2.connect(`http://127.0.0.1:${port}`, {
+        createConnection: () => (socket = net.connect(port, "127.0.0.1")),
+      });
+      const socketDestroyedCodes = errorCodes(socketDestroyed);
+      socket.destroy();
+
+      expect({
+        destroyWhileConnecting: await destroyedEarlyCodes,
+        peerHangupAfterConnect: await peerHangupCodes,
+        socketDestroyedWhileConnecting: await socketDestroyedCodes,
+      }).toEqual({
+        destroyWhileConnecting: [],
+        peerHangupAfterConnect: [],
+        socketDestroyedWhileConnecting: ["ERR_SOCKET_CLOSED"],
+      });
+    } finally {
+      server.close();
+      hangup.close();
+    }
+  });
+
+  it("server: a corked write that destroy() flushes never reaches the peer without its HEADERS", async () => {
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.session.on("error", () => {});
+      stream.cork();
+      stream.write("buffered-body");
+      stream.session.destroy();
+    });
+    const port = await listen(server);
+    try {
+      const client = http2.connect(`http://127.0.0.1:${port}`);
+      const problems = [];
+      client.on("error", error => problems.push(`session error ${error.code}`));
+      const closed = once(client, "close");
+      const req = client.request({ ":method": "POST", ":path": "/" });
+      let responded = false;
+      req.on("response", () => {
+        responded = true;
+      });
+      req.on("data", () => {
+        if (!responded) problems.push("data before the response headers");
+      });
+      req.on("error", error => problems.push(`request error ${error.code}`));
+      req.write("x");
+      await closed;
+      // node drops the write. Bun sends it behind the implicit response HEADERS.
+      expect(problems).toEqual([]);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 // node declares Http2Session#destroy(error = NGHTTP2_NO_ERROR, code). An undefined error takes

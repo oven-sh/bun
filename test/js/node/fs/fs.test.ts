@@ -5536,6 +5536,61 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
     }
   });
 
+  // Nothing reads the FIFO, so every write fails with EAGAIN and writeAll / writevAll give up
+  // after five retries. The stream reports that itself: the write callbacks, 'error', 'close'.
+  // One chunk goes through _write (writeAll), two buffered chunks through _writev (writevAll).
+  it.concurrent.skipIf(isWindows).each([
+    ["fs.createWriteStream(null, { fd })", 1, "write failed"],
+    ["FileHandle.createWriteStream()", 2, "writev failed"],
+  ])("%s reports a write that keeps failing with EAGAIN", async (api, chunks, message) => {
+    using dir = tempDir("fs-write-stream-eagain-full", {});
+    const path = join(String(dir), "fifo");
+    mkfifo(path, 0o666);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+          const path = ${JSON.stringify(path)};
+          (async () => {
+            const reader = fs.openSync(path, O_RDONLY | O_NONBLOCK);
+            const handle = ${api.startsWith("FileHandle")} ? await fs.promises.open(path, O_WRONLY | O_NONBLOCK) : null;
+            const fd = handle ? handle.fd : fs.openSync(path, O_WRONLY | O_NONBLOCK);
+            // The 1-byte pass leaves no room at all, whatever the pipe capacity is.
+            for (const size of [4096, 1]) {
+              const filler = Buffer.alloc(size, 0x61);
+              try {
+                for (;;) fs.writeSync(fd, filler);
+              } catch (err) {
+                if (err.code !== "EAGAIN") throw err;
+              }
+            }
+            const stream = handle ? handle.createWriteStream() : fs.createWriteStream(null, { fd });
+            stream.on("error", err => console.log("error", err.message));
+            stream.on("close", () => console.log("close"));
+            for (let i = 0; i < ${chunks}; i++) {
+              stream.write(Buffer.alloc(1024, 0x62), err => console.log("write", err?.message));
+            }
+            stream.end();
+          })();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual([
+      ...Array.from({ length: chunks }, () => `write ${message}`),
+      `error ${message}`,
+      "close",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // A pipe that bun has already used through process.stdout is in non-blocking
   // mode, so a write that lands on a full pipe returns EAGAIN. writeAll retries
   // with the rest of the buffer it got back from the callback. Without it the

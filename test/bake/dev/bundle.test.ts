@@ -452,6 +452,76 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
     // AllocationScope's invalid-free panic.
   },
 });
+// One server-side record stands for a file in the server graph and in the SSR
+// graph. A module that the other graph asks for later is bundled for it too.
+{
+  const framework = {
+    ...minimalFramework,
+    serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+  };
+  const files = {
+    "shared.ts": `export const shared = "shared";`,
+    "routes/index.ts": `
+      import { shared } from "../shared";
+      export default function () {
+        return new Response("index " + shared);
+      }
+    `,
+    "routes/other.ts": `
+      import { shared } from "../shared" with { bunBakeGraph: "ssr" };
+      export default function () {
+        return new Response("other " + shared);
+      }
+    `,
+  };
+  devTest("a second route imports a module of the server graph into the SSR graph", {
+    framework,
+    files,
+    async test(dev) {
+      await dev.fetch("/").equals("index shared");
+      await dev.fetch("/other").equals("other shared");
+    },
+  });
+  devTest("a second route imports a module of the SSR graph into the server graph", {
+    framework,
+    files,
+    async test(dev) {
+      await dev.fetch("/other").equals("other shared");
+      await dev.fetch("/").equals("index shared");
+    },
+  });
+  devTest("a page starts to import a module that only a client component imported", {
+    framework,
+    files: {
+      "lib.ts": `export const lib = "lib";`,
+      "Comp.ts": `
+        "use client";
+        import { lib } from "./lib";
+        export const marker = lib;
+      `,
+      "routes/index.ts": `
+        import "../Comp";
+        export default function () {
+          return new Response("index");
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index");
+      await dev.write(
+        "routes/index.ts",
+        `
+          import "../Comp";
+          import { lib } from "../lib";
+          export default function () {
+            return new Response("index " + lib);
+          }
+        `,
+      );
+      await dev.fetch("/").equals("index lib");
+    },
+  });
+}
 devTest("importing html file", {
   files: {
     "index.html": emptyHtmlFile({

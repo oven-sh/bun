@@ -363,6 +363,10 @@ impl QuicStream {
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
     }
+    /// True until lsquic opens the stream.
+    pub(super) fn is_pending(&self) -> bool {
+        self.with_state(|s| s.pending != 0)
+    }
 
     pub(super) fn stream_id(&self) -> i64 {
         self.with_state(|s| s.id)

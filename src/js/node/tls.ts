@@ -1294,7 +1294,8 @@ function Server(options, secureConnectionListener): void {
       validateSecureContextOptions(options);
       options = processPfxOptions(options);
 
-      let cert = options.cert;
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1474: a falsy key, cert, ca or crl counts as absent
+      let cert = options.cert || undefined;
       // Assign unconditionally so a later setSecureContext() that omits an
       // option clears the previous call's value (Node resets each omitted
       // field) instead of silently keeping stale key material.
@@ -1303,7 +1304,7 @@ function Server(options, secureConnectionListener): void {
       }
       next.cert = cert;
 
-      let key = options.key;
+      let key = options.key || undefined;
       if (key) {
         throwOnInvalidTLSArray("options.key", key);
       }
@@ -1343,7 +1344,7 @@ function Server(options, secureConnectionListener): void {
         }
       }
 
-      let ca = options.ca;
+      let ca = options.ca || undefined;
       // The process-wide default-CA override (tls.setDefaultCACertificates)
       // applies here too when no explicit `ca` was given: this path hands raw
       // {key, cert, ca} to the native listener and never goes through
@@ -1367,7 +1368,7 @@ function Server(options, secureConnectionListener): void {
       }
       next.ca = ca;
 
-      const crl = options.crl;
+      const crl = options.crl || undefined;
       if (crl) {
         throwOnInvalidTLSArray("options.crl", crl);
       }

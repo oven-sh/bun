@@ -331,6 +331,40 @@ test("ca: [] skips the setDefaultCACertificates override (distinct from ca: unde
   }
 });
 
+test("setDefaultCACertificates() applies to a server whose ca is falsy, as to one with no ca", async () => {
+  // tls.Server counts a falsy ca as absent:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1451-L1454
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const agent1 = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") };
+  const prevCerts = tls.getCACertificates("default");
+  tls.setDefaultCACertificates([keys("ca1-cert.pem")]);
+  try {
+    for (const ca of ["", false, 0]) {
+      const server = tls.createServer({ ...agent1, ca, requestCert: true, rejectUnauthorized: false } as any);
+      try {
+        const authorized = Promise.withResolvers<boolean>();
+        server.on("secureConnection", socket => {
+          authorized.resolve(socket.authorized);
+          socket.end();
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const port = (server.address() as import("net").AddressInfo).port;
+        // ca1, now a process default, issued the client's certificate.
+        const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...agent1 });
+        await once(client, "secureConnect");
+        expect([ca, await authorized.promise]).toEqual([ca, true]);
+        client.end();
+        await once(client, "close");
+      } finally {
+        server.close();
+      }
+    }
+  } finally {
+    tls.setDefaultCACertificates(prevCerts);
+  }
+});
+
 test("setDefaultCACertificates() applies to a server's client-cert verification (no explicit ca)", async () => {
   // The server path (setSecureContext -> Bun.listen) does not go through
   // InternalSecureContext; the process-default override must still apply so

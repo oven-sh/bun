@@ -2476,6 +2476,186 @@ describe("tls.Server secure-context options", () => {
     expect(authorized).toBe(false);
   });
 
+  // tls.Server#setSecureContext() stores undefined for a falsy key, cert, ca or crl:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1431-L1474
+  describe("a falsy key, cert, ca or crl counts as absent, like Node", () => {
+    const keys = (name: string) => readFileSync(join(import.meta.dir, "..", "test", "fixtures", "keys", name), "utf8");
+    const identity = { key: agent6Key, cert: agent6CertChain };
+    // This ca1 issued this agent1. This ca2 issued this agent3, and ca2-crl-agent3.pem revokes it.
+    const agent1 = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") };
+    const agent3 = { key: keys("agent3-key.pem"), cert: keys("agent3-cert.pem") };
+    const ca1 = keys("ca1-cert.pem");
+    const ca2 = keys("ca2-cert.pem");
+    const revokesAgent3 = keys("ca2-crl-agent3.pem");
+    const mtls = { ...identity, ca: ca2, requestCert: true, rejectUnauthorized: false };
+    const accepted = { authorized: true, authorizationError: null };
+    const unknownIssuer = { authorized: false, authorizationError: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" };
+    const revoked = { authorized: false, authorizationError: "CERT_REVOKED" };
+    const names = ["key", "cert", "ca", "crl"] as const;
+    const cells = names.flatMap(name => ["", false, 0].map(value => [name, value] as const));
+
+    async function listen(server: net.Server) {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return (server.address() as AddressInfo).port;
+    }
+
+    // How `server` judges an agent3 client that connects to `port`.
+    async function judge(server: Server, port: number) {
+      const verdict = Promise.withResolvers<{ authorized: boolean; authorizationError: unknown }>();
+      const onSecureConnection = (socket: TLSSocket) => {
+        verdict.resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+        socket.end();
+      };
+      server.once("secureConnection", onSecureConnection);
+      server.once("error", verdict.reject);
+      const closed = Promise.withResolvers<void>();
+      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...agent3 });
+      client.on("error", verdict.reject);
+      client.on("close", () => {
+        closed.resolve();
+        verdict.reject(new Error("the client closed before 'secureConnection'"));
+      });
+      client.resume();
+      try {
+        const judged = await verdict.promise;
+        await closed.promise;
+        return judged;
+      } finally {
+        client.destroy();
+        server.off("secureConnection", onSecureConnection);
+        server.off("error", verdict.reject);
+      }
+    }
+
+    it.each(cells)("%s: %p listens and is not stored", async (name, value) => {
+      const server: any = createServer({ ...identity, [name]: value });
+      try {
+        await listen(server);
+        expect(server[name]).toBeUndefined();
+      } finally {
+        server.close();
+      }
+    });
+
+    it("-0, NaN, 0n and null are not stored either", () => {
+      for (const name of names) {
+        for (const value of [-0, NaN, 0n, null]) {
+          expect([name, value, (createServer({ [name]: value }) as any)[name]]).toEqual([name, value, undefined]);
+        }
+      }
+    });
+
+    it.each([
+      ["new tls.Server()", (options: any) => new Server(options)],
+      ["tls.Server() without new", (options: any) => (Server as any)(options)],
+      ["a tls.Server subclass", (options: any) => new (class extends Server {})(options)],
+      ["http2.createSecureServer()", (options: any) => http2.createSecureServer(options)],
+    ])("%s drops them as tls.createServer() does", async (_name, construct) => {
+      const server = construct({ key: "", cert: false, ca: 0, crl: "" });
+      try {
+        await listen(server);
+        expect([server.key, server.cert, server.ca, server.crl]).toEqual([undefined, undefined, undefined, undefined]);
+      } finally {
+        server.close();
+      }
+    });
+
+    it.each(["", false, 0])("with key and cert %p, the server serves its addContext() certificate", async falsy => {
+      const server: Server = createServer({ key: falsy, cert: falsy } as any, socket => socket.end("served"));
+      let client: TLSSocket | undefined;
+      try {
+        server.addContext("agent1", agent1);
+        client = connect({ port: await listen(server), host: "127.0.0.1", servername: "agent1", ca: ca1 });
+        let data = "";
+        client.setEncoding("utf8").on("data", chunk => (data += chunk));
+        await once(client, "end");
+        expect({ authorized: client.authorized, data }).toEqual({ authorized: true, data: "served" });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    });
+
+    it("a falsy ca judges a client as an absent ca does", async () => {
+      for (const ca of ["", false, 0, undefined]) {
+        const server: Server = createServer({ ...mtls, ca } as any);
+        try {
+          expect([ca, await judge(server, await listen(server))]).toEqual([ca, unknownIssuer]);
+        } finally {
+          server.close();
+        }
+      }
+    });
+
+    it("setSecureContext() before listen() drops the CRL the constructor got", async () => {
+      const server: Server = createServer({ ...mtls, crl: revokesAgent3 });
+      try {
+        server.setSecureContext({ ...mtls, crl: "" as any });
+        expect(await judge(server, await listen(server))).toEqual(accepted);
+        expect((server as any).crl).toBeUndefined();
+      } finally {
+        server.close();
+      }
+    });
+
+    it("setSecureContext() on a listening server accepts each falsy value", async () => {
+      const server: any = createServer(identity);
+      try {
+        await listen(server);
+        for (const [name, value] of cells) {
+          server.setSecureContext({ ...identity, [name]: value });
+          expect([name, value, server[name]]).toEqual([name, value, undefined]);
+        }
+      } finally {
+        server.close();
+      }
+    });
+
+    it("setSecureContext() on a listening server stops the revocation checks until it gets a CRL again", async () => {
+      const server: Server = createServer({ ...mtls, crl: revokesAgent3 });
+      try {
+        const port = await listen(server);
+        expect(await judge(server, port)).toEqual(revoked);
+
+        server.setSecureContext({ ...mtls, crl: false as any });
+        expect(await judge(server, port)).toEqual(accepted);
+
+        server.setSecureContext({ ...mtls, crl: revokesAgent3 });
+        expect(await judge(server, port)).toEqual(revoked);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("setSecureContext() on a listening server drops the CA until it gets one again", async () => {
+      const server: Server = createServer(mtls);
+      try {
+        const port = await listen(server);
+        expect(await judge(server, port)).toEqual(accepted);
+
+        server.setSecureContext({ ...mtls, ca: "" as any });
+        expect(await judge(server, port)).toEqual(unknownIssuer);
+
+        server.setSecureContext(mtls);
+        expect(await judge(server, port)).toEqual(accepted);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("serves a socket handed in via server.emit('connection')", async () => {
+      const tlsServer: Server = createServer({ ...mtls, crl: 0 } as any);
+      const rawServer = net.createServer(raw => tlsServer.emit("connection", raw));
+      try {
+        expect(await judge(tlsServer, await listen(rawServer))).toEqual(accepted);
+      } finally {
+        rawServer.close();
+        tlsServer.close();
+      }
+    });
+  });
+
   it("still rejects an unverifiable client certificate when rejectUnauthorized is 0", async () => {
     // The server trusts no CA, so the client certificate cannot be verified;
     // Node's `rejectUnauthorized !== false` rule makes 0 behave like true and

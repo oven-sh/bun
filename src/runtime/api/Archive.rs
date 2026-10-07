@@ -708,6 +708,28 @@ pub enum ExtractError {
 pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
+    /// A system call for one entry failed.
+    SysErr(Box<bun_sys::Error>),
+}
+
+// Every `extract()` job holds one. The boxed error keeps the job in mimalloc's 160-byte class.
+const _: () = assert!(core::mem::size_of::<ExtractResult>() <= 16);
+
+impl ExtractResult {
+    /// `err` with the path that the failed call was given: `entry`, a name below `root`.
+    fn entry_error(err: &bun_sys::Error, root: &[u8], entry: &[u8]) -> ExtractResult {
+        let mut path =
+            bun_paths::join_sep_maybe_z::<false>(&[root, strings::without_trailing_slash(entry)])
+                .into_vec();
+        bun_paths::resolve_path::posix_to_platform_in_place(&mut path[root.len()..]);
+        ExtractResult::SysErr(Box::new(err.with_path(&path)))
+    }
+
+    /// The error of `make_path(dir)` below `root`. The directory that the system refused can be a parent of `dir`.
+    fn mkdir_error(err: &bun_sys::Error, root: &[u8], dir: &[u8]) -> ExtractResult {
+        let refused: &[u8] = if err.path.is_empty() { dir } else { &err.path };
+        Self::entry_error(err, root, refused)
+    }
 }
 
 pub(crate) struct ExtractContext {
@@ -730,6 +752,7 @@ impl TaskContext for ExtractContext {
             ExtractResult::Err(e) => PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
             ),
+            ExtractResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
         })
     }
 }
@@ -738,15 +761,11 @@ impl ExtractContext {
     fn do_run(&mut self) -> ExtractResult {
         // If we have glob patterns, use filtered extraction
         if self.glob_patterns.is_some() {
-            let count = match extract_to_disk_filtered(
+            return extract_to_disk_filtered(
                 self.store.shared_view(),
                 &self.path,
                 self.glob_patterns.as_deref(),
-            ) {
-                Ok(c) => c,
-                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
-            };
-            return ExtractResult::Success(count);
+            );
         }
 
         // Otherwise use the fast path without filtering
@@ -1040,6 +1059,12 @@ impl FilesContext {
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
+        let mut name_buf = self
+            .glob_patterns
+            .as_ref()
+            .map(|_| bun_paths::path_buffer_pool::get());
+        let mut long_name_buf: Vec<u8> = Vec::new();
+
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
         while archive.read_next_header(&mut entry).succeeded() {
             let entry_ref = lib::Entry::opaque_ref(entry);
@@ -1057,8 +1082,10 @@ impl FilesContext {
             #[cfg(windows)]
             let pathname: &[u8] = &pathname_owned;
             // Apply glob pattern filtering (supports both positive and negative patterns)
-            if let Some(patterns) = &self.glob_patterns {
-                if !match_glob_patterns(patterns, pathname) {
+            if let (Some(patterns), Some(name_buf)) = (&self.glob_patterns, &mut name_buf) {
+                let name =
+                    NormalizedName::new_spilling(pathname, &mut name_buf[..], &mut long_name_buf);
+                if !match_glob_patterns(patterns, &name) {
                     continue;
                 }
             }
@@ -1260,10 +1287,43 @@ pub(crate) struct GlobPattern {
 impl GlobPattern {
     fn new(pattern: &[u8]) -> GlobPattern {
         let positive = pattern.strip_prefix(b"!");
+        // A pattern sees entry names without a leading "./".
+        let mut glob = positive.unwrap_or(pattern);
+        while glob.len() > 2 && glob.starts_with(b"./") {
+            glob = &glob[2..];
+        }
         GlobPattern {
             is_negative: positive.is_some(),
-            glob: glob::Prepared::new(positive.unwrap_or(pattern).into()),
+            glob: glob::Prepared::new(glob.into()),
         }
+    }
+}
+
+/// The only name of an entry that a glob pattern sees: the path that `extract()` writes, with no "./", "//" or "\\".
+pub(crate) struct NormalizedName<'a>(&'a bun_core::ZStr);
+
+impl<'a> NormalizedName<'a> {
+    /// `None` for a stored name that does not fit `buf`.
+    fn new(stored: &[u8], buf: &'a mut [u8]) -> Option<Self> {
+        if stored.len() >= buf.len() {
+            return None;
+        }
+        Some(Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, buf)))
+    }
+
+    /// For a caller with no limit on the length of a name: one that does not fit `buf` goes to `spill`.
+    fn new_spilling(stored: &[u8], buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
+        if stored.len() < buf.len() {
+            return Self(bun_paths::resolve_path::normalize_buf_z::<
+                bun_paths::platform::Posix,
+            >(stored, buf));
+        }
+        spill.resize(stored.len() + 1, 0);
+        Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, &mut spill[..]))
     }
 }
 
@@ -1271,7 +1331,8 @@ impl GlobPattern {
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], name: &NormalizedName<'_>) -> bool {
+    let pathname = name.0.as_bytes();
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
@@ -1297,17 +1358,18 @@ pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> 
 
 /// Extract archive to disk with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
+/// Stops at the first directory or file that a system call refuses.
 fn extract_to_disk_filtered(
     file_buffer: &[u8],
     root: &[u8],
     glob_patterns: Option<&[GlobPattern]>,
-) -> crate::Result<u32> {
+) -> ExtractResult {
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
     configure_archive_reader(&archive);
 
     if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
+        return ExtractResult::Err(ExtractError::ReadError);
     }
 
     // Open/create target directory using bun.sys
@@ -1317,7 +1379,7 @@ fn extract_to_disk_filtered(
         if bun_paths::is_absolute(root) {
             break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
                 Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
+                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
             };
         } else {
             break 'brk match bun_sys::openat_a(
@@ -1327,7 +1389,7 @@ fn extract_to_disk_filtered(
                 0,
             ) {
                 Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
+                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
             };
         }
     };
@@ -1336,28 +1398,25 @@ fn extract_to_disk_filtered(
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
     let mut write_strategy = lib::WriteStrategy::default();
+    let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
     while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let raw_pathname_z = entry_ref.pathname();
+        let raw_pathname = entry_ref.pathname().as_bytes();
         #[cfg(windows)]
-        let raw_pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
-        );
+        let raw_pathname_owned = match entry_pathname_utf8(entry_ref) {
+            Ok(name) => name,
+            Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+        };
         #[cfg(windows)]
-        let raw_pathname_z = raw_pathname_zbox.as_zstr();
-        let raw_pathname = raw_pathname_z.as_bytes();
+        let raw_pathname: &[u8] = &raw_pathname_owned;
 
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        if raw_pathname.len() >= normalized_buf.len() {
+        let Some(name) = NormalizedName::new(raw_pathname, &mut normalized_buf[..]) else {
             continue;
-        }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        };
+        let pathname_z = name.0;
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
@@ -1369,7 +1428,7 @@ fn extract_to_disk_filtered(
         // Positive patterns: at least one must match
         // Negative patterns: if any matches, the file is excluded
         if let Some(patterns) = glob_patterns {
-            if !match_glob_patterns(patterns, pathname) {
+            if !match_glob_patterns(patterns, &name) {
                 continue;
             }
         }
@@ -1379,11 +1438,8 @@ fn extract_to_disk_filtered(
 
         match kind {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
-                    // Directory already exists - don't count as extracted
-                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
-                    Err(_) => continue,
-                    Ok(()) => {}
+                if let Err(err) = dir_fd.make_path(pathname) {
+                    return ExtractResult::mkdir_error(&err, root, pathname);
                 }
                 count += 1;
             }
@@ -1396,19 +1452,12 @@ fn extract_to_disk_filtered(
                 } else {
                     0o644
                 };
+                // With the owner-write bit, a later entry of the same name or a second extract can open the file.
+                let mode: Mode = mode | 0o200;
 
-                // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
-                        // Expected: directory already exists
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
-                        // Permission errors: skip this file, will fail at openat
-                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
-                        // Other errors: skip, will fail at openat
-                        Err(_) => {}
-                        Ok(()) => {}
-                    }
-                }
+                // Create parent directories if needed
+                let parent = bun_core::dirname(pathname)
+                    .map(|parent_dir| (parent_dir, dir_fd.make_path(parent_dir)));
 
                 // Create and write the file using bun.sys
                 let file_fd: Fd = match bun_sys::openat(
@@ -1418,18 +1467,33 @@ fn extract_to_disk_filtered(
                     mode,
                 ) {
                     Ok(fd) => fd,
-                    Err(_) => continue,
+                    Err(err) => {
+                        return match parent {
+                            // The open fails because this mkdir failed.
+                            Some((parent_dir, Err(mkdir_err))) => {
+                                ExtractResult::mkdir_error(&mkdir_err, root, parent_dir)
+                            }
+                            _ => ExtractResult::entry_error(&err, root, pathname),
+                        };
+                    }
                 };
 
-                let write_success = size == 0
-                    || archive.read_data_into_fd(file_fd, &mut write_strategy) == lib::Result::Ok;
+                let written = if size == 0 {
+                    Ok(lib::Result::Ok)
+                } else {
+                    archive.read_data_into_fd(file_fd, &mut write_strategy)
+                };
                 let _ = file_fd.close();
 
-                if write_success {
-                    count += 1;
-                } else {
-                    // Remove partial file on failure
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                match written {
+                    Ok(lib::Result::Ok) => count += 1,
+                    incomplete => {
+                        // Remove partial file on failure
+                        let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                        if let Err(err) = incomplete {
+                            return ExtractResult::entry_error(&err, root, pathname);
+                        }
+                    }
                 }
             }
             bun_sys::FileKind::SymLink => {
@@ -1464,5 +1528,5 @@ fn extract_to_disk_filtered(
         }
     }
 
-    Ok(count)
+    ExtractResult::Success(count)
 }

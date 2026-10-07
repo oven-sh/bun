@@ -804,25 +804,28 @@ describe("constant arguments", () => {
       const { a: object = getObj() } = getUndefined();
       let { a: changed = 5 } = getUndefined();
       changed = 9;
-      console.log(JSON.stringify([id(a), a, id(x), x, id(y), y, random === random, object === object, changed]));
+      const own = [typeof random, random === random, object.a, object === object, changed];
+      console.log(JSON.stringify([id(a), a, id(x), x, id(y), y, ...own]));
     `;
     expect(await lastLineOf(header + entry, build)).toMatchObject({
-      stdout: "[5,5,8,8,2,2,true,true,9]",
+      stdout: '[5,5,8,8,2,2,"number",true,1,true,9]',
       exitCode: 0,
     });
   });
 
-  // A var that a direct eval adds stays in the function that holds the eval.
-  test.concurrent.each(modes)("$mode: a direct eval in another function does not hide the const", async ({ build }) => {
+  // A module is strict, so a var that a direct eval declares stays inside the eval.
+  test.concurrent.each(modes)("$mode: a direct eval does not hide the const", async ({ build }) => {
     const entry = `
       function helper(s) { return eval(s); }
       console.log("a statement");
       const N = 5;
       const out = [id(N), helper("1 + 1")];
       { eval("0"); out.push(id(N)); }
+      function sameFunction() { eval("var N = 7"); return id(N); }
+      out.push(sameFunction());
       console.log(JSON.stringify(out));
     `;
-    expect(await lastLineOf(header + entry, build, {}, "entry.js")).toMatchObject({ stdout: "[5,2,5]", exitCode: 0 });
+    expect(await lastLineOf(header + entry, build, {}, "entry.js")).toMatchObject({ stdout: "[5,2,5,5]", exitCode: 0 });
   });
 
   test.concurrent("a joined flag name in an argument is read whole", async () => {
@@ -891,15 +894,15 @@ describe("constant arguments", () => {
       entry: `const { a = Math.random() } = getUndefined(); console.log(id(a));`,
       error: identifierError,
     },
+    // The program reads a property that the object does not have from its prototype.
+    {
+      what: "a binding of a property that the macro result does not have",
+      entry: `const { toString = 5 } = getObj(); console.log(id(toString));`,
+      error: identifierError,
+    },
     {
       what: "a const that a with object can shadow",
       entry: `console.log("a statement"); const N = 5; with ({ N: 6 }) { console.log(id(N)); }`,
-      error: identifierError,
-      entryFile: "entry.js",
-    },
-    {
-      what: "a const that a direct eval can shadow",
-      entry: `console.log("a statement"); const N = 5; function f() { eval("var N = 7"); return id(N); } console.log(f());`,
       error: identifierError,
       entryFile: "entry.js",
     },

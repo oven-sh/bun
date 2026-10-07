@@ -477,9 +477,9 @@ async function runBunTest(dir: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-// Files that `bun test` ran, from the "path/to/file.ts:" header lines.
+// Files that `bun test` ran, from the "path/to/file.ts:" header lines, with `/` separators.
 function ranFiles(stderr: string): string[] {
-  return [...stderr.matchAll(/^(\S+\.(?:ts|tsx|js)):$/gm)].map(m => m[1]).sort();
+  return [...stderr.matchAll(/^(\S+\.(?:ts|tsx|js)):$/gm)].map(m => m[1].replaceAll("\\", "/")).sort();
 }
 
 const passingTest = (name: string) => `
@@ -516,6 +516,26 @@ describe.concurrent("[test] filePatterns", () => {
     const { stderr, exitCode } = await runBunTest(String(dir));
     expect(ranFiles(stderr)).toEqual(["src/a.itest.ts", "src/nested/d.spec.tsx"]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a negated glob removes files from the matched set", async () => {
+    using dir = tempDir("bunfig-file-patterns-negated", {
+      ...tree,
+      "bunfig.toml": `[test]\nfilePatterns = ["**/*.itest.ts", "!src/nested/**"]`,
+    });
+    const { stderr, exitCode } = await runBunTest(String(dir));
+    expect(ranFiles(stderr)).toEqual(["e.itest.ts", "src/a.itest.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a negated glob alone matches nothing", async () => {
+    using dir = tempDir("bunfig-file-patterns-negated-only", {
+      ...tree,
+      "bunfig.toml": `[test]\nfilePatterns = "!src/nested/**"`,
+    });
+    const { stderr, exitCode } = await runBunTest(String(dir));
+    expect(stderr).toContain("No tests found!");
+    expect(exitCode).toBe(1);
   });
 
   test("a positional filter still narrows the matched set", async () => {
@@ -562,6 +582,51 @@ describe.concurrent("[test] filePatterns", () => {
     const coverageTable = stdout + stderr;
     expect(coverageTable).toContain("lib.ts");
     expect(coverageTable).not.toContain("lib.itest.ts |");
+    expect(exitCode).toBe(0);
+  });
+
+  test("coverageSkipTestFiles still skips a suffix-named file run by explicit path", async () => {
+    using dir = tempDir("bunfig-file-patterns-coverage-explicit", {
+      "lib.ts": `export const add = (a: number, b: number) => a + b;`,
+      "legacy.test.ts": `
+        import { test, expect } from "bun:test";
+        import { add } from "./lib";
+        test("add", () => expect(add(1, 2)).toBe(3));
+      `,
+      "bunfig.toml": `[test]\nfilePatterns = "*.itest.ts"\ncoverage = true\ncoverageSkipTestFiles = true`,
+    });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir), "./legacy.test.ts");
+    const coverageTable = stdout + stderr;
+    expect(coverageTable).toContain("lib.ts");
+    expect(coverageTable).not.toContain("legacy.test.ts |");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--parallel workers load the --config file the coordinator used", async () => {
+    const itest = (name: string) => `
+      import { test, expect } from "bun:test";
+      import { add } from "./lib";
+      test(${JSON.stringify(name)}, () => expect(add(1, 2)).toBe(3));
+    `;
+    using dir = tempDir("bunfig-file-patterns-parallel-config", {
+      "lib.ts": `export const add = (a: number, b: number) => a + b;`,
+      "one.itest.ts": itest("one"),
+      "two.itest.ts": itest("two"),
+      "bunfig.dom.toml": `[test]\nfilePatterns = "*.itest.ts"\ncoverage = true\ncoverageSkipTestFiles = true`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--config=bunfig.dom.toml", "test", "--parallel=2"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdout + stderr;
+    expect(output).toContain("2 pass");
+    expect(output).toContain("lib.ts");
+    expect(output).not.toContain("one.itest.ts |");
+    expect(output).not.toContain("two.itest.ts |");
     expect(exitCode).toBe(0);
   });
 
@@ -645,13 +710,14 @@ describe.concurrent("[test] isolate", () => {
     expect(await isolated(`[test]\nisolate = false`, "--isolate")).toBe(true);
   });
 
+  // --parallel=2 spawns workers (--parallel=1 runs in-process). The huge
+  // scale-up delay keeps both files on the first worker, so a shared global is observable.
   test("--parallel still implies isolate over isolate = false", async () => {
-    // One worker gets both files, so a shared global is observable.
-    expect(await isolated(`[test]\nisolate = false`, "--parallel=1", "--parallel-delay=1000000")).toBe(true);
+    expect(await isolated(`[test]\nisolate = false`, "--parallel=2", "--parallel-delay=1000000")).toBe(true);
   });
 
   test("--parallel --no-isolate wins over isolate = true", async () => {
-    expect(await isolated(`[test]\nisolate = true`, "--parallel=1", "--parallel-delay=1000000", "--no-isolate")).toBe(
+    expect(await isolated(`[test]\nisolate = true`, "--parallel=2", "--parallel-delay=1000000", "--no-isolate")).toBe(
       false,
     );
   });

@@ -24,10 +24,8 @@ pub(crate) struct Scanner<'a> {
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub(crate) path_ignore_patterns: &'a [&'a [u8]],
-    /// `[test] filePatterns`: globs matched against the path relative to the
-    /// project root (top_level_dir), the same base as `path_ignore_patterns`.
-    /// When non-empty, a discovered file must match one of them instead of
-    /// ending in one of [`TEST_NAME_SUFFIXES`].
+    /// `[test] filePatterns`, matched like `path_ignore_patterns`. When
+    /// non-empty it replaces the [`TEST_NAME_SUFFIXES`] rule for discovered files.
     pub(crate) file_patterns: &'a [&'a [u8]],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
@@ -250,8 +248,7 @@ impl<'a> Scanner<'a> {
         if !NEEDS_TEST_SUFFIX {
             return true;
         }
-        // With `filePatterns`, the glob decides once the absolute path is built
-        // (see `matches_file_patterns`), so every JS-like file passes here.
+        // With `filePatterns`, `matches_file_patterns` decides once the absolute path exists.
         if !self.file_patterns.is_empty() {
             return true;
         }
@@ -443,22 +440,29 @@ impl<'a> Scanner<'a> {
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
 
-/// The default test-file rule: the name without its extension ends in one of
-/// [`TEST_NAME_SUFFIXES`]. Shared by discovery and by the coverage
-/// `skip_test_files` check so both agree on what a test file is.
+/// The default test-file rule, shared by discovery and the coverage `skip_test_files` check.
 pub(crate) fn has_test_suffix(name_without_extension: &[u8]) -> bool {
     TEST_NAME_SUFFIXES
         .iter()
         .any(|suffix| strings::ends_with(name_without_extension, suffix))
 }
 
-/// `[test] filePatterns` rule: `rel_path` (relative to the project root)
-/// matches one of the globs.
+/// `[test] filePatterns` rule: the project-root-relative path matches a glob
+/// and no `!`-negated glob rejects it.
 pub(crate) fn matches_any_file_pattern<'p>(
     patterns: impl IntoIterator<Item = &'p [u8]>,
     rel_path: &[u8],
 ) -> bool {
-    patterns
-        .into_iter()
-        .any(|pattern| bun_glob::r#match(pattern, rel_path).matches())
+    let mut matched = false;
+    for pattern in patterns {
+        let result = bun_glob::r#match(pattern, rel_path);
+        if result.is_negated() {
+            if !result.matches() {
+                return false;
+            }
+        } else if result.matches() {
+            matched = true;
+        }
+    }
+    matched
 }

@@ -1782,6 +1782,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
+    if let Some(config_path) = args.option(b"--config") {
+        if !config_path.is_empty() {
+            ctx.test_options.config_path = Some(config_path.into());
+        }
+    }
+
     if let Some(timeout_ms) = args.option(b"--timeout") {
         if !timeout_ms.is_empty() {
             ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {

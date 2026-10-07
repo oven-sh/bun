@@ -261,6 +261,13 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     );
     argv.push(lit(b"test\0"));
     argv.push(lit(b"--test-worker\0"));
+    // A worker loads bunfig.toml itself. Same cwd, so a relative path resolves the same.
+    if let Some(config_path) = &opts.config_path {
+        argv.push(print_z(format_args!(
+            "--config={}",
+            bstr::BStr::new(config_path)
+        ))?);
+    }
     argv.push(if opts.isolate {
         lit(b"--isolate\0")
     } else {

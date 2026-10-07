@@ -533,27 +533,15 @@ impl<'a> Parser<'a> {
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                let mut randomize_from_config: Option<bool> = None;
-
                 if let Some(expr) = test.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    randomize_from_config = expr.as_bool();
                     self.ctx.test_options.randomize =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
+                // `parse_test_command_options` checks `seed` against `randomize` after the flags apply.
                 if let Some(expr) = test.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    // `randomize = false` in this file is a contradiction, reported
-                    // here with its location. An absent `randomize` is checked in
-                    // `parse_test_command_options`, after `--randomize` applies.
-                    if randomize_from_config == Some(false) {
-                        self.add_error(
-                            expr.loc,
-                            b"\"seed\" can only be used when \"randomize\" is true",
-                        )?;
-                    }
-
                     self.ctx.test_options.seed = Some(num_to_u32(
                         expr.as_number().expect("infallible: type checked"),
                     ));

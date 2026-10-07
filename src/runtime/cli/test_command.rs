@@ -1721,9 +1721,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
             if scanner::has_test_suffix(&slice[0..slice.len() - ext.len()]) {
                 return false;
             }
-            // A file discovered through `filePatterns` is a test file too. The
-            // suffix rule stays on because an explicit `bun test ./x.test.ts`
-            // runs whether or not it matches the patterns.
+            // The suffix rule stays on: `bun test ./x.test.ts` runs whether or not it matches `filePatterns`.
             if !runner.test_options.file_patterns.is_empty() {
                 let rel_path = resolve_path::relative(FileSystem::instance().top_level_dir, slice);
                 if scanner::matches_any_file_pattern(
@@ -1754,8 +1752,7 @@ impl core::fmt::Display for QuotedList<'_> {
     }
 }
 
-/// One line that says which files count as test files: the default suffixes,
-/// or the `[test] filePatterns` globs when bunfig.toml sets them.
+/// One line that says which files count as test files.
 fn print_test_file_rule(file_patterns: &[Box<[u8]>], as_note: bool) {
     if as_note {
         pretty_error!("<blue>note<r><d>:<r> ");

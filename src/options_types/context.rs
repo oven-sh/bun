@@ -430,9 +430,10 @@ pub struct TestOptions {
     pub bail: u32,
     pub coverage: CodeCoverageOptions,
     pub path_ignore_patterns: Vec<Box<[u8]>>,
-    /// `[test] filePatterns`: globs matched against the project-root-relative
-    /// path of each discovered file. Empty means the default test suffixes.
+    /// `[test] filePatterns`. Empty means the default test suffixes.
     pub file_patterns: Vec<Box<[u8]>>,
+    /// `bun test --config=<path>`, forwarded to `--parallel` workers.
+    pub config_path: Option<Box<[u8]>>,
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `test_filter_regex()`.
@@ -517,6 +518,7 @@ impl Default for TestOptions {
             coverage: CodeCoverageOptions::default(),
             path_ignore_patterns: Vec::new(),
             file_patterns: Vec::new(),
+            config_path: None,
             test_filter_pattern: None,
             test_filter_regex: None,
             // Under ASAN every spawned `bun` child is several-× heavier in

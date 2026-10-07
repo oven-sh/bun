@@ -2640,3 +2640,32 @@ describe.concurrent("request handlers run to completion before the callbacks the
     expect(order).toEqual(["close()", "rest of handler", "microtask"]);
   });
 });
+
+it(
+  "server.upgrade() reports false for a connection the idle timeout already ended",
+  async () => {
+    // uWS refuses to adopt a closed or shut down socket, and HttpResponse::upgrade() destructs
+    // HttpResponseData before it adopts. A refused adopt used to leave WebSocketData in a socket
+    // that stayed in the HTTP context, and its close destructed that block as an HttpResponseData.
+    // A TLS shutdown keeps the socket in the shut down state while it waits for the peer's
+    // close_notify, which is the window a handler that awaits can land in.
+    await using proc = spawn({
+      cmd: [bunExe(), "run", path.join(import.meta.dir, "websocket-server-idle-upgrade-fixture.js")],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({
+      ok: true,
+      // The request is not aborted, so the aborted-request check of server.upgrade() does not cover this.
+      abortedBeforeUpgrade: false,
+      upgradeResult: false,
+      opened: 0,
+      pendingWebSockets: 0,
+    });
+  },
+  // The fixture waits for the server's own idle timeout on a spawned debug build.
+  40_000,
+);

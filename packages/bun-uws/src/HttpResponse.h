@@ -202,18 +202,65 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
     }
 
-    /* Ends the 101 of upgrade(): terminates the header section and marks the
-     * response done. Not internalEnd(), because the socket leaves HTTP right
-     * after: the connection close gate does not apply (Connection: close,
-     * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
-     * WebSocket that takes over the socket), and the cork stays so the
-     * handshake batches with the first frames written from open(). */
-    void endUpgradeHandshake() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        writeMark();
-        Super::write("\r\n", 2);
-        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
-        httpResponseData->markDone(this);
+    /* Writes the 101 of upgrade() through the adopted WebSocket, in one write and with no
+     * allocation of its own: the length is known up front, so the bytes go straight into the cork
+     * slot (or behind the backpressure the response handed over). `httpState` is the response's
+     * state from before the adopt: a caller that wrote its own status or Date is not repeated. */
+    static void writeUpgradeHandshake(AsyncSocket<SSL> *socket, unsigned int httpState,
+            std::string_view secWebSocketAccept, std::string_view secWebSocketProtocol,
+            std::string_view secWebSocketExtensions) {
+        static constexpr std::string_view STATUS_LINE = "HTTP/1.1 101 Switching Protocols\r\n";
+        static constexpr std::string_view FIXED_HEADERS =
+            "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ";
+        static constexpr std::string_view PROTOCOL_HEADER = "Sec-WebSocket-Protocol: ";
+        static constexpr std::string_view EXTENSIONS_HEADER = "Sec-WebSocket-Extensions: ";
+        static constexpr std::string_view DATE_HEADER = "Date: ";
+        static constexpr std::string_view CRLF = "\r\n";
+        /* LoopData::date is a fixed-width HTTP-date, like writeMark() writes. */
+        static constexpr size_t DATE_LENGTH = 29;
+
+        const bool writeStatusLine = !(httpState & HttpResponseData<SSL>::HTTP_STATUS_CALLED);
+        const bool writeDate = !(httpState & HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER);
+
+        size_t length = FIXED_HEADERS.length() + secWebSocketAccept.length() + CRLF.length() + CRLF.length();
+        if (writeStatusLine) length += STATUS_LINE.length();
+        if (secWebSocketProtocol.length()) length += PROTOCOL_HEADER.length() + secWebSocketProtocol.length() + CRLF.length();
+        if (secWebSocketExtensions.length()) length += EXTENSIONS_HEADER.length() + secWebSocketExtensions.length() + CRLF.length();
+        if (writeDate) length += DATE_HEADER.length() + DATE_LENGTH + CRLF.length();
+
+        auto [sendBuffer, sendBufferAttribute] = socket->getSendBuffer(length);
+        char *p = sendBuffer;
+        auto append = [&p](std::string_view bytes) {
+            memcpy(p, bytes.data(), bytes.length());
+            p += bytes.length();
+        };
+        if (writeStatusLine) append(STATUS_LINE);
+        append(FIXED_HEADERS);
+        append(secWebSocketAccept);
+        append(CRLF);
+        if (secWebSocketProtocol.length()) {
+            append(PROTOCOL_HEADER);
+            append(secWebSocketProtocol);
+            append(CRLF);
+        }
+        if (secWebSocketExtensions.length()) {
+            append(EXTENSIONS_HEADER);
+            append(secWebSocketExtensions);
+            append(CRLF);
+        }
+        if (writeDate) {
+            append(DATE_HEADER);
+            append(std::string_view(socket->getLoopData()->date, DATE_LENGTH));
+            append(CRLF);
+        }
+        append(CRLF);
+        ASSERT((size_t) (p - sendBuffer) == length);
+
+        if (sendBufferAttribute == SendBufferAttribute::NEEDS_DRAIN) {
+            socket->write(nullptr, 0);
+        } else if (sendBufferAttribute == SendBufferAttribute::NEEDS_UNCORK) {
+            socket->uncork();
+        }
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
@@ -379,11 +426,20 @@ public:
     }
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
-     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
+     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
+     * Returns nullptr, leaving the response (and userData) untouched, if the socket is closed or shut down. */
     template <typename UserData>
     us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        /* us_socket_adopt below refuses a closed or shut down socket, and by then HttpResponseData
+         * is destructed. This is the only point that can refuse: nothing between here and the adopt
+         * writes to the socket, so nothing can end the connection in between. The 101 goes out
+         * through the WebSocket, after the adopt. */
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
 
         /* Extract needed parameters from WebSocketContextData */
         WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
@@ -394,15 +450,12 @@ public:
         secWebSocketKey.copy(secWebSocketKeyBuffer, 24);
         WebSocketHandshake::generate(secWebSocketKeyBuffer, secWebSocketAccept);
 
-        writeStatus("101 Switching Protocols")
-            ->writeHeader("Upgrade", "websocket")
-            ->writeHeader("Connection", "Upgrade")
-            ->writeHeader("Sec-WebSocket-Accept", secWebSocketAccept);
-
         /* Select first subprotocol if present */
+        std::string_view selectedProtocol;
         if (secWebSocketProtocol.length()) {
-            writeHeader("Sec-WebSocket-Protocol", secWebSocketProtocol.substr(0, secWebSocketProtocol.find(',')));
+            selectedProtocol = secWebSocketProtocol.substr(0, secWebSocketProtocol.find(','));
         }
+        std::string_view negotiatedExtensions;
 
         /* Negotiate compression */
         bool perMessageDeflate = false;
@@ -446,11 +499,14 @@ public:
                     compressOptions = CompressOptions(compressOptions | (negInflationWindow << 8));
                 }
 
-                writeHeader("Sec-WebSocket-Extensions", negResponse);
+                negotiatedExtensions = negResponse;
             }
         }
 
-        endUpgradeHandshake();
+        /* A caller that wrote its own status and headers (server.upgrade({ headers }), node:http)
+         * has the head open; the fields below finish it. Read the state before HttpResponseData is
+         * destructed. */
+        const unsigned int httpState = getHttpResponseData()->state;
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
@@ -531,6 +587,19 @@ public:
 
         /* Move construct the UserData right before calling open handler */
         new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
+
+        /* The 101 goes out here, through the WebSocket. It lands behind the moved backpressure and
+         * in the cork it shares with the frames open() writes, so one upgrade is one write even
+         * when the cork of the parser is long gone. A write here cannot refuse the upgrade: the
+         * socket already belongs to the WebSocket, so a failure ends as any other WebSocket
+         * failure does. */
+        writeUpgradeHandshake((AsyncSocket<SSL> *) webSocket, httpState, secWebSocketAccept,
+            selectedProtocol, negotiatedExtensions);
+
+        /* That write can close the socket, which has already run the close handler for it. */
+        if (us_socket_is_closed(usSocket)) {
+            return usSocket;
+        }
 
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {

@@ -61,6 +61,77 @@ test("should be able to upgrade a paused socket and also have backpressure on it
   expect().pass();
 });
 
+test("tls.connect({ socket }) on a socket that already finished writing emits 'error'", async () => {
+  // Same underlying bug as upgradeTLS() on a shut-down Bun socket: the native
+  // adopt used to leave the fd registered as a plain TCP socket while the TLS
+  // wrapper was stored as its owner, so the TLSSocket never got an 'error' and
+  // simply went 'close' once the peer hung up.
+  const peerSawFin = Promise.withResolvers<net.Socket>();
+  // allowHalfOpen: the peer must not answer our FIN on its own, or its reply
+  // could close the socket under test before tls.connect() gets to it.
+  const server = net.createServer({ allowHalfOpen: true }, peer => {
+    peer.on("error", () => {});
+    peer.on("end", () => peerSawFin.resolve(peer));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const socket = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    await once(socket, "connect");
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    const socketClosed = once(socket, "close");
+
+    socket.end();
+    await once(socket, "finish");
+
+    const tlsSocket = tls.connect({ socket, rejectUnauthorized: false });
+    const outcome = new Promise<Error>((resolve, reject) => {
+      tlsSocket.once("error", resolve);
+      tlsSocket.once("secureConnect", () => reject(new Error("handshake completed on a finished socket")));
+      tlsSocket.once("close", () => reject(new Error("TLSSocket closed without emitting 'error'")));
+    });
+    // The upgrade has been attempted; now the peer may reply. The refused
+    // upgrade must have left the original net.Socket in charge of the fd.
+    const peerReplied = peerSawFin.promise.then(peer => peer.end("bye"));
+
+    expect((await outcome).message).toBe("Cannot upgrade to TLS: the socket is closed or has been shut down");
+    await peerReplied;
+    await socketClosed;
+    expect(received).toBe("bye");
+  } finally {
+    server.close();
+  }
+});
+
+test("new tls.TLSSocket(socket, { isServer: true }) on a socket that already finished writing emits 'error'", async () => {
+  // The native upgrade runs a tick after the wrap and throws for this socket.
+  // The TLSSocket has to report that, not the process.
+  const { promise: outcome, resolve, reject } = Promise.withResolvers<Error>();
+  const server = net.createServer({ allowHalfOpen: true }, accepted => {
+    accepted.on("error", () => {});
+    accepted.end();
+    const tlsSocket = new tls.TLSSocket(accepted, { isServer: true, secureContext: tls.createSecureContext(certs) });
+    tlsSocket.once("error", resolve);
+    tlsSocket.once("secure", () => reject(new Error("handshake completed on a finished socket")));
+    tlsSocket.once("close", () => reject(new Error("TLSSocket closed without emitting 'error'")));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = net.connect({
+    port: (server.address() as net.AddressInfo).port,
+    host: "127.0.0.1",
+    allowHalfOpen: true,
+  });
+  client.on("error", () => {});
+
+  try {
+    expect((await outcome).message).toBe("Cannot upgrade to TLS: the socket is closed or has been shut down");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
 test.each([
   ["readable: false", () => ({ readable: false })],

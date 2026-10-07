@@ -2643,13 +2643,21 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     // the connection's readable buffer; hand them to the TLS engine so the
     // handshake doesn't stall.
     const pending = connection.read();
-    const result = handle.upgradeTLS({
-      data: this,
-      tls,
-      socket: serverHandlersFor(this),
-      isServer: true,
-      initialData: pending || undefined,
-    });
+    let result;
+    try {
+      result = handle.upgradeTLS({
+        data: this,
+        tls,
+        socket: serverHandlersFor(this),
+        isServer: true,
+        initialData: pending || undefined,
+      });
+    } catch (error) {
+      // upgradeTLS throws for a connection that was ended or closed after the wrap.
+      this._handle = null;
+      this.destroy(error);
+      return;
+    }
     if (!result) {
       this._handle = null;
       this.destroy(new Error("Invalid socket"));

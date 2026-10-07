@@ -947,9 +947,15 @@ function abortHandshake(socket, code, message, headers) {
     ...headers,
   };
 
+  // The application ended or destroyed the socket before the handshake finished (in 'headers' or
+  // verifyClient), so no status can reach the peer.
+  const gone = socket.writableEnded || socket.destroyed;
+
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  // Only while that response can still send a status: once its headers are out, the status of the
+  // abort has nowhere to go and writeHead() would throw ERR_HTTP_HEADERS_SENT.
   const response = socket._httpMessage;
-  if (response) {
+  if (response && !response.headersSent && !gone) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();
@@ -958,6 +964,13 @@ function abortHandshake(socket, code, message, headers) {
 
   // Another WebSocketServer on the same http.Server has already taken this connection.
   if (socket[kBunInternals]?.upgraded) return;
+
+  // Release the connection. ws on Node gets there too: its socket.end() below raises an 'error' on
+  // an ended socket, and that destroys it.
+  if (gone) {
+    socket.destroy();
+    return;
+  }
 
   socket.once("finish", socket.destroy);
 
@@ -1580,6 +1593,11 @@ class WebSocketServer extends EventEmitter {
         });
       }
       cb(ws, request);
+    } else if (socket._httpMessage?.headersSent) {
+      // A response is already on the wire, so a 500 for the refused handshake has no framing of its
+      // own. abortHandshake would half-close the socket and leave that response writable but unable
+      // to end, which turns the usual `if (!res.writableEnded) res.end()` into a throw.
+      socket.destroy();
     } else {
       abortHandshake(socket, 500);
     }

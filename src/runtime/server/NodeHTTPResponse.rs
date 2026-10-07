@@ -61,6 +61,11 @@ mod connection {
             }
         }
 
+        /// uWS refused the upgrade, so the socket stays in the HTTP context and the response keeps it.
+        pub(super) fn return_after_refused_upgrade(&self, raw_response: uws::AnyResponse) {
+            self.0.set(Some(raw_response));
+        }
+
         /// The socket closed, or the server socket took the connection back.
         pub(super) fn release(&self) {
             self.0.set(None);
@@ -616,7 +621,15 @@ impl NodeHTTPResponse {
         sec_websocket_extensions: &[u8],
     ) -> bool {
         let upgrade_ctx = self.upgrade_context.get().context;
-        if upgrade_ctx.is_null() || self.writer().is_none() {
+        let Some(writer) = self.writer() else {
+            return false;
+        };
+        if upgrade_ctx.is_null() {
+            return false;
+        }
+        // uWS refuses to adopt a closed or shut down socket. Decide before this response gives up
+        // its connection below, so a refusal leaves it able to answer.
+        if writer.is_closed() || writer.is_shutdown() {
             return false;
         }
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
@@ -674,23 +687,41 @@ impl NodeHTTPResponse {
 
         let armed_reader = self.armed_this_value.get();
         let mut ended_unfinished_body = false;
+        let mut upgraded = false;
         if let Some(raw_response) = self.connection.take_for_upgrade(self.flags.get()) {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
             ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
             // Unref the poll_ref since the socket is now upgraded to WebSocket
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
+            let held_poll_ref = self.poll_ref.get().has;
             self.poll_ref.with_mut(|r| r.unref(vm));
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
-            let _ = raw_response.upgrade::<ServerWebSocket>(
-                ws,
-                websocket_key,
-                sec_websocket_protocol_value,
-                sec_websocket_extensions_value,
-                Some(ctx),
-            );
+            upgraded = !raw_response
+                .upgrade::<ServerWebSocket>(
+                    ws,
+                    websocket_key,
+                    sec_websocket_protocol_value,
+                    sec_websocket_extensions_value,
+                    Some(ctx),
+                )
+                .is_null();
+            if !upgraded {
+                // The test above lets only a socket that a re-entrant option getter ended reach
+                // this. It stays this response's to write and to end.
+                self.update_flags(|f| f.remove(Flags::UPGRADED));
+                self.connection.return_after_refused_upgrade(raw_response);
+                if held_poll_ref {
+                    self.poll_ref.with_mut(|r| r.r#ref(vm));
+                }
+            }
+        }
+        if !upgraded {
+            // SAFETY: `ws` is the live allocation `init` returned; its JS
+            // wrapper owns it and nothing else has a pointer to it yet.
+            unsafe { &*ws }.discard_unopened();
         }
 
         // The request's header views end with its dispatch: this context must not read them later.
@@ -702,7 +733,7 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
         }
 
-        true
+        upgraded
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {

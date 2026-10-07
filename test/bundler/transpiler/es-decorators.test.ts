@@ -969,6 +969,58 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("true\n");
       expect(exitCode).toBe(0);
     });
+
+    test("Bun.Transpiler prints export default @dec class as a class declaration", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const source = "function dec() {}\nexport default @dec class Df {}";
+      expect(transpiler.transformSync(source)).toContain("export default class Df {");
+      expect(transpiler.scan(source).exports).toEqual(["default"]);
+    });
+
+    function parseErrors(source: string) {
+      try {
+        new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+        return [];
+      } catch (e: any) {
+        return (e.errors ?? [e]).map((error: Error) => error.message);
+      }
+    }
+
+    test.each([
+      ["@a export default @b class X {}", ['Expected "class" but found "@"']],
+      ["export default @dec function f() {}", ['Expected "class" but found "function"']],
+      ["export default @dec export class X {}", ["Unexpected export"]],
+      // The class declaration ends at its closing brace.
+      ["export default @dec class Df {} as any", ['Expected ";" but found "any"']],
+      ["export default @dec class Df {}.name", ["Unexpected ."]],
+      // The class name is declared in the module scope.
+      ["const Df = 1; export default @dec class Df {}", ['"Df" has already been declared']],
+    ])("%s is a syntax error", (source, messages) => {
+      expect(parseErrors(source)).toEqual(messages);
+    });
+
+    // A top-level `using` is lowered for targets other than bun. That lowering
+    // drops every `export default` class declaration, so the build fails with
+    // `No matching export in "mod.js" for import "default"`. `export default
+    // class Df {}` and `@dec export default class Df {}` fail the same way.
+    test.todo("export default @dec class next to a lowered top-level using", async () => {
+      using dir = tempDir("es-dec-export-default-using", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log(Cls.name);
+        `,
+        "mod.js": `
+          function dec(cls, ctx) {}
+          using resource = { [Symbol.dispose]() {} };
+          export default @dec class Df {}
+        `,
+      });
+
+      const build = await runIn(String(dir), ["build", "entry.js", "--target=node", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect({ stdout, stderr: filterStderr(stderr), exitCode }).toEqual({ stdout: "Df\n", stderr: "", exitCode: 0 });
+    });
   });
 
   describe("anonymous class expressions with reserved-word inferred names", () => {
@@ -2529,6 +2581,192 @@ describe("ES decorators lowering matrix", () => {
         test(key, () => {
           // JSON turns `undefined` into `null`.
           expect(out[key]).toEqual(expected[key]);
+        });
+      }
+    });
+  });
+});
+
+// `export default @dec class` is a class declaration, like `@dec export default
+// class`. Each cell is a module with its own default export; `main` imports
+// them all and prints one JSON array. Per cell, `seen` is what the decorators
+// were called with, `inside` is what the module observed of its own binding,
+// and `name` is the `.name` of the default import.
+
+const defaultExportPrelude = `
+const seen = [];
+function dec(value, ctx) {
+  seen.push(ctx.kind + " " + ctx.name);
+}
+function mk() {
+  return dec;
+}
+const ns = { dec };
+function observe(fn) {
+  try {
+    return fn();
+  } catch (e) {
+    return e.name;
+  }
+}
+`;
+
+type DefaultExportCell = {
+  source: string;
+  expected: { seen: string[]; inside?: unknown; name?: string };
+  // TypeScript syntax.
+  ts?: true;
+  // `bun build` names every default class statement after its module, decorated
+  // or not, and a wrapped module in a bundle has no TDZ for its classes.
+  unbundledOnly?: true;
+};
+
+const namedClass = `class Df { m() { return "m"; } }`;
+const insideNamedClass = `export const inside = observe(() => [typeof Df, new Df().m()]);`;
+const namedClassExpected = { seen: ["class Df"], inside: ["function", "m"], name: "Df" };
+const anonymousClassExpected = { seen: ["class default"], name: "default" };
+
+const defaultExportCells: Record<string, DefaultExportCell> = {
+  "named class": {
+    source: `export default @dec ${namedClass}\n${insideNamedClass}`,
+    expected: namedClassExpected,
+  },
+  "two decorators": {
+    source: `export default @dec @dec ${namedClass}\n${insideNamedClass}`,
+    expected: { ...namedClassExpected, seen: ["class Df", "class Df"] },
+  },
+  "decorator call": {
+    source: `export default @mk() ${namedClass}\n${insideNamedClass}`,
+    expected: namedClassExpected,
+  },
+  "decorator member access": {
+    source: `export default @ns.dec ${namedClass}\n${insideNamedClass}`,
+    expected: namedClassExpected,
+  },
+  "parenthesized decorator": {
+    source: `export default @(dec) ${namedClass}\n${insideNamedClass}`,
+    expected: namedClassExpected,
+  },
+  "line break before class": {
+    source: `export default @dec\n${namedClass}\n${insideNamedClass}`,
+    expected: namedClassExpected,
+  },
+  "next line starts with (": {
+    source: `export default @dec ${namedClass}\n(() => seen.push("next statement"))();\n${insideNamedClass}`,
+    expected: { ...namedClassExpected, seen: ["class Df", "next statement"] },
+  },
+  "next line starts with [": {
+    source: `export default @dec ${namedClass}\n[seen.push("next statement")];\n${insideNamedClass}`,
+    expected: { ...namedClassExpected, seen: ["class Df", "next statement"] },
+  },
+  "decorator returns a subclass": {
+    source: `
+      function replace(value) {
+        return class Replaced extends value {
+          replaced = true;
+        };
+      }
+      export default @replace class Df {}
+      export const inside = observe(() => [Df.name, new Df().replaced]);
+    `,
+    expected: { seen: [], inside: ["Replaced", true], name: "Replaced" },
+  },
+  "temporal dead zone": {
+    source: `
+      const before = observe(() => Df);
+      export default @dec class Df {}
+      export const inside = [before, observe(() => typeof Df)];
+    `,
+    expected: { seen: ["class Df"], inside: ["ReferenceError", "function"], name: "Df" },
+    unbundledOnly: true,
+  },
+  "abstract class": {
+    source: `export default @dec abstract ${namedClass}\n${insideNamedClass}`,
+    expected: namedClassExpected,
+    ts: true,
+  },
+  "declare class": {
+    source: `export default @mk(() => 0) declare class Df {}`,
+    expected: { seen: [] },
+    ts: true,
+  },
+  "anonymous class": {
+    source: `export default @dec class {}`,
+    expected: anonymousClassExpected,
+  },
+  "anonymous class, next line starts with (": {
+    source: `export default @dec class {}\n(() => seen.push("next statement"))();`,
+    expected: { ...anonymousClassExpected, seen: ["class default", "next statement"] },
+  },
+  "anonymous class, decorator before export": {
+    source: `@dec export default class {}`,
+    expected: anonymousClassExpected,
+  },
+  "anonymous abstract class": {
+    source: `export default @dec abstract class {}`,
+    expected: anonymousClassExpected,
+    ts: true,
+  },
+  "anonymous abstract class, decorator before export": {
+    source: `@dec export default abstract class {}`,
+    expected: anonymousClassExpected,
+    ts: true,
+  },
+  "anonymous class with a decorated method": {
+    source: `export default class { @dec m() {} }`,
+    expected: { seen: ["method m"], name: "default" },
+    unbundledOnly: true,
+  },
+  "anonymous class with an accessor": {
+    source: `export default class { accessor x = 1; }`,
+    expected: { seen: [], name: "default" },
+    unbundledOnly: true,
+  },
+};
+
+async function runDefaultExportCells(mode: Mode) {
+  const ext = mode.file.slice(mode.file.lastIndexOf(".") + 1);
+  const names = Object.keys(defaultExportCells).filter(name => {
+    const cell = defaultExportCells[name];
+    return (!cell.ts || ext === "ts") && !(cell.unbundledOnly && mode.bundle);
+  });
+  const files: Record<string, string> = { "tsconfig.json": "{}" };
+  names.forEach((name, i) => {
+    files[`cell${i}.${ext}`] = `${defaultExportPrelude}${defaultExportCells[name].source}\nexport { seen };\n`;
+  });
+  files[mode.file] = `
+    ${names.map((_, i) => `import * as cell${i} from "./cell${i}";`).join("\n")}
+    const cells = [${names.map((_, i) => `cell${i}`).join(", ")}];
+    console.log(JSON.stringify(cells.map(cell => ({ seen: cell.seen, inside: cell.inside, name: cell.default?.name }))));
+  `;
+
+  using dir = tempDir("es-dec-export-default-cells", files);
+  let entry = mode.file;
+  if (mode.bundle) {
+    const build = await runIn(String(dir), ["build", mode.file, "--target=bun", "--outfile=bundled.js"]);
+    if (build.exitCode !== 0) return { names, out: {}, stderr: filterStderr(build.stderr), exitCode: build.exitCode };
+    entry = "bundled.js";
+  }
+  const { stdout, stderr, exitCode } = await runIn(String(dir), [entry]);
+  const results: unknown[] = exitCode === 0 ? JSON.parse(stdout) : [];
+  const out: Record<string, unknown> = Object.fromEntries(names.map((name, i) => [name, results[i]]));
+  return { names, out, stderr: filterStderr(stderr), exitCode };
+}
+
+const defaultExportRuns = await Promise.all(modes.map(runDefaultExportCells));
+
+describe("export default @dec class is a class declaration", () => {
+  modes.forEach((mode, i) => {
+    describe(mode.name, () => {
+      const { names, out, stderr, exitCode } = defaultExportRuns[i];
+
+      test("the fixture runs", () => {
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      });
+
+      for (const name of names) {
+        test(name, () => {
+          expect(out[name]).toEqual(defaultExportCells[name].expected);
         });
       }
     });

@@ -816,12 +816,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             data.default_name = p.create_default_name(stmt.loc);
                         }
 
-                        // We only inject a name into classes when decorator lowering
-                        // needs one: legacy TS decorators (`has_decorators`) or
-                        // standard decorator lowering, which also covers classes with
-                        // only auto-accessor fields and no decorators.
+                        // Only the legacy TS decorator lowering refers to the class by
+                        // name, so only it has the default export's symbol injected as
+                        // the name of an anonymous class.
                         if class.class.has_decorators
-                            || class.class.should_lower_standard_decorators
+                            && !class.class.should_lower_standard_decorators
                         {
                             if class.class.class_name.is_none()
                                 || class.class.class_name.unwrap().ref_.is_empty()
@@ -833,7 +832,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
                         // (variable declarations) before the class statement.
-                        let class_stmts = p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy));
+                        let class_stmts = if class.class.should_lower_standard_decorators {
+                            let mut lowered: StmtList<'a> = BumpVec::new_in(p.arena);
+                            p.lower_standard_decorators_stmt(
+                                s2_copy,
+                                Some(data.default_name),
+                                &mut lowered,
+                            );
+                            lowered.into_bump_slice_mut()
+                        } else {
+                            p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy))
+                        };
 
                         // Find the s_class statement in the returned list
                         let mut class_stmt_idx: usize = 0;

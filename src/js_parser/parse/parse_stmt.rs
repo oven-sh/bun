@@ -1584,8 +1584,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     ));
                 }
 
+                // "@" is in the lookahead set that rules out an expression after
+                // "export default": a decorator here starts a class declaration.
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
+                    || p.lexer.token == T::TAt
                     || p.lexer.is_contextual_keyword(b"interface")
                 {
                     let mut _opts = ParseStatementOptions {

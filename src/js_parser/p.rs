@@ -7454,7 +7454,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     // `lower_standard_decorators_stmt` takes an out-param Vec; wrap to
                     // keep this function's slice contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
-                    self.lower_standard_decorators_stmt(stmt, &mut out);
+                    self.lower_standard_decorators_stmt(stmt, None, &mut out);
                     return out.into_bump_slice_mut();
                 }
 

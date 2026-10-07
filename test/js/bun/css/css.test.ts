@@ -1890,7 +1890,7 @@ describe("css tests", () => {
 
   // Ported from lightningcss's test_svg and test_ui, with an in-gamut color.
   describe("fill, stroke and caret", () => {
-    for (const property of ["fill", "stroke"]) {
+    describe.each(["fill", "stroke"])("%s", property => {
       minify_test(`.foo { ${property}: yellow; }`, `.foo{${property}:#ff0}`);
       minify_test(`.foo { ${property}: url(#foo); }`, `.foo{${property}:url(#foo)}`);
       minify_test(`.foo { ${property}: url(#foo) none; }`, `.foo{${property}:url(#foo) none}`);
@@ -1909,7 +1909,7 @@ describe("css tests", () => {
         `,
         { chrome: Some(90 << 16), safari: Some(14 << 16) },
       );
-    }
+    });
 
     prefix_test(
       ".foo { fill: url(#foo) lab(40% 56.6 39) }",
@@ -1939,9 +1939,9 @@ describe("css tests", () => {
 
     minify_test(".foo { caret-color: auto }", ".foo{caret-color:auto}");
     minify_test(".foo { caret-color: yellow }", ".foo{caret-color:#ff0}");
-    for (const shape of ["auto", "bar", "block", "underscore"]) {
+    describe.each(["auto", "bar", "block", "underscore"])("caret-shape %s", shape => {
       minify_test(`.foo { caret-shape: ${shape} }`, `.foo{caret-shape:${shape}}`);
-    }
+    });
     // Typed, so keywords are normalized; anything else still passes through as written.
     minify_test(".foo { caret-shape: BLOCK }", ".foo{caret-shape:block}");
     minify_test(".foo { caret-shape: banana }", ".foo{caret-shape:banana}");

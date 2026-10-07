@@ -1890,17 +1890,17 @@ describe("css tests", () => {
 
   // Ported from lightningcss's test_filter (minus the non-negative range checks).
   describe("filter", () => {
-    for (const property of ["filter", "backdrop-filter", "-webkit-filter", "-webkit-backdrop-filter"]) {
-      for (const [value, expected] of [
+    describe.each(["filter", "backdrop-filter", "-webkit-filter", "-webkit-backdrop-filter"])("%s", property => {
+      describe.each([
         ["", ""],
         ["  ", " "],
         ["/*empty*/", ""],
-      ]) {
+      ])("value %j", (value, expected) => {
         minify_test(`.foo{${property}:${value}}`, `.foo{${property}:${expected}}`);
-      }
+      });
       minify_test(`.foo{${property}:none}`, `.foo{${property}:none}`);
       minify_test(`.foo{${property}:blur(0px) foo}`, `.foo{${property}:blur(0px)foo}`);
-    }
+    });
 
     minify_test(".foo { filter: url('filters.svg#filter-id'); }", ".foo{filter:url(filters.svg#filter-id)}");
     minify_test(".foo { filter: blur(5px); }", ".foo{filter:blur(5px)}");

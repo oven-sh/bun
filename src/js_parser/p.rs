@@ -7452,7 +7452,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // Standard decorator lowering path (for both JS and TS files)
                 if s_class.class.should_lower_standard_decorators {
                     // `lower_standard_decorators_stmt` takes an out-param Vec; wrap to
-                    // keep this function's slice contract.
+                    // keep this function's slice contract. `s_export_default` calls
+                    // it itself, so a class that arrives here has a name.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
                     self.lower_standard_decorators_stmt(stmt, None, &mut out);
                     return out.into_bump_slice_mut();

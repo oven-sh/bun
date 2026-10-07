@@ -798,7 +798,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 replace_expr,
                             ) = entry
                             {
+                                // The class is discarded. Lowering it would put it back
+                                // in `data.value`.
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                stmts.push(*stmt);
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -806,19 +809,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     bun_ast::Loc::EMPTY,
                                     &entry,
                                 );
-                                restore_dead!();
-                                record_on_exit!();
-                                return Ok(());
                             }
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
                         }
 
                         if !data.default_name.ref_.is_symbol() {
                             data.default_name = p.create_default_name(stmt.loc);
                         }
 
-                        // Only the legacy TS decorator lowering refers to the class by
-                        // name, so only it has the default export's symbol injected as
-                        // the name of an anonymous class.
+                        // The legacy TS decorator lowering reads `class_name`, so an
+                        // anonymous class takes the default export's symbol as its name.
+                        // The standard lowering takes that symbol as an argument.
                         if class.class.has_decorators
                             && !class.class.should_lower_standard_decorators
                         {

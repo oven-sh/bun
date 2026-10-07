@@ -272,9 +272,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
 
     thisObject->flushResponseBytesAhead();
     auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, &thisObject->bytesWritten, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
-    // JS parks the write callback on false only when it has an ondrain (_write in _http_server.ts).
-    if (thisObject->functionToCallOnDrain && JSValue::decode(result).isFalse()) {
-        thisObject->heldWriteAwaitsDrain = true;
+    // The conversion of the chunk can run JavaScript that closes the socket.
+    if (thisObject->isClosed()) {
+        return JSValue::encode(JSC::jsNumber(0));
+    }
+    // false: user space holds bytes, and JS waits for ondrain (_write in _http_server.ts). A WebSocket that adopted the connection sends them and calls no ondrain.
+    if (JSValue::decode(result).isFalse() && !thisObject->oweDrainIfUnsent()) {
+        return JSValue::encode(JSC::jsBoolean(true));
     }
     thisObject->updateTunnelIdle();
     return result;
@@ -294,15 +298,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     // end(true) is Node's destroySoon() after a finished response: uWS waits for the body parse and the flush, then closes behind the FIN.
     bool destroySoon = callFrame->argument(0).isTrue();
     if (thisObject->shutdownAfterResponseDrains(destroySoon)) {
-        return JSValue::encode(JSC::jsUndefined());
+        // true: the shutdown waits for bytes, and JS waits for ondrain with its 'finish' (_final in _http_server.ts).
+        return JSValue::encode(JSC::jsBoolean(thisObject->oweDrainIfUnsent()));
     }
     if (destroySoon) {
         us_socket_shutdown(thisObject->socket);
         thisObject->close();
-        return JSValue::encode(JSC::jsUndefined());
+        return JSValue::encode(JSC::jsBoolean(false));
     }
     thisObject->halfClose();
-    return JSValue::encode(JSC::jsUndefined());
+    return JSValue::encode(JSC::jsBoolean(false));
 }
 
 // Implementation of custom getters

@@ -169,6 +169,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
+        /* node:http: a write() or end() of the JS socket left bytes in user space, and JavaScript waits to
+         * hear that they are out. onWritable reports that once (onSocketDrain), in a task. Until the task
+         * has run, nothing closes this connection and no request is dispatched as its current one. */
+        HTTP_NODE_DRAIN_OWED = 1 << 23,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -179,7 +183,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
-            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED,
+            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
+            | HTTP_NODE_DRAIN_OWED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -249,11 +254,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
     /* Whether the connection should be torn down once the in-flight response (if
-     * any) has completed and all buffered outgoing data has been flushed. */
+     * any) has completed and all buffered outgoing data has been flushed. Not
+     * while a drain report is owed (HTTP_NODE_DRAIN_OWED): the task that makes
+     * the report runs the close gate again. */
     bool shouldCloseConnection() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
+        return ((state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
-            || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
+            || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle))
+            && !(state & HTTP_NODE_DRAIN_OWED);
     }
 
     /* The response that closes this connection (Connection: close, HTTP/1.0, a

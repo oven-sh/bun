@@ -751,6 +751,10 @@ void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
     socket = adopted;
     upgraded = true;
     releaseTunnelReadsForUpgrade();
+    // The WebSocket sends the bytes that uWS still holds, and it reports no drain: the writes that wait for one settle now.
+    if (functionToCallOnDrain) {
+        queueDrainReport();
+    }
 
     // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
     if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {
@@ -867,13 +871,46 @@ static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t le
         data += chunk;
         length -= chunk;
     }
-    return asyncSocket->getBufferedAmount() > 0;
+    return !asyncSocket->hasFullyDrained();
 }
 
-/* A raw socket.write() takes the path of a 1xx line (HttpResponse::writeRawInformational): what the kernel does not take waits in the uWS buffer, behind the response bytes already there. Returns whether uWS still holds bytes. */
+/* A raw socket.write() takes the path of a 1xx line (HttpResponse::writeRawInformational): what the kernel does not take waits in the uWS buffer, behind the response bytes already there. Returns whether user space still holds bytes of the connection. */
 extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* socket, bool is_ssl, const char* data, size_t length)
 {
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
+}
+
+template<bool SSL>
+static bool hasUnsentBytesImpl(us_socket_t* socket)
+{
+    return !reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->hasFullyDrained();
+}
+
+bool JSNodeHTTPServerSocket::hasUnsentBytes() const
+{
+    if (upgraded || isClosed()) {
+        return false;
+    }
+    return is_ssl ? hasUnsentBytesImpl<true>(socket) : hasUnsentBytesImpl<false>(socket);
+}
+
+template<bool SSL>
+static void setDrainOwed(us_socket_t* socket, bool owed)
+{
+    reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->setFlag(uWS::HttpResponseData<SSL>::HTTP_NODE_DRAIN_OWED, owed);
+}
+
+bool JSNodeHTTPServerSocket::oweDrainIfUnsent()
+{
+    if (!hasUnsentBytes()) {
+        return false;
+    }
+    if (is_ssl) {
+        setDrainOwed<true>(socket, true);
+    } else {
+        setDrainOwed<false>(socket, true);
+    }
+    return true;
 }
 
 void JSNodeHTTPServerSocket::updateTunnelIdle()
@@ -881,44 +918,77 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
     if (!tunnelReadEnded || upgraded || isClosed()) {
         return;
     }
+    const bool idle = !oweDrainIfUnsent();
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle);
     }
 }
 
 void JSNodeHTTPServerSocket::onDrain()
 {
     // This function can be called during GC!
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
-    if (!functionToCallOnDrain) {
-        return;
-    }
-
     updateTunnelIdle();
-    // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
-    if (!heldWriteAwaitsDrain) {
+    queueDrainReport();
+}
+
+void JSNodeHTTPServerSocket::queueDrainReport()
+{
+    if (drainReportQueued) {
         return;
     }
-    // uWS calls this with its own buffer empty, so the write it held has left.
-    heldWriteAwaitsDrain = false;
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
-
-    if (scriptExecutionContext) {
-        scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
-            auto* globalObject = defaultGlobalObject(context.globalObject());
-            auto* thisObject = self;
-            auto* callbackObject = thisObject->functionToCallOnDrain.get();
-            if (!callbackObject) {
-                return;
+    if (!scriptExecutionContext) {
+        // Nobody is left to tell, and uWS must not wait for the report.
+        if (!upgraded && !isClosed()) {
+            if (is_ssl) {
+                setDrainOwed<true>(socket, false);
+            } else {
+                setDrainOwed<false>(socket, false);
             }
-            MarkedArgumentBuffer args;
-            EnsureStillAliveScope ensureStillAlive(self);
+        }
+        return;
+    }
+    drainReportQueued = true;
+    scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
+        self->reportDrain(defaultGlobalObject(context.globalObject()));
+    });
+}
 
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running)
-                callStoredCallback(globalObject, callbackObject, thisObject, args);
-        });
+void JSNodeHTTPServerSocket::reportDrain(Zig::GlobalObject* globalObject)
+{
+    drainReportQueued = false;
+    EnsureStillAliveScope ensureStillAlive(this);
+
+    // A closed or an adopted socket has no HTTP state left. Its bytes were out when uWS called onDrain(), or the WebSocket sends them.
+    if (!upgraded && !isClosed()) {
+        // A write since onDrain() left bytes again: the writable event for those reports.
+        if (hasUnsentBytes()) {
+            return;
+        }
+        if (is_ssl) {
+            setDrainOwed<true>(socket, false);
+        } else {
+            setDrainOwed<false>(socket, false);
+        }
+    }
+
+    if (auto* callbackObject = functionToCallOnDrain.get()) {
+        if (globalObject->scriptExecutionStatus(globalObject, this) == ScriptExecutionStatus::Running) {
+            MarkedArgumentBuffer args;
+            callStoredCallback(globalObject, callbackObject, this, args);
+        }
+    }
+
+    // JavaScript has settled its writes, and it can have written again or closed the socket.
+    if (!upgraded && !isClosed()) {
+        if (is_ssl) {
+            uWS::HttpContext<true>::runNodeHttpDrainGates(socket);
+        } else {
+            uWS::HttpContext<false>::runNodeHttpDrainGates(socket);
+        }
     }
 }
 

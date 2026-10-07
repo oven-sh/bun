@@ -1619,10 +1619,88 @@ interface NetSocketBase extends Pick<NetSocket, NetSocketPrototypeAccessors>, Ne
 interface NetSocketConstructor {
   new (options?: import("node:net").SocketConstructorOpts & import("node:stream").DuplexOptions): NetSocketBase;
 }
+// The writes of a server socket that wait for the handle's ondrain, since the first one that did:
+// the callback of the _write or of the _final that waits, the async context it waits in, and the
+// number of leading entries of the stream's buffer whose bytes the handle already has.
+type WaitingWrites = { write: Function | null; final: Function | null; frame: unknown; handedOver: number };
+
+function settleWaitingWrites(write: Function | null, final: Function | null, err?: Error) {
+  if (write !== null) write(err);
+  if (final !== null) final(err);
+}
+
+// Runs once for a socket, at its first write that waits. While a write waits, the stream queues the
+// chunks of later write() calls, and uWS knows nothing of a queue in JS: a response written after
+// them would leave first, and uWS would close the connection without them. So write() gives the bytes
+// of such a chunk to the handle at once, and _write / _writev only ask the handle later whether it
+// still holds bytes. A socket that never waits keeps the methods of its prototype.
+function installWriteHandOver(socket, waiting: WaitingWrites) {
+  const write = socket.write;
+  const end = socket.end;
+  const writeToHandle = socket._write;
+
+  socket.write = function (this: any, chunk, encoding, cb) {
+    if (waiting.write === null) return write.$call(this, chunk, encoding, cb);
+    const state = this._writableState;
+    const queued = state.bufferedRequestCount;
+    const ret = write.$call(this, chunk, encoding, cb);
+    // Only behind entries that were handed over too: a caller that went around this method queued one that was not.
+    if (state.bufferedRequestCount > queued && waiting.handedOver === queued) {
+      const buffered = state.buffered;
+      const entry = buffered[buffered.length - 1];
+      this[kHandle]?.write(entry.chunk, entry.encoding);
+      waiting.handedOver++;
+    }
+    // In Node the socket's stream holds the response bytes too, so behind a high water mark of them write() returns false.
+    if (ret && (this[kHandle]?.response?.bufferedAmount ?? 0) >= state.highWaterMark) {
+      state.needDrain = true;
+      return false;
+    }
+    return ret;
+  };
+
+  // Writable.prototype.end() queues its chunk without a call to this.write().
+  socket.end = function (this: any, chunk, encoding, cb) {
+    if (waiting.write !== null && chunk != null && typeof chunk !== "function") {
+      const state = this._writableState;
+      if (!state.ending && !state.destroyed) {
+        if (typeof encoding === "function") {
+          cb = encoding;
+          encoding = undefined;
+        }
+        this.write(chunk, encoding);
+        return end.$call(this, cb);
+      }
+    }
+    return end.$call(this, chunk, encoding, cb);
+  };
+
+  socket._write = function (this: any, chunk, encoding, callback) {
+    if (waiting.handedOver > 0) {
+      waiting.handedOver--;
+      return writeToHandle.$call(this, "", undefined, callback);
+    }
+    return writeToHandle.$call(this, chunk, encoding, callback);
+  };
+
+  // The entries that were not handed over leave in one write, as with net.Socket's _writev.
+  socket._writev = function (this: any, entries, callback) {
+    const handedOver = waiting.handedOver;
+    waiting.handedOver = 0;
+    const rest = entries.length - handedOver;
+    if (rest <= 0) return writeToHandle.$call(this, "", undefined, callback);
+    if (rest === 1) return writeToHandle.$call(this, entries[handedOver].chunk, entries[handedOver].encoding, callback);
+    const chunks = new Array(rest);
+    for (let i = 0; i < rest; i++) chunks[i] = entries[handedOver + i].chunk;
+    return writeToHandle.$call(this, Buffer.concat(chunks), "buffer", callback);
+  };
+}
+
 function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
   const { getTimerDuration } = require("internal/timers");
+  const AsyncContextFrame = require("internal/async_context_frame");
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -1644,7 +1722,8 @@ function getNodeHTTPServerSocket() {
     // Node's connectionListener sets socket._paused when it stops reading a
     // connection whose pipelined responses have buffered past the high water mark.
     _paused = false;
-    #pendingCallback = null;
+    // Null until the first write that waits for the handle's ondrain.
+    #waiting: WaitingWrites | null = null;
     #pendingAbortMessage;
     #closeHandled = false;
     #resetSupported;
@@ -1712,24 +1791,32 @@ function getNodeHTTPServerSocket() {
       const handle = this[kHandle];
       if (handle) {
         this[kStreamingEnabled] = enable;
-        if (enable) {
-          handle.ondata = this.#onData.bind(this);
-          handle.ondrain = this.#onDrain.bind(this);
-        } else {
-          handle.ondata = undefined;
-          handle.ondrain = undefined;
-        }
+        handle.ondata = enable ? this.#onData.bind(this) : undefined;
       }
     }
+    // uWS holds bytes of this socket, and the handle calls ondrain once they are out. The caller
+    // stores the callback that waits for that.
+    #waitForDrain(handle): WaitingWrites {
+      let waiting = this.#waiting;
+      if (waiting === null) {
+        waiting = this.#waiting = { write: null, final: null, frame: undefined, handedOver: 0 };
+        handle.ondrain = this.#onDrain.bind(this);
+        installWriteHandOver(this, waiting);
+      }
+      waiting.frame = AsyncContextFrame.current();
+      return waiting;
+    }
+    // Every byte that uWS held is out. 'drain' is the stream's to emit, when it holds nothing either.
     #onDrain() {
       const handle = this[kHandle];
       this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
-      const callback = this.#pendingCallback;
-      if (callback) {
-        this.#pendingCallback = null;
-        (callback as Function)();
-      }
-      this.emit("drain");
+      const waiting = this.#waiting!;
+      const { write, final, frame } = waiting;
+      if (write === null && final === null) return;
+      waiting.write = waiting.final = null;
+      waiting.frame = undefined;
+      this._unrefTimer();
+      AsyncContextFrame.run(frame, settleWaitingWrites, undefined, write, final);
     }
     #onData(chunk, last) {
       this._unrefTimer();
@@ -1877,11 +1964,14 @@ function getNodeHTTPServerSocket() {
       if (!this.destroyed) {
         this.destroy(this.#closeError);
       }
-      // A tunnel write that waited for a drain fails now. After destroy(), it settles the callbacks of Writable and emits no 'error'.
-      const pendingCallback = this.#pendingCallback;
-      if (pendingCallback) {
-        this.#pendingCallback = null;
-        (pendingCallback as Function)(writeFailure);
+      // The writes that waited for a drain fail now. After destroy(), that settles the callbacks of Writable and emits no 'error'.
+      const waiting = this.#waiting;
+      if (waiting !== null) {
+        const { write, final, frame } = waiting;
+        waiting.write = waiting.final = null;
+        waiting.frame = undefined;
+        waiting.handedOver = 0;
+        AsyncContextFrame.run(frame, settleWaitingWrites, undefined, write, final, writeFailure);
       }
     }
     #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
@@ -1951,15 +2041,15 @@ function getNodeHTTPServerSocket() {
 
     _final(callback) {
       const handle = this[kHandle];
-      if (!handle) {
-        callback();
+      // true: the shutdown waits for bytes that uWS holds, and 'finish' waits with it.
+      if (handle && handle.end(this[kDestroySoon]) === true) {
+        this.#waitForDrain(handle).final = callback;
         return;
       }
-      handle.end(this[kDestroySoon]);
       callback();
     }
 
-    // Not destroy() on 'finish' like net.Socket: 'finish' does not wait for bytes uWS still queues.
+    // Not destroy() on 'finish' like net.Socket: the handle closes behind its FIN, after the read that is being parsed.
     destroySoon() {
       if (this[kDestroySoon]) return;
       const handle = this[kHandle];
@@ -2149,25 +2239,24 @@ function getNodeHTTPServerSocket() {
       return this;
     }
 
-    _write(_chunk, _encoding, _callback) {
+    _write(chunk, encoding, callback) {
       const handle = this[kHandle];
-      let err;
       this._unrefTimer();
+      let written;
       try {
-        if (handle) {
-          const flushed = handle.write(_chunk, _encoding);
-          if (!flushed && handle.ondrain) {
-            // Streaming mode (CONNECT tunnels): wait for the native drain
-            // callback before completing the write.
-            this.#pendingCallback = _callback;
-            return false;
-          }
-        }
-      } catch (e) {
-        err = e;
+        // true: every byte is in the kernel. false: uWS holds bytes. 0: the handle is closed or has ended.
+        written = handle ? handle.write(chunk, encoding) : 0;
+      } catch (err) {
+        callback(err);
+        return;
       }
-      if (err) _callback(err);
-      else _callback();
+      if (written === true) {
+        callback();
+      } else if (written === false) {
+        this.#waitForDrain(handle).write = callback;
+      } else {
+        callback($ERR_SOCKET_CLOSED());
+      }
     }
 
     pause() {

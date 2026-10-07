@@ -134,6 +134,12 @@ public:
         return &fromSocket(s)->data;
     }
 
+    /* node:http: the reads and the close that onWritable held back for an owed
+     * drain report (HTTP_NODE_DRAIN_OWED). The task that made the report calls it. */
+    static void runNodeHttpDrainGates(us_socket_t *s) {
+        afterFlush<true>(s);
+    }
+
 private:
     /* ── vtable handlers ─────────────────────────────────────────────────── */
 
@@ -490,10 +496,14 @@ private:
                  * written out, with later responses queued behind it (Node's
                  * state.outgoing). A write or uncork can empty the buffer before
                  * the writable event tells that response so (kqueue reports read
-                 * and write readiness separately); onWritable stays armed until then. */
+                 * and write readiness separately); onWritable stays armed until then.
+                 * The same holds for raw writes of the JS socket: until their
+                 * writer has heard that they are out (HTTP_NODE_DRAIN_OWED), it can
+                 * have more to send ahead of this response. */
                 queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
                     || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
-                    || httpResponseData->onWritable != nullptr;
+                    || httpResponseData->onWritable != nullptr
+                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_DRAIN_OWED);
             }
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if constexpr (!IsNodeHttp) {
@@ -918,12 +928,6 @@ private:
             */
         }
 
-        auto *httpContextData = getSocketContextDataS(s);
-
-
-        if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
-            httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
-        }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
             /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
@@ -967,6 +971,36 @@ private:
         /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
         asyncSocket->flush();
 
+        if constexpr (IsNodeHttp) {
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_DRAIN_OWED) {
+                HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+                if (!httpResponseData->socketData || !httpContextData->onSocketDrain) {
+                    /* Nobody is left to tell. */
+                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_DRAIN_OWED;
+                } else if (asyncSocket->hasFullyDrained()) {
+                    /* A writable event alone is not the news: a TLS batch can still hold
+                     * ciphertext, and the event that follows it comes back here. */
+                    httpContextData->onSocketDrain(httpResponseData->socketData, SSL, s);
+                }
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_DRAIN_OWED) {
+                    /* The JS socket hears in a task, and that task runs afterFlush(). */
+                    reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+                    return s;
+                }
+            }
+        }
+
+        return afterFlush<IsNodeHttp>(s);
+    }
+
+    /* The end of onWritable, with nothing left to flush: the reads and the close that
+     * waited for the send buffer. node:http runs it again from the task that reports an
+     * owed drain (HTTP_NODE_DRAIN_OWED), because shouldCloseConnection() waits for it. */
+    template <bool IsNodeHttp>
+    static us_socket_t *afterFlush(us_socket_t *s) {
+        auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
+        auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
+
         /* node:http compat: reads were paused while pipelined responses were
          * queued and stayed paused because the socket still had outgoing
          * backpressure when the queue drained; now that it has flushed, read
@@ -981,6 +1015,7 @@ private:
         if (httpResponseData->shouldCloseConnection()) {
             bool responseDone = (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0;
             if constexpr (IsNodeHttp) {
+                HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
                 /* Node's socketOnEnd (!httpAllowHalfOpen) issues socket.end():
                  * once already-queued bytes have drained the connection shuts
                  * down regardless of whether res.end() was ever called. A
@@ -1091,9 +1126,11 @@ private:
              * (AsyncSocketData::buffer, or a pinned write an onWritable
              * callback is still draining) must not be discarded by the close()
              * below; the connection shuts down from the shouldCloseConnection()
-             * gates once they have flushed. */
+             * gates once they have flushed. An owed drain report counts as
+             * queued: the JS socket settles its writes with it. */
             bool hasQueuedOutgoing = !asyncSocket->hasFullyDrained()
-                || httpResponseData->onWritable != nullptr;
+                || httpResponseData->onWritable != nullptr
+                || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_DRAIN_OWED);
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
                 || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
             if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {

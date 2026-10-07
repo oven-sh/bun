@@ -43,8 +43,8 @@ public:
     unsigned tunnelReadsQueuedFull : 1 = 0;
     /* onData() got the end of the stream. The task that tells JS can still be queued. */
     unsigned tunnelReadEnded : 1 = 0;
-    /* write() returned false, and JS waits for ondrain. */
-    unsigned heldWriteAwaitsDrain : 1 = 0;
+    /* onDrain() queued the task that tells JS, and the task has not run. */
+    unsigned drainReportQueued : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
@@ -109,7 +109,7 @@ public:
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
 
-    /* socket.end(): true when uWS will shut down later, after the buffered response. destroySoon also waits for the body parse and closes behind the FIN. */
+    /* socket.end(): true when uWS will shut down later, after the bytes it holds. destroySoon also waits for the body parse and closes behind the FIN. */
     bool shutdownAfterResponseDrains(bool destroySoon);
     /* socket.end() with nothing left to send: the FIN goes out now and the reads stay armed, so that the peer's FIN closes the socket. */
     void halfClose();
@@ -130,8 +130,12 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
+    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. A tunnel at read EOF that has bytes left owes a drain, and onDrain() comes back here. */
     void updateTunnelIdle();
+    /* User space holds bytes of this connection: the uWS buffer, or the ciphertext of a TLS batch. Never for a closed or an adopted socket. */
+    bool hasUnsentBytes() const;
+    /* If user space holds bytes, uWS calls onDrain() once they are out (HTTP_NODE_DRAIN_OWED). Returns whether it holds any. write() and end() tell JS to wait with this. */
+    bool oweDrainIfUnsent();
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
     void flushResponseBytesAhead();
     /* The WebSocket that adopted the connection reads from here on. */
@@ -181,7 +185,12 @@ public:
     void onClose(int readError, bool peerEnded);
     /* A WebSocket adopted the connection. `adopted` is its socket: the adoption can move it. */
     void onUpgraded(us_socket_t* adopted);
+    /* uWS: a drain is owed, and every byte is out. */
     void onDrain();
+    /* Queues reportDrain() as a task, once. */
+    void queueDrainReport();
+    /* Calls ondrain, unless bytes were refused again since onDrain(). Then it runs the reads and the close that uWS held back for the report. */
+    void reportDrain(Zig::GlobalObject*);
     void onData(const char* data, int length, bool last);
     void applyTunnelReads();
     void didDeliverQueuedTunnelBytes(size_t length);

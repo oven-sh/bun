@@ -37,8 +37,7 @@ fn namespaces_in_scope<'a>(node: Node<'a>) -> Namespaces<'a> {
     namespaces
 }
 
-fn symbol_is_namespace_in_scope<'a>(symbol: TsSymbol<'a>, namespaces: &Namespaces<'a>) -> bool {
-    let mut symbol = symbol;
+fn symbol_is_namespace_in_scope<'a>(mut symbol: TsSymbol<'a>, namespaces: &Namespaces<'a>) -> bool {
     for _ in 0..8 {
         if symbol.declarations().any(|declaration| namespaces.contains(&declaration)) {
             return true;
@@ -87,8 +86,7 @@ fn qualifier_is_unnecessary<'a>(
 }
 
 /// An `Identifier`, or a `MemberExpression` that is not computed of one.
-fn is_entity_name_expression(node: Expr) -> bool {
-    let mut node = node;
+fn is_entity_name_expression(mut node: Expr) -> bool {
     loop {
         match node.kind() {
             ExprKind::Ident(_) => return true,
@@ -108,7 +106,7 @@ impl NoUnnecessaryQualifier {
 
     /// `A.B.c`, as an expression or after `typeof` in a type. The qualifiers in a qualifier that is
     /// reported are not looked at, so all of them are checked from the outermost.
-    fn check_member<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_member<'a>(&self, mut node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { obj, .. } = node.kind() else {
             return;
         };
@@ -129,7 +127,6 @@ impl NoUnnecessaryQualifier {
             return;
         }
         let types = cx.file().type_checker();
-        let mut node = node;
         while let ExprKind::Dot { obj, name, .. } = node.kind() {
             let (qualifier, name_text) = (obj.ts_node(), cx.slice(name.span()));
             if qualifier_is_unnecessary(types, qualifier, NameOf(node).ts_node(), name_text, &namespaces) {

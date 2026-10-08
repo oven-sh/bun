@@ -1,0 +1,123 @@
+use bun_lint::prelude::*;
+
+/// Disallow confusing multiline expressions.
+pub struct NoUnexpectedMultiline;
+
+const FUNCTION: Message = Message::new(
+    "function",
+    "Unexpected newline between function and ( of function call.",
+);
+const PROPERTY: Message = Message::new(
+    "property",
+    "Unexpected newline between object and [ of property access.",
+);
+const TAGGED_TEMPLATE: Message = Message::new(
+    "taggedTemplate",
+    "Unexpected newline between template tag and template literal.",
+);
+const DIVISION: Message = Message::new(
+    "division",
+    "Unexpected newline between numerator and division operator.",
+);
+
+/// The token after `e` and its parentheses, which is one character long, if it is on another line
+/// than what is before it.
+fn break_after(e: Expr) -> Option<Span> {
+    let file = e.file();
+    let end = e.outer_span().end;
+    let open = skip_trivia(file.text(), end);
+    text::has_line_break(file.slice(Span::new(end, open))).then(|| Span::new(open, open + 1))
+}
+
+impl NoUnexpectedMultiline {
+    fn check_index<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Index { obj, chain, .. } = e.kind()
+            && chain != Chain::Start
+            && let Some(open) = break_after(obj)
+        {
+            cx.report(open, PROPERTY);
+        }
+    }
+
+    fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Call(call) = e.kind()
+            && !call.is_optional()
+            && !call.args().is_empty()
+            && let Some(open) = break_after(call.callee())
+        {
+            cx.report(open, FUNCTION);
+        }
+    }
+
+    fn check_tagged_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::TaggedTemplate(call) = e.kind() else {
+            return;
+        };
+        let Some(start) = call.template().map(|it| it.span().start) else {
+            return;
+        };
+        let mut end = call.callee().outer_span().end;
+        if !text::has_line_break(cx.slice(Span::new(end, start))) {
+            return;
+        }
+        if !call.type_args().is_empty() {
+            let Some(before) = cx.file().token_before(Span::empty(start)) else {
+                return;
+            };
+            end = before.end();
+            if !text::has_line_break(cx.slice(Span::new(end, start))) {
+                return;
+            }
+        }
+        cx.report(Span::new(start, start + 1), TAGGED_TEMPLATE);
+    }
+
+    /// `a / b / c` where `/ b /c` looks like a regular expression with the flags `c`.
+    fn check_division<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary {
+            op: BinOp::Div,
+            left: inner,
+            ..
+        } = e.kind()
+        else {
+            return;
+        };
+        let ExprKind::Binary {
+            op: BinOp::Div,
+            left,
+            ..
+        } = inner.kind()
+        else {
+            return;
+        };
+        let Some(first_slash) = break_after(left) else {
+            return;
+        };
+        let Some(second_slash) = e.operator_span() else {
+            return;
+        };
+        if let Some(after) = cx.file().token_after(second_slash)
+            && after.kind() == TokenKind::Identifier
+            && after.start() == second_slash.end
+            && after.value().iter().all(|c| matches!(c, b'd' | b'g' | b'i' | b'm' | b's' | b'u' | b'v' | b'y'))
+        {
+            cx.report(first_slash, DIVISION);
+        }
+    }
+}
+
+impl Rule for NoUnexpectedMultiline {
+    const META: Meta = Meta::eslint("no-unexpected-multiline", Kind::Problem).recommended();
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoUnexpectedMultiline
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.exprs([ExprTag::Index], Self::check_index);
+        on.exprs([ExprTag::Call], Self::check_call);
+        on.exprs([ExprTag::TaggedTemplate], Self::check_tagged_template);
+        on.exprs([ExprTag::Binary], Self::check_division);
+    }
+}

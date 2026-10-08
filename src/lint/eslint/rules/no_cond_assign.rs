@@ -5,14 +5,13 @@ pub struct NoCondAssign {
     is_always: bool,
 }
 
-const UNEXPECTED: Message =
-    Message::new("unexpected", "Unexpected assignment within {{type}}.");
+const UNEXPECTED: Message = Message::new("unexpected", "Unexpected assignment within {{type}}.");
 const MISSING: Message = Message::new(
     "missing",
     "Expected a conditional expression and instead saw an assignment.",
 );
 
-/// The test of a statement or of a conditional expression, and what ESLint calls that.
+/// The test of a statement or of a conditional expression, and how the message describes that.
 fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
     match node {
         Node::Stmt(stmt) => match stmt.kind() {
@@ -23,7 +22,7 @@ fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
             _ => None,
         },
         Node::Expr(e) => match e.kind() {
-            ExprKind::Cond { test, .. } => Some((test, "a conditional expression")),
+            ExprKind::Cond { test, .. } => Some((test, "ConditionalExpression")),
             _ => None,
         },
         _ => None,
@@ -35,13 +34,16 @@ impl NoCondAssign {
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let mut inner = Node::Expr(e);
         for ancestor in inner.ancestors() {
-            if matches!(ancestor, Node::Func(_)) {
+            if ast_utils::is_function(ancestor) {
                 return;
             }
             if let Some((test, kind)) = test_of(ancestor)
                 && Node::Expr(test) == inner
             {
-                cx.report(e, UNEXPECTED).data("type", kind);
+                // The default value of a part of a destructuring assignment is not an assignment.
+                if !utils::is_assignment_target(e) {
+                    cx.report(e, UNEXPECTED).data("type", kind);
+                }
                 return;
             }
             inner = ancestor;
@@ -56,8 +58,9 @@ impl NoCondAssign {
         if test.tag() != ExprTag::Assign {
             return;
         }
-        // Those of `if (..)` are not around the expression, those of `(..) ? a : b` are.
-        let needed = if matches!(node, Node::Expr(_)) { 1 } else { 1 };
+        // ESLint wants two pairs around every test but that of a `for`. One of them is part of an
+        // `if`, a `while` and a `do`, and none is part of a conditional expression.
+        let needed = if matches!(node, Node::Expr(_)) { 2 } else { 1 };
         if test.parens().len() < needed {
             cx.report(test, MISSING);
         }

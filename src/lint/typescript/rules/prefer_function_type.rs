@@ -1,0 +1,204 @@
+use bun_lint::ast::walk::{Visitor, walk_node};
+use bun_lint::prelude::*;
+
+/// Enforce using function types instead of interfaces with call signatures.
+pub struct PreferFunctionType;
+
+const FUNCTION_TYPE_OVER_CALLABLE_TYPE: Message = Message::new(
+    "functionTypeOverCallableType",
+    "{{ literalOrInterface }} only has a call signature, you should use a function type instead.",
+);
+const UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE: Message = Message::new(
+    "unexpectedThisOnFunctionOnlyInterface",
+    "`this` refers to the function type '{{ interfaceName }}', did you intend to use a generic `this` parameter like `<Self>(this: Self, ...) => Self` instead?",
+);
+
+/// What has the member.
+#[derive(Copy, Clone)]
+enum Owner<'a> {
+    Interface(Interface<'a>),
+    TypeLiteral(TypeNode<'a>),
+}
+
+/// Finds the first `this` type that is not in a type literal, where it is invalid.
+#[derive(Default)]
+struct ThisTypes {
+    literal_nesting: u32,
+    first: Option<Span>,
+}
+
+impl<'a> Visitor<'a> for ThisTypes {
+    fn enter(&mut self, node: Node<'a>) {
+        let Node::Type(ty) = node else {
+            return;
+        };
+        let this = match ty.kind() {
+            TypeKind::Object(_) => {
+                self.literal_nesting += 1;
+                return;
+            }
+            TypeKind::Keyword(Keyword::This) => ty.span(),
+            TypeKind::Predicate { param, .. } if param.is("this") => match ty.predicate_param() {
+                Some(param) => param.span(),
+                None => return,
+            },
+            _ => return,
+        };
+        if self.literal_nesting == 0 && self.first.is_none() {
+            self.first = Some(this);
+        }
+    }
+
+    fn exit(&mut self, node: Node<'a>) {
+        if matches!(node, Node::Type(ty) if ty.tag() == TypeTag::Object) {
+            self.literal_nesting -= 1;
+        }
+    }
+}
+
+/// Whether the interface extends anything but `Function`.
+fn has_one_supertype(interface: Interface) -> bool {
+    let extends = interface.extends();
+    match (extends.first(), extends.len()) {
+        (None, _) => false,
+        (Some(only), 1) => !matches!(only.kind(), TypeKind::Ref { name, .. } if name.is("Function")),
+        _ => true,
+    }
+}
+
+fn should_wrap_suggestion(parent: Node) -> bool {
+    matches!(parent, Node::Type(parent) if matches!(
+        parent.kind(),
+        TypeKind::Union(_) | TypeKind::Intersection(_) | TypeKind::Array(_)
+    ))
+}
+
+fn comment_text(comment: Token) -> Vec<u8> {
+    match comment.kind() {
+        TokenKind::Line => [&b"//"[..], comment.comment_value()].concat(),
+        _ => [&b"/*"[..], comment.comment_value(), b"*/"].concat(),
+    }
+}
+
+fn fix<'a>(
+    fixer: Fixer<'a>,
+    member: Member<'a>,
+    return_type: TypeNode<'a>,
+    owner: Owner<'a>,
+) -> Option<Vec<Fix>> {
+    let file = fixer.file();
+    let text = member.text();
+    let colon = return_type.annotation_span().start.checked_sub(member.span().start)? as usize;
+    let mut suggestion = [text.get(..colon)?, b" =>", text.get(colon + 1..)?].concat();
+    let has_semicolon = suggestion.ends_with(b";");
+    if has_semicolon {
+        suggestion.pop();
+    }
+    // What is replaced, and the `export` before it.
+    let (replaced, export) = match owner {
+        Owner::TypeLiteral(literal) => {
+            if should_wrap_suggestion(literal.parent()) {
+                suggestion.insert(0, b'(');
+                suggestion.push(b')');
+            }
+            (literal.span(), None)
+        }
+        Owner::Interface(interface) => {
+            let name = match interface.type_params().angle_brackets_span() {
+                Some(type_params) => file.slice(interface.name().span().to(type_params)),
+                None => interface.name().bytes(),
+            };
+            suggestion = [&b"type "[..], name, b" = ", &suggestion[..]].concat();
+            if has_semicolon {
+                suggestion.push(b';');
+            }
+            let statement = interface.stmt();
+            (statement.span_without_export(), statement.export_span())
+        }
+    };
+    let comments = file.comments_before(member).chain(file.comments_after(member));
+    let Some(export) = export else {
+        let line = file.line_of(member.span().start);
+        for comment in comments {
+            let mut with_comment = comment_text(comment);
+            with_comment.push(if file.line_of(comment.start()) == line { b' ' } else { b'\n' });
+            with_comment.extend_from_slice(&suggestion);
+            suggestion = with_comment;
+        }
+        return Some(vec![fixer.replace(replaced, suggestion)]);
+    };
+    // They go before the `export`, not between it and the declaration.
+    let mut comments_text = Vec::new();
+    for comment in comments {
+        comments_text.extend_from_slice(&comment_text(comment));
+        comments_text.push(b'\n');
+    }
+    Some(vec![
+        fixer.insert_before(export, comments_text),
+        fixer.replace(replaced, suggestion),
+    ])
+}
+
+fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunctionType>) {
+    if !matches!(member.kind(), MemberKind::CallSignature | MemberKind::ConstructSignature) {
+        return;
+    }
+    let Some(return_type) = member.func().and_then(Func::return_type) else {
+        return;
+    };
+    let (phrase, is_default_export) = match owner {
+        Owner::TypeLiteral(_) => ("Type literal", false),
+        Owner::Interface(interface) => {
+            let mut this_types = ThisTypes::default();
+            walk_node(Node::Stmt(interface.stmt()), &mut this_types);
+            if let Some(this) = this_types.first {
+                cx.report(this, UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE)
+                    .data("interfaceName", interface.name());
+                return;
+            }
+            ("Interface", interface.stmt().is_default_export())
+        }
+    };
+    let report = cx
+        .report(member, FUNCTION_TYPE_OVER_CALLABLE_TYPE)
+        .data("literalOrInterface", phrase);
+    if !is_default_export {
+        report.fix(|fixer| fix(fixer, member, return_type, owner));
+    }
+}
+
+impl Rule for PreferFunctionType {
+    const META: Meta = Meta::typescript("prefer-function-type", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .presets(Presets::STYLISTIC);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferFunctionType
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.stmts([StmtTag::Interface], |_, statement, cx| {
+            let StmtKind::Interface(interface) = statement.kind() else {
+                return;
+            };
+            let members = interface.members();
+            if let Some(member) = members.first()
+                && members.len() == 1
+                && !has_one_supertype(interface)
+            {
+                check_member(member, Owner::Interface(interface), cx);
+            }
+        });
+        on.types([TypeTag::Object], |_, literal, cx| {
+            let TypeKind::Object(members) = literal.kind() else {
+                return;
+            };
+            if let Some(member) = members.first()
+                && members.len() == 1
+            {
+                check_member(member, Owner::TypeLiteral(literal), cx);
+            }
+        });
+    }
+}

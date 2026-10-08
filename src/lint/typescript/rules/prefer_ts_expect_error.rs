@@ -54,10 +54,9 @@ impl Rule for PreferTsExpectError {
                 cx.report(comment, PREFER_EXPECT_ERROR_COMMENT).fix(|fixer| {
                     let value = comment.comment_value();
                     let at = strings::index_of(value, TS_IGNORE)?;
-                    let (open, close): (&[u8], &[u8]) = match comment.kind() {
-                        TokenKind::Line => (b"//", b""),
-                        _ => (b"/*", b"*/"),
-                    };
+                    let is_line_comment = comment.kind() == TokenKind::Line;
+                    let open: &[u8] = if is_line_comment { b"//" } else { b"/*" };
+                    let close: &[u8] = if is_line_comment { b"" } else { b"*/" };
                     let after = &value[at + TS_IGNORE.len()..];
                     Some(fixer.replace(comment, [open, &value[..at], b"@ts-expect-error", after, close].concat()))
                 });

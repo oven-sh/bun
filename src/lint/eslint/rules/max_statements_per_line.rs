@@ -101,7 +101,9 @@ impl MaxStatementsPerLine {
             cx.state.number_of_statements_on_this_line = 1;
             cx.state.last_statement_line = line;
         }
-        if cx.state.number_of_statements_on_this_line == self.max + 1 && cx.state.first_extra_statement.is_none() {
+        if cx.state.number_of_statements_on_this_line == self.max.saturating_add(1)
+            && cx.state.first_extra_statement.is_none()
+        {
             cx.state.first_extra_statement = Some(span);
         }
     }

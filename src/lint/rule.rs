@@ -43,6 +43,7 @@ use crate::ast::{
 };
 use crate::code_path::{CodePath, Segment};
 use crate::context::Cx;
+use crate::literal::Literal;
 use crate::options::Options;
 use crate::semantic::Symbol;
 
@@ -268,6 +269,11 @@ sorts! {
     /// Everything that the file declares in a scope: variables, functions, classes, parameters,
     /// imports, types, namespaces, enums.
     symbols Symbols Symbol;
+    /// Every string in quotes, which is a `Literal` for ESLint: not only the expressions, also the keys of properties and
+    /// members, literal types, module specifiers, the names in quotes of imports and exports. Not the text in JSX.
+    string_literals StringLiterals Literal;
+    /// The same for numbers, including `1n`.
+    number_literals NumberLiterals Literal;
 }
 
 impl<'a, R: Rule> Listeners<'a, R> {
@@ -415,6 +421,11 @@ impl NodeTags {
     #[inline]
     pub const fn union(self, other: NodeTags) -> NodeTags {
         NodeTags(self.0 | other.0)
+    }
+
+    #[inline]
+    pub(crate) const fn from_index(index: u32) -> NodeTags {
+        NodeTags(1 << index)
     }
 
     #[inline]

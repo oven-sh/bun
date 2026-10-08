@@ -31,13 +31,17 @@ The HIR keeps the nodes of a file in one vector per sort. So:
 - `on.exprs([ExprTag::Call], f)`, `on.stmts(..)`, `on.types(..)`, `on.pats(..)`, `on.funcs(f)`, `on.classes(f)`, `on.members(f)`, `on.props(f)`, `on.params(f)`, `on.var_decls(f)`, `on.cases(f)`, `on.symbols(f)`, ..: `f` runs in a tight loop over exactly those nodes, **in no particular order**. No tree walk. **This is the default. Use it unless the rule cannot work without order.**
 - `on.enter(tags, f)` / `on.exit(tags, f)`: source order, around the children. The nodes of the listened kinds are collected and sorted by span, so it costs in proportion to how many there are: fine for functions, classes, loops and blocks, wasteful for identifiers. Use it for rules that are inherently about nesting order.
 - Code path listeners (`on.code_path_start(..)`, ..) make the linter walk and analyze the whole file. Register them only if the file can have something to report: `file.has_stmts([StmtTag::Switch])`, `file.has_exprs(..)`, `file.has_classes()`.
+- `on.string_literals(f)` / `on.number_literals(f)`: every ESTree `Literal` that is a string / a number, as a `Literal` (`span()`, `text()`, `owner()`). Only some are expressions here: the others are keys, literal types, module specifiers, names in quotes of imports and exports. Use these instead of listing the places by hand.
+- In `register`, `file.has_exprs(..)`, `file.has_stmts(..)`, `file.exprs_of_kind(tag)`, `file.stmts_of_kind(tag)`, `file.funcs()` tell whether there is anything to listen for.
 - `on.finish(f)`: once at the end. Collect in `cx.state` from unordered listeners, decide here.
-- ESLint rules often keep a stack only to know "which function/class/loop am I in". Do not port the stack: ask the node (`node.enclosing_function()`, `node.ancestors()`, `func.enclosing()`, `func.returns()`, `func.yields()`, `func.contains_this()`).
+- ESLint rules often keep a stack only to know "which function/class/loop am I in". Do not port the stack: ask the node (`node.enclosing_function()`, `node.ancestors()`, `func.enclosing()`, `func.returns()`, `func.yields()`). `func.contains_this()` is TypeScript's notion, not ESLint's: it counts `this` types, and a `this` in a computed key or a decorator of a method counts for the method.
 - Reports are sorted by position afterwards, so the order of reporting does not matter.
 
 ### Performance rules
 
 - Decide from the syntax first. Touch tokens, comments, line/column, references, scopes and types only when the cheap checks have passed: each of these is computed lazily for the whole file on first use.
+- `expr.symbol()` is a load. `symbol.declarations()`, `node.scope()`, `scope.symbols()/get/resolve` compute the scopes and variables of the file on first use (~1.6 ms/MB); `symbol.references()`, `expr.reference()`, `file.unresolved_references()` also the references (~1.3 ms/MB more). For comparison, parsing and binding is ~25 ms/MB.
+- `skip_trivia_back` takes a token that ends in `*/`, like the regex `/a*/`, for a comment. Where that can be, use `file.token_before(..)`.
 - `skip_trivia(text, end_of_node)` finds the next token after a node without scanning the file. `expr.operator_span()`, `func.open_paren()`, `func.arrow_span()`, `func.body_span()`, `class.body_span()`, `call.close_paren()` are positions the HIR already has or finds locally.
 - No allocation on the path that reports nothing. No `format!`, `to_vec`, `collect` before you know there is a report.
 - Compare `Name`s with each other (`a == b` is an integer compare), or with text by `name.is("x")` / `name.is_any(&[..])` / `match name.bytes() { b"x" => .. }`.
@@ -126,6 +130,7 @@ ESLint's rules, docs and tests speak ESTree (TSESTree for TypeScript). The mappi
 | `ImportAttribute` | `import.attributes()`, `export.attributes()`, `stmt.import_attributes()` → `ImportAttributes`: `entries()` (`Prop`s that are not nodes, their values are), `keyword_span()`, `braces_span()` |
 | `JSXIdentifier`, `JSXMemberExpression`, `JSXNamespacedName` in a tag | `ExprKind::{Ident, This, Dot, String}` with `expr.is_jsx_tag_name()` |
 | `JSXSpreadChild` | `ExprKind::Spread` among the children, with `jsx_container_span()` |
+| `TSLiteralType` of a `` `a` `` without substitutions | `TypeKind::StringLit`, whose text starts with a backtick |
 | `TSTemplateLiteralType` | `TypeKind::Template(types)`, `ty.as_template()` for `cooked(i)`, `raw(i)`, `quasi_span(i)` |
 | `TSTypePredicate.parameterName` | `ty.predicate_param()` |
 | `TSImportType` | `TypeKind::Import`. `ty.import_span()`, `ty.import_source_span()`, `ty.import_attributes()` |

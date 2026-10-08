@@ -10,7 +10,7 @@ const UNEXPECTED: Message = Message::new("unexpected", "Unexpected usage of {{de
 
 impl JsxQuotes {
     fn check<'a>(&self, attribute: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if !attribute.is_jsx_attribute() {
+        if !attribute.is_jsx_attribute() || attribute.kind() != PropKind::Init {
             return;
         }
         let Some(value) = attribute.value() else {

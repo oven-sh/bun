@@ -27,6 +27,8 @@ pub struct Diagnostic {
     pub span: Span,
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
+    /// The start that is reported in place of that of `span`: [`Report::start_at`].
+    pub start_position: Option<Position>,
     /// The end that is reported in place of that of `span`: [`Report::end_at`].
     pub end_position: Option<Position>,
     pub fix: Option<Fix>,
@@ -94,6 +96,7 @@ impl<'a, R: Rule> Cx<'a, R> {
                 message: Vec::new(),
                 span: at.span(),
                 has_no_end: false,
+                start_position: None,
                 end_position: None,
                 fix: None,
                 suggestions: Vec::new(),
@@ -130,7 +133,17 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// Reports `end` as the end, for the rare rule whose `loc.end` is a line and a column that are not in the text.
+    /// Reports `start` as the start, for the rare rule whose `loc.start` is a line and a column that are not in the text: some
+    /// report what concerns the configuration at line 0.
+    pub fn start_at(mut self, start: Position) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.start_position = Some(start);
+        }
+        self
+    }
+
+    /// Reports `end` as the end, for the rare rule whose `loc.end` is a line and a column that are not in the text. ESLint's
+    /// column -1 is `u32::MAX`.
     pub fn end_at(mut self, end: Position) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.end_position = Some(end);

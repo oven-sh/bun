@@ -24,14 +24,14 @@ fn split_into<'a>(operator: BinOp, e: Expr<'a>, into: &mut Operands<'a>) {
     }
 }
 
-fn split<'a>(operator: BinOp, e: Expr<'a>) -> Operands<'a> {
+fn split(operator: BinOp, e: Expr<'_>) -> Operands<'_> {
     let mut operands = Operands::new();
     split_into(operator, e, &mut operands);
     operands
 }
 
 /// ESLint's `splitByOr(e).map(splitByAnd)`.
-fn split_by_or_and<'a>(e: Expr<'a>) -> OrOperands<'a> {
+fn split_by_or_and(e: Expr<'_>) -> OrOperands<'_> {
     split(BinOp::Or, e).into_iter().map(|it| split(BinOp::And, it)).collect()
 }
 
@@ -55,7 +55,7 @@ fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
 }
 
 /// The `if` whose `else` is `statement`.
-fn previous_if<'a>(statement: Stmt<'a>) -> Option<Stmt<'a>> {
+fn previous_if(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let parent = statement.parent().as_stmt()?;
     matches!(parent.kind(), StmtKind::If { no: Some(no), .. } if no == statement).then_some(parent)
 }

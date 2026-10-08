@@ -1,11 +1,10 @@
 //! Runs rules on a file.
 
-use crate::ast::walk::{Visitor, walk};
 use crate::ast::{
     Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
     Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, VarDecl,
 };
-use crate::code_path::{Analyzer, Event};
+use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entry, Listeners, Meta, NodeTags, Rule};
@@ -100,7 +99,7 @@ impl File<'_> {
         !self.hir.classes.is_empty()
     }
 
-    fn pats_of(&self, tag: PatTag) -> &[u32] {
+    pub(crate) fn pats_of(&self, tag: PatTag) -> &[u32] {
         let grouped = (self.by_kind().pats)
             .get_or_init(|| Grouped::new(self.hir.pats.len(), |i| self.pat_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
@@ -113,7 +112,7 @@ macro_rules! every {
         impl<'a> File<'a> {
             $(
                 #[inline]
-                fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
+                pub(crate) fn $method(&'a self, mut visit: impl FnMut($handle<'a>)) {
                     for i in 0..self.hir.$field.len() {
                         let it = <$handle as Handle>::from_raw(self, i as u32);
                         if it.is_in_tree() {
@@ -141,6 +140,39 @@ every! {
 }
 
 impl<'a> File<'a> {
+    /// The expressions of a kind, in no particular order. For [`Rule::register`] to look closer than [`File::has_exprs`] does.
+    pub fn exprs_of_kind(&'a self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> {
+        self.exprs_of(tag).iter().map(|&id| Expr::from_raw(self, id))
+    }
+
+    /// The same for statements.
+    pub fn stmts_of_kind(&'a self, tag: StmtTag) -> impl Iterator<Item = Stmt<'a>> {
+        self.stmts_of(tag).iter().map(|&id| Stmt::from_raw(self, id))
+    }
+
+    /// The same for functions: what [`Listeners::funcs`] is called with.
+    pub fn funcs(&'a self) -> impl Iterator<Item = Func<'a>> {
+        (0..self.hir.fns.len()).map(|i| Func::from_raw(self, i as u32)).filter(|it| it.is_in_tree())
+    }
+
+    pub(crate) fn every_expr_of(&'a self, tags: &[ExprTag], mut visit: impl FnMut(Expr<'a>)) {
+        for &tag in tags {
+            self.exprs_of(tag).iter().for_each(|&id| visit(Expr::from_raw(self, id)));
+        }
+    }
+
+    pub(crate) fn every_stmt_of(&'a self, tags: &[StmtTag], mut visit: impl FnMut(Stmt<'a>)) {
+        for &tag in tags {
+            self.stmts_of(tag).iter().for_each(|&id| visit(Stmt::from_raw(self, id)));
+        }
+    }
+
+    pub(crate) fn every_type_of(&'a self, tags: &[TypeTag], mut visit: impl FnMut(TypeNode<'a>)) {
+        for &tag in tags {
+            self.types_of(tag).iter().for_each(|&id| visit(TypeNode::from_raw(self, id)));
+        }
+    }
+
     fn every_tuple_elem(&'a self, mut visit: impl FnMut(TupleElem<'a>)) {
         for i in 0..self.hir.tuple_elems.len() {
             let it = TupleElem::from_raw(self, i as u32);
@@ -150,7 +182,7 @@ impl<'a> File<'a> {
         }
     }
 
-    fn every_pat_prop(&'a self, mut visit: impl FnMut(PatProp<'a>)) {
+    pub(crate) fn every_pat_prop(&'a self, mut visit: impl FnMut(PatProp<'a>)) {
         for i in 0..self.hir.pat_props.len() {
             let it = PatProp::from_raw(self, i as u32);
             if self.pat_in_tree(it.value().id().idx()).is_some() {
@@ -242,7 +274,22 @@ pub trait Running<'a> {
 pub enum WalkListener {
     Enter(NodeTags, u16),
     Exit(NodeTags, u16),
-    CodePath(u16),
+    /// The index is `event_index` of the events it is for.
+    CodePath(usize, u16),
+}
+
+const EVENTS: usize = 7;
+
+fn event_index(event: &Event) -> usize {
+    match event {
+        Event::CodePathStart(..) => 0,
+        Event::CodePathEnd(..) => 1,
+        Event::SegmentStart(..) => 2,
+        Event::SegmentEnd(..) => 3,
+        Event::UnreachableSegmentStart(..) => 4,
+        Event::UnreachableSegmentEnd(..) => 5,
+        Event::SegmentLoop(..) => 6,
+    }
 }
 
 struct Run<'r, 'a, R: Rule> {
@@ -288,6 +335,8 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                 Entry::EnumMembers(listener) => file.every_enum_member(|it| listener(rule, it, cx)),
                 Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
                 Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
+                Entry::StringLiterals(listener) => file.every_string_literal(|it| listener(rule, it, cx)),
+                Entry::NumberLiterals(listener) => file.every_number_literal(|it| listener(rule, it, cx)),
                 Entry::Symbols(listener) => {
                     for symbol in file.symbols() {
                         listener(rule, symbol, cx);
@@ -312,13 +361,13 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
             match entry {
                 Entry::Enter(tags, _) => add(WalkListener::Enter(*tags, i as u16)),
                 Entry::Exit(tags, _) => add(WalkListener::Exit(*tags, i as u16)),
-                Entry::CodePathStart(_)
-                | Entry::CodePathEnd(_)
-                | Entry::SegmentStart(_)
-                | Entry::SegmentEnd(_)
-                | Entry::UnreachableSegmentStart(_)
-                | Entry::UnreachableSegmentEnd(_)
-                | Entry::SegmentLoop(_) => add(WalkListener::CodePath(i as u16)),
+                Entry::CodePathStart(_) => add(WalkListener::CodePath(0, i as u16)),
+                Entry::CodePathEnd(_) => add(WalkListener::CodePath(1, i as u16)),
+                Entry::SegmentStart(_) => add(WalkListener::CodePath(2, i as u16)),
+                Entry::SegmentEnd(_) => add(WalkListener::CodePath(3, i as u16)),
+                Entry::UnreachableSegmentStart(_) => add(WalkListener::CodePath(4, i as u16)),
+                Entry::UnreachableSegmentEnd(_) => add(WalkListener::CodePath(5, i as u16)),
+                Entry::SegmentLoop(_) => add(WalkListener::CodePath(6, i as u16)),
                 _ => {}
             }
         }
@@ -373,46 +422,37 @@ struct Walk<'w, 'r, 'a> {
     /// By `NodeTags::index_of`: the rule and its listener.
     enter: Vec<Vec<(u16, u16)>>,
     exit: Vec<Vec<(u16, u16)>>,
-    code_path: Vec<(u16, u16)>,
-    analyzer: Option<Analyzer<'a>>,
+    /// By `event_index`.
+    code_path: [Vec<(u16, u16)>; EVENTS],
 }
 
 impl<'a> Walk<'_, '_, 'a> {
-    fn analyze(
-        &mut self,
-        node: Node<'a>,
-        step: fn(&mut Analyzer<'a>, Node<'a>, &mut dyn FnMut(Event<'a>)),
-    ) {
-        let Some(analyzer) = &mut self.analyzer else {
-            return;
-        };
-        let (running, listeners) = (&mut *self.running, &self.code_path);
-        step(analyzer, node, &mut |event| {
-            for &(rule, entry) in listeners {
-                running[rule as usize].code_path_event(entry, event);
-            }
-        });
-    }
-}
-
-impl<'a> Visitor<'a> for Walk<'_, '_, 'a> {
     fn enter(&mut self, node: Node<'a>) {
-        self.analyze(node, Analyzer::enter);
         for &(rule, entry) in &self.enter[NodeTags::index_of(node) as usize] {
             self.running[rule as usize].call(entry, node);
         }
     }
 
     fn exit(&mut self, node: Node<'a>) {
-        self.analyze(node, Analyzer::before_exit);
         for &(rule, entry) in &self.exit[NodeTags::index_of(node) as usize] {
             self.running[rule as usize].call(entry, node);
         }
-        self.analyze(node, Analyzer::after_exit);
+    }
+
+    fn event(&mut self, event: Event<'a>) {
+        for &(rule, entry) in &self.code_path[event_index(&event)] {
+            self.running[rule as usize].code_path_event(entry, event);
+        }
+    }
+
+    /// The kinds of nodes that `table` has a listener for.
+    fn tags_of(table: &[Vec<(u16, u16)>]) -> NodeTags {
+        let listened = table.iter().enumerate().filter(|(_, listeners)| !listeners.is_empty());
+        listened.fold(NodeTags::EMPTY, |tags, (index, _)| tags | NodeTags::from_index(index as u32))
     }
 }
 
-/// What `walk` does for a `Walk` without code paths, without walking: the nodes of a file nest, so their spans determine the order.
+/// Enters and leaves the nodes that are listened for, without walking: the nodes of a file nest, so their spans determine the order.
 /// Only the nodes of the kinds that are listened for are collected, from the vectors they are in, and sorted. The cost depends on
 /// how many of those there are, not on the size of the file.
 fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
@@ -576,7 +616,7 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
     }
 
     let (mut enter, mut exit): (Vec<Vec<(u16, u16)>>, Vec<Vec<(u16, u16)>>) = (Vec::new(), Vec::new());
-    let mut code_path = Vec::new();
+    let mut code_path: [Vec<(u16, u16)>; EVENTS] = Default::default();
     let mut needs_walk = false;
     for (i, rule) in running.iter().enumerate() {
         rule.listeners_of_walk(&mut |listener| {
@@ -588,7 +628,7 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
             let (table, tags, entry) = match listener {
                 WalkListener::Enter(tags, entry) => (&mut enter, tags, entry),
                 WalkListener::Exit(tags, entry) => (&mut exit, tags, entry),
-                WalkListener::CodePath(entry) => return code_path.push((i as u16, entry)),
+                WalkListener::CodePath(event, entry) => return code_path[event].push((i as u16, entry)),
             };
             for (index, listeners) in table.iter_mut().enumerate() {
                 if tags.has_index(index as u32) {
@@ -598,18 +638,24 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
         });
     }
     if needs_walk {
-        let analyzer = (!code_path.is_empty()).then(|| Analyzer::new(file));
+        let has_code_paths = code_path.iter().any(|listeners| !listeners.is_empty());
         let mut listeners = Walk {
             running: &mut running,
             enter,
             exit,
             code_path,
-            analyzer,
         };
-        // The analysis of code paths looks at every node.
-        match listeners.analyzer.is_some() {
-            true => walk(file, &mut listeners),
-            false => walk_listened(file, &mut listeners),
+        if has_code_paths {
+            let (enter, exit) = (Walk::tags_of(&listeners.enter), Walk::tags_of(&listeners.exit));
+            for step in steps(file, enter, exit) {
+                match step {
+                    Step::Enter(node) => listeners.enter(node),
+                    Step::Exit(node) => listeners.exit(node),
+                    Step::Event(event) => listeners.event(event),
+                }
+            }
+        } else {
+            walk_listened(file, &mut listeners);
         }
     }
 

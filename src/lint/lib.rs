@@ -18,6 +18,7 @@ pub mod fix;
 pub mod json;
 pub mod language;
 pub mod linter;
+pub mod literal;
 pub mod options;
 pub mod regex;
 pub mod rule;
@@ -36,11 +37,12 @@ pub mod prelude {
     pub use crate::context::{Cx, IntoText, Report};
     pub use crate::fix::{Fix, Fixer};
     pub use crate::language::{Global, LanguageOptions, SourceType};
+    pub use crate::literal::Literal;
     pub use crate::options::{Json, Object, Options};
     pub use crate::regex::Regex;
     pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, Presets, Rule};
     pub use crate::semantic::{
-        Declaration, Reference, ReferenceFlags, Scope, ScopeKind, SymFlags, Symbol,
+        Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, SymFlags, Symbol,
     };
     pub use crate::span::{Position, Span, Spanned};
     pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};

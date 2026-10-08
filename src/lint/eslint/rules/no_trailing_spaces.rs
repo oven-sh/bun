@@ -22,7 +22,7 @@ fn trailing_blank_len(line: &[u8]) -> usize {
 }
 
 impl NoTrailingSpaces {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn check(&self, cx: &mut Cx<'_, Self>) {
         let (file, text) = (cx.file(), cx.text());
         let mut has_backtick = None;
         let mut line_start = if file.has_bom() { 3 } else { 0 };

@@ -52,19 +52,25 @@ impl<'a> File<'a> {
         self.slice(self.line_span(line))
     }
 
-    /// ESLint's `getLocFromIndex`.
+    /// ESLint's `getLocFromIndex`. An offset inside a character of four bytes is the position between its two UTF-16 code units.
     pub fn position(&self, offset: u32) -> Position {
-        let offset = offset.min(self.text().len() as u32);
+        let text = self.text();
+        let offset = offset.min(text.len() as u32);
         let line = self.line_of(offset);
         let start = self.lines_index().starts[line as usize - 1];
-        let column = match self.lines_index().is_ascii {
-            true => offset - start,
-            false => utf16_len(self.slice(Span::new(start, offset))),
-        };
+        if self.lines_index().is_ascii {
+            return Position { line, column: offset - start };
+        }
+        let mut character = offset;
+        while character > start && text.get(character as usize).is_some_and(|byte| byte & 0xC0 == 0x80) {
+            character -= 1;
+        }
+        let is_between_surrogates = character < offset && text.get(character as usize).is_some_and(|&byte| byte >= 0xF0);
+        let column = utf16_len(self.slice(Span::new(start, character))) + u32::from(is_between_surrogates);
         Position { line, column }
     }
 
-    /// ESLint's `getIndexFromLoc`.
+    /// ESLint's `getIndexFromLoc`. The position between the two UTF-16 code units of a character is its offset plus 2.
     pub fn offset(&self, position: Position) -> u32 {
         let line = self.line_span(position.line);
         if self.lines_index().is_ascii {
@@ -74,6 +80,9 @@ impl<'a> File<'a> {
         let text = self.text();
         while units < position.column && (at as usize) < text.len() {
             let (c, size) = bun_core::lexer::char_and_size(text, at as usize);
+            if c > 0xFFFF && units + 1 == position.column {
+                return at + 2;
+            }
             units += if c > 0xFFFF { 2 } else { 1 };
             at += size as u32;
         }

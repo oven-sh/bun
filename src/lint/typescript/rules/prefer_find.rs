@@ -46,10 +46,9 @@ fn is_arrayish(ty: Type) -> bool {
     is_at_least_one_arrayish_component
 }
 
-/// Adds the calls of `Array.prototype.filter` whose result is the value of `expression`. There are
+/// Adds the calls of `Array.prototype.filter` whose result is the value of `node`. There are
 /// several where it is a ternary. False if it can have another value.
-fn parse_array_filter_expressions(expression: Expr, found: &mut FilterExpressions) -> bool {
-    let mut node = expression;
+fn parse_array_filter_expressions(mut node: Expr, found: &mut FilterExpressions) -> bool {
     loop {
         match node.kind() {
             // Only the last expression of `(a, b, [1, 2, 3].filter(condition))[0]` matters.

@@ -2,7 +2,8 @@ use bun_lint::prelude::*;
 
 /// Enforce a maximum depth that blocks can be nested.
 pub struct MaxDepth {
-    max: usize,
+    /// `None`: `{ "maximum": 0 }` without `max`, with which upstream compares to `undefined`.
+    max: Option<usize>,
 }
 
 const TOO_DEEPLY: Message = Message::new(
@@ -10,68 +11,74 @@ const TOO_DEEPLY: Message = Message::new(
     "Blocks are nested too deeply ({{depth}}). Maximum allowed is {{maxDepth}}.",
 );
 
-/// What starts counting from zero again.
-fn functions() -> NodeTags {
-    NodeTags::FILE | NodeTags::FUNC
+/// The keyword that `stmt` starts with, if it is a statement that counts: not the `if` of an
+/// `else if`.
+fn keyword_of(stmt: Stmt) -> Option<&'static str> {
+    Some(match stmt.kind() {
+        StmtKind::If { .. } => {
+            let is_else_if = matches!(stmt.parent(), Node::Stmt(parent)
+                if matches!(parent.kind(), StmtKind::If { no: Some(no), .. } if no == stmt));
+            if is_else_if {
+                return None;
+            }
+            "if"
+        }
+        StmtKind::Switch { .. } => "switch",
+        StmtKind::Try { .. } => "try",
+        StmtKind::DoWhile { .. } => "do",
+        StmtKind::While { .. } => "while",
+        StmtKind::With { .. } => "with",
+        StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. } => "for",
+        _ => return None,
+    })
 }
 
-fn blocks() -> NodeTags {
-    NodeTags::LOOPS | [StmtTag::If, StmtTag::Switch, StmtTag::Try, StmtTag::Block].into()
-}
-
-/// Whether ESLint counts the statement: not a plain block, which only the `with` statement shares
-/// its tag with, and not the `if` of an `else if`.
-fn counts(node: Node) -> bool {
-    let Node::Stmt(stmt) = node else {
-        return false;
-    };
-    match stmt.kind() {
-        StmtKind::Block(_) => false,
-        StmtKind::If { .. } => !matches!(stmt.parent(), Node::Stmt(parent)
-            if matches!(parent.kind(), StmtKind::If { no: Some(no), .. } if no == stmt)),
-        _ => true,
+impl MaxDepth {
+    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
+            return;
+        };
+        let in_function = Node::Stmt(stmt).ancestors().take_while(|it| !matches!(it, Node::Func(_)));
+        let around = in_function.filter(|it| matches!(it, Node::Stmt(outer) if keyword_of(*outer).is_some()));
+        let depth = around.count() + 1;
+        if depth > max {
+            let start = stmt.span().start;
+            cx.report(Span::new(start, start + keyword.len() as u32), TOO_DEEPLY)
+                .data("depth", depth)
+                .data("maxDepth", max);
+        }
     }
 }
 
 impl Rule for MaxDepth {
     const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    /// The depth in each of the functions around the current node.
-    type State<'a> = Vec<usize>;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         MaxDepth {
-            max: (object.usize("maximum").or(object.usize("max")))
-                .or(options.number(0).map(|n| n as usize))
-                .unwrap_or(4),
+            max: match object.has("maximum") || object.has("max") {
+                true => object.usize("maximum").filter(|max| *max != 0).or_else(|| object.usize("max")),
+                false => Some(options.number(0).map_or(4, |max| max as usize)),
+            },
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<usize> {
-        on.enter(functions(), |_, _, cx| cx.state.push(0));
-        on.exit(functions(), |_, _, cx| {
-            cx.state.pop();
-        });
-        on.enter(blocks(), |rule, node, cx| {
-            if !counts(node) {
-                return;
-            }
-            let Some(depth) = cx.state.last_mut() else {
-                return;
-            };
-            *depth += 1;
-            let depth = *depth;
-            if depth > rule.max {
-                cx.report(node, TOO_DEEPLY).data("depth", depth).data("maxDepth", rule.max);
-            }
-        });
-        on.exit(blocks(), |_, node, cx| {
-            if counts(node)
-                && let Some(depth) = cx.state.last_mut()
-            {
-                *depth -= 1;
-            }
-        });
-        Vec::new()
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.stmts(
+            [
+                StmtTag::If,
+                StmtTag::Switch,
+                StmtTag::Try,
+                StmtTag::DoWhile,
+                StmtTag::While,
+                StmtTag::For,
+                StmtTag::ForIn,
+                StmtTag::ForOf,
+                // `with`
+                StmtTag::Block,
+            ],
+            Self::check,
+        );
     }
 }

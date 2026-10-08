@@ -262,7 +262,7 @@ impl<'t> Builder<'t, '_, '_> {
         }
         let is_ignored = comments.iter().any(|it| {
             let comment = self.slice(self.comment_span(it));
-            comment.get(1..).unwrap_or_default().trim_ascii() == b"prettier-ignore"
+            matches!(comment.get(1..).unwrap_or_default().trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore")
         });
         match is_ignored {
             true => self.ignored(self.tree.span(id)),

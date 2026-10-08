@@ -3,7 +3,7 @@
 /**
  * Regenerate test/expected-durations.json from recent Buildkite runs.
  * The file maps each test path (relative to test/, forward slashes) to its
- * median per-lane cost in ms (see `lanes` below). runner.node.mjs uses it
+ * median per-lane cost in ms (see `lanes` below). runner.node.ts uses it
  * to bin-pack test files across --max-shards so every shard does roughly
  * the same amount of work instead of `index % shards`.
  * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
@@ -65,7 +65,7 @@ const api = async path => {
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
-// prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
+// prefix the header with `--- `; the parallel-safe phase (runner.node.ts)
 // prints the bare form. For that concurrent phase the gap is an inter-dispatch
 // delta, not wall clock; we clamp it so the last-dispatched file on each shard
 // does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
@@ -203,7 +203,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
 
   const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
-  // Guard the implicit contract with utils.mjs startGroup(): if the group-header
+  // Guard the implicit contract with startGroup() in scripts/buildkite.ts: if the group-header
   // format ever changes, parseLog() quietly returns nothing. Fail loudly rather
   // than committing an empty table that would collapse every shard onto shard 0.
   if (paths.size < 1000) {

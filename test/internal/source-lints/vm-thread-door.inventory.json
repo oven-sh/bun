@@ -16,9 +16,6 @@
   "src/jsc/Debugger.rs": {
     "thread spawn": 1
   },
-  "src/jsc/GarbageCollectionController.rs": {
-    "thread spawn": 1
-  },
   "src/jsc/JSSecrets.rs": {
     "unsafe impl Send": [
       "SecretsOptions"
@@ -40,6 +37,11 @@
     ],
     "unsafe impl Sync": [
       "SourceLocation"
+    ]
+  },
+  "src/jsc/VirtualMachine.rs": {
+    "unsafe impl Send": [
+      "Shared"
     ]
   },
   "src/jsc/hot_reloader.rs": {

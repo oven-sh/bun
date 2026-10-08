@@ -40,6 +40,15 @@ const errorCodes = {
   CANCELLED: "ECANCELLED",
 };
 
+type ServerTriple = Bun.dns.ServerTriple;
+type NativeResolver = Bun.dns.NativeResolver;
+type NewNativeResolver = (options: { timeout: number; tries: number }) => NativeResolver;
+
+interface DNSException extends Error {
+  errno?: number;
+  syscall?: string;
+}
+
 const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
@@ -76,9 +85,12 @@ const getRuntimeDefaultResultOrderOption = $newRustFunction(
 
 function newResolver(options) {
   if (!newResolver.native) {
-    newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
+    newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1) as NewNativeResolver;
   }
   return newResolver.native(options);
+}
+declare namespace newResolver {
+  export let native: NewNativeResolver | undefined;
 }
 
 function defaultResultOrder() {
@@ -87,6 +99,9 @@ function defaultResultOrder() {
   }
 
   return defaultResultOrder.value;
+}
+declare namespace defaultResultOrder {
+  export let value: string | undefined;
 }
 
 function setDefaultResultOrder(order) {
@@ -107,7 +122,7 @@ function stripZoneId(host) {
 function setServersOn(servers, object) {
   validateArray(servers, "servers");
 
-  const triples = [];
+  const triples: ServerTriple[] = [];
 
   servers.forEach((server, i) => {
     validateString(server, `servers[${i}]`);
@@ -135,12 +150,12 @@ function setServersOn(servers, object) {
 
     if (addrSplitMatch) {
       const hostIP = addrSplitMatch[1];
-      const port = addrSplitMatch[2] || IANA_DNS_PORT;
+      const port = addrSplitMatch[2] ? parseInt(addrSplitMatch[2]) : IANA_DNS_PORT;
 
       ipVersion = isIP(hostIP);
 
       if (ipVersion !== 0) {
-        triples.push([ipVersion, hostIP, parseInt(port)]);
+        triples.push([ipVersion, hostIP, port]);
         return;
       }
     }
@@ -157,7 +172,7 @@ function validateFlagsOption(options) {
   }
 
   const flags = options.flags;
-  validateNumber(flags);
+  validateNumber(flags, "options.flags");
 
   if ((flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
     throw $ERR_INVALID_ARG_VALUE("hints", flags, "is invalid");
@@ -189,14 +204,14 @@ function validateFamilyOption(options) {
 function validateAllOption(options) {
   const all = options.all;
   if (all != null) {
-    validateBoolean(all);
+    validateBoolean(all, "options.all");
   }
 }
 
 function validateVerbatimOption(options) {
   const verbatim = options.verbatim;
   if (verbatim != null) {
-    validateBoolean(verbatim);
+    validateBoolean(verbatim, "options.verbatim");
   }
 }
 
@@ -228,9 +243,9 @@ function validateResolve(hostname, callback) {
 }
 
 function validateLocalAddresses(first, second) {
-  validateString(first);
+  validateString(first, "ipv4");
   if (typeof second !== "undefined") {
-    validateString(second);
+    validateString(second, "ipv6");
   }
 }
 
@@ -245,6 +260,9 @@ function invalidHostname(hostname) {
     "DeprecationWarning",
     "DEP0118",
   );
+}
+declare namespace invalidHostname {
+  export let warned: boolean | undefined;
 }
 
 function translateLookupOptions(options) {
@@ -279,7 +297,7 @@ function validateLookupOptions(options) {
   validateOrderOption(options);
 }
 
-function lookup(hostname, options, callback) {
+function lookup(hostname, options, callback?) {
   if (typeof hostname !== "string" && hostname) {
     throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
   }
@@ -358,12 +376,13 @@ function lookupService(address, port, callback) {
     throw $ERR_MISSING_ARGS("address", "port", "callback");
   }
 
+  if (isIP(address) === 0) {
+    throw $ERR_INVALID_ARG_VALUE("address", address);
+  }
+  validatePort(port, "port");
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
-
-  validateString(address);
-  validatePort(port, "port");
 
   callback = guardCallback(callback);
   dns.lookupService(address, +port).then(
@@ -383,8 +402,9 @@ function validateResolverOptions(options) {
   return { timeout, tries };
 }
 
-var InternalResolver = class Resolver {
-  #resolver;
+class Resolver {
+  declare _handle: NativeResolver;
+  #resolver: NativeResolver;
 
   constructor(options) {
     this.#resolver = this._handle = newResolver(validateResolverOptions(options));
@@ -683,18 +703,13 @@ var InternalResolver = class Resolver {
 
   setLocalAddress(first, second) {
     validateLocalAddresses(first, second);
-    Resolver.#getResolver(this).setLocalAddress(first, second);
+    this.#resolver.setLocalAddress(first, second);
   }
 
   setServers(servers) {
     return setServersOn(servers, Resolver.#getResolver(this));
   }
-};
-
-function Resolver(options) {
-  return new InternalResolver(options);
 }
-$toClass(Resolver, "Resolver", InternalResolver);
 
 var {
   resolve,
@@ -711,7 +726,7 @@ var {
   resolveSrv,
   reverse,
   resolveTxt,
-} = InternalResolver.prototype;
+} = Resolver.prototype;
 
 const mapLookupAll = res => {
   const { address, family } = res;
@@ -720,7 +735,7 @@ const mapLookupAll = res => {
 
 function throwIfEmpty(res) {
   if (res.length === 0) {
-    const err = new Error("No records found");
+    const err: DNSException = new Error("No records found");
     err.name = "DNSException";
     err.code = "ENODATA";
     // Hardcoded errno
@@ -812,7 +827,9 @@ const promises = {
       throw $ERR_MISSING_ARGS("address", "port");
     }
 
-    validateString(address);
+    if (isIP(address) === 0) {
+      throw $ERR_INVALID_ARG_VALUE("address", address);
+    }
     validatePort(port, "port");
 
     try {
@@ -821,7 +838,7 @@ const promises = {
         service,
       }));
     } catch (err) {
-      if (err.name === "TypeError" || err.name === "RangeError") {
+      if ((err as Error).name === "TypeError" || (err as Error).name === "RangeError") {
         throw err;
       }
       return Promise.$reject(withTranslatedError(err));
@@ -891,7 +908,8 @@ const promises = {
   },
 
   Resolver: class Resolver {
-    #resolver;
+    declare _handle: NativeResolver;
+    #resolver: NativeResolver;
 
     constructor(options) {
       this.#resolver = this._handle = newResolver(validateResolverOptions(options));
@@ -984,7 +1002,7 @@ const promises = {
 
     setLocalAddress(first, second) {
       validateLocalAddresses(first, second);
-      Resolver.#getResolver(this).setLocalAddress(first, second);
+      this.#resolver.setLocalAddress(first, second);
     }
 
     setServers(servers) {

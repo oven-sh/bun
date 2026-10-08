@@ -500,7 +500,7 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let mut inner = self.0.inner_non_null_spans().peekable();
         while inner.next().is_some() {
-            let next_mark = inner.peek().map_or(self.0.span().end, |next| next.end).saturating_sub(1);
+            let next_mark = inner.peek().map_or_else(|| self.0.span().end, |next| next.end).saturating_sub(1);
             write!(f, ["!", FormatTrailingComments::Comments(f.comments().comments_before(next_mark))]);
         }
         write!(f, "!");

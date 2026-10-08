@@ -1,6 +1,7 @@
 use bun_lint::linter::GlobalVariable;
 use bun_lint::prelude::*;
 use bun_lint::source::ByName;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ast_utils::is_import_attribute_key;
 use bun_lint::utils::{estree_span, estree_type_name, is_assignment_target, is_chain_root};
 use rustc_hash::FxHashSet;
@@ -33,6 +34,8 @@ pub struct State<'a> {
     reported: FxHashSet<Span>,
     /// `File::unresolved_references`, once a name in a type may be one of them.
     unresolved: Option<Vec<Reference<'a>>>,
+    /// What is in an object pattern.
+    object_patterns: AncestorMemo<'a, ()>,
 }
 
 /// ESTree's `key.name`: the name of a key that is an `Identifier`, in brackets or not.
@@ -44,29 +47,14 @@ fn key_identifier(key: Key<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// Whether `e` is the operand of a `typeof` type, or a part of it. ESLint has a `TSTypeQuery` or a
-/// `TSQualifiedName` around it, not a `MemberExpression`.
-// TODO(api): replace by utils::ast_utils::is_member_expression, once it leaves out JSX and types
-fn is_in_type_query(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == at) => {
-                at = parent;
-            }
-            Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return false,
-        }
-    }
-}
-
 /// ESLint's `isInsideObjectPattern`.
-fn is_inside_object_pattern(node: Node<'_>) -> bool {
-    node.ancestors().any(|it| match it {
+fn is_inside_object_pattern<'a>(node: Node<'a>, state: &mut State<'a>) -> bool {
+    let is_object_pattern = |it: Node<'a>| match it {
         Node::Pat(pat) => pat.tag() == PatTag::Object,
         Node::Expr(e) => e.tag() == ExprTag::Object && is_assignment_target(e),
         _ => false,
-    })
+    };
+    state.object_patterns.find(node, |_, it| is_object_pattern(it).then_some(())).is_some()
 }
 
 /// Whether `member`, an `a.b` or an `a[b]`, is a side of an assignment expression that assigns to a
@@ -182,14 +170,14 @@ impl IdMatch {
     }
 
     /// Whether the `left` of an `AssignmentPattern` is checked.
-    fn checks_target_with_default(&self, target: Node<'_>) -> bool {
+    fn checks_target_with_default<'a>(&self, target: Node<'a>, state: &mut State<'a>) -> bool {
         self.checks_properties
             && !self.only_declarations
-            && !(self.ignores_destructuring && is_inside_object_pattern(target))
+            && !(self.ignores_destructuring && is_inside_object_pattern(target, state))
     }
 
     /// Whether `e`, named `name`, is checked as the computed key or the value of `prop`.
-    fn checks_in_property<'a>(&self, prop: Prop<'a>, e: Expr<'a>, name: Name<'a>) -> bool {
+    fn checks_in_property<'a>(&self, prop: Prop<'a>, e: Expr<'a>, name: Name<'a>, state: &mut State<'a>) -> bool {
         let (Node::Expr(object), Some(key)) = (prop.parent(), prop.key()) else {
             return !self.only_declarations;
         };
@@ -208,14 +196,14 @@ impl IdMatch {
         prop.kind() != PropKind::Shorthand
             && (self.checks_properties || key.is_computed())
             && !self.only_declarations
-            && !(self.ignores_destructuring && is_inside_object_pattern(e.into()))
+            && !(self.ignores_destructuring && is_inside_object_pattern(e.into(), state))
     }
 
     /// Whether the identifier `e`, named `name`, is checked where it is.
-    fn checks_reference<'a>(&self, e: Expr<'a>, name: Name<'a>) -> bool {
+    fn checks_reference<'a>(&self, e: Expr<'a>, name: Name<'a>, state: &mut State<'a>) -> bool {
         match e.parent() {
             Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { .. } if is_in_type_query(e) => !self.only_declarations,
+                ExprKind::Dot { .. } if e.is_in_type_query() => !self.only_declarations,
                 ExprKind::Dot { .. } => self.checks_properties,
                 ExprKind::Index { obj, .. } => {
                     self.checks_properties
@@ -224,11 +212,11 @@ impl IdMatch {
                 }
                 ExprKind::Call(_) | ExprKind::New(_) => false,
                 ExprKind::Assign { op: None, target, .. } if is_assignment_target(parent) => {
-                    target == e && self.checks_target_with_default(e.into())
+                    target == e && self.checks_target_with_default(e.into(), state)
                 }
                 _ => !self.only_declarations,
             },
-            Node::Prop(prop) => self.checks_in_property(prop, e, name),
+            Node::Prop(prop) => self.checks_in_property(prop, e, name, state),
             // A default value, or a computed key.
             Node::PatProp(prop) => {
                 prop.default().is_none()
@@ -250,7 +238,7 @@ impl IdMatch {
     fn check_reference<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(name) = e.as_ident()
             && self.is_invalid(name, cx)
-            && self.checks_reference(e, name)
+            && self.checks_reference(e, name, &mut cx.state)
             && !e.is_jsx_tag_name()
             && !is_reference_to_global_variable(e)
         {
@@ -275,7 +263,7 @@ impl IdMatch {
         }
         let is_checked = is_private
             || !e.is_jsx_tag_name()
-                && match is_in_type_query(e) {
+                && match e.is_in_type_query() {
                     true => !self.only_declarations,
                     false => {
                         self.checks_properties
@@ -301,7 +289,7 @@ impl IdMatch {
                     || !matches!(declaration.parent(), Node::Stmt(it) if it.tag() == StmtTag::Try)
             }
             Node::Param(param) if param.default().is_some() => {
-                self.checks_target_with_default(pat.into())
+                self.checks_target_with_default(pat.into(), &mut cx.state)
             }
             Node::Param(param) => {
                 !self.only_declarations
@@ -310,11 +298,11 @@ impl IdMatch {
                         && param.func().is_some_and(|it| it.kind() == FnKind::Decl && it.has_body()))
             }
             Node::PatElem(element) if element.default().is_some() => {
-                self.checks_target_with_default(pat.into())
+                self.checks_target_with_default(pat.into(), &mut cx.state)
             }
             Node::PatProp(prop) if prop.is_rest() => !self.only_declarations,
             Node::PatProp(prop) if prop.default().is_some() => {
-                self.checks_target_with_default(pat.into())
+                self.checks_target_with_default(pat.into(), &mut cx.state)
             }
             Node::PatProp(prop) => {
                 !(self.ignores_destructuring && prop.key().and_then(key_identifier) == Some(name))

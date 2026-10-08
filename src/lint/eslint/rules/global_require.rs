@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Require `require()` calls to be placed at top-level module scope.
 pub struct GlobalRequire;
@@ -30,26 +31,28 @@ fn is_shadowed(callee: Expr<'_>) -> bool {
 
 impl Rule for GlobalRequire {
     const META: Meta = Meta::eslint("global-require", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    /// What has an ancestor that is not acceptable.
+    type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
         GlobalRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         if !file.mentions("require") {
-            return;
+            return AncestorMemo::default();
         }
         on.exprs([ExprTag::Call], |_, e, cx| {
             let Some(call) = e.as_call() else {
                 return;
             };
             if call.callee().is_ident("require")
-                && !Node::Expr(e).ancestors().all(is_acceptable_parent)
+                && cx.state.find(Node::Expr(e), |_, it| (!is_acceptable_parent(it)).then_some(())).is_some()
                 && !is_shadowed(call.callee())
             {
                 cx.report(e, UNEXPECTED);
             }
         });
+        AncestorMemo::default()
     }
 }

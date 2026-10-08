@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{ast_utils, text};
 use smallvec::SmallVec;
 
@@ -20,6 +21,8 @@ pub struct TopLevelFunctions<'a> {
     count: usize,
     /// Those with too many statements, and how many.
     exceeding: Vec<(Func<'a>, usize)>,
+    /// What is in a function or a static block.
+    enclosed: AncestorMemo<'a, ()>,
 }
 
 fn may_contain_blocks(statement: &Stmt) -> bool {
@@ -94,8 +97,8 @@ impl MaxStatements {
         if !ast_utils::is_function_with_body(func) {
             return;
         }
-        let is_top_level =
-            self.ignore_top_level_functions && Node::Func(func).enclosing_function().is_none();
+        let is_top_level = self.ignore_top_level_functions
+            && cx.state.enclosed.find(Node::Func(func), |_, it| it.as_func().map(|_| ())).is_none();
         if is_top_level {
             cx.state.count += 1;
         }

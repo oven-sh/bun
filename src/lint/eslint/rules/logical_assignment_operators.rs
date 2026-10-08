@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Require or disallow logical assignment operator shorthand.
 pub struct LogicalAssignmentOperators {
@@ -125,29 +126,25 @@ fn get_existence(expression: Expr<'_>) -> Option<(Expr<'_>, BinOp)> {
     }
 }
 
+/// What is in the body of a `with` statement.
+type WithBlocks<'a> = AncestorMemo<'a, ()>;
+
 /// Whether `e` is in the body of a `with` statement, in code that is not strict.
-fn is_inside_with_block(e: Expr<'_>) -> bool {
-    let mut inner = Node::Expr(e);
-    for ancestor in inner.ancestors() {
-        if let Node::Stmt(statement) = ancestor
-            && let StmtKind::With { body, .. } = statement.kind()
-            && Node::Stmt(body) == inner
-        {
-            return !e.file().scope().is_strict();
-        }
-        inner = ancestor;
-    }
-    false
+fn is_inside_with_block<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bool {
+    let is_body_of_with = |inner: Node<'a>, ancestor: Node<'a>| {
+        matches!(ancestor.as_stmt()?.kind(), StmtKind::With { body, .. } if Node::Stmt(body) == inner).then_some(())
+    };
+    with_blocks.find(Node::Expr(e), is_body_of_with).is_some() && !e.file().scope().is_strict()
 }
 
 /// Whether reading `e` cannot call a getter.
-fn cannot_be_getter(e: Expr<'_>) -> bool {
-    e.tag() == ExprTag::Ident && !is_inside_with_block(e)
+fn cannot_be_getter<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bool {
+    e.tag() == ExprTag::Ident && !is_inside_with_block(e, with_blocks)
 }
 
 /// Whether evaluating `e` reads a single property.
-fn accesses_single_property(e: Expr<'_>) -> bool {
-    if is_inside_with_block(e) {
+fn accesses_single_property<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -> bool {
+    if is_inside_with_block(e, with_blocks) {
         return e.tag() == ExprTag::Ident;
     }
     let is_base = |object: Expr| matches!(object.tag(), ExprTag::Ident | ExprTag::Super | ExprTag::This);
@@ -209,7 +206,7 @@ impl LogicalAssignmentOperators {
             message: UNEXPECTED,
             suggestion: SEPARATE,
             operator: op,
-            should_be_fixed: cannot_be_getter(target),
+            should_be_fixed: cannot_be_getter(target, &mut cx.state),
         };
         Self::report(cx, &descriptor, |fixer| {
             let Some(operator_token) = assignment.operator_span() else {
@@ -262,7 +259,7 @@ impl LogicalAssignmentOperators {
             message: ASSIGNMENT,
             suggestion: USE_LOGICAL_OPERATOR,
             operator: op,
-            should_be_fixed: cannot_be_getter(target),
+            should_be_fixed: cannot_be_getter(target, &mut cx.state),
         };
         Self::report(cx, &descriptor, |fixer| {
             let (Some(assignment_operator), Some(logical_operator)) =
@@ -301,7 +298,7 @@ impl LogicalAssignmentOperators {
             message: LOGICAL,
             suggestion: CONVERT_LOGICAL,
             operator: op,
-            should_be_fixed: cannot_be_getter(left) || accesses_single_property(left),
+            should_be_fixed: cannot_be_getter(left, &mut cx.state) || accesses_single_property(left, &mut cx.state),
         };
         Self::report(cx, &descriptor, |fixer| {
             let Some(operator_token) = right.operator_span() else {
@@ -352,7 +349,8 @@ impl LogicalAssignmentOperators {
             message: IF,
             suggestion: CONVERT_IF,
             operator,
-            should_be_fixed: cannot_be_getter(reference) || (!is_logical_test && accesses_single_property(reference)),
+            should_be_fixed: cannot_be_getter(reference, &mut cx.state)
+                || (!is_logical_test && accesses_single_property(reference, &mut cx.state)),
         };
         Self::report(cx, &descriptor, |fixer| {
             let file = fixer.file();
@@ -388,7 +386,7 @@ impl Rule for LogicalAssignmentOperators {
     const META: Meta = Meta::eslint("logical-assignment-operators", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
-    type State<'a> = ();
+    type State<'a> = WithBlocks<'a>;
 
     fn new(options: &Options) -> Self {
         let is_never = options.str(0) == Some("never");
@@ -398,15 +396,16 @@ impl Rule for LogicalAssignmentOperators {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> WithBlocks<'a> {
         if self.is_never {
             on.exprs([ExprTag::Assign], Self::check_logical_assignment);
-            return;
+            return WithBlocks::default();
         }
         on.exprs([ExprTag::Assign], Self::check_assignment);
         on.exprs([ExprTag::Binary], Self::check_logical);
         if self.check_if {
             on.stmts([StmtTag::If], Self::check_if_statement);
         }
+        WithBlocks::default()
     }
 }

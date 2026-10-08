@@ -61,6 +61,7 @@ pub(crate) enum Kind {
     Css(bun_format::css::Parser),
     Yaml,
     Markdown,
+    Mdx,
     GraphQl,
 }
 
@@ -73,6 +74,7 @@ impl Kind {
             let other = || match parser {
                 b"yaml" => Some(Kind::Yaml),
                 b"markdown" | b"remark" => Some(Kind::Markdown),
+                b"mdx" => Some(Kind::Mdx),
                 b"graphql" => Some(Kind::GraphQl),
                 _ => None,
             };
@@ -87,14 +89,18 @@ impl Kind {
         let css = || bun_format::css::parser_for_path(path).map(Kind::Css);
         let yaml = || bun_format::yaml::is_yaml_path(path).then_some(Kind::Yaml);
         let markdown = || bun_format::markdown::is_markdown_path(path).then_some(Kind::Markdown);
+        let mdx = || bun_format::markdown::is_mdx_path(path).then_some(Kind::Mdx);
         let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
-        json().or_else(css).or_else(yaml).or_else(markdown).or_else(graphql)
+        json().or_else(css).or_else(yaml).or_else(markdown).or_else(mdx).or_else(graphql)
     }
 }
 
 pub(crate) fn language_of(path: &[u8]) -> Language {
-    if Kind::of(path, None).is_some() {
-        return Language::Supported;
+    match Kind::of(path, None) {
+        // Prettier reads MDX 1, and damages what is written today. Only for who asks: `--parser mdx`.
+        Some(Kind::Mdx) => return Language::Other,
+        Some(_) => return Language::Supported,
+        None => {}
     }
     let name = paths::basename(path);
     let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);

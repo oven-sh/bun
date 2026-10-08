@@ -164,7 +164,6 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
     let resolved = Resolved {
         options: options.clone(),
         omits_final_newline: false,
-        tolerates_types_in_javascript: false,
     };
     let names = Session::new();
     let formatted = format(path, code, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false);
@@ -215,6 +214,10 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
             let done = bun_format::markdown::format(text, options, &mut scratch.markdown, &mut out);
             return finish(done, out, "Markdown");
         }
+        Some(Kind::Mdx) => {
+            let done = bun_format::markdown::format_mdx(text, options, &mut scratch.markdown, &mut out);
+            return finish(done, out, "MDX");
+        }
         Some(Kind::GraphQl) => {
             let done = bun_format::graphql::format(text, options, &mut scratch.graphql, &mut out);
             return finish(done, out, "GraphQL");
@@ -251,17 +254,13 @@ fn print<'a>(
     let options = &how.resolved.options;
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
     let takes_types = matches!(options.parser.as_deref(), Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts"));
-    let types = match takes_types || how.resolved.tolerates_types_in_javascript {
+    let types = match takes_types {
         true => TypesInJavaScript::Tolerated,
         false => TypesInJavaScript::Refused,
     };
-    if bun_lint::linter::refused_by_prettier_with(file, types) {
-        // What typescript-estree refuses while it converts the tree has words of its own.
-        let Some(error) = bun_lint::linter::parse_error(file).filter(|_| file.language().parser == Parser::TypeScript) else {
-            return Err(Failure::Syntax(syntax_error(file, first_error)));
-        };
-        let message = error.message.strip_prefix(b"Parsing error: ").unwrap_or(&error.message);
-        return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(message), error.line, error.column).into_bytes()));
+    if let Some(why) = bun_lint::linter::refusal_of_prettier(file, types) {
+        let at = file.position(why.at);
+        return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(&why.message), at.line, at.column + 1).into_bytes()));
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _, _| then(file));
@@ -309,8 +308,6 @@ pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Re
             ..options.clone()
         },
         omits_final_newline: false,
-        // Many of Prettier's tests are for its other parsers.
-        tolerates_types_in_javascript: true,
     };
     let names = Session::new();
     format(path, text, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false).map_err(|failure| matches!(failure, Failure::Syntax(_)))

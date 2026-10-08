@@ -17,7 +17,7 @@ use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
-use bun_lint::language::{LanguageOptions, Parser, SourceType};
+use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
@@ -77,7 +77,7 @@ struct How<'h> {
 
 impl How<'_> {
     /// What the file is parsed as.
-    fn language_and_dialect(&self) -> (LanguageOptions, Dialect) {
+    fn language_and_dialect(&self) -> (LanguageOptions, Dialect, ParseOptions) {
         let path = self.path;
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
@@ -102,7 +102,8 @@ impl How<'_> {
             true => Dialect::flow_parser(self.is_script),
             false => Dialect::babel(self.is_script),
         };
-        (language, dialect)
+        let options = language.parse_options(path);
+        (language, dialect, options)
     }
 }
 
@@ -112,13 +113,11 @@ fn with_tree<'h, R>(
     text: &[u8],
     then: impl FnOnce(Summary<'_, 'h>, &dyn Intern, &LanguageOptions) -> R,
 ) -> R {
-    let (language, dialect) = how.language_and_dialect();
-    let (path, session) = (how.path, how.memory);
-    let options = language.parse_options(path);
+    let (language, dialect, options) = how.language_and_dialect();
     bun_js_parser::sema::with_summary_in_place(
         dialect,
-        (session.arena(), session),
-        path,
+        (how.memory.arena(), how.memory),
+        how.path,
         options.script_kind,
         text,
         how.atoms.of_this_thread(),
@@ -502,13 +501,26 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
     })
 }
 
+/// Why `bun format` leaves a file as it is.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// It has a syntax error or is nested too deeply.
+    Syntax,
+    /// A bug in the formatter, which it has noticed itself.
+    Bug(&'static str),
+    /// What Prettier prints does not say what the file says.
+    Loss(&'static str),
+}
+
 /// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
-/// the cursor ends up. For the tests of the formatter. `Err(true)`: a syntax error.
+/// the cursor ends up. `verifies`: with the checks that `bun format` makes on what it has printed.
+/// For the tests of the formatter, and the fuzzers in test/cli/format/oracle/fuzz/coverage.
 pub fn format_for_tests(
     path: &[u8],
     text: &[u8],
     options: &FormatOptions,
-) -> Result<(Vec<u8>, Option<u32>), bool> {
+    verifies: bool,
+) -> Result<(Vec<u8>, Option<u32>), Refusal> {
     let resolved = Resolved {
         options: FormatOptions {
             format_javascript: Some(format_javascript),
@@ -524,9 +536,13 @@ pub fn format_for_tests(
         &resolved,
         (&Interner::new_in(&names), &names),
         &mut Scratches::default(),
-        false,
+        verifies,
     )
-    .map_err(|failure| matches!(failure, Failure::Syntax(_)))
+    .map_err(|failure| match failure {
+        Failure::Syntax(_) => Refusal::Syntax,
+        Failure::Bug(what) => Refusal::Bug(what),
+        Failure::Loss(what) => Refusal::Loss(what),
+    })
 }
 
 /// What has become of a file.

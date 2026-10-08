@@ -34,10 +34,12 @@ impl FormatCommand {
                 &rest,
                 run,
                 &|path, text, options| {
-                    bun_lint_driver::fmt::format_for_tests(path, text, options).map_err(
-                        |is_syntax_error| match is_syntax_error {
-                            true => bun_format_conformance::Failure::SyntaxError,
-                            false => bun_format_conformance::Failure::Other,
+                    bun_lint_driver::fmt::format_for_tests(path, text, options, false).map_err(
+                        |refusal| match refusal {
+                            bun_lint_driver::fmt::Refusal::Syntax => {
+                                bun_format_conformance::Failure::SyntaxError
+                            }
+                            _ => bun_format_conformance::Failure::Other,
                         },
                     )
                 },

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ast_utils;
 
 /// Require or disallow strict mode directives.
@@ -7,7 +8,7 @@ pub struct Strict {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Mode {
+enum Mode {
     Never,
     Global,
     Function,
@@ -101,23 +102,35 @@ struct Surroundings {
     is_in_strict_function: bool,
 }
 
+/// By a node: the innermost function with a body, or class whose body it is in, around it.
+type Containers<'a> = AncestorMemo<'a, Node<'a>>;
+
 impl Surroundings {
-    fn of(func: Func<'_>) -> Surroundings {
+    fn of<'a>(func: Func<'a>, containers: &mut Containers<'a>) -> Surroundings {
         let mut around = Surroundings::default();
         let mut inner = Node::Func(func);
-        for ancestor in inner.ancestors() {
-            match ancestor {
-                Node::Func(outer) if ast_utils::is_function_with_body(outer) => {
+        while let Some(container) = containers.find(inner, |child, ancestor| match ancestor {
+            Node::Func(outer) => ast_utils::is_function_with_body(outer).then_some(ancestor),
+            Node::Class(_) => matches!(child, Node::Member(_)).then_some(ancestor),
+            _ => None,
+        }) {
+            match container {
+                Node::Func(outer) => {
                     around.is_in_function = true;
                     around.is_in_strict_function |= has_use_strict_directive(outer);
                 }
-                Node::Class(_) if matches!(inner, Node::Member(_)) => around.is_in_class = true,
-                _ => {}
+                _ => around.is_in_class = true,
             }
-            inner = ancestor;
+            inner = container;
         }
         around
     }
+}
+
+pub struct State<'a> {
+    /// The mode in this file. Never `Safe`.
+    mode: Mode,
+    containers: Containers<'a>,
 }
 
 fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Message, fix: bool) {
@@ -129,7 +142,7 @@ fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Messa
 
 impl Strict {
     fn check_program<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mode = cx.state;
+        let mode = cx.state.mode;
         let body = cx.file().body();
         let mut directives = get_use_strict_directives(Some(body));
         if mode != Mode::Global {
@@ -145,7 +158,7 @@ impl Strict {
         if !ast_utils::is_function_with_body(func) {
             return;
         }
-        let mode = cx.state;
+        let mode = cx.state.mode;
         let mut directives = get_use_strict_directives(func.body_statements());
         let Some(first) = directives.next() else {
             if mode == Mode::Function {
@@ -160,7 +173,7 @@ impl Strict {
             directives.for_each(|it| report_directive(cx, it, mode.message(), mode.should_fix()));
             return;
         } else {
-            let around = Surroundings::of(func);
+            let around = Surroundings::of(func, &mut cx.state.containers);
             if around.is_in_strict_function {
                 report_directive(cx, first, UNNECESSARY, true);
             } else if around.is_in_class {
@@ -171,12 +184,12 @@ impl Strict {
     }
 
     /// In the mode `Function`.
-    fn check_function_without_directive<'a>(func: Func<'a>, cx: &Cx<'a, Self>) {
+    fn check_function_without_directive<'a>(func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // A static block is in a class.
         if func.enclosing().is_some_and(Func::has_body) {
             return;
         }
-        let around = Surroundings::of(func);
+        let around = Surroundings::of(func, &mut cx.state.containers);
         if around.is_in_function || around.is_in_class {
             return;
         }
@@ -191,8 +204,7 @@ impl Strict {
 
 impl Rule for Strict {
     const META: Meta = Meta::eslint("strict", Kind::Suggestion).fixable(Fixable::Code);
-    /// The mode in this file. Never `Safe`.
-    type State<'a> = Mode;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         Strict {
@@ -205,11 +217,11 @@ impl Rule for Strict {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Mode {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         on.funcs(Self::check_function);
         on.finish(Self::check_program);
         let language = file.language();
-        match self.mode {
+        let mode = match self.mode {
             _ if is_module(file) => Mode::Module,
             _ if language.implied_strict => Mode::Implied,
             Mode::Safe if language.global_return || language.source_type == SourceType::CommonJs => {
@@ -217,6 +229,10 @@ impl Rule for Strict {
             }
             Mode::Safe => Mode::Function,
             mode => mode,
+        };
+        State {
+            mode,
+            containers: Containers::default(),
         }
     }
 }

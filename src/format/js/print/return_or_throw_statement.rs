@@ -1,5 +1,4 @@
 use super::semicolon::OptionalSemicolon;
-use crate::js::format::{ExprOptions, write_expression, write_trailing_comments_of};
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -21,9 +20,9 @@ fn write_return_or_throw<'a>(keyword: &'static str, argument: Option<Expr<'a>>, 
     write!(f, OptionalSemicolon);
 }
 
-/// What has to start on the line of the keyword before it: the argument of `return`, `throw` or
-/// `yield`. If it breaks, or starts with a comment, it is written in parentheses.
-pub(crate) struct FormatAdjacentArgument<'a>(pub(crate) Expr<'a>);
+/// What has to start on the line of the keyword before it: the argument of `return` or `throw`.
+/// If it breaks, or starts with a comment, it is written in parentheses.
+struct FormatAdjacentArgument<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
@@ -38,20 +37,7 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
         let is_jsx = matches!(argument.kind(), ExprKind::Jsx(_));
 
         if !is_jsx && !f.is_quiet() && has_argument_leading_comments(argument, f) {
-            let is_in_yield = matches!(argument.ast_parent(), AstNodes::YieldExpression(_));
-            let inner = format_with(|f| match argument.kind() {
-                _ if is_sequence && is_in_yield => {
-                    write!(f, [format_leading_comments(argument.span()), "(", argument, ")"]);
-                }
-                // Prettier's `willReturnOrThrowStatementBreak`: these parentheses are enough.
-                ExprKind::Assign { .. } if !is_in_yield => {
-                    write!(f, format_leading_comments(argument.span()));
-                    write_expression(argument, ExprOptions::None, f);
-                    write_trailing_comments_of(argument.as_ast_nodes(), f);
-                }
-                _ => write!(f, argument),
-            });
-            write!(f, ["(", block_indent(&inner), ")"]);
+            write!(f, ["(", block_indent(&argument), ")"]);
         } else if matches!(argument.kind(), ExprKind::Binary { .. }) && !is_sequence {
             write!(
                 f,
@@ -63,21 +49,6 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                 write!(f, format_leading_comments(span));
             }
             write!(f, group(&format_args!("(", soft_block_indent(&argument), ")")));
-        } else if !f.is_quiet()
-            && matches!(argument.kind(), ExprKind::Assign { .. })
-            && matches!(argument.ast_parent(), AstNodes::ReturnStatement(_))
-        {
-            // Prettier's `handleParenthesizedExpressionTrailingComment`:
-            // `return (a = b /* comment */);`
-            let comments = f.comments().comments_in_range(argument.span().end, argument.outer_span().end);
-            let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
-            if count == 0 {
-                return write!(f, argument);
-            }
-            write!(f, [format_leading_comments(argument.span()), "("]);
-            write_expression(argument, ExprOptions::None, f);
-            write!(f, [FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()), ")"]);
-            write_trailing_comments_of(argument.as_ast_nodes(), f);
         } else {
             write!(f, argument);
         }
@@ -95,7 +66,6 @@ fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> b
         .and_then(|index| comments.unprinted_comments().get(index))
         .map(|comment| comment.span.end);
     let is_before_type_cast = |comment: &Comment| type_cast_comment_end.is_none_or(|end| comment.span.start < end);
-    let is_in_yield = matches!(argument.ast_parent(), AstNodes::YieldExpression(_));
 
     for left_side in ExpressionLeftSide::from(argument).iter() {
         let leading_comments = comments.comments_before(left_side.span().start);
@@ -104,7 +74,7 @@ fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> b
         }) {
             return true;
         }
-        if is_in_yield || left_side.is_assignment_target {
+        if left_side.is_assignment_target {
             continue;
         }
         if let ExprKind::Dot { obj, name, .. } = left_side.expr.kind()

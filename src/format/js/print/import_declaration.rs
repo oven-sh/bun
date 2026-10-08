@@ -40,10 +40,19 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a
     }
     if let Some(with_clause) = statement.import_attributes() {
         let span = with_clause.keyword_span().to(with_clause.braces_span());
-        // The comments before the `{` trail the source, unless they start their line.
+        // Of the comments before the first attribute that do not start their line, those before
+        // the `{` and those that end their line trail the source.
         if !f.is_quiet() {
-            let comments = f.comments().comments_before(with_clause.braces_span().start);
-            let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
+            let braces_start = with_clause.braces_span().start;
+            let end = with_clause.entries().first().map_or(braces_start, |first| first.span().start);
+            let comments = f.comments().comments_before(end);
+            let count = comments
+                .iter()
+                .take_while(|comment| !comment.preceded_by_newline())
+                .enumerate()
+                .filter(|(_, comment)| comment.span.end <= braces_start || comment.followed_by_newline())
+                .last()
+                .map_or(0, |(index, _)| index + 1);
             write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
         }
         if f.comments().has_comment_before(span.start) {
@@ -72,7 +81,9 @@ pub(crate) fn write_import_declaration<'a>(statement: Stmt<'a>, import: Import<'
 fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut Formatter<'a>) {
     let node = AstNodes::ImportDeclaration(statement);
     let named = import.named();
-    let has_braces = import.has_named_imports();
+    // `import a, {} from "a"` is `import a from "a"`.
+    let has_braces = import.has_named_imports()
+        && !(named.is_empty() && (import.default().is_some() || import.namespace().is_some()));
 
     if let Some(default) = import.default() {
         write!(f, identifier(default, node));
@@ -92,45 +103,47 @@ fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut 
     let should_insert_space_around_brackets = f.options().bracket_spacing.value();
     let is_only_specifier = named.len() == 1 && import.default().is_none() && import.namespace().is_none();
 
-    if named.is_empty() {
-        write!(f, "{}");
-    } else if is_only_specifier && !only_specifier_has_comments(statement, named.first().map(|it| it.span()), f) {
-        write!(
+    match named.first() {
+        None => write!(f, "{}"),
+        Some(only) if is_only_specifier && !only_specifier_has_comments(statement, only.span(), f) => write!(
             f,
             [
                 "{",
                 maybe_space(should_insert_space_around_brackets),
-                named.first(),
+                only,
                 maybe_space(should_insert_space_around_brackets),
                 "}",
             ]
-        );
-    } else {
-        write!(f, ["{", FormatSpecifiers(statement, named), "}"]);
+        ),
+        Some(_) => write!(f, ["{", FormatSpecifiers(statement, named), "}"]),
     }
 }
 
-/// Whether a comment belongs to the only specifier of the import or export `statement`.
-pub(crate) fn only_specifier_has_comments<'a>(statement: Stmt<'a>, specifier: Option<Span>, f: &Formatter<'a>) -> bool {
+/// Whether a comment belongs to `specifier`, the only one of the import or export `statement`. One
+/// inside of it does if it starts or ends its line, otherwise it belongs to a name.
+pub(crate) fn only_specifier_has_comments<'a>(statement: Stmt<'a>, specifier: Span, f: &Formatter<'a>) -> bool {
     !f.is_quiet()
-        && (!f.comments().comments_before_character(statement.span().start, b'}').is_empty()
-            || specifier.is_some_and(|span| !comments_before_from(span.end, statement, f).is_empty()))
+        && (f.comments().comments_before_character(statement.span().start, b'}').iter().any(|comment| {
+            !specifier.contains(comment.span) || comment.preceded_by_newline() || comment.followed_by_newline()
+        }) || !comments_before_from(specifier.end, statement, f).is_empty())
 }
 
-/// `{ a } /* comment */ from "a"`: the comments that are not printed yet between `position`, where
-/// the last specifier of `statement` ends, and `from`. They trail the specifier, up to one that
-/// starts its line.
+/// `{ a } /* comment */ from "a"`: of the comments that are not printed yet between `position`,
+/// where the last specifier of `statement` ends, and the source, those that trail the specifier:
+/// the ones that end their line, and the ones before the `from` that do not start their line.
 fn comments_before_from<'a>(mut position: u32, statement: Stmt<'a>, f: &Formatter<'a>) -> &'a [Comment] {
     let Some(source) = statement.module_specifier_span() else {
         return &[];
     };
     let comments = f.comments().comments_in_range(position, source.start);
+    let mut is_before_from = true;
     let count = comments
         .iter()
         .take_while(|comment| {
             let gap = f.source_text().slice_range(position, comment.span.start);
             position = comment.span.end;
-            !comment.preceded_by_newline() && !bun_core::strings::contains(gap, b"from")
+            is_before_from &= !bun_core::strings::contains(gap, b"from");
+            comment.followed_by_newline() || (is_before_from && !comment.preceded_by_newline())
         })
         .count();
     comments.get(..count).unwrap_or_default()
@@ -187,11 +200,26 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
     }
 }
 
+/// Prettier's `handleModuleSpecifiersComments`: a comment in the specifier at this span that starts
+/// or ends its line goes before the specifier.
+pub(crate) struct FormatCommentsInSpecifier(pub(crate) Span);
+
+impl<'a> Format<'a> for FormatCommentsInSpecifier {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.is_quiet() {
+            return;
+        }
+        let comments = f.comments().comments_before(self.0.end);
+        let count = comments.iter().rposition(|it| it.preceded_by_newline() || it.followed_by_newline());
+        let comments = comments.get(..count.map_or(0, |last| last + 1)).unwrap_or_default();
+        write!(f, FormatLeadingComments::Comments(comments));
+    }
+}
+
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_import_specifier<'a>(specifier: ImportSpec<'a>, f: &mut Formatter<'a>) {
     let node = AstNodes::ImportSpecifier(specifier);
-    let comments = f.comments().line_comments_before(specifier.local().span().end);
-    write!(f, [FormatLeadingComments::Comments(comments), specifier.is_type_only().then_some("type ")]);
+    write!(f, [FormatCommentsInSpecifier(specifier.span()), specifier.is_type_only().then_some("type ")]);
     let local = identifier(specifier.local(), node);
     match specifier.is_renamed() {
         true => write!(f, [module_export_name(specifier.imported(), node), space(), "as", space(), local]),

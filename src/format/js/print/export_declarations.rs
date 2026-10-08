@@ -1,6 +1,6 @@
 use super::decorators::FormatDecorators;
 use super::import_declaration::{
-    FormatSpecifiers, format_import_and_export_source_with_clause, module_export_name,
+    FormatCommentsInSpecifier, FormatSpecifiers, format_import_and_export_source_with_clause, module_export_name,
     only_specifier_has_comments,
 };
 use super::semicolon::OptionalSemicolon;
@@ -79,7 +79,6 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
 
 /// `export { a, b as c }`, `export { a } from "a"`
 pub(crate) fn write_export_named_declaration<'a>(statement: Stmt<'a>, export: Export<'a>, f: &mut Formatter<'a>) {
-    let node = AstNodes::ExportNamedDeclaration(statement);
     let span = statement.span();
     let specifiers = export.items();
     let export_kind = export.is_type_only().then_some("type ");
@@ -88,7 +87,7 @@ pub(crate) fn write_export_named_declaration<'a>(statement: Stmt<'a>, export: Ex
     write!(f, ["export", space()]);
 
     let needs_space = f.options().bracket_spacing.value();
-    if specifiers.is_empty() {
+    let Some(first) = specifiers.first() else {
         // The comments in an export of nothing go after the keyword.
         if !export.has_from() && !f.is_quiet() {
             let comments = f.comments().comments_before_character(span.start, b'}');
@@ -106,27 +105,31 @@ pub(crate) fn write_export_named_declaration<'a>(statement: Stmt<'a>, export: Ex
                 );
             }
         }
-        write!(f, [export_kind, "{"]);
-    } else if specifiers.len() == 1 && !only_specifier_has_comments(statement, specifiers.first().map(|it| it.span()), f) {
-        write!(f, [export_kind, "{", maybe_space(needs_space), specifiers.first(), maybe_space(needs_space)]);
+        write!(f, [export_kind, "{}"]);
+        return write_export_source(statement, export, f);
+    };
+    if specifiers.len() == 1 && !only_specifier_has_comments(statement, first.span(), f) {
+        write!(f, [export_kind, "{", maybe_space(needs_space), first, maybe_space(needs_space), "}"]);
     } else {
-        write!(f, [export_kind, "{", FormatSpecifiers(statement, specifiers)]);
+        write!(f, [export_kind, "{", FormatSpecifiers(statement, specifiers), "}"]);
     }
-    write!(f, "}");
+    write_export_source(statement, export, f);
+}
 
+/// What is after the `}` of `export {}`.
+fn write_export_source<'a>(statement: Stmt<'a>, export: Export<'a>, f: &mut Formatter<'a>) {
     if export.has_from() {
         write!(f, [space(), "from", space()]);
         format_import_and_export_source_with_clause(statement, f);
     }
     write!(f, OptionalSemicolon);
-    write_trailing_comments_of(node, f);
+    write_trailing_comments_of(AstNodes::ExportNamedDeclaration(statement), f);
 }
 
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_export_specifier<'a>(specifier: ExportSpec<'a>, f: &mut Formatter<'a>) {
     let node = AstNodes::ExportSpecifier(specifier);
-    let comments = f.comments().line_comments_before(specifier.exported().span().end);
-    write!(f, [FormatLeadingComments::Comments(comments), specifier.is_type_only().then_some("type ")]);
+    write!(f, [FormatCommentsInSpecifier(specifier.span()), specifier.is_type_only().then_some("type ")]);
     let exported = module_export_name(specifier.exported(), node);
     match specifier.is_renamed() {
         true => write!(f, [module_export_name(specifier.local(), node), space(), "as", space(), exported]),

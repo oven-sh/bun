@@ -6,7 +6,8 @@
 //! `{ "id": .., "facts": ["name|type|start|end|value", ..] }`, or `{ "id": .., "error": true }` if
 //! the code does not parse. `bun-lint utils-core adjacent <pairs.jsonl>` answers
 //! `can_tokens_be_adjacent` for `[left, right]` pairs, `bun-lint utils-core text <pairs.jsonl>` prints
-//! what `utils::text` makes of them.
+//! what `utils::text` makes of them, `bun-lint utils-core types-at <cases.jsonl>` the
+//! `estree_type_at` of every offset, as runs.
 
 use bstr::BStr;
 use bun_lint::ast::{Expr, ExprKind, File, Node, Stmt, StmtKind};
@@ -414,6 +415,31 @@ pub(crate) fn run(args: &[String]) {
                 let pair = json.as_array().unwrap_or_default();
                 let text = |i: usize| pair.get(i).and_then(Json::as_str).unwrap_or_default();
                 println!("{}", ast_utils::can_tokens_be_adjacent(text(0), text(1)));
+            }
+            "types-at" => {
+                let case = Object::of(Some(&json));
+                let code = case.get("code").and_then(Json::as_str).unwrap_or_default();
+                let path = case.str("filename").unwrap_or("file.js");
+                let id = case.number("id").unwrap_or(-1.0);
+                crate::with_file(path, code, &LanguageOptions::default(), |file| {
+                    if file.has_parse_errors() || !code.is_ascii() {
+                        println!("{{\"id\":{id},\"error\":true}}");
+                        return;
+                    }
+                    let mut runs = String::new();
+                    let mut previous = ("", 0);
+                    for offset in 0..code.len() as u32 {
+                        let name = utils::estree_type_at(file, offset);
+                        if name != previous.0 {
+                            if previous.1 > 0 {
+                                _ = write!(runs, "{} {},", previous.0, previous.1);
+                            }
+                            previous = (name, 0);
+                        }
+                        previous.1 += 1;
+                    }
+                    println!("{{\"id\":{id},\"runs\":\"{runs}{} {}\"}}", previous.0, previous.1);
+                });
             }
             "text" => {
                 let pair = json.as_array().unwrap_or_default();

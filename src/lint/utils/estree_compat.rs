@@ -13,14 +13,13 @@
 //! | any pattern, in a declaration or in an assignment | [`Target`] |
 //! | `TSTypeAnnotation.range` | [`type_annotation_span`] |
 //! | `sourceCode.getNodeByRangeIndex(i)` | [`get_node_by_range_index`] |
-//! | `sourceCode.getNodeByRangeIndex(i).type` | [`estree_types_at`] |
+//! | `sourceCode.getNodeByRangeIndex(i).type` | [`estree_type_at`](super::estree_type_at) |
 //! | `CatchClause.range` | [`catch_clause_span`] |
 
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name, Node,
     Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
 };
-use crate::estree::{NodeType, Sink};
 use crate::span::{Span, Spanned};
 use smallvec::SmallVec;
 
@@ -796,42 +795,6 @@ pub fn estree_ancestors(node: Node<'_>) -> impl Iterator<Item = Node<'_>> {
         _ => Some(estree_parent(at)),
     })
     .skip(1)
-}
-
-/// ESLint's `sourceCode.getNodeByRangeIndex(offset).type` for each of `offsets`, which are sorted,
-/// exactly as ESTree has it: also `BlockStatement` for the body of a function, `ClassBody`,
-/// `JSXEmptyExpression`, `TSTypeAnnotation` and the other types that are no nodes here.
-///
-/// It converts the whole file to ESTree, so it is for when there is something to report.
-pub fn estree_types_at<'a>(file: &'a File<'a>, offsets: &[u32]) -> Vec<Option<NodeType>> {
-    struct TypesAt<'o> {
-        offsets: &'o [u32],
-        types: Vec<Option<NodeType>>,
-    }
-    impl Sink for TypesAt<'_> {
-        fn start_node(&mut self, node_type: NodeType, span: Span) {
-            let first = self.offsets.partition_point(|&it| it < span.start);
-            let count = self.offsets[first..].partition_point(|&it| it < span.end);
-            // A node comes after those around it.
-            self.types[first..first + count].fill(Some(node_type));
-        }
-        fn end_node(&mut self) {}
-        fn start_object(&mut self) {}
-        fn end_object(&mut self) {}
-        fn start_list(&mut self) {}
-        fn end_list(&mut self) {}
-        fn field(&mut self, _: &'static str) {}
-        fn null(&mut self) {}
-        fn boolean(&mut self, _: bool) {}
-        fn number(&mut self, _: f64) {}
-        fn string(&mut self, _: &[u8]) {}
-    }
-    let mut sink = TypesAt {
-        offsets,
-        types: vec![None; offsets.len()],
-    };
-    crate::estree::convert(file, &mut sink);
-    sink.types
 }
 
 /// ESLint's `sourceCode.getNodeByRangeIndex`: the innermost node whose span contains `offset`.

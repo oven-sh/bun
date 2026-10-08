@@ -20,7 +20,7 @@
 //! | `../shared/naming`, `../shared/directives` | [`naming`], [`directives`] | `normalize_package_name`, `get_shorthand_name`, `get_namespace_from_term`, `directivesPattern`: `match_directives_pattern(text)` |
 //! | `require("natural-compare")`, `esutils.keyword.isIdentifierES5/ES6`, `require("escape-string-regexp")` | [`text`] | `text::natural_compare(a, b)`, `text::is_identifier_es6(name)`, `text::escape_string_regexp(s)` |
 //! | `require("ignore")` | [`ignore`] | `Ignore::new(&patterns, ignores_case, IgnoreVersion::V5).ignores(path)` |
-//! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::sequence_expressions(e)`, `utils::Target` |
+//! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
@@ -82,6 +82,7 @@ pub mod char_source;
 pub mod directives;
 pub mod eslint_utils;
 pub mod estree_compat;
+mod estree_type_at;
 pub mod fix_tracker;
 pub mod ignore;
 pub mod keywords;
@@ -94,9 +95,10 @@ pub mod ts_utils;
 pub mod unicode;
 
 pub use array::array_sort_by;
+pub use estree_type_at::estree_type_at;
 pub use estree_compat::{
     Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
-    estree_parent, estree_span, estree_type_name, estree_types_at, get_node_by_range_index, is_assignment_target,
+    estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,
     is_chain_root, is_expression_statement, is_for_init, is_in_optional_chain, is_in_type_query, is_sequence_root, last_sequence_expression, normalize,
     sequence_expressions, sequence_root, type_annotation_span,
 };

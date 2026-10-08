@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
+use bun_lint::selector::Selector;
 use smallvec::SmallVec;
 
 /// Enforce consistent indentation.
@@ -24,8 +25,7 @@ pub struct Indent {
     import_declaration: Offset,
     flat_ternary_expressions: bool,
     offset_ternary_expressions: bool,
-    // TODO(api): bun_lint::selector. Until then only the names of node types match.
-    ignored_nodes: Vec<Box<str>>,
+    ignored_nodes: Vec<Selector>,
     ignore_comments: bool,
 }
 
@@ -64,13 +64,10 @@ struct FunctionOffsets {
 }
 
 impl Indent {
-    #[inline]
-    fn ignores(&self, node_type: &str) -> bool {
-        !self.ignored_nodes.is_empty() && self.ignored_nodes.iter().any(|it| &**it == node_type)
-    }
-
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mut offsets = Offsets::new(self, cx.file());
+        let mut matched = std::mem::take(&mut cx.state);
+        matched.sort_unstable();
+        let mut offsets = Offsets::new(self, cx.file(), matched);
         offsets.compute();
         offsets.report(cx);
     }
@@ -78,7 +75,8 @@ impl Indent {
 
 impl Rule for Indent {
     const META: Meta = Meta::eslint("indent", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
-    type State<'a> = ();
+    /// The nodes that `ignoredNodes` selects: where each starts and ends, and its type.
+    type State<'a> = Vec<(u32, u32, &'static str)>;
 
     fn new(options: &Options) -> Self {
         let is_tab = options.str(0) == Some("tab");
@@ -114,13 +112,33 @@ impl Rule for Indent {
             import_declaration: Offset::of(object.get("ImportDeclaration")),
             flat_ternary_expressions: object.bool_or("flatTernaryExpressions", false),
             offset_ternary_expressions: object.bool_or("offsetTernaryExpressions", false),
-            ignored_nodes: object.strings("ignoredNodes").into_iter().map(Box::from).collect(),
+            ignored_nodes: (object.strings("ignoredNodes").into_iter())
+                .filter_map(|it| Selector::parse(it.as_bytes()).ok())
+                .collect(),
             ignore_comments: object.bool_or("ignoreComments", false),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn validate(options: &Options) -> Result<(), Vec<u8>> {
+        for selector in options.object(1).strings("ignoredNodes") {
+            Selector::parse(selector.as_bytes()).map_err(|error| error.message().to_vec())?;
+        }
+        Ok(())
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+        let selected = self.ignored_nodes.iter().fold(NodeTags::EMPTY, |tags, it| tags | it.listens_to());
+        if selected != NodeTags::EMPTY {
+            on.nodes(selected, |rule, node, cx| {
+                for selector in &rule.ignored_nodes {
+                    selector.for_each_match(node, |it| {
+                        cx.state.push((it.span().start, it.span().end, it.type_name()));
+                    });
+                }
+            });
+        }
         on.finish(Self::check);
+        Vec::new()
     }
 }
 
@@ -243,6 +261,8 @@ struct Offsets<'a, 'r> {
     /// ESLint's `_desiredIndentCache`.
     desired: Vec<Indentation>,
     stack: Vec<Step<'a>>,
+    /// What `ignoredNodes` selects, sorted.
+    matched: Vec<(u32, u32, &'static str)>,
     /// ESLint's `ignoredNodes`.
     ignored: Vec<Span>,
     /// The walk only looks for the nodes that are ignored, which have to be known before any
@@ -339,7 +359,7 @@ fn is_outer_iife(callee: Expr) -> bool {
 // ───────────────────────────── tokens ─────────────────────────────
 
 impl<'a, 'r> Offsets<'a, 'r> {
-    fn new(rule: &'r Indent, file: &'a File<'a>) -> Self {
+    fn new(rule: &'r Indent, file: &'a File<'a>, matched: Vec<(u32, u32, &'static str)>) -> Self {
         let line_count = file.line_count();
         let start_of_line = |line: u32| match line <= line_count {
             true => file.line_span(line).start,
@@ -402,6 +422,7 @@ impl<'a, 'r> Offsets<'a, 'r> {
             locked: Vec::new(),
             desired: vec![Indentation::UNKNOWN; count],
             stack: Vec::new(),
+            matched,
             ignored: Vec::new(),
             is_collecting: false,
             has_collected: false,
@@ -800,6 +821,12 @@ impl<'a> Offsets<'a, '_> {
         }
     }
 
+    /// Whether `ignoredNodes` selects the node.
+    #[inline]
+    fn ignores(&self, node_type: &'static str, node: Span) -> bool {
+        !self.matched.is_empty() && self.matched.binary_search(&(node.start, node.end, node_type)).is_ok()
+    }
+
     /// ESLint's `addToIgnoredNodes`.
     fn add_to_ignored_nodes(&mut self, node: Span) {
         self.ignored.push(node);
@@ -951,7 +978,7 @@ impl<'a> Offsets<'a, '_> {
     /// Called with each node of a type that ESLint's rule knows, before its children. Returns
     /// whether the listener for its type is to run.
     fn enter(&mut self, node_type: &'static str, node: Span) -> bool {
-        let is_ignored = self.rule.ignores(node_type);
+        let is_ignored = self.ignores(node_type, node);
         if self.is_collecting {
             if is_ignored {
                 self.add_to_ignored_nodes(node);
@@ -1074,12 +1101,12 @@ impl<'a> Offsets<'a, '_> {
                 self.enter(node_type, node);
             }
             Step::EnterUnknown(node_type, node) => {
-                if self.rule.ignores(node_type) {
+                if self.ignores(node_type, node) {
                     self.add_to_ignored_nodes(node);
                 }
             }
             Step::ExitUnknown(node_type, node) => {
-                if !self.rule.ignores(node_type) {
+                if !self.ignores(node_type, node) {
                     self.add_to_ignored_nodes(node);
                 }
             }

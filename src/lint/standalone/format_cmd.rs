@@ -302,15 +302,7 @@ fn format_text_with_cursor(
         }
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
-    // `babel-flow` reads what is in `/*:: */` and `/*: */` as code.
-    let module = dialect_of(options, &code, name, false);
-    let has_comment_types =
-        module.flow && module.babel && bun_format::flow::may_have_comment_types(&code);
-    let code = match has_comment_types {
-        true => with_file_as(module, path, &code, bun_format::flow::uncommented)
-            .map_or(code, std::borrow::Cow::Owned),
-        false => code,
-    };
+    let code = without_comment_types(options, path, name, code);
     let format_as = |is_script: bool| {
         let dialect = dialect_of(options, &code, name, is_script);
         let how = options.sort_imports.as_deref();
@@ -335,6 +327,21 @@ fn format_text_with_cursor(
         Some(b"cjs" | b"cts") => format_as(true),
         Some(b"mjs" | b"mts") => format_as(false),
         _ => format_as(false).or_else(|_| format_as(true)),
+    }
+}
+
+/// `code`, or what `babel-flow` reads in its place: what is in `/*:: */` and `/*: */` is code.
+fn without_comment_types<'c>(
+    options: &FormatOptions,
+    path: &str,
+    name: &[u8],
+    code: std::borrow::Cow<'c, [u8]>,
+) -> std::borrow::Cow<'c, [u8]> {
+    let module = dialect_of(options, &code, name, false);
+    match module.flow && module.babel && bun_format::flow::may_have_comment_types(&code) {
+        true => with_file_as(module, path, &code, bun_format::flow::uncommented)
+            .map_or(code, std::borrow::Cow::Owned),
+        false => code,
     }
 }
 

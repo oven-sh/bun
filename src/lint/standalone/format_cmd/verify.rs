@@ -124,6 +124,8 @@ pub(super) fn verify(args: &Args) {
             errors += 1;
             continue;
         };
+        // As `bun format` does.
+        let code = super::without_comment_types(&args.options, &name, name.as_bytes(), code.into());
         match compare(&name, &code, &formatted, &args.options, &mut scratch) {
             Some(Ok(())) => passed += 1,
             Some(Err(difference)) => {

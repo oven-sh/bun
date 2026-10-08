@@ -686,7 +686,7 @@ pub(crate) fn write_object_type<'a>(
             let should_expand = f.options().expand == Expand::Auto
                 && !is_inexact_mark(first)
                 && f.source_text()
-                    .contains_newline_between(ty.span().start, first.span().start);
+                    .contains_newline(Span::new(ty.span().start, first.span().start));
             let content = format_with(|f| write_ts_signatures(members, f));
             let inner =
                 soft_block_indent_with_maybe_space(&content, f.options().bracket_spacing.value());

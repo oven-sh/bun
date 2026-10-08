@@ -31,7 +31,7 @@ pub(crate) enum ReferenceSite {
     ExportSpec(hir::ExportSpecId),
     /// The `N` of `export as namespace N`.
     ExportAsNamespace(hir::StmtId),
-    /// The tag `A-b`, or a part of the tag `a:b`, which the HIR stores as a string.
+    /// The tag `A-b`, or a part of the tag `a:b`, which the HIR stores as a string. The tag `this`.
     JsxName(ExprId),
     /// The name of the first declaration of the variable at this index, for the use that JSX makes
     /// of `React`.
@@ -419,13 +419,22 @@ impl Collector<'_, '_> {
             // `eslint-scope` does not visit closing elements.
             let tags = [Some(jsx.tag), (!self.is_javascript).then_some(jsx.close_tag)];
             for tag in tags.into_iter().flatten() {
-                let Some(hir::Expr {
-                    kind: ExprKind::String(name),
-                    pos,
-                    ..
-                }) = file.hir.exprs.get(tag.idx())
-                else {
-                    continue;
+                let (name, pos) = match file.hir.exprs.get(tag.idx()) {
+                    Some(hir::Expr {
+                        kind: ExprKind::String(name),
+                        pos,
+                        ..
+                    }) => (name, pos),
+                    // "the only case we want to visit a lower-cased component has its name as "this""
+                    Some(hir::Expr {
+                        kind: ExprKind::This,
+                        pos,
+                        ..
+                    }) if !self.is_javascript => {
+                        self.push(ReferenceSite::JsxName(tag), *pos, known::this, READ, ExprId::NONE);
+                        continue;
+                    }
+                    _ => continue,
                 };
                 let text = file.atoms.bytes(*name);
                 match bun_core::strings::index_of_char_usize(text, b':') {

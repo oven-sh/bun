@@ -49,7 +49,6 @@
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
 //!   ESLint.
 //! - `x as const` has no reference to a type `const`.
-//! - The tag `<this />` is not a reference.
 //! - Where TypeScript merges declarations that are in different scopes, there is a [`Symbol`] in
 //!   each scope, as in ESLint, and they have the same [`Symbol::id`]: the type parameters of
 //!   `interface I<T> {} interface I<T> {}`, what the bodies of `namespace N {} namespace N {}`
@@ -724,7 +723,7 @@ impl<'a> Reference<'a> {
     /// - the `Stmt` of `import x = a.b` or of `export as namespace a`
     /// - the `ExportSpec` of `export { a }`
     /// - the `Expr` that is the tag `<A-b>` or `<a:b>`, an `ExprKind::String`. The latter is two
-    ///   references in TypeScript, to `a` and to `b`.
+    ///   references in TypeScript, to `a` and to `b`. There `<this>` is one too.
     pub fn node(self) -> Node<'a> {
         let file = self.file;
         match self.raw().site {

@@ -536,19 +536,32 @@ interface Line {
 
 const show = (text: string) => JSON.stringify(text);
 
+interface Edit {
+  range: [number, number];
+  text: string;
+}
+
+const edit = (fix: Edit) => `[${fix.range[0]},${fix.range[1]}] ${show(fix.text)}`;
+
 function lineOf(
   ruleId: string | null | undefined,
   messageId: string | null,
   message: string,
   start: [number, number],
   end: [number | null, number | null] | null,
-  suggestions: [string | null, string][],
+  fix: Edit | null | undefined,
+  suggestions: { id: string | null; desc: string; fix: Edit | null | undefined; output: string }[],
 ): Line {
   const where = `${start[0]}:${start[1]}` + (end && end[0] !== null ? `-${end[0]}:${end[1]}` : "");
   const from = ruleId === undefined || ruleId === null ? "" : ` <${ruleId || "linter"}>`;
   return {
     text: `${where}${from} [${messageId || ""}] ${message}`,
-    more: suggestions.map(([id, output]) => `    suggestion [${id || ""}] -> ${show(output)}`),
+    more: [
+      ...(fix ? [`    fix ${edit(fix)}`] : []),
+      ...suggestions.map(
+        it => `    suggestion [${it.id || ""}] ${it.desc}${it.fix ? ` ${edit(it.fix)}` : ""} -> ${show(it.output)}`,
+      ),
+    ],
   };
 }
 
@@ -560,12 +573,23 @@ const expectedLines = (messages: FixtureMessage[]) =>
       m.message,
       [m.line, m.column],
       [m.endLine, m.endColumn],
-      m.suggestions.map(s => [s.messageId, s.output]),
+      m.fix,
+      m.suggestions.map(s => ({ id: s.messageId, desc: s.desc, fix: s.fix, output: s.output })),
     ),
   );
 
 const actualLines = (reported: any[]) =>
-  reported.map(m => lineOf(m.rule_id, m.message_id, m.message, [m.line, m.column], m.end, m.suggestions ?? []));
+  reported.map(m =>
+    lineOf(
+      m.rule_id,
+      m.message_id,
+      m.message,
+      [m.line, m.column],
+      m.end,
+      m.fix,
+      (m.suggestions ?? []).map((s: any) => ({ id: s.message_id, desc: s.desc, fix: s.fix, output: s.output })),
+    ),
+  );
 
 /** `-` is what only ESLint reports, `+` what only we report. */
 function diffLines(expected: Line[], actual: Line[]): string[] {

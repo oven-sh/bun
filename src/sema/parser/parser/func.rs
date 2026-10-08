@@ -290,7 +290,8 @@ impl Parser<'_> {
             }
         }
         let pat;
-        if self.token() == T::This {
+        let is_this = self.token() == T::This;
+        if is_this {
             self.typescript_only();
             pat = self.f.pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
             self.next();
@@ -308,7 +309,11 @@ impl Parser<'_> {
             }
         }
         let ty = self.type_annotation();
-        let default = self.optional_initializer();
+        // `this` has none.
+        let default = match is_this {
+            true => ExprId::NONE,
+            false => self.optional_initializer(),
+        };
         self.s.params.push(Param {
             pat,
             ty,

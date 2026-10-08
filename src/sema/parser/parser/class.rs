@@ -69,8 +69,9 @@ impl Parser<'_> {
         let type_params = self.type_parameters();
         let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
         if self.eat(T::Extends) {
-            if self.token() == T::At {
-                self.refuse(Refusal::Unsupported);
+            // `isListElement`
+            if !self.is_start_of_left_hand_side_expression() {
+                self.fail();
             }
             // `parseExpressionWithTypeArguments`
             extends = self.left_hand_side_expression();

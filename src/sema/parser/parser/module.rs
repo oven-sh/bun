@@ -387,14 +387,7 @@ impl Parser<'_> {
         } else {
             let names = self.s.names.len();
             loop {
-                let part = match self.s.names.len() == names {
-                    true => self.identifier(),
-                    false => {
-                        let part = self.identifier_name();
-                        self.note_identifier(part.0, part.1);
-                        part
-                    }
-                };
+                let part = self.identifier();
                 self.s.names.push(part);
                 if !self.eat(T::Dot) {
                     break;
@@ -514,7 +507,11 @@ impl Parser<'_> {
             self.typescript_only();
         }
         self.next();
-        let saved = self.enter_context(ctx::AWAIT, ctx::DISALLOW_IN);
+        // `parseExportAssignment` has `setAwaitContext(true)`.
+        let saved = match self.is_ecmascript {
+            true => self.enter_context(0, ctx::DISALLOW_IN),
+            false => self.enter_context(ctx::AWAIT, ctx::DISALLOW_IN),
+        };
         let expression = self.assignment_expression();
         self.context = saved;
         self.semicolon();

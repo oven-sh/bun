@@ -273,7 +273,7 @@ impl Parser<'_> {
     }
 
     /// `isStartOfLeftHandSideExpression`
-    fn is_start_of_left_hand_side_expression(&mut self) -> bool {
+    pub(crate) fn is_start_of_left_hand_side_expression(&mut self) -> bool {
         match self.token() {
             T::This
             | T::Super

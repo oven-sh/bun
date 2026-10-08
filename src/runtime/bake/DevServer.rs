@@ -5113,14 +5113,18 @@ impl DevServer {
                 });
             }};
         }
-        // One server record stands for the file in the server graph and in the SSR graph.
-        // Only a JS record says which of the two bundled it.
         match side {
             bake::Graph::Client => check!(&self.client_graph, |_file| true),
-            bake::Graph::Server => check!(&self.server_graph, |file| file.is_rsc
-                || file.file_kind() != FileKind::Js),
-            bake::Graph::Ssr => check!(&self.server_graph, |file| file.is_ssr
-                || file.file_kind() != FileKind::Js),
+            // One server record stands for the file in the server graph and in the SSR graph.
+            // Only a JS record says which of the two bundled it.
+            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
+                file.file_kind() != FileKind::Js
+                    || if side == bake::Graph::Ssr {
+                        file.is_ssr
+                    } else {
+                        file.is_rsc
+                    }
+            }),
         }
     }
 

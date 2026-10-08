@@ -158,6 +158,8 @@ slices! {
         module_symbol: bind::SymbolId,
         var_stmt: hir::StmtId,
         case_stmt: hir::StmtId,
+        stmt_flow: bind::FlowId,
+        case_fallthrough: bind::FlowId,
         type_query_operands: hir::ExprId,
     }
 }

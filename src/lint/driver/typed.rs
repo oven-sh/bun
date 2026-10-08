@@ -15,8 +15,10 @@
 use crate::lint::Context;
 use crate::results::FileResult;
 use crate::run::Environment;
+use bun_lint::context::Severity;
 use bun_lint::linter::{
-    LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, apply_fixes, grows_too_much, max_fixed_len,
+    LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, apply_fixes, grows_too_much,
+    max_fixed_len,
 };
 use bun_sema::program::FileId;
 use bun_sema::util::FxHashMap;
@@ -80,6 +82,9 @@ fn check_and_lint(
             Some(context.modules),
             |file| {
                 let mut result = context.linter.lint(file, config, &options);
+                if file.is_too_large_for_flow_analysis() {
+                    result.messages.insert(0, too_large_for_flow_analysis());
+                }
                 context.promote_suggestions(&mut result);
                 let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
                 let text = (is_reported && (context.keeps_text || context.fixes()))
@@ -168,6 +173,19 @@ fn with_byte_order_mark((mut result, text): Linted, current: Option<&[u8]>, path
         fix.span.end += MARK.len() as u32;
     }
     (result, Some([MARK, &text].concat()))
+}
+
+/// What is said about a file for which [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis)
+/// holds. typescript-eslint says nothing.
+fn too_large_for_flow_analysis() -> LintMessage {
+    LintMessage {
+        severity: Severity::Warn,
+        message: b"This file is too large for control flow analysis. What rules that need types say about it may be wrong or incomplete."
+            .to_vec(),
+        line: 1,
+        column: 1,
+        ..LintMessage::default()
+    }
 }
 
 /// Where ESLint's `verifyAndFix` is with a file.

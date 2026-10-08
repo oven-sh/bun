@@ -243,6 +243,9 @@ queries! {
     /// resolves to.
     fn resolve_module_name(specifier: &[u8]) -> Option<FileId>;
     fn ambient_module(name: &[u8]) -> Option<SymbolRef>;
+    /// Whether references in the file have the error type because a function or module body is too
+    /// large for control flow analysis (2563).
+    fn was_flow_analysis_ever_disabled() -> bool;
 
     // ── nodes ──
     fn node(location: Location) -> RawNode;
@@ -386,6 +389,14 @@ impl<'a> File<'a> {
             Some(Ok(mut queries)) => ask(&mut **queries),
             _ => ask(&mut NoTypes),
         }
+    }
+
+    /// Whether a function or module body of the file is too large for control flow analysis (2563), as far as
+    /// the check of the file and the questions of the rules have come across it: to be asked when the rules
+    /// have run. Every reference that would be narrowed has the error type from then on, so what the rules
+    /// that need types say about the file can be wrong or incomplete.
+    pub fn is_too_large_for_flow_analysis(&self) -> bool {
+        self.query(|it| it.was_flow_analysis_ever_disabled())
     }
 
     /// The number that the program gives the file.

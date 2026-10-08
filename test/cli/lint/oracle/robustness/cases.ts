@@ -442,6 +442,57 @@ export const cases: Case[] = [
   },
 
   // ══ the rules that need types ══
+  // ── a body that is too large for control flow analysis (TS2563): every reference in it that would be narrowed has the error type ──
+  ...((): Case[] => {
+    const head = "export {};\ndeclare const a: boolean, b: number, p: Promise<void>; let x: number;\n";
+    // Each of the three is reported, if `b` and `p` have their types.
+    const three = "await b;\nx = b as number;\np;\n";
+    const conditions = (n: number, name = "x") => rep(`if (a) { ${name} = 1; }\n`, n);
+    const warning = /This file is too large for control flow analysis\. What rules that need types say about it may be wrong or incomplete\./;
+    const [awaited, asserted, floating] = ["await-thenable", "no-unnecessary-type-assertion", "no-floating-promises"];
+    const common = {
+      file: "a.ts",
+      rules: { [`typescript/${awaited}`]: "error", [`typescript/${asserted}`]: "error", [`typescript/${floating}`]: "error" },
+      args: typed,
+      // With the stack frames of a debug build the type checker overflows the stack from about 800 such statements on, in `bun check` too.
+      isHeavy: true,
+    };
+    const all = { [`@typescript-eslint/${awaited}`]: 1, [`@typescript-eslint/${asserted}`]: 1, [`@typescript-eslint/${floating}`]: 1 };
+    return [
+      {
+        ...common,
+        name: "1,000 statements with a condition are not too many for the types",
+        text: () => head + three + conditions(1_000),
+        reports: all,
+        lacks: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "what stands before 1,100 statements with a condition has its types, and the file a warning",
+        text: () => head + three + conditions(1_100),
+        reports: all,
+        matches: warning,
+        exitCode: 1,
+      },
+      {
+        ...common,
+        name: "what stands behind 1,100 statements with a condition has no types, which the warning says",
+        text: () => head + conditions(1_100) + three,
+        reports: {},
+        matches: warning,
+        exitCode: 0,
+      },
+      {
+        ...common,
+        name: "a function with 1,000 statements with a condition, about which a rule asks, gives the file the warning",
+        text: () => `${head}function f() { let y: number = 0;\n${conditions(1_000, "y")}y as number; }\n${three}`,
+        matches: warning,
+        exitCode: 1,
+      },
+    ];
+  })(),
+
   // ── fixes that make a file much larger, in the passes with types ──
   ...[380, 440].map((count): Case => {
     const isLeft = count === 440;

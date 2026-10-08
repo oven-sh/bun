@@ -59,7 +59,8 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
 /// many are, as Prettier prints them and, in the flavor of oxfmt, as oxfmt prints them.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     let (mut as_prettier, mut as_oxfmt, mut other_options) = (Count::default(), Count::default(), 0);
-    for snapshot in bundle.paths().filter(|it| it.ends_with(b".prettier.snap")) {
+    let snapshots = bundle.paths().filter(|it| it.ends_with(b".prettier.snap"));
+    for snapshot in snapshots.skip(flags.first % flags.every).step_by(flags.every) {
         let name = &snapshot[..snapshot.len() - b".prettier.snap".len()];
         let (Some(input), true) = (bundle.read(name), flags.wants(name)) else {
             continue;

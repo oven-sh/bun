@@ -4,6 +4,7 @@ use super::import_declaration::{
     only_specifier_has_comments,
 };
 use super::semicolon::OptionalSemicolon;
+use crate::cursor::{enter_node, extend_node};
 use crate::js::format::{FormatDeclaration, write_trailing_comments_of};
 use crate::prelude::*;
 use crate::write;
@@ -27,12 +28,17 @@ fn format_export_keyword_with_class_decorators<'a>(
     {
         let decorators = FormatDecorators::new(class.decorators(), node);
         if first_decorator.span().end < span.start {
+            enter_node(span, f);
             write!(f, [decorators, hard_line_break(), format_leading_comments, keyword, space()]);
         } else {
-            write!(f, [format_leading_comments, keyword, hard_line_break(), decorators, hard_line_break()]);
+            write!(f, format_leading_comments);
+            enter_node(span, f);
+            write!(f, [keyword, hard_line_break(), decorators, hard_line_break()]);
         }
     } else {
-        write!(f, [format_leading_comments, keyword, space()]);
+        write!(f, format_leading_comments);
+        enter_node(span, f);
+        write!(f, [keyword, space()]);
     }
 }
 
@@ -49,6 +55,7 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
     if matches!(statement.kind(), StmtKind::Var(_)) {
         write!(f, OptionalSemicolon);
     }
+    extend_node(node.span(), f);
     write_trailing_comments_of(node, f);
 }
 
@@ -57,6 +64,7 @@ pub(crate) fn write_export_default_expression<'a>(statement: Stmt<'a>, expressio
     let node = AstNodes::ExportDefaultDeclaration(statement);
     format_export_keyword_with_class_decorators(node, "export default", None, f);
     write!(f, [expression, OptionalSemicolon]);
+    extend_node(node.span(), f);
     write_trailing_comments_of(node, f);
 }
 

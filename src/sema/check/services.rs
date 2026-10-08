@@ -35,6 +35,46 @@ use visited::VisitedKind;
 /// can be read. The checker does not keep that text.
 pub type ReadLibrary<'r> = &'r (dyn Fn(&[u8], &mut dyn FnMut(&[u8])) + Sync);
 
+/// A child of a node of the file at hand that is a HIR node.
+#[derive(Copy, Clone)]
+struct ChildSpan {
+    start: u32,
+    end: u32,
+    /// Which of the children it is.
+    position: u32,
+    node: Node,
+}
+
+/// The children of a node that has many, for [`Services::name_at`].
+#[derive(Copy, Clone)]
+struct ManyChildren<'c> {
+    /// Those that are HIR nodes. From one to the next neither the start nor the end goes down.
+    spans: &'c [ChildSpan],
+    /// The others, each with which of the children it is.
+    parts: &'c [(u32, Node)],
+}
+
+impl ManyChildren<'_> {
+    /// Adds the parts and the children that `offset` is in, in the order of the children. It takes the logarithm of their number.
+    fn push_around(self, offset: u32, work: &mut SmallVec<[Node; 16]>) {
+        let from = self.spans.partition_point(|it| it.end <= offset);
+        let to = self.spans.partition_point(|it| it.start <= offset);
+        let mut around = self
+            .spans
+            .get(from..to)
+            .unwrap_or_default()
+            .iter()
+            .peekable();
+        for &(position, part) in self.parts {
+            while let Some(it) = around.next_if(|it| it.position < position) {
+                work.push(it.node);
+            }
+            work.push(part);
+        }
+        work.extend(around.map(|it| it.node));
+    }
+}
+
 pub struct Services<'c, 'p, 's> {
     c: &'c mut Checker<'p, 's>,
     file: FileId,
@@ -45,6 +85,8 @@ pub struct Services<'c, 'p, 's> {
     /// What `properties_of_type` and `signature_info` have answered.
     properties: FxHashMap<TypeId, &'c [SymbolRef]>,
     signatures: FxHashMap<SigId, SignatureInfo<'c>>,
+    /// For the nodes of `file` with many children that `name_at` has come through. `None`: they are not in order.
+    many_children: FxHashMap<Node, Option<ManyChildren<'c>>>,
     /// `Checker::symbols_of_declarations` of `file`.
     symbols_of_declarations: OnceCell<FxHashMap<Decl, SymbolId>>,
     read_library: Option<ReadLibrary<'c>>,
@@ -75,6 +117,7 @@ impl<'p, 's> Checker<'p, 's> {
             symbol_ids: FxHashMap::default(),
             properties: FxHashMap::default(),
             signatures: FxHashMap::default(),
+            many_children: FxHashMap::default(),
             symbols_of_declarations: OnceCell::new(),
         };
         then(&mut services)
@@ -336,26 +379,66 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     /// The innermost node that starts at `offset` and has no children: a name or a literal.
-    fn name_at(&self, offset: u32) -> Node {
+    fn name_at(&mut self, offset: u32) -> Node {
         let hir = self.c.hir(self.file);
         let mut work: SmallVec<[Node; 16]> = SmallVec::new();
         work.push(Node::FILE);
         while let Some(at) = work.pop() {
             let before = work.len();
-            hir.for_each_child(at, &mut |child| {
-                // Where a node begins and ends that is derived from another is not always known.
-                let is_around = child.part().is_some()
-                    || hir.start(child) <= offset && offset < self.c.end_of_node(self.file, child);
-                if is_around {
-                    work.push(child);
+            let known = self.many_children.get(&at).copied();
+            if let Some(Some(children)) = known {
+                children.push_around(offset, &mut work);
+            } else {
+                let mut count = 0;
+                hir.for_each_child(at, &mut |child| {
+                    count += 1;
+                    // Where a node begins and ends that is derived from another is not always known.
+                    let is_around = child.part().is_some()
+                        || hir.start(child) <= offset
+                            && offset < self.c.end_of_node(self.file, child);
+                    if is_around {
+                        work.push(child);
+                    }
+                    false
+                });
+                if count > 16 && known.is_none() {
+                    let children = self.many_children_of(at);
+                    self.many_children.insert(at, children);
                 }
-                false
-            });
+            }
             if work.len() == before && at != Node::FILE && hir.start(at) == offset {
                 return at;
             }
         }
         Node::NONE
+    }
+
+    /// `None` if a search in them would not find what going through them finds.
+    fn many_children_of(&self, at: Node) -> Option<ManyChildren<'c>> {
+        let hir = self.c.hir(self.file);
+        let (mut spans, mut parts) = (Vec::new(), SmallVec::<[(u32, Node); 8]>::new());
+        let mut position = 0;
+        hir.for_each_child(at, &mut |child| {
+            match child.part() {
+                Some(_) => parts.push((position, child)),
+                None => spans.push(ChildSpan {
+                    start: hir.start(child),
+                    end: self.c.end_of_node(self.file, child),
+                    position,
+                    node: child,
+                }),
+            }
+            position += 1;
+            false
+        });
+        let is_in_order = spans
+            .iter()
+            .zip(spans.iter().skip(1))
+            .all(|(a, b)| a.start <= b.start && a.end <= b.end);
+        (is_in_order && !parts.spilled()).then(|| ManyChildren {
+            spans: self.list(&spans),
+            parts: self.list(&parts),
+        })
     }
 
     pub fn node_kind(&mut self, node: NodeRef) -> Kind {

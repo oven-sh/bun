@@ -1,0 +1,32 @@
+{
+  "_id": "optional-peer-hoist-target2",
+  "name": "optional-peer-hoist-target2",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "0.0.1": {
+      "name": "optional-peer-hoist-target2",
+      "version": "0.0.1",
+      "_id": "optional-peer-hoist-target2@0.0.1",
+      "dist": {
+        "integrity": "sha512-xY6X5B7Kf871dRTuI3LmN7kjI+MylkvmStfISbJUodW45kVfJBZqbvA0rAIy2ZRs6hfjwRkc5pDMZSxrRwp8rg==",
+        "shasum": "bd2acff2d6b98ce81b856a2c1eb8b5b220c2e3e9",
+        "tarball": "http://localhost:4873/optional-peer-hoist-target2/-/optional-peer-hoist-target2-0.0.1.tgz"
+      }
+    },
+    "1.0.0": {
+      "name": "optional-peer-hoist-target2",
+      "version": "1.0.0",
+      "dependencies": {
+        "optional-peer-hoist-tail": "2.0.0"
+      },
+      "_id": "optional-peer-hoist-target2@1.0.0",
+      "dist": {
+        "integrity": "sha512-k2m7NpKAOXV0lYfAicW/eCTRFYlAJcoSkGp0z/qL7GlaQEtRqtLitQJSsb5p5cXTYezuuLe61PsbGggVWgS65A==",
+        "shasum": "3512fb5ad917d139ce5af219d14673ddc4d4b9e9",
+        "tarball": "http://localhost:4873/optional-peer-hoist-target2/-/optional-peer-hoist-target2-1.0.0.tgz"
+      }
+    }
+  }
+}

@@ -3,6 +3,8 @@ import type * as SqliteTypes from "bun:sqlite";
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
+const kOwnedByDatabaseFlag = 1 << 3;
+const kPrepareOwned = Symbol("prepareOwned");
 
 const defineProperties = Object.defineProperties;
 const toStringTag = Symbol.toStringTag;
@@ -105,10 +107,11 @@ interface CppSQLStatement {
   raw: (...args: TODO[]) => TODO;
   finalize: (...args: TODO[]) => TODO;
   toString: (...args: TODO[]) => TODO;
+  isFinalized: boolean;
   columns: string[];
   columnsCount: number;
   paramsCount: number;
-  columnTypes: string[];
+  columnTypes: SqliteTypes.Statement["columnTypes"];
   declaredTypes: (string | null)[];
   safeIntegers: boolean;
 }
@@ -122,12 +125,27 @@ interface CppSQL {
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  run(handle: TODO, internalFlags: number, internalFieldTuple: TODO, query: string, ...params: TODO[]): void;
+  prepare(
+    handle: TODO,
+    query: string,
+    params: SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[] | undefined,
+    flags: number,
+    internalFlags: number,
+  ): CppSQLStatement;
+}
+
+interface TransactionFunction<A extends any[], T> {
+  (...args: A): T;
+  deferred: (...args: A) => T;
+  immediate: (...args: A) => T;
+  exclusive: (...args: A) => T;
 }
 
 let SQL: CppSQL;
 let controllers: WeakMap<Database, any> | undefined;
 
-class Statement {
+class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBindings[] = any[]> {
   constructor(raw: CppSQLStatement) {
     this.#raw = raw;
 
@@ -155,13 +173,15 @@ class Statement {
 
   #raw: CppSQLStatement;
 
-  get: SqliteTypes.Statement["get"];
-  all: SqliteTypes.Statement["all"];
-  iterate: SqliteTypes.Statement["iterate"];
-  values: SqliteTypes.Statement["values"];
-  raw: SqliteTypes.Statement["raw"];
-  run: SqliteTypes.Statement["run"];
-  isFinalized = false;
+  get: SqliteTypes.Statement<ReturnType, ParamsType>["get"];
+  all: SqliteTypes.Statement<ReturnType, ParamsType>["all"];
+  iterate: SqliteTypes.Statement<ReturnType, ParamsType>["iterate"];
+  values: SqliteTypes.Statement<ReturnType, ParamsType>["values"];
+  raw: SqliteTypes.Statement<ReturnType, ParamsType>["raw"];
+  run: SqliteTypes.Statement<ReturnType, ParamsType>["run"];
+  get isFinalized() {
+    return this.#raw.isFinalized;
+  }
 
   toJSON() {
     return {
@@ -221,7 +241,8 @@ class Statement {
     return this.#raw.safeIntegers;
   }
 
-  as(ClassType: any) {
+  as<T = unknown>(ClassType: new (...args: any[]) => T): Statement<T, ParamsType>;
+  as(ClassType: new (...args: any[]) => unknown): Statement<unknown, ParamsType> {
     this.#raw.as(ClassType);
 
     return this;
@@ -325,7 +346,6 @@ class Statement {
   }
 
   finalize(...args) {
-    this.isFinalized = true;
     return this.#raw.finalize(...args);
   }
 
@@ -343,6 +363,8 @@ class Statement {
 const cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
+  declare exec: Database["run"];
+
   constructor(
     filenameGiven: string | undefined | NodeJS.TypedArray | Buffer<ArrayBufferLike>,
     options?: SqliteTypes.DatabaseOptions | number,
@@ -426,11 +448,8 @@ class Database implements SqliteTypes.Database {
 
   #internalFlags = 0;
   #handle;
-  #cachedQueriesKeys: string[] = [];
-  #cachedQueriesLengths: number[] = [];
-  #cachedQueriesValues: Statement[] = [];
+  #queryCache: Map<string, Statement> = new Map();
   filename;
-  #hasClosed = false;
   get handle() {
     return this.#handle;
   }
@@ -463,20 +482,21 @@ class Database implements SqliteTypes.Database {
     serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
   ) {
+    const bytes: NodeJS.TypedArray = require("node:util/types").isAnyArrayBuffer(serialized)
+      ? new Uint8Array(serialized as ArrayBufferLike)
+      : (serialized as NodeJS.TypedArray);
     if (typeof options === "boolean") {
       // Maintain backward compatibility with existing API
-      return new Database(serialized, { readonly: options });
+      return new Database(bytes, { readonly: options });
     } else if (options && typeof options === "object") {
-      return new Database(serialized, options);
+      return new Database(bytes, options);
     } else {
-      return new Database(serialized, 0);
+      return new Database(bytes, 0);
     }
   }
 
   [Symbol.dispose]() {
-    if (!this.#hasClosed) {
-      this.close(true);
-    }
+    this.close(true);
   }
 
   static setCustomSQLite(path) {
@@ -498,34 +518,14 @@ class Database implements SqliteTypes.Database {
   }
 
   close(throwOnError = false) {
-    this.clearQueryCache();
-    // Finalize any prepared statements created by db.transaction()
-    if (controllers) {
-      const controller = controllers.get(this);
-      if (controller) {
-        controllers.delete(this);
-        const seen = new Set();
-        for (const ctrl of [controller.default, controller.deferred, controller.immediate, controller.exclusive]) {
-          if (!ctrl) continue;
-          for (const stmt of [ctrl.begin, ctrl.commit, ctrl.rollback, ctrl.savepoint, ctrl.release, ctrl.rollbackTo]) {
-            if (stmt && !seen.has(stmt)) {
-              seen.add(stmt);
-              stmt.finalize?.();
-            }
-          }
-        }
-      }
-    }
-    this.#hasClosed = true;
+    // native close finalizes every kOwnedByDatabaseFlag statement (query cache + transaction controller)
+    this.#queryCache.$clear();
+    controllers?.delete(this);
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
-    for (let item of this.#cachedQueriesValues) {
-      item?.finalize?.();
-    }
-    this.#cachedQueriesKeys.length = 0;
-    this.#cachedQueriesValues.length = 0;
-    this.#cachedQueriesLengths.length = 0;
+    this.#queryCache.$forEach(stmt => stmt.finalize());
+    this.#queryCache.$clear();
   }
 
   run(query, ...params) {
@@ -544,14 +544,26 @@ class Database implements SqliteTypes.Database {
     return createChangesObject();
   }
 
-  prepare(query: string, params: any[] | undefined, flags: number = 0) {
-    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
+  prepare<ReturnType, ParamsType extends SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[]>(
+    query: string,
+    params?: ParamsType,
+    flags: number = 0,
+  ) {
+    return new Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>(
+      SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags),
+    );
+  }
+
+  [kPrepareOwned](query: string, flags: number) {
+    return new Statement(
+      SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag),
+    );
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;
 
   get [cachedCount]() {
-    return this.#cachedQueriesKeys.length;
+    return this.#queryCache.$size;
   }
 
   query(query) {
@@ -563,42 +575,30 @@ class Database implements SqliteTypes.Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
-
-    // this list should be pretty small
-    let index = this.#cachedQueriesLengths.indexOf(query.length);
-    while (index !== -1) {
-      if (this.#cachedQueriesKeys[index] !== query) {
-        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-        continue;
-      }
-
-      const stmt = this.#cachedQueriesValues[index];
-      if (stmt.isFinalized) {
-        return (this.#cachedQueriesValues[index] = this.prepare(
-          query,
-          undefined,
-          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
-        ));
-      }
+    const cache = this.#queryCache;
+    let stmt = cache.$get(query);
+    if (stmt !== undefined) {
+      // LRU: re-insert so the most recently used key is last
+      cache.$delete(query);
+      if (stmt.isFinalized) stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
+      cache.$set(query, stmt);
       return stmt;
     }
 
-    var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
-
-    if (willCache) {
-      this.#cachedQueriesKeys.push(query);
-      this.#cachedQueriesLengths.push(query.length);
-      this.#cachedQueriesValues.push(stmt);
+    stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
+    const max = Database.MAX_QUERY_CACHE_SIZE;
+    if (max > 0) {
+      // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
+      if (cache.$size >= max) cache.$delete(cache.$keys().next().value);
+      cache.$set(query, stmt);
     }
-
     return stmt;
   }
 
   // Code for transactions is largely copied from better-sqlite3
   // https://github.com/JoshuaWise/better-sqlite3/blob/master/lib/methods/transaction.js
   // thank you @JoshuaWise!
-  transaction(fn, self) {
+  transaction<A extends any[], T>(fn: (...args: A) => T, self?) {
     if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
 
     const db = this;
@@ -623,11 +623,10 @@ class Database implements SqliteTypes.Database {
     defineProperties(properties.exclusive.value, properties);
 
     // Return the default version of the transaction function
-    return properties.default.value;
+    return properties.default.value as TransactionFunction<A, T>;
   }
 }
 
-// @ts-expect-error
 Database.prototype.exec = Database.prototype.run;
 
 // Return the database's cached transaction controller, or create a new one
@@ -635,20 +634,20 @@ const getController = (db, _self) => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {
-      commit: db.prepare("COMMIT", undefined, 0),
-      rollback: db.prepare("ROLLBACK", undefined, 0),
-      savepoint: db.prepare("SAVEPOINT `\t_bs3.\t`", undefined, 0),
-      release: db.prepare("RELEASE `\t_bs3.\t`", undefined, 0),
-      rollbackTo: db.prepare("ROLLBACK TO `\t_bs3.\t`", undefined, 0),
+      commit: db[kPrepareOwned]("COMMIT", 0),
+      rollback: db[kPrepareOwned]("ROLLBACK", 0),
+      savepoint: db[kPrepareOwned]("SAVEPOINT `\t_bs3.\t`", 0),
+      release: db[kPrepareOwned]("RELEASE `\t_bs3.\t`", 0),
+      rollbackTo: db[kPrepareOwned]("ROLLBACK TO `\t_bs3.\t`", 0),
     };
 
     controllers.set(
       db,
       (controller = {
-        default: Object.assign({ begin: db.prepare("BEGIN", undefined, 0) }, shared),
-        deferred: Object.assign({ begin: db.prepare("BEGIN DEFERRED", undefined, 0) }, shared),
-        immediate: Object.assign({ begin: db.prepare("BEGIN IMMEDIATE", undefined, 0) }, shared),
-        exclusive: Object.assign({ begin: db.prepare("BEGIN EXCLUSIVE", undefined, 0) }, shared),
+        default: Object.assign({ begin: db[kPrepareOwned]("BEGIN", 0) }, shared),
+        deferred: Object.assign({ begin: db[kPrepareOwned]("BEGIN DEFERRED", 0) }, shared),
+        immediate: Object.assign({ begin: db[kPrepareOwned]("BEGIN IMMEDIATE", 0) }, shared),
+        exclusive: Object.assign({ begin: db[kPrepareOwned]("BEGIN EXCLUSIVE", 0) }, shared),
       }),
     );
   }

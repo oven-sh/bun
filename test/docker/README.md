@@ -113,10 +113,11 @@ test("database test", async () => {
 | `mysql_tls` | MySQL with TLS | 3306 | SSL certificates included |
 | **Redis/Valkey** | | | |
 | `redis_unified` | Redis with all features | 6379 (TCP), 6380 (TLS) | Persistence, Unix sockets, ACLs |
-| **S3/MinIO** | | | |
-| `minio` | S3-compatible storage | 9000 (API), 9001 (Console) | AWS S3 API testing |
 | **WebSocket** | | | |
 | `autobahn` | WebSocket test suite | 9002 | 517 conformance tests |
+
+The S3 tests use no container. They start the S3 server in
+`test/packages/s3-server`, which runs on `Bun.serve`.
 
 ## Usage Examples
 

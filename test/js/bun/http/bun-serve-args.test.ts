@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { isWindows, tls, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -342,7 +342,7 @@ describe("Bun.serve hostname and port validation", () => {
           return new Response("ok");
         },
       }),
-    ).toThrow();
+    ).toThrow("Cannot specify both hostname and unix");
   });
 
   test("unix with no hostname/port is valid", () => {
@@ -397,6 +397,67 @@ describe("Bun.serve hostname and port validation", () => {
         server.stop();
       });
     }
+  });
+
+  describe("invalid port values throw RangeError", () => {
+    const invalidPorts: { port: unknown; received: string }[] = [
+      { port: 65536, received: "65536" },
+      { port: 70000, received: "70000" },
+      { port: 2 ** 32 + 8080, received: "4294975376" },
+      { port: -1, received: "-1" },
+      { port: 1.5, received: "1.5" },
+      { port: "abc", received: "NaN" },
+      { port: NaN, received: "NaN" },
+      { port: Infinity, received: "Infinity" },
+      { port: -Infinity, received: "-Infinity" },
+      { port: "65536", received: "65536" },
+      { port: Number.MAX_SAFE_INTEGER, received: String(Number.MAX_SAFE_INTEGER) },
+    ];
+
+    for (const { port, received } of invalidPorts) {
+      test(`port: ${typeof port === "string" ? JSON.stringify(port) : port}`, () => {
+        let thrown: unknown;
+        try {
+          const server = serve({
+            // @ts-expect-error - Testing invalid port values
+            port,
+            fetch() {
+              return new Response("ok");
+            },
+          });
+          server.stop(true);
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toBeInstanceOf(RangeError);
+        expect((thrown as RangeError).message).toContain("options.port");
+        expect((thrown as RangeError).message).toContain(received);
+      });
+    }
+
+    test("server.reload() rejects an out-of-range port", () => {
+      using server = serve({
+        port: 0,
+        fetch() {
+          return new Response("ok");
+        },
+      });
+      let thrown: unknown;
+      try {
+        server.reload({
+          // @ts-expect-error - Testing invalid port values
+          port: 65536,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as RangeError).message).toContain("options.port");
+      expect((thrown as RangeError).message).toContain("65536");
+    });
   });
 });
 
@@ -599,7 +660,23 @@ describe("Bun.serve unix socket validation", () => {
           return new Response("ok");
         },
       }),
-    ).toThrow();
+    ).toThrow("Cannot specify both hostname and unix");
+  });
+
+  // HTTP/3 is the only protocol left, and it needs a UDP socket.
+  test("unix socket with http3 and no http1 or http2 should throw", () => {
+    expect(() =>
+      // @ts-expect-error - Testing invalid combination
+      serve({
+        unix: "bun-serve-args-http3-only.sock",
+        http1: false,
+        http3: true,
+        tls,
+        fetch() {
+          return new Response("ok");
+        },
+      }),
+    ).toThrow("Cannot disable http1 with a unix socket");
   });
 
   describe("invalid unix socket paths should throw", () => {

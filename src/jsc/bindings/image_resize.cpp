@@ -25,6 +25,7 @@
 #define HWY_TARGET_INCLUDE "image_resize.cpp"
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 // clang-format on
 
 #include <cmath>
@@ -306,6 +307,40 @@ static void ModulateImpl(uint8_t* HWY_RESTRICT buf, size_t len, float brightness
     }
 }
 
+// u8×u8/255 with exact round-to-nearest: t=a·k+128; (t + (t>>8)) >> 8.
+template<class D8, class V8 = hn::Vec<D8>>
+static HWY_INLINE V8 MulDiv255(D8 d8, V8 a, V8 k)
+{
+    const hn::RepartitionToWide<D8> d16;
+    const auto bias = hn::Set(d16, 128);
+    auto lo = hn::Add(hn::Mul(hn::PromoteLowerTo(d16, a), hn::PromoteLowerTo(d16, k)), bias);
+    auto hi = hn::Add(hn::Mul(hn::PromoteUpperTo(d16, a), hn::PromoteUpperTo(d16, k)), bias);
+    lo = hn::ShiftRight<8>(hn::Add(lo, hn::ShiftRight<8>(lo)));
+    hi = hn::ShiftRight<8>(hn::Add(hi, hn::ShiftRight<8>(hi)));
+    return hn::OrderedDemote2To(d8, lo, hi);
+}
+
+// In-place inverted CMYK (byte = 255 − ink, libjpeg-turbo's TJPF_CMYK) → opaque RGBA via RGB = CMY·K/255, the non-CMS formula Skia and pdf.js use.
+static void CmykToRgbaImpl(uint8_t* HWY_RESTRICT buf, size_t npx)
+{
+    const hn::ScalableTag<uint8_t> d8;
+    const size_t N = hn::Lanes(d8);
+    const auto opaque = hn::Set(d8, 0xFF);
+    size_t i = 0;
+    for (; i + N <= npx; i += N, buf += N * 4) {
+        hn::Vec<decltype(d8)> c, m, y, k;
+        hn::LoadInterleaved4(d8, buf, c, m, y, k);
+        hn::StoreInterleaved4(MulDiv255(d8, c, k), MulDiv255(d8, m, k), MulDiv255(d8, y, k), opaque, d8, buf);
+    }
+    for (; i < npx; i++, buf += 4) {
+        const uint32_t k = buf[3];
+        buf[0] = static_cast<uint8_t>((buf[0] * k + 127) / 255);
+        buf[1] = static_cast<uint8_t>((buf[1] * k + 127) / 255);
+        buf[2] = static_cast<uint8_t>((buf[2] * k + 127) / 255);
+        buf[3] = 0xFF;
+    }
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun_image
 HWY_AFTER_NAMESPACE();
@@ -321,6 +356,7 @@ HWY_EXPORT(Rotate270Impl);
 HWY_EXPORT(FlipHImpl);
 HWY_EXPORT(FlipVImpl);
 HWY_EXPORT(ModulateImpl);
+HWY_EXPORT(CmykToRgbaImpl);
 HWY_EXPORT(NearestPaletteImpl);
 
 namespace {
@@ -527,8 +563,8 @@ int bun_image_resize_rgba8(const uint8_t* src, int32_t src_w, int32_t src_h,
     buildWeights(filter_kind, src_w, dst_w, xspans, xw, static_cast<int32_t>(L.wsx));
     buildWeights(filter_kind, src_h, dst_h, yspans, yw, static_cast<int32_t>(L.wsy));
 
-    HWY_DYNAMIC_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
-    HWY_DYNAMIC_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, L.wsy);
+    BUN_HWY_DISPATCH(HorizPass)(src, src_w, src_h, tmp, dst_w, xspans, xw, L.wsx);
+    BUN_HWY_DISPATCH(VertPass)(tmp, src_h, dst_w, dst, dst_h, yspans, yw, L.wsy);
     return 0;
 }
 
@@ -537,13 +573,13 @@ void bun_image_rotate_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* d
 {
     switch (degrees) {
     case 90:
-        HWY_DYNAMIC_DISPATCH(Rotate90Impl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(Rotate90Impl)(src, w, h, dst);
         break;
     case 180:
-        HWY_DYNAMIC_DISPATCH(Rotate180Impl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(Rotate180Impl)(src, w, h, dst);
         break;
     case 270:
-        HWY_DYNAMIC_DISPATCH(Rotate270Impl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(Rotate270Impl)(src, w, h, dst);
         break;
     default:
         std::memcpy(dst, src, static_cast<size_t>(w) * h * 4);
@@ -553,20 +589,25 @@ void bun_image_rotate_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* d
 void bun_image_flip_rgba8(const uint8_t* src, int32_t w, int32_t h, uint8_t* dst, int32_t horizontal)
 {
     if (horizontal)
-        HWY_DYNAMIC_DISPATCH(FlipHImpl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(FlipHImpl)(src, w, h, dst);
     else
-        HWY_DYNAMIC_DISPATCH(FlipVImpl)(src, w, h, dst);
+        BUN_HWY_DISPATCH(FlipVImpl)(src, w, h, dst);
 }
 
 void bun_image_modulate_rgba8(uint8_t* buf, size_t len, float brightness, float saturation)
 {
-    HWY_DYNAMIC_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
+    BUN_HWY_DISPATCH(ModulateImpl)(buf, len, brightness, saturation);
+}
+
+void bun_image_cmyk_to_rgba8(uint8_t* buf, size_t len)
+{
+    BUN_HWY_DISPATCH(CmykToRgbaImpl)(buf, len / 4);
 }
 
 uint32_t bun_image_nearest_palette(const uint8_t* palette, uint32_t k,
     int32_t r, int32_t g, int32_t b, int32_t a)
 {
-    return HWY_DYNAMIC_DISPATCH(NearestPaletteImpl)(palette, k, r, g, b, a);
+    return BUN_HWY_DISPATCH(NearestPaletteImpl)(palette, k, r, g, b, a);
 }
 
 } // extern "C"

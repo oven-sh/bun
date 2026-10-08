@@ -28,42 +28,8 @@
 #include "config.h"
 #include "EventContext.h"
 
-// #include "DOMWindow.h"
-// #include "Document.h"
-#include "EventNames.h"
-// #include "FocusEvent.h"
-// #include "HTMLFormElement.h"
-// #include "MouseEvent.h"
-// #include "TouchEvent.h"
-
 namespace WebCore {
 
 EventContext::~EventContext() = default;
-
-void EventContext::handleLocalEvents(Event& event, EventInvokePhase phase) const
-{
-    event.setTarget(m_target.get());
-    event.setCurrentTarget(m_currentTarget.get(), m_currentTargetIsInShadowTree);
-
-    if (!m_node || m_type == Type::Window) [[unlikely]] {
-        m_currentTarget->fireEventListeners(event, phase);
-        return;
-    }
-
-    if (!m_node->hasEventTargetData())
-        return;
-
-    m_node->fireEventListeners(event, phase);
-}
-
-#if ASSERT_ENABLED
-
-bool EventContext::isUnreachableNode(EventTarget* target) const
-{
-    // FIXME: Checks also for SVG elements.
-    return false;
-}
-
-#endif
 
 }

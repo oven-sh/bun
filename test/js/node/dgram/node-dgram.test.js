@@ -56,6 +56,19 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
   expect(exitCode).toBe(0);
 });
 
+test("node:dgram Symbol.asyncDispose closes the socket and resolves after 'close'", async () => {
+  const socket = dgram.createSocket("udp4");
+  await new Promise(resolve => socket.bind(0, "127.0.0.1", resolve));
+  const events = [];
+  socket.on("close", () => events.push("close"));
+  await socket[Symbol.asyncDispose]();
+  events.push("disposed");
+  expect(events).toEqual(["close", "disposed"]);
+  // The handle is gone, so disposing again resolves without touching the socket.
+  await expect(socket[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  expect(() => socket.address()).toThrow(expect.objectContaining({ code: "ERR_SOCKET_DGRAM_NOT_RUNNING" }));
+});
+
 describe.skipIf(!isIPv6())("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {
     const socket = makeSocket6();

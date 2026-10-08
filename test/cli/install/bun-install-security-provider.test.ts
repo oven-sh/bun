@@ -108,6 +108,10 @@ test("basic", {
       url: "https://example.com/advisory-1",
     },
   ],
+  expect: ({ out }) => {
+    expect(out).toContain("Advisory 1 description");
+    expect(out).toContain("https://example.com/advisory-1");
+  },
 });
 
 test("shows progress message when scanner takes more than 1 second", {
@@ -600,6 +604,10 @@ describe("Edge Cases", () => {
   test("empty advisories array", {
     scanner: async () => [],
     expectedExitCode: 0,
+    expect: ({ out }) => {
+      expect(out).toContain("installed bar@");
+      expect(out).not.toContain("advisory");
+    },
   });
 
   test("special characters in advisory", {
@@ -699,17 +707,18 @@ describe("Package Resolution", () => {
 });
 
 describe("Large payload via ipc pipe", () => {
-  // Pad package names so the JSON exceeds 1MB with fewer packages. Each
-  // package resolution triggers an HTTP round-trip to the dummy registry,
-  // which is the slow part on Windows aarch64. The name appears twice in
-  // each JSON entry (name field + tarball URL), so 170-char padding gives
-  // ~470 bytes/entry; 2500 entries = ~1.2MB. Filenames stay under 200 chars.
-  const PKG_COUNT = 2500;
-  const NAME_PAD = Buffer.alloc(170, "x").toString();
-  const pkgName = (i: number) => `test-pkg-${NAME_PAD}-${i}`;
+  // The >1MB payload threshold is reached via long tarball URLs (query-string
+  // padding) rather than many packages. Each package still costs a manifest
+  // fetch + tarball fetch + extract, so fewer packages keeps this test fast on
+  // Windows aarch64 while the IPC pipe still round-trips >1MB of JSON.
+  //
+  // 400 packages x ~3KB tarball URL = ~1.25MB; the scanner returns a fatal
+  // advisory after validating the payload so the subsequent node_modules link
+  // step (which is not under test here) is skipped.
+  const PKG_COUNT = 400;
+  const URL_PAD = Buffer.alloc(3000, "p").toString();
+  const pkgName = (i: number) => `test-pkg-${i}`;
 
-  // Every package resolves to the same tarball bytes, served from memory so
-  // the registry never touches the filesystem.
   let barTarballBytes: Uint8Array;
 
   beforeAll(async () => {
@@ -717,7 +726,7 @@ describe("Large payload via ipc pipe", () => {
   });
 
   test("handles packages JSON larger than max arg length (>1MB)", {
-    testTimeout: 120_000,
+    testTimeout: 60_000,
     scanner: async ({ packages }) => {
       const jsonSize = JSON.stringify(packages).length;
       console.log(`Received JSON payload of ${jsonSize} bytes from ${packages.length} packages`);
@@ -730,7 +739,9 @@ describe("Large payload via ipc pipe", () => {
         throw new Error("Expected to receive packages");
       }
 
-      return [];
+      // Abort the install after the IPC payload has been validated; linking
+      // hundreds of packages into node_modules is not what is under test here.
+      return [{ package: packages[0].name, description: "abort after IPC payload check", level: "fatal", url: null }];
     },
 
     packageJson: (() => {
@@ -746,13 +757,12 @@ describe("Large payload via ipc pipe", () => {
       };
     })(),
     packages: [],
-    concurrent: false,
-    customRegistry: (urls, ctx) => {
+    fails: true,
+    customRegistry: (_urls, ctx) => {
       return async (request: Request) => {
-        urls.push(request.url);
         const url = request.url.replaceAll("%2f", "/");
         expect(request.method).toBe("GET");
-        if (url.endsWith(".tgz")) {
+        if (new URL(url).pathname.endsWith(".tgz")) {
           return new Response(barTarballBytes);
         }
         expect(request.headers.get("accept")).toBe(
@@ -765,21 +775,25 @@ describe("Large payload via ipc pipe", () => {
           JSON.stringify({
             name,
             versions: {
-              "0.0.2": { name, version: "0.0.2", dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz` } },
+              "0.0.2": {
+                name,
+                version: "0.0.2",
+                dist: { tarball: `${ctx.registry_url}${name}-0.0.2.tgz?pad=${URL_PAD}` },
+              },
             },
             "dist-tags": { latest: "0.0.2" },
           }),
         );
       };
     },
-    expectedExitCode: 0,
     expect: ({ out }) => {
-      expect(out).toContain("Received JSON payload");
-
-      const match = out.match(/Received JSON payload of (\d+) bytes/);
+      const match = out.match(/Received JSON payload of (\d+) bytes from (\d+) packages/);
       expect(match).not.toBeNull();
       const bytes = parseInt(match![1], 10);
+      const count = parseInt(match![2], 10);
       expect(bytes).toBeGreaterThan(1024 * 1024);
+      expect(count).toBe(PKG_COUNT);
+      expect(out).toContain("abort after IPC payload check");
     },
   });
 });

@@ -31,7 +31,7 @@ use crate::hir::{
 /// removing event handlers, and stripping known event handler / ref JSX props.
 ///
 /// Corresponds to TS `optimizeForSSR(fn: HIRFunction): void`.
-pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
+pub(crate) fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
     // Phase 1: Identify useState/useReducer calls that can be safely inlined.
     //
     // For useState(initialValue) where initialValue is primitive/object/array,
@@ -184,7 +184,7 @@ pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                 InstructionValue::JsxExpression { tag, .. } => {
                     if let crate::hir::JsxTag::Builtin(builtin) = tag {
                         // Only optimize non-custom-element builtin tags
-                        if !builtin.name.contains(&b'-') {
+                        if !bun_core::strings::contains_char(&builtin.name, b'-') {
                             let tag_name = builtin.name;
                             // Retain only props that are not known event handlers and not "ref"
                             if let InstructionValue::JsxExpression { props, .. } = &mut instr.value

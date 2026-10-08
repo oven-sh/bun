@@ -29,7 +29,6 @@ public:
     static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data);
-    // static KeyObject createJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
 
     enum class KeyEncodingContext {
         Input,
@@ -48,7 +47,6 @@ private:
     // Helpers for `prepareAsymmetricKey`
     static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk, PrepareAsymmetricKeyMode mode);
     static KeyObject getKeyObjectHandleFromRaw(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> keyData, ncrypto::EVPKeyPointer::PKFormatType format, const WTF::String& asymmetricKeyType, JSC::JSValue namedCurveValue);
-    static void getKeyObjectFromHandle(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, const KeyObject& handle, PrepareAsymmetricKeyMode mode);
 
 public:
     static ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig getPrivateKeyEncoding(

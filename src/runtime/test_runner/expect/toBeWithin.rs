@@ -4,7 +4,7 @@ use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_within(
+    pub(crate) fn to_be_within(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -16,10 +16,9 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let _arguments = frame.arguments_old::<2>();
-        let arguments = _arguments.slice();
+        let arguments = frame.arguments();
 
-        if arguments.len() < 1 {
+        if arguments.len() < 2 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toBeWithin() requires 2 arguments"
             )));
@@ -62,7 +61,6 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        // defer formatter.deinit(); — handled by Drop
         let start_fmt = start_value.to_fmt(&mut formatter);
         let end_fmt = end_value.to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);

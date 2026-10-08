@@ -29,17 +29,17 @@ pub(crate) struct ImportRef {
     pub stmt_index: u32,
 }
 
-pub(crate) struct DeduplicatedImportResult {
+struct DeduplicatedImportResult {
     pub namespace_ref: Ref,
     pub import_record_index: u32,
 }
 
 impl<'a> ConvertESMExportsForHmr<'a> {
-    // Note: takes the concrete `P<'p, TS, SCAN>`; `AstBuilder` instead
+    // Note: takes the concrete `P<'p, TS, SCAN, SEMA>`; `AstBuilder` instead
     // open-codes the equivalent transform (see bundler/AstBuilder.rs).
-    pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
+    pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, TS, SCAN, SEMA>,
         stmt: Stmt,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
@@ -195,7 +195,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             })?;
                         self.last_part
                             .symbol_uses
-                            .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
+                            .put_no_clobber(temp_id, js_ast::symbol::Use::unscoped(1))?;
                         // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
                         VecExt::append(&mut p.current_scope_mut().generated, temp_id);
 
@@ -229,20 +229,20 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         );
                     }
                     js_ast::StmtOrExpr::Stmt(s) => {
+                        let ref_ = match s.data {
+                            js_ast::StmtData::SClass(mut class) => {
+                                // The visit pass names an anonymous default function
+                                // but leaves an anonymous default class unnamed. A
+                                // class statement needs a binding, so use the
+                                // statement's default name like convertStmtsForChunk.
+                                class.class.class_name.get_or_insert(st.default_name).ref_
+                            }
+                            js_ast::StmtData::SFunction(func) => func.func.name.unwrap().ref_,
+                            _ => unreachable!(),
+                        };
                         self.export_props.push(G::Property {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
-                            value: Some(Expr::init_identifier(
-                                match s.data {
-                                    js_ast::StmtData::SClass(class) => {
-                                        class.class.class_name.unwrap().ref_
-                                    }
-                                    js_ast::StmtData::SFunction(func) => {
-                                        func.func.name.unwrap().ref_
-                                    }
-                                    _ => unreachable!(),
-                                },
-                                stmt.loc,
-                            )),
+                            value: Some(Expr::init_identifier(ref_, stmt.loc)),
                             ..Default::default()
                         });
                         break 'stmt *s;
@@ -393,9 +393,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     /// Deduplicates imports, returning a previously used Ref and import record
     /// index if present.
-    fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
+    fn deduplicated_import<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, TS, SCAN, SEMA>,
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
@@ -471,7 +471,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // Note: the concrete `P` always carries `symbol_uses`;
                     // once a `ParserLike` trait is introduced for
                     // AstBuilder, that variant should override this to a no-op.
-                    p.symbol_uses.swap_remove(&namespace_ref);
+                    p.forget_part_use(namespace_ref);
                 }
             }
             if stmt.star_name_loc.is_empty() {
@@ -512,9 +512,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         })
     }
 
-    fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(
+    fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, TS, SCAN, SEMA>,
         binding: Binding,
     ) -> Result<(), AllocError> {
         match binding.data {
@@ -536,9 +536,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool>(
+    fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, TS, SCAN, SEMA>,
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
         loc: bun_ast::Loc,
@@ -593,7 +593,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 })?;
             self.last_part
                 .symbol_uses
-                .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
+                .put_no_clobber(arg1, js_ast::symbol::Use::unscoped(1))?;
             // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
             VecExt::append(&mut p.current_scope_mut().generated, arg1);
 
@@ -633,9 +633,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool>(
+    pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool, const SEMA: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, TS, SCAN, SEMA>,
         // Note: `self.last_part` must not alias into this slice
         // (Stacked Borrows: `&mut [Part]` asserts
         // exclusive access to every element). Caller passes the `[0..len-1]`
@@ -684,7 +684,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // mark a dependency on module_ref so it is renamed
             self.last_part
                 .symbol_uses
-                .put(p.module_ref, js_ast::symbol::Use { count_estimate: 1 })?;
+                .put(p.module_ref, js_ast::symbol::Use::unscoped(1))?;
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol {
@@ -739,7 +739,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 if !gop.found_existing {
                     *gop.value_ptr = v;
                 } else {
-                    gop.value_ptr.count_estimate += v.count_estimate;
+                    gop.value_ptr.merge(v);
                 }
             }
             part.stmts = bun_ast::StoreSlice::EMPTY;

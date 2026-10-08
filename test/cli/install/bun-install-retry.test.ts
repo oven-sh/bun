@@ -143,7 +143,13 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
   });
   await writeFile(
     join(package_dir, "bunfig.toml"),
-    `[install]\ncache = false\nregistry = { url = "${root_url}/", token = "${token}" }\nsaveTextLockfile = false\n`,
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `${root_url}/`, token },
+        saveTextLockfile: false,
+      },
+    }),
   );
   await writeFile(
     join(package_dir, "package.json"),
@@ -327,7 +333,13 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
     });
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      `[install]\ncache = false\nregistry = "${root_url}/"\nlinker = "${linker}"\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `${root_url}/`,
+          linker,
+        },
+      }),
     );
     await writeFile(
       join(package_dir, "package.json"),
@@ -382,7 +394,13 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
     });
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      `[install]\ncache = false\nregistry = "${root_url}/"\nlinker = "${linker}"\n`,
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `${root_url}/`,
+          linker,
+        },
+      }),
     );
     await writeFile(
       join(package_dir, "package.json"),

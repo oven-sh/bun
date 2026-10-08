@@ -34,8 +34,6 @@ public:
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 };
 
-// Constructor helper
-JSValue constructS3File(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
 Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
 } // namespace Bun

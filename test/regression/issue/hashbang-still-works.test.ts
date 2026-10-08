@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 describe.concurrent("hashbang-still-works", () => {
   test("hashbang still works after bounds check fix", async () => {
-    const dir = tempDirWithFiles("hashbang", {
+    await using dir = tempDir("hashbang", {
       "script.js": "#!/usr/bin/env bun\nconsole.log('hello');",
     });
 
@@ -25,7 +25,7 @@ describe.concurrent("hashbang-still-works", () => {
   });
 
   test("lexer handles single # character without bounds error", async () => {
-    const dir = tempDirWithFiles("single-hash", {
+    await using dir = tempDir("single-hash", {
       "single-hash.js": "#",
     });
 
@@ -43,7 +43,7 @@ describe.concurrent("hashbang-still-works", () => {
   });
 
   test("lexer should not crash on single # character", async () => {
-    const dir = tempDirWithFiles("single-hash", {
+    await using dir = tempDir("single-hash", {
       "single-hash.js": "#",
     });
 

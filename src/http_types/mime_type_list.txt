@@ -2299,12 +2299,3 @@ application/vnd.openxmlformats-officedocument.wordprocessingml.websettings+xml
 application/vnd.openxmlformats-officedocument.presentationml.commentauthors+xml
 application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml
 application/vnd.openxmlformats-officedocument.spreadsheetml.revisionheaders+xml
-application/vnd.openxmlformats-officedocument.presentationml.slideupdateinfo+xml
-application/vnd.openxmlformats-officedocument.spreadsheetml.tablesinglecells+xml
-application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml
-application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml
-application/vnd.openxmlformats-officedocument.spreadsheetml.pivotcacherecords+xml
-application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml
-application/vnd.openxmlformats-officedocument.spreadsheetml.pivotcachedefinition+xml
-application/vnd.openxmlformats-officedocument.spreadsheetml.volatiledependencies+xml
-application/vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml

@@ -7,6 +7,7 @@ import {
   MYSQL_FAST_AUTH_SUCCESS,
   MYSQL_MOCK_AUTH_DATA_PART_1,
   MYSQL_MOCK_AUTH_DATA_PART_2,
+  mysqlAckSessionSetup,
   mysqlAuthMoreData,
   mysqlHandshakeV10,
   mysqlOkPacket,
@@ -131,6 +132,9 @@ test.each(["split", "coalesced"] as const)(
             }
             return;
           }
+          // The session-setup COM_QUERY (SET time_zone) belongs to connection
+          // establishment; ack it and keep it out of `commands`.
+          if (mysqlAckSessionSetup(socket, payload)) return;
           commands.push(payload[0]);
           if (payload[0] === COM_QUERY) {
             socket.write(mysqlTextResultSet(1, [{ name: "v", type: MYSQL_TYPE_VAR_STRING }], [["REAL-ROW"]]));
@@ -186,6 +190,8 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
           // Accept the auth so the query below completes and `await using sql` can
           // tear down over the normal COM_QUIT path; the scramble is the subject.
           socket.write(mysqlOkPacket(seq + 1));
+        } else if (mysqlAckSessionSetup(socket, payload)) {
+          // session setup acked
         } else if (payload[0] === COM_QUERY) {
           socket.write(mysqlTextResultSet(1, [{ name: "v", type: MYSQL_TYPE_VAR_STRING }], [["REAL-ROW"]]));
         } else {
@@ -214,6 +220,42 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
     const nonce21 = Buffer.concat([MYSQL_MOCK_AUTH_DATA_PART_1, MYSQL_MOCK_AUTH_DATA_PART_2]);
     expect([expected(nonce20), expected(nonce21)]).toContain(sent.toString("hex"));
     expect(rows).toEqual([{ v: "REAL-ROW" }]);
+  } finally {
+    server.close();
+  }
+});
+
+// AuthMoreData 0x04 (perform_full_authentication) over plain TCP makes the client
+// fetch the server's RSA public key, which is refused unless allowPublicKeyRetrieval
+// is set. Every MySQL 8 first connection for a user looks like this by default, so
+// the refusal must name the cause and the remedies, not just say "Connection closed".
+test("public key retrieval refusal names allowPublicKeyRetrieval and TLS as remedies", async () => {
+  const PERFORM_FULL_AUTH = 0x04;
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+        if (!authed) {
+          // HandshakeResponse41 -> demand full authentication.
+          authed = true;
+          socket.write(mysqlAuthMoreData(seq + 1, Buffer.from([PERFORM_FULL_AUTH])));
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db`, max: 1 });
+    const err = await sql.connect().then(
+      () => null,
+      e => e,
+    );
+    expect(err?.code).toBe("ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED");
+    expect(err?.message).toContain("allowPublicKeyRetrieval: true");
+    expect(err?.message).toContain("TLS");
   } finally {
     server.close();
   }

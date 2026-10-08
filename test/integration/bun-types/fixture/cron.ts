@@ -70,3 +70,15 @@ declare const controller: Bun.CronController;
 expectType(controller.type).is<"scheduled">();
 expectType(controller.cron).is<string>();
 expectType(controller.scheduledTime).is<number>();
+
+// -- { tz } option --
+
+expectType(Bun.cron.parse("@hourly", Date.now(), { tz: "UTC" })).is<Date | null>();
+expectType(Bun.cron.parse("0 9 * * *", new Date(), { tz: "America/New_York" })).is<Date | null>();
+expectType(Bun.cron("* * * * *", () => {}, { tz: "UTC" })).is<Bun.CronJob>();
+expectType(Bun.cron("0 9 * * *", async () => {}, { tz: "America/New_York" })).is<Bun.CronJob>();
+
+// -- CronOptions type is accessible --
+
+declare const opts: Bun.CronOptions;
+expectType(opts.tz).is<string | undefined>();

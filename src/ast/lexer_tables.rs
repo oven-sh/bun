@@ -52,6 +52,7 @@ pub enum T {
     TLessThan,
     TLessThanEquals,
     TLessThanLessThan,
+    TLessThanSlash, // scanned for the type checker only, in a file with JSX
     TMinus,
     TMinusMinus,
     TOpenBrace,
@@ -269,7 +270,7 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
 /// earlier `LazyLock<EnumMap<T, _>>` so lookup is a plain array index with
 /// zero init code.
 #[repr(transparent)]
-pub struct TokenEnumType(pub [&'static [u8]; <T as Enum>::LENGTH]);
+pub struct TokenEnumType(pub(crate) [&'static [u8]; <T as Enum>::LENGTH]);
 
 impl core::ops::Index<T> for TokenEnumType {
     type Output = &'static [u8];
@@ -326,6 +327,7 @@ pub static TOKEN_TO_STRING: TokenEnumType = TokenEnumType({
     token_enums[T::TLessThan as usize] = b"\"<\"";
     token_enums[T::TLessThanEquals as usize] = b"\"<=\"";
     token_enums[T::TLessThanLessThan as usize] = b"\"<<\"";
+    token_enums[T::TLessThanSlash as usize] = b"\"</\"";
     token_enums[T::TMinus as usize] = b"\"-\"";
     token_enums[T::TMinusMinus as usize] = b"\"--\"";
     token_enums[T::TOpenBrace as usize] = b"\"{\"";

@@ -30,7 +30,7 @@ pub(crate) static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static st
 /// Sentinel default for errnos with no coreutils label. Stored by pointer
 /// identity in `COREUTILS_ERROR_MAP` so `get()` can distinguish "unmapped"
 /// from a real entry.
-pub(crate) const UNKNOWN: &str = "unknown error";
+const UNKNOWN: &str = "unknown error";
 
 /// The
 /// `EnumMap` is total, so we treat the `UNKNOWN` sentinel as `None` so callers

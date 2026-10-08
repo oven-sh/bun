@@ -33,19 +33,17 @@
 #include "SerializedScriptValue.h"
 #include <wtf/TZoneMallocInlines.h>
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String& name)
-    : ContextDestructionObserver(&context)
+    : ActiveDOMObject(&context)
     , m_name(name.isolatedCopy())
     , m_contextId(context.identifier())
 {
-    initializeWeakPtrFactory();
-    BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
+    EventTarget::initializeWeakPtrFactory();
+    BunBroadcastChannelRegistry::singleton().subscribe(m_name, context, *this);
     jsRef(context.jsGlobalObject());
 }
 
@@ -56,6 +54,10 @@ BroadcastChannel::~BroadcastChannel()
 
 ExceptionOr<void> BroadcastChannel::postMessage(JSC::JSGlobalObject& globalObject, JSC::JSValue messageValue)
 {
+    // Made or kept by the script of a disposed Bun.ModuleGraph: like a MessagePort of one it says nothing,
+    // to the script (the stop closes it a turn later) or to anyone listening on the name.
+    if (auto* context = scriptExecutionContext(); context && context->isForModuleGraph() && context->isStopped())
+        return {};
     if (isClosed())
         return Exception { InvalidStateError, "This BroadcastChannel is closed"_s };
 
@@ -83,13 +85,18 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#dom-broadcastchannel-postmessage (step 7's task,
+    // sub-step 3): if deserializing throws, catch it and fire messageerror instead.
     Vector<RefPtr<MessagePort>> dummyPorts;
     auto event = MessageEvent::create(*globalObject, WTF::move(message), {}, {}, nullptr, WTF::move(dummyPorts));
     if (scope.exception()) [[unlikely]] {
-        RELEASE_ASSERT(vm.hasPendingTerminationException());
+        if (vm.hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
         return;
     }
-    dispatchEvent(event.event);
+    dispatchEvent(event->event);
 }
 
 void BroadcastChannel::close()
@@ -98,6 +105,15 @@ void BroadcastChannel::close()
     if (prev & Closed)
         return;
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
+}
+
+// Its context stopped (a worker's, or a disposed Bun.ModuleGraph's): nobody is left to close() it,
+// so what it holds of the event loop goes too.
+void BroadcastChannel::stop()
+{
+    close();
+    if (auto* context = scriptExecutionContext())
+        jsUnref(context->jsGlobalObject());
 }
 
 void BroadcastChannel::contextDestroyed()
@@ -114,7 +130,7 @@ void BroadcastChannel::eventListenersDidChange()
         m_state.fetch_and(~uint64_t(HasMessageListener), std::memory_order_acq_rel);
 }
 
-bool BroadcastChannel::hasPendingActivity() const
+bool BroadcastChannel::virtualHasPendingActivity() const
 {
     // Called from the GC thread; a single atomic load covers everything.
     // Queued-but-undelivered messages are NOT counted as pending activity:
@@ -131,7 +147,7 @@ void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
     if (!m_hasRef) {
         m_hasRef = true;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
 }
 
@@ -139,7 +155,7 @@ void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
     if (m_hasRef) {
         m_hasRef = false;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
 }
 

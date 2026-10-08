@@ -2515,7 +2515,8 @@ describe("process.exitCode", () => {
 });
 
 // Node emits 'beforeExit' and 'exit' with `process.emit(event, code)`, so an `emit` that a program replaced
-// is what runs. Each expectation below is the output of node v26.3.0 for the same script.
+// is what runs. Each expectation below is the output of node v26.3.0 for the same script, unless the case
+// says what node does.
 describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
   // Logs the two events and calls the built-in emit.
   const logEmit = `
@@ -2581,6 +2582,12 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
       exitCode: 3,
     },
     {
+      name: "process.exit(code) calls emit with the code",
+      script: logEmit + `process.on("exit", code => console.log("listener exit", code)); process.exit(2);`,
+      stdout: ["emit exit 2", "listener exit 2"],
+      exitCode: 2,
+    },
+    {
       name: "no listener runs when the replaced emit does not call the built-in one",
       script:
         listeners +
@@ -2607,6 +2614,17 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
          });
          process.kill(process.pid, "SIGINT");`,
       stdout: ["listener SIGINT", "onExit 0 null"],
+    },
+    {
+      name: "the emit and reallyExit that signal-exit installs, in process.exit()",
+      script: signalExit + `process.on("exit", code => console.log("listener exit", code)); process.exit(2);`,
+      stdout: ["listener exit 2", "onExit 2 null"],
+      exitCode: 2,
+    },
+    {
+      name: "two replaced emits, one over the other",
+      script: signalExit + `{ ${logEmit} }`,
+      stdout: ["emit beforeExit 0", "emit exit 0", "onExit 0 null"],
     },
     {
       name: "an emit on the prototype of process",
@@ -2737,6 +2755,24 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
       exitCode: 1,
     },
     {
+      name: "the ticks that an 'uncaughtException' listener queues for a throw from emit at 'beforeExit' run",
+      script: `
+        const builtInEmit = process.emit;
+        process.emit = function (event, ...args) {
+          if (event === "beforeExit") throw new Error("boom");
+          return builtInEmit.call(this, event, ...args);
+        };
+        process.on("uncaughtException", error => {
+          console.log("uncaughtException", error.message);
+          process.nextTick(() => {
+            console.log("tick");
+            process.exit(1);
+          });
+        });`,
+      stdout: ["uncaughtException boom", "tick"],
+      exitCode: 1,
+    },
+    {
       name: "a throw from emit at 'exit' is an uncaught exception",
       script:
         listeners +
@@ -2750,7 +2786,8 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
       exitCode: 1,
     },
     {
-      name: "a throw from emit in process.exit() goes to the caller, and the exit emits 'exit' again",
+      // Node emits 'exit' again when the event loop ends after this: "emit exit 3 call 2", "listener exit 3".
+      name: "a throw from emit in process.exit() goes to the caller",
       script: `
         const builtInEmit = process.emit;
         let calls = 0;
@@ -2767,8 +2804,36 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
         } catch (error) {
           console.log("caught", error.message);
         }`,
-      stdout: ["emit exit 3 call 1", "caught boom", "emit exit 3 call 2", "listener exit 3"],
+      stdout: ["emit exit 3 call 1", "caught boom"],
       exitCode: 3,
+    },
+    {
+      // Node exits with 3 here and in the next case: a throw at 'exit' does not replace the exit code there.
+      name: "a throw from emit in process.exit() that nothing catches: the 'exit' listeners run once",
+      script: `
+        const builtInEmit = process.emit;
+        process.emit = function (event, ...args) {
+          const returned = builtInEmit.call(this, event, ...args);
+          if (event === "exit") throw new Error("boom");
+          return returned;
+        };
+        process.on("exit", code => console.log("listener exit", code));
+        process.exit(3);`,
+      stdout: ["listener exit 3"],
+      stderr: "boom",
+      exitCode: expect.any(Number),
+    },
+    {
+      name: "process.exit() in a 'beforeExit' listener and a throw from an 'exit' listener: the listeners run once",
+      script: `
+        process.on("beforeExit", () => process.exit(3));
+        process.on("exit", code => {
+          console.log("listener exit", code);
+          throw new Error("boom");
+        });`,
+      stdout: ["listener exit 3"],
+      stderr: "boom",
+      exitCode: expect.any(Number),
     },
     {
       name: "emit = 5: a natural exit emits nothing and keeps the exit code",
@@ -2777,45 +2842,17 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
       exitCode: 9,
     },
     {
-      name: "emit = 5: process.exit() throws a TypeError, and the exit emits 'exit' again",
+      name: "emit = 5: process.exit() throws a TypeError",
       script: `
-        const builtInEmit = process.emit;
         process.on("exit", code => console.log("listener exit", code));
         process.emit = 5;
         try {
           process.exit(3);
         } catch (error) {
           console.log("caught", error.name + ":", error.message);
-        }
-        process.emit = builtInEmit;`,
-      stdout: ["caught TypeError: process.emit is not a function", "listener exit 3"],
-      exitCode: 3,
-    },
-    {
-      name: "emit = 5: the process.exit() after the one that threw emits nothing",
-      script: `
-        const builtInEmit = process.emit;
-        process.on("exit", code => console.log("listener exit", code));
-        process.emit = 5;
-        try {
-          process.exit(3);
-        } catch (error) {
-          console.log("caught", error.name + ":", error.message);
-        }
-        process.emit = builtInEmit;
-        process.exit(6);`,
+        }`,
       stdout: ["caught TypeError: process.emit is not a function"],
-      exitCode: 6,
-    },
-    {
-      name: "process.exit() with a process.reallyExit that returns: the exit emits 'exit' again",
-      script: `
-        process.on("exit", code => console.log("listener exit", code));
-        process.reallyExit = () => {};
-        process.exit(2);
-        console.log("after process.exit()");`,
-      stdout: ["listener exit 2", "after process.exit()", "listener exit 2"],
-      exitCode: 2,
+      exitCode: 3,
     },
     {
       name: "in a worker that ends",
@@ -2841,7 +2878,7 @@ describe.concurrent("'beforeExit' and 'exit' go through process.emit", () => {
         stderr: "pipe",
       });
       const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: out.split("\n").filter(Boolean), stderr: err, exitCode: code }).toEqual({
+      expect({ stdout: out.split(/\r?\n/).filter(Boolean), stderr: err, exitCode: code }).toEqual({
         stdout,
         stderr: stderr ? expect.stringContaining(stderr) : "",
         exitCode,

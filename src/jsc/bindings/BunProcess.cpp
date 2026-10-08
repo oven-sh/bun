@@ -337,28 +337,21 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// How an event that the runtime emits reaches `process.emit`. The shapes differ when `emit` is not callable.
+// How node calls `process.emit` for an event: it decides what a non-callable `emit` and a throw do.
 enum class ProcessEmitCall : uint8_t {
-    // node's MakeCallback(process, "emit", ...): 'beforeExit', and 'exit' when nothing called process.exit().
-    // Nothing is called and nothing throws.
+    // MakeCallback(process, "emit", ...) does not call a non-callable emit: https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L307
     MakeCallback,
-    // node's `process.emit('exit', code)` in process.exit(): TypeError "process.emit is not a function".
+    // process.exit() calls process.emit() from script: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/per_thread.js#L236
     ProcessExit,
-    // The tick that emits 'worker'.
-    WorkerEvent,
 };
 
-// Node reads `emit` from `process` for each event it emits, so an `emit` that a program replaced is what
-// runs (signal-exit replaces it to see 'exit'). Returns that `emit`, or the empty value while it is the
-// built-in one: the caller then emits on the native emitter, with no call into JS. The value is empty too
-// when the read threw.
+// The `emit` that script reads from `process`, or the empty value while that is the built-in one (or when the read threw).
 static JSValue replacedProcessEmit(JSC::JSGlobalObject* globalObject, Process* process)
 {
     auto& vm = JSC::getVM(globalObject);
     auto emitName = Identifier::fromString(vm, "emit"_s);
 
-    // A program that never touched `emit` stops here, before a [[Get]]: `process` has no own `emit` (the
-    // name is not in processObjectTable either) and its prototype, an ordinary object, holds the built-in one.
+    // No [[Get]] for a program that never touched `emit`: `process` has no own one (nor a processObjectTable entry) and its ordinary prototype holds the built-in one.
     if (!process->getDirect(vm, emitName)) [[likely]] {
         auto* prototype = process->getPrototypeDirect().getObject();
         if (prototype && !prototype->structure()->typeInfo().overridesGetOwnPropertySlot() && WebCore::JSEventEmitter::isBuiltInEmit(prototype->getDirect(vm, emitName))) [[likely]]
@@ -368,73 +361,46 @@ static JSValue replacedProcessEmit(JSC::JSGlobalObject* globalObject, Process* p
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue emit = process->get(globalObject, emitName);
     RETURN_IF_EXCEPTION(scope, {});
-    // signal-exit puts the built-in emit back, as an own property, when its last handler goes.
+    // signal-exit puts the built-in emit back, as an own property, when its last handler is removed.
     if (WebCore::JSEventEmitter::isBuiltInEmit(emit))
         return {};
     return emit;
 }
 
-// [[Call]] of an `emit` read from `process`, with this = process. The empty value means that nothing was
-// called (MakeCallback, and `emit` is not callable) or that an exception is pending.
-static JSValue callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, JSValue emit, const ArgList& args, ProcessEmitCall shape)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto callData = JSC::getCallData(emit);
-    if (callData.type == CallData::Type::None) {
-        if (shape == ProcessEmitCall::ProcessExit)
-            throwTypeError(globalObject, scope, "process.emit is not a function"_s);
-        else if (shape == ProcessEmitCall::WorkerEvent)
-            scope.throwException(globalObject, createNotAFunctionError(globalObject, emit));
-        return {};
-    }
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, emit, callData, process, args));
-}
-
-enum class ReplacedProcessEmit : uint8_t {
-    // `emit` is the built-in one and nothing ran: the caller emits on the native emitter.
-    No,
-    Called,
-    // `emit` is not callable, or the read of `emit` or the call threw.
-    NotCalled,
-};
-
-// 'beforeExit' and 'exit' for a program that replaced `process.emit`: node's `emit.call(process, event, code)`.
-static ReplacedProcessEmit emitThroughReplacedEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral event, int exitCode, ProcessEmitCall shape)
+// Calls a replaced `process.emit` with (event, ...args). Empty: `emit` is the built-in one and the caller emits on the native emitter.
+static JSValue emitThroughReplacedEmit(JSC::JSGlobalObject* globalObject, Process* process, const Identifier& event, const ArgList& args, ProcessEmitCall shape)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue emit = replacedProcessEmit(globalObject, process);
-    JSValue returned;
+    JSValue returned = jsUndefined();
     if (!scope.exception()) [[likely]] {
         if (!emit) [[likely]]
-            return ReplacedProcessEmit::No;
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsNontrivialString(vm, event));
-        arguments.append(jsNumber(exitCode));
-        returned = callProcessEmit(globalObject, process, emit, arguments, shape);
+            return {};
+        if (shape == ProcessEmitCall::ProcessExit || emit.isCallable()) {
+            MarkedArgumentBuffer emitArgs;
+            emitArgs.append(jsString(vm, event.string()));
+            for (size_t i = 0; i < args.size(); ++i)
+                emitArgs.append(args.at(i));
+            returned = JSC::call(globalObject, emit, process, emitArgs, "process.emit is not a function"_s);
+        }
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
-        // process.exit() has a caller to throw to. A MakeCallback has no script below it: the throw is
-        // reported the way a listener's throw is. A termination stays pending.
+        // process.exit() has a caller to throw to. A MakeCallback has no script below it, so the throw is reported as a listener's throw is.
         if (shape == ProcessEmitCall::MakeCallback && scope.tryClearException())
             Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-        return ReplacedProcessEmit::NotCalled;
+        return jsUndefined();
     }
-    return returned ? ReplacedProcessEmit::Called : ReplacedProcessEmit::NotCalled;
+    return returned;
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode, ProcessEmitCall shape)
 {
+    if (exitCode > 0)
+        process->m_isExitCodeObservable = true;
     if (process->m_isExiting)
         return;
-    if (shape == ProcessEmitCall::ProcessExit) {
-        if (process->m_processExitEmittedExit)
-            return;
-        process->m_processExitEmittedExit = true;
-    } else {
-        process->m_isExiting = true;
-    }
+    process->m_isExiting = true;
     auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
@@ -442,16 +408,15 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
         return;
 
     putDirectNamed(vm, process, "_exiting"_s, jsBoolean(true));
-    if (emitThroughReplacedEmit(globalObject, process, "exit"_s, exitCode, shape) != ReplacedProcessEmit::No) [[unlikely]]
-        return;
-
     auto event = Identifier::fromString(vm, "exit"_s);
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(exitCode));
+    if (emitThroughReplacedEmit(globalObject, process, event, arguments, shape)) [[unlikely]]
+        return;
     if (!emitter.hasEventListeners(event)) {
         return;
     }
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
     emitter.emit(event, arguments);
 }
 
@@ -961,13 +926,13 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    if (auto replaced = emitThroughReplacedEmit(globalObject, process, "beforeExit"_s, exitCode, ProcessEmitCall::MakeCallback); replaced != ReplacedProcessEmit::No) [[unlikely]] {
-        // node's MakeCallback runs the checkpoint after each call of `emit`, whatever it returned.
-        if (replaced == ReplacedProcessEmit::Called)
-            globalObject->drainMicrotasks();
+    auto event = Identifier::fromString(vm, "beforeExit"_s);
+    if (emitThroughReplacedEmit(globalObject, process, event, arguments, ProcessEmitCall::MakeCallback)) [[unlikely]] {
+        // MakeCallback ends with the checkpoint, whatever `emit` returned or threw to a handler: https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L133
+        globalObject->drainMicrotasks();
         RELEASE_AND_RETURN(scope, );
     }
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+    auto fired = process->wrapped().emit(event, arguments);
     RETURN_IF_EXCEPTION(scope, );
     if (fired) {
         // The ticks and the microtasks of the listeners run now, with or without a tick queue (node: MakeCallback).
@@ -982,10 +947,7 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
         return;
     }
 
-    auto* process = globalObject->processObject();
-    if (exitCode > 0)
-        process->m_isExitCodeObservable = true;
-    dispatchExitInternal(globalObject, process, exitCode, ProcessEmitCall::MakeCallback);
+    dispatchExitInternal(globalObject, globalObject->processObject(), exitCode, ProcessEmitCall::MakeCallback);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1007,11 +969,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // node: `process.emit('exit', code)`, a call from script. What a replaced emit throws goes to the caller.
-    auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
-    if (exitCode > 0)
-        process->m_isExitCodeObservable = true;
-    dispatchExitInternal(zigGlobal, process, exitCode, ProcessEmitCall::ProcessExit);
+    dispatchExitInternal(zigGlobal, process, Bun__getExitCode(bunVM(zigGlobal)), ProcessEmitCall::ProcessExit);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // process.reallyExit(process.exitCode) — re-read: an 'exit' listener may have set it.
@@ -5047,7 +5005,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto emit = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(callProcessEmit(globalObject, process, emit, ArgList(callFrame), ProcessEmitCall::WorkerEvent)));
+    auto callData = JSC::getCallData(emit);
+    if (callData.type == CallData::Type::None) {
+        scope.throwException(globalObject, createNotAFunctionError(globalObject, emit));
+        return {};
+    }
+    auto ret = JSC::call(globalObject, emit, callData, process, callFrame);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(ret);
 }
 
 static constexpr auto kInternalIpcPrefix = "NODE_"_s;

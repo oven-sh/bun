@@ -35,6 +35,8 @@ macro_rules! pretty {
     };
 }
 
+const NESTED_TOO_DEEPLY: &[u8] = b"RangeError: The code is nested too deeply.";
+
 /// Why a file is left as it is.
 enum Failure {
     /// `SyntaxError: ';' expected. (1:7)`
@@ -124,6 +126,7 @@ fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratches, ver
                 Ok(out)
             }
             Err(FormatError::SyntaxError) => Err(Failure::Syntax(b"SyntaxError: It is not JSON.".to_vec())),
+            Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
             Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
         };
     }
@@ -155,6 +158,7 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     match bun_format::range::format(file, &how.resolved.options, scratch, &mut out, parse) {
         Ok(()) => {}
         Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
+        Err(FormatError::NestedTooDeeply) => return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
     }
     if how.resolved.omits_final_newline {

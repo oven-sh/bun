@@ -23,6 +23,9 @@ pub(crate) struct JsFormatContext<'a> {
     /// See `Formatter::is_quiet`.
     pub(crate) is_quiet: bool,
     pub(crate) cursor: CursorRegion,
+    stack_check: bun_core::StackCheck,
+    /// Something has not been written because it is nested too deeply.
+    pub(crate) ran_out_of_stack: bool,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -35,12 +38,25 @@ impl<'a> JsFormatContext<'a> {
             quote_needed_stack: Vec::new(),
             is_quiet: false,
             cursor: CursorRegion::NONE,
+            stack_check: bun_core::StackCheck::init(),
+            ran_out_of_stack: false,
         }
     }
 
     #[inline]
     pub(crate) fn file(&self) -> &'a File<'a> {
         self.file
+    }
+
+    /// Whether there is stack left to write one more expression, statement or type in what is being
+    /// written. If not, that is noted, and the document is of no use.
+    #[inline]
+    pub(crate) fn has_stack_left(&mut self) -> bool {
+        let has_stack_left = self.stack_check.is_safe_to_recurse();
+        if !has_stack_left {
+            self.ran_out_of_stack = true;
+        }
+        has_stack_left
     }
 
     #[inline]

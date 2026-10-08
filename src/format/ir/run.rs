@@ -89,8 +89,12 @@ fn write_document<'a>(
     let buffers = std::mem::take(&mut scratch.formatter);
     let mut formatter = Formatter::new(context, buffers);
     write(file, &mut formatter);
+    let ran_out_of_stack = formatter.context().ran_out_of_stack;
     let (root, buffers) = formatter.finish();
     scratch.formatter = buffers;
+    if ran_out_of_stack {
+        return Err(FormatError::NestedTooDeeply);
+    }
     super::document::propagate_expand(root, &mut scratch.formatter.storage, &mut scratch.propagate);
     Ok(root)
 }

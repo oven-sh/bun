@@ -44,6 +44,9 @@ pub(crate) mod prelude {
 pub enum FormatError {
     /// The file has syntax errors. It is left as it is.
     SyntaxError,
+    /// The syntax is nested so deeply that formatting it would overflow the stack. The file is left
+    /// as it is.
+    NestedTooDeeply,
     /// A bug in the formatter: the document it wrote is malformed.
     InvalidDocument,
 }

@@ -378,6 +378,9 @@ impl<'a> FormatExpr<'a> {
 impl<'a> Format<'a> for FormatExpr<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
         let is_chain_expression = !self.is_in_chain_expression && is_chain_root(self.expr);
         match f.is_quiet() {
             true => self.write_in_parentheses(is_chain_expression, f),
@@ -493,6 +496,9 @@ pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
 
 impl<'a> Format<'a> for Stmt<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
         let (statement, span) = (*self, self.span());
         if f.is_quiet() {
             return write_statement(statement, f);
@@ -663,6 +669,9 @@ pub(crate) fn write_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) 
 impl<'a> Format<'a> for TypeNode<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
         match f.is_quiet() {
             true => write_type_in_parentheses(*self, f),
             false => format_type_with_comments(*self, f),

@@ -395,11 +395,11 @@ const FOLD_DOC =
   "Triples of the first code point, `last << 1 | (stride - 1)` and a difference. Adding the difference to a code\npoint of the run gives the least of the code points that it is equal to when case is ignored.";
 
 /** The sets of code points that `RegExp` holds equal with the flags `flags`, which include `i`. */
-function foldClasses(flags: string, limit: number): number[][] {
+function foldClasses(flags: string): number[][] {
   const cased = property("Cased")!;
   for (const name of ["CWCF", "CWCM", "CWL", "CWU", "CWT", "CWKCF"]) cased.push(...property(name)!);
   const candidates: number[] = [];
-  for (const [lo, hi] of normalize(cased)) for (let cp = lo; cp <= Math.min(hi, limit); cp++) candidates.push(cp);
+  for (const [lo, hi] of normalize(cased)) for (let cp = lo; cp <= hi; cp++) candidates.push(cp);
   const text = String.fromCodePoint(...candidates);
   const parent = new Map<number, number>();
   const find = (cp: number): number => {
@@ -426,17 +426,33 @@ function foldClasses(flags: string, limit: number): number[][] {
   return [...classes.values()];
 }
 
+/**
+ * The specification's `Canonicalize` without the `u` and `v` flags, from `toUpperCase`. JavaScriptCore has a table of its own for
+ * this, which is behind the rest of its Unicode data.
+ */
+function legacyFoldClasses(): number[][] {
+  const classes = new Map<number, number[]>();
+  for (let unit = 0; unit <= 0xffff; unit++) {
+    const upper = String.fromCharCode(unit).toUpperCase();
+    let canonical = upper.length === 1 ? upper.charCodeAt(0) : unit;
+    if (unit >= 128 && canonical < 128) canonical = unit;
+    if (!classes.has(canonical)) classes.set(canonical, []);
+    classes.get(canonical)!.push(unit);
+  }
+  return [...classes.values()].filter(members => members.length > 1);
+}
+
 emit(
   `Case folding with the \`u\` or \`v\` flag.\n${FOLD_DOC}`,
   "FOLD_UNICODE",
   "i32",
-  runs(representatives(foldClasses("giu", MAX))),
+  runs(representatives(foldClasses("giu"))),
 );
 emit(
   `Case folding without the \`u\` and \`v\` flags.\n${FOLD_DOC}`,
   "FOLD_LEGACY",
   "i32",
-  runs(representatives(foldClasses("gi", 0xffff))),
+  runs(representatives(legacyFoldClasses())),
 );
 
 // == properties of strings ==

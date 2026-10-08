@@ -4,6 +4,9 @@
 //! | --- | --- |
 //! | `new RegExpParser(options).parsePattern(source, 0, source.length, { unicode, unicodeSets })` | [`parse_pattern`](super::parse_pattern) |
 //! | `parseRegExpLiteral(source, options)` | [`parse_literal`](super::parse_literal) |
+//! | `new RegExpValidator(options).validatePattern(..)`, `validateFlags(..)` | [`validate_pattern`](super::validate_pattern), [`validate_flags`](super::validate_flags) with [`Ignore`](super::Ignore) |
+//! | `new RegExpValidator({ onCharacter(start, end, cp) {} })` | the same with a [`Handler`](super::Handler) |
+//! | `error.message`, `error.index` | [`SyntaxError`](super::SyntaxError): `message`, `index`, and `offset` in bytes |
 //! | `node.type` | [`Node::ty`], or `match node.kind()` |
 //! | `node.parent` | [`Node::parent`] |
 //! | `node.start`, `node.end` | [`Node::start`], [`Node::end`]: **byte** offsets in the source that was parsed. [`Node::utf16_start`], [`Node::utf16_end`] are regexpp's numbers |

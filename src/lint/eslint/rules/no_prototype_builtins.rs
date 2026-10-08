@@ -21,6 +21,10 @@ fn disallowed_prop(name: Name<'_>) -> Option<&'static str> {
 
 /// ESLint's `isAfterOptional`: `e` or something to the left of it in the same chain has a `?.`.
 fn is_after_optional(e: Expr<'_>) -> bool {
+    // Only a `!` can be in the way from a link of a chain to its `?.`.
+    if e.chain() == Chain::No || e.file().is_javascript() {
+        return e.chain() != Chain::No;
+    }
     let mut at = e;
     loop {
         let (left, is_optional) = match at.kind() {

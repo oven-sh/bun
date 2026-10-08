@@ -124,8 +124,8 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
 
 fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> bool {
     matches!(f.options().embedded_language_formatting, EmbeddedLanguageFormatting::Auto)
-        && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
         && is_embed_graphql(e, f)
+        && (0..template.quasi_count()).all(|index| template.cooked(index).is_some())
 }
 
 fn is_blank_template(template: Template<'_>) -> bool {

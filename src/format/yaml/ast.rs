@@ -1191,7 +1191,7 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
         is_ascii: text.is_ascii(),
         line_starts,
         last_line: std::cell::Cell::new(1),
-        nodes: Vec::with_capacity(text.len() / 6 + 8),
+        nodes: Vec::with_capacity(text.len() / 4 + 8),
         comments: Vec::new(),
         pending: Vec::new(),
     };
@@ -1205,7 +1205,11 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
     } = context;
     comments.sort_by_key(|&comment| nodes[comment as usize].position.start.offset);
 
-    // `attachComments`
+    // `attachComments`, if there are comments to attach.
+    if comments.iter().all(|&comment| nodes[comment as usize].parent.is_some()) {
+        update_positions(&mut nodes, root);
+        return Ok(Tree { nodes, root });
+    }
     let mut table = vec![Line::default(); nodes[root as usize].position.end.line as usize];
     for &comment in &comments {
         if let Some(line) = table.get_mut(nodes[comment as usize].position.start.line as usize - 1) {

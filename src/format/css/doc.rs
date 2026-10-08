@@ -336,6 +336,8 @@ enum Element {
         should_break: bool,
         /// `conditionalGroup([contents])`: a line break in it does not break it, nor what is around it.
         is_conditional: bool,
+        /// There is nothing in it that is printed one way in a broken group and another way in one that is not.
+        is_plain: bool,
     },
     /// An index into `Elements::indents`.
     StartIndent(u32),
@@ -367,6 +369,8 @@ pub(crate) struct Elements {
     open: Vec<u32>,
     /// The same, of the groups only.
     open_groups: Vec<u32>,
+    /// How many of `open_groups`, from the first on, are known not to be plain.
+    groups_with_lines: usize,
 }
 
 impl Default for Elements {
@@ -377,6 +381,7 @@ impl Default for Elements {
             indents: Vec::new(),
             open: Vec::new(),
             open_groups: Vec::new(),
+            groups_with_lines: 0,
         }
     }
 }
@@ -388,6 +393,17 @@ impl Elements {
         self.indents.clear();
         self.open.clear();
         self.open_groups.clear();
+        self.groups_with_lines = 0;
+    }
+
+    /// What is written next depends on whether the group that it is in is broken.
+    fn mark_groups(&mut self) {
+        for index in self.groups_with_lines..self.open_groups.len() {
+            if let Element::StartGroup { is_plain, .. } = &mut self.list[self.open_groups[index] as usize] {
+                *is_plain = false;
+            }
+        }
+        self.groups_with_lines = self.open_groups.len();
     }
 
     pub(crate) fn text(&mut self, text: &[u8]) {
@@ -404,11 +420,13 @@ impl Elements {
     }
 
     pub(crate) fn line(&mut self, line: Line) {
+        self.mark_groups();
         self.list.push(Element::Line(line));
     }
 
     /// `hardline`
     pub(crate) fn hard_line(&mut self) {
+        self.mark_groups();
         self.list.push(Element::HardLine);
         self.break_groups();
     }
@@ -432,6 +450,7 @@ impl Elements {
     }
 
     pub(crate) fn line_suffix_boundary(&mut self) {
+        self.mark_groups();
         self.list.push(Element::LineSuffixBoundary);
     }
 
@@ -461,17 +480,23 @@ impl Elements {
         if should_break {
             self.break_groups();
         }
+        // Whether it is broken depends on the groups around it, and something else on that.
+        if id != 0 {
+            self.mark_groups();
+        }
         self.open_groups.push(self.list.len() as u32);
         self.start(Element::StartGroup {
             end: 0,
             id,
             should_break,
             is_conditional,
+            is_plain: id == 0,
         });
     }
 
     pub(crate) fn end_group(&mut self) {
         self.open_groups.pop();
+        self.groups_with_lines = self.groups_with_lines.min(self.open_groups.len());
         self.end(Element::End);
     }
 
@@ -505,6 +530,7 @@ impl Elements {
 
     /// Starts an `ifBreak`, with the contents for a broken group.
     pub(crate) fn start_if_break(&mut self, group_id: u32) {
+        self.mark_groups();
         self.start(Element::StartIfBreak {
             otherwise: 0,
             end: 0,
@@ -531,6 +557,7 @@ impl Elements {
     }
 
     pub(crate) fn start_line_suffix(&mut self) {
+        self.mark_groups();
         self.start(Element::StartLineSuffix { end: 0 });
     }
 
@@ -618,6 +645,7 @@ impl Elements {
                 Element::EndItem,
             ],
         );
+        self.mark_groups();
         self.break_groups();
     }
 
@@ -695,6 +723,7 @@ impl Elements {
 
     /// Writes `self.list[start..end]`, which is complete, once more.
     pub(crate) fn duplicate(&mut self, start: usize, end: usize) {
+        self.mark_groups();
         let shift = (self.list.len() - start) as u32;
         for index in start..end {
             let mut element = self.list[index];
@@ -740,6 +769,7 @@ impl Elements {
                     id,
                     should_break,
                     is_conditional,
+                    ..
                 } => Doc::Group {
                     contents: contents(at, end),
                     should_break,
@@ -1153,10 +1183,14 @@ impl<'o> Printer<'o> {
                     end: group_end,
                     id,
                     should_break,
+                    is_plain,
                     ..
                 } => {
                     let group_mode = if mode == Mode::Flat && !should_remeasure {
                         if should_break { Mode::Break } else { Mode::Flat }
+                    } else if is_plain {
+                        should_remeasure = false;
+                        Mode::Flat
                     } else {
                         should_remeasure = false;
                         let remaining_width = self.width as isize - position as isize;

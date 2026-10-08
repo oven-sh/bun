@@ -15,7 +15,9 @@ use std::borrow::Cow;
 
 /// What can be used again for the next file.
 #[derive(Default)]
-pub struct Scratch {}
+pub struct Scratch {
+    elements: Elements,
+}
 
 /// Whether Prettier takes the file at `path` for YAML.
 pub fn is_yaml_path(path: &[u8]) -> bool {
@@ -49,11 +51,13 @@ pub fn is_yaml_path(path: &[u8]) -> bool {
 
 /// The document for `text`, whose line breaks are `\n`, as a tree.
 pub(crate) fn document(text: &[u8], options: &FormatOptions) -> Result<Doc<'static>, FormatError> {
-    elements(text, options).map(|elements| elements.to_tree())
+    let mut elements = Elements::default();
+    write_document(text, options, &mut elements)?;
+    Ok(elements.to_tree())
 }
 
-/// The document for `text`, whose line breaks are `\n`.
-fn elements(text: &[u8], options: &FormatOptions) -> Result<Elements, FormatError> {
+/// Writes the document for `text`, whose line breaks are `\n`, to `out`, which is empty.
+fn write_document(text: &[u8], options: &FormatOptions, out: &mut Elements) -> Result<(), FormatError> {
     let lexemes = lexer::lex(text);
     let tokens = cst::parse(text, &lexemes).map_err(|error| match error {
         cst::ParseError::Syntax => FormatError::SyntaxError,
@@ -69,12 +73,12 @@ fn elements(text: &[u8], options: &FormatOptions) -> Result<Elements, FormatErro
         bracket_spacing: options.bracket_spacing.value(),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         tab_width: u32::from(options.indent_width.value()),
-        printed_empty_lines: Default::default(),
+        printed_empty_lines: vec![false; text.len() + 1],
         last_group_id: 0,
-        out: Elements::default(),
+        out,
     };
     printer.print(tree.root, true);
-    Ok(printer.out)
+    Ok(())
 }
 
 /// `/^\s*#[^\S\n]*@(?:a|b)\s*?(?:\n|$)/`
@@ -101,7 +105,7 @@ fn can_be_json(path: &[u8]) -> bool {
 }
 
 /// Appends the formatted `text` to `out`. `options.filepath` says whether it can be JSON.
-pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
     const BOM: &[u8] = "\u{FEFF}".as_bytes();
     let original = text;
     let (has_bom, text) = match text.strip_prefix(BOM) {
@@ -129,7 +133,9 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
         return Ok(());
     }
     // It has to be YAML in any case.
-    let document = elements(&text, options).inspect_err(|_| out.truncate(start))?;
+    let document = &mut scratch.elements;
+    document.clear();
+    write_document(&text, options, document).inspect_err(|_| out.truncate(start))?;
     if is_range {
         doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)), options, original, out);
         return Ok(());
@@ -141,6 +147,6 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
         }
         out.truncate(end);
     }
-    doc::Printer::new(options, original, out).print(&document, 0, 0);
+    doc::Printer::new(options, original, out).print(document, 0, 0);
     Ok(())
 }

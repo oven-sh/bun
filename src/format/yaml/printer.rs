@@ -17,11 +17,11 @@ pub(crate) struct Printer<'t, 'a> {
     /// `trailingComma` is not `"none"`.
     pub(crate) trailing_comma: bool,
     pub(crate) tab_width: u32,
-    /// `printedEmptyLineCache`: where the nodes end whose next line has been looked at.
-    pub(crate) printed_empty_lines: rustc_hash::FxHashSet<u32>,
+    /// `printedEmptyLineCache`: for each position, whether a node ends there whose next line has been looked at.
+    pub(crate) printed_empty_lines: Vec<bool>,
     pub(crate) last_group_id: u32,
     /// The document.
-    pub(crate) out: Elements,
+    pub(crate) out: &'t mut Elements,
 }
 
 /// `isInlineNode`
@@ -107,9 +107,10 @@ impl<'c> Words<'c> {
     /// `fill(join(line, words))`
     fn write_fill(&self, out: &mut Elements) {
         let words = match self {
-            Words::None => &[][..],
-            Words::One(word) => std::slice::from_ref(word),
-            Words::Slices(words) => words,
+            Words::None => return,
+            // Nothing is to be filled with one word.
+            Words::One(word) => return out.text(word),
+            Words::Slices(words) => &words[..],
             Words::Joined(text) => &[&text[..]],
         };
         out.start_fill();
@@ -214,7 +215,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printNextEmptyLine`: whether it is a `softline`.
     fn has_next_empty_line(&mut self, node: &Node<'a>) -> bool {
-        self.printed_empty_lines.insert(node.position.end.offset)
+        self.printed_empty_lines.get_mut(node.position.end.offset as usize).is_some_and(|it| !std::mem::replace(it, true))
             && self.is_next_line_empty(node)
             && !self.parent(node).is_some_and(should_print_end_comments)
     }
@@ -521,13 +522,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     fn print_flow_scalar_content(&mut self, kind: Kind, content: &[u8]) {
         // Most are one line that stays as it is.
         if self.prose_wrap == ProseWrap::Preserve && !strings::contains_char(content, b'\n') {
-            return Words::line(content).write_fill(&mut self.out);
+            return Words::line(content).write_fill(self.out);
         }
         for (index, words) in self.flow_scalar_line_contents(kind, content).iter().enumerate() {
             if index > 0 {
                 self.out.hard_line();
             }
-            words.write_fill(&mut self.out);
+            words.write_fill(self.out);
         }
     }
 
@@ -707,7 +708,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.start_align((indent + parent_indent as u32).saturating_sub(1));
             }
         }
-        let out = &mut self.out;
+        let out = &mut *self.out;
         let literal_line = |out: &mut Elements| {
             out.line(Line::Literal);
             out.break_parent();
@@ -924,7 +925,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
             self.print(key_id, is_last_descendant);
             self.start_align(self.tab_width);
-            write_colon(&mut self.out);
+            write_colon(self.out);
             self.print(value_id, is_last_descendant);
             self.out.end_indent();
             return self.out.end_group();
@@ -955,7 +956,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.out.end_indent();
         self.out.otherwise();
         self.start_align(self.tab_width);
-        write_colon(&mut self.out);
+        write_colon(self.out);
         self.out.duplicate(value_start, value_end);
         self.out.end_indent();
         self.out.end_if_break();

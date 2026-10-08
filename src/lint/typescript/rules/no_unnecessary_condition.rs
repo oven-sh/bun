@@ -1,0 +1,834 @@
+use bun_lint::prelude::*;
+use bun_lint::types::tsutils::{
+    CompilerOption, get_call_signatures_of_type, is_boolean_literal_type,
+    is_compiler_option_enabled, is_strict_compiler_option_enabled, is_true_literal_type,
+    union_constituents,
+};
+use bun_lint::types::utils::{
+    find_truthiness_asserted_argument, find_type_guard_asserted_argument,
+    get_constrained_type_at_location, get_constraint_info, get_type_name,
+    get_type_of_property_of_name, get_value_of_literal_type, is_array_method_call_with_predicate,
+    is_nullable_type, is_possibly_falsy, is_possibly_truthy, is_type_any_type, is_type_flag_set,
+    is_type_unknown_type,
+};
+use bun_lint::types::{Literal, SymbolFlags, Type, TypeFlags};
+use bun_lint::utils::eslint_utils::StaticValue;
+use std::borrow::Cow;
+use std::cmp::Ordering;
+
+/// Disallow conditionals where the type is always truthy or always falsy.
+pub struct NoUnnecessaryCondition {
+    allow_constant_loop_conditions: AllowConstantLoopConditions,
+    allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing: bool,
+    check_type_predicates: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AllowConstantLoopConditions {
+    Always,
+    Never,
+    OnlyAllowedLiterals,
+}
+
+/// The compiler options that the rule depends on.
+#[derive(Copy, Clone)]
+pub struct CompilerFlags {
+    is_strict_null_checks: bool,
+    is_no_unchecked_indexed_access: bool,
+}
+
+type Context<'a> = Cx<'a, NoUnnecessaryCondition>;
+
+const ALWAYS_FALSY: Message =
+    Message::new("alwaysFalsy", "Unnecessary conditional, value is always falsy.");
+const ALWAYS_FALSY_FUNC: Message = Message::new(
+    "alwaysFalsyFunc",
+    "This callback should return a conditional, but return is always falsy.",
+);
+const ALWAYS_NULLISH: Message = Message::new(
+    "alwaysNullish",
+    "Unnecessary conditional, left-hand side of `??` operator is always `null` or `undefined`.",
+);
+const ALWAYS_TRUTHY: Message =
+    Message::new("alwaysTruthy", "Unnecessary conditional, value is always truthy.");
+const ALWAYS_TRUTHY_FUNC: Message = Message::new(
+    "alwaysTruthyFunc",
+    "This callback should return a conditional, but return is always truthy.",
+);
+const COMPARISON_BETWEEN_LITERAL_TYPES: Message = Message::new(
+    "comparisonBetweenLiteralTypes",
+    "Unnecessary conditional, comparison is always {{trueOrFalse}}, since `{{left}} {{operator}} {{right}}` is {{trueOrFalse}}.",
+);
+const NEVER: Message = Message::new("never", "Unnecessary conditional, value is `never`.");
+const NEVER_NULLISH: Message = Message::new(
+    "neverNullish",
+    "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined.",
+);
+const NEVER_OPTIONAL_CHAIN: Message = Message::new(
+    "neverOptionalChain",
+    "Unnecessary optional chain on a non-nullish value.",
+);
+const NO_OVERLAP_BOOLEAN_EXPRESSION: Message = Message::new(
+    "noOverlapBooleanExpression",
+    "Unnecessary conditional, the types have no overlap.",
+);
+const NO_STRICT_NULL_CHECK: Message = Message::new(
+    "noStrictNullCheck",
+    "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
+);
+const SUGGEST_REMOVE_OPTIONAL_CHAIN: Message =
+    Message::new("suggestRemoveOptionalChain", "Remove unnecessary optional chain");
+const TYPE_GUARD_ALREADY_IS_TYPE: Message = Message::new(
+    "typeGuardAlreadyIsType",
+    "Unnecessary conditional, expression already has the type being checked by the {{typeGuardOrAssertionFunction}}.",
+);
+
+const NULLISH_FLAG: TypeFlags = TypeFlags::UNDEFINED.union(TypeFlags::NULL);
+const NULLISH_OR_VOID_FLAG: TypeFlags = NULLISH_FLAG.union(TypeFlags::VOID);
+const ANY_UNKNOWN_OR_TYPE_VARIABLE_FLAG: TypeFlags = TypeFlags::ANY
+    .union(TypeFlags::UNKNOWN)
+    .union(TypeFlags::TYPE_PARAMETER)
+    .union(TypeFlags::TYPE_VARIABLE);
+
+fn is_nullish_type(ty: Type) -> bool {
+    ty.has_flags(NULLISH_FLAG)
+}
+
+fn is_always_nullish(ty: Type) -> bool {
+    union_constituents(ty).iter().all(is_nullish_type)
+}
+
+/// Unlike `is_nullable_type`, `any` and `unknown` are not.
+fn is_possibly_nullish(ty: Type) -> bool {
+    union_constituents(ty).iter().any(|t| t.has_flags(NULLISH_OR_VOID_FLAG))
+}
+
+fn is_possibly_non_nullish(ty: Type) -> bool {
+    union_constituents(ty).iter().any(|t| !t.has_flags(NULLISH_OR_VOID_FLAG))
+}
+
+fn to_static_value(ty: Type<'_>) -> Option<StaticValue<'_>> {
+    if is_boolean_literal_type(ty) {
+        return Some(StaticValue::Bool(is_true_literal_type(ty)));
+    }
+    let flags = ty.flags();
+    if flags == TypeFlags::UNDEFINED {
+        return Some(StaticValue::Undefined);
+    }
+    if flags == TypeFlags::NULL {
+        return Some(StaticValue::Null);
+    }
+    if !ty.is_literal() {
+        return None;
+    }
+    Some(match get_value_of_literal_type(ty)? {
+        Literal::String(value) => StaticValue::string(value),
+        Literal::Number(value) => StaticValue::Number(value),
+        Literal::BigInt { negative, base10 } => {
+            let value: i128 = std::str::from_utf8(base10).ok()?.parse().ok()?;
+            StaticValue::BigInt(if negative { -value } else { value })
+        }
+    })
+}
+
+// TODO(api): replace what follows, up to `boolean_comparison`, by utils::eslint_utils::StaticValue::{strict_equals, loose_equals, compare}
+
+/// `ToNumber`, of what is not a `bigint`.
+fn to_number(value: &StaticValue<'_>) -> f64 {
+    value.to_js_number().unwrap_or(f64::NAN)
+}
+
+/// `StringToBigInt`
+fn string_to_big_int(text: &[u8]) -> Option<i128> {
+    let (is_negative, digits, radix) = match text::trim(text) {
+        [] => return Some(0),
+        [b'0', b'x' | b'X', digits @ ..] => (false, digits, 16),
+        [b'0', b'o' | b'O', digits @ ..] => (false, digits, 8),
+        [b'0', b'b' | b'B', digits @ ..] => (false, digits, 2),
+        [b'-', digits @ ..] => (true, digits, 10),
+        [b'+', digits @ ..] => (false, digits, 10),
+        digits => (false, digits, 10),
+    };
+    if !digits.iter().all(|digit| char::from(*digit).is_digit(radix)) {
+        return None;
+    }
+    let value = i128::from_str_radix(std::str::from_utf8(digits).ok()?, radix).ok()?;
+    Some(if is_negative { -value } else { value })
+}
+
+/// How the mathematical values of `a` and `b` compare.
+fn compare_big_int_with_number(a: i128, b: f64) -> Option<Ordering> {
+    if b.is_nan() {
+        return None;
+    }
+    // Every `i128` is between these.
+    if b >= 1.8e38 {
+        return Some(Ordering::Less);
+    }
+    if b <= -1.8e38 {
+        return Some(Ordering::Greater);
+    }
+    let floor = b.floor();
+    let rest = if b > floor { Ordering::Less } else { Ordering::Equal };
+    Some(a.cmp(&(floor as i128)).then(rest))
+}
+
+/// `a === b`
+fn strict_equals(a: &StaticValue<'_>, b: &StaticValue<'_>) -> bool {
+    use StaticValue::{BigInt, Bool, Null, Number, String, Undefined};
+    match (a, b) {
+        (Undefined, Undefined) | (Null, Null) => true,
+        (Bool(a), Bool(b)) => a == b,
+        (Number(a), Number(b)) => a == b,
+        (String(a), String(b)) => a == b,
+        (BigInt(a), BigInt(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// `a == b`
+fn loose_equals(a: &StaticValue<'_>, b: &StaticValue<'_>) -> bool {
+    use StaticValue::{BigInt, Bool, Number, String};
+    match (a, b) {
+        _ if a.is_nullish() || b.is_nullish() => a.is_nullish() && b.is_nullish(),
+        (Bool(_), _) => loose_equals(&Number(to_number(a)), b),
+        (_, Bool(_)) => loose_equals(a, &Number(to_number(b))),
+        (Number(number), String(_)) => *number == to_number(b),
+        (String(_), Number(number)) => to_number(a) == *number,
+        (BigInt(big_int), String(text)) | (String(text), BigInt(big_int)) => {
+            string_to_big_int(text) == Some(*big_int)
+        }
+        (BigInt(big_int), Number(number)) | (Number(number), BigInt(big_int)) => {
+            compare_big_int_with_number(*big_int, *number) == Some(Ordering::Equal)
+        }
+        _ => strict_equals(a, b),
+    }
+}
+
+/// `IsLessThan`, both ways at once. `None` if one is `NaN`, so that `<`, `<=`, `>` and `>=` are all
+/// false.
+fn compare(a: &StaticValue<'_>, b: &StaticValue<'_>) -> Option<Ordering> {
+    use StaticValue::{BigInt, String};
+    match (a, b) {
+        (String(a), String(b)) => Some(text::compare(a, b)),
+        (BigInt(a), String(b)) => string_to_big_int(b).map(|b| a.cmp(&b)),
+        (String(a), BigInt(b)) => string_to_big_int(a).map(|a| a.cmp(b)),
+        (BigInt(a), BigInt(b)) => Some(a.cmp(b)),
+        (BigInt(a), _) => compare_big_int_with_number(*a, to_number(b)),
+        (_, BigInt(b)) => compare_big_int_with_number(*b, to_number(a)).map(Ordering::reverse),
+        _ => to_number(a).partial_cmp(&to_number(b)),
+    }
+}
+
+fn boolean_comparison(left: &StaticValue<'_>, operator: BinOp, right: &StaticValue<'_>) -> bool {
+    match operator {
+        BinOp::NotEq => !loose_equals(left, right),
+        BinOp::NotEqEq => !strict_equals(left, right),
+        BinOp::EqEq => loose_equals(left, right),
+        BinOp::EqEqEq => strict_equals(left, right),
+        BinOp::Lt => compare(left, right) == Some(Ordering::Less),
+        BinOp::Le => matches!(compare(left, right), Some(Ordering::Less | Ordering::Equal)),
+        BinOp::Gt => compare(left, right) == Some(Ordering::Greater),
+        BinOp::Ge => matches!(compare(left, right), Some(Ordering::Greater | Ordering::Equal)),
+        _ => false,
+    }
+}
+
+fn is_only_used_for_truthiness(mut node: Expr<'_>) -> bool {
+    loop {
+        match node.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Cond { test, .. } => return test == node,
+                ExprKind::Binary {
+                    op: BinOp::And,
+                    left,
+                    ..
+                } if left == node => return true,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    ..
+                } => node = parent,
+                ExprKind::Unary { op, .. } => return op == UnOp::Not,
+                _ => return false,
+            },
+            Node::Stmt(parent) => {
+                return match parent.kind() {
+                    StmtKind::DoWhile { test, .. }
+                    | StmtKind::If { test, .. }
+                    | StmtKind::While { test, .. } => test == node,
+                    StmtKind::For { test, .. } => test == Some(node),
+                    _ => false,
+                };
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// ESLint's `Literal`.
+fn is_literal(node: Expr) -> bool {
+    matches!(
+        node.kind(),
+        ExprKind::String(_)
+            | ExprKind::Number(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Null
+            | ExprKind::Regex(_)
+    )
+}
+
+/// `node` is any expression as ESLint has it: the whole of an optional chain is a
+/// `ChainExpression` there, which is no `MemberExpression`.
+fn is_array_index_expression(node: Expr) -> bool {
+    let ExprKind::Index { obj, index, .. } = node.kind() else {
+        return false;
+    };
+    if node.is_chain_root() {
+        return false;
+    }
+    let parts = union_constituents(get_constrained_type_at_location(obj));
+    parts.iter().any(|part| part.is_array_type())
+        // A literal index into a tuple has a sound type.
+        || !is_literal(index) && parts.iter().any(|part| part.is_tuple_type())
+}
+
+/// A conditional is always necessary if it involves `any`, `unknown` or a naked type variable.
+fn is_conditional_always_necessary(ty: Type) -> bool {
+    union_constituents(ty).iter().any(|part| {
+        is_type_any_type(part)
+            || is_type_unknown_type(part)
+            || part.has_flags(TypeFlags::TYPE_VARIABLE)
+            || part.is_unresolved()
+    })
+}
+
+/// `String(type.value)` of a string or a number literal type.
+fn property_name_of_literal_type(ty: Type<'_>) -> Option<Cow<'_, [u8]>> {
+    if !ty.is_string_literal() && !ty.is_number_literal() {
+        return None;
+    }
+    match ty.value()? {
+        Literal::String(value) => Some(Cow::Borrowed(value)),
+        Literal::Number(value) => StaticValue::Number(value).to_js_string(),
+        Literal::BigInt { .. } => None,
+    }
+}
+
+fn is_nullable_property_type<'a>(obj_type: Type<'a>, property_type: Type<'a>) -> bool {
+    if property_type.is_union() {
+        return property_type.types().iter().any(|ty| is_nullable_property_type(obj_type, ty));
+    }
+    if let Some(name) = property_name_of_literal_type(property_type)
+        && let Some(prop_type) = get_type_of_property_of_name(obj_type, &name, None)
+    {
+        return is_nullable_type(prop_type);
+    }
+    let type_name = get_type_name(property_type);
+    obj_type.get_index_infos().any(|info| get_type_name(info.key_type()) == type_name)
+}
+
+/// `node` is a member access.
+fn is_nullable_member_expression(node: Expr) -> bool {
+    match node.kind() {
+        ExprKind::Index { obj, index, .. } => is_nullable_property_type(obj.ty(), index.ty()),
+        ExprKind::Dot { obj, name, .. } => obj
+            .ty()
+            .get_properties()
+            .iter()
+            .find(|prop| prop.name() == name.bytes())
+            .is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL)),
+        _ => false,
+    }
+}
+
+/// Whether `node` is `object[key]`, every key that it can have is known and names a property, and
+/// one of these properties may be something else than `null` and `undefined`.
+fn has_possibly_non_nullish_computed_member_property(node: Expr) -> bool {
+    let ExprKind::Index { obj, index, .. } = node.kind() else {
+        return false;
+    };
+    if node.is_chain_root() {
+        return false;
+    }
+    let object_type = get_constrained_type_at_location(obj);
+    let mut is_possibly_non_nullish_property = false;
+    for key_type in union_constituents(get_constrained_type_at_location(index)) {
+        let selected_type = property_name_of_literal_type(key_type)
+            .and_then(|name| get_type_of_property_of_name(object_type, &name, None));
+        let Some(selected_type) = selected_type else {
+            return false;
+        };
+        is_possibly_non_nullish_property |= is_possibly_non_nullish(selected_type);
+    }
+    is_possibly_non_nullish_property
+}
+
+/// Searches an optional chain for an optional access to an element of an array, which "infects"
+/// the types of the rest: in `[{ x: { y: "z" } }][n]?.x?.y` the second `?.` looks unnecessary.
+///
+/// `node` is a call or a member access, whether or not it is the whole of the chain.
+fn option_chain_contains_option_array_index(mut node: Expr) -> bool {
+    loop {
+        let lhs_node = match node.kind() {
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            _ => return false,
+        };
+        if node.is_optional() && is_array_index_expression(lhs_node) {
+            return true;
+        }
+        if lhs_node.is_chain_root() {
+            return false;
+        }
+        node = lhs_node;
+    }
+}
+
+/// Reports `expression` if its type is always truthy or always falsy.
+fn check_node<'a>(expression: Expr<'a>, cx: &Context<'a>) {
+    let node = expression;
+    let (mut expression, mut is_unary_not_argument) = (expression, false);
+    while let ExprKind::Unary {
+        op: UnOp::Not,
+        operand,
+    } = expression.kind()
+    {
+        expression = operand;
+        is_unary_not_argument = !is_unary_not_argument;
+    }
+
+    // The type of an element of an array does not tell that the index may be out of bounds.
+    if !cx.state.is_no_unchecked_indexed_access && is_array_index_expression(expression) {
+        return;
+    }
+
+    // The left side has been checked as the left side of a logical expression. The right side is
+    // a condition only if the whole is one. Not so for `??`: `nullBool ?? true` is common, so the
+    // type of the whole is looked at.
+    if let ExprKind::Binary {
+        op: BinOp::And | BinOp::Or,
+        right,
+        ..
+    } = expression.kind()
+    {
+        if is_only_used_for_truthiness(expression) {
+            check_node(right, cx);
+        }
+        return;
+    }
+
+    let ty = get_constrained_type_at_location(expression);
+    if is_conditional_always_necessary(ty) {
+        return;
+    }
+    let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
+        NEVER
+    } else if !is_possibly_truthy(ty) {
+        if is_unary_not_argument { ALWAYS_TRUTHY } else { ALWAYS_FALSY }
+    } else if !is_possibly_falsy(ty) {
+        if is_unary_not_argument { ALWAYS_FALSY } else { ALWAYS_TRUTHY }
+    } else {
+        return;
+    };
+    cx.report(node, message);
+}
+
+fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &Context<'a>) {
+    let ty = get_constrained_type_at_location(node);
+    if is_type_flag_set(ty, ANY_UNKNOWN_OR_TYPE_VARIABLE_FLAG) {
+        return;
+    }
+    let is_chain_expression = node.is_chain_root();
+
+    let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
+        NEVER
+    } else if !is_possibly_nullish(ty)
+        && (is_chain_expression || !is_nullable_member_expression(node))
+    {
+        // The type of an element of an array does not tell that the index may be out of bounds.
+        if !cx.state.is_no_unchecked_indexed_access
+            && (is_array_index_expression(node)
+                || is_chain_expression
+                    && !matches!(node.kind(), ExprKind::NonNull(_))
+                    && option_chain_contains_option_array_index(node))
+        {
+            return;
+        }
+        NEVER_NULLISH
+    } else if is_always_nullish(ty) && !has_possibly_non_nullish_computed_member_property(node) {
+        ALWAYS_NULLISH
+    } else {
+        return;
+    };
+    cx.report(node, message);
+}
+
+/// Reports a comparison of two literal types, and one with `null` or `undefined` of what cannot be
+/// that, which TypeScript does not report: https://github.com/microsoft/TypeScript/issues/37160
+fn check_if_bool_expression_is_necessary_conditional<'a>(
+    node: Expr<'a>,
+    left: Expr<'a>,
+    right: Expr<'a>,
+    operator: BinOp,
+    cx: &Context<'a>,
+) {
+    let left_type = get_constrained_type_at_location(left);
+    let right_type = get_constrained_type_at_location(right);
+
+    if let Some(left_static_value) = to_static_value(left_type)
+        && let Some(right_static_value) = to_static_value(right_type)
+    {
+        let condition_is_true =
+            boolean_comparison(&left_static_value, operator, &right_static_value);
+        cx.report(node, COMPARISON_BETWEEN_LITERAL_TYPES)
+            .data("left", left_type.to_text())
+            .data("operator", bin_op_text(operator))
+            .data("right", right_type.to_text())
+            .data("trueOrFalse", if condition_is_true { "true" } else { "false" });
+        return;
+    }
+
+    if !cx.state.is_strict_null_checks {
+        return;
+    }
+    let is_comparable = |ty: Type<'a>, flag: TypeFlags| {
+        // `any`, `unknown` and a naked type parameter can be compared with anything.
+        let mut flag = flag | ANY_UNKNOWN_OR_TYPE_VARIABLE_FLAG;
+        if matches!(operator, BinOp::EqEq | BinOp::NotEq) {
+            flag |= NULLISH_OR_VOID_FLAG;
+        }
+        is_type_flag_set(ty, flag)
+    };
+    let undefined_or_void = TypeFlags::UNDEFINED | TypeFlags::VOID;
+    let (left_flags, right_flags) = (left_type.flags(), right_type.flags());
+    if left_flags == TypeFlags::UNDEFINED && !is_comparable(right_type, undefined_or_void)
+        || right_flags == TypeFlags::UNDEFINED && !is_comparable(left_type, undefined_or_void)
+        || left_flags == TypeFlags::NULL && !is_comparable(right_type, TypeFlags::NULL)
+        || right_flags == TypeFlags::NULL && !is_comparable(left_type, TypeFlags::NULL)
+    {
+        cx.report(node, NO_OVERLAP_BOOLEAN_EXPRESSION);
+    }
+}
+
+/// The `property` of a `MemberExpression` that is an `Identifier`.
+#[derive(Copy, Clone)]
+enum Property<'a> {
+    Name(Ident<'a>),
+    Computed(Expr<'a>),
+}
+
+/// Whether the member access `node` can be `null` or `undefined` only because its object can:
+/// the `foo?.bar` of a `{ bar: { baz: string } } | null`.
+fn is_member_expression_nullable_origin_from_object<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
+    let (object, property) = match node.kind() {
+        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
+            (obj, Property::Name(name))
+        }
+        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {
+            (obj, Property::Computed(index))
+        }
+        _ => return false,
+    };
+    let prev_type = get_constrained_type_at_location(object);
+    if !prev_type.is_union() {
+        return false;
+    }
+    let is_own_nullable = prev_type.types().iter().any(|ty| match property {
+        Property::Computed(index) => {
+            is_nullable_property_type(ty, get_constrained_type_at_location(index))
+        }
+        Property::Name(name) => match get_type_of_property_of_name(ty, name.bytes(), None) {
+            Some(prop_type) => is_nullable_type(prop_type),
+            None => ty.get_index_infos().any(|info| {
+                get_type_name(info.key_type()) == b"string"
+                    && (cx.state.is_no_unchecked_indexed_access || is_nullable_type(info.ty()))
+            }),
+        },
+    });
+    !is_own_nullable && is_nullable_type(prev_type)
+}
+
+fn is_call_expression_nullable_origin_from_callee(callee: Expr) -> bool {
+    let prev_type = get_constrained_type_at_location(callee);
+    if !prev_type.is_union() {
+        return false;
+    }
+    let is_own_nullable = prev_type.types().iter().any(|ty| {
+        ty.get_call_signatures().iter().any(|signature| is_nullable_type(signature.get_return_type()))
+    });
+    !is_own_nullable && is_nullable_type(prev_type)
+}
+
+fn is_optionable_expression<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
+    let ty = get_constrained_type_at_location(node);
+    if is_conditional_always_necessary(ty) {
+        return true;
+    }
+    is_nullable_type(ty)
+        && match node.kind() {
+            _ if node.is_chain_root() => true,
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                !is_member_expression_nullable_origin_from_object(node, cx)
+            }
+            ExprKind::Call(call) => !is_call_expression_nullable_origin_from_callee(call.callee()),
+            _ => true,
+        }
+}
+
+fn check_optional_chain<'a>(node: Expr<'a>, cx: &Context<'a>) {
+    // Only this step of the chain is of interest.
+    if !node.is_optional() {
+        return;
+    }
+    let (node_to_check, fix) = match node.kind() {
+        ExprKind::Dot { obj, .. } => (obj, "."),
+        ExprKind::Index { obj, .. } => (obj, ""),
+        ExprKind::Call(call) => (call.callee(), ""),
+        _ => return,
+    };
+    // The type of an element of an array does not tell that the index may be out of bounds.
+    if !cx.state.is_no_unchecked_indexed_access && option_chain_contains_option_array_index(node) {
+        return;
+    }
+    if is_optionable_expression(node_to_check, cx) {
+        return;
+    }
+
+    let start = skip_trivia(cx.text(), node_to_check.outer_span().end);
+    let question_dot_operator = Span::new(start, start + 2);
+    if cx.slice(question_dot_operator) != b"?." {
+        return;
+    }
+    cx.report(question_dot_operator, NEVER_OPTIONAL_CHAIN)
+        .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));
+}
+
+impl NoUnnecessaryCondition {
+    fn check_if_loop_is_necessary_conditional<'a>(&self, test: Expr<'a>, cx: &Context<'a>) {
+        let is_allowed = match self.allow_constant_loop_conditions {
+            AllowConstantLoopConditions::OnlyAllowedLiterals => match test.kind() {
+                ExprKind::True | ExprKind::False => true,
+                ExprKind::Number(value) => value == 0.0 || value == 1.0,
+                _ => false,
+            },
+            AllowConstantLoopConditions::Always => {
+                is_true_literal_type(get_constrained_type_at_location(test))
+            }
+            AllowConstantLoopConditions::Never => false,
+        };
+        if !is_allowed {
+            check_node(test, cx);
+        }
+    }
+
+    fn check_type_predicate<'a>(node: Expr<'a>, cx: &Context<'a>) {
+        if let Some(truthiness_asserted_argument) = find_truthiness_asserted_argument(node) {
+            check_node(truthiness_asserted_argument, cx);
+        }
+        let Some(type_guard_asserted_argument) = find_type_guard_asserted_argument(node) else {
+            return;
+        };
+        let type_of_argument = get_constrained_type_at_location(type_guard_asserted_argument.argument);
+        let asserted_type = type_guard_asserted_argument.ty;
+        // `any` is assignable to everything. Beyond that the two types have to be equivalent, or
+        // the asserted type a union that the type of the argument is a subtype of: a structural
+        // subtype whose other members are optional in the asserted type is no reason to report.
+        if !type_of_argument.has_flags(TypeFlags::ANY | TypeFlags::UNKNOWN)
+            && type_of_argument.is_assignable_to(asserted_type)
+            && (asserted_type.is_assignable_to(type_of_argument) || asserted_type.is_union())
+        {
+            cx.report(type_guard_asserted_argument.argument, TYPE_GUARD_ALREADY_IS_TYPE).data(
+                "typeGuardOrAssertionFunction",
+                match type_guard_asserted_argument.asserts {
+                    true => "assertion function",
+                    false => "type guard",
+                },
+            );
+        }
+    }
+
+    fn check_call_expression<'a>(&self, node: Expr<'a>, cx: &Context<'a>) {
+        if self.check_type_predicates {
+            Self::check_type_predicate(node, cx);
+        }
+
+        // In something like `arr.filter(x => condition)`, `condition` is checked.
+        if !is_array_method_call_with_predicate(node) {
+            return;
+        }
+        let Some(callback) = node.as_call().and_then(|call| call.args().first()) else {
+            return;
+        };
+        if let ExprKind::Fn(function) = callback.kind() {
+            match function.body() {
+                // `() => something`
+                FnBody::Expr(body) => return check_node(body, cx),
+                // `() => { return something; }`
+                FnBody::Block(statements) => {
+                    if statements.len() == 1
+                        && let Some(StmtKind::Return(Some(argument))) =
+                            statements.first().map(Stmt::kind)
+                    {
+                        return check_node(argument, cx);
+                    }
+                }
+                FnBody::None => {}
+            }
+        }
+
+        // Otherwise the type of the function as a whole is looked at.
+        let signatures = get_call_signatures_of_type(get_constrained_type_at_location(callback));
+        if signatures.is_empty() {
+            // Not callable: `any`
+            return;
+        }
+        let (mut has_falsy_return_types, mut has_truthy_return_types) = (false, false);
+        for signature in signatures {
+            let Some(constraint_type) = get_constraint_info(signature.get_return_type()).constraint_type
+            else {
+                return;
+            };
+            if is_type_any_type(constraint_type)
+                || is_type_unknown_type(constraint_type)
+                || constraint_type.is_unresolved()
+            {
+                return;
+            }
+            has_falsy_return_types |= is_possibly_falsy(constraint_type);
+            has_truthy_return_types |= is_possibly_truthy(constraint_type);
+            if has_falsy_return_types && has_truthy_return_types {
+                return;
+            }
+        }
+        match has_falsy_return_types {
+            false => cx.report(callback, ALWAYS_TRUTHY_FUNC),
+            true => cx.report(callback, ALWAYS_FALSY_FUNC),
+        };
+    }
+}
+
+impl Rule for NoUnnecessaryCondition {
+    const META: Meta = Meta::typescript("no-unnecessary-condition", Kind::Suggestion)
+        .has_suggestions()
+        .presets(Presets::STRICT_TYPE_CHECKED)
+        .requires_types();
+    type State<'a> = CompilerFlags;
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let allow_constant_loop_conditions = match (
+            options.bool("allowConstantLoopConditions"),
+            options.str("allowConstantLoopConditions"),
+        ) {
+            (Some(true), _) | (_, Some("always")) => AllowConstantLoopConditions::Always,
+            (_, Some("only-allowed-literals")) => AllowConstantLoopConditions::OnlyAllowedLiterals,
+            _ => AllowConstantLoopConditions::Never,
+        };
+        NoUnnecessaryCondition {
+            allow_constant_loop_conditions,
+            allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing: options
+                .bool_or("allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing", false),
+            check_type_predicates: options.bool_or("checkTypePredicates", false),
+        }
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> CompilerFlags {
+        let compiler_options = file.type_checker().compiler_options();
+        let flags = CompilerFlags {
+            is_strict_null_checks: is_strict_compiler_option_enabled(
+                compiler_options,
+                CompilerOption::StrictNullChecks,
+            ),
+            is_no_unchecked_indexed_access: is_compiler_option_enabled(
+                compiler_options,
+                CompilerOption::NoUncheckedIndexedAccess,
+            ),
+        };
+        if !flags.is_strict_null_checks
+            && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
+        {
+            on.finish(|_, cx| {
+                let nowhere = Position { line: 0, column: 0 };
+                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(nowhere).end_at(nowhere);
+            });
+        }
+
+        on.exprs([ExprTag::Assign], |_, node, cx| {
+            // `a ||= b` is `a || (a = b)`.
+            match node.kind() {
+                ExprKind::Assign {
+                    op: Some(BinOp::And | BinOp::Or),
+                    target,
+                    ..
+                } => check_node(target, cx),
+                ExprKind::Assign {
+                    op: Some(BinOp::Nullish),
+                    target,
+                    ..
+                } => check_node_for_nullish(target, cx),
+                _ => {}
+            }
+        });
+        on.exprs([ExprTag::Binary], |_, node, cx| {
+            let ExprKind::Binary { op, left, right } = node.kind() else {
+                return;
+            };
+            match op {
+                BinOp::Lt
+                | BinOp::Gt
+                | BinOp::Le
+                | BinOp::Ge
+                | BinOp::EqEq
+                | BinOp::EqEqEq
+                | BinOp::NotEq
+                | BinOp::NotEqEq => {
+                    check_if_bool_expression_is_necessary_conditional(node, left, right, op, cx);
+                }
+                BinOp::Nullish => check_node_for_nullish(left, cx),
+                // Only the left side: the right side need not be a condition at all. It is checked
+                // if the whole is used as one.
+                BinOp::And | BinOp::Or => check_node(left, cx),
+                _ => {}
+            }
+        });
+        on.exprs([ExprTag::Call], |rule, node, cx| {
+            rule.check_call_expression(node, cx);
+            check_optional_chain(node, cx);
+        });
+        on.exprs([ExprTag::Dot, ExprTag::Index], |_, node, cx| check_optional_chain(node, cx));
+        on.exprs([ExprTag::Cond], |_, node, cx| {
+            if let ExprKind::Cond { test, .. } = node.kind() {
+                check_node(test, cx);
+            }
+        });
+        on.stmts(
+            [StmtTag::If, StmtTag::DoWhile, StmtTag::For, StmtTag::While],
+            |rule, node, cx| match node.kind() {
+                StmtKind::If { test, .. } => check_node(test, cx),
+                StmtKind::DoWhile { test, .. }
+                | StmtKind::While { test, .. }
+                | StmtKind::For {
+                    test: Some(test), ..
+                } => rule.check_if_loop_is_necessary_conditional(test, cx),
+                _ => {}
+            },
+        );
+        on.cases(|_, node, cx| {
+            if let Some(test) = node.test()
+                && let Node::Stmt(parent) = node.parent()
+                && let StmtKind::Switch { expr: discriminant, .. } = parent.kind()
+            {
+                check_if_bool_expression_is_necessary_conditional(
+                    test,
+                    discriminant,
+                    test,
+                    BinOp::EqEqEq,
+                    cx,
+                );
+            }
+        });
+        flags
+    }
+}

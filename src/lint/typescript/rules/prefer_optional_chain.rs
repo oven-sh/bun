@@ -205,7 +205,7 @@ fn is_private_identifier(property: Property) -> bool {
 }
 
 /// `compareArrays`
-fn all_equal<T>(
+fn all_equal<T: Copy>(
     mut a: impl Iterator<Item = T>,
     mut b: impl Iterator<Item = T>,
     mut is_equal: impl FnMut(T, T) -> bool,
@@ -219,7 +219,7 @@ fn all_equal<T>(
     }
 }
 
-fn compare_entity_names(a: EntityName, b: EntityName) -> bool {
+fn compare_entity_names<'a>(a: EntityName<'a>, b: EntityName<'a>) -> bool {
     a.len() == b.len() && a.parts().zip(b.parts()).all(|(a, b)| a.name() == b.name())
 }
 

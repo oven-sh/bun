@@ -224,7 +224,8 @@ impl PreferIncludes {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => argument.is_chain_root(),
                 _ => true,
             };
-            let (open, close): (&[u8], &[u8]) = if needs_paren { (b"(", b")") } else { (b"", b"") };
+            let open: &[u8] = if needs_paren { b"(" } else { b"" };
+            let close: &[u8] = if needs_paren { b")" } else { b"" };
             let dot: &[u8] = if chain == Chain::Start { b"?." } else { b"." };
             let escaped = escape_string(&text);
             fixer.replace(call_node, [open, argument.text(), close, dot, b"includes('", escaped.as_slice(), b"')"].concat())

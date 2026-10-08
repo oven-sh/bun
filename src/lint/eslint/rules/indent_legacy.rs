@@ -274,7 +274,7 @@ impl IndentLegacy {
             return;
         }
         let mut expected = text::number_to_string(needed);
-        expected.extend_from_slice(if self.is_tab { b" tab" } else { b" space" });
+        expected.extend_from_slice(if self.is_tab { " tab" } else { " space" }.as_bytes());
         if needed != 1.0 {
             expected.push(b's');
         }
@@ -301,7 +301,7 @@ impl IndentLegacy {
     }
 
     /// ESLint's `checkNodeIndent`, of a node or a token that has nothing more to check.
-    fn check_node_indent<'a>(&self, cx: &Cx<'a, Self>, node: Span, needed: f64) {
+    fn check_node_indent(&self, cx: &Cx<'_, Self>, node: Span, needed: f64) {
         let actual = get_node_indent(cx.file(), node.start);
         if self.is_wrong(actual, needed) && is_node_first_in_line(cx.file(), node.start) {
             self.report(cx, Loc::Node(node), node.start, needed, actual);
@@ -350,7 +350,7 @@ impl IndentLegacy {
                 }
                 _ => {}
             }
-            return;
+            break;
         }
     }
 
@@ -361,7 +361,7 @@ impl IndentLegacy {
     }
 
     /// ESLint's `checkLastNodeLineIndent`, of a node whose last token is a `}`, a `]` or a `;`.
-    fn check_last_node_line_indent<'a>(&self, cx: &Cx<'a, Self>, node: Span, needed: f64) {
+    fn check_last_node_line_indent(&self, cx: &Cx<'_, Self>, node: Span, needed: f64) {
         let last_token = node.end.saturating_sub(1);
         let end_indent = get_node_indent(cx.file(), last_token);
         if self.is_wrong(end_indent, needed) && is_node_end_first_in_line(cx.file(), node) {
@@ -370,7 +370,7 @@ impl IndentLegacy {
     }
 
     /// ESLint's `checkLastReturnStatementLineIndent`
-    fn check_last_return_statement_line_indent<'a>(&self, cx: &Cx<'a, Self>, node: Span, needed: f64) {
+    fn check_last_return_statement_line_indent(&self, cx: &Cx<'_, Self>, node: Span, needed: f64) {
         let file = cx.file();
         let Some(last_token) = file.tokens_in(node).rfind(ast_utils::is_closing_paren_token) else {
             return;
@@ -499,7 +499,7 @@ impl IndentLegacy {
                             });
                             match (self.array_expression, first) {
                                 _ if first_spans_lines => {}
-                                (Offset::Number(elements), _) => node_indent += elements * size,
+                                (Offset::Number(option), _) => node_indent += option * size,
                                 (Offset::First, Some(first)) => node_indent = column(file, first.start),
                                 (Offset::First, None) => {}
                             }
@@ -724,7 +724,7 @@ impl IndentLegacy {
         let Some(option) = self.member_expression else {
             return;
         };
-        if is_single_line_node(file, node) || e.is_jsx_tag_name() || e.is_in_type_query() {
+        if is_single_line_node(file, node) || e.is_jsx_tag_name() || utils::is_in_type_query(e) {
             return;
         }
 

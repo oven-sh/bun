@@ -1,0 +1,79 @@
+use bun_lint::prelude::*;
+use bun_lint::types::Type;
+use bun_lint::types::utils::get_constrained_type_at_location;
+
+/// Disallow using the `delete` operator on array values.
+pub struct NoArrayDelete;
+
+const NO_ARRAY_DELETE: Message = Message::new(
+    "noArrayDelete",
+    "Using the `delete` operator with an array expression is unsafe.",
+);
+const USE_SPLICE: Message = Message::new("useSplice", "Use `array.splice()` instead.");
+
+fn is_underlying_type_array(ty: Type) -> bool {
+    let predicate = |t: Type| t.is_array_type() || t.is_tuple_type();
+    if ty.is_union() {
+        return ty.types().iter().all(predicate);
+    }
+    if ty.is_intersection() {
+        return ty.types().iter().any(predicate);
+    }
+    predicate(ty)
+}
+
+fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span, is_sequence: bool) -> Fix {
+    let file = fixer.file();
+    let mut suggestion = Vec::new();
+    let indentation = file.position(node.span().start).column as usize;
+    for comment in file.comments_in(node) {
+        suggestion.extend_from_slice(comment.text());
+        suggestion.push(b'\n');
+        suggestion.resize(suggestion.len() + indentation, b' ');
+    }
+    suggestion.extend_from_slice(object.text());
+    suggestion.extend_from_slice(if is_sequence { ".splice((" } else { ".splice(" }.as_bytes());
+    suggestion.extend_from_slice(file.slice(key));
+    suggestion.extend_from_slice(if is_sequence { "), 1)" } else { ", 1)" }.as_bytes());
+    fixer.replace(node, suggestion)
+}
+
+impl NoArrayDelete {
+    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Unary { op: UnOp::Delete, operand: argument } = node.kind() else {
+            return;
+        };
+        let (object, key, is_sequence) = match argument.kind() {
+            ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
+            ExprKind::Index { obj, index, .. } => {
+                (obj, index.span(), matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. }))
+            }
+            _ => return,
+        };
+        // A `ChainExpression` for ESLint.
+        if argument.is_in_optional_chain() {
+            return;
+        }
+        if !is_underlying_type_array(get_constrained_type_at_location(object)) {
+            return;
+        }
+        cx.report(node, NO_ARRAY_DELETE)
+            .suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence));
+    }
+}
+
+impl Rule for NoArrayDelete {
+    const META: Meta = Meta::typescript("no-array-delete", Kind::Problem)
+        .has_suggestions()
+        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
+        .requires_types();
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoArrayDelete
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.exprs([ExprTag::Unary], Self::check);
+    }
+}

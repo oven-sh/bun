@@ -90,7 +90,7 @@ pub fn exit<'a, R: Rule<State<'a> = State<'a>>>(
 
     // Whether the first `return` specifies a value.
     let mut expected = None;
-    for_each_return(node, &mut |statement| {
+    for_each_return(node, &mut |statement: Stmt<'a>| {
         let Some(has_return_value) = classify(statement) else {
             return;
         };

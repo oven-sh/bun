@@ -640,6 +640,10 @@ impl Parser<'_> {
         if self.token() == T::Await && self.has_context(ctx::AWAIT) {
             self.refuse(Refusal::Reported);
         }
+        // An element is no decorator.
+        if self.token() == T::LessThan {
+            self.fail();
+        }
         self.left_hand_side_expression()
     }
 

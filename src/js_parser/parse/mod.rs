@@ -1357,9 +1357,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     ..Default::default()
                 },
                 loc,
-                bun_ast::Loc {
-                    start: p.real_loc(loc).start + b"async".len() as i32,
-                },
+                // The name can be written with an escape.
+                crate::lexer::range_of_identifier(p.source, p.real_loc(loc)).end(),
             );
             return Ok(p.new_expr(
                 E::Call {

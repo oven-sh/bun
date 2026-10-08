@@ -461,6 +461,10 @@ impl Parser<'_> {
             T::Interface => self.interface_declaration(start, base, flags),
             T::Type => self.type_alias_declaration(start, base, flags),
             T::Enum => self.enum_declaration(start, base, flags),
+            T::Global if self.is_ecmascript => {
+                self.fail();
+                StmtId::NONE
+            }
             T::Global | T::Module | T::Namespace => self.module_declaration(start, base, flags),
             T::Import => self.import_declaration_or_import_equals(start, base, flags),
             T::Export => {

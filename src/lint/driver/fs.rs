@@ -25,6 +25,15 @@ pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
     }
 }
 
+/// The time of the last change of what is at `path` and its size, as text, and that time in
+/// seconds.
+pub(crate) fn stamp(path: &[u8]) -> Option<(Vec<u8>, i64)> {
+    let found = bun_sys::stat(z(path, &mut path_buffer_pool::get())).ok()?;
+    let changed = bun_sys::stat_mtime(&found);
+    let text = format!("{}.{:09} {}", changed.sec, changed.nsec, found.st_size);
+    Some((text.into_bytes(), changed.sec))
+}
+
 pub(crate) fn is_file(path: &[u8]) -> bool {
     kind(path) == Some(Kind::File)
 }
@@ -100,6 +109,26 @@ pub(crate) fn write_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> 
                 z(&real, &mut path_buffer_pool::get()),
             )
         });
+    if written.is_err() {
+        let _ = bun_sys::unlink(z(&temporary, &mut path_buffer_pool::get()));
+    }
+    written
+}
+
+/// Writes a file that need not exist, so that nobody ever reads a part of `text`, and makes the
+/// directories that it is in.
+pub(crate) fn write_new_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
+    let mut temporary = path.to_vec();
+    {
+        use std::io::Write;
+        let _ = write!(temporary, ".{:016x}.tmp", bun_core::fast_random());
+    }
+    let written = write_new(&temporary, text).and_then(|()| {
+        bun_sys::rename(
+            z(&temporary, &mut path_buffer_pool::get()),
+            z(path, &mut path_buffer_pool::get()),
+        )
+    });
     if written.is_err() {
         let _ = bun_sys::unlink(z(&temporary, &mut path_buffer_pool::get()));
     }

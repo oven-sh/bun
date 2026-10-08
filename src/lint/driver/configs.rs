@@ -322,7 +322,14 @@ impl<'l> Loader<'l> {
                 entries.push((b"reportUnusedDisableDirectives".to_vec(), severity_name(severity)));
             }
         }
-        let mut load = |directory: &[u8], name: &[u8]| bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?);
+        let mut load = |directory: &[u8], name: &[u8]| {
+            // A package, which would have to be run.
+            if !name.starts_with(b".") && !paths::is_absolute(name) {
+                self.warn(&[b"\"", name, b"\", which ", path, b" extends, is not supported and was skipped"]);
+                return Some(Json::Object(Vec::new()));
+            }
+            bun_lint::json::parse(&fs::read(&paths::resolve(directory, name)).ok()?)
+        };
         Config::from_rc_json(self.linter.registry(), paths::dirname(path), &json, flavor, &mut load)
             .map_err(|error| Fatal([b"Cannot use the configuration file ", path, b":\n", &error.message[..]].concat()))
     }
@@ -351,8 +358,7 @@ impl<'l> Loader<'l> {
         let syntax = known.map_or(if is_json { Syntax::Json } else { Syntax::Program }, |it| it.1);
         let json = match syntax {
             Syntax::Program => {
-                let is_oxlint = known.is_some_and(|it| it.0 == Flavor::Oxlint);
-                crate::evaluate::evaluate(self, path, is_oxlint)?
+                crate::evaluate::evaluate(self, path)?
             }
             Syntax::Json => {
                 let text = fs::read(path).map_err(|error| {
@@ -504,6 +510,11 @@ impl<'l> Loader<'l> {
             Flavor::Oxlint => loaded.is_type_aware,
             Flavor::BuiltIn => false,
         })
+    }
+
+    /// Whether what a configuration file that is a program evaluates to is kept for the next run.
+    pub(crate) fn keeps_configurations(&self) -> bool {
+        self.options.config_cache
     }
 
     /// Whether `.gitignore` counts for what has the configuration `loaded`.

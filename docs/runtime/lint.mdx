@@ -1,0 +1,327 @@
+---
+title: "Linting"
+description: "Lint JavaScript and TypeScript with bun lint, a fast linter that is compatible with ESLint"
+---
+
+`bun lint` lints JavaScript and TypeScript. It reads your `eslint.config.js`, runs the rules of ESLint and typescript-eslint, prints what `eslint` prints, and uses every CPU core.
+
+```bash terminal icon="terminal"
+bun lint
+```
+
+```txt
+/app/src/index.ts
+  3:7   error    'count' is never reassigned. Use 'const' instead  prefer-const
+  9:14  warning  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+
+✖ 2 problems (1 error, 1 warning)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+```
+
+`bun lint` exits with code `1` if it finds an error, `0` if it finds none, and `2` if it could not lint, for example because the configuration is invalid.
+
+You don't need the `eslint` package, and you don't need a configuration file.
+
+## Without a configuration file
+
+`bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun.
+
+To change a rule, add a configuration file:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+export default [
+  {
+    rules: {
+      eqeqeq: "error",
+      "no-console": "warn",
+    },
+  },
+];
+```
+
+A configuration file replaces the defaults. See [Configure ESLint](https://eslint.org/docs/latest/use/configure/) for everything it can contain.
+
+## Replace ESLint
+
+`bun lint` reads the same configuration, lints the same files, and takes the same flags, so most projects only change the command.
+
+| Instead of                        | Run                            |
+| --------------------------------- | ------------------------------ |
+| `eslint`                          | `bun lint`                     |
+| `eslint src test`                 | `bun lint src test`            |
+| `eslint --fix`                    | `bun lint --fix`               |
+| `eslint --max-warnings 0`         | `bun lint --max-warnings 0`    |
+| `eslint -f json -o report.json .` | `bun lint -f json -o report.json .` |
+
+Rule names, options, messages, locations, fixes, and `eslint-disable` comments are those of ESLint 10 and typescript-eslint 8.
+
+### Plugins
+
+The rules of ESLint and typescript-eslint are built into Bun. `bun lint` does not run other plugins. It skips their rules and tells you how many:
+
+```txt
+warn: 12 rules of the plugin "react" are not supported yet and were skipped
+```
+
+To keep those rules, run ESLint for them only. Turn off what `bun lint` covers in a second configuration file, and run both:
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "bun lint && eslint -c eslint.plugins.config.js"
+  }
+}
+```
+
+### `.eslintrc.json`
+
+`bun lint` reads `.eslintrc.json` and `.eslintrc`, if they are JSON. It skips what they extend from a package, such as `"next/core-web-vitals"`. `.eslintrc.js` and `.eslintrc.yml` are not supported: [migrate to `eslint.config.js`](https://eslint.org/docs/latest/use/configure/migration-guide).
+
+## Replace oxlint
+
+`bun lint` reads `.oxlintrc.json`, including `categories`, `overrides`, `ignorePatterns`, `extends`, and nested configuration files.
+
+Where an `.oxlintrc.json` is the configuration, `bun lint` chooses files like oxlint: it skips what `.gitignore` ignores and follows symbolic links.
+
+| Instead of                    | Run                             |
+| ----------------------------- | ------------------------------- |
+| `oxlint`                      | `bun lint`                      |
+| `oxlint -D no-console src`    | `bun lint -D no-console src`    |
+| `oxlint --type-aware`         | `bun lint --type-aware`         |
+| `oxlint --deny-warnings`      | `bun lint --deny-warnings`      |
+
+The rules of the `eslint` and `typescript` plugins run. Rules of other plugins, and `jsPlugins`, are skipped with a warning. Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does.
+
+## Which configuration file
+
+For each file, `bun lint` uses the nearest configuration file: it looks in the directory of the file, then in each parent directory. In a directory with several, the first of this list counts:
+
+1. `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
+2. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`
+3. `.eslintrc.json`, `.eslintrc`
+
+Configuration files are not merged. Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
+
+```bash terminal icon="terminal"
+bun lint -c eslint.ci.config.js
+```
+
+Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
+
+Loading `typescript-eslint` takes longer than linting most projects, so Bun keeps the evaluated configuration in `node_modules/.cache/bun-lint`. Bun evaluates the file again when it changes, or when a file it imports or reads, an installed package it imports, or an environment variable it reads changes. Use `--no-config-cache` to evaluate it every time.
+
+## Choose what to lint
+
+Pass files, directories, or glob patterns. Without arguments, `bun lint` lints the current directory.
+
+```bash terminal icon="terminal"
+bun lint src/index.ts
+bun lint src test
+bun lint "src/**/*.test.ts"
+```
+
+In a directory, `bun lint` lints the files that a `files` pattern of the configuration matches, plus `.js`, `.mjs`, and `.cjs` files. `node_modules` and `.git` are always skipped.
+
+To ignore files, add `ignores` to the configuration, or use `--ignore-pattern`:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+export default [{ ignores: ["dist/", "**/*.generated.ts"] }];
+```
+
+```bash terminal icon="terminal"
+bun lint --ignore-pattern "dist/"
+```
+
+If you name a file that is ignored, `bun lint` warns about it. lint-staged does that often: add `--no-warn-ignored`.
+
+## Rules that need types
+
+Rules such as `@typescript-eslint/no-floating-promises` need type information. `bun lint` gets it from the type checker of [`bun check`](/runtime/check), which is built in and uses every CPU core. You don't need the `typescript` package.
+
+These rules run if the configuration asks for types, as for typescript-eslint:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(...tseslint.configs.recommendedTypeChecked, {
+  languageOptions: { parserOptions: { projectService: true } },
+});
+```
+
+Or use `--type-aware`, whatever the configuration says. Without a configuration file, that flag selects `typescript-eslint/recommended-type-checked`.
+
+```bash terminal icon="terminal"
+bun lint --type-aware
+```
+
+Bun checks each file with the `tsconfig.json` your editor uses for it: the nearest one. Use `-p` to name another. `bun lint` does not report type errors. Run `bun check` for those.
+
+## Fix problems
+
+`--fix` applies the fixes that rules offer and writes the files.
+
+```bash terminal icon="terminal"
+bun lint --fix
+bun lint --fix --fix-type layout,suggestion
+```
+
+`--fix-dry-run` fixes without writing. With `-f json`, the fixed code is in `output`.
+
+## Run in CI
+
+```yaml .github/workflows/lint.yml icon="file-code"
+name: Lint
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun lint --max-warnings 0
+```
+
+In GitHub Actions, `bun lint` also prints a workflow command for each problem. GitHub shows them as annotations on the lines of the pull request diff.
+
+```txt
+::error file=src/index.ts,line=3,col=7,endLine=3,endColumn=12,title=prefer-const::'count' is never reassigned. Use 'const' instead.
+```
+
+- **Install first.** `eslint.config.js` imports packages such as `typescript-eslint`.
+- **The report goes to stdout.** Warnings about the run, and the summary line, go to stderr.
+- **Warnings don't fail the job.** Use `--max-warnings 0` if they should.
+- **An empty run fails.** If an argument matches no file, `bun lint` exits with code `2`.
+
+## Check before you commit
+
+With [lint-staged](https://github.com/lint-staged/lint-staged):
+
+```json package.json icon="file-json"
+{
+  "lint-staged": {
+    "*.{js,ts,tsx}": "bun lint --fix --no-warn-ignored"
+  }
+}
+```
+
+## If `package.json` has a `lint` script
+
+Your script wins. `bun lint` runs it, like `bun run lint`.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "bun lint --max-warnings 0"
+  }
+}
+```
+
+Inside the `lint` script, and in any script it starts, `bun lint` is the linter. That makes the script above work.
+
+<Warning>
+  A version of Bun that has no linter runs `"lint": "bun lint"` again and again, without end. If not everyone on your
+  team has upgraded, keep `eslint` in the script until they have.
+</Warning>
+
+## Output
+
+Choose a format with `-f`.
+
+| Format               | What it prints                                                      |
+| -------------------- | ------------------------------------------------------------------- |
+| `stylish`            | ESLint's default format. The default                                |
+| `pretty`             | The source code around each problem, like `bun check` in a terminal |
+| `json`               | ESLint's JSON format                                                |
+| `json-with-metadata` | The same, with the metadata of the run                              |
+| `unix`               | One line per problem: `file:line:column: message [Error/rule]`      |
+| `github`             | Workflow commands for GitHub Actions                                |
+| `agent`              | A tagged block per problem, with the source lines                   |
+
+`stylish` and `json` are byte for byte what ESLint prints, so problem matchers, editors, and scripts written for ESLint keep working.
+
+```txt
+2 | export function total(items) {
+3 |   let count = items.length;
+          ^
+error: 'count' is never reassigned. Use 'const' instead.  prefer-const
+    at src/index.ts:3:7
+```
+
+Above 50 problems, `pretty` and `agent` show each distinct problem once, with how often and where it occurs. Use `--all` to show every problem.
+
+### AI agents
+
+When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `agent`.
+
+```txt
+<error file="src/index.ts" line="3" column="7" rule="prefer-const" fixable="true">
+'count' is never reassigned. Use 'const' instead.
+<source>
+2 | export function total(items) {
+3 |   let count = items.length;
+          ^^^^^
+4 |   return count;
+</source>
+</error>
+```
+
+## Differences from ESLint
+
+`bun lint` aims to report exactly what ESLint 10 with typescript-eslint 8 reports. If it reports something else for a rule it supports, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+
+These differences are intentional:
+
+- **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
+- **Plugins, processors, custom parsers, and custom formatters do not load.** Their rules are skipped with a warning. Files that need them, such as `.vue` or Markdown files, are skipped too.
+- **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
+- **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
+- **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.
+- **Types are those of TypeScript 7**, as in `bun check`, whichever version of `typescript` you have installed.
+- **`--cache` has no effect.** Every run lints every file.
+- **Bulk suppressions are not supported.** `--suppress-all` and the related flags are refused, and `eslint-suppressions.json` is not read.
+- **`--print-config` leaves out the default options of rules.**
+- **A summary line on stderr** says how many files were linted and how long it took.
+
+## CLI usage
+
+```bash
+bun lint [flags] [...files, directories or patterns]
+```
+
+| Flag                                      | Description                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `-c`, `--config <path>`                   | Use this configuration file instead of looking for one             |
+| `--no-config-lookup`                      | Do not look for a configuration file                               |
+| `--no-config-cache`                       | Evaluate `eslint.config.js` again even if nothing changed          |
+| `--rule <rule>`                           | Configure a rule: `--rule 'eqeqeq: [error, smart]'`                |
+| `--global <names>`                        | Define global variables: `--global a,b:true`                       |
+| `--parser-options <options>`              | Set parser options: `--parser-options projectService:true`         |
+| `--ext <extensions>`                      | Lint files with these extensions too                               |
+| `--fix`                                   | Fix what can be fixed, and write the files                         |
+| `--fix-dry-run`                           | Fix without writing                                                |
+| `--fix-type <types>`                      | Only `directive`, `problem`, `suggestion`, or `layout` fixes       |
+| `--ignore-pattern <pattern>`              | Ignore the files that match                                        |
+| `--no-ignore`                             | Lint ignored files too                                             |
+| `--no-warn-ignored`                       | Do not warn about an ignored file that is named as an argument     |
+| `--stdin`, `--stdin-filename <path>`      | Lint the code on standard input, as that file                      |
+| `--quiet`                                 | Report errors only                                                 |
+| `--max-warnings <n>`                      | Exit with `1` if there are more warnings than this                 |
+| `-f`, `--format <name>`                   | The [output format](#output)                                       |
+| `--all`                                   | Show every problem. Without it, `pretty` groups them above 50      |
+| `-o`, `--output-file <path>`              | Write the report to a file                                         |
+| `--color`, `--no-color`                   | Always or never use colors                                         |
+| `--no-inline-config`                      | Ignore `eslint-disable` and other configuration comments           |
+| `--report-unused-disable-directives`      | Report `eslint-disable` comments that disable nothing              |
+| `--no-error-on-unmatched-pattern`         | Do not fail if an argument matches no file                         |
+| `--pass-on-no-patterns`                   | Exit with `0` if there are no arguments                            |
+| `--exit-on-fatal-error`                   | Exit with `2` if a file cannot be parsed                           |
+| `--print-config <path>`                   | Print the configuration of a file, and lint nothing                |
+| `--type-aware`, `--no-type-aware`         | Run or skip the rules that need types                              |
+| `-p`, `--project <path>`                  | The `tsconfig.json` for the rules that need types                  |
+| `-A`, `-W`, `-D <rule or category>`       | Allow, warn about, or deny a rule, with an `.oxlintrc.json`        |
+| `--threads <n>`                           | Number of threads. Default: one per CPU core                       |
+| `--timing`                                | Print how long each phase took                                     |
+| `--cwd <path>`                            | Set the working directory                                          |
+| `-h`, `--help`                            | Print the help menu                                                |

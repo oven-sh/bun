@@ -327,3 +327,108 @@ describe.concurrent("bunfig.toml that does not parse", () => {
     });
   });
 });
+
+// A merge can leave conflict markers in bunfig.toml. `bun run <file>` printed the parse error and ran the
+// file anyway: the preload did not run, and a missing package was requested from the default registry.
+describe.concurrent("bun run <file> next to a bunfig.toml with conflict markers", () => {
+  const withConflictMarkers = (config: string) =>
+    `<<<<<<< HEAD\n${config}=======\n${config}telemetry = false\n>>>>>>> feature\n`;
+
+  const scopePackage = new Bun.Archive(
+    {
+      "package/package.json": JSON.stringify({ name: "@corp/lib", version: "1.0.0" }),
+      "package/index.js": `module.exports = "from the @corp registry";\n`,
+    },
+    { compress: "gzip" },
+  ).bytes();
+
+  /** Runs `bun ...args`. The only package that exists is `@corp/lib`, in the registry whose URL `bunfig` gets. */
+  async function run(bunfig: (scopeRegistry: string) => string, specifier: string, args: string[]) {
+    const tarball = await scopePackage;
+    using scopeRegistry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname.endsWith(".tgz")) return new Response(tarball);
+        const version = { name: "@corp/lib", version: "1.0.0", dist: { tarball: `${origin}/lib-1.0.0.tgz` } };
+        return Response.json({ name: "@corp/lib", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    const defaultRegistryAsked: string[] = [];
+    using defaultRegistry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        defaultRegistryAsked.push(decodeURIComponent(new URL(request.url).pathname.slice(1)));
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("run-bunfig-conflict-markers", {
+      "bunfig.toml": bunfig(scopeRegistry.url.href),
+      "guard.ts": `globalThis.guardRan = true;`,
+      "main.ts": `
+        let loaded;
+        try { loaded = require(${JSON.stringify(specifier)}); } catch { loaded = "cannot load"; }
+        console.log((globalThis.guardRan ? "the guard ran" : "the guard did not run") + ", ${specifier}: " + loaded);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: {
+        ...bunEnv,
+        HOME: pathJoin(String(dir), "home"),
+        BUN_INSTALL_CACHE_DIR: pathJoin(String(dir), "cache"),
+        BUN_CONFIG_REGISTRY: defaultRegistry.url.href,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, defaultRegistryAsked };
+  }
+
+  const settings: [setting: string, bunfig: (scopeRegistry: string) => string, specifier: string, loaded: string][] = [
+    [
+      '[install] auto = "disable"',
+      () => `preload = ["./guard.ts"]\n[install]\nauto = "disable"\n`,
+      "ghost",
+      "cannot load",
+    ],
+    [
+      "[install.scopes] a registry for @corp",
+      scopeRegistry => `preload = ["./guard.ts"]\n[install.scopes]\n"@corp" = "${scopeRegistry}"\n`,
+      "@corp/lib",
+      "from the @corp registry",
+    ],
+  ];
+
+  describe.each(settings)("with a preload and %s", (_, bunfig, specifier, loaded) => {
+    test("the settings apply while the file parses", async () => {
+      expect(await run(bunfig, specifier, ["run", "main.ts"])).toEqual({
+        stdout: `the guard ran, ${specifier}: ${loaded}\n`,
+        stderr: "",
+        exitCode: 0,
+        defaultRegistryAsked: [],
+      });
+    });
+
+    test.each(["main.ts", "./main.ts"])("bun run %s stops", async file => {
+      expect(await run(scopeRegistry => withConflictMarkers(bunfig(scopeRegistry)), specifier, ["run", file])).toEqual({
+        stdout: "",
+        stderr: [
+          "1 | <<<<<<< HEAD",
+          "    ^",
+          "error: Expected a key but found (redacted)",
+          "    at bunfig.toml:1:1",
+          "",
+          "SyntaxError: failed to load bunfig",
+          "",
+        ].join("\n"),
+        exitCode: 1,
+        defaultRegistryAsked: [],
+      });
+    });
+  });
+});

@@ -226,15 +226,8 @@ impl FormatOptions {
         }
         Ok(())
     }
-
-    /// Whether the formatter does what the options ask for. `experimentalTernaries` and
-    /// `experimentalOperatorPosition: "start"` are understood and not implemented.
-    pub fn is_supported(&self) -> bool {
-        !self.experimental_ternaries && self.experimental_operator_position == OperatorPosition::End
-    }
 }
 
-/// How a paragraph is divided into lines.
 /// Which white space in HTML counts.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum HtmlWhitespaceSensitivity {
@@ -247,6 +240,7 @@ pub enum HtmlWhitespaceSensitivity {
     Ignore,
 }
 
+/// How a paragraph is divided into lines.
 #[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum ProseWrap {
     /// At the print width.

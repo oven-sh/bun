@@ -310,25 +310,28 @@ fn check_idempotent(args: &Args) {
 fn verify(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let (mut passed, mut failed, mut errors) = (0, 0, 0);
-    for path in collect_files(&args.positional) {
+    for path in collect_files(&args.positional).iter().filter(|it| !is_other_language(it)) {
         let name = path.to_string_lossy();
-        let Ok(code) = std::fs::read(&path) else {
+        let Ok(code) = std::fs::read(path) else {
             continue;
         };
         let Ok(formatted) = format_text_or_panic(&name, &code, &args.options) else {
             errors += 1;
             continue;
         };
-        let language = LanguageOptions::default();
-        let difference = crate::with_file(&name, &code, &language, |before| {
-            crate::with_file(&name, &formatted, &language, |after| bun_format::verify::compare(before, after))
-        });
-        match difference {
-            Ok(()) => passed += 1,
-            Err(difference) => {
+        let compare_as = |is_script: bool| {
+            with_file_as(is_script, &name, &code, |before| {
+                let compare = || with_file_as(is_script, &name, &formatted, |after| bun_format::verify::compare(before, after));
+                (!before.has_parse_errors()).then(compare)
+            })
+        };
+        match compare_as(false).or_else(|| compare_as(true)) {
+            Some(Ok(())) => passed += 1,
+            Some(Err(difference)) => {
                 failed += 1;
                 println!("{name}: {difference}");
             }
+            None => errors += 1,
         }
     }
     println!("the same tokens: {passed}, not: {failed}, not formatted: {errors}");

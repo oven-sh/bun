@@ -1,6 +1,6 @@
 # `bun format`
 
-A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS and GraphQL whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
+A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS, GraphQL, YAML and Markdown whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
 
 - **The specification is Prettier**: `src/language-js/**`, `src/document/**`, `src/main/comments/**`, and its snapshot tests, `tests/format/{js,jsx,typescript}/**/__snapshots__/format.test.js.snap`.
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
@@ -21,7 +21,7 @@ File (HIR + binder tables)                     bun_lint::ast
 
 `ir/run.rs` has the entry point, `format(file, &options, &mut scratch, &mut out)`. `Scratch` holds every buffer, so that formatting the next file allocates nothing.
 
-What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON, style sheets and GraphQL by `options.parser` or the name of the file (`json::format`, `css::format`, `graphql::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format_with_cursor` (which is `format` if there is no range and no cursor).
+What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON, style sheets, GraphQL, YAML and Markdown by `options.parser` or the name of the file (`json::format`, `css::format`, `graphql::format`, `yaml::format`, `markdown::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format_with_cursor` (which is `format` if there is no range and no cursor).
 
 **Import sorting** (`js/sort_imports/`, option `FormatOptions::sort_imports`, compiled once per run from `sort_imports::Settings`) has four flavours. `@trivago`/`@ianvs` `importOrder*` and prettier-plugin-organize-imports are text → text preprocessors in Prettier, so they are here too: `sort_imports::sorted_text(file, how)` gives the text that has to be parsed and formatted instead of the file, byte for byte the plugin's (`babel.rs`: @babel/parser's comment attachment over the HIR, `generator.rs`: @babel/generator's printer for imports, `trivago.rs`/`ianvs.rs`: the plugins, `organize.rs`: TypeScript's organizeImports and textChanges), or `None` if formatting the file as it is gives the same (`layout.rs`): only a file whose imports move is parsed twice. oxfmt's `sortImports` (`oxfmt/`) happens inside `format`: `FormatStatements` tells an `ImportRun` what it is about to write, a run of imports is captured and written as `Interned` sub-ranges, one per line, in sorted order. Tests: `bun-lint format sort-imports cases|bench|serve`, oracles in `test/cli/format/oracle/sort-imports/`.
 
@@ -37,6 +37,8 @@ What a caller does with a file, in this order, is `format_text` in `src/lint/sta
 | `js/utils/` | what several kinds of nodes share: assignments, member chains, conditionals, strings, numbers | `utils/` |
 | `js/sort_imports/` | import sorting: `@trivago`/`@ianvs` `importOrder*`, oxfmt's `sortImports` | |
 | `json/`, `css/`, `graphql/` | JSON (`json`, `json5`, `jsonc`, `json-stringify`), style sheets (`css`, `less`, `scss`) and GraphQL, each with a parser of its own. `embed.rs` in the last two: the same in the templates of JavaScript | |
+| `yaml/` | YAML: ports of `yaml` (lexer, CST, composer with its errors), of `yaml-unist-parser` and of `language-yaml`. Prints with `css/doc.rs`. Also the front matter of style sheets and of Markdown | |
+| `markdown/` | Markdown: a parser whose tree is that of micromark and remark, and `language-markdown`. Prints with `css/doc.rs`. Code blocks go to the other formatters. For JavaScript the caller sets `FormatOptions::format_javascript`, since this crate does not parse it | |
 | `conformance/` | the crate `bun_format_conformance`: runs the tests of Prettier and of oxfmt | |
 | `pragma.rs`, `range.rs`, `cursor.rs` | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js` | |
 | `verify.rs` | a check that formatting did not change the tokens | `detect_code_removal` (different) |

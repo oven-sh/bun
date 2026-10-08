@@ -255,6 +255,12 @@ impl<'a> File<'a> {
         }
     }
 
+    /// For a `hir` that does not hold its text.
+    pub fn with_text(mut self, text: &'a [u8]) -> File<'a> {
+        self.hir.text = text;
+        self
+    }
+
     #[inline]
     pub fn path(&self) -> &'a [u8] {
         self.path

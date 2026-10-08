@@ -507,7 +507,7 @@ pub static DIRECT_PARSER_COUNTS: DirectParserCounts = DirectParserCounts {
 fn summarize_directly<'s>(
     scratch: &mut bun_sema_parser::Scratch,
     dialect: bun_sema::resolve::Dialect,
-    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    memory: (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
     path: &[u8],
     script_kind: Option<bun_sema::resolve::ScriptKind>,
     text: &[u8],
@@ -515,6 +515,61 @@ fn summarize_directly<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> Option<bun_sema::hir::File<'s>> {
+    let mut file = parse_directly(
+        scratch,
+        dialect,
+        path,
+        script_kind,
+        text,
+        atoms,
+        experimental_decorators,
+        every_file_is_a_module,
+    )?;
+    let in_arena = Summary::InPlace(&mut file).into_arena(memory);
+    // A very large file would leave its capacity to every later file.
+    if text.len() < 4 << 20 {
+        scratch.recycle(file);
+    }
+    Some(in_arena)
+}
+
+/// A file as [`with_summary_in_place`] hands it out.
+pub enum Summary<'a, 's> {
+    /// Where `bun_sema_parser` has left it. It does not hold its text, and what
+    /// `File::finish_nodes` computes is missing.
+    InPlace(&'a mut bun_sema::hir::FileBuilder),
+    InArena(bun_sema::hir::File<'s>),
+}
+
+impl<'s> Summary<'_, 's> {
+    /// The file as [`with_summary`] hands it out.
+    pub fn into_arena(
+        self,
+        (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    ) -> bun_sema::hir::File<'s> {
+        match self {
+            Summary::InArena(file) => file,
+            Summary::InPlace(file) => {
+                let (mut in_arena, emptied) = core::mem::take(file).into_arena(arena, session);
+                *file = emptied;
+                in_arena.finish_nodes();
+                in_arena
+            }
+        }
+    }
+}
+
+/// The file as `bun_sema_parser` leaves it.
+fn parse_directly(
+    scratch: &mut bun_sema_parser::Scratch,
+    dialect: bun_sema::resolve::Dialect,
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: Option<&dyn bun_sema::atom::Intern>,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+) -> Option<bun_sema::hir::FileBuilder> {
     use bun_sema::resolve::ScriptKind;
     use core::sync::atomic::Ordering::Relaxed;
     let by_name = script_kind.is_none();
@@ -572,12 +627,6 @@ fn summarize_directly<'s>(
     };
     DIRECT_PARSER_COUNTS.parsed.fetch_add(1, Relaxed);
     file.legacy_decorators = experimental_decorators;
-    let (mut file, emptied) = file.into_arena(arena, session);
-    // A very large file would leave its capacity to every later file.
-    if text.len() < 4 << 20 {
-        scratch.recycle(emptied);
-    }
-    file.finish_nodes();
     Some(file)
 }
 
@@ -660,12 +709,37 @@ pub fn with_summary<'s, R>(
     every_file_is_a_module: bool,
     then: impl FnOnce(bun_sema::hir::File<'s>, &dyn bun_sema::atom::Intern) -> R,
 ) -> R {
-    // `then` may parse another text.
-    let mut scratch = DIRECT.take().unwrap_or_default();
-    let directly = summarize_directly(
-        &mut scratch,
+    with_summary_in_place(
         dialect,
         (arena, session),
+        path,
+        script_kind,
+        text,
+        atoms,
+        experimental_decorators,
+        every_file_is_a_module,
+        |file, atoms| then(file.into_arena((arena, session)), atoms),
+    )
+}
+
+/// [`with_summary`] for one who can read the file where the parser has left it, which saves a copy
+/// of its lists.
+pub fn with_summary_in_place<'s, R>(
+    dialect: bun_sema::resolve::Dialect,
+    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: &dyn bun_sema::atom::Intern,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+    then: impl FnOnce(Summary<'_, 's>, &dyn bun_sema::atom::Intern) -> R,
+) -> R {
+    // `then` may parse another text.
+    let mut scratch = DIRECT.take().unwrap_or_default();
+    let directly = parse_directly(
+        &mut scratch,
+        dialect,
         path,
         script_kind,
         text,
@@ -673,7 +747,7 @@ pub fn with_summary<'s, R>(
         experimental_decorators,
         every_file_is_a_module,
     );
-    let Some(file) = directly else {
+    let Some(mut file) = directly else {
         DIRECT.set(Some(scratch));
         let (file, _) = summarize_with_recovery(
             dialect,
@@ -686,9 +760,13 @@ pub fn with_summary<'s, R>(
             experimental_decorators,
             every_file_is_a_module,
         );
-        return then(file, atoms);
+        return then(Summary::InArena(file), atoms);
     };
-    let result = then(file, &scratch.atoms(text));
+    let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
+    // A very large file would leave its capacity to every later file.
+    if text.len() < 4 << 20 {
+        scratch.recycle(file);
+    }
     DIRECT.set(Some(scratch));
     result
 }

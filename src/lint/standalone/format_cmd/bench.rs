@@ -5,7 +5,8 @@ use bun_format::Scratch;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, InternerPerThread};
-use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in};
+use bun_js_parser::sema::Summary;
+use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
 use std::hash::Hasher as _;
@@ -28,7 +29,7 @@ fn with_file_as<R>(
     };
     let arena = session.arena();
     let how = language.parse_options(path.as_bytes());
-    bun_js_parser::sema::with_summary(
+    bun_js_parser::sema::with_summary_in_place(
         Dialect::babel(is_script),
         (arena, session),
         path.as_bytes(),
@@ -37,14 +38,20 @@ fn with_file_as<R>(
         atoms,
         how.experimental_decorators,
         how.every_file_is_a_module,
-        |mut hir, atoms| {
+        |mut summary, atoms| {
+            let mut recycled = Recycled::of_this_thread();
+            if let Summary::InPlace(hir) = &mut summary
+                && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
+            {
+                return then(&File::new(path.as_bytes(), &**hir, bound, atoms, &language, None).with_text(code));
+            }
+            let mut hir = summary.into_arena((arena, session));
             hir.text = std::borrow::Cow::Borrowed(code);
             let bind_options = BindOptions {
                 emit_standard_class_fields: true,
                 before_es2020: false,
                 before_es2017: false,
             };
-            let mut recycled = Recycled::of_this_thread();
             let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
             then(&File::new(path.as_bytes(), &hir, bound, atoms, &language, None))
         },

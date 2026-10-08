@@ -16,41 +16,45 @@ const BAD_SUPER: Message = Message::new(
 );
 
 /// ESLint's `isPossibleConstructor`
-fn is_possible_constructor(e: Expr<'_>) -> bool {
-    if utils::is_chain_root(e) {
+fn is_possible_constructor(mut e: Expr<'_>) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
     }
-    match e.kind() {
-        ExprKind::Class(_)
-        | ExprKind::This
-        | ExprKind::Dot { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Call(_)
-        | ExprKind::New(_)
-        | ExprKind::Yield { .. }
-        | ExprKind::TaggedTemplate(_)
-        | ExprKind::ImportMeta
-        | ExprKind::NewTarget => true,
-        ExprKind::Fn(func) => !func.is_arrow(),
-        ExprKind::Ident(name) => !name.is("undefined"),
-        ExprKind::Assign { op, target, value } => match op {
-            None | Some(BinOp::And) => is_possible_constructor(value),
-            Some(BinOp::Or | BinOp::Nullish) => {
-                is_possible_constructor(target) || is_possible_constructor(value)
-            }
-            // The result of arithmetic is a primitive value.
-            Some(_) => false,
-        },
-        ExprKind::Binary { op, left, right } => match op {
-            // If `&&` yields its left side, that is falsy.
-            BinOp::And | BinOp::Comma => is_possible_constructor(right),
-            BinOp::Or | BinOp::Nullish => {
-                is_possible_constructor(left) || is_possible_constructor(right)
-            }
-            _ => false,
-        },
-        ExprKind::Cond { yes, no, .. } => is_possible_constructor(no) || is_possible_constructor(yes),
-        _ => false,
+    loop {
+        if utils::is_chain_root(e) {
+            return true;
+        }
+        e = match e.kind() {
+            ExprKind::Class(_)
+            | ExprKind::This
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Call(_)
+            | ExprKind::New(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::TaggedTemplate(_)
+            | ExprKind::ImportMeta
+            | ExprKind::NewTarget => return true,
+            ExprKind::Fn(func) => return !func.is_arrow(),
+            ExprKind::Ident(name) => return !name.is("undefined"),
+            ExprKind::Assign { op, target, value } => match op {
+                None | Some(BinOp::And) => value,
+                Some(BinOp::Or | BinOp::Nullish) if is_possible_constructor(target) => return true,
+                Some(BinOp::Or | BinOp::Nullish) => value,
+                // The result of arithmetic is a primitive value.
+                Some(_) => return false,
+            },
+            ExprKind::Binary { op, left, right } => match op {
+                // If `&&` yields its left side, that is falsy.
+                BinOp::And | BinOp::Comma => right,
+                BinOp::Or | BinOp::Nullish if is_possible_constructor(right) => return true,
+                BinOp::Or | BinOp::Nullish => left,
+                _ => return false,
+            },
+            ExprKind::Cond { yes, .. } if is_possible_constructor(yes) => return true,
+            ExprKind::Cond { no, .. } => no,
+            _ => return false,
+        };
     }
 }
 
@@ -68,13 +72,21 @@ pub fn first_super_statement<'a>(constructor: Func<'a>) -> Option<(impl Iterator
 /// Whether it can be told from the statements of the body alone that `super()` is called exactly
 /// once on every way through `constructor`: it is a statement of its own there, no `return`
 /// precedes it, and there is no other.
-fn calls_super_plainly(constructor: Func<'_>) -> bool {
+fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSuper>) -> bool {
     let Some((_, call)) = first_super_statement(constructor) else {
         return false;
     };
     let (file, callee, whole) = (constructor.file(), call.callee(), constructor.span());
-    constructor.returns().all(|it| it.span().start > callee.span().start)
-        && !file.exprs_of_kind(ExprTag::Super).any(|e| e != callee && whole.contains(e.span()) && ast_utils::is_callee(e))
+    if !constructor.returns().all(|it| it.span().start > callee.span().start) {
+        return false;
+    }
+    let callees = cx.state.super_callees.get_or_insert_with(|| {
+        let mut callees: Vec<_> = file.exprs_of_kind(ExprTag::Super).filter(|&e| ast_utils::is_callee(e)).collect();
+        callees.sort_unstable_by_key(|e| e.span().start);
+        callees
+    });
+    let inside = callees.get(callees.partition_point(|e| e.span().start < whole.start)..).unwrap_or_default();
+    !inside.iter().take_while(|e| e.span().start < whole.end).any(|&e| e != callee)
 }
 
 fn is_update_of_for(node: Node<'_>) -> bool {
@@ -106,6 +118,8 @@ pub struct State<'a> {
     func_infos: Vec<FuncInfo<'a>>,
     /// By `Segment::id`, for the segments of the constructors that are checked.
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
+    /// The `super` of each `super()` of the file, in source order, once a constructor asks.
+    super_callees: Option<Vec<Expr<'a>>>,
 }
 
 impl<'a> State<'a> {
@@ -303,7 +317,7 @@ impl Rule for ConstructorSuper {
             };
             let constructors = class.members().iter().filter(|it| it.kind() == MemberKind::Constructor);
             for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
-                if !(is_possible_constructor(super_class) && calls_super_plainly(constructor)) {
+                if !(is_possible_constructor(super_class) && calls_super_plainly(constructor, cx)) {
                     rule.check_constructor(constructor, cx);
                 }
             }

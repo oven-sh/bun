@@ -45,6 +45,8 @@ const INDENTABLE: u8 = 1 << 2;
 const TYPE_CAST: u8 = 1 << 3;
 /// Prettier's `isTypeCastComment`, which is asked of the comment alone.
 const LOOKS_LIKE_TYPE_CAST: u8 = 1 << 4;
+/// `prettier-ignore`, or `oxfmt-ignore`, which means the same.
+const SUPPRESSION: u8 = 1 << 5;
 
 impl Comment {
     /// Without the delimiters.
@@ -145,6 +147,9 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
         }
         if kind != CommentKind::Line && content.starts_with(b"*") && is_type_cast_text(content) {
             flags |= if has_type_casts { LOOKS_LIKE_TYPE_CAST | TYPE_CAST } else { LOOKS_LIKE_TYPE_CAST };
+        }
+        if matches!(content.trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore") {
+            flags |= SUPPRESSION;
         }
         comments.push(Comment {
             span,
@@ -439,10 +444,12 @@ pub(crate) struct Comments<'a> {
     view_limit: Option<usize>,
     /// Some comment is a type cast: `/** @type {T} */ (e)`.
     has_type_cast_comments: bool,
+    has_suppression_comments: bool,
 }
 
 impl<'a> Comments<'a> {
     pub(crate) fn new(source_text: SourceText<'a>, comments: &'a [Comment]) -> Self {
+        let flags = comments.iter().fold(0, |flags, comment| flags | comment.flags);
         Comments {
             source_text,
             inner: comments,
@@ -450,7 +457,8 @@ impl<'a> Comments<'a> {
             last_handled_type_cast_comment: 0,
             type_cast_node_span: Span::default(),
             view_limit: None,
-            has_type_cast_comments: comments.iter().any(|c| c.flags & TYPE_CAST != 0),
+            has_type_cast_comments: flags & TYPE_CAST != 0,
+            has_suppression_comments: flags & SUPPRESSION != 0,
         }
     }
 
@@ -689,14 +697,20 @@ impl<'a> Comments<'a> {
     }
 
     /// Whether a `prettier-ignore` comment leads the node that starts at `start`.
+    #[inline]
     pub(crate) fn is_suppressed(&self, start: u32) -> bool {
-        self.comments_before_iter(start).any(|comment| self.is_suppression_comment(comment))
+        self.has_suppression_comments && self.comments_before_iter(start).any(|comment| self.is_suppression_comment(comment))
     }
 
     /// Whether a `prettier-ignore` comment trails the node that ends at `pos`: Prettier goes by any
     /// comment of a node. `statement(); // prettier-ignore`, and on a line of its own if nothing
     /// follows in what the node is in.
+    #[inline]
     pub(crate) fn has_trailing_suppression_comment(&self, pos: u32) -> bool {
+        self.has_suppression_comments && self.find_trailing_suppression_comment(pos)
+    }
+
+    fn find_trailing_suppression_comment(&self, pos: u32) -> bool {
         if self.end_of_line_comments_after(pos).iter().any(|comment| self.is_suppression_comment(comment)) {
             return true;
         }
@@ -719,8 +733,9 @@ impl<'a> Comments<'a> {
     }
 
     /// `prettier-ignore`, or `oxfmt-ignore`, which means the same.
+    #[inline]
     pub(crate) fn is_suppression_comment(&self, comment: &Comment) -> bool {
-        matches!(self.source_text.text_for(&comment.content_span()).trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore")
+        comment.flags & SUPPRESSION != 0
     }
 
     /// A JSDoc comment with `@type` or `@satisfies`, in a file where the parentheses after it stay.

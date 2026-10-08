@@ -12,6 +12,7 @@
 //! - The order of modifiers: `readonly abstract` is `abstract readonly`.
 //! - The white space in JSX text, and `{" "}`.
 //! - The empty braces of `import a, {} from "a"`.
+//! - Escapes in names: `\u0061b` is `ab`.
 //! - The indentation of the lines of block comments.
 //!
 //! It is a debugging aid, not a proof: a formatter that drops a pair of parentheses that matters
@@ -66,6 +67,30 @@ impl<'a> Visitor<'a> for TypeBodies {
 
 /// A token in the form that is compared, and where it is.
 type Item<'a> = (Cow<'a, [u8]>, u32);
+
+/// `name` with the characters that `\u0061` and `\u{61}` in it stand for.
+fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(name.len());
+    let mut rest = name;
+    while let Some((&byte, after)) = rest.split_first() {
+        rest = after;
+        let Some(escape) = after.strip_prefix(b"u").filter(|_| byte == b'\\') else {
+            out.push(byte);
+            continue;
+        };
+        let (digits, after) = match escape.strip_prefix(b"{") {
+            Some(braced) => {
+                let end = bun_core::strings::index_of_char_usize(braced, b'}').unwrap_or(braced.len());
+                (&braced[..end], braced.get(end + 1..).unwrap_or_default())
+            }
+            None => escape.split_at(escape.len().min(4)),
+        };
+        let code_point = digits.iter().try_fold(0u32, |all, &digit| Some(all.checked_mul(16)? + char::from(digit).to_digit(16)?));
+        bun_lint::utils::text::push_code_point(&mut out, code_point.unwrap_or(0xFFFD));
+        rest = after;
+    }
+    out
+}
 
 fn without_quote_escapes(content: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(content.len());
@@ -173,6 +198,13 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                         .filter(|word| !word.is_empty())
                         .map(|word| (Cow::Borrowed(word), start)),
                 );
+                continue;
+            }
+            // `\u0061b` is printed as `ab`.
+            TokenKind::Identifier | TokenKind::Keyword | TokenKind::PrivateIdentifier
+                if bun_core::strings::contains_char(text, b'\\') =>
+            {
+                out.push((Cow::Owned(without_unicode_escapes(text)), start));
                 continue;
             }
             _ => {}

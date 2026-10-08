@@ -699,20 +699,28 @@ impl<'a> Comments<'a> {
         &comments[..count]
     }
 
-    /// The same after the left side of an assignment or the key of a property, which ends at `pos`:
-    /// an operator and `(` can be in between. `a ||= ( // comment`
-    pub(crate) fn end_of_line_comments_after_left_side(&self, pos: u32) -> &'a [Comment] {
-        let comments = self.end_of_line_comments_after_bytes(pos, |b| {
-            matches!(
-                b,
-                b'\t' | b' ' | b'=' | b':' | b'(' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'<' | b'>' | b'?'
-            )
-        });
-        // `a = /** @type {T} */ ( // comment`: what is behind the `(` of a type cast is in it.
+    /// Prettier's `handlePropertyComments`: the comments between the key of a property, which ends at
+    /// `key_end`, and its value, which starts at `value_start`, that lead the property: those that end
+    /// their line. None if one before them does not.
+    pub(crate) fn comments_leading_property(&self, key_end: u32, value_start: u32) -> &'a [Comment] {
+        let comments = self.comments_in_range(key_end, value_start);
+        let count = comments.iter().rposition(|comment| comment.followed_by_newline()).map_or(0, |last| last + 1);
+        let comments = &comments[..count];
+        let ends_line = |(index, comment): (usize, &Comment)| {
+            !comment.is_moved()
+                && (comment.followed_by_newline()
+                    || comments.get(index + 1).is_some_and(|next| {
+                        self.source_text.all_bytes_match(comment.end(), next.start(), |b| matches!(b, b' ' | b'\t'))
+                    }))
+        };
+        // `a: /** @type {T} */ ( // comment`: what is behind the `(` of a type cast is in it.
         let is_type_cast = |comment: &Comment| {
             self.is_type_cast_comment(comment) && self.source_text.next_non_whitespace_byte_is(comment.end(), b'(')
         };
-        if comments.iter().any(is_type_cast) { &[] } else { comments }
+        match comments.iter().enumerate().all(ends_line) && !comments.iter().any(is_type_cast) {
+            true => comments,
+            false => &[],
+        }
     }
 
     fn end_of_line_comments_after_bytes(&self, mut pos: u32, can_be_between: impl Fn(u8) -> bool) -> &'a [Comment] {

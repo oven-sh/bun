@@ -4,6 +4,7 @@ use super::object_pattern_like::ObjectPatternLike;
 use crate::js::format::format_node;
 use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
 
@@ -82,10 +83,10 @@ pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatte
         && let Some(key) = property.key()
         && !f.comments().has_comment_in_span(key.span(f.file()))
     {
-        let value_start = property.value().span().start;
-        let comments = Some(f.comments().end_of_line_comments_after_left_side(key.span(f.file()).end))
-            .filter(|comments| comments.last().is_none_or(|last| !last.is_moved() && last.end() <= value_start))
-            .unwrap_or_default();
+        let comments = f.comments().comments_leading_property(key.span(f.file()).end, property.value().span().start);
+        if comments.iter().any(|comment| f.comments().is_suppression_comment(comment)) {
+            return write!(f, FormatSuppressedNode(property.span()));
+        }
         write!(f, FormatLeadingComments::Comments(comments));
     }
     AssignmentLike::BindingProperty(property).fmt(f);

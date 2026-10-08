@@ -85,9 +85,7 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
             && let (Some(key), Some(value)) = (property.key(), property.value())
             && !f.comments().has_comment_in_span(key.span(f.file()))
         {
-            let comments = Some(f.comments().end_of_line_comments_after_left_side(key.span(f.file()).end))
-                .filter(|comments| comments.last().is_none_or(|last| !last.is_moved() && last.end() <= value.span().start))
-                .unwrap_or_default();
+            let comments = f.comments().comments_leading_property(key.span(f.file()).end, value.span().start);
             if comments.iter().any(|comment| f.comments().is_suppression_comment(comment)) {
                 return write!(f, FormatSuppressedNode(property.span()));
             }

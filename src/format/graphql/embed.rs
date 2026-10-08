@@ -31,17 +31,24 @@ fn follows_language_comment(start: u32, f: &Formatter<'_>) -> bool {
     false
 }
 
-/// Prettier's `hasLanguageComment`. A comment leads the outermost of the nodes that start behind it.
+/// Whether the comment leads `e`. A comment leads the outermost of the nodes that start behind it, and
+/// parentheses are not nodes.
+fn is_led_by_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+    let outer_start = e.outer_span().start;
+    (e.is_parenthesized() && follows_language_comment(e.span().start, f))
+        || (parent.span().start != outer_start && follows_language_comment(outer_start, f))
+}
+
+/// Prettier's `hasLanguageComment`
 fn has_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
-    let start = e.span().start;
-    let is_led = match parent {
-        AstNodes::ExpressionStatement(_) => true,
-        AstNodes::TSAsExpression(cast) if matches!(cast.kind(), ExprKind::AsConst(_)) => {
-            parent.parent().span().start != start
+    is_led_by_language_comment(e, parent, f)
+        || match parent {
+            AstNodes::ExpressionStatement(_) => follows_language_comment(parent.span().start, f),
+            AstNodes::TSAsExpression(cast) => {
+                matches!(cast.kind(), ExprKind::AsConst(_)) && is_led_by_language_comment(cast, parent.parent(), f)
+            }
+            _ => false,
         }
-        _ => parent.span().start != start,
-    };
-    is_led && follows_language_comment(start, f)
 }
 
 /// Prettier's `isEmbedGraphQL`. `e`: a template.

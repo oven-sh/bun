@@ -1153,6 +1153,25 @@ declare module "bun" {
     timeout(request: Request, seconds: number): void;
 
     /**
+     * Serve a TCP connection that was accepted somewhere else, exactly as if
+     * this server's listener had accepted it. Useful for a router that reads
+     * the TLS ClientHello (without consuming it) to pick a server by hostname,
+     * then passes the descriptor on, for example over IPC with SCM_RIGHTS.
+     *
+     * The server takes ownership of `fd`. Returns `false` if the server is not
+     * listening or the descriptor could not be registered (it is closed then).
+     *
+     * @example
+     * ```js
+     * const server = Bun.serve({ port: 0, fetch: () => new Response("hi") });
+     * process.on("message", (msg, fd) => {
+     *   if (msg === "connection" && typeof fd === "number") server.adopt(fd);
+     * });
+     * ```
+     */
+    adopt(fd: number): boolean;
+
+    /**
      * Undo a call to {@link Server.unref}
      *
      * If the Server has already been stopped, this does nothing.

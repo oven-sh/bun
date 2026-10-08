@@ -5565,3 +5565,70 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
     socket.destroy();
   }
 });
+
+describe.skipIf(!isPosix)("server.adopt(fd)", () => {
+  // Accept a TCP connection outside Bun's event loop with raw libc calls, the
+  // way a hostname router would before passing the descriptor on.
+  function rawAccept() {
+    const { dlopen, ptr } = require("bun:ffi");
+    const { symbols: libc } = dlopen(libcPathForDlopen(), {
+      socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+      bind: { args: ["i32", "ptr", "u32"], returns: "i32" },
+      listen: { args: ["i32", "i32"], returns: "i32" },
+      accept: { args: ["i32", "ptr", "ptr"], returns: "i32" },
+      getsockname: { args: ["i32", "ptr", "ptr"], returns: "i32" },
+      close: { args: ["i32"], returns: "i32" },
+    });
+    // struct sockaddr_in, 127.0.0.1:0. BSDs start with sin_len.
+    const addr = new Uint8Array(16);
+    if (isLinux) new DataView(addr.buffer).setUint16(0, 2, true);
+    else ((addr[0] = 16), (addr[1] = 2));
+    addr.set([127, 0, 0, 1], 4);
+    const lfd = libc.socket(2, 1, 0);
+    expect(libc.bind(lfd, ptr(addr), 16)).toBe(0);
+    expect(libc.listen(lfd, 8)).toBe(0);
+    const len = new Uint32Array([16]);
+    expect(libc.getsockname(lfd, ptr(addr), ptr(len))).toBe(0);
+    const port = new DataView(addr.buffer).getUint16(2, false);
+    return {
+      port,
+      accept: () => libc.accept(lfd, null, null),
+      [Symbol.dispose]: () => libc.close(lfd),
+    };
+  }
+
+  async function adoptedRequest(serveOptions: Partial<Serve.Options<undefined>>, url: (port: number) => string) {
+    using raw = rawAccept();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      ...serveOptions,
+      fetch: (req, srv) => new Response(`adopted ${new URL(req.url).pathname} from ${srv.requestIP(req)?.address}`),
+    } as Serve.Options<undefined>);
+    // The client connects to the raw listener, never to the server's port.
+    const response = fetch(url(raw.port), { tls: { rejectUnauthorized: false } });
+    await Bun.sleep(10);
+    const fd = raw.accept();
+    expect(fd).toBeGreaterThan(0);
+    expect(server.adopt(fd)).toBe(true);
+    const res = await response;
+    return [res.status, await res.text()];
+  }
+
+  it("serves an HTTP connection accepted elsewhere", async () => {
+    expect(await adoptedRequest({}, port => `http://127.0.0.1:${port}/x`)).toEqual([200, "adopted /x from 127.0.0.1"]);
+  });
+
+  it("serves a TLS connection accepted elsewhere", async () => {
+    expect(await adoptedRequest({ tls }, port => `https://127.0.0.1:${port}/y`)).toEqual([
+      200,
+      "adopted /y from 127.0.0.1",
+    ]);
+  });
+
+  it("returns false once the server has stopped", async () => {
+    const server = serve({ port: 0, fetch: () => new Response("") });
+    server.stop(true);
+    expect(server.adopt(1_000_000)).toBe(false);
+  });
+});

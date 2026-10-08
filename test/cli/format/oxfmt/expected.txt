@@ -283,7 +283,6 @@ FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth
 FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 100, proseWrap: "preserve" }
 FAIL oxfmt markdown/markdown/prose-wrap/ignored-block-trailing-quote-line.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/ignored-block-trailing-quote-line.md { printWidth: 100, proseWrap: "always" }
-FAIL prettier markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "never" }
@@ -330,8 +329,6 @@ FAIL oxfmt ts/assignments/type-alias-leading-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 80 }
 FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/class/issue-16259.ts { printWidth: 80 }
-FAIL prettier ts/comments/assignments.ts { printWidth: 80 }
-FAIL prettier ts/comments/assignments.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/assignments.ts { printWidth: 100 }
 FAIL prettier ts/comments/binary-cast-own-line-comment.ts { printWidth: 80 }
@@ -455,5 +452,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1516/1570
+as Prettier prints them: 1519/1570
 as oxfmt prints them, in its flavor: 1095/1498

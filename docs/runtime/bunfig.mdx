@@ -618,6 +618,10 @@ ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile = "path/to/cafile"
 ```
 
+Bun verifies the registry's certificate against these certificates instead of the default ones. `bun install` and [auto-install](/runtime/auto-install) use them for their registry requests. `fetch()` and the other requests of your code do not use them.
+
+A relative `cafile` is relative to the directory you run Bun in.
+
 ### `install.cache`
 
 To configure the cache behavior:

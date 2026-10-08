@@ -35,6 +35,16 @@ Once Bun determines a version or version range, it:
 2. When resolving `latest`, checks if `package@latest` was downloaded and cached in the last _24 hours_. If so, uses it.
 3. Otherwise, downloads and installs the appropriate version from the `npm` registry.
 
+To use another registry, set [`install.registry`](/runtime/bunfig#install-registry) or [`install.scopes`](/runtime/bunfig#install-scopes) in `bunfig.toml`. If a private certificate authority signs the registry's certificate, name it with [`install.ca` or `install.cafile`](/runtime/bunfig#install-ca-and-install-cafile):
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+registry = "https://registry.example.com/"
+cafile = "registry-ca.pem"
+```
+
+Bun reads the certificates at the first request to an `https://` registry. If Bun cannot load them, it prints the reason once and the import fails.
+
 ---
 
 ## Installation

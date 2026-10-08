@@ -127,6 +127,8 @@ describe("auto-install", () => {
 });
 
 describe("certificate authority", () => {
+  /** A CA that did not sign the `tls` certificate. */
+  const unrelatedCa = join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem");
   const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
     return async function (req: Request) {
       if (req.url.includes("no-deps")) {
@@ -359,7 +361,6 @@ describe("certificate authority", () => {
     const extraCaEnv = { NODE_EXTRA_CA_CERTS: join(packageDir, "extra-ca"), BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
 
     // The CA in `--cafile` did not sign the certificate: the install can only succeed if the tunnel ignores `--cafile`.
-    const unrelatedCa = join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem");
     let { out, err, exitCode } = await installThroughProxy(server, proxy.url, ["--cafile", unrelatedCa], extraCaEnv);
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(out).not.toContain("+ no-deps@");
@@ -371,6 +372,132 @@ describe("certificate authority", () => {
     expect(out).toContain("+ no-deps@");
     expect(exitCode).toBe(0);
     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
+  });
+
+  /**
+   * Runs `bun install` in `cwd` for the project in `packageDir`, whose one dependency is a tarball
+   * on `server`. `install` is added to the `[install]` table of its bunfig.toml.
+   */
+  async function installWithBunfig(server: { port: number }, install: Record<string, unknown>, cwd = packageDir) {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+            ...install,
+          },
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, exitCode };
+  }
+
+  test.each([
+    ["ca", async () => ({ ca: tls.cert })],
+    ["ca list", async () => ({ ca: [await file(unrelatedCa).text(), tls.cert] })],
+    // With both set, only the file counts.
+    ["cafile next to a ca", async () => ({ cafile: "cafile", ca: await file(unrelatedCa).text() })],
+  ])("valid %s from bunfig", async (_, ca) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await write(join(packageDir, "cafile"), tls.cert);
+
+    const { out, err, exitCode } = await installWithBunfig(server, await ca());
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a relative cafile is relative to the directory `bun install` runs in", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    // `nested` has no package.json, so the project and its bunfig.toml are one directory up.
+    const cwd = join(packageDir, "nested");
+    await write(join(cwd, "cafile"), tls.cert);
+
+    const { out, err, exitCode } = await installWithBunfig(server, { cafile: "cafile" }, cwd);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(exitCode).toBe(0);
+  });
+
+  // The HTTP/3 client has no CA options: it verifies against the default roots. A registry that
+  // advertises `Alt-Svc: h3` must not move the next request off the connection `--cafile` applies to.
+  test("--cafile keeps requests off an Alt-Svc h3 upgrade", async () => {
+    const tarball = await file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")).bytes();
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
+    const requests: string[] = [];
+    const respond = (transport: "tcp" | "h3") => (req: Request) => {
+      const { pathname } = new URL(req.url);
+      requests.push(`${transport} ${pathname}`);
+      const headers = { "alt-svc": `h3=":${quic.port}"; ma=86400` };
+      if (pathname !== "/no-deps") return new Response(tarball, { headers });
+      return Response.json(
+        {
+          name: "no-deps",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "no-deps",
+              version: "1.0.0",
+              dist: { tarball: `https://localhost:${origin.port}/no-deps-1.0.0.tgz`, integrity },
+            },
+          },
+        },
+        { headers },
+      );
+    };
+    // Only `quic` speaks HTTP/3, on a port of its own, so a request it logs did take the upgrade.
+    using quic = Bun.serve({ port: 0, fetch: respond("h3"), ...tls, http3: true, http1: false });
+    using origin = Bun.serve({ port: 0, fetch: respond("tcp"), ...tls });
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.1.1", dependencies: { "no-deps": "1.0.0" } })),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: `https://localhost:${origin.port}/` } }),
+      ),
+      write(join(packageDir, "cafile"), tls.cert),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", "cafile"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env: { ...env, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1", BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@1.0.0");
+    expect(requests).toEqual(["tcp /no-deps", "tcp /no-deps-1.0.0.tgz"]);
+    expect(exitCode).toBe(0);
   });
 
   test(`non-existent --cafile`, async () => {

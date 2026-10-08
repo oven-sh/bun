@@ -138,15 +138,9 @@ impl Tracker {
                 self.state.is_space_pending = true;
                 self.state.is_space_element_pending = true;
             }
-            FormatElement::Line(LineMode::Soft | LineMode::SoftEmpty) | FormatElement::Nop | FormatElement::Cursor(_) => {}
-            FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => {
-                self.state.last_line = index;
-                self.state.is_space_pending = true;
-            }
-            FormatElement::Line(LineMode::Hard | LineMode::Empty) => {
-                self.state.last_break = index;
-                self.state.last_will_break = index;
-            }
+            // It is not there when what encloses it is flat.
+            FormatElement::TokenIfBreaks(_) | FormatElement::Nop | FormatElement::Cursor(_) => {}
+            FormatElement::Line(mode) => self.line(mode, index),
             FormatElement::ExpandParent => self.forced_break(index),
             FormatElement::LineSuffixBoundary => self.state.last_boundary = index,
             FormatElement::Skip(_) => self.state.last_unknown = index,
@@ -170,6 +164,7 @@ impl Tracker {
                     self.state.is_in_line_suffix = true;
                 }
                 Tag::EndConditionalContent | Tag::EndLineSuffix => self.end_content(index),
+                Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode) => self.line(mode, index),
                 // These change where a line starts, or nothing at all.
                 Tag::StartIndent
                 | Tag::EndIndent
@@ -194,6 +189,21 @@ impl Tracker {
     #[inline]
     pub(crate) fn will_break_from(&self, start: usize) -> bool {
         self.state.last_will_break as usize >= start
+    }
+
+    #[inline(always)]
+    fn line(&mut self, mode: LineMode, index: u32) {
+        match mode {
+            LineMode::Soft | LineMode::SoftEmpty => {}
+            LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
+                self.state.last_line = index;
+                self.state.is_space_pending = true;
+            }
+            LineMode::Hard | LineMode::Empty => {
+                self.state.last_break = index;
+                self.state.last_will_break = index;
+            }
+        }
     }
 
     /// Something other than a line break that forces the enclosing groups to break.

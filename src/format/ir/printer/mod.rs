@@ -20,7 +20,7 @@ use super::element::{
     BestFitting, Condition, CursorMark, DedentMode, Flat, FlatFlags, FormatElement, Group, GroupId, Interned, LineMode,
     PrintMode, Tag, TextWidth,
 };
-use super::formatter::{END_LINE_SUFFIX, HARD_LINE_BREAK, Storage};
+use super::formatter::{END_LINE_SUFFIX, Storage, line_break};
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
 use smallvec::SmallVec;
 
@@ -378,49 +378,20 @@ impl<'d> Printer<'d> {
                     self.line_width += token.len();
                     self.has_empty_line = false;
                 }
-                FormatElement::SourceText(text) => self.print_text(self.source, text.range(), text.width),
-                FormatElement::OwnedText(text) => self.print_text(self.text, text.range(), text.width),
-                FormatElement::Line(line_mode) => {
-                    if self.mode.is_flat() {
-                        match line_mode {
-                            LineMode::Soft | LineMode::SoftEmpty => continue,
-                            LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
-                                if self.line_width > 0 {
-                                    self.pending_space = true;
-                                }
-                                continue;
-                            }
-                            LineMode::Hard | LineMode::Empty => self.measured_group_fits = false,
-                        }
-                    }
-
-                    if !self.buffers.line_suffixes.is_empty() {
-                        let again = Interned {
-                            start: self.elements.at() - 1,
-                            len: 1,
-                        };
-                        self.flush_line_suffixes(Some(again));
-                        continue;
-                    }
-
-                    // Not if the line is empty.
-                    if self.line_width > 0 {
-                        self.out.trim_trailing_whitespace();
-                        self.pull_marks_back();
-                        self.print_line_break();
+                FormatElement::TokenIfBreaks(token) => {
+                    if !self.mode.is_flat() {
+                        self.print_pending();
+                        self.out.token(token);
+                        self.line_width += token.len();
                         self.has_empty_line = false;
                     }
-                    let is_empty_line = matches!(line_mode, LineMode::Empty | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty);
-                    if is_empty_line && !self.has_empty_line {
-                        self.print_line_break();
-                        self.has_empty_line = true;
-                    }
-                    self.pending_space = false;
-                    self.pending_indent = self.indention();
                 }
+                FormatElement::SourceText(text) => self.print_text(self.source, text.range(), text.width),
+                FormatElement::OwnedText(text) => self.print_text(self.text, text.range(), text.width),
+                FormatElement::Line(line_mode) => self.print_line(*line_mode),
                 // `propagate_expand` has taken care of it.
                 FormatElement::ExpandParent => {}
-                FormatElement::LineSuffixBoundary => self.flush_line_suffixes(Some(HARD_LINE_BREAK)),
+                FormatElement::LineSuffixBoundary => self.flush_line_suffixes(Some(line_break(LineMode::Hard))),
                 FormatElement::BestFitting(best_fitting) => self.print_best_fitting(*best_fitting)?,
                 FormatElement::Interned(content) => self.print_next(*content),
                 FormatElement::Tag(tag) => match tag {
@@ -475,6 +446,14 @@ impl<'d> Printer<'d> {
                         }
                     }
                     Tag::StartIndent => self.indent(),
+                    Tag::StartIndentWithLine(line_mode) => {
+                        self.indent();
+                        self.print_line(*line_mode);
+                    }
+                    Tag::EndIndentWithLine(line_mode) => {
+                        self.buffers.indentions.pop();
+                        self.print_line(*line_mode);
+                    }
                     Tag::StartDedent(DedentMode::Level) => {
                         if let Some(indention) = self.buffers.indentions.pop() {
                             self.buffers.history.push(indention);
@@ -531,6 +510,42 @@ impl<'d> Printer<'d> {
         }
     }
 
+    #[inline]
+    fn print_line(&mut self, line_mode: LineMode) {
+        if self.mode.is_flat() {
+            match line_mode {
+                LineMode::Soft | LineMode::SoftEmpty => return,
+                LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
+                    if self.line_width > 0 {
+                        self.pending_space = true;
+                    }
+                    return;
+                }
+                LineMode::Hard | LineMode::Empty => self.measured_group_fits = false,
+            }
+        }
+
+        // They come first, and then this again.
+        if !self.buffers.line_suffixes.is_empty() {
+            return self.flush_line_suffixes(Some(line_break(line_mode)));
+        }
+
+        // Not if the line is empty.
+        if self.line_width > 0 {
+            self.out.trim_trailing_whitespace();
+            self.pull_marks_back();
+            self.print_line_break();
+            self.has_empty_line = false;
+        }
+        let is_empty_line = matches!(line_mode, LineMode::Empty | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty);
+        if is_empty_line && !self.has_empty_line {
+            self.print_line_break();
+            self.has_empty_line = true;
+        }
+        self.pending_space = false;
+        self.pending_indent = self.indention();
+    }
+
     /// Prints everything from the [`Tag::StartEntry`] that is next in the queue to its
     /// [`Tag::EndEntry`], in `mode`.
     fn print_entry(&mut self, mode: PrintMode) -> PrintResult<()> {
@@ -555,7 +570,12 @@ impl<'d> Printer<'d> {
                     }
                     FormatElement::SourceText(text) => self.print_text(self.source, text.range(), text.width),
                     FormatElement::OwnedText(text) => self.print_text(self.text, text.range(), text.width),
-                    FormatElement::Space | FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => {
+                    FormatElement::Space
+                    | FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
+                    | FormatElement::Tag(
+                        Tag::StartIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
+                        | Tag::EndIndentWithLine(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty),
+                    ) => {
                         if self.line_width > 0 {
                             self.pending_space = true;
                         }
@@ -578,11 +598,17 @@ impl<'d> Printer<'d> {
                             skip_conditional_content(&mut elements)?;
                         }
                     }
-                    FormatElement::Line(LineMode::Hard | LineMode::Empty) | FormatElement::Tag(Tag::StartLineSuffix) => {
+                    FormatElement::Line(LineMode::Hard | LineMode::Empty)
+                    | FormatElement::Tag(
+                        Tag::StartLineSuffix
+                        | Tag::StartIndentWithLine(LineMode::Hard | LineMode::Empty)
+                        | Tag::EndIndentWithLine(LineMode::Hard | LineMode::Empty),
+                    ) => {
                         return Err(PrintError::InvalidDocument);
                     }
                     FormatElement::Cursor(mark) => self.note_mark(*mark),
                     FormatElement::Nop
+                    | FormatElement::TokenIfBreaks(_)
                     | FormatElement::Line(LineMode::Soft | LineMode::SoftEmpty)
                     | FormatElement::ExpandParent
                     | FormatElement::LineSuffixBoundary

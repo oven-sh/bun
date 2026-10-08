@@ -37,6 +37,7 @@ fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usiz
             FormatElement::ExpandParent => writeln!(out, "breakParent"),
             FormatElement::LineSuffixBoundary => writeln!(out, "lineSuffixBoundary"),
             FormatElement::Token(token) => writeln!(out, "{}", text(token.as_bytes())),
+            FormatElement::TokenIfBreaks(token) => writeln!(out, "ifBreak({})", text(token.as_bytes())),
             FormatElement::SourceText(it) => {
                 writeln!(out, "{}", text(source.get(it.range()).unwrap_or_default()))
             }
@@ -68,6 +69,8 @@ fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usiz
                     writeln!(out)
                 }
                 Tag::StartIndent => writeln!(out, "indent("),
+                Tag::StartIndentWithLine(mode) => writeln!(out, "indent({mode:?}"),
+                Tag::EndIndentWithLine(mode) => writeln!(out, ") {mode:?}"),
                 Tag::StartAlign(align) => writeln!(out, "align({},", align.count()),
                 Tag::StartDedent(DedentMode::Level) => writeln!(out, "dedent("),
                 Tag::StartDedent(DedentMode::Root) => writeln!(out, "dedentToRoot("),

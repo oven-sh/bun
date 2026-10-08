@@ -264,7 +264,8 @@ impl<'d> Printer<'d> {
                     measure.is_space_element_pending = true;
                 }
             }
-            FormatElement::Line(line_mode) => {
+            FormatElement::Line(line_mode)
+            | FormatElement::Tag(Tag::StartIndentWithLine(line_mode) | Tag::EndIndentWithLine(line_mode)) => {
                 if mode.is_flat() {
                     match line_mode {
                         LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => measure.pending_space = true,
@@ -279,6 +280,11 @@ impl<'d> Printer<'d> {
                     // This is past the end of what is measured, in content that is expanded.
                     let width = measure.line_width + usize::from(measure.is_space_element_pending);
                     return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
+                }
+            }
+            FormatElement::TokenIfBreaks(token) => {
+                if !mode.is_flat() {
+                    return Ok(self.fits_text(measure, TextWidth::single(token.len() as u32)));
                 }
             }
             FormatElement::Token(token) => {
@@ -345,7 +351,8 @@ impl<'d> Printer<'d> {
                     take_line_suffix(&mut measure.elements)?;
                     measure.has_line_suffix = true;
                 }
-                Tag::EndLineSuffix => return Err(PrintError::InvalidDocument),
+                // Of a line suffix that is being printed.
+                Tag::EndLineSuffix => self.measure_pop(measure, FrameKind::LineSuffix)?,
                 Tag::StartFill => self.measure_push(measure, FrameKind::Fill, mode),
                 Tag::StartEntry => {
                     // After an item that is being printed, `mode` is that of the separator.
@@ -360,6 +367,8 @@ impl<'d> Printer<'d> {
                 // Where the next line starts does not matter: measuring ends there.
                 Tag::StartIndent
                 | Tag::EndIndent
+                | Tag::StartIndentWithLine(_)
+                | Tag::EndIndentWithLine(_)
                 | Tag::StartAlign(_)
                 | Tag::EndAlign
                 | Tag::StartDedent(_)
@@ -383,11 +392,9 @@ impl<'d> Printer<'d> {
         let print_width = self.options.print_width;
         measure.line_width += measure.pending_indent + usize::from(measure.pending_space) + width.value() as usize;
         measure.pending_indent = 0;
+        // The line break is there in any mode. What counts is what is before it.
         if width.is_multiline() {
-            return match measure.must_be_flat || measure.line_width > print_width {
-                true => Fits::No,
-                false => Fits::Yes,
-            };
+            return if measure.line_width > print_width { Fits::No } else { Fits::Yes };
         }
         if measure.line_width > print_width {
             return Fits::No;

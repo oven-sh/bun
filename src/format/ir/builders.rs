@@ -391,13 +391,12 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for BlockIndent<'_, Content> {
             IndentMode::SoftSpace => (LineMode::SoftOrSpace, Some(LineMode::SoftOrSpace)),
             IndentMode::SoftLineOrSpace => (LineMode::SoftOrSpace, None),
         };
-        f.write_element(FormatElement::Tag(Tag::StartIndent));
-        f.write_element(FormatElement::Line(before));
+        f.write_element(FormatElement::Tag(Tag::StartIndentWithLine(before)));
         self.content.fmt(f);
-        f.write_element(FormatElement::Tag(Tag::EndIndent));
-        if let Some(after) = after {
-            f.write_element(FormatElement::Line(after));
-        }
+        f.write_element(FormatElement::Tag(match after {
+            Some(after) => Tag::EndIndentWithLine(after),
+            None => Tag::EndIndent,
+        }));
     }
 }
 
@@ -511,6 +510,11 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if let (Some(text), None, PrintMode::Expanded) = (self.content.as_token(), self.group_id, self.mode)
+            && let Some(token) = element::Token::new(text)
+        {
+            return f.write_element(FormatElement::TokenIfBreaks(token));
+        }
         let condition = Condition::new(self.mode).with_group_id(self.group_id);
         f.write_element(FormatElement::Tag(Tag::StartConditionalContent(condition)));
         self.content.fmt(f);

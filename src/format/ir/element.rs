@@ -26,6 +26,9 @@ pub(crate) enum FormatElement {
     ExpandParent,
     /// A keyword or a punctuator: ASCII, without line breaks or tabs.
     Token(Token),
+    /// One that is only written if the enclosing group breaks: the same as a [`FormatElement::Token`]
+    /// in a [`Tag::StartConditionalContent`] for [`PrintMode::Expanded`] without a group id.
+    TokenIfBreaks(Token),
     /// A range of the source text.
     SourceText(Text),
     /// A range of the formatter's text buffer.
@@ -285,6 +288,16 @@ pub(crate) enum LineMode {
 }
 
 impl LineMode {
+    /// In the order they are declared.
+    pub(crate) const ALL: [LineMode; 6] = [
+        LineMode::SoftOrSpace,
+        LineMode::Soft,
+        LineMode::Hard,
+        LineMode::Empty,
+        LineMode::SoftOrSpaceEmpty,
+        LineMode::SoftEmpty,
+    ];
+
     pub(crate) const fn will_break(self) -> bool {
         matches!(self, LineMode::Hard | LineMode::Empty)
     }
@@ -310,6 +323,10 @@ impl PrintMode {
 pub(crate) enum Tag {
     StartIndent,
     EndIndent,
+    /// The same as a [`Tag::StartIndent`] and a [`FormatElement::Line`] after it.
+    StartIndentWithLine(LineMode),
+    /// The same as a [`Tag::EndIndent`] and a [`FormatElement::Line`] after it.
+    EndIndentWithLine(LineMode),
     /// Indents by a number of spaces.
     StartAlign(Align),
     EndAlign,
@@ -344,6 +361,7 @@ impl Tag {
         matches!(
             self,
             Tag::StartIndent
+                | Tag::StartIndentWithLine(_)
                 | Tag::StartAlign(_)
                 | Tag::StartDedent(_)
                 | Tag::StartGroup(_)

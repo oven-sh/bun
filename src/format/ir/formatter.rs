@@ -18,12 +18,23 @@ use std::num::NonZeroU32;
 /// Something that can be written as [`FormatElement`]s.
 pub(crate) trait Format<'a> {
     fn fmt(&self, f: &mut Formatter<'a>);
+
+    /// The text, if this is a keyword or a punctuator and nothing else.
+    #[inline(always)]
+    fn as_token(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 impl<'a, T: ?Sized + Format<'a>> Format<'a> for &T {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         Format::fmt(&**self, f);
+    }
+
+    #[inline(always)]
+    fn as_token(&self) -> Option<&'static str> {
+        Format::as_token(&**self)
     }
 }
 
@@ -46,6 +57,11 @@ impl<'a> Format<'a> for &'static str {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         f.write_token(self);
+    }
+
+    #[inline(always)]
+    fn as_token(&self) -> Option<&'static str> {
+        Some(self)
     }
 }
 
@@ -103,17 +119,25 @@ pub(crate) struct Storage {
 }
 
 /// The first elements of every pool, which the printer needs to be somewhere.
-pub(crate) const HARD_LINE_BREAK: Interned = Interned { start: 0, len: 1 };
-pub(crate) const END_LINE_SUFFIX: Interned = Interned { start: 1, len: 1 };
+pub(crate) const END_LINE_SUFFIX: Interned = Interned { start: 0, len: 1 };
+
+/// A [`FormatElement::Line`] of `mode`.
+#[inline]
+pub(crate) const fn line_break(mode: LineMode) -> Interned {
+    Interned {
+        start: 1 + mode as u32,
+        len: 1,
+    }
+}
 
 impl Storage {
     /// The number of elements that are in every pool.
-    const RESERVED: u32 = 2;
+    const RESERVED: u32 = 1 + LineMode::ALL.len() as u32;
 
     pub(crate) fn clear(&mut self) {
         self.pool.clear();
-        self.pool.push(FormatElement::Line(LineMode::Hard));
         self.pool.push(FormatElement::Tag(Tag::EndLineSuffix));
+        self.pool.extend(LineMode::ALL.map(FormatElement::Line));
         self.variants.clear();
         self.text.clear();
     }
@@ -164,7 +188,8 @@ impl Storage {
                     skip(&mut elements, it.len);
                     false
                 }
-                FormatElement::Line(mode) => mode.will_break(),
+                FormatElement::Line(mode)
+                | FormatElement::Tag(Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode)) => mode.will_break(),
                 FormatElement::ExpandParent => true,
                 FormatElement::SourceText(text) | FormatElement::OwnedText(text) => text.width.is_multiline(),
                 FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
@@ -194,6 +219,7 @@ impl Storage {
             // If even the flattest variant has something that forces a break, it breaks.
             FormatElement::BestFitting(it) => self.variants(*it).first().is_some_and(|&flattest| self.summary_of(flattest).1),
             FormatElement::Token(_)
+            | FormatElement::TokenIfBreaks(_)
             | FormatElement::LineSuffixBoundary
             | FormatElement::Space
             | FormatElement::Nop
@@ -215,7 +241,12 @@ impl Storage {
                 FormatElement::Tag(Tag::EndLineSuffix) => {
                     ignore_depth = ignore_depth.saturating_sub(1);
                 }
-                FormatElement::Line(mode) if mode.will_break() => return true,
+                FormatElement::Line(mode)
+                | FormatElement::Tag(Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode))
+                    if mode.will_break() =>
+                {
+                    return true;
+                }
                 element if ignore_depth == 0 && self.element_will_break(element) => return true,
                 _ => {}
             }
@@ -235,7 +266,8 @@ impl Storage {
                     ignore_depth = ignore_depth.saturating_sub(1);
                 }
                 _ if ignore_depth != 0 => {}
-                FormatElement::Line(_) => return true,
+                FormatElement::Line(_)
+                | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) => return true,
                 FormatElement::Interned(it) if self.may_directly_break(self.interned(*it)) => {
                     return true;
                 }
@@ -657,6 +689,14 @@ impl<'a> Formatter<'a> {
                     continue;
                 }
                 _ if conditions.last() == Some(&PrintMode::Expanded) => continue,
+                FormatElement::TokenIfBreaks(_) => continue,
+                FormatElement::Tag(tag @ (Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode))) if !mode.will_break() => {
+                    self.write_element(FormatElement::Tag(if tag.is_start() { Tag::StartIndent } else { Tag::EndIndent }));
+                    match mode {
+                        LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => FormatElement::Space,
+                        _ => continue,
+                    }
+                }
                 FormatElement::Line(LineMode::Soft | LineMode::SoftEmpty) => continue,
                 FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => FormatElement::Space,
                 FormatElement::Interned(interned) => {
@@ -684,8 +724,12 @@ impl<'a> Formatter<'a> {
                 FormatElement::Line(
                     LineMode::Soft | LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty
                 )
+                    | FormatElement::TokenIfBreaks(_)
                     | FormatElement::Tag(
-                        Tag::StartConditionalContent(_) | Tag::EndConditionalContent
+                        Tag::StartConditionalContent(_)
+                            | Tag::EndConditionalContent
+                            | Tag::StartIndentWithLine(_)
+                            | Tag::EndIndentWithLine(_)
                     )
                     | FormatElement::BestFitting(_)
                     | FormatElement::Interned(_)

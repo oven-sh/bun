@@ -176,7 +176,7 @@ impl Parser<'_> {
                     return self.yield_expression();
                 }
                 // `isYieldExpression`: it is read as one, and reported.
-                if self.next_is_word_or_literal_on_same_line() {
+                if !self.is_ecmascript && self.next_is_word_or_literal_on_same_line() {
                     self.report();
                     return self.yield_expression();
                 }
@@ -350,6 +350,7 @@ impl Parser<'_> {
                     if self.newline_before() {
                         return left;
                     }
+                    self.typescript_only();
                     self.next();
                     let kind = if token == T::As && self.token() == T::Const {
                         self.const_assertion_type();
@@ -429,7 +430,7 @@ impl Parser<'_> {
             return true;
         }
         // "here we are using similar heuristics as 'isYieldExpression'". The checker reports it.
-        if self.next_is_word_or_literal_on_same_line() {
+        if !self.is_ecmascript && self.next_is_word_or_literal_on_same_line() {
             self.report();
             return true;
         }
@@ -498,7 +499,10 @@ impl Parser<'_> {
                 };
                 return self.finish_expr(ExprKind::Unary { op, operand }, start);
             }
-            T::LessThan if self.options.is_jsx => return self.jsx_element_or_fragment(),
+            // For acorn an element is a primary expression.
+            T::LessThan if self.options.is_jsx && !self.is_ecmascript => {
+                return self.jsx_element_or_fragment();
+            }
             _ => {}
         }
         let operand = self.left_hand_side_expression();
@@ -618,7 +622,10 @@ impl Parser<'_> {
         if token.is_identifier_or_keyword() {
             // "a name on the next line that is followed by a word on its line belongs to the next
             // statement"
-            if self.newline_before() && self.is_followed_by_word_on_same_line() {
+            if self.newline_before()
+                && !self.is_ecmascript
+                && self.is_followed_by_word_on_same_line()
+            {
                 self.refuse(Refusal::Reported);
             }
         } else if token != T::PrivateIdentifier {
@@ -666,6 +673,7 @@ impl Parser<'_> {
                     expression = self.element_access(start, expression, chain);
                 }
                 T::Exclamation if !self.newline_before() => {
+                    self.typescript_only();
                     self.next();
                     let end = self.prev_end();
                     if non_null == expression {
@@ -900,6 +908,8 @@ impl Parser<'_> {
             T::BigInt => self.token_expr(ExprKind::BigInt(self.lx.atom)),
             T::PrivateIdentifier => self.token_expr(ExprKind::PrivateIdentifier(self.lx.atom)),
             T::Super => self.token_expr(ExprKind::Super),
+            T::LessThan if self.is_ecmascript => self.jsx_element_or_fragment(),
+            T::Import if self.is_ecmascript => self.import_expression(),
             _ if self.is_identifier() => {
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
@@ -935,7 +945,8 @@ impl Parser<'_> {
     fn array_literal(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
-        let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
+        let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;
+        let saved = self.enter_context(0, cleared);
         let base = self.s.ids.len();
         while self.is_in_list(T::CloseBracket) {
             let element = match self.token() {
@@ -1072,7 +1083,8 @@ impl Parser<'_> {
     fn object_literal(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
-        let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
+        let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;
+        let saved = self.enter_context(0, cleared);
         let base = self.s.props.len();
         let modifiers = self.s.prop_modifiers.len();
         while self.is_in_list(T::CloseBrace) {
@@ -1268,7 +1280,7 @@ impl Parser<'_> {
                 // `{ a = 1 }`, which only a destructuring assignment can have.
                 T::Equals => {
                     self.next();
-                    let value = self.assignment_expression();
+                    let value = self.assignment_expression_allowing_in();
                     let kind = ExprKind::Assign {
                         op: None,
                         target,
@@ -1280,7 +1292,7 @@ impl Parser<'_> {
             };
         } else {
             self.expect(T::Colon);
-            value = self.assignment_expression();
+            value = self.assignment_expression_allowing_in();
         }
         if self.s.modifiers.len() > first_modifier {
             let list = self.take_modifiers(first_modifier);

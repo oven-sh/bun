@@ -20,6 +20,12 @@ pub(crate) struct Comparison<'a, A: Storage, B: Storage> {
     members: Vec<u32>,
     classes: Vec<u32>,
     fns: Vec<u32>,
+    types: Vec<u32>,
+    pats: Vec<u32>,
+    props: Vec<u32>,
+    calls: Vec<u32>,
+    /// The first list whose nodes the two parsers number in different orders.
+    pub(crate) other_order: Option<&'static str>,
 }
 
 macro_rules! seen {
@@ -69,6 +75,11 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             members: vec![u32::MAX; a.members.len()],
             classes: vec![u32::MAX; a.classes.len()],
             fns: vec![u32::MAX; a.fns.len()],
+            types: vec![u32::MAX; a.types.len()],
+            pats: vec![u32::MAX; a.pats.len()],
+            props: vec![u32::MAX; a.props.len()],
+            calls: vec![u32::MAX; a.calls.len()],
+            other_order: None,
         }
     }
 
@@ -117,8 +128,33 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             self.differ("with_bodies", &&a.with_bodies[..], &&b.with_bodies[..]);
         }
         self.stmt_list("body", a.body, b.body);
+        if self.lens("import_attributes", a.import_attributes.len(), b.import_attributes.len()) {
+            for (x, y) in a.import_attributes.iter().zip(&b.import_attributes[..]) {
+                if x.0 != y.0 {
+                    self.differ("import_attributes", &x.0, &y.0);
+                }
+                self.expr("import attributes", x.1, y.1);
+            }
+        }
         if self.is_done() {
             return;
+        }
+        for (name, map) in [
+            ("exprs", &self.exprs),
+            ("stmts", &self.stmts),
+            ("fns", &self.fns),
+            ("params", &self.params),
+            ("members", &self.members),
+            ("classes", &self.classes),
+            ("types", &self.types),
+            ("pats", &self.pats),
+            ("props", &self.props),
+            ("calls", &self.calls),
+        ] {
+            let reached = map.iter().filter(|&&it| it != u32::MAX);
+            if !reached.is_sorted() && self.other_order.is_none() {
+                self.other_order = Some(name);
+            }
         }
         // The lists that are in the order of the source, or in that of the ids.
         let uses = |list: &[SpecifierUse]| {
@@ -160,13 +196,6 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         y.dedup();
         if x != y {
             self.differ("keyword_identifier_positions", &x, &y);
-        }
-        let x: Vec<_> = (a.import_attributes.iter())
-            .map(|&(pos, e)| (pos, self.exprs[e.idx()]))
-            .collect();
-        let y: Vec<_> = b.import_attributes.iter().map(|&(pos, e)| (pos, e.0)).collect();
-        if x != y {
-            self.differ("import_attributes", &x, &y);
         }
         let x: Vec<_> = (a.deferred_import_calls.iter())
             .map(|&(e, pos)| (self.exprs[e.idx()], pos))
@@ -579,6 +608,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             return;
         }
         let (x, y) = (self.a[a], self.b[b]);
+        self.pats[a.idx()] = b.0;
         self.seen.pats[b.idx()] = true;
         self.path.push((what, x.pos));
         same!(self, x, y, pos, end);
@@ -756,6 +786,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         }
         for n in 0..a.len() {
             let (x, y) = (self.a[a.at(n)], self.b[b.at(n)]);
+            self.props[a.at(n).idx()] = b.at(n).0;
             self.seen.props[b.at(n).idx()] = true;
             self.path.push(("property", x.start));
             same!(self, x, y, kind, name_kind, pos, start, end, postfix_token);
@@ -768,6 +799,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
 
     fn call(&mut self, a: CallId, b: CallId) {
         let (x, y) = (self.a[a], self.b[b]);
+        self.calls[a.idx()] = b.0;
         self.seen.calls[b.idx()] = true;
         same!(self, x, y, close_pos, chain);
         self.expr("callee", x.callee, y.callee);
@@ -1002,6 +1034,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             return;
         }
         let (x, y) = (self.a[a], self.b[b]);
+        self.types[a.idx()] = b.0;
         self.seen.types[b.idx()] = true;
         self.path.push((what, x.pos));
         same!(self, x, y, pos, end);

@@ -79,6 +79,7 @@ impl Parser<'_> {
         }
         let mut implements = IdList::EMPTY;
         if self.eat(T::Implements) {
+            self.typescript_only();
             implements = self.heritage_types();
         }
         if matches!(self.token(), T::Extends | T::Implements) {
@@ -152,6 +153,9 @@ impl Parser<'_> {
         if flags.intersects(Flags::CONST | Flags::EXPORT | Flags::DEFAULT | Flags::IN | Flags::OUT) {
             self.refuse(Refusal::Reported);
         }
+        if flags.intersects(!(Flags::STATIC | Flags::ASYNC | Flags::ACCESSOR)) {
+            self.typescript_only();
+        }
         if self.token() == T::Static && self.peek() == T::OpenBrace {
             return self.class_static_block(start, first_modifier);
         }
@@ -173,6 +177,7 @@ impl Parser<'_> {
         }
         if kind == MemberKind::Property && self.token() == T::OpenBracket && self.is_index_signature()
         {
+            self.typescript_only();
             let modifiers = self.take_modifiers(first_modifier);
             let mut member = self.index_signature(start, flags, modifiers);
             if is_parent_ambient {
@@ -200,6 +205,7 @@ impl Parser<'_> {
             _ => {}
         }
         if self.eat(T::Question) {
+            self.typescript_only();
             flags |= Flags::OPTIONAL;
         }
         let mut member = Member {
@@ -256,6 +262,7 @@ impl Parser<'_> {
                 && self.token() == T::Exclamation
                 && !self.newline_before()
             {
+                self.typescript_only();
                 self.next();
                 member.flags |= Flags::DEFINITE;
             }

@@ -77,6 +77,8 @@ impl Parser<'_> {
                     child
                 }
                 T::OpenBrace => self.jsx_expression_child(start),
+                // For acorn `<` and `/` are two tokens.
+                T::LessThan if self.is_ecmascript && self.peek() == T::Slash => break,
                 T::LessThan => self.jsx_element(false),
                 T::LessThanSlash => break,
                 _ => {
@@ -89,6 +91,9 @@ impl Parser<'_> {
         jsx.children = self.take_ids(base);
         // `parseJsxClosingElement`, `parseJsxClosingFragment`
         jsx.close_pos = self.pos();
+        if self.token() == T::LessThan {
+            self.next();
+        }
         self.next();
         if jsx.tag.is_some() {
             let closing = self.pos();
@@ -174,7 +179,7 @@ impl Parser<'_> {
                 // `parseJsxSpreadAttribute`
                 self.next();
                 self.expect(T::DotDotDot);
-                let value = self.expression_allowing_in();
+                let value = self.jsx_expression();
                 self.expect(T::CloseBrace);
                 let pos = self.first_operand_pos(value);
                 self.s.props.push(Prop {
@@ -211,7 +216,7 @@ impl Parser<'_> {
                         if self.token() == T::CloseBrace {
                             self.refuse(Refusal::Reported);
                         }
-                        value = self.expression_allowing_in();
+                        value = self.jsx_expression();
                         self.expect(T::CloseBrace);
                     }
                     T::LessThan => value = self.jsx_element(true),
@@ -236,6 +241,14 @@ impl Parser<'_> {
         take_span!(self, props, base)
     }
 
+    /// The expression between braces. `parseJsxExpression` stays in the context of the element.
+    fn jsx_expression(&mut self) -> ExprId {
+        match self.is_ecmascript {
+            true => self.expression_allowing_in(),
+            false => self.expression(),
+        }
+    }
+
     /// `parseJsxExpression` among the children of the element that starts at `element`.
     fn jsx_expression_child(&mut self, element: u32) -> ExprId {
         let open = self.pos();
@@ -244,10 +257,10 @@ impl Parser<'_> {
             // The missing expression is placed at the opening brace.
             self.add_expr(ExprKind::Missing, open, open)
         } else if self.eat(T::DotDotDot) {
-            let operand = self.expression_allowing_in();
+            let operand = self.jsx_expression();
             self.finish_expr(ExprKind::Spread(operand), element)
         } else {
-            self.expression_allowing_in()
+            self.jsx_expression()
         };
         if self.token() != T::CloseBrace {
             self.fail();

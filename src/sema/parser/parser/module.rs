@@ -44,7 +44,9 @@ impl Parser<'_> {
         let mut mode = ResolutionMode::None;
         // After an import, `with` can be on the next line. After an export it starts a statement
         // there.
-        if self.token() == T::With && !(is_export && self.newline_before()) {
+        if self.token() == T::With
+            && !(is_export && self.newline_before() && !self.is_ecmascript)
+        {
             mode = self.import_attributes();
         } else if self.token() == T::Assert && !self.newline_before() {
             self.refuse(Refusal::Reported);
@@ -185,6 +187,9 @@ impl Parser<'_> {
             self.next();
             name = self.module_export_name();
         }
+        if is_type_only {
+            self.typescript_only();
+        }
         Specifier {
             start,
             is_type_only,
@@ -215,6 +220,7 @@ impl Parser<'_> {
                     && matches!(self.peek(), T::From | T::Equals))
                 && (self.is_identifier() || matches!(self.token(), T::Asterisk | T::OpenBrace));
             if is_modifier {
+                self.typescript_only();
                 type_only = true;
                 identifier = None;
                 if self.is_identifier() {
@@ -343,6 +349,7 @@ impl Parser<'_> {
         (name, name_pos): (Atom, u32),
         type_only: bool,
     ) -> StmtId {
+        self.typescript_only();
         self.expect(T::Equals);
         let mut flags = flags & (Flags::EXPORT | Flags::AMBIENT) | self.ambient();
         if type_only {
@@ -408,6 +415,9 @@ impl Parser<'_> {
             self.refuse(Refusal::Reported);
         }
         let type_only = self.eat(T::Type);
+        if type_only {
+            self.typescript_only();
+        }
         if self.token() == T::Asterisk {
             let star_pos = self.pos();
             self.next();
@@ -488,6 +498,9 @@ impl Parser<'_> {
             self.refuse(Refusal::Reported);
         }
         let is_export_equals = self.token() == T::Equals;
+        if is_export_equals {
+            self.typescript_only();
+        }
         self.next();
         let saved = self.enter_context(ctx::AWAIT, ctx::DISALLOW_IN);
         let expression = self.assignment_expression();
@@ -505,6 +518,7 @@ impl Parser<'_> {
         if self.s.modifiers.len() > base {
             self.refuse(Refusal::Reported);
         }
+        self.typescript_only();
         self.next();
         self.expect(T::Namespace);
         let (name, _) = self.identifier();

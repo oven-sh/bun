@@ -463,6 +463,7 @@ pub fn summarize<'s>(
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
     summarize_with_recovery(
         Default::default(),
+        true,
         (arena, atoms.session()),
         path,
         script_kind,
@@ -514,11 +515,17 @@ fn summarize_directly<'s>(
     let is_json = by_name
         && (path.len().checked_sub(b".json".len()))
             .is_some_and(|dot| path[dot..].eq_ignore_ascii_case(b".json"));
+    let is_ecmascript = dialect.ecmascript && is_js;
+    let every_file_is_a_module = match is_ecmascript {
+        true => !dialect.script,
+        false => every_file_is_a_module,
+    };
     let mut options = bun_sema_parser::Options {
         is_declaration_file: by_name && bun_sema::resolve::is_declaration_file_name(path),
         is_jsx: is_js || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js,
-        await_is_a_name: false,
+        await_is_a_name: is_ecmascript && dialect.script,
+        dialect,
     };
     let parsed = DIRECT.with_borrow_mut(|scratch| {
         if is_json {
@@ -616,6 +623,7 @@ pub fn summarize_in<'s>(
     }
     summarize_with_recovery(
         dialect,
+        false,
         (arena, session),
         path,
         script_kind,
@@ -626,9 +634,11 @@ pub fn summarize_in<'s>(
     )
 }
 
-/// [`summarize_as`] by Bun's parser, which recovers from errors as TypeScript does.
+/// [`summarize_as`] by Bun's parser, which recovers from errors as TypeScript does. `reads_jsdoc`:
+/// the types of a JavaScript file are read from its comments.
 pub fn summarize_with_recovery<'s>(
     dialect: bun_sema::resolve::Dialect,
+    reads_jsdoc: bool,
     (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
     path: &[u8],
     script_kind: Option<bun_sema::resolve::ScriptKind>,
@@ -690,6 +700,7 @@ pub fn summarize_with_recovery<'s>(
                 is_declaration_file,
                 is_json,
                 await_is_a_name,
+                reads_jsdoc,
                 statements,
                 &parsing,
             ),

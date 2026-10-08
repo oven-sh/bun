@@ -45,6 +45,7 @@ impl Parser<'_> {
         if self.is_too_deep() {
             return TypeNodeId::NONE;
         }
+        self.typescript_only();
         // `TypeExcludesFlags`
         let saved = self.enter_context(0, ctx::YIELD | ctx::AWAIT);
         let ty = self.type_in_context();

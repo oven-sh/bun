@@ -110,6 +110,7 @@ pub struct Options {
     pub is_javascript: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
+    pub dialect: bun_sema::resolve::Dialect,
 }
 
 /// What a thread keeps from one file to the next: the caches of names, and the capacity of every

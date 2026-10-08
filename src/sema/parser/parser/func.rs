@@ -109,6 +109,7 @@ impl Parser<'_> {
         let (body, open) = match self.token() {
             T::OpenBrace => self.function_block(signature_context(flags)),
             _ => {
+                self.typescript_only();
                 self.semicolon();
                 (FnBody::None, 0)
             }
@@ -136,6 +137,7 @@ impl Parser<'_> {
     pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
         let open = self.pos();
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR;
+        let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
         self.next();
         let list = self.statements_until_close_brace();
@@ -151,6 +153,7 @@ impl Parser<'_> {
         if self.token() != T::LessThan {
             return Span::EMPTY;
         }
+        self.typescript_only();
         self.next();
         let base = self.s.type_params.len();
         while self.is_in_list(T::GreaterThan) {
@@ -215,7 +218,9 @@ impl Parser<'_> {
     /// `parseParametersWorker`
     pub(crate) fn parameter_list(&mut self, context: u32, close: T) -> Span<ParamId> {
         let outer_await = self.context & ctx::AWAIT;
-        let saved = self.enter_context(context, ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL);
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL;
+        let cleared = cleared | self.disallow_in_if_brackets_end_it();
+        let saved = self.enter_context(context, cleared);
         let base = self.s.params.len();
         let modifiers = self.s.param_modifiers.len();
         let decorators = self.s.decorators.len();
@@ -270,6 +275,7 @@ impl Parser<'_> {
             }
             flags |= seen;
             if !seen.is_empty() {
+                self.typescript_only();
                 flags |= Flags::PARAMETER_PROPERTY;
             }
             let list = self.take_modifiers(first);
@@ -279,6 +285,7 @@ impl Parser<'_> {
         }
         let pat;
         if self.token() == T::This {
+            self.typescript_only();
             pat = self.f.pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
             self.next();
             if self.s.params.len() != base || !flags.is_empty() {
@@ -290,6 +297,7 @@ impl Parser<'_> {
             }
             pat = self.identifier_or_pattern();
             if self.eat(T::Question) {
+                self.typescript_only();
                 flags |= Flags::OPTIONAL;
             }
         }

@@ -144,6 +144,8 @@ pub(crate) struct Parser<'a> {
     /// How many classes enclose the node.
     pub(crate) classes_around: u32,
     pub(crate) options: Options,
+    /// `Dialect::ecmascript`, in a JavaScript file.
+    pub(crate) is_ecmascript: bool,
     pub(crate) has_top_level_await: bool,
     /// `notParenthesizedArrow`: the positions at which a speculative parse has found that no arrow
     /// function starts.
@@ -176,6 +178,9 @@ impl<'a> Parser<'a> {
         stacks.clear();
         let mut lx = Lexer::new(text, atoms, &mut scratch.names);
         lx.is_jsx = options.is_jsx;
+        let is_ecmascript = options.dialect.ecmascript && options.is_javascript;
+        lx.is_ecmascript = is_ecmascript;
+        lx.is_script = is_ecmascript && options.dialect.script;
         let mut context = ctx::TOP_LEVEL;
         if options.is_declaration_file {
             context |= ctx::AMBIENT;
@@ -189,6 +194,7 @@ impl<'a> Parser<'a> {
             context,
             classes_around: 0,
             options,
+            is_ecmascript,
             has_top_level_await: false,
             not_arrows: Vec::new(),
             unclaimed_nullable_types: 0,
@@ -360,6 +366,25 @@ impl<'a> Parser<'a> {
         match self.speculations {
             0 => self.refuse(Refusal::Reported),
             _ => self.has_reported = true,
+        }
+    }
+
+    /// At syntax that only TypeScript has, which is an error in a JavaScript file.
+    #[inline(always)]
+    #[track_caller]
+    pub(crate) fn typescript_only(&mut self) {
+        if self.options.is_javascript {
+            self.report();
+        }
+    }
+
+    /// The bit of the context in which `in` is no operator, if brackets, braces, and the parameters
+    /// and the bodies of functions leave that context. TypeScript's parser stays in it.
+    #[inline(always)]
+    pub(crate) fn disallow_in_if_brackets_end_it(&self) -> u32 {
+        match self.is_ecmascript {
+            true => ctx::DISALLOW_IN,
+            false => 0,
         }
     }
 

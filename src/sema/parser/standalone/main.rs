@@ -1,14 +1,17 @@
 //! `bun-hir`: the test harness of `bun_sema_parser`.
 //!
-//! - `compare <file or directory>.. [--jobs=n] [--show=n] [--decorators] [--list]`: parses every
-//!   file with both parsers and compares the results node by node.
+//! - `compare <file or directory>.. [--jobs=n] [--show=n] [--decorators] [--list]
+//!   [--dialect=tsc|estree|espree|babel] [--script]`: parses every file with both parsers and
+//!   compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
+//!   `{"id", "filename", "code", "sourceType", "parser"}`. Without `--dialect` such a text is read as
+//!   its `parser` reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it.
 //! - `bench <file or directory>.. [--reference] [--repeat=n]`: parses every file on one thread.
 //! - `snippets <file.json>..`: the same comparison for the `code` strings of test fixtures.
 
 mod compare;
 
 use bun_sema::atom::Interner;
-use bun_sema::resolve::ScriptKind;
+use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema_parser::{Options, Refused, Scratch};
 use std::collections::BTreeMap;
@@ -36,19 +39,32 @@ fn walk(path: &std::path::Path, files: &mut Vec<String>) {
     }
 }
 
-fn options_for(path: &[u8]) -> Options {
+fn options_for(path: &[u8], dialect: Dialect) -> Options {
     let kind = ScriptKind::from_file_name(path);
     let is_javascript = kind.is_some_and(ScriptKind::is_javascript);
     Options {
         is_declaration_file: bun_sema::resolve::is_declaration_file_name(path),
         is_jsx: is_javascript || kind == Some(ScriptKind::Tsx),
         is_javascript,
-        await_is_a_name: false,
+        await_is_a_name: is_javascript && dialect.ecmascript && dialect.script,
+        dialect,
     }
 }
 
+/// The dialect that `name` stands for.
+fn dialect_of(name: &str, script: bool) -> Option<Dialect> {
+    Some(match name {
+        "tsc" => Dialect::default(),
+        "estree" | "typescript" => Dialect::typescript_estree(script),
+        "espree" => Dialect::espree(script),
+        "babel" => Dialect::babel(script),
+        _ => return None,
+    })
+}
+
 enum Outcome {
-    Identical,
+    /// With the first list that is numbered in another order, if any.
+    Identical(Option<&'static str>),
     /// The reference reports an error, and so the direct parser is right to refuse.
     BothRefuse,
     Refused(Refused),
@@ -57,34 +73,44 @@ enum Outcome {
     Different(String),
 }
 
-fn compare_one(path: &[u8], text: &[u8], decorators: bool, scratch: &mut Scratch) -> Outcome {
+fn compare_one(
+    path: &[u8],
+    text: &[u8],
+    decorators: bool,
+    dialect: Dialect,
+    scratch: &mut Scratch,
+) -> Outcome {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
-    let (reference, _) =
-        bun_js_parser::sema::summarize_with_recovery(
-            Default::default(),
-            (arena, &session),
-            path,
-            None,
-            text,
-            &atoms,
-            decorators,
-            false,
-        );
+    // As the linter has it.
+    let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
+    let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
+        dialect,
+        false,
+        (arena, &session),
+        path,
+        None,
+        text,
+        &atoms,
+        decorators,
+        every_file_is_a_module,
+    );
     let is_refused_by_reference = reference.has_errors
         || reference.has_parse_diagnostics
         || !reference.diagnostics.is_empty()
         || reference.ran_out_of_stack;
-    let mut options = options_for(path);
+    let mut options = options_for(path, dialect);
     let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
     // `parseSourceFileWorker`: only a module has an await context at its top level.
     if let Ok(first) = &parsed
         && first.has_top_level_await
+        && !every_file_is_a_module
         && !first.file.has_module_syntax
-        && ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
-            .iter()
-            .any(|extension| path.ends_with(extension))
+        && (dialect.script
+            || ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
+                .iter()
+                .any(|extension| path.ends_with(extension)))
         && !(first.file.exprs.iter()).any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta))
     {
         options.await_is_a_name = true;
@@ -105,7 +131,7 @@ fn compare_one(path: &[u8], text: &[u8], decorators: bool, scratch: &mut Scratch
                 comparison.run();
                 match comparison.difference.take() {
                     Some(difference) => Outcome::Different(difference),
-                    None => Outcome::Identical,
+                    None => Outcome::Identical(comparison.other_order),
                 }
             };
             scratch.recycle(parsed.file);
@@ -117,6 +143,7 @@ fn compare_one(path: &[u8], text: &[u8], decorators: bool, scratch: &mut Scratch
 #[derive(Default)]
 struct Totals {
     identical: usize,
+    other_order: BTreeMap<&'static str, Vec<String>>,
     both_refuse: usize,
     refused: BTreeMap<String, Vec<String>>,
     accepted: Vec<(String, String)>,
@@ -126,7 +153,12 @@ struct Totals {
 impl Totals {
     fn add(&mut self, name: &str, outcome: Outcome) {
         match outcome {
-            Outcome::Identical => self.identical += 1,
+            Outcome::Identical(other_order) => {
+                self.identical += 1;
+                if let Some(list) = other_order {
+                    self.other_order.entry(list).or_default().push(name.to_owned());
+                }
+            }
             Outcome::BothRefuse => self.both_refuse += 1,
             Outcome::Refused(it) => self
                 .refused
@@ -169,6 +201,10 @@ impl Totals {
         for (why, names) in &self.refused {
             println!("    refused: {why} {}", names.len());
         }
+        for (list, names) in &mut self.other_order {
+            names.sort();
+            println!("    identical, but numbered in another order: {list} {} (e.g. {})", names.len(), names[0]);
+        }
     }
 }
 
@@ -186,21 +222,106 @@ fn files_of(args: &[String]) -> Vec<String> {
     files
 }
 
+/// A text to parse.
+struct Input {
+    /// What it is called in the output.
+    id: String,
+    /// The name that says which language it is.
+    path: String,
+    /// `None`: that of the file at `path`.
+    text: Option<Vec<u8>>,
+    dialect: Dialect,
+}
+
+/// The value of the string field `name` of the JSON object `line`.
+fn json_field(line: &str, name: &str) -> Option<String> {
+    let rest = &line[line.find(&format!("\"{name}\":\""))? + name.len() + 4..];
+    let (mut value, mut chars) = (Vec::new(), rest.chars());
+    loop {
+        match chars.next()? {
+            '"' => break,
+            '\\' => match chars.next()? {
+                'n' => value.push(u16::from(b'\n')),
+                'r' => value.push(u16::from(b'\r')),
+                't' => value.push(u16::from(b'\t')),
+                'b' => value.push(8),
+                'f' => value.push(12),
+                'u' => {
+                    let digits: String = chars.by_ref().take(4).collect();
+                    value.push(u16::from_str_radix(&digits, 16).ok()?);
+                }
+                other => value.extend(other.encode_utf16(&mut [0; 2]).iter()),
+            },
+            other => value.extend(other.encode_utf16(&mut [0; 2]).iter()),
+        }
+    }
+    Some(String::from_utf16_lossy(&value))
+}
+
+fn inputs_of(args: &[String]) -> Vec<Input> {
+    let script = args.iter().any(|arg| arg == "--script");
+    let chosen = args.iter().find_map(|arg| arg.strip_prefix("--dialect="));
+    let mut inputs = Vec::new();
+    for arg in args.iter().filter(|arg| !arg.starts_with("--")) {
+        if !arg.ends_with(".jsonl") {
+            let mut files = Vec::new();
+            walk(std::path::Path::new(arg), &mut files);
+            let dialect = dialect_of(chosen.unwrap_or("tsc"), script).expect("a dialect");
+            inputs.extend(files.into_iter().map(|path| Input {
+                id: path.clone(),
+                path,
+                text: None,
+                dialect,
+            }));
+            continue;
+        }
+        let lines = std::fs::read_to_string(arg).expect("the list of texts");
+        for line in lines.lines() {
+            let field = |name: &str| json_field(line, name);
+            let (Some(id), Some(path), Some(code)) = (field("id"), field("filename"), field("code"))
+            else {
+                continue;
+            };
+            let script = script || field("sourceType").is_some_and(|it| it != "module");
+            let parser = field("parser").unwrap_or_default();
+            let Some(dialect) = dialect_of(chosen.unwrap_or(&parser), script) else {
+                continue;
+            };
+            inputs.push(Input {
+                id,
+                path,
+                text: Some(code.into_bytes()),
+                dialect,
+            });
+        }
+    }
+    inputs
+}
+
 fn compare(args: &[String]) {
-    let files = files_of(args);
+    let inputs = inputs_of(args);
     let decorators = args.iter().any(|arg| arg == "--decorators");
     let totals = Mutex::new(Totals::default());
-    bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), files.len(), |i| {
+    bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), inputs.len(), |i| {
         thread_local! {
             static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
         }
-        let Ok(text) = std::fs::read(&files[i]) else {
-            return;
+        let input = &inputs[i];
+        let read;
+        let text = match &input.text {
+            Some(text) => text,
+            None => match std::fs::read(&input.path) {
+                Ok(text) => {
+                    read = text;
+                    &read
+                }
+                Err(_) => return,
+            },
         };
         let outcome = SCRATCH.with_borrow_mut(|scratch| {
-            compare_one(files[i].as_bytes(), &text, decorators, scratch)
+            compare_one(input.path.as_bytes(), text, decorators, input.dialect, scratch)
         });
-        totals.lock().unwrap().add(&files[i], outcome);
+        totals.lock().unwrap().add(&input.id, outcome);
     });
     let list = args.iter().any(|arg| arg == "--list");
     totals
@@ -240,7 +361,7 @@ fn bench(args: &[String]) {
                 nodes += file.0.exprs.len();
                 parsed += 1;
             } else if let Ok(file) =
-                bun_sema_parser::parse(text, options_for(path.as_bytes()), &atoms, &mut scratch)
+                bun_sema_parser::parse(text, options_for(path.as_bytes(), Dialect::default()), &atoms, &mut scratch)
             {
                 nodes += file.file.exprs.len();
                 parsed += 1;

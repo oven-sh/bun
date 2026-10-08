@@ -496,6 +496,7 @@ impl<'a> Parser<'a> {
     /// `await_is_a_name`: the top level has no await context, as in a script
     /// (`parseSourceFileWorker`).
     /// `statements`: `P::statements_with_await_in_names`, before and after.
+    /// `reads_jsdoc`: the types of a JavaScript file are read from its comments.
     /// Also returns whether `await` was parsed as a keyword at the top level.
     #[cold]
     pub(crate) fn parse_for_sema(
@@ -504,6 +505,7 @@ impl<'a> Parser<'a> {
         is_declaration_file: bool,
         is_json: bool,
         await_is_a_name: bool,
+        reads_jsdoc: bool,
         statements: &mut Vec<bun_ast::Loc>,
         parsing: &core::cell::Cell<core::time::Duration>,
     ) -> (bun_sema::hir::FileBuilder, bool) {
@@ -551,7 +553,7 @@ impl<'a> Parser<'a> {
         let builder = crate::sema::builder::Builder::new(is_js, atoms);
         let mut type_syntax = Box::new(crate::sema::TypeSyntax::new(builder));
         type_syntax.save_types |= is_declaration_file;
-        type_syntax.has_jsdoc = is_js;
+        type_syntax.has_jsdoc = is_js && reads_jsdoc;
         p.type_syntax = Some(type_syntax);
         // `parseSourceFileWorker`: a declaration file is never reparsed for its top-level `await`
         // either. `parseJSONText` has no await context at all.

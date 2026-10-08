@@ -88,10 +88,7 @@ impl Parser<'_> {
             T::For => self.for_statement(),
             T::Continue | T::Break => self.break_or_continue(),
             T::Return => self.return_statement(),
-            T::With => {
-                self.refuse(Refusal::Unsupported);
-                StmtId::NONE
-            }
+            T::With => self.with_statement(),
             T::Switch => self.switch_statement(),
             T::Throw => self.throw_statement(),
             T::Try => self.try_statement(),
@@ -126,10 +123,32 @@ impl Parser<'_> {
 
     /// `nextTokenIsBindingIdentifierOrStartOfDestructuring`
     fn is_let_declaration(&mut self) -> bool {
+        let is_ecmascript = self.is_ecmascript;
         self.look_ahead(|p| {
             p.next();
-            p.is_binding_identifier() || matches!(p.token(), T::OpenBrace | T::OpenBracket)
+            match p.token() {
+                T::OpenBrace | T::OpenBracket => true,
+                // acorn's `isLet`
+                T::In | T::InstanceOf if is_ecmascript => false,
+                token if is_ecmascript => token.is_identifier_or_keyword(),
+                _ => p.is_binding_identifier(),
+            }
         })
+    }
+
+    /// `parseStatement` where a declaration cannot be: the body of an `if`, of a loop, of a `with`
+    /// or of a label. For acorn `let` is a name there, unless a `[` or a name with an escape follows.
+    pub(crate) fn embedded_statement(&mut self) -> StmtId {
+        if self.token() == T::Let && self.is_ecmascript {
+            let is_declaration = self.look_ahead(|p| {
+                p.next();
+                p.token() == T::OpenBracket || p.token() == T::Identifier && p.lx.has_escape
+            });
+            if !is_declaration {
+                return self.expression_or_labeled_statement();
+            }
+        }
+        self.statement()
     }
 
     /// `nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`
@@ -379,6 +398,9 @@ impl Parser<'_> {
             | T::Type => Flags::empty(),
             _ => self.modifiers(true, false, false),
         };
+        if flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
+            self.typescript_only();
+        }
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
@@ -396,6 +418,12 @@ impl Parser<'_> {
             }
             T::Function => self.function_declaration(start, base, flags),
             T::Class => self.class_declaration(start, base, flags),
+            T::Interface | T::Type | T::Enum | T::Global | T::Module | T::Namespace
+                if self.options.is_javascript =>
+            {
+                self.report();
+                StmtId::NONE
+            }
             T::Interface => self.interface_declaration(start, base, flags),
             T::Type => self.type_alias_declaration(start, base, flags),
             T::Enum => self.enum_declaration(start, base, flags),
@@ -454,6 +482,7 @@ impl Parser<'_> {
                 && !self.newline_before()
                 && matches!(self.f.pats.get(pat.idx()), Some(Pat { kind: PatKind::Ident(_), .. }))
             {
+                self.typescript_only();
                 self.next();
                 flags |= Flags::DEFINITE;
             }
@@ -679,9 +708,9 @@ impl Parser<'_> {
         let start = self.start();
         self.next();
         let test = self.parenthesized_condition();
-        let yes = self.statement();
+        let yes = self.embedded_statement();
         let no = match self.eat(T::Else) {
-            true => self.statement(),
+            true => self.embedded_statement(),
             false => StmtId::NONE,
         };
         self.add_stmt(StmtKind::If { test, yes, no }, start, Span::EMPTY)
@@ -690,7 +719,7 @@ impl Parser<'_> {
     fn do_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
-        let body = self.statement();
+        let body = self.embedded_statement();
         self.expect(T::While);
         let test = self.parenthesized_condition();
         // "do;while(0)x will have a semicolon inserted before x."
@@ -702,8 +731,28 @@ impl Parser<'_> {
         let start = self.start();
         self.next();
         let test = self.parenthesized_condition();
-        let body = self.statement();
+        let body = self.embedded_statement();
         self.add_stmt(StmtKind::While { test, body }, start, Span::EMPTY)
+    }
+
+    /// `parseWithStatement`: a block of the expression, as a statement, and the body.
+    fn with_statement(&mut self) -> StmtId {
+        let start = self.start();
+        self.next();
+        self.expect(T::OpenParen);
+        let full = self.full_start();
+        let object = self.expression_allowing_in();
+        let object = self.add_stmt(StmtKind::Expr(object), start, Span::EMPTY);
+        if let Some(statement) = self.f.stmts.get_mut(object.idx()) {
+            statement.loc.pos = full;
+        }
+        let close = self.pos();
+        self.expect(T::CloseParen);
+        let body = self.embedded_statement();
+        let end = self.f.stmts.get(body.idx()).map_or(0, |it| it.loc.end);
+        self.f.with_bodies.push((close + 1, end));
+        let list = self.f.list(&[object, body]);
+        self.add_stmt(StmtKind::Block(list), start, Span::EMPTY)
     }
 
     /// `parseForOrForInOrForOfStatement`
@@ -720,6 +769,7 @@ impl Parser<'_> {
         if self.token() != T::Semicolon {
             let at = self.start();
             let is_declaration = match self.token() {
+                T::Let if self.is_ecmascript => self.is_let_declaration(),
                 T::Var | T::Let | T::Const => true,
                 T::Using => self.look_ahead(|p| p.next_is_binding_on_same_line(true)),
                 T::Await => self.is_await_using_declaration(),
@@ -741,7 +791,7 @@ impl Parser<'_> {
             let expr = self.assignment_expression();
             self.context = saved;
             self.expect(T::CloseParen);
-            let body = self.statement();
+            let body = self.embedded_statement();
             StmtKind::ForOf {
                 left: init,
                 expr,
@@ -751,7 +801,7 @@ impl Parser<'_> {
         } else if self.eat(T::In) {
             let expr = self.expression_allowing_in();
             self.expect(T::CloseParen);
-            let body = self.statement();
+            let body = self.embedded_statement();
             StmtKind::ForIn {
                 left: init,
                 expr,
@@ -769,7 +819,7 @@ impl Parser<'_> {
                 _ => self.expression_allowing_in(),
             };
             self.expect(T::CloseParen);
-            let body = self.statement();
+            let body = self.embedded_statement();
             StmtKind::For {
                 init,
                 test,
@@ -924,7 +974,11 @@ impl Parser<'_> {
     /// `parseExpressionOrLabeledStatement`
     fn expression_or_labeled_statement(&mut self) -> StmtId {
         let start = self.start();
-        let expression = self.expression_allowing_in();
+        // TypeScript 5 has `allowInAnd(parseExpression)` here, the native parser has not.
+        let expression = match self.options.dialect.typescript_5 || self.is_ecmascript {
+            true => self.expression_allowing_in(),
+            false => self.expression(),
+        };
         if self.token() == T::Colon
             && expression.idx() + 1 == self.f.exprs.len()
             && let Some(&Expr {
@@ -936,7 +990,7 @@ impl Parser<'_> {
         {
             self.f.exprs.pop();
             self.next();
-            let body = self.statement();
+            let body = self.embedded_statement();
             return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
         }
         self.semicolon();

@@ -57,7 +57,7 @@ impl Extent {
 }
 
 pub(crate) struct Variables {
-    /// Sorted by scope, then by position.
+    /// Sorted by scope, then by position, but for the `arguments` of a function, which is first.
     pub(crate) list: Vec<Variable>,
     /// For each of `list`.
     pub(crate) extents: Vec<Extent>,

@@ -13,6 +13,8 @@
 //! - The white space in JSX text, and `{" "}`.
 //! - The empty braces of `import a, {} from "a"`.
 //! - Escapes in names: `\u0061b` is `ab`.
+//! - The text of a template that is in another language, like `` css`a{}` ``, and the white space in
+//!   the table of a `` describe.each`..` ``.
 //! - The indentation of the lines of block comments.
 //!
 //! It is a debugging aid, not a proof: a formatter that drops a pair of parentheses that matters
@@ -20,7 +22,7 @@
 
 use crate::js::utils::number::format_trimmed_number;
 use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::ast::{File, Node, StmtKind, TypeKind};
+use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind, TypeKind};
 use bun_lint::span::Span;
 use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
@@ -47,16 +49,49 @@ impl std::fmt::Display for Difference {
     }
 }
 
-/// The `{` of the interfaces and type literals of a file.
-struct TypeBodies(Vec<u32>);
+/// Whether the text of the template `e` may be formatted as a style sheet or as GraphQL.
+fn is_in_another_language(e: Expr<'_>) -> bool {
+    let is_graphql = match e.parent() {
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::TaggedTemplate(call) => matches!(call.callee().text(), b"gql" | b"graphql" | b"graphql.experimental"),
+            ExprKind::Call(call) => call.callee().text() == b"graphql",
+            _ => false,
+        },
+        _ => false,
+    };
+    let before = e.file().text().get(..e.span().start as usize).unwrap_or_default();
+    is_graphql || before.trim_ascii_end().ends_with(b"/* GraphQL */") || crate::css::embed::is_embed_css(e)
+}
 
-impl<'a> Visitor<'a> for TypeBodies {
+/// What the tokens do not tell.
+#[derive(Default)]
+struct Places {
+    /// The `{` of the interfaces and type literals of a file.
+    type_bodies: Vec<u32>,
+    /// The templates whose text is in another language, which is formatted too.
+    embedded: Vec<Span>,
+    /// The tables of `` describe.each`..` ``, whose columns are lined up.
+    tables: Vec<Span>,
+}
+
+impl<'a> Visitor<'a> for Places {
     fn enter(&mut self, node: Node<'a>) {
         match node {
-            Node::Type(ty) if matches!(ty.kind(), TypeKind::Object(_)) => self.0.push(ty.span().start),
+            Node::Type(ty) if matches!(ty.kind(), TypeKind::Object(_)) => self.type_bodies.push(ty.span().start),
             Node::Stmt(statement) => {
                 if let StmtKind::Interface(interface) = statement.kind() {
-                    self.0.push(interface.body_span().start);
+                    self.type_bodies.push(interface.body_span().start);
+                }
+            }
+            Node::Expr(e) if matches!(e.kind(), ExprKind::Template(_)) && is_in_another_language(e) => {
+                self.embedded.push(e.span());
+            }
+            Node::Expr(e) => {
+                if let ExprKind::TaggedTemplate(call) = e.kind()
+                    && call.callee().text().ends_with(b".each")
+                    && let Some(template) = call.template()
+                {
+                    self.tables.push(template.span());
                 }
             }
             _ => {}
@@ -114,9 +149,12 @@ fn is_closer(token: Token<'_>) -> bool {
 }
 
 fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
-    let mut type_bodies = TypeBodies(Vec::new());
-    walk(file, &mut type_bodies);
-    type_bodies.0.sort_unstable();
+    let mut places = Places::default();
+    walk(file, &mut places);
+    places.type_bodies.sort_unstable();
+    places.embedded.sort_unstable_by_key(|it| it.start);
+    // One can be in an expression of another.
+    let is_in = |spans: &[Span], at: u32| spans.iter().take_while(|it| it.start <= at).any(|it| at < it.end);
 
     let mut out: Vec<Item<'a>> = Vec::new();
     // For each `{`, `[` and `(` that is open, whether it is that of an interface or a type literal.
@@ -137,7 +175,7 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                     }
                     continue;
                 }
-                b"{" | b"[" => open.push(type_bodies.0.binary_search(&start).is_ok()),
+                b"{" | b"[" => open.push(places.type_bodies.binary_search(&start).is_ok()),
                 b"}" | b"]" => drop(open.pop()),
                 b"," if open.last() == Some(&true) || tokens.peek().is_none_or(|next| is_closer(*next)) => continue,
                 // In front of the first type.
@@ -173,6 +211,15 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                     false => format_trimmed_number(text),
                 };
                 out.push((number, start));
+                continue;
+            }
+            // Only where its expressions are.
+            TokenKind::Template if is_in(&places.embedded, start) => {
+                out.push((Cow::Borrowed(b"`"), start));
+                continue;
+            }
+            TokenKind::Template if is_in(&places.tables, start) => {
+                out.push((Cow::Owned(text.iter().copied().filter(|it| !it.is_ascii_whitespace()).collect()), start));
                 continue;
             }
             TokenKind::RegularExpression => {

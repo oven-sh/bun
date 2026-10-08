@@ -76,6 +76,13 @@ pub(crate) fn read_sized(path: &[u8], size: u64) -> bun_sys::Result<Vec<u8>> {
     Ok(text)
 }
 
+/// Whether the file at `path` starts with the few bytes `prefix`.
+pub(crate) fn starts_with(path: &[u8], prefix: &[u8]) -> bool {
+    let mut start = [0; 8];
+    let read = File::openat(Fd::cwd(), path, O::RDONLY, 0).and_then(|file| file.read_all(&mut start));
+    read.is_ok_and(|count| start[..count].starts_with(prefix))
+}
+
 pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
     let mut all = Vec::new();
     let mut buffer = vec![0; 64 * 1024];

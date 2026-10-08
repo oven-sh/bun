@@ -116,6 +116,28 @@ fn check_and_lint(
     std::mem::take(results.get_mut())
 }
 
+/// The checker has the text of a file without its byte order mark. Puts it back, so that it is in
+/// what is printed and written. `current`: the text that was checked, if it is not what is on the
+/// disk.
+fn with_byte_order_mark((mut result, text): Linted, current: Option<&[u8]>, path: &[u8]) -> Linted {
+    const MARK: &[u8] = b"\xEF\xBB\xBF";
+    let Some(text) = text else {
+        return (result, None);
+    };
+    if !current.map_or_else(|| crate::fs::starts_with(path, MARK), |current| current.starts_with(MARK)) {
+        return (result, Some(text));
+    }
+    let fixes = result.messages.iter_mut().chain(&mut result.suppressed).flat_map(|message| {
+        let of_suggestions = message.suggestions.iter_mut().map(|it| &mut it.fix);
+        message.fix.iter_mut().chain(of_suggestions)
+    });
+    for fix in fixes {
+        fix.span.start += MARK.len() as u32;
+        fix.span.end += MARK.len() as u32;
+    }
+    (result, Some([MARK, &text].concat()))
+}
+
 /// Where ESLint's `verifyAndFix` is with a file.
 #[derive(Default)]
 struct Fixing {
@@ -149,7 +171,7 @@ pub(crate) fn lint(
         for (index, linted) in pending.iter().copied().zip(linted) {
             let (file, state) = (&files[index], &mut states[index]);
             let (mut result, text) = match (linted, &state.current) {
-                (Some(linted), _) => linted,
+                (Some(linted), current) => with_byte_order_mark(linted, current.as_deref(), file.path),
                 // It was in a program before it was fixed.
                 (None, Some(current)) => (context.verify(file.path, current, file.config), Some(current.clone())),
                 (None, None) => continue,

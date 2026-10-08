@@ -122,6 +122,9 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
         Some(b"double") => options.push((b"singleQuote", b"false".to_vec())),
         _ => {}
     }
+    if let Some(value @ (b"true" | b"false")) = get(b"insert_final_newline") {
+        options.push((b"insertFinalNewline", value.to_vec()));
+    }
     if let Some(end @ (b"lf" | b"crlf" | b"cr")) = get(b"end_of_line") {
         options.push((b"endOfLine", end.to_vec()));
     }

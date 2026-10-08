@@ -21,7 +21,7 @@ use bun_sema::hir::Diagnostic;
 use bun_sema::session::Session;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
-use config::{Configs, Resolved};
+use config::{Configs, Flavor, Resolved};
 use files::{Expanded, Ignored, Language, Target};
 use std::borrow::Cow;
 use std::io::Write;
@@ -118,6 +118,10 @@ fn format(path: &[u8], text: &[u8], how: &Resolved, scratch: &mut Scratch, verif
             Ok(()) => {}
             Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
             Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
+        }
+        if how.omits_final_newline {
+            let end = out.strip_suffix(b"\n").map_or(out.len(), |rest| rest.strip_suffix(b"\r").unwrap_or(rest).len());
+            out.truncate(end);
         }
         if verifies && out != text {
             let is_same = with_file(path, &out, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
@@ -236,14 +240,18 @@ impl Run<'_> {
         let dot = [b".".to_vec()];
         let patterns = if options.patterns.is_empty() { &dot[..] } else { &options.patterns[..] };
         let started = Instant::now();
-        let expanded = match files::expand(configs, &pool, ignored, patterns, options.error_on_unmatched_pattern) {
+        let expand = match configs.flavor {
+            Flavor::Prettier => files::expand,
+            Flavor::Oxfmt => files::expand_as_oxfmt,
+        };
+        let expanded = match expand(configs, &pool, ignored, patterns, options.error_on_unmatched_pattern) {
             Ok(expanded) => expanded,
             Err(Fatal(error)) => return self.fail(&error),
         };
         let finding = started.elapsed();
 
         // What is not to be formatted after all.
-        let mut others = 0;
+        let mut others: Vec<(&[u8], usize)> = Vec::new();
         let is_wanted = |target: &Target| {
             let of_config = target.scope.config.as_ref().map_or(&None, |it| &it.ignores);
             !target.is_named || !ignored.ignores_file(&target.path, of_config)
@@ -258,12 +266,26 @@ impl Run<'_> {
             match files::language_of(&target.path) {
                 _ if !is_wanted(target) => {}
                 Language::Supported => work.push((index, target)),
-                Language::Other => others += 1,
+                Language::Other => {
+                    let name = paths::basename(&target.path);
+                    let kind = strings::last_index_of_char(name, b'.').map_or(name, |dot| &name[dot..]);
+                    match others.iter_mut().find(|it| it.0 == kind) {
+                        Some(entry) => entry.1 += 1,
+                        None => others.push((kind, 1)),
+                    }
+                }
                 Language::Unknown if target.ignores_unknown || options.ignore_unknown => {}
                 Language::Unknown => {
                     done[index] = Some(Done::Failed([b"No parser could be inferred for file \"", &target.path[..], b"\"."].concat()));
                 }
             }
+        }
+        if options.list_files {
+            for (_, target) in &work {
+                self.out.stdout.extend_from_slice(&paths::relative(cwd, &target.path));
+                self.out.stdout.push(b'\n');
+            }
+            return self.out;
         }
         // The largest first, so that no thread begins it when the others are nearly done.
         work.sort_by_key(|it| std::cmp::Reverse(it.1.size));
@@ -323,10 +345,13 @@ impl Run<'_> {
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }
-        if others > 0 {
-            let noun = if others == 1 { "file is" } else { "files are" };
-            let text = format!("{others} {noun} in a language that bun format does not support yet (CSS, JSON, Markdown, YAML, HTML, ..) and left as they are.");
-            self.warn(text.as_bytes());
+        if !others.is_empty() {
+            others.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
+            let count: usize = others.iter().map(|it| it.1).sum();
+            let noun = if count == 1 { "file is" } else { "files are" };
+            let kinds: Vec<Vec<u8>> = others.iter().map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes()).collect();
+            let text = format!("{count} {noun} in a language that bun format does not support yet, and left as they are: ");
+            self.warn(&[text.as_bytes(), &kinds.join(&b", "[..])].concat());
         }
         let count = |n: usize| if n == 1 { "the above file".to_owned() } else { format!("{n} files") };
         if options.check {
@@ -394,7 +419,10 @@ impl Run<'_> {
                 }
             };
         }
-        let mut ignored = Ignored::new(options, &environment.cwd);
+        let mut ignored = match Ignored::new(options, &environment.cwd, configs.flavor) {
+            Ok(ignored) => ignored,
+            Err(Fatal(error)) => return self.fail(&error),
+        };
         match &options.stdin_filepath {
             Some(name) => self.format_stdin(&configs, &ignored, name),
             None => self.format_files(&configs, &mut ignored),

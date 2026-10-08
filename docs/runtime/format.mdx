@@ -53,18 +53,33 @@ Checking formatting...
 
 ## Replace oxfmt
 
-`bun format` reads `.oxfmtrc.json` and `.oxfmtrc.jsonc`, including `overrides` and `ignorePatterns`. With one of these, lines are 100 columns wide unless `printWidth` says otherwise, as in oxfmt.
+`bun format` reads `.oxfmtrc.json`, `.oxfmtrc.jsonc`, and `oxfmt.config.ts`, including `overrides`, `ignorePatterns`, and `insertFinalNewline`, and takes the flags of `oxfmt`.
+
+| Instead of        | Run                  |
+| ----------------- | -------------------- |
+| `oxfmt`           | `bun format`         |
+| `oxfmt --check .` | `bun format --check` |
+
+If the nearest configuration file is one of these, `bun format` finds files and configuration the way oxfmt does:
+
+- Lines are 100 columns wide unless `printWidth` says otherwise.
+- Every `.gitignore` of the repository counts, not only the one in the current directory.
+- A `!` argument and `ignorePatterns` are in the format of `.gitignore`.
+- Only the `.editorconfig` nearest to the current directory counts.
+- `.prettierrc` files are not read.
+
+`sortImports`, `sortTailwindcss`, and `jsdoc` are not supported yet.
 
 ## Configuration
 
 For each file, `bun format` uses the nearest configuration file: it looks in the directory of the file, then in each parent directory. In a directory with several, the first of this list counts:
 
-1. `"prettier"` in `package.json` or `package.yaml`
-2. `.prettierrc`, in JSON or YAML
-3. `.prettierrc.json`, `.yml`, `.yaml`, `.json5`
-4. `.prettierrc.js`, `prettier.config.js`, and the same with `.ts`, `.mjs`, `.mts`, `.cjs`, `.cts`
-5. `.prettierrc.toml`
-6. `.oxfmtrc.json`, `.oxfmtrc.jsonc`
+1. `.oxfmtrc.json`, `.oxfmtrc.jsonc`, `oxfmt.config.ts`
+2. `"prettier"` in `package.json` or `package.yaml`
+3. `.prettierrc`, in JSON or YAML
+4. `.prettierrc.json`, `.yml`, `.yaml`, `.json5`
+5. `.prettierrc.js`, `prettier.config.js`, and the same with `.ts`, `.mjs`, `.mts`, `.cjs`, `.cts`
+6. `.prettierrc.toml`
 
 ```json .prettierrc icon="file-json"
 {

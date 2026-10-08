@@ -2,6 +2,10 @@
 //!
 //! The configuration of a file is in the first directory, from that of the file upwards, that has
 //! a file of one of [`NAMES`]. `.editorconfig` files count besides, and less.
+//!
+//! Where the working directory has a configuration file of oxfmt, things are as in oxfmt
+//! ([`Flavor::Oxfmt`]): which files are configuration files, how patterns are read, which
+//! `.editorconfig` counts, and which files are ignored (`files.rs`).
 
 use super::cli::{Options, Precedence};
 use super::editorconfig;
@@ -16,8 +20,12 @@ use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::sync::Arc;
 
-/// The names of configuration files, by priority: Prettier's `CONFIG_FILES`, then oxfmt's.
+/// The names of configuration files, by priority: oxfmt's, then Prettier's `CONFIG_FILES`.
 const NAMES: [&[u8]; 24] = [
+    b".oxfmtrc.json",
+    b".oxfmtrc.jsonc",
+    b"oxfmt.config.ts",
+    b"oxfmt.config.mts",
     b"package.json",
     b"package.yaml",
     b".prettierrc",
@@ -38,11 +46,17 @@ const NAMES: [&[u8]; 24] = [
     b".prettierrc.cts",
     b"prettier.config.cts",
     b".prettierrc.toml",
-    b".oxfmtrc.json",
-    b".oxfmtrc.jsonc",
-    b"oxfmt.config.ts",
-    b"oxfmt.config.mts",
 ];
+
+/// How many of [`NAMES`] are oxfmt's.
+const NAMES_OF_OXFMT: usize = 4;
+
+/// Whose command line this one behaves like.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Flavor {
+    Prettier,
+    Oxfmt,
+}
 
 /// The options that the formatter has.
 const OPTIONS: [&[u8]; 17] = [
@@ -70,6 +84,7 @@ type Settings = Vec<(Vec<u8>, Vec<u8>)>;
 
 struct Pattern {
     glob: Glob,
+    /// As it is written.
     has_slash: bool,
 }
 
@@ -78,6 +93,7 @@ struct Override {
     files: Vec<Pattern>,
     excluded: Vec<Pattern>,
     settings: Settings,
+    is_oxfmt: bool,
 }
 
 /// A configuration file that has been read.
@@ -98,14 +114,23 @@ pub(crate) struct Scope {
     editorconfigs: Vec<Arc<editorconfig::File>>,
 }
 
-fn patterns(json: Option<&Json>) -> Vec<Pattern> {
+/// oxc's `GlobSet::new`: a pattern without a slash is for a name in any directory.
+pub(crate) fn glob_of_oxc(pattern: &[u8]) -> Glob {
+    match pattern.strip_prefix(b"./") {
+        Some(rest) => Glob::new(rest),
+        None if strings::contains_char(pattern, b'/') => Glob::new(pattern),
+        None => Glob::new(&[b"**/", pattern].concat()),
+    }
+}
+
+fn patterns(json: Option<&Json>, is_oxfmt: bool) -> Vec<Pattern> {
     let all: Vec<&[u8]> = match json {
         Some(Json::String(one)) => vec![one],
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
         _ => Vec::new(),
     };
     let pattern = |text: &&[u8]| Pattern {
-        glob: Glob::new(text),
+        glob: if is_oxfmt { glob_of_oxc(text) } else { Glob::new(text) },
         has_slash: strings::contains_char(text, b'/'),
     };
     all.iter().map(pattern).collect()
@@ -120,6 +145,8 @@ fn settings(json: &Json) -> Settings {
             // `Infinity` is not JSON. A YAML file can have it.
             Json::Number(number) if *number >= 65535.0 => b"65535".to_vec(),
             Json::Number(number) => bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *number).to_vec(),
+            // A feature of oxfmt that is configured, and so is on.
+            Json::Object(_) => b"true".to_vec(),
             _ => continue,
         };
         settings.push((name.clone(), text));
@@ -130,6 +157,10 @@ fn settings(json: &Json) -> Settings {
 impl Override {
     /// Prettier's `pathMatchesGlobs`. `relative`: from the directory of the configuration file.
     fn matches(&self, relative: &[u8]) -> bool {
+        if self.is_oxfmt {
+            let matches = |it: &Pattern| it.glob.matches(relative);
+            return self.files.iter().any(matches) && !self.excluded.iter().any(matches);
+        }
         let name = paths::basename(relative);
         [false, true].into_iter().any(|with_slashes| {
             // With patterns without slashes, what is excluded is matched against the name too,
@@ -140,9 +171,12 @@ impl Override {
     }
 }
 
+fn is_name_of_oxfmt(name: &[u8]) -> bool {
+    name.starts_with(b".oxfmtrc") || name.starts_with(b"oxfmt.")
+}
+
 impl Config {
-    fn new(path: &[u8], json: &Json) -> Config {
-        let name = paths::basename(path);
+    fn new(path: &[u8], json: &Json, is_oxfmt: bool) -> Config {
         let overrides = json.get(b"overrides").and_then(Json::as_array).unwrap_or_default();
         let ignored: Vec<&[u8]> = (json.get(b"ignorePatterns").and_then(Json::as_array).unwrap_or_default().iter())
             .filter_map(Json::as_str)
@@ -152,12 +186,13 @@ impl Config {
             settings: settings(json),
             overrides: (overrides.iter())
                 .map(|it| Override {
-                    files: patterns(it.get(b"files")),
-                    excluded: patterns(it.get(b"excludeFiles")),
+                    files: patterns(it.get(b"files"), is_oxfmt),
+                    excluded: patterns(it.get(b"excludeFiles"), is_oxfmt),
                     settings: it.get(b"options").map(settings).unwrap_or_default(),
+                    is_oxfmt,
                 })
                 .collect(),
-            is_oxfmt: name.starts_with(b".oxfmtrc") || name.starts_with(b"oxfmt."),
+            is_oxfmt,
             ignores: gitignore::with_text(None, paths::dirname(path), &ignored.join(&b'\n')),
         }
     }
@@ -171,6 +206,8 @@ pub(crate) struct Resolved {
     pub(crate) requires_pragma: bool,
     /// A file whose first comment has `@noformat` or `@noprettier` is not.
     pub(crate) checks_ignore_pragma: bool,
+    /// `insertFinalNewline: false` of oxfmt.
+    pub(crate) omits_final_newline: bool,
 }
 
 pub(crate) type Found = Result<Arc<Scope>, Fatal>;
@@ -181,6 +218,9 @@ pub(crate) struct Configs<'c> {
     by_directory: Guarded<FxHashMap<Vec<u8>, Found>>,
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
+    pub(crate) flavor: Flavor,
+    /// With oxfmt, the one `.editorconfig` that counts: the nearest to the working directory.
+    editorconfig_of_oxfmt: Option<Arc<editorconfig::File>>,
     /// For the user.
     pub(crate) warnings: Guarded<Vec<Vec<u8>>>,
 }
@@ -192,15 +232,30 @@ impl<'c> Configs<'c> {
             environment,
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
+            flavor: Flavor::Prettier,
+            editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
         };
+        let nearest = configs.for_directory(&environment.cwd).ok().and_then(|it| it.config.clone());
+        let mut is_oxfmt = nearest.is_some_and(|it| it.is_oxfmt);
         if let Some(path) = &options.config {
             let path = paths::resolve(&environment.cwd, &paths::from_native(path));
-            configs.named = Some(match configs.load(&path) {
+            // A name that does not tell is of the tool that the project uses.
+            let name = paths::basename(&path);
+            is_oxfmt = is_name_of_oxfmt(name) || (is_oxfmt && !strings::contains(name, b"prettier") && name != b"package.json");
+            configs.named = Some(match configs.load(&path, is_oxfmt) {
                 Ok(Some(config)) => Ok(config),
-                Ok(None) => Ok(Arc::new(Config::new(&path, &Json::Null))),
+                Ok(None) => Ok(Arc::new(Config::new(&path, &Json::Null, is_oxfmt))),
                 Err(error) => Err(error),
             });
+        }
+        if is_oxfmt {
+            configs.flavor = Flavor::Oxfmt;
+            // What was found on the way was found as Prettier finds it.
+            configs.by_directory.get_mut().clear();
+            if options.editorconfig {
+                configs.editorconfig_of_oxfmt = paths::ancestors(&environment.cwd).find_map(editorconfig::File::read).map(Arc::new);
+            }
         }
         configs
     }
@@ -214,7 +269,7 @@ impl<'c> Configs<'c> {
     }
 
     /// Prettier's `loadConfig`. `None`: the file has no configuration, like most `package.json`.
-    fn load(&self, path: &[u8]) -> Result<Option<Arc<Config>>, Fatal> {
+    fn load(&self, path: &[u8], is_oxfmt: bool) -> Result<Option<Arc<Config>>, Fatal> {
         let name = paths::basename(path);
         let read = || {
             fs::read(path).map_err(|error| Fatal([b"Cannot read the configuration file ", path, b": ", &fs::describe(&error)].concat()))
@@ -249,17 +304,18 @@ impl<'c> Configs<'c> {
         if json.get(b"plugins").and_then(Json::as_array).is_some_and(|it| !it.is_empty()) {
             self.warn(&[b"Plugins are not supported: \"plugins\" in ", path, b" has no effect."]);
         }
-        Ok(Some(Arc::new(Config::new(path, &json))))
+        Ok(Some(Arc::new(Config::new(path, &json, is_oxfmt))))
     }
 
     /// What counts in `directory`, whose entries are `names`, and whose parent has `above`.
     fn scope<'n>(&self, directory: &[u8], names: impl Iterator<Item = &'n [u8]>, above: Option<&Scope>) -> Found {
+        let count = if self.flavor == Flavor::Oxfmt { NAMES_OF_OXFMT } else { NAMES.len() };
         let (mut candidates, mut has_editorconfig, mut is_project_root) = (Vec::new(), false, false);
         for name in names.filter(|name| matches!(name.first(), Some(b'.' | b'p' | b'o'))) {
             match name {
                 b".editorconfig" => has_editorconfig = true,
                 b".git" | b".hg" => is_project_root = true,
-                name => candidates.extend(NAMES.iter().position(|it| *it == name)),
+                name => candidates.extend(NAMES.iter().position(|it| *it == name).filter(|at| *at < count)),
             }
         }
         let mut config = above.and_then(|it| it.config.clone());
@@ -267,11 +323,15 @@ impl<'c> Configs<'c> {
             // One after the other: a `package.json` need not have a configuration.
             candidates.sort_unstable();
             for at in candidates {
-                if let Some(found) = self.load(&paths::join(directory, NAMES[at]))? {
+                if let Some(found) = self.load(&paths::join(directory, NAMES[at]), at < NAMES_OF_OXFMT)? {
                     config = Some(found);
                     break;
                 }
             }
+        }
+        if self.flavor == Flavor::Oxfmt {
+            let editorconfigs = self.editorconfig_of_oxfmt.iter().map(Arc::clone).collect();
+            return Ok(Arc::new(Scope { config, editorconfigs }));
         }
         let own = if has_editorconfig && self.options.editorconfig { editorconfig::File::read(directory) } else { None };
         let starts_over = is_project_root || own.as_ref().is_some_and(|it| it.is_root);
@@ -285,6 +345,7 @@ impl<'c> Configs<'c> {
 
     /// What counts for the files in `directory`.
     pub(crate) fn for_directory(&self, directory: &[u8]) -> Found {
+        let directory = if self.options.disable_nested_config { &self.environment.cwd[..] } else { directory };
         let mut missing: Vec<&[u8]> = Vec::new();
         let mut above: Option<Arc<Scope>> = None;
         for ancestor in paths::ancestors(directory) {
@@ -312,6 +373,9 @@ impl<'c> Configs<'c> {
         names: impl Iterator<Item = &'n [u8]>,
         above: &Arc<Scope>,
     ) -> Found {
+        if self.options.disable_nested_config {
+            return Ok(Arc::clone(above));
+        }
         let found = self.scope(directory, names, Some(above));
         self.by_directory.lock().insert(directory.to_vec(), found.clone());
         found
@@ -334,7 +398,9 @@ impl<'c> Configs<'c> {
             true => editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path),
             false => Vec::new(),
         };
-        from_files.extend(from_editorconfig.iter().map(|it| (it.0, &it.1[..])));
+        // oxfmt does not know `max_line_length = off`.
+        let counts = |it: &&(&[u8], Vec<u8>)| self.flavor == Flavor::Prettier || (it.0, &it.1[..]) != (b"printWidth", b"65535");
+        from_files.extend(from_editorconfig.iter().filter(counts).map(|it| (it.0, &it.1[..])));
         if let Some(config) = config {
             if config.is_oxfmt && !from_files.iter().any(|it| it.0 == b"printWidth") {
                 from_files.push((b"printWidth", b"100"));
@@ -359,6 +425,12 @@ impl<'c> Configs<'c> {
                 b"requirePragma" => resolved.requires_pragma = value == b"true",
                 b"checkIgnorePragma" => resolved.checks_ignore_pragma = value == b"true",
                 b"insertPragma" if value == b"true" => self.warn(&[b"insertPragma is not supported: no pragma is inserted."]),
+                b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => resolved.omits_final_newline = value == b"false",
+                b"sortImports" | b"experimentalSortImports" | b"sortTailwindcss" | b"experimentalTailwindcss" | b"jsdoc"
+                    if value != b"false" =>
+                {
+                    self.warn(&[name, b" is not supported yet, and has no effect."]);
+                }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
                     return Err(Fatal([b"Invalid ", name, b" value: ", value, b"."].concat()));
                 }

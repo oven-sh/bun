@@ -1,7 +1,8 @@
 //! Finds the files to format: `expandPatterns` of Prettier's command line, and what it ignores.
+//! With a configuration file of oxfmt: its `ScopedWalker`.
 
 use super::cli::Options;
-use super::config::{Configs, Scope};
+use super::config::{Configs, Flavor, Scope, glob_of_oxc};
 use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
@@ -98,22 +99,30 @@ pub(crate) struct Ignored {
 }
 
 impl Ignored {
-    pub(crate) fn new(options: &Options, cwd: &[u8]) -> Ignored {
+    pub(crate) fn new(options: &Options, cwd: &[u8], flavor: Flavor) -> Result<Ignored, Fatal> {
         let mut directories: Vec<&[u8]> = vec![b".git", b".sl", b".svn", b".hg", b".jj"];
         if !options.with_node_modules {
             directories.push(b"node_modules");
         }
-        let default = [b".gitignore".to_vec(), b".prettierignore".to_vec()];
-        let files = options.ignore_path.as_deref().unwrap_or(&default).iter().map(|file| {
+        // oxfmt reads every `.gitignore` on its way, as Git does.
+        let default: &[Vec<u8>] = match flavor {
+            Flavor::Prettier => &[b".gitignore".to_vec(), b".prettierignore".to_vec()],
+            Flavor::Oxfmt => &[b".prettierignore".to_vec()],
+        };
+        let mut files = Vec::new();
+        for file in options.ignore_path.as_deref().unwrap_or(default) {
             let file = paths::resolve(cwd, &paths::from_native(file));
-            gitignore::with_file(None, paths::dirname(&file), &file)
-        });
-        Ignored {
+            if flavor == Flavor::Oxfmt && options.ignore_path.is_some() && !fs::is_file(&file) {
+                return Err(Fatal([&file[..], b": File not found"].concat()));
+            }
+            files.extend(gitignore::with_file(None, paths::dirname(&file), &file).map(Some));
+        }
+        Ok(Ignored {
             directories,
             negative: Vec::new(),
-            files: files.filter(Option::is_some).collect(),
+            files,
             cwd: cwd.to_vec(),
-        }
+        })
     }
 
     /// `DirectoryIgnorer.shouldIgnore`
@@ -146,6 +155,8 @@ struct Directory {
     /// Of the directory that it is in or, for the one that is searched, its own.
     above: Arc<Scope>,
     is_first: bool,
+    /// The `.gitignore` files above it or, for the one that is searched, in it too.
+    git: Chain,
 }
 
 /// The files in `base` that `matches` says yes to, given the path from the working directory.
@@ -156,12 +167,14 @@ fn search(
     base: &[u8],
     matches: &(dyn Fn(&[u8]) -> bool + Sync),
     enters: &(dyn Fn(&[u8]) -> bool + Sync),
+    reads_gitignore: bool,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
     let mut level = vec![Directory {
         path: base.to_vec(),
         above: configs.for_directory(base)?,
         is_first: true,
+        git: if reads_gitignore { gitignore::above_and_in(base, &[b".gitignore"]) } else { None },
     }];
     while !level.is_empty() && failure.lock().is_none() {
         let mut next = Guarded::new(Vec::new());
@@ -183,11 +196,17 @@ fn search(
                 }
             };
             let of_config = scope.config.as_ref().map_or(&None, |it| &it.ignores);
+            let mut git = directory.git.clone();
+            if reads_gitignore && !directory.is_first && entries.iter().any(|it| it.name == b".gitignore") {
+                git = gitignore::with_file(git, &directory.path, &paths::join(&directory.path, b".gitignore"));
+            }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             // Links are not followed, and not formatted.
             for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
-                if ignored.ignores_entry(&path, &entry.name, entry.is_directory, of_config) {
+                if ignored.ignores_entry(&path, &entry.name, entry.is_directory, of_config)
+                    || gitignore::is_ignored(&git, &path, entry.is_directory)
+                {
                     continue;
                 }
                 let relative = paths::relative(&ignored.cwd, &path);
@@ -197,6 +216,7 @@ fn search(
                             path,
                             above: Arc::clone(&scope),
                             is_first: false,
+                            git: git.clone(),
                         });
                     }
                 } else if matches(&relative) {
@@ -281,7 +301,7 @@ pub(crate) fn expand(
                 (found, b"Explicitly specified file was ignored due to negative glob patterns")
             }
             Entry::Directory(path) => {
-                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true)?;
+                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, false)?;
                 found.iter_mut().for_each(|it| it.ignores_unknown = true);
                 written_base = (paths::relative(&cwd, &path), path);
                 (found, b"No supported files were found in the directory")
@@ -295,7 +315,7 @@ pub(crate) fn expand(
                 }
                 let found = match fs::kind(&base) {
                     Some(fs::Kind::Directory) => {
-                        search(configs, pool, ignored, &base, &|relative| glob.matches(relative), &|relative| glob.matches_partially(relative))?
+                        search(configs, pool, ignored, &base, &|relative| glob.matches(relative), &|relative| glob.matches_partially(relative), false)?
                     }
                     _ => Vec::new(),
                 };
@@ -324,4 +344,83 @@ pub(crate) fn expand(
         expanded.push(Expanded::Error([b"No matching files. Patterns: ", &patterns[..]].concat()));
     }
     Ok(expanded)
+}
+
+/// oxfmt's `ScopedWalker`. `patterns`: the arguments.
+pub(crate) fn expand_as_oxfmt(
+    configs: &Configs,
+    pool: &Pool,
+    ignored: &mut Ignored,
+    patterns: &[Vec<u8>],
+    error_on_unmatched_pattern: bool,
+) -> Result<Vec<Expanded>, Fatal> {
+    let cwd = ignored.cwd.clone();
+    let (mut targets, mut globs, mut excluded) = (Vec::new(), Vec::new(), Vec::new());
+    for pattern in patterns {
+        let pattern = paths::from_native(pattern);
+        if let Some(rest) = pattern.strip_prefix(b"!") {
+            excluded.push(rest.to_vec());
+            continue;
+        }
+        let mut normalized = &pattern[..];
+        if let Some(rest) = normalized.strip_prefix(b"./") {
+            normalized = rest;
+            while let Some(rest) = normalized.strip_prefix(b"/") {
+                normalized = rest;
+            }
+        }
+        let path = paths::resolve(&cwd, normalized);
+        // What is there is not a pattern, whatever it looks like.
+        match strings::index_of_any(normalized, b"*?[{").is_some() && !bun_sys::exists(&path) {
+            true => globs.push(glob_of_oxc(normalized)),
+            false => targets.push(path),
+        }
+    }
+    // In the format of `.gitignore`, unlike Prettier's.
+    ignored.files.extend(gitignore::with_text(None, &cwd, &excluded.join(&b'\n')).map(Some));
+    let ignored = &*ignored;
+    if !globs.is_empty() || targets.is_empty() {
+        targets.push(cwd.clone());
+    }
+    targets.sort_unstable();
+    targets.dedup();
+
+    let mut found: Vec<Target> = Vec::new();
+    for path in targets {
+        let Some((kind, size)) = fs::kind_and_size(&path) else {
+            continue;
+        };
+        let is_directory = kind == fs::Kind::Directory;
+        let is_ignored = |chain: &Chain| match is_directory {
+            true => gitignore::is_file_ignored_anywhere(chain, &paths::join(&path, b".")),
+            false => gitignore::is_file_ignored_anywhere(chain, &path),
+        };
+        if ignored.files.iter().any(is_ignored) {
+            continue;
+        }
+        if is_directory {
+            let matches = |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
+            found.append(&mut search(configs, pool, ignored, &path, &matches, &|_| true, true)?);
+            continue;
+        }
+        let scope = configs.for_directory(paths::dirname(&path))?;
+        if !scope.config.as_ref().is_some_and(|it| is_ignored(&it.ignores)) {
+            found.push(Target {
+                path,
+                size,
+                scope,
+                ignores_unknown: true,
+                is_named: false,
+            });
+        }
+    }
+    // Nothing is said about a file that there is no parser for, and it does not count.
+    found.retain(|it| language_of(&it.path) != Language::Unknown);
+    found.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    found.dedup_by(|a, b| a.path == b.path);
+    if found.is_empty() && error_on_unmatched_pattern {
+        let error = b"Expected at least one target file. All matched files may have been excluded by ignore rules.";
+        return Ok(vec![Expanded::Error(error.to_vec())]);
+    }
+    Ok(found.into_iter().map(Expanded::File).collect())
 }

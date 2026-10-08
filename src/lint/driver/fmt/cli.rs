@@ -12,6 +12,7 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--stdin-filepath <path>         Format standard input as that file, and print the result"),
     clap::param!("--config <path>                 Use this configuration file instead of looking for one"),
     clap::param!("--no-config                     Do not look for a configuration file"),
+    clap::param!("--disable-nested-config         Use the configuration file of the working directory for every file"),
     clap::param!("--no-editorconfig               Do not read <b>.editorconfig<r>"),
     clap::param!("--config-precedence <which>     <b>cli-override<r> <d>(default)<r>, <b>file-override<r>, or <b>prefer-file<r>"),
     clap::param!("--ignore-path <path>...         Files with patterns to ignore <d>(default: .gitignore and .prettierignore)<r>"),
@@ -58,8 +59,13 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--cache-strategy <strategy>"),
     clap::param!("--color"),
     clap::param!("-v, --version"),
+    // oxfmt's.
+    clap::param!("--init"),
+    clap::param!("--migrate <source>"),
+    clap::param!("--lsp"),
     // Ours.
     clap::param!("--config-cache"),
+    clap::param!("--list-files"),
     clap::param!("--verify"),
 ];
 
@@ -97,6 +103,7 @@ pub struct Options {
     pub config: Option<Vec<u8>>,
     /// `false`: `--no-config`.
     pub config_lookup: bool,
+    pub disable_nested_config: bool,
     pub editorconfig: bool,
     pub config_precedence: Precedence,
     /// `None`: `.gitignore` and `.prettierignore`.
@@ -122,6 +129,8 @@ pub struct Options {
     pub config_cache: bool,
     /// Before a file is written, what is written is parsed and compared with what was there.
     pub verify: bool,
+    /// Prints the files that would be formatted, and formats nothing.
+    pub list_files: bool,
 }
 
 impl Default for Options {
@@ -134,6 +143,7 @@ impl Default for Options {
             stdin_filepath: None,
             config: None,
             config_lookup: true,
+            disable_nested_config: false,
             editorconfig: true,
             config_precedence: Precedence::default(),
             ignore_path: None,
@@ -152,6 +162,7 @@ impl Default for Options {
             cwd: None,
             config_cache: true,
             verify: true,
+            list_files: false,
         }
     }
 }
@@ -200,6 +211,9 @@ impl Options {
             b"stdin-filepath" => self.stdin_filepath = owned(),
             // `--no-config` is read as the opposite of a flag that takes a value.
             b"config" => self.config = owned(),
+            b"disable-nested-config" => self.disable_nested_config = is_on,
+            b"list-files" => self.list_files = is_on,
+            b"init" | b"migrate" | b"lsp" => return error(&[b"bun format does not support --", name, b"."]),
             b"editorconfig" => self.editorconfig = is_on,
             b"config-precedence" => {
                 self.config_precedence = match text {
@@ -257,13 +271,20 @@ impl Options {
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = Options::default();
         // The one flag that takes a value and has an opposite.
-        let args: Vec<&[u8]> = (args.iter().copied())
-            .filter(|arg| {
-                let is_no_config = *arg == b"--no-config";
-                options.config_lookup &= !is_no_config;
-                !is_no_config
+        let args = args.iter().copied().filter(|arg| {
+            let is_no_config = *arg == b"--no-config";
+            options.config_lookup &= !is_no_config;
+            !is_no_config
+        });
+        // `-c` is `--check` for Prettier and `--config` for oxfmt, which takes `-c=path`.
+        let rewritten: Vec<Vec<u8>> = args
+            .map(|arg| match arg.strip_prefix(b"-c=") {
+                Some(path) => [b"--config=", path].concat(),
+                None if arg == b"-V" => b"--version".to_vec(),
+                None => arg.to_vec(),
             })
             .collect();
+        let args: Vec<&[u8]> = rewritten.iter().map(Vec::as_slice).collect();
         crate::args::parse(PARAMS, &args, &mut |argument| match argument {
             Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
             Argument::Positional(pattern) => {

@@ -1,11 +1,12 @@
 //! ESLint's `lib/rules/utils/fix-tracker.js`.
 
-use super::estree_compat::{estree_span, normalize};
-use crate::ast::{File, FnKind, Node};
+use super::ast_utils::get_upper_function;
+use super::estree_compat::estree_span;
+use crate::ast::{File, Node};
 use crate::context::IntoText;
 use crate::fix::{Fix, Fixer};
 use crate::span::{Span, Spanned};
-use crate::tokens::{Token, skip_trivia, skip_trivia_back};
+use crate::tokens::{Token, skip_trivia};
 
 /// ESLint's `FixTracker`. Makes a fix whose range is wider than what it changes, so that no other
 /// fix changes the rest of the range in the same pass.
@@ -38,27 +39,8 @@ impl<'a> FixTracker<'a> {
     /// ESLint's `retainEnclosingFunction`. Retains the innermost function that `node` is or is in,
     /// or else the whole program.
     pub fn retain_enclosing_function(self, node: impl Into<Node<'a>>) -> Self {
-        let node = normalize(node.into());
-        let function = std::iter::once(node)
-            .chain(node.ancestors())
-            .find(|it| match it {
-                Node::Func(func) => {
-                    func.has_body()
-                        && matches!(
-                            func.kind(),
-                            FnKind::Decl
-                                | FnKind::Expr
-                                | FnKind::Arrow
-                                | FnKind::Method
-                                | FnKind::Getter
-                                | FnKind::Setter
-                                | FnKind::Constructor
-                        )
-                }
-                _ => false,
-            });
-        self.retain_range(match function {
-            Some(function) => estree_span(function),
+        self.retain_range(match get_upper_function(node) {
+            Some(function) => estree_span(function.into()),
             None => program_span(self.fixer.file()),
         })
     }
@@ -101,15 +83,12 @@ impl<'a> FixTracker<'a> {
     }
 }
 
-/// ESLint's `sourceCode.ast.range`. espree's `Program` is from the first statement to the last
-/// token, typescript-estree's from the first token to the end of the text.
+/// ESLint's `sourceCode.ast.range`. espree's `Program` is the whole text, typescript-estree's starts
+/// at the first token.
 fn program_span(file: &File<'_>) -> Span {
-    let (text, whole) = (file.text(), file.span());
-    if !file.is_javascript() {
-        return Span::new(skip_trivia(text, 0).min(whole.end), whole.end);
-    }
-    match skip_trivia_back(text, whole.end) {
-        0 => whole,
-        end => Span::new(skip_trivia(text, 0).min(end), end),
+    let whole = file.span();
+    match file.is_javascript() {
+        true => whole,
+        false => Span::new(skip_trivia(file.text(), 0).min(whole.end), whole.end),
     }
 }

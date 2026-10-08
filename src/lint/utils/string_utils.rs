@@ -1,6 +1,6 @@
 //! ESLint's `lib/shared/string-utils.js` and `lib/rules/utils/string-utils.js`.
 
-use super::text::{code_points, find_line_break};
+use super::text::code_points;
 use super::unicode::is_in_runs;
 use bun_core::lexer::char_and_size;
 use bun_core::strings;
@@ -177,29 +177,6 @@ impl Class {
             }
         }
     }
-}
-
-/// ESLint's `createGlobalLinebreakMatcher`. Where `text.matchAll(createGlobalLinebreakMatcher())`
-/// are: the range in bytes of each line break of `text`. For `lineBreakPattern`, which is
-/// `astUtils.LINEBREAK_MATCHER`, see [`find_line_break`] and
-/// [`has_line_break`](super::text::has_line_break).
-pub fn line_breaks(text: &[u8]) -> impl Iterator<Item = Range<usize>> + '_ {
-    let mut from = 0;
-    std::iter::from_fn(move || {
-        let (at, len) = find_line_break(text.get(from..)?)?;
-        let start = from + at;
-        from = start + len;
-        Some(start..from)
-    })
-}
-
-/// ESLint's `shebangPattern`, which is `astUtils.SHEBANG_MATCHER`. The first group of
-/// `shebangPattern.exec(text)`: what follows the `#!` that `text` starts with, to the end of the
-/// line.
-pub fn match_shebang_pattern(text: &[u8]) -> Option<&[u8]> {
-    let rest = text.strip_prefix(b"#!")?;
-    let line = &rest[..strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len())];
-    (!line.is_empty()).then_some(line)
 }
 
 /// `\p{L}`. See [`is_in_runs`]. Made by `test/cli/lint/oracle/utils-small/generate-unicode-tables.ts`.

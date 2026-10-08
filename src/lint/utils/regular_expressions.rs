@@ -21,5 +21,6 @@ pub fn is_valid_with_unicode_flag(ecma_version: u32, pattern: &[u8], flag: Unico
         UnicodeFlag::U => (2015, "u"),
         UnicodeFlag::V => (2024, "v"),
     };
-    ecma_version >= first_version && Regex::new(&String::from_utf8_lossy(pattern), flags).is_ok()
+    ecma_version >= first_version
+        && std::str::from_utf8(pattern).is_ok_and(|pattern| Regex::new(pattern, flags).is_ok())
 }

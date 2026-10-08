@@ -4,7 +4,7 @@
 //! writes the file and compares.
 
 use bun_lint::utils::char_source::{CharInfo, parse_string_literal, parse_template_token};
-use bun_lint::utils::{directives, keywords, naming, string_utils, unicode};
+use bun_lint::utils::{ast_utils, directives, keywords, naming, string_utils, unicode};
 use std::fmt::Write as _;
 
 fn unhex(text: &str) -> Vec<u8> {
@@ -74,8 +74,11 @@ pub(crate) fn run(args: &[String]) {
             "upperCaseFirst" => hex(&string_utils::upper_case_first(&a)),
             "containsLetter" => string_utils::contains_letter(&a).to_string(),
             "LETTER_PATTERN" => ranges(&mut string_utils::find_letter(&a).into_iter()),
-            "createGlobalLinebreakMatcher" => ranges(&mut string_utils::line_breaks(&a)),
-            "shebangPattern" => string_utils::match_shebang_pattern(&a).map_or("null".into(), hex),
+            "createGlobalLinebreakMatcher" => {
+                let all = ast_utils::create_global_linebreak_matcher(&a);
+                ranges(&mut all.map(|(at, len)| at..at + len))
+            }
+            "shebangPattern" => ast_utils::match_shebang(&a).map_or("null".into(), hex),
             "parseStringLiteral" => units(parse_string_literal(&a)),
             "parseTemplateToken" => units(parse_template_token(&a)),
             "normalizePackageName" => hex(&naming::normalize_package_name(&a, &b)),

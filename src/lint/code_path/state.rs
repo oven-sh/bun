@@ -1,25 +1,53 @@
 //! ESLint's `CodePathState`, `ForkContext` and the static methods of `CodePathSegment`: what
 //! builds the graph of one code path. The names are ESLint's, in snake case.
 
-use super::{
-    CodePathData, Edges, Event, Origin, Segment, SegmentData, SegmentIds, Store,
-};
-use crate::ast::{File, Node};
+use super::{CodePathData, Edges, Event, Origin, Segment, SegmentData, SegmentIds, Store};
+use crate::ast::{File, Node, StmtKind};
 use bun_sema::atom::Atom;
 use smallvec::SmallVec;
 
 /// What a step of the analysis works with.
 pub(super) struct Cx<'e, 'a> {
     pub(super) file: &'a File<'a>,
-    /// ESLint's `analyzer.currentNode`, which is also the node of the events.
+    /// ESLint's `analyzer.currentNode`.
     pub(super) node: Node<'a>,
+    /// Whether an event is told with `node` even if that is a function expression.
+    pub(super) keeps_function_expression: bool,
     pub(super) emit: &'e mut dyn FnMut(Event<'a>),
 }
 
-impl<'a> Cx<'_, 'a> {
+impl<'e, 'a> Cx<'e, 'a> {
+    #[inline]
+    pub(super) fn new(
+        file: &'a File<'a>,
+        node: Node<'a>,
+        emit: &'e mut dyn FnMut(Event<'a>),
+    ) -> Self {
+        Cx {
+            file,
+            node,
+            keeps_function_expression: false,
+            emit,
+        }
+    }
+
     #[inline]
     pub(super) fn store(&self) -> &'a Store {
         &self.file.lazy.code_paths
+    }
+
+    /// The node that an event is told with: a function is a `Func`, whatever owns it.
+    pub(super) fn node_of_event(&self) -> Node<'a> {
+        match self.node {
+            Node::Expr(e) if !self.keeps_function_expression => {
+                e.as_fn().map_or(self.node, Node::Func)
+            }
+            Node::Stmt(stmt) => match stmt.kind() {
+                StmtKind::Fn(func) => Node::Func(func),
+                _ => self.node,
+            },
+            _ => self.node,
+        }
     }
 }
 
@@ -31,11 +59,22 @@ impl Store {
         self.segments.borrow_mut().clear();
     }
 
+    /// To be called when the graphs are finished.
+    pub(super) fn finish(&self) {
+        for segment in self.segments.borrow_mut().iter_mut() {
+            segment.looped_prev.sort_unstable();
+        }
+    }
+
     /// Keeps `current_segments` up to date while the events are told to the rules.
     pub(super) fn follow(&self, event: Event) {
         let (segment, starts) = match event {
-            Event::SegmentStart(segment, _) | Event::UnreachableSegmentStart(segment, _) => (segment, true),
-            Event::SegmentEnd(segment, _) | Event::UnreachableSegmentEnd(segment, _) => (segment, false),
+            Event::SegmentStart(segment, _) | Event::UnreachableSegmentStart(segment, _) => {
+                (segment, true)
+            }
+            Event::SegmentEnd(segment, _) | Event::UnreachableSegmentEnd(segment, _) => {
+                (segment, false)
+            }
             _ => return,
         };
         let path = self.segments.borrow()[segment.id() as usize].path;
@@ -104,7 +143,9 @@ impl Store {
 
     fn new_next(&self, path: u32, all_prev: &[u32]) -> u32 {
         let segments = &mut *self.segments.borrow_mut();
-        let is_reachable = all_prev.iter().any(|&id| segments[id as usize].is_reachable);
+        let is_reachable = all_prev
+            .iter()
+            .any(|&id| segments[id as usize].is_reachable);
         let all_prev = self.flatten_unused_in(segments, all_prev);
         self.new_segment(segments, path, all_prev, is_reachable)
     }
@@ -119,7 +160,9 @@ impl Store {
 
     fn new_disconnected(&self, path: u32, all_prev: &[u32]) -> u32 {
         let segments = &mut *self.segments.borrow_mut();
-        let is_reachable = all_prev.iter().any(|&id| segments[id as usize].is_reachable);
+        let is_reachable = all_prev
+            .iter()
+            .any(|&id| segments[id as usize].is_reachable);
         self.new_segment(segments, path, Edges::new(), is_reachable)
     }
 
@@ -187,20 +230,6 @@ impl Store {
             }
         }
     }
-
-    pub(super) fn current_segments(&self, path: u32) -> SegmentIds {
-        self.paths.borrow()[path as usize].current_segments.clone()
-    }
-
-    pub(super) fn set_current_segments(&self, path: u32, current: &[u32]) {
-        let slot = &mut self.paths.borrow_mut()[path as usize].current_segments;
-        slot.clear();
-        slot.extend_from_slice(current);
-    }
-
-    pub(super) fn is_current(&self, path: u32, head: &[u32]) -> bool {
-        self.paths.borrow()[path as usize].current_segments[..] == *head
-    }
 }
 
 fn mark_used(segments: &mut [SegmentData], id: u32) {
@@ -265,7 +294,8 @@ fn make_looped(cx: &mut Cx, from: &[u32], to: &[u32]) {
         };
         if are_reachable {
             let (from, to) = (Segment::new(cx.file, from), Segment::new(cx.file, to));
-            (cx.emit)(Event::SegmentLoop(from, to, cx.node));
+            let node = cx.node_of_event();
+            (cx.emit)(Event::SegmentLoop(from, to, node));
         }
     }
 }
@@ -326,7 +356,8 @@ impl ForkContext {
         (0..count)
             .map(|route| {
                 all_prev.clear();
-                all_prev.extend((start..=end).map(|entry| self.list[entry as usize * count + route]));
+                all_prev
+                    .extend((start..=end).map(|entry| self.list[entry as usize * count + route]));
                 match make {
                     Make::Next => store.new_next(self.path, &all_prev),
                     Make::Unreachable => store.new_unreachable(self.path, &all_prev),
@@ -370,7 +401,8 @@ impl ForkContext {
     fn replace_head(&mut self, store: &Store, segments: &[u32]) {
         let merged = self.merge_extra_segments(store, segments);
         if merged.len() == self.count as usize {
-            self.list.truncate(self.list.len().saturating_sub(self.count as usize));
+            self.list
+                .truncate(self.list.len().saturating_sub(self.count as usize));
             self.list.extend_from_slice(&merged);
         }
     }
@@ -378,6 +410,15 @@ impl ForkContext {
     fn add_all(&mut self, other: &ForkContext) {
         if other.count == self.count {
             self.list.extend_from_slice(&other.list);
+        }
+    }
+
+    /// `add_all` of a context that is not needed any more. A chain of `&&` hands its routes from
+    /// each operator to the next, which has none of its own yet: that takes constant time.
+    fn take_all(&mut self, other: ForkContext) {
+        match self.list.is_empty() && other.count == self.count {
+            true => self.list = other.list,
+            false => self.add_all(&other),
         }
     }
 
@@ -481,6 +522,8 @@ const MAX_PARALLEL_ROUTES: u32 = 256;
 /// ESLint's `CodePathState`. Each of its linked lists of contexts is a stack here.
 pub(super) struct State {
     pub(super) path: u32,
+    /// The segments that the rules have been told to have started and not ended.
+    pub(super) current_segments: SegmentIds,
     forks: Vec<ForkContext>,
     choices: Vec<ChoiceContext>,
     switches: Vec<SwitchContext>,
@@ -495,6 +538,7 @@ impl State {
     pub(super) fn new() -> State {
         State {
             path: 0,
+            current_segments: SegmentIds::new(),
             forks: Vec::new(),
             choices: Vec::new(),
             switches: Vec::new(),
@@ -508,6 +552,7 @@ impl State {
     /// Makes it the state of the new code path `path`. The vectors keep their capacity.
     pub(super) fn reset(&mut self, store: &Store, path: u32) {
         self.path = path;
+        self.current_segments.clear();
         self.forks.clear();
         self.choices.clear();
         self.switches.clear();
@@ -528,7 +573,9 @@ impl State {
     }
 
     pub(super) fn is_reachable(&self, store: &Store) -> bool {
-        self.forks.last().is_some_and(|fork| fork.is_reachable(store))
+        self.forks
+            .last()
+            .is_some_and(|fork| fork.is_reachable(store))
     }
 
     /// An empty fork context with as many parallel routes as the current one.
@@ -600,9 +647,9 @@ impl State {
                 }
                 if popped.is_forking_as_result {
                     if let Some(parent) = self.choices.last_mut() {
-                        parent.when_true.add_all(&popped.when_true);
-                        parent.when_false.add_all(&popped.when_false);
-                        parent.when_nullish.add_all(&popped.when_nullish);
+                        parent.when_true.take_all(popped.when_true);
+                        parent.when_false.take_all(popped.when_false);
+                        parent.when_nullish.take_all(popped.when_nullish);
                         parent.is_processed = true;
                     }
                     return;
@@ -714,9 +761,10 @@ impl State {
 
     pub(super) fn pop_switch_context(&mut self, cx: &mut Cx) {
         let store = cx.store();
-        let (Some(context), Some(mut broken)) =
-            (self.switches.pop(), self.pop_break_context(store).map(|it| it.broken))
-        else {
+        let (Some(context), Some(mut broken)) = (
+            self.switches.pop(),
+            self.pop_break_context(store).map(|it| it.broken),
+        ) else {
             return;
         };
         let Some(fork) = self.forks.last_mut() else {
@@ -737,18 +785,31 @@ impl State {
             if context.default_body_segments.is_empty() {
                 broken.add(store, &last_case_segments);
             } else {
-                disconnect_segments(store, &context.default_segments, &context.default_body_segments);
+                disconnect_segments(
+                    store,
+                    &context.default_segments,
+                    &context.default_body_segments,
+                );
                 make_looped(cx, &last_case_segments, &context.default_body_segments);
             }
         }
-        let remaining = self.forks.len().saturating_sub(context.fork_count as usize).max(1);
+        let remaining = self
+            .forks
+            .len()
+            .saturating_sub(context.fork_count as usize)
+            .max(1);
         self.forks.truncate(remaining);
         if let Some(fork) = self.forks.last_mut() {
             fork.replace_head(store, &broken.make_next(store, 0, -1));
         }
     }
 
-    pub(super) fn make_switch_case_body(&mut self, store: &Store, is_empty: bool, is_default: bool) {
+    pub(super) fn make_switch_case_body(
+        &mut self,
+        store: &Store,
+        is_empty: bool,
+        is_default: bool,
+    ) {
         let (Some(context), Some(parent)) = (self.switches.last_mut(), self.forks.last()) else {
             return;
         };
@@ -864,7 +925,10 @@ impl State {
 
     pub(super) fn make_finally_block(&mut self, store: &Store) {
         let head_of_leaving_segments = SegmentIds::from_slice(self.head_segments());
-        let is_after_catch = self.tries.last().is_some_and(|it| it.position == Position::Catch);
+        let is_after_catch = self
+            .tries
+            .last()
+            .is_some_and(|it| it.position == Position::Catch);
         if is_after_catch {
             self.pop_fork_context(store);
         }
@@ -913,7 +977,9 @@ impl State {
     #[inline]
     pub(super) fn is_before_first_throwable(&self, store: &Store) -> bool {
         !self.tries.is_empty()
-            && self.throw_context().is_some_and(|at| self.tries[at].thrown.is_empty())
+            && self
+                .throw_context()
+                .is_some_and(|at| self.tries[at].thrown.is_empty())
             && self.is_reachable(store)
     }
 
@@ -965,9 +1031,10 @@ impl State {
 
     pub(super) fn pop_loop_context(&mut self, cx: &mut Cx) {
         let store = cx.store();
-        let (Some(context), Some(mut broken)) =
-            (self.loops.pop(), self.pop_break_context(store).map(|it| it.broken))
-        else {
+        let (Some(context), Some(mut broken)) = (
+            self.loops.pop(),
+            self.pop_break_context(store).map(|it| it.broken),
+        ) else {
             return;
         };
         let head = SegmentIds::from_slice(self.head_segments());
@@ -1017,9 +1084,11 @@ impl State {
     }
 
     pub(super) fn make_while_body(&mut self, store: &Store) {
-        let (Some(context), Some(choice), Some(fork)) =
-            (self.loops.last(), self.choices.last_mut(), self.forks.last_mut())
-        else {
+        let (Some(context), Some(choice), Some(fork)) = (
+            self.loops.last(),
+            self.choices.last_mut(),
+            self.forks.last_mut(),
+        ) else {
             return;
         };
         if !choice.is_processed {
@@ -1050,7 +1119,10 @@ impl State {
         context.test = test;
         if !context.continue_fork_context.is_empty() {
             context.continue_fork_context.add(store, fork.head());
-            fork.replace_head(store, &context.continue_fork_context.make_next(store, 0, -1));
+            fork.replace_head(
+                store,
+                &context.continue_fork_context.make_next(store, 0, -1),
+            );
         }
     }
 
@@ -1068,9 +1140,11 @@ impl State {
 
     /// `finalizeTestSegmentsOfFor` with the current contexts.
     fn finalize_test_segments_of_for(&mut self, store: &Store) {
-        let (Some(context), Some(choice), Some(fork)) =
-            (self.loops.last_mut(), self.choices.last_mut(), self.forks.last())
-        else {
+        let (Some(context), Some(choice), Some(fork)) = (
+            self.loops.last_mut(),
+            self.choices.last_mut(),
+            self.forks.last(),
+        ) else {
             return;
         };
         if !choice.is_processed {
@@ -1087,10 +1161,15 @@ impl State {
     }
 
     pub(super) fn make_for_update(&mut self, store: &Store) {
-        if self.loops.last().is_some_and(|it| !it.test_segments.is_empty()) {
+        if self
+            .loops
+            .last()
+            .is_some_and(|it| !it.test_segments.is_empty())
+        {
             self.finalize_test_segments_of_for(store);
         } else if let Some(context) = self.loops.last_mut() {
-            context.end_of_init_segments = self.forks.last().map_or(&[][..], ForkContext::head).into();
+            context.end_of_init_segments =
+                self.forks.last().map_or(&[][..], ForkContext::head).into();
         }
         let (Some(context), Some(fork)) = (self.loops.last_mut(), self.forks.last_mut()) else {
             return;
@@ -1254,9 +1333,12 @@ impl State {
     }
 
     pub(super) fn make_final(&mut self, store: &Store) {
-        let current = store.current_segments(self.path);
-        if current.first().is_some_and(|&id| store.is_reachable(id)) {
-            store.add_returned(self.path, &current);
+        if self
+            .current_segments
+            .first()
+            .is_some_and(|&id| store.is_reachable(id))
+        {
+            store.add_returned(self.path, &self.current_segments);
         }
     }
 }

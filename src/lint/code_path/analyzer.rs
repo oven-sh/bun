@@ -5,27 +5,31 @@
 //! that exist here. For an ESTree node that does not exist here and that matters to the analysis
 //! (`ChainExpression`, `CatchClause`, the name after a `.`), entering and leaving it is part of
 //! entering or leaving the node that stands for it.
+//!
+//! Most nodes are nothing to the analysis. What is known about a node when it is entered is kept
+//! in a few flags, so that neither its children nor leaving it have to look at it again.
 
 use super::state::{ChoiceKind, Cx, LoopKind, State};
-use crate::ast::walk::{Visitor, walk};
 use super::{CodePath, Event, Origin, Segment, SegmentIds};
+use crate::ast::walk::{Visitor, walk};
 use crate::ast::{
-    BinOp, Chain, Expr, ExprKind, File, Flags, FnKind, Func, Key, KeyKind, Member, MemberKind, Node,
-    Pat, PatKind, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
+    BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, Member,
+    MemberKind, Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
 };
+use crate::rule::NodeTags;
 use bun_sema::atom::Atom;
 
 bitflags::bitflags! {
-    /// What is known about a node from its ancestors.
+    /// What is known about a node that has been entered.
     #[derive(Copy, Clone, PartialEq, Eq)]
-    struct Is: u8 {
+    struct Is: u16 {
         /// An expression that ESTree has as a pattern: all or a part of the target of an
         /// assignment.
         const PATTERN = 1 << 0;
-        /// The `Stmt` around an expression that is the `left` of a `for`-`in` or `for`-`of`.
-        const LEFT_OF_FOR = 1 << 1;
         /// Part of an optional chain, up to its outermost expression.
-        const IN_CHAIN = 1 << 2;
+        const IN_CHAIN = 1 << 1;
+        /// It continues the optional chain that its parent is part of.
+        const CONTINUES_CHAIN = 1 << 2;
         /// The outermost expression of an optional chain: ESTree has a `ChainExpression` around it.
         const CHAIN_ROOT = 1 << 3;
         /// The value of a `PropertyDefinition`.
@@ -34,9 +38,14 @@ bitflags::bitflags! {
         const JSX_NAME = 1 << 5;
         /// Not a node of ESTree, and nothing to the analysis.
         const ABSENT = 1 << 6;
-        /// The `Stmt` around an expression in the head of a `for`, `for`-`in` or `for`-`of`.
-        /// Entering it is entering the expression. Leaving it is nothing.
-        const WRAPPER = 1 << 7;
+        /// Which of its children a node is matters: see `place_of_expr` and `preprocess`.
+        const PLACES_CHILDREN = 1 << 7;
+        /// There is something to do when it is left, besides telling what has changed.
+        const HAS_EXIT = 1 << 8;
+        /// There is something to do after it has been left.
+        const HAS_POSTPROCESS = 1 << 9;
+        /// A code path starts with it and ends after it.
+        const HAS_CODE_PATH = 1 << 10;
     }
 }
 
@@ -95,15 +104,17 @@ fn boolean_value_if_simple_constant(e: Expr) -> Option<bool> {
         ExprKind::True | ExprKind::Regex(_) => Some(true),
         ExprKind::False | ExprKind::Null => Some(false),
         ExprKind::Number(value) => Some(value != 0.0 && !value.is_nan()),
-        // A template is not a `Literal`.
-        ExprKind::String(_) if e.text().starts_with(b"`") => None,
         ExprKind::String(value) => Some(!value.bytes().is_empty()),
         ExprKind::BigInt(_) => {
             let digits = match e.text() {
                 [b'0', b'x' | b'X' | b'o' | b'O' | b'b' | b'B', digits @ ..] => digits,
                 digits => digits,
             };
-            Some(digits.iter().any(|digit| !matches!(digit, b'0' | b'_' | b'n')))
+            Some(
+                digits
+                    .iter()
+                    .any(|digit| !matches!(digit, b'0' | b'_' | b'n')),
+            )
         }
         _ => None,
     }
@@ -163,7 +174,8 @@ fn is_property_definition(member: Member) -> bool {
 /// and for which `isIdentifierReference` holds. It holds for every name that ESLint does not
 /// know to be something else, which includes all the names in the syntax of TypeScript.
 fn starts_with_identifier_reference(node: Node) -> bool {
-    let is_identifier = |key: Option<Key>| key.is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)));
+    let is_identifier =
+        |key: Option<Key>| key.is_some_and(|key| matches!(key.kind(), KeyKind::Ident(_)));
     match node {
         Node::Prop(prop) => prop.kind() == PropKind::Shorthand,
         Node::PatProp(prop) => prop.is_shorthand(),
@@ -188,59 +200,117 @@ fn starts_with_identifier_reference(node: Node) -> bool {
             _ => false,
         },
         // The `const` is a `TSTypeReference`.
-        Node::Expr(e) => matches!(e.kind(), ExprKind::AsConst(_)) && e.is_angle_bracket_assertion(),
+        Node::Expr(e) => e.tag() == ExprTag::AsConst && e.is_angle_bracket_assertion(),
         _ => false,
     }
 }
 
-impl<'a> Builder<'a> {
+/// `isIdentifierReference` for an identifier that is bound.
+fn is_binding_a_reference(pat: Pat) -> bool {
+    match pat.parent() {
+        Node::PatProp(prop) => !prop.is_rest(),
+        Node::PatElem(element) => element.default().is_some(),
+        Node::Param(param) => !param.is_rest(),
+        _ => false,
+    }
+}
 
+/// What `e` is because of which child of `parent` it is.
+fn place_of_expr<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
+    match parent.node {
+        Node::Expr(parent_expr) => match parent_expr.kind() {
+            ExprKind::Assign { target, .. } if target == e => Is::PATTERN,
+            ExprKind::Array(_) | ExprKind::Spread(_) => parent.is & Is::PATTERN,
+            // ESTree has one `SequenceExpression` for `a, b, c`.
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                left,
+                ..
+            } if left == e
+                && matches!(
+                    e.kind(),
+                    ExprKind::Binary {
+                        op: BinOp::Comma,
+                        ..
+                    }
+                )
+                && !e.is_parenthesized() =>
+            {
+                Is::ABSENT | Is::PLACES_CHILDREN
+            }
+            ExprKind::Jsx(jsx) if jsx.tag() == Some(e) || jsx.close_tag() == Some(e) => {
+                Is::JSX_NAME
+            }
+            ExprKind::Dot { .. } if parent.is.contains(Is::JSX_NAME) => Is::JSX_NAME,
+            _ if parent.is.contains(Is::IN_CHAIN)
+                && chain_operand(parent_expr) == Some(e)
+                && !e.is_parenthesized() =>
+            {
+                Is::CONTINUES_CHAIN
+            }
+            _ => Is::empty(),
+        },
+        Node::Prop(prop) if prop.value() == Some(e) => parent.is & Is::PATTERN,
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if matches!(left.kind(), StmtKind::Expr(left) if left == e) => {
+                Is::PATTERN
+            }
+            _ => Is::empty(),
+        },
+        Node::Member(member) if member.init() == Some(e) => {
+            Is::FIELD_INITIALIZER | Is::HAS_POSTPROCESS
+        }
+        _ => Is::empty(),
+    }
+}
+
+/// What is known about a parameter or a part of a pattern, which ESTree has as an
+/// `AssignmentPattern` if it has a default value.
+#[inline]
+fn with_default(default: Option<Expr>) -> Is {
+    match default {
+        Some(_) => Is::HAS_EXIT | Is::PLACES_CHILDREN,
+        None => Is::empty(),
+    }
+}
+
+impl<'a> Builder<'a> {
     // ───────────────────────────── events ─────────────────────────────
 
     /// `forwardCurrentToHead`
+    #[inline]
     fn forward_current_to_head(&mut self, cx: &mut Cx<'_, 'a>) {
-        let (file, store) = (cx.file, cx.store());
-        let Some(state) = self.states.last() else {
-            return;
-        };
-        let head = state.head_segments();
-        if store.is_current(state.path, head) {
-            return;
+        if let Some(state) = self.states.last_mut()
+            && state.current_segments[..] != *state.head_segments()
+        {
+            Self::forward(state, cx);
         }
-        let current = store.current_segments(state.path);
+    }
+
+    #[cold]
+    fn forward(state: &mut State, cx: &mut Cx<'_, 'a>) {
+        let (file, store, node) = (cx.file, cx.store(), cx.node_of_event());
+        let head = SegmentIds::from_slice(state.head_segments());
+        let current = std::mem::replace(&mut state.current_segments, head.clone());
         for (i, &id) in current.iter().enumerate() {
             if head.get(i) != Some(&id) {
                 let segment = Segment::new(file, id);
                 (cx.emit)(match store.is_reachable(id) {
-                    true => Event::SegmentEnd(segment, cx.node),
-                    false => Event::UnreachableSegmentEnd(segment, cx.node),
+                    true => Event::SegmentEnd(segment, node),
+                    false => Event::UnreachableSegmentEnd(segment, node),
                 });
             }
         }
-        store.set_current_segments(state.path, head);
         for (i, &id) in head.iter().enumerate() {
             if current.get(i) != Some(&id) {
                 store.mark_used(id);
                 let segment = Segment::new(file, id);
                 (cx.emit)(match store.is_reachable(id) {
-                    true => Event::SegmentStart(segment, cx.node),
-                    false => Event::UnreachableSegmentStart(segment, cx.node),
+                    true => Event::SegmentStart(segment, node),
+                    false => Event::UnreachableSegmentStart(segment, node),
                 });
             }
         }
-    }
-
-    /// `leaveFromCurrentSegment`
-    fn leave_from_current_segment(path: u32, cx: &mut Cx<'_, 'a>) {
-        let store = cx.store();
-        for id in store.current_segments(path) {
-            let segment = Segment::new(cx.file, id);
-            (cx.emit)(match store.is_reachable(id) {
-                true => Event::SegmentEnd(segment, cx.node),
-                false => Event::UnreachableSegmentEnd(segment, cx.node),
-            });
-        }
-        store.set_current_segments(path, &SegmentIds::new());
     }
 
     fn start_code_path(&mut self, origin: Origin, cx: &mut Cx<'_, 'a>) {
@@ -250,26 +320,39 @@ impl<'a> Builder<'a> {
         let mut state = self.spare_states.pop().unwrap_or_else(State::new);
         state.reset(store, path);
         self.states.push(state);
-        (cx.emit)(Event::CodePathStart(CodePath::new(cx.file, path), cx.node));
+        let node = cx.node_of_event();
+        (cx.emit)(Event::CodePathStart(CodePath::new(cx.file, path), node));
     }
 
     fn end_code_path(&mut self, cx: &mut Cx<'_, 'a>) {
         let Some(mut state) = self.states.pop() else {
             return;
         };
-        state.make_final(cx.store());
-        Self::leave_from_current_segment(state.path, cx);
-        (cx.emit)(Event::CodePathEnd(CodePath::new(cx.file, state.path), cx.node));
+        let (store, node) = (cx.store(), cx.node_of_event());
+        state.make_final(store);
+        // `leaveFromCurrentSegment`
+        for id in state.current_segments.drain(..) {
+            let segment = Segment::new(cx.file, id);
+            (cx.emit)(match store.is_reachable(id) {
+                true => Event::SegmentEnd(segment, node),
+                false => Event::UnreachableSegmentEnd(segment, node),
+            });
+        }
+        (cx.emit)(Event::CodePathEnd(CodePath::new(cx.file, state.path), node));
         self.spare_states.push(state);
     }
 
+    #[inline]
     fn is_before_first_throwable(&self, cx: &Cx<'_, 'a>) -> bool {
-        self.states.last().is_some_and(|state| state.is_before_first_throwable(cx.store()))
+        self.states
+            .last()
+            .is_some_and(|state| state.is_before_first_throwable(cx.store()))
     }
 
-    /// Leaving an `Identifier` of ESTree for which `isIdentifierReference` holds. What it changes
-    /// is told to the rules with the next node.
-    fn leave_identifier_reference(&mut self, cx: &Cx<'_, 'a>) {
+    /// Leaving a node that may throw. If it is an `Identifier` of ESTree for which
+    /// `isIdentifierReference` holds, what changes is told to the rules with the next node.
+    #[inline]
+    fn leave_throwable(&mut self, cx: &Cx<'_, 'a>) {
         if let Some(state) = self.states.last_mut() {
             state.make_first_throwable_path_in_try_or_catch_block(cx.store());
         }
@@ -390,7 +473,10 @@ impl<'a> Builder<'a> {
                         state.make_for_body(cx);
                     }
                 }
-                StmtKind::ForIn { left, expr, body } | StmtKind::ForOf { left, expr, body, .. } => {
+                StmtKind::ForIn { left, expr, body }
+                | StmtKind::ForOf {
+                    left, expr, body, ..
+                } => {
                     if is_stmt(left) || matches!(left.kind(), StmtKind::Expr(left) if is(left)) {
                         state.make_for_in_of_left(store);
                     } else if is(expr) {
@@ -419,7 +505,7 @@ impl<'a> Builder<'a> {
             Node::PatProp(prop) => {
                 if prop.default().is_some_and(is) {
                     fork_for_default(state);
-                } else if prop.default().is_some() && node == Node::Pat(prop.value()) {
+                } else if node == Node::Pat(prop.value()) {
                     // The `AssignmentPattern` is entered here, after the key.
                     cx.node = parent.node;
                     self.forward_current_to_head(cx);
@@ -430,199 +516,214 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// What `e` is because of where it is.
-    fn place_of_expr(e: Expr<'a>, parent: Frame<'a>) -> Is {
-        let mut is = Is::empty();
-        match parent.node {
-            Node::Expr(parent_expr) => match parent_expr.kind() {
-                ExprKind::Assign { target, .. } if target == e => is |= Is::PATTERN,
-                ExprKind::Array(_) | ExprKind::Spread(_) => is |= parent.is & Is::PATTERN,
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    left,
-                    ..
-                } if left == e
-                    && matches!(e.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
-                    && !e.is_parenthesized() =>
-                {
-                    is |= Is::ABSENT;
-                }
-                ExprKind::Jsx(jsx) if jsx.tag() == Some(e) || jsx.close_tag() == Some(e) => {
-                    is |= Is::JSX_NAME;
-                }
-                ExprKind::Dot { .. } => is |= parent.is & Is::JSX_NAME,
-                _ => {}
-            },
-            Node::Prop(prop) if prop.value() == Some(e) => is |= parent.is & Is::PATTERN,
-            Node::Stmt(_) if parent.is.contains(Is::LEFT_OF_FOR) => is |= Is::PATTERN,
-            Node::Stmt(parent) => match parent.kind() {
-                StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
-                    if matches!(left.kind(), StmtKind::Expr(left) if left == e) {
-                        is |= Is::PATTERN;
-                    }
-                }
-                _ => {}
-            },
-            Node::Member(member) if member.init() == Some(e) && is_property_definition(member) => {
-                is |= Is::FIELD_INITIALIZER;
-            }
-            _ => {}
-        }
-        let continues_chain = || {
-            parent.is.contains(Is::IN_CHAIN)
-                && matches!(parent.node, Node::Expr(parent) if chain_operand(parent) == Some(e))
-                && !e.is_parenthesized()
-        };
-        match e.kind() {
-            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } if chain == Chain::No => {}
-            ExprKind::Call(call) if call.chain() == Chain::No => {}
-            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
-                is |= Is::IN_CHAIN;
-                if !continues_chain() {
-                    is |= Is::CHAIN_ROOT;
-                }
-            }
-            ExprKind::NonNull(_) => {
-                if continues_chain() {
-                    is |= Is::IN_CHAIN;
-                } else if is_non_null_after_chain(e) {
-                    is |= Is::IN_CHAIN | Is::CHAIN_ROOT;
-                }
-            }
-            _ => {}
-        }
-        is
-    }
-
-    /// `processCodePathToEnter`, without the last step.
-    fn enter_expr(&mut self, e: Expr<'a>, is: Is, parent: Option<Node<'a>>, cx: &mut Cx<'_, 'a>) {
+    /// `processCodePathToEnter`, without the last step. `is`: what is known from the parent.
+    /// Returns what else is known.
+    fn enter_expr(
+        &mut self,
+        e: Expr<'a>,
+        is: Is,
+        parent: Option<Node<'a>>,
+        cx: &mut Cx<'_, 'a>,
+    ) -> Is {
         if is.contains(Is::FIELD_INITIALIZER) {
+            cx.keeps_function_expression = true;
             self.start_code_path(Origin::ClassFieldInitializer, cx);
+            self.forward_current_to_head(cx);
+            cx.keeps_function_expression = false;
         }
-        if is.contains(Is::CHAIN_ROOT) {
+        let mut more = match e.tag() {
+            ExprTag::Ident
+            | ExprTag::New
+            | ExprTag::ImportCall
+            | ExprTag::NewTarget
+            | ExprTag::ImportMeta
+            | ExprTag::Yield
+            | ExprTag::AsConst => return Is::HAS_EXIT,
+            ExprTag::Dot | ExprTag::Index | ExprTag::Call => match e.chain() {
+                Chain::No if is.contains(Is::JSX_NAME) => {
+                    return Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                }
+                Chain::No => return Is::HAS_EXIT,
+                _ => Is::IN_CHAIN | Is::HAS_EXIT | Is::PLACES_CHILDREN,
+            },
+            ExprTag::NonNull if is.contains(Is::CONTINUES_CHAIN) || is_non_null_after_chain(e) => {
+                Is::IN_CHAIN | Is::PLACES_CHILDREN
+            }
+            ExprTag::Array | ExprTag::Spread | ExprTag::Object if is.contains(Is::PATTERN) => {
+                return Is::PLACES_CHILDREN;
+            }
+            ExprTag::Jsx => return Is::PLACES_CHILDREN,
+            ExprTag::Fn | ExprTag::Binary | ExprTag::Assign | ExprTag::Cond => Is::empty(),
+            _ => return Is::empty(),
+        };
+        if more.contains(Is::IN_CHAIN) && !is.contains(Is::CONTINUES_CHAIN) {
+            // The `ChainExpression` is entered.
+            more |= Is::CHAIN_ROOT | Is::HAS_POSTPROCESS;
             if let Some(state) = self.states.last_mut() {
                 state.push_chain_context();
             }
             self.forward_current_to_head(cx);
         }
         let Some(state) = self.states.last_mut() else {
-            return;
+            return more;
         };
         match e.kind() {
             ExprKind::Fn(func) if has_code_path(func) => {
-                cx.node = Node::Func(func);
                 self.start_code_path(Origin::Function, cx);
+                more |= Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS;
             }
-            ExprKind::Call(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                if e.is_optional() {
+            ExprKind::Call(call) => {
+                if call.is_optional() {
+                    state.make_optional_node();
+                    if call.args().is_empty() {
+                        more |= Is::HAS_POSTPROCESS;
+                    }
+                }
+            }
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
+                if chain == Chain::Start {
                     state.make_optional_node();
                 }
             }
-            ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. } => {
+            ExprKind::Binary { op, .. } => {
                 if let Some(kind) = choice_kind(op) {
                     state.push_choice_context(kind, is_forking_by_true_or_false(e, parent));
+                    more |= Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                } else if op == BinOp::Comma {
+                    more |= Is::PLACES_CHILDREN;
                 }
             }
-            ExprKind::Cond { .. } => state.push_choice_context(ChoiceKind::Test, false),
+            ExprKind::Assign { op, .. } => {
+                more |= Is::PLACES_CHILDREN;
+                if let Some(kind) = op.and_then(choice_kind) {
+                    state.push_choice_context(kind, is_forking_by_true_or_false(e, parent));
+                    more |= Is::HAS_EXIT;
+                } else if op.is_none() && is.contains(Is::PATTERN) {
+                    more |= Is::HAS_EXIT;
+                }
+            }
+            ExprKind::Cond { .. } => {
+                state.push_choice_context(ChoiceKind::Test, false);
+                more |= Is::HAS_EXIT | Is::PLACES_CHILDREN;
+            }
             _ => {}
         }
+        more
     }
 
-    /// `processCodePathToEnter`, without the last step.
-    fn enter_stmt(&mut self, stmt: Stmt<'a>, parent: Option<Node<'a>>, cx: &mut Cx<'_, 'a>) {
+    /// `processCodePathToEnter`, without the last step. Returns what is known about `stmt`.
+    fn enter_stmt(&mut self, stmt: Stmt<'a>, parent: Option<Node<'a>>, cx: &mut Cx<'_, 'a>) -> Is {
         let Some(state) = self.states.last_mut() else {
-            return;
+            return Is::empty();
         };
-        match stmt.kind() {
-            StmtKind::Fn(func) if has_code_path(func) => {
-                cx.node = Node::Func(func);
-                self.start_code_path(Origin::Function, cx);
+        let kind = match stmt.tag() {
+            StmtTag::Break | StmtTag::Continue | StmtTag::Return | StmtTag::Throw => {
+                return Is::HAS_EXIT;
             }
-            StmtKind::If { .. } => state.push_choice_context(ChoiceKind::Test, false),
-            StmtKind::Switch { cases, .. } => {
-                let has_case = cases.iter().any(|case| !case.is_default());
-                state.push_switch_context(has_case, label_of(parent));
+            StmtTag::If => {
+                state.push_choice_context(ChoiceKind::Test, false);
+                return Is::HAS_EXIT | Is::PLACES_CHILDREN;
             }
-            StmtKind::Try { finalizer, .. } => state.push_try_context(finalizer.is_some()),
-            StmtKind::While { .. } => state.push_loop_context(LoopKind::While, label_of(parent)),
-            StmtKind::DoWhile { .. } => state.push_loop_context(LoopKind::DoWhile, label_of(parent)),
-            StmtKind::For { .. } => state.push_loop_context(LoopKind::For, label_of(parent)),
-            StmtKind::ForIn { .. } => state.push_loop_context(LoopKind::ForIn, label_of(parent)),
-            StmtKind::ForOf { .. } => state.push_loop_context(LoopKind::ForOf, label_of(parent)),
-            StmtKind::Labeled { label, body } => {
-                if !is_breakable(body) {
-                    state.push_break_context(false, Some(label.atom()));
+            StmtTag::While => LoopKind::While,
+            StmtTag::DoWhile => LoopKind::DoWhile,
+            StmtTag::For => LoopKind::For,
+            StmtTag::ForIn => LoopKind::ForIn,
+            StmtTag::ForOf => LoopKind::ForOf,
+            StmtTag::Fn | StmtTag::Switch | StmtTag::Try | StmtTag::Labeled => match stmt.kind() {
+                StmtKind::Fn(func) if has_code_path(func) => {
+                    self.start_code_path(Origin::Function, cx);
+                    return Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS;
                 }
-            }
-            _ => {}
-        }
+                StmtKind::Switch { cases, .. } => {
+                    let has_case = cases.iter().any(|case| !case.is_default());
+                    state.push_switch_context(has_case, label_of(parent));
+                    return Is::HAS_EXIT;
+                }
+                StmtKind::Try { finalizer, .. } => {
+                    state.push_try_context(finalizer.is_some());
+                    return Is::HAS_EXIT | Is::PLACES_CHILDREN;
+                }
+                StmtKind::Labeled { label, body } if !is_breakable(body) => {
+                    state.push_break_context(false, Some(label.atom()));
+                    return Is::HAS_EXIT;
+                }
+                _ => return Is::empty(),
+            },
+            _ => return Is::empty(),
+        };
+        state.push_loop_context(kind, label_of(parent));
+        Is::HAS_EXIT | Is::PLACES_CHILDREN
     }
 
     /// `enterNode`, up to where it calls the listeners of the node.
     fn enter(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let cx = &mut Cx {
-            file: self.file,
-            node,
-            emit,
-        };
+        let cx = &mut Cx::new(self.file, node, emit);
         let parent = self.ancestors.last().copied();
         let mut is = Is::empty();
-        if let (Node::Expr(e), Some(parent)) = (node, parent) {
-            is = Self::place_of_expr(e, parent);
-        }
-        self.ancestors.push(Frame { node, is });
-        if is.contains(Is::ABSENT) {
-            return;
-        }
-        if let Some(parent) = parent {
+        if let Some(parent) = parent
+            && parent.is.contains(Is::PLACES_CHILDREN)
+        {
+            match node {
+                Node::Expr(e) => is = place_of_expr(e, parent),
+                Node::Prop(_) if parent.is.contains(Is::PATTERN) => {
+                    is = Is::PATTERN | Is::PLACES_CHILDREN
+                }
+                _ => {}
+            }
+            if is.contains(Is::ABSENT) {
+                self.ancestors.push(Frame { node, is });
+                return;
+            }
             self.preprocess(parent, cx);
         }
-        let parent_node = parent.map(|it| it.node);
-        match node {
-            Node::File(_) => self.start_code_path(Origin::Program, cx),
-            Node::Expr(e) => self.enter_expr(e, is, parent_node, cx),
-            Node::Stmt(stmt) => {
-                self.enter_stmt(stmt, parent_node, cx);
-                if stmt.tag() == StmtTag::Expr
-                    && let Some(Node::Stmt(parent)) = parent_node
-                    && let Some(frame) = self.ancestors.last_mut()
-                {
-                    frame.is |= match parent.kind() {
-                        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == stmt => {
-                            Is::WRAPPER | Is::LEFT_OF_FOR
-                        }
-                        StmtKind::For { init, .. } if init == Some(stmt) => Is::WRAPPER,
-                        _ => Is::empty(),
-                    };
-                }
+        let parent = parent.map(|it| it.node);
+        is |= match node {
+            Node::Expr(e) => self.enter_expr(e, is, parent, cx),
+            Node::Stmt(stmt) => self.enter_stmt(stmt, parent, cx),
+            Node::Pat(pat) => match pat.tag() {
+                PatTag::Ident => Is::HAS_EXIT,
+                _ => Is::empty(),
+            },
+            Node::File(_) => {
+                self.start_code_path(Origin::Program, cx);
+                Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
             }
-            Node::Func(func) => {
-                if has_code_path(func) && matches!(parent_node, Some(Node::Member(_))) {
+            Node::Func(func) => match parent {
+                Some(Node::Member(_)) if has_code_path(func) => {
                     self.start_code_path(Origin::Function, cx);
+                    Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
                 }
-            }
-            Node::Member(member) => {
-                if member.kind() == MemberKind::StaticBlock {
+                _ => Is::empty(),
+            },
+            Node::Member(member) => match member.kind() {
+                MemberKind::StaticBlock => {
                     self.start_code_path(Origin::ClassStaticBlock, cx);
+                    Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
                 }
-            }
+                MemberKind::Property
+                    if member.init().is_some() && is_property_definition(member) =>
+                {
+                    Is::PLACES_CHILDREN
+                }
+                _ => Is::empty(),
+            },
             Node::Case(case) => {
-                let is_first = matches!(parent_node, Some(Node::Stmt(parent))
+                let is_first = matches!(parent, Some(Node::Stmt(parent))
                     if matches!(parent.kind(), StmtKind::Switch { cases, .. } if cases.first() == Some(case)));
                 if !is_first && let Some(state) = self.states.last_mut() {
                     state.fork_path(cx.store());
                 }
+                Is::HAS_EXIT | Is::PLACES_CHILDREN
             }
-            Node::Prop(_) => {
-                if let (Some(parent), Some(frame)) = (parent, self.ancestors.last_mut()) {
-                    frame.is |= parent.is & Is::PATTERN;
-                }
-            }
-            _ => {}
-        }
+            Node::Param(param) => with_default(param.default()),
+            Node::PatElem(element) => with_default(element.default()),
+            Node::PatProp(prop) => with_default(prop.default()),
+            _ => Is::empty(),
+        };
+        self.ancestors.push(Frame { node, is });
         self.forward_current_to_head(cx);
         if self.is_before_first_throwable(cx) && starts_with_identifier_reference(node) {
-            self.leave_identifier_reference(cx);
+            self.leave_throwable(cx);
         }
     }
 
@@ -638,21 +739,9 @@ impl<'a> Builder<'a> {
         }
         // In an `ArrayPattern` or a `RestElement` it is not.
         match self.ancestors.iter().rev().nth(1).map(|parent| parent.node) {
-            Some(Node::Expr(parent)) => {
-                !matches!(parent.kind(), ExprKind::Array(_) | ExprKind::Spread(_))
-            }
+            Some(Node::Expr(parent)) => !matches!(parent.tag(), ExprTag::Array | ExprTag::Spread),
             Some(Node::Prop(parent)) => parent.kind() != PropKind::Spread,
             _ => true,
-        }
-    }
-
-    /// `isIdentifierReference` for an identifier that is bound.
-    fn is_binding_a_reference(pat: Pat<'a>) -> bool {
-        match pat.parent() {
-            Node::PatProp(prop) => !prop.is_rest(),
-            Node::PatElem(element) => element.default().is_some(),
-            Node::Param(param) => !param.is_rest(),
-            _ => false,
         }
     }
 
@@ -662,48 +751,41 @@ impl<'a> Builder<'a> {
         let Some(state) = self.states.last_mut() else {
             return false;
         };
-        match e.kind() {
-            ExprKind::Cond { .. } => state.pop_choice_context(store),
-            ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. } => {
-                if choice_kind(op).is_some() {
-                    state.pop_choice_context(store);
-                }
-            }
-            ExprKind::Assign { op: None, .. } => {
-                if is.contains(Is::PATTERN) {
-                    state.pop_fork_context(store);
-                }
-            }
-            ExprKind::Ident(_) => {
+        match e.tag() {
+            ExprTag::Ident => {
                 if state.is_before_first_throwable(store) && self.is_identifier_reference(is) {
-                    self.leave_identifier_reference(cx);
+                    self.leave_throwable(cx);
                 }
                 return true;
             }
-            ExprKind::Dot { chain, .. } => {
+            ExprTag::Dot => {
                 if is.contains(Is::JSX_NAME) {
                     return false;
                 }
                 // The name is a node of ESTree, which is entered and left here.
-                if chain == Chain::Start {
+                if is.contains(Is::IN_CHAIN) && e.is_optional() {
                     state.make_optional_right(store);
                     self.forward_current_to_head(cx);
                 }
-                self.leave_identifier_reference(cx);
+                self.leave_throwable(cx);
             }
-            ExprKind::Call(_)
-            | ExprKind::ImportCall { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::New(_)
-            | ExprKind::NewTarget
-            | ExprKind::ImportMeta => {
-                state.make_first_throwable_path_in_try_or_catch_block(store);
-            }
-            ExprKind::Yield { .. } => state.make_yield(store),
+            // The names of a `MetaProperty` are references to ESLint.
+            ExprTag::Call
+            | ExprTag::ImportCall
+            | ExprTag::Index
+            | ExprTag::New
+            | ExprTag::NewTarget
+            | ExprTag::ImportMeta => state.make_first_throwable_path_in_try_or_catch_block(store),
+            ExprTag::Cond | ExprTag::Binary => state.pop_choice_context(store),
+            ExprTag::Assign => match matches!(e.kind(), ExprKind::Assign { op: None, .. }) {
+                true => state.pop_fork_context(store),
+                false => state.pop_choice_context(store),
+            },
+            ExprTag::Yield => state.make_yield(store),
             // The `const` is a `TSTypeReference`, whose name is an `Identifier`.
-            ExprKind::AsConst(_) => {
+            ExprTag::AsConst => {
                 if state.is_before_first_throwable(store) && !e.is_angle_bracket_assertion() {
-                    self.leave_identifier_reference(cx);
+                    self.leave_throwable(cx);
                 }
             }
             _ => {}
@@ -749,79 +831,48 @@ impl<'a> Builder<'a> {
             | StmtKind::For { .. }
             | StmtKind::ForIn { .. }
             | StmtKind::ForOf { .. } => state.pop_loop_context(cx),
-            StmtKind::Labeled { body, .. } => {
-                if !is_breakable(body) {
-                    state.pop_break_context_of_label(store);
-                }
-            }
+            StmtKind::Labeled { .. } => state.pop_break_context_of_label(store),
             _ => {}
         }
         false
     }
 
-    /// The node that stands for `node` in an event.
-    fn node_of_event(node: Node<'a>) -> Node<'a> {
-        match node {
-            Node::Expr(e) => match e.kind() {
-                ExprKind::Fn(func) => Node::Func(func),
-                _ => node,
-            },
-            Node::Stmt(stmt) => match stmt.kind() {
-                StmtKind::Fn(func) => Node::Func(func),
-                _ => node,
-            },
-            _ => node,
-        }
-    }
-
     /// `leaveNode`, before it calls the listeners of the node.
     fn before_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let cx = &mut Cx {
-            file: self.file,
-            node: Self::node_of_event(node),
-            emit,
-        };
+        let cx = &mut Cx::new(self.file, node, emit);
         let is = self.ancestors.last().map_or(Is::empty(), |frame| frame.is);
-        if is.intersects(Is::ABSENT | Is::WRAPPER) {
+        if is.contains(Is::ABSENT) {
             return;
         }
         let store = cx.store();
-        let dont_forward = match node {
-            Node::Expr(e) => self.leave_expr(e, is, cx),
-            Node::Stmt(stmt) => self.leave_stmt(stmt, cx),
-            Node::Case(case) => match self.states.last_mut() {
-                Some(state) => {
-                    if case.body().is_empty() {
-                        state.make_switch_case_body(store, true, case.is_default());
+        let dont_forward = is.contains(Is::HAS_EXIT)
+            && match node {
+                Node::Expr(e) => self.leave_expr(e, is, cx),
+                Node::Stmt(stmt) => self.leave_stmt(stmt, cx),
+                Node::Case(case) => match self.states.last_mut() {
+                    Some(state) => {
+                        if case.body().is_empty() {
+                            state.make_switch_case_body(store, true, case.is_default());
+                        }
+                        state.is_reachable(store)
                     }
-                    state.is_reachable(store)
-                }
-                None => false,
-            },
-            Node::Pat(pat) => {
-                if matches!(pat.kind(), PatKind::Ident(_)) {
-                    if self.is_before_first_throwable(cx) && Self::is_binding_a_reference(pat) {
-                        self.leave_identifier_reference(cx);
+                    None => false,
+                },
+                Node::Pat(pat) => {
+                    if self.is_before_first_throwable(cx) && is_binding_a_reference(pat) {
+                        self.leave_throwable(cx);
                     }
                     true
-                } else {
+                }
+                // The `AssignmentPattern` is left.
+                Node::Param(_) | Node::PatElem(_) | Node::PatProp(_) => {
+                    if let Some(state) = self.states.last_mut() {
+                        state.pop_fork_context(store);
+                    }
                     false
                 }
-            }
-            Node::Param(_) | Node::PatElem(_) | Node::PatProp(_) => {
-                let has_default = match node {
-                    Node::Param(param) => param.default().is_some(),
-                    Node::PatElem(element) => element.default().is_some(),
-                    Node::PatProp(prop) => prop.default().is_some(),
-                    _ => false,
-                };
-                if has_default && let Some(state) = self.states.last_mut() {
-                    state.pop_fork_context(store);
-                }
-                false
-            }
-            _ => false,
-        };
+                _ => false,
+            };
         if !dont_forward {
             self.forward_current_to_head(cx);
         }
@@ -829,148 +880,161 @@ impl<'a> Builder<'a> {
 
     /// `leaveNode`, after it has called them: `postprocess`.
     fn after_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let cx = &mut Cx {
-            file: self.file,
-            node: Self::node_of_event(node),
-            emit,
-        };
         let Some(Frame { is, .. }) = self.ancestors.pop() else {
             return;
         };
-        match node {
-            Node::File(_) => self.end_code_path(cx),
-            Node::Expr(e) => {
-                match e.kind() {
-                    ExprKind::Fn(func) if has_code_path(func) => self.end_code_path(cx),
-                    ExprKind::Call(call) if call.is_optional() && call.args().is_empty() => {
-                        if let Some(state) = self.states.last_mut() {
-                            state.make_optional_right(cx.store());
-                        }
-                    }
-                    _ => {}
-                }
-                if is.contains(Is::CHAIN_ROOT) {
-                    if let Some(state) = self.states.last_mut() {
-                        state.pop_chain_context(cx.store());
-                    }
-                    self.forward_current_to_head(cx);
-                }
-                if is.contains(Is::FIELD_INITIALIZER) {
-                    cx.node = node;
-                    self.end_code_path(cx);
-                }
+        if !is.contains(Is::HAS_POSTPROCESS) {
+            return;
+        }
+        let cx = &mut Cx::new(self.file, node, emit);
+        if is.contains(Is::HAS_CODE_PATH) {
+            self.end_code_path(cx);
+        }
+        if is.contains(Is::IN_CHAIN)
+            && let Some(state) = self.states.last_mut()
+        {
+            // The other case of `makeOptionalRight` is in `preprocess`.
+            let is_call_without_arguments = matches!(node, Node::Expr(e)
+                if matches!(e.kind(), ExprKind::Call(call) if call.is_optional() && call.args().is_empty()));
+            if is_call_without_arguments {
+                state.make_optional_right(cx.store());
             }
-            Node::Stmt(stmt) => {
-                if matches!(stmt.kind(), StmtKind::Fn(func) if has_code_path(func)) {
-                    self.end_code_path(cx);
-                }
+            // The `ChainExpression` is left.
+            if is.contains(Is::CHAIN_ROOT) {
+                state.pop_chain_context(cx.store());
+                self.forward_current_to_head(cx);
             }
-            Node::Func(func) => {
-                let is_of_member =
-                    matches!(self.ancestors.last(), Some(parent) if matches!(parent.node, Node::Member(_)));
-                if has_code_path(func) && is_of_member {
-                    self.end_code_path(cx);
-                }
-            }
-            Node::Member(member) => {
-                if member.kind() == MemberKind::StaticBlock {
-                    self.end_code_path(cx);
-                }
-            }
-            _ => {}
+        }
+        if is.contains(Is::FIELD_INITIALIZER) {
+            cx.keeps_function_expression = true;
+            self.end_code_path(cx);
         }
     }
 }
 
-// ───────────────────────────── the two passes ─────────────────────────────
+// ───────────────────────────── the walk ─────────────────────────────
 
-/// The first pass: a walk that builds the graphs and keeps the events.
-struct Recorder<'a> {
-    builder: Builder<'a>,
-    /// Each with the number of the step that it belongs to.
-    events: Vec<(u32, Event<'a>)>,
-    /// A node is three steps: entering it, leaving it, having left it.
-    step: u32,
+/// A step of the walk of a file for the rules.
+#[derive(Copy, Clone)]
+pub(crate) enum Step<'a> {
+    /// Call the listeners for entering the node.
+    Enter(Node<'a>),
+    /// Call the listeners for leaving the node.
+    Exit(Node<'a>),
+    /// Call the listeners for the event.
+    Event(Event<'a>),
 }
 
-impl<'a> Recorder<'a> {
-    fn step(&mut self, node: Node<'a>, step: fn(&mut Builder<'a>, Node<'a>, &mut dyn FnMut(Event<'a>))) {
-        self.step += 1;
-        let (events, number) = (&mut self.events, self.step);
-        step(&mut self.builder, node, &mut |event| events.push((number, event)));
-    }
+struct Recorder<'a> {
+    builder: Builder<'a>,
+    steps: Vec<Step<'a>>,
+    enter: NodeTags,
+    exit: NodeTags,
 }
 
 impl<'a> Visitor<'a> for Recorder<'a> {
     fn enter(&mut self, node: Node<'a>) {
-        self.step(node, Builder::enter);
+        let steps = &mut self.steps;
+        self.builder
+            .enter(node, &mut |event| steps.push(Step::Event(event)));
+        if self.enter.contains(node) {
+            steps.push(Step::Enter(node));
+        }
     }
 
     fn exit(&mut self, node: Node<'a>) {
-        self.step(node, Builder::before_exit);
-        self.step(node, Builder::after_exit);
+        let steps = &mut self.steps;
+        self.builder
+            .before_exit(node, &mut |event| steps.push(Step::Event(event)));
+        if self.exit.contains(node) {
+            steps.push(Step::Exit(node));
+        }
+        self.builder
+            .after_exit(node, &mut |event| steps.push(Step::Event(event)));
     }
 }
 
-/// Tells the rules about the code paths of a file during the walk that calls their listeners.
+/// Walks and analyzes `file`. Returns what to tell the rules, in order: the events, and the nodes
+/// of the kinds `enter` and `exit`, which are those that a rule listens for.
 ///
 /// Like ESLint, it analyzes the whole file before the first listener is called: a rule sees the
 /// finished graph from the first event on, with the segments that follow the current one and
 /// those that lead back to it from the end of a loop.
-pub(crate) struct Analyzer<'a> {
+pub(crate) fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'a> {
+    file.lazy.code_paths.clear();
+    let mut recorder = Recorder {
+        builder: Builder {
+            file,
+            states: Vec::new(),
+            spare_states: Vec::new(),
+            ancestors: Vec::new(),
+        },
+        steps: Vec::new(),
+        enter,
+        exit,
+    };
+    walk(file, &mut recorder);
+    file.lazy.code_paths.finish();
+    Steps {
+        file,
+        steps: recorder.steps.into_iter(),
+    }
+}
+
+/// See [`steps`].
+pub(crate) struct Steps<'a> {
     file: &'a File<'a>,
-    events: std::vec::IntoIter<(u32, Event<'a>)>,
-    step: u32,
+    steps: std::vec::IntoIter<Step<'a>>,
+}
+
+impl<'a> Iterator for Steps<'a> {
+    type Item = Step<'a>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Step<'a>> {
+        let step = self.steps.next()?;
+        if let Step::Event(event) = step {
+            self.file.lazy.code_paths.follow(event);
+        }
+        Some(step)
+    }
+}
+
+/// [`steps`] for a caller that walks the file itself.
+pub(crate) struct Analyzer<'a> {
+    steps: std::iter::Peekable<Steps<'a>>,
 }
 
 impl<'a> Analyzer<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
-        file.lazy.code_paths.clear();
-        let mut recorder = Recorder {
-            builder: Builder {
-                file,
-                states: Vec::new(),
-                spare_states: Vec::new(),
-                ancestors: Vec::new(),
-            },
-            events: Vec::new(),
-            step: 0,
-        };
-        walk(file, &mut recorder);
         Analyzer {
-            file,
-            events: recorder.events.into_iter(),
-            step: 0,
+            steps: steps(file, NodeTags::ALL, NodeTags::ALL).peekable(),
         }
     }
 
-    /// Emits the events of the next step.
-    fn step(&mut self, emit: &mut dyn FnMut(Event<'a>)) {
-        self.step += 1;
-        while let Some(&(step, event)) = self.events.as_slice().first()
-            && step <= self.step
+    /// Emits the events up to the next node.
+    fn events(&mut self, emit: &mut dyn FnMut(Event<'a>)) {
+        while let Some(Step::Event(event)) =
+            self.steps.next_if(|step| matches!(step, Step::Event(_)))
         {
-            self.events.next();
-            self.file.lazy.code_paths.follow(event);
             emit(event);
         }
     }
 
     /// ESLint's `enterNode`, up to where it calls the listeners of the node.
-    #[inline]
     pub(crate) fn enter(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        self.step(emit);
+        self.events(emit);
+        self.steps.next();
     }
 
     /// `leaveNode`, before it calls the listeners of the node.
-    #[inline]
     pub(crate) fn before_exit(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        self.step(emit);
+        self.events(emit);
+        self.steps.next();
     }
 
     /// `leaveNode`, after it has called them.
-    #[inline]
     pub(crate) fn after_exit(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        self.step(emit);
+        self.events(emit);
     }
 }

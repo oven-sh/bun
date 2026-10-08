@@ -36,18 +36,41 @@
 //! | `CatchClause` | the `handler` block |
 //! | `ChainExpression` | the outermost expression of the chain |
 //! | the `b` of `a.b`, the `new` and `target` of `new.target` | the whole expression |
-//! | an expression that is the `init` of a `for` or the `left` of a `for`-`in` or `for`-`of` | the `Stmt` around it, which is what `StmtKind::For::init` and `StmtKind::ForIn::left` are |
 //! | `AssignmentPattern` | the `Param`, `PatElem` or `PatProp` with the default. In the target of an assignment, the `ExprKind::Assign` |
 //! | any other name or wrapper (`ExportNamedDeclaration`, `ClassBody`, `TemplateElement`, a key, ..) | the next node that is entered or left |
+//!
+//! # Differences
+//!
+//! The ids, the graphs and the order of the events are ESLint's
+//! (`test/cli/lint/oracle/code_path/trace.ts` compares them). What differs follows from the order
+//! of the walk:
+//!
+//! - ESTree has the type annotation of a pattern and the decorators of a parameter inside the
+//!   pattern. Here the annotation comes after the pattern and the decorators before it. A name in
+//!   a type is what may throw first in a `try` block as far as ESLint knows, so in
+//!   `try { let a: T = b; }` the segment changes before ESLint leaves the `a`, and here after.
+//! - Each `finally` block that a `return` or a `throw` leads through doubles the number of
+//!   current segments in it. Here that ends with 256 of them, which takes 8 such blocks each in
+//!   the `finally` block of the other: further ones are analyzed as if only their end was left.
 
 mod analyzer;
 mod state;
 
-pub(crate) use analyzer::Analyzer;
+pub(crate) use analyzer::{Analyzer, steps};
+// For the runner, instead of `Analyzer`.
+#[allow(unused_imports)]
+pub(crate) use analyzer::{Step, Steps};
 
 use crate::ast::{File, Node};
+use crate::rule::NodeTags;
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
+
+/// Analyzes `file` and tells nobody. Returns the number of events. For measuring.
+#[doc(hidden)]
+pub fn analyze<'a>(file: &'a File<'a>) -> usize {
+    steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count()
+}
 
 /// ESLint's `codePath.origin`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -84,7 +107,7 @@ pub(crate) struct SegmentData {
     prev: Edges,
     all_next: Edges,
     all_prev: Edges,
-    /// Those of `all_prev` that come from the end of a loop.
+    /// Those of `all_prev` that come from the end of a loop. Sorted once the graph is finished.
     looped_prev: SmallVec<[u32; 2]>,
     path: u32,
     /// Counted from 1 in its code path.
@@ -198,7 +221,11 @@ impl<'a> CodePath<'a> {
     /// [`CodePath::current_segments`] is reachable.
     pub fn is_current_reachable(self) -> bool {
         let segments = self.file.lazy.code_paths.segments.borrow();
-        self.read(|path| path.current_segments.iter().any(|&id| segments[id as usize].is_reachable))
+        self.read(|path| {
+            path.current_segments
+                .iter()
+                .any(|&id| segments[id as usize].is_reachable)
+        })
     }
 
     /// The code path of what contains the function.
@@ -209,7 +236,12 @@ impl<'a> CodePath<'a> {
 
     pub fn child_code_paths(self) -> Vec<CodePath<'a>> {
         let file = self.file;
-        self.read(|path| path.children.iter().map(|&id| CodePath { file, id }).collect())
+        self.read(|path| {
+            path.children
+                .iter()
+                .map(|&id| CodePath { file, id })
+                .collect()
+        })
     }
 
     /// Calls `visit` with every reachable segment, from the initial segment on. A segment comes
@@ -240,7 +272,8 @@ impl<'a> CodePath<'a> {
                 let segment = &segments[id as usize];
                 if index == 0 {
                     let is_in = |set: &Numbers, prev: u32| {
-                        set.has(&segments[prev as usize]) || segment.looped_prev.contains(&prev)
+                        set.has(&segments[prev as usize])
+                            || segment.looped_prev.binary_search(&prev).is_ok()
                     };
                     if visited.has(segment)
                         || id != start && !segment.prev.iter().all(|&prev| is_in(&visited, prev))
@@ -269,7 +302,8 @@ impl<'a> CodePath<'a> {
                 }
                 let segments = store.segments.borrow();
                 let next = &segments[id as usize].next;
-                next.get(index as usize).map(|&it| (it, index as usize + 1 == next.len()))
+                next.get(index as usize)
+                    .map(|&it| (it, index as usize + 1 == next.len()))
             };
             match (next, stack.last_mut()) {
                 (Some((next, true)), Some(top)) => *top = (next, 0),
@@ -319,7 +353,11 @@ impl Numbers {
     }
 
     fn has(&self, segment: &SegmentData) -> bool {
-        let word = self.bits.get(segment.number as usize / 64).copied().unwrap_or(0);
+        let word = self
+            .bits
+            .get(segment.number as usize / 64)
+            .copied()
+            .unwrap_or(0);
         self.path == Some(segment.path) && word & (1 << (segment.number % 64)) != 0
     }
 
@@ -390,7 +428,12 @@ impl<'a> Segment<'a> {
 
     fn others(self, read: impl FnOnce(&SegmentData) -> &[u32]) -> Segments<'a> {
         let file = self.file;
-        self.read(|segment| read(segment).iter().map(|&id| Segment { file, id }).collect())
+        self.read(|segment| {
+            read(segment)
+                .iter()
+                .map(|&id| Segment { file, id })
+                .collect()
+        })
     }
 
     pub fn is_reachable(self) -> bool {
@@ -426,7 +469,7 @@ impl<'a> Segment<'a> {
 
     /// Whether `prev` leads here from the end of a loop.
     pub fn is_looped_prev_segment(self, prev: Segment<'a>) -> bool {
-        self.read(|segment| segment.looped_prev.contains(&prev.id))
+        self.read(|segment| segment.looped_prev.binary_search(&prev.id).is_ok())
     }
 }
 
@@ -461,7 +504,12 @@ impl<'a> CurrentSegments<'a> {
     /// Also for `unreachable_segment_end`.
     pub fn segment_end(&mut self, segment: Segment<'a>) {
         let start = self.starts.last().copied().unwrap_or(0) as usize;
-        if let Some(at) = self.segments.iter().skip(start).position(|it| *it == segment) {
+        if let Some(at) = self
+            .segments
+            .iter()
+            .skip(start)
+            .position(|it| *it == segment)
+        {
             self.segments.remove(start + at);
         }
     }

@@ -2,7 +2,8 @@
 // that are entered and left, and the graph of each code path when it ends.
 //
 //   bun trace.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir>
-//                [--fixtures <conformance/fixtures>].. [--files <dir>].. [--only <regex of case ids>]
+//                [--fixtures <conformance/fixtures>].. [--files <dir>].. [--generated <count> [--seed <first>]]
+//                [--only <regex of case ids>]
 //                [--jobs N] [--examples N] [--ignore-nodes]
 //   bun trace.ts --eslint <checkout> --typescript-eslint <checkout> --print <file>
 //
@@ -24,6 +25,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Case, casesFromArguments, option } from "../tokens/corpus";
+import { generatedCases } from "./generate";
 
 const args = process.argv.slice(2);
 const scratch = option(args, "--scratch") ?? ".";
@@ -112,6 +114,7 @@ function isExpressionOrBinding(node: any, sourceCode: any): boolean {
     case "ImportDefaultSpecifier":
     case "ImportNamespaceSpecifier":
     case "ImportAttribute":
+      return parent.value === node;
     case "ImportDeclaration":
     case "ExportSpecifier":
     case "ExportAllDeclaration":
@@ -419,6 +422,7 @@ function run(cases: Case[], name: string): Result {
 }
 
 let all = casesFromArguments(args);
+all.push(...generatedCases(Number(option(args, "--generated") ?? 0), Number(option(args, "--seed") ?? 1)));
 const only = option(args, "--only");
 if (only) all = all.filter(it => new RegExp(only).test(it.id));
 if (shard !== undefined) {

@@ -240,8 +240,9 @@ it("keeps tarball entry paths within the destination when checking for conflicti
 });
 
 // The destination has `shared -> ../victim`, and the template has a file in
-// `shared/`. The file must not land in `victim`.
-describe.skipIf(!isPosix)("a symlink in the destination where the template needs a directory", () => {
+// `shared/`. The file must not land in `victim`. On Windows the link is a
+// junction: any process can create one, and its target is an absolute path.
+describe("a symlink in the destination where the template needs a directory", () => {
   it.each([
     ["is listed as a conflict", [], "could conflict"],
     ["stops the extraction with --force", ["--force"], "ELOOP: a symbolic link in dest/ is in the way of shared/f.txt"],
@@ -256,7 +257,7 @@ describe.skipIf(!isPosix)("a symlink in the destination where the template needs
 
     mkdirSync(join(x_dir, "dest"));
     mkdirSync(join(x_dir, "victim"));
-    symlinkSync("../victim", join(x_dir, "dest", "shared"));
+    symlinkSync(isPosix ? "../victim" : join(x_dir, "victim"), join(x_dir, "dest", "shared"), "junction");
 
     using server = Bun.serve({
       tls,

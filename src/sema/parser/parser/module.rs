@@ -259,9 +259,8 @@ impl Parser<'_> {
         {
             return self.import_equals(start, base, flags, (name, name_pos), type_only);
         }
-        if self.s.modifiers.len() > base {
-            self.refuse(Refusal::Reported);
-        }
+        // The checker reports them.
+        let modifiers = self.take_modifiers(base);
         // `parseImportClause`
         let (mut default, mut default_pos) = (Atom::NONE, 0);
         if let Some((name, pos, _)) = identifier {
@@ -358,7 +357,7 @@ impl Parser<'_> {
             mode,
             stmt: StmtId::NONE,
         });
-        let statement = self.add_stmt(StmtKind::Import(declaration), start, Span::EMPTY);
+        let statement = self.add_stmt(StmtKind::Import(declaration), start, modifiers);
         self.f[declaration].stmt = statement;
         statement
     }
@@ -426,10 +425,7 @@ impl Parser<'_> {
 
     /// `parseExportDeclaration`, after `export`.
     pub(crate) fn export_declaration(&mut self, start: Start, base: usize) -> StmtId {
-        if self.s.modifiers.len() > base && !self.is_flow {
-            self.refuse(Refusal::Reported);
-        }
-        // In Flow: `declare`
+        // The checker reports them. In Flow: `declare`
         let modifiers = self.take_modifiers(base);
         let type_only = self.eat(T::Type);
         if self.token() == T::Asterisk {
@@ -511,9 +507,7 @@ impl Parser<'_> {
 
     /// `parseExportAssignment`, at the `default` or the `=` after `export`.
     pub(crate) fn export_assignment(&mut self, start: Start, base: usize) -> StmtId {
-        if self.s.modifiers.len() > base {
-            self.refuse(Refusal::Reported);
-        }
+        let modifiers = self.take_modifiers(base);
         let is_export_equals = self.token() == T::Equals;
         self.next();
         // `parseExportAssignment` has `setAwaitContext(true)`.
@@ -528,18 +522,16 @@ impl Parser<'_> {
             true => StmtKind::ExportAssign(expression),
             false => StmtKind::ExportDefault(expression),
         };
-        self.add_stmt(kind, start, Span::EMPTY)
+        self.add_stmt(kind, start, modifiers)
     }
 
     /// `parseNamespaceExportDeclaration`, at the `as` after `export`.
     pub(crate) fn namespace_export_declaration(&mut self, start: Start, base: usize) -> StmtId {
-        if self.s.modifiers.len() > base {
-            self.refuse(Refusal::Reported);
-        }
+        let modifiers = self.take_modifiers(base);
         self.next();
         self.expect(T::Namespace);
         let (name, _) = self.identifier();
         self.semicolon();
-        self.add_stmt(StmtKind::ExportAsNamespace(name), start, Span::EMPTY)
+        self.add_stmt(StmtKind::ExportAsNamespace(name), start, modifiers)
     }
 }

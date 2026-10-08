@@ -1419,7 +1419,8 @@ impl Parser<'_> {
                 _ if name_token == T::OpenBracket => member.flags |= Flags::COMPUTED_NAME,
                 _ => {}
             }
-            if self.eat(T::Question) {
+            // `parseAccessorDeclaration` takes none.
+            if member.kind == MemberKind::Property && self.eat(T::Question) {
                 member.flags |= Flags::OPTIONAL;
             }
             if member.kind != MemberKind::Property
@@ -1436,8 +1437,11 @@ impl Parser<'_> {
                 }
             } else {
                 member.ty = self.type_annotation();
-                if self.token() == T::Equals {
-                    self.refuse(Refusal::Reported);
+                // The checker reports it. `scanTypeMemberStart`: no member starts with `a =`.
+                if member.ty.is_some() || member.flags.contains(Flags::OPTIONAL) {
+                    let saved = self.enter_context(0, ctx::TYPE);
+                    member.init = self.optional_initializer();
+                    self.context = saved;
                 }
             }
         }

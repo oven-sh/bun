@@ -28,9 +28,26 @@ impl Parser<'_> {
         };
         let class_flags =
             self.ambient() | flags & (Flags::ABSTRACT | Flags::EXPORT | Flags::DEFAULT);
-        let class = self.class(start.pos, base, class_flags);
-        let is_unnamed = |it: &Class| it.name.is_none() && !it.flags.contains(Flags::DEFAULT);
-        if self.f.classes.get(class.idx()).is_some_and(is_unnamed) {
+        // A default export without a name is placed at `export`.
+        let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
+        let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
+        let unnamed_at = match (modifiers.iter().rfind(is_export), modifiers.last()) {
+            (Some(export), _) if flags.contains(Flags::DEFAULT) => export.pos,
+            // Any other without a name is an error, and placed at an `abstract` before the keyword.
+            (_, Some(last)) if last.kind == ModifierKind::Keyword(Flags::ABSTRACT) => last.pos,
+            _ => self.pos(),
+        };
+        let class = self.class((start.pos, unnamed_at), base, class_flags);
+        // In a namespace the other parser does not export what has no name.
+        let is_unnamed_export = |it: &Class| {
+            it.name.is_none() && it.flags & (Flags::EXPORT | Flags::DEFAULT) == Flags::EXPORT
+        };
+        if self
+            .f
+            .classes
+            .get(class.idx())
+            .is_some_and(is_unnamed_export)
+        {
             self.report();
         }
         let modifiers = self.f.classes.get(class.idx()).map(|it| it.modifiers);
@@ -41,7 +58,7 @@ impl Parser<'_> {
     pub(crate) fn class_expression(&mut self) -> ExprId {
         let start = self.pos();
         let base = self.s.modifiers.len();
-        let class = self.class(start, base, Flags::empty());
+        let class = self.class((start, start), base, Flags::empty());
         self.finish_expr(ExprKind::Class(class), start)
     }
 
@@ -55,7 +72,7 @@ impl Parser<'_> {
             return ExprId::NONE;
         }
         let keyword = self.pos();
-        let class = self.class(start, base, flags & Flags::ABSTRACT);
+        let class = self.class((start, keyword), base, flags & Flags::ABSTRACT);
         self.finish_expr(ExprKind::Class(class), keyword)
     }
 
@@ -177,18 +194,11 @@ impl Parser<'_> {
     }
 
     /// `parseClassDeclarationOrExpression`, at `class`. Its modifiers are on the stack from `base`
-    /// on.
-    fn class(&mut self, start: u32, base: usize, flags: Flags) -> ClassId {
+    /// on. `unnamed_at`: where it is placed if it has no name.
+    fn class(&mut self, (start, unnamed_at): (u32, u32), base: usize, flags: Flags) -> ClassId {
         if self.is_too_deep() {
             return ClassId::NONE;
         }
-        // A default export without a name is placed at `export`.
-        let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
-        let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
-        let unnamed_at = match modifiers.iter().rfind(is_export) {
-            Some(export) if flags.contains(Flags::DEFAULT) => export.pos,
-            _ => self.pos(),
-        };
         self.next();
         // `GetContainingClass`: its heritage clauses are inside it too.
         self.classes_around += 1;
@@ -453,7 +463,10 @@ impl Parser<'_> {
             member.func = self.function_rest(fn_kind, fn_flags, name, name_pos, start.pos);
         } else {
             // `tryParseConstructorDeclaration` takes the keyword whatever follows it.
-            if name_token == T::Constructor || flags.contains(Flags::ASYNC) {
+            // The other parser does not go on at the `!` of `async a!`.
+            if name_token == T::Constructor
+                || flags.contains(Flags::ASYNC) && self.token() == T::Exclamation
+            {
                 self.report();
             }
             // `parsePropertyDeclaration`

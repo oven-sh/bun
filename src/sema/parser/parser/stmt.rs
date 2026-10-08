@@ -400,10 +400,6 @@ impl Parser<'_> {
                 return flags;
             }
             let flag = modifier_flag(token);
-            // The other parser does not go on after `export export`.
-            if flags.contains(flag) && flag.intersects(Flags::EXPORT | Flags::DEFAULT) {
-                self.report();
-            }
             flags |= flag;
             self.s.modifiers.push(Modifier {
                 kind: ModifierKind::Keyword(flag),
@@ -462,10 +458,6 @@ impl Parser<'_> {
                 false => self.report(),
             }
         }
-        if flags.intersects(Flags::IN | Flags::OUT) {
-            self.report();
-        }
-
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
@@ -552,6 +544,9 @@ impl Parser<'_> {
             _ => {
                 self.note_await();
                 self.next();
+                if self.token() != T::Using {
+                    self.fail();
+                }
                 VarKind::AwaitUsing
             }
         };
@@ -563,6 +558,18 @@ impl Parser<'_> {
         };
         let base = self.s.var_decls.len();
         loop {
+            // `isListElement`, `isListTerminator`: the list can be empty, and can end with a comma.
+            // The checker reports both.
+            if !self.is_binding_identifier()
+                && !matches!(
+                    self.token(),
+                    T::OpenBracket | T::OpenBrace | T::PrivateIdentifier
+                )
+                && !self.is_ecmascript
+                && (self.can_parse_semicolon() || matches!(self.token(), T::In | T::Of))
+            {
+                break;
+            }
             // `parseVariableDeclaration`
             let full = self.full_start();
             let pat = self.identifier_or_pattern();
@@ -989,10 +996,18 @@ impl Parser<'_> {
     fn throw_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
-        if self.newline_before() {
-            self.fail();
-        }
-        let value = self.expression_allowing_in();
+        let value = match self.newline_before() {
+            // The checker reports the line break.
+            true if !self.is_ecmascript => {
+                let end = self.prev_end();
+                self.add_expr(ExprKind::Missing, end, end)
+            }
+            true => {
+                self.fail();
+                ExprId::NONE
+            }
+            false => self.expression_allowing_in(),
+        };
         self.semicolon();
         self.add_stmt(StmtKind::Throw(value), start, Span::EMPTY)
     }
@@ -1133,6 +1148,18 @@ impl Parser<'_> {
     fn statement_without_semicolon(&mut self, start: Start, expression: ExprId) -> StmtId {
         if self.is_flow {
             return self.flow_declaration_after_expression(start, expression);
+        }
+        // `parseErrorForMissingSemicolonAfter`: "If a declared node failed to parse, it would have
+        // emitted a diagnostic already."
+        if !self.is_ecmascript
+            && let Some(&Expr {
+                kind: ExprKind::Ident(name),
+                ..
+            }) = self.f.exprs.get(expression.idx())
+            && self.lx.text_of(name) == b"declare"
+            && !self.is_parenthesized(expression)
+        {
+            return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }
         self.fail();
         StmtId::NONE

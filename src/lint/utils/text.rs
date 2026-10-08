@@ -232,7 +232,11 @@ pub fn upper_case_first(text: &[u8]) -> Cow<'_, [u8]> {
 /// `\x2d`, as in `escape-string-regexp`.
 pub fn escape_reg_exp_with(text: &[u8], escapes_hyphen: bool) -> Cow<'_, [u8]> {
     const SPECIAL: &[u8] = b"\\^$.*+?()[]{}|-";
-    let special = if escapes_hyphen { SPECIAL } else { &SPECIAL[..SPECIAL.len() - 1] };
+    let special = if escapes_hyphen {
+        SPECIAL
+    } else {
+        &SPECIAL[..SPECIAL.len() - 1]
+    };
     let Some(first) = strings::index_of_any(text, special) else {
         return Cow::Borrowed(text);
     };
@@ -241,7 +245,9 @@ pub fn escape_reg_exp_with(text: &[u8], escapes_hyphen: bool) -> Cow<'_, [u8]> {
     for &c in &text[first..] {
         match c {
             b'-' if escapes_hyphen => out.extend_from_slice(b"\\x2d"),
-            c if c != b'-' && strings::contains_char(special, c) => out.extend_from_slice(&[b'\\', c]),
+            c if c != b'-' && strings::contains_char(special, c) => {
+                out.extend_from_slice(&[b'\\', c])
+            }
             c => out.push(c),
         }
     }
@@ -290,10 +296,19 @@ pub fn string_to_number(text: &[u8]) -> f64 {
         _ => text,
     };
     if unsigned == b"Infinity" {
-        return if text[0] == b'-' { f64::NEG_INFINITY } else { f64::INFINITY };
+        return if text[0] == b'-' {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
     }
     // `StrUnsignedDecimalLiteral`
-    let digits = |from: usize| unsigned[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let digits = |from: usize| {
+        unsigned[from..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count()
+    };
     let whole = digits(0);
     let mut at = whole;
     let mut fraction = 0;
@@ -502,7 +517,8 @@ pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
 fn is_reserved_word_es6(name: &[u8]) -> bool {
     matches!(
         name,
-        b"if" | b"in"
+        b"if"
+            | b"in"
             | b"do"
             | b"var"
             | b"for"

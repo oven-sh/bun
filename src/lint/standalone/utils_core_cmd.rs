@@ -25,7 +25,8 @@ impl<'a> Facts<'a> {
     fn add(&mut self, name: &str, node: Node<'a>, value: impl std::fmt::Display) {
         let span = utils::estree_span(node);
         let kind = utils::estree_type_name(node);
-        self.out.push(format!("{name}|{kind}|{}|{}|{value}", span.start, span.end));
+        self.out
+            .push(format!("{name}|{kind}|{}|{}|{value}", span.start, span.end));
     }
 
     fn text(value: Option<impl AsRef<[u8]>>) -> String {
@@ -68,7 +69,9 @@ impl<'a> Facts<'a> {
             self.pattern(Target::Expr(e));
         }
         // What ESTree has no node for.
-        if e.is_missing() || (matches!(e.kind(), ExprKind::Binary { .. }) && utils::sequence_root(e) != e) {
+        if e.is_missing()
+            || (matches!(e.kind(), ExprKind::Binary { .. }) && utils::sequence_root(e) != e)
+        {
             return;
         }
         if matches!(e.kind(), ExprKind::Fn(_) | ExprKind::Class(_)) {
@@ -84,14 +87,26 @@ impl<'a> Facts<'a> {
         }
         self.add("precedence", node, ast_utils::get_precedence(e));
         self.add("parenthesised", node, ast_utils::is_parenthesised(e));
-        self.add("parenthesisedText", node, BStr::new(ast_utils::get_parenthesised_text(e)));
-        self.add("staticString", node, Self::text(ast_utils::get_static_string_value(e)));
+        self.add(
+            "parenthesisedText",
+            node,
+            BStr::new(ast_utils::get_parenthesised_text(e)),
+        );
+        self.add(
+            "staticString",
+            node,
+            Self::text(ast_utils::get_static_string_value(e)),
+        );
         self.add("constant", node, ast_utils::is_constant(e, false));
         self.add("constantBoolean", node, ast_utils::is_constant(e, true));
         self.add("couldBeError", node, ast_utils::could_be_error(e));
         self.add("callee", node, ast_utils::is_callee(e));
         self.add("inLoop", node, ast_utils::is_in_loop(e));
-        self.add("startOfStatement", node, ast_utils::is_start_of_expression_statement(e));
+        self.add(
+            "startOfStatement",
+            node,
+            ast_utils::is_start_of_expression_statement(e),
+        );
         self.add("nullOrUndefined", node, ast_utils::is_null_or_undefined(e));
         self.add("decimalInteger", node, ast_utils::is_decimal_integer(e));
         self.add(
@@ -100,10 +115,18 @@ impl<'a> Facts<'a> {
             Self::span(ast_utils::get_upper_function(e).map(|it| utils::estree_span(it.into()))),
         );
         if ast_utils::is_literal(e) {
-            self.add("booleanValue", node, format!("{:?}", ast_utils::get_boolean_value(e)));
+            self.add(
+                "booleanValue",
+                node,
+                format!("{:?}", ast_utils::get_boolean_value(e)),
+            );
         }
         if ast_utils::is_member_expression(e) {
-            self.add("staticProperty", node, Self::text(ast_utils::get_static_property_name(e)));
+            self.add(
+                "staticProperty",
+                node,
+                Self::text(ast_utils::get_static_property_name(e)),
+            );
             self.add("chainRoot", node, utils::is_chain_root(e));
         }
         if matches!(e.kind(), ExprKind::Call(_) | ExprKind::NonNull(_)) {
@@ -120,9 +143,21 @@ impl<'a> Facts<'a> {
         } = e.kind()
             && !utils::is_sequence_root(e)
         {
-            self.add("sameReference", node, ast_utils::is_same_reference(left, right, false));
-            self.add("sameReferenceStrict", node, ast_utils::is_same_reference(left, right, true));
-            self.add("equalTokens", node, ast_utils::equal_tokens(self.file, left, right));
+            self.add(
+                "sameReference",
+                node,
+                ast_utils::is_same_reference(left, right, false),
+            );
+            self.add(
+                "sameReferenceStrict",
+                node,
+                ast_utils::is_same_reference(left, right, true),
+            );
+            self.add(
+                "equalTokens",
+                node,
+                ast_utils::equal_tokens(self.file, left, right),
+            );
         }
         if utils::is_sequence_root(e) {
             let mut list = String::new();
@@ -131,31 +166,56 @@ impl<'a> Facts<'a> {
             }
             self.add("sequence", node, list);
         }
-        if matches!(e.parent(), Node::Stmt(parent) if utils::estree_compat::is_expression_statement(parent)) {
-            self.add("needsSemicolon", node, ast_utils::needs_preceding_semicolon(e));
+        if matches!(e.parent(), Node::Stmt(parent) if utils::estree_compat::is_expression_statement(parent))
+        {
+            self.add(
+                "needsSemicolon",
+                node,
+                ast_utils::needs_preceding_semicolon(e),
+            );
         }
     }
 
     fn stmt(&mut self, statement: Stmt<'a>) {
         let node = Node::Stmt(statement);
         if matches!(statement.kind(), StmtKind::Fn(_) | StmtKind::Class(_))
-            || (matches!(statement.kind(), StmtKind::Expr(_)) && utils::estree_compat::is_for_init(statement))
+            || (matches!(statement.kind(), StmtKind::Expr(_))
+                && utils::estree_compat::is_for_init(statement))
         {
             return;
         }
         self.add("node", node, "");
-        self.add("topLevel", node, ast_utils::is_top_level_expression_statement(statement));
+        self.add(
+            "topLevel",
+            node,
+            ast_utils::is_top_level_expression_statement(statement),
+        );
         self.add("directive", node, ast_utils::is_directive(statement));
-        self.add("breakable", node, ast_utils::is_breakable_statement(statement));
+        self.add(
+            "breakable",
+            node,
+            ast_utils::is_breakable_statement(statement),
+        );
         self.add("emptyBlock", node, ast_utils::is_empty_block(statement));
-        self.add("statementListParent", node, ast_utils::is_statement_list_parent(statement.parent()));
+        self.add(
+            "statementListParent",
+            node,
+            ast_utils::is_statement_list_parent(statement.parent()),
+        );
         self.add(
             "trailing",
             node,
-            Self::span(ast_utils::get_trailing_statement(statement).map(|it| utils::estree_span(it.into()))),
+            Self::span(
+                ast_utils::get_trailing_statement(statement)
+                    .map(|it| utils::estree_span(it.into())),
+            ),
         );
         if statement.as_block().is_some_and(|body| body.len() == 1) {
-            self.add("bracesNecessary", node, ast_utils::are_braces_necessary(statement));
+            self.add(
+                "bracesNecessary",
+                node,
+                ast_utils::are_braces_necessary(statement),
+            );
         }
     }
 
@@ -170,20 +230,48 @@ impl<'a> Facts<'a> {
             Node::Func(func) => {
                 self.add("node", node, "");
                 if ast_utils::is_function(func) {
-                    self.add("name", node, BStr::new(&ast_utils::get_function_name_with_kind(func)));
-                    self.add("head", node, Self::span(Some(ast_utils::get_function_head_loc(func))));
-                    self.add("paren", node, Self::span(ast_utils::get_opening_paren_of_params(func)));
+                    self.add(
+                        "name",
+                        node,
+                        BStr::new(&ast_utils::get_function_name_with_kind(func)),
+                    );
+                    self.add(
+                        "head",
+                        node,
+                        Self::span(Some(ast_utils::get_function_head_loc(func))),
+                    );
+                    self.add(
+                        "paren",
+                        node,
+                        Self::span(ast_utils::get_opening_paren_of_params(func)),
+                    );
                     self.add("empty", node, ast_utils::is_empty_function(func));
-                    self.add("prologue", node, ast_utils::get_directive_prologue(func).count());
+                    self.add(
+                        "prologue",
+                        node,
+                        ast_utils::get_directive_prologue(func).count(),
+                    );
                     if !func.is_arrow() {
-                        self.add("defaultThis", node, ast_utils::is_default_this_binding(func, true));
-                        self.add("defaultThisNoCap", node, ast_utils::is_default_this_binding(func, false));
+                        self.add(
+                            "defaultThis",
+                            node,
+                            ast_utils::is_default_this_binding(func, true),
+                        );
+                        self.add(
+                            "defaultThisNoCap",
+                            node,
+                            ast_utils::is_default_this_binding(func, false),
+                        );
                     }
                 }
             }
             Node::Prop(_) | Node::Member(_) | Node::PatProp(_) => {
                 self.add("node", node, "");
-                self.add("staticProperty", node, Self::text(ast_utils::get_static_property_name(node)));
+                self.add(
+                    "staticProperty",
+                    node,
+                    Self::text(ast_utils::get_static_property_name(node)),
+                );
             }
             Node::Case(case) => {
                 self.add("node", node, "");
@@ -203,7 +291,9 @@ impl<'a> Facts<'a> {
 }
 
 fn json_string(text: &str, out: &mut String) {
-    out.push_str(&String::from_utf8_lossy(&utils::text::json_stringify(text.as_bytes())));
+    out.push_str(&String::from_utf8_lossy(&utils::text::json_stringify(
+        text.as_bytes(),
+    )));
 }
 
 fn dump(case: Object<'_>) -> String {
@@ -214,40 +304,47 @@ fn dump(case: Object<'_>) -> String {
             Some("commonjs") => SourceType::CommonJs,
             _ => SourceType::Module,
         },
-        ecma_version: case.number("ecmaVersion").map_or(LanguageOptions::LATEST_ECMA_VERSION, |it| it as u32),
+        ecma_version: case
+            .number("ecmaVersion")
+            .map_or(LanguageOptions::LATEST_ECMA_VERSION, |it| it as u32),
         ..LanguageOptions::default()
     };
     let code = case.get("code").and_then(Json::as_str).unwrap_or_default();
-    crate::with_file(case.str("filename").unwrap_or("file.js"), code, &language, |file| {
-        if file.has_parse_errors() {
-            return format!("{{\"id\":{id},\"error\":true}}");
-        }
-        let mut facts = Facts {
-            file,
-            out: Vec::new(),
-        };
-        facts.visit(Node::File(file));
-        for comment in facts.file.comments() {
-            let span = comment.span();
-            facts.out.push(format!(
-                "comment|{:?}|{}|{}|{} {}",
-                comment.kind(),
-                span.start,
-                span.end,
-                ast_utils::is_directive_comment(&comment),
-                ast_utils::matches_comments_ignore_pattern(comment.comment_value()),
-            ));
-        }
-        let mut line = format!("{{\"id\":{id},\"facts\":[");
-        for (i, fact) in facts.out.iter().enumerate() {
-            if i > 0 {
-                line.push(',');
+    crate::with_file(
+        case.str("filename").unwrap_or("file.js"),
+        code,
+        &language,
+        |file| {
+            if file.has_parse_errors() {
+                return format!("{{\"id\":{id},\"error\":true}}");
             }
-            json_string(fact, &mut line);
-        }
-        line.push_str("]}");
-        line
-    })
+            let mut facts = Facts {
+                file,
+                out: Vec::new(),
+            };
+            facts.visit(Node::File(file));
+            for comment in facts.file.comments() {
+                let span = comment.span();
+                facts.out.push(format!(
+                    "comment|{:?}|{}|{}|{} {}",
+                    comment.kind(),
+                    span.start,
+                    span.end,
+                    ast_utils::is_directive_comment(&comment),
+                    ast_utils::matches_comments_ignore_pattern(comment.comment_value()),
+                ));
+            }
+            let mut line = format!("{{\"id\":{id},\"facts\":[");
+            for (i, fact) in facts.out.iter().enumerate() {
+                if i > 0 {
+                    line.push(',');
+                }
+                json_string(fact, &mut line);
+            }
+            line.push_str("]}");
+            line
+        },
+    )
 }
 
 /// What `utils::text` says about `a`, and about `a` and `b`.
@@ -269,8 +366,18 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
         text::json_stringify(a),
         text::lines(a).count().to_string().into(),
         text::utf16_slice(a, 1, 3).to_vec(),
-        format!("{} {}", text::is_identifier_es5(a), text::is_identifier_es6(a)).into(),
-        format!("{:?} {:?}", text::compare(a, b), text::natural_compare(a, b)).into(),
+        format!(
+            "{} {}",
+            text::is_identifier_es5(a),
+            text::is_identifier_es6(a)
+        )
+        .into(),
+        format!(
+            "{:?} {:?}",
+            text::compare(a, b),
+            text::natural_compare(a, b)
+        )
+        .into(),
         format!(
             "{} {}",
             ast_utils::has_octal_or_non_octal_decimal_escape_sequence(a),

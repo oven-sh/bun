@@ -16,13 +16,13 @@
 
 use super::estree_compat::{
     estree_parent, estree_span, get_node_by_range_index, is_assignment_target, is_chain_root,
-    is_expression_statement, is_in_type_query,
-    type_annotation_span,
+    is_expression_statement, is_in_type_query, type_annotation_span,
 };
 use super::text;
 use crate::ast::{
-    BinOp, Case, Chain, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind, Member,
-    MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp, VarKind,
+    BinOp, Case, Chain, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind,
+    Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp,
+    VarKind,
 };
 use crate::semantic::{Declaration, Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
@@ -75,10 +75,12 @@ pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
     if rest.starts_with(b"eslint") || rest.starts_with(b"jscs") {
         return true;
     }
-    ["jshint", "jslint", "istanbul", "globals", "global", "exported"]
-        .iter()
-        .filter_map(|word| rest.strip_prefix(word.as_bytes()))
-        .any(|after| text::first_code_point(after).is_some_and(text::is_js_whitespace))
+    [
+        "jshint", "jslint", "istanbul", "globals", "global", "exported",
+    ]
+    .iter()
+    .filter_map(|word| rest.strip_prefix(word.as_bytes()))
+    .any(|after| text::first_code_point(after).is_some_and(text::is_js_whitespace))
 }
 
 /// ESLint's `STATEMENT_LIST_PARENTS.has(node.type)`, for the parent of a statement: a `Program`, a
@@ -87,7 +89,10 @@ pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
 pub fn is_statement_list_parent(parent: Node<'_>) -> bool {
     match parent {
         Node::File(_) | Node::Func(_) | Node::Case(_) => true,
-        Node::Stmt(statement) => matches!(statement.kind(), StmtKind::Block(_) | StmtKind::Switch { .. }),
+        Node::Stmt(statement) => matches!(
+            statement.kind(),
+            StmtKind::Block(_) | StmtKind::Switch { .. }
+        ),
         _ => false,
     }
 }
@@ -96,13 +101,43 @@ pub fn is_statement_list_parent(parent: Node<'_>) -> bool {
 /// `LanguageOptions::ecma_version` counts them. ESLint's `conf/globals.js`.
 pub fn ecmascript_global_since(name: &[u8]) -> Option<u32> {
     Some(match name {
-        b"Array" | b"Boolean" | b"constructor" | b"Date" | b"decodeURI" | b"decodeURIComponent"
-        | b"encodeURI" | b"encodeURIComponent" | b"Error" | b"escape" | b"eval" | b"EvalError"
-        | b"Function" | b"hasOwnProperty" | b"Infinity" | b"isFinite" | b"isNaN"
-        | b"isPrototypeOf" | b"Math" | b"NaN" | b"Number" | b"Object" | b"parseFloat"
-        | b"parseInt" | b"propertyIsEnumerable" | b"RangeError" | b"ReferenceError" | b"RegExp"
-        | b"String" | b"SyntaxError" | b"toLocaleString" | b"toString" | b"TypeError"
-        | b"undefined" | b"unescape" | b"URIError" | b"valueOf" => 3,
+        b"Array"
+        | b"Boolean"
+        | b"constructor"
+        | b"Date"
+        | b"decodeURI"
+        | b"decodeURIComponent"
+        | b"encodeURI"
+        | b"encodeURIComponent"
+        | b"Error"
+        | b"escape"
+        | b"eval"
+        | b"EvalError"
+        | b"Function"
+        | b"hasOwnProperty"
+        | b"Infinity"
+        | b"isFinite"
+        | b"isNaN"
+        | b"isPrototypeOf"
+        | b"Math"
+        | b"NaN"
+        | b"Number"
+        | b"Object"
+        | b"parseFloat"
+        | b"parseInt"
+        | b"propertyIsEnumerable"
+        | b"RangeError"
+        | b"ReferenceError"
+        | b"RegExp"
+        | b"String"
+        | b"SyntaxError"
+        | b"toLocaleString"
+        | b"toString"
+        | b"TypeError"
+        | b"undefined"
+        | b"unescape"
+        | b"URIError"
+        | b"valueOf" => 3,
         b"JSON" => 5,
         b"ArrayBuffer" | b"DataView" | b"Float32Array" | b"Float64Array" | b"Int16Array"
         | b"Int32Array" | b"Int8Array" | b"Intl" | b"Map" | b"Promise" | b"Proxy" | b"Reflect"
@@ -179,7 +214,9 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
 pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Spanned) -> bool {
     let (left, right) = (file.tokens_in(left), file.tokens_in(right));
     left.len() == right.len()
-        && left.zip(right).all(|(l, r)| l.kind() == r.kind() && l.text() == r.text())
+        && left
+            .zip(right)
+            .all(|(l, r)| l.kind() == r.kind() && l.text() == r.text())
 }
 
 /// ESLint's `canContinueExpressionInClassBody`.
@@ -238,15 +275,15 @@ pub enum TokenOrText<'t> {
     Text(&'t [u8]),
 }
 
-impl<'t> From<Token<'t>> for TokenOrText<'t> {
+impl<'t, 'a: 't> From<Token<'a>> for TokenOrText<'t> {
     #[inline]
-    fn from(token: Token<'t>) -> Self {
+    fn from(token: Token<'a>) -> Self {
         TokenOrText::Token(token.kind(), token.text())
     }
 }
-impl<'t> From<&Token<'t>> for TokenOrText<'t> {
+impl<'t, 'a: 't> From<&Token<'a>> for TokenOrText<'t> {
     #[inline]
-    fn from(token: &Token<'t>) -> Self {
+    fn from(token: &Token<'a>) -> Self {
         TokenOrText::Token(token.kind(), token.text())
     }
 }
@@ -290,7 +327,13 @@ fn end_of_string(text: &[u8], start: usize) -> Option<usize> {
     let mut at = start + 1;
     loop {
         match *text.get(at)? {
-            b'\\' => at += if text.get(at + 1..at + 3) == Some(b"\r\n") { 3 } else { 2 },
+            b'\\' => {
+                at += if text.get(at + 1..at + 3) == Some(b"\r\n") {
+                    3
+                } else {
+                    2
+                }
+            }
             b'\n' | b'\r' => return None,
             c if c == quote => return Some(at + 1),
             _ => at += 1,
@@ -313,7 +356,9 @@ fn end_of_regex(text: &[u8], start: usize) -> Option<usize> {
         }
         at += 1;
     }
-    Some(bun_core::lexer::end_of_run(text, at + 1, |c| text::is_identifier_part(c as u32)))
+    Some(bun_core::lexer::end_of_run(text, at + 1, |c| {
+        text::is_identifier_part(c as u32)
+    }))
 }
 
 /// A word after which a `/` starts a regular expression.
@@ -356,11 +401,15 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
         let (kind, end) = match c {
             b'/' if next == Some(b'/') => {
                 let rest = &text[at..];
-                (TokenKind::Line, at + text::find_line_break(rest).map_or(rest.len(), |it| it.0))
+                (
+                    TokenKind::Line,
+                    at + text::find_line_break(rest).map_or(rest.len(), |it| it.0),
+                )
             }
-            b'/' if next == Some(b'*') => {
-                (TokenKind::Block, at + 4 + strings::index_of(text.get(at + 2..)?, b"*/")?)
-            }
+            b'/' if next == Some(b'*') => (
+                TokenKind::Block,
+                at + 4 + strings::index_of(text.get(at + 2..)?, b"*/")?,
+            ),
             b'/' if is_regex_allowed => (TokenKind::RegularExpression, end_of_regex(text, at)?),
             b'"' | b'\'' => (TokenKind::String, end_of_string(text, at)?),
             b'`' => {
@@ -377,10 +426,14 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
                 }
                 (TokenKind::Template, end)
             }
-            b'#' if at == 0 && next == Some(b'!') => {
-                (TokenKind::Shebang, text::find_line_break(text).map_or(text.len(), |it| it.0))
-            }
-            b'#' => (TokenKind::PrivateIdentifier, at + 1 + token_len(&text[at + 1..])),
+            b'#' if at == 0 && next == Some(b'!') => (
+                TokenKind::Shebang,
+                text::find_line_break(text).map_or(text.len(), |it| it.0),
+            ),
+            b'#' => (
+                TokenKind::PrivateIdentifier,
+                at + 1 + token_len(&text[at + 1..]),
+            ),
             b'0'..=b'9' => (TokenKind::Numeric, at + token_len(&text[at..])),
             b'.' if next.is_some_and(|c| c.is_ascii_digit()) => {
                 (TokenKind::Numeric, at + token_len(&text[at..]))
@@ -390,7 +443,9 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
                 let is_word = c == b'\\'
                     || text::first_code_point(&text[at..]).is_some_and(text::is_identifier_start);
                 match is_word {
-                    true if is_keyword_before_expression(&text[at..end]) => (TokenKind::Keyword, end),
+                    true if is_keyword_before_expression(&text[at..end]) => {
+                        (TokenKind::Keyword, end)
+                    }
                     true => (TokenKind::Identifier, end),
                     false => {
                         match c {
@@ -464,10 +519,14 @@ pub fn get_name_location_in_global_directive_comment(comment: &Token<'_>, name: 
     let value = comment.comment_value();
     let base = comment.start() + 2;
     let is_separator = |c: u32| text::is_js_whitespace(c) || c == u32::from(b',');
-    let limit = strings::index_of(value, b"global").map_or(5, |at| at + 6).min(value.len());
+    let limit = strings::index_of(value, b"global")
+        .map_or(5, |at| at + 6)
+        .min(value.len());
     let mut from = limit;
     while !name.is_empty()
-        && let Some(found) = value.get(from..).and_then(|rest| strings::index_of(rest, name))
+        && let Some(found) = value
+            .get(from..)
+            .and_then(|rest| strings::index_of(rest, name))
     {
         let at = from + found;
         let after = text::first_code_point(&value[at + name.len()..]);
@@ -537,7 +596,9 @@ pub fn is_in_loop<'a>(node: impl Into<Node<'a>>) -> bool {
 /// it.
 pub fn get_upper_function<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
     let node = node.into();
-    std::iter::once(node).chain(node.ancestors()).find_map(as_function)
+    std::iter::once(node)
+        .chain(node.ancestors())
+        .find_map(as_function)
 }
 
 /// ESLint's `isBreakableStatement`: a loop or a `switch`.
@@ -613,13 +674,25 @@ pub fn is_decimal_integer(e: Expr<'_>) -> bool {
 /// ESLint's `isLogicalExpression`: `&&` or `||`, not `??`.
 #[inline]
 pub fn is_logical_expression(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::And | BinOp::Or, .. })
+    matches!(
+        e.kind(),
+        ExprKind::Binary {
+            op: BinOp::And | BinOp::Or,
+            ..
+        }
+    )
 }
 
 /// ESLint's `isCoalesceExpression`: `??`.
 #[inline]
 pub fn is_coalesce_expression(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::Nullish, .. })
+    matches!(
+        e.kind(),
+        ExprKind::Binary {
+            op: BinOp::Nullish,
+            ..
+        }
+    )
 }
 
 /// ESLint's `isMixedLogicalAndCoalesceExpressions`.
@@ -734,16 +807,18 @@ pub fn are_braces_necessary(block: Stmt<'_>) -> bool {
         return false;
     };
     let is_lexical_declaration = match statement.kind() {
-        StmtKind::Var(declarations) => {
-            declarations.first().is_some_and(|it| it.var_kind() != VarKind::Var)
-        }
+        StmtKind::Var(declarations) => declarations
+            .first()
+            .is_some_and(|it| it.var_kind() != VarKind::Var),
         StmtKind::Fn(func) => func.has_body(),
         StmtKind::Class(_) => true,
         _ => false,
     };
     is_lexical_declaration || {
         let text = block.file().text();
-        let next = text.get(skip_trivia(text, block.span().end) as usize..).unwrap_or_default();
+        let next = text
+            .get(skip_trivia(text, block.span().end) as usize..)
+            .unwrap_or_default();
         has_unsafe_if(statement) && next.starts_with(b"else") && token_len(next) == 4
     }
 }
@@ -897,7 +972,9 @@ pub fn equal_literal_value<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
         (ExprKind::Regex(l), ExprKind::Regex(r)) => {
             l.pattern() == r.pattern() && l.flags() == r.flags()
         }
-        (ExprKind::BigInt(_), ExprKind::BigInt(_)) => get_bigint_text(left) == get_bigint_text(right),
+        (ExprKind::BigInt(_), ExprKind::BigInt(_)) => {
+            get_bigint_text(left) == get_bigint_text(right)
+        }
         (ExprKind::String(l), ExprKind::String(r)) => l == r,
         (ExprKind::Number(l), ExprKind::Number(r)) => l == r,
         (ExprKind::True, ExprKind::True)
@@ -921,7 +998,14 @@ pub fn is_same_reference<'a>(
             (ExprKind::Super, ExprKind::Super) | (ExprKind::This, ExprKind::This) => return true,
             (ExprKind::Ident(l), ExprKind::Ident(r))
             | (ExprKind::PrivateIdentifier(l), ExprKind::PrivateIdentifier(r)) => return l == r,
-            (ExprKind::Dot { obj: l, name: a, .. }, ExprKind::Dot { obj: r, name: b, .. }) => {
+            (
+                ExprKind::Dot {
+                    obj: l, name: a, ..
+                },
+                ExprKind::Dot {
+                    obj: r, name: b, ..
+                },
+            ) => {
                 if a.name() != b.name() {
                     return false;
                 }
@@ -989,7 +1073,10 @@ pub fn is_surrounded_by(value: &[u8], character: u8) -> bool {
 /// `\9`, or `\0` before a digit.
 pub fn has_octal_or_non_octal_decimal_escape_sequence(raw: &[u8]) -> bool {
     let mut at = 0;
-    while let Some(found) = raw.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
+    while let Some(found) = raw
+        .get(at..)
+        .and_then(|rest| strings::index_of_char_usize(rest, b'\\'))
+    {
         at += found + 1;
         match raw.get(at) {
             Some(b'1'..=b'9') => return true,
@@ -1048,7 +1135,11 @@ pub fn get_precedence(e: Expr<'_>) -> i32 {
         } => 17,
         ExprKind::Unary { .. } | ExprKind::Await(_) => 16,
         ExprKind::Call(_) | ExprKind::ImportCall { .. } => 18,
-        ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_) if is_chain_root(e) => 18,
+        ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_)
+            if is_chain_root(e) =>
+        {
+            18
+        }
         ExprKind::New(_) => 19,
         ExprKind::As { .. }
         | ExprKind::AsConst(_)
@@ -1094,7 +1185,8 @@ pub fn get_parenthesised_text<'a>(node: impl Into<Node<'a>>) -> &'a [u8] {
 /// value: [`File::global`].
 #[inline]
 pub fn is_configured_global<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
-    file.global(name).is_some_and(|global| global.accepts(false))
+    file.global(name)
+        .is_some_and(|global| global.accepts(false))
 }
 
 /// ESLint's `sourceCode.isGlobalReference`: `e` is an identifier that refers to a global variable
@@ -1104,7 +1196,9 @@ pub fn is_global_reference(e: Expr<'_>) -> bool {
     // What only an assignment in JavaScript declares, such as `module.exports = ..`, is not declared
     // as far as ESLint is concerned.
     let is_declared = |symbol: Symbol<'_>| {
-        symbol.declarations().any(|it| !matches!(it, Declaration::Other))
+        symbol
+            .declarations()
+            .any(|it| !matches!(it, Declaration::Other))
     };
     e.as_ident().is_some_and(|name| {
         !e.symbol().is_some_and(is_declared) && is_configured_global(e.file(), name.bytes())
@@ -1148,7 +1242,8 @@ pub fn is_reflect_apply(e: Expr<'_>) -> bool {
 /// ESLint's `isArrayFromMethod`, for a callee: `Array.from`, `Int8Array.from`, ..
 pub fn is_array_from_method(e: Expr<'_>) -> bool {
     is_specific_member_access(e, None, Some("from"))
-        && member_object(e).is_some_and(|it| is_specific_id_with(it, |name| name.ends_with(b"Array")))
+        && member_object(e)
+            .is_some_and(|it| is_specific_id_with(it, |name| name.ends_with(b"Array")))
 }
 
 /// ESLint's `isArrayFromAsyncMethod`, for a callee.
@@ -1235,7 +1330,14 @@ pub fn is_import_attribute_key(prop: Prop<'_>) -> bool {
                 return matches!(parent.kind(), ExprKind::ImportCall { args } if args.get(1) == Some(object));
             }
             Node::Prop(outer) if outer.value() == Some(object) => prop = outer,
-            _ => return object.file().hir.import_attributes.iter().any(|it| it.1 == object.id()),
+            _ => {
+                return object
+                    .file()
+                    .hir
+                    .import_attributes
+                    .iter()
+                    .any(|it| it.1 == object.id());
+            }
         }
     }
 }
@@ -1251,7 +1353,10 @@ pub fn is_logical_identity(e: Expr<'_>, operator: BinOp) -> bool {
             op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
             left,
             right,
-        } => op == operator && (is_logical_identity(left, operator) || is_logical_identity(right, operator)),
+        } => {
+            op == operator
+                && (is_logical_identity(left, operator) || is_logical_identity(right, operator))
+        }
         ExprKind::Assign {
             op: Some(op @ (BinOp::Or | BinOp::And)),
             value,
@@ -1272,7 +1377,10 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
     match e.kind() {
         // A hole in an array.
         ExprKind::Missing => true,
-        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Assign { op: None, .. } | ExprKind::Spread(_)
+        ExprKind::Object(_)
+        | ExprKind::Array(_)
+        | ExprKind::Assign { op: None, .. }
+        | ExprKind::Spread(_)
             if is_assignment_target(e) =>
         {
             false
@@ -1360,7 +1468,8 @@ pub fn could_be_error(e: Expr<'_>) -> bool {
 /// ESLint's `isES5Constructor`: the name of the function starts with a capital letter.
 #[inline]
 pub fn is_es5_constructor(func: Func<'_>) -> bool {
-    func.name().is_some_and(|name| starts_with_upper_case(name.bytes()))
+    func.name()
+        .is_some_and(|name| starts_with_upper_case(name.bytes()))
 }
 
 /// What ESLint finds as the `parent` of a function.
@@ -1382,7 +1491,9 @@ enum FunctionParent<'a> {
 impl<'a> FunctionParent<'a> {
     fn of(func: Func<'a>) -> Self {
         match estree_parent(Node::Func(func)) {
-            Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => FunctionParent::Other,
+            Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => {
+                FunctionParent::Other
+            }
             Node::Member(member) => {
                 let in_class = matches!(member.parent(), Node::Class(_));
                 match member.kind() {
@@ -1393,7 +1504,9 @@ impl<'a> FunctionParent<'a> {
                         true => FunctionParent::Method(member),
                         false => FunctionParent::Signature(member),
                     },
-                    MemberKind::Property if in_class && !member.flags().contains(Flags::ACCESSOR) => {
+                    MemberKind::Property
+                        if in_class && !member.flags().contains(Flags::ACCESSOR) =>
+                    {
                         FunctionParent::Field(member)
                     }
                     _ => FunctionParent::Other,
@@ -1480,14 +1593,19 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
         }
     }
     let mut out = tokens.join(&b' ');
-    let name = match (private_name, parent.node().and_then(get_static_property_name)) {
+    let name = match (
+        private_name,
+        parent.node().and_then(get_static_property_name),
+    ) {
         (Some(name), _) => {
             out.push(b' ');
             out.extend_from_slice(name.bytes());
             return out;
         }
         (None, Some(name)) => Some(name),
-        (None, None) if matches!(parent, FunctionParent::Signature(_)) => Some(Cow::Borrowed(&b"null"[..])),
+        (None, None) if matches!(parent, FunctionParent::Signature(_)) => {
+            Some(Cow::Borrowed(&b"null"[..]))
+        }
         (None, None) => func.name().map(|name| Cow::Borrowed(name.bytes())),
     };
     if let Some(name) = name {
@@ -1512,10 +1630,12 @@ pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
     {
         let start = only.span().start;
         let before = skip_trivia_back(text, start);
-        return Some(match before.checked_sub(1).map(|at| (at, text.get(at as usize))) {
-            Some((at, Some(b'('))) => Span::new(at, before),
-            _ => Span::new(start, start + token_len(text.get(start as usize..)?) as u32),
-        });
+        return Some(
+            match before.checked_sub(1).map(|at| (at, text.get(at as usize))) {
+                Some((at, Some(b'('))) => Span::new(at, before),
+                _ => Span::new(start, start + token_len(text.get(start as usize..)?) as u32),
+            },
+        );
     }
     if func.type_params().is_empty()
         && let Some(at) = func.open_paren()
@@ -1524,7 +1644,9 @@ pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
     }
     let whole = estree_span(Node::Func(func));
     let from = func.name().map_or(whole.start, |name| name.span().end);
-    file.tokens_in(Span::new(from, whole.end)).find(is_opening_paren_token).map(Token::span)
+    file.tokens_in(Span::new(from, whole.end))
+        .find(is_opening_paren_token)
+        .map(Token::span)
 }
 
 /// ESLint's `getFunctionHeadLoc`: what to report for a function, so that not all of it is
@@ -1532,7 +1654,10 @@ pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
 /// method or the property that it is the value of, to the `(` of the parameters.
 pub fn get_function_head_loc(func: Func<'_>) -> Span {
     let to_paren = |start: u32| {
-        Span::new(start, get_opening_paren_of_params(func).map_or(start, |paren| paren.start))
+        Span::new(
+            start,
+            get_opening_paren_of_params(func).map_or(start, |paren| paren.start),
+        )
     };
     match FunctionParent::of(func).node() {
         Some(parent) => to_paren(parent.span().start),
@@ -1550,7 +1675,10 @@ pub fn get_function_head_loc(func: Func<'_>) -> Span {
 /// `/^[\s*]*@this/mu.test(value)`
 fn has_this_tag(value: &[u8]) -> bool {
     let mut from = 0;
-    while let Some(found) = value.get(from..).and_then(|rest| strings::index_of(rest, b"@this")) {
+    while let Some(found) = value
+        .get(from..)
+        .and_then(|rest| strings::index_of(rest, b"@this"))
+    {
         let at = from + found;
         let mut before = &value[..at];
         loop {
@@ -1571,10 +1699,16 @@ fn has_this_tag(value: &[u8]) -> bool {
 }
 
 fn find_jsdoc_comment<'a>(file: &'a File<'a>, start: u32) -> Option<Token<'a>> {
-    let before = file.tokens_before(Span::empty(start)).with_comments().next()?;
+    let before = file
+        .tokens_before(Span::empty(start))
+        .with_comments()
+        .next()?;
     (before.kind() == TokenKind::Block
         && before.comment_value().starts_with(b"*")
-        && file.line_of(start).saturating_sub(file.line_of(before.end())) <= 1)
+        && file
+            .line_of(start)
+            .saturating_sub(file.line_of(before.end()))
+            <= 1)
         .then_some(before)
 }
 
@@ -1585,12 +1719,14 @@ pub fn get_jsdoc_comment<'a>(node: impl Into<Node<'a>>) -> Option<Token<'a>> {
     let file = node.file();
     match node {
         Node::Class(class) => match class.owner() {
-            Node::Expr(e) => find_jsdoc_comment(file, estree_parent(estree_parent(e.into())).span().start),
+            Node::Expr(e) => {
+                find_jsdoc_comment(file, estree_parent(estree_parent(e.into())).span().start)
+            }
             owner => find_jsdoc_comment(file, owner.span().start),
         },
-        Node::Func(func) if func.kind() == FnKind::Decl => {
-            func.has_body().then(|| find_jsdoc_comment(file, func.owner().span().start))?
-        }
+        Node::Func(func) if func.kind() == FnKind::Decl => func
+            .has_body()
+            .then(|| find_jsdoc_comment(file, func.owner().span().start))?,
         Node::Func(func) if is_function_with_body(func) => {
             let mut parent = estree_parent(node);
             let is_argument = matches!(
@@ -1653,7 +1789,10 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
     };
     if func.kind() == FnKind::StaticBlock
         || func.this_param().is_some()
-        || func.params().iter().any(|param| param.pat().as_ident().is_some_and(|name| name.is("this")))
+        || func
+            .params()
+            .iter()
+            .any(|param| param.pat().as_ident().is_some_and(|name| name.is("this")))
     {
         return false;
     }
@@ -1661,10 +1800,13 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
         Node::Expr(e) => e,
         // The value of a `MethodDefinition`.
         Node::Member(_) => return false,
-        _ => return !((cap_is_constructor && is_es5_constructor(func)) || has_jsdoc_this_tag(func)),
+        _ => {
+            return !((cap_is_constructor && is_es5_constructor(func)) || has_jsdoc_this_tag(func));
+        }
     };
     let is_value_of = |member: Member<'_>, value: Expr<'_>| {
-        member.init().is_some_and(|init| init.id() == value.id()) && !member.flags().contains(Flags::ACCESSOR)
+        member.init().is_some_and(|init| init.id() == value.id())
+            && !member.flags().contains(Flags::ACCESSOR)
     };
     if matches!(current.parent(), Node::Member(member) if is_value_of(member, current)) {
         return false;
@@ -1691,7 +1833,9 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
                     return !is_member_expression(target) && !is_capitalized(target.as_ident());
                 }
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                    if obj != current || !is_member_access_of_any(parent, &["bind", "call", "apply"]) {
+                    if obj != current
+                        || !is_member_access_of_any(parent, &["bind", "call", "apply"])
+                    {
                         return true;
                     }
                     return match parent.parent().as_expr().map(Expr::kind) {
@@ -1788,7 +1932,9 @@ fn is_in_type(node: Node<'_>) -> bool {
         if matches!(child, Node::Type(_))
             && match parent {
                 Node::VarDecl(_) | Node::Param(_) | Node::Member(_) | Node::Func(_) => true,
-                Node::Expr(e) => matches!(e.kind(), ExprKind::As { .. } | ExprKind::Satisfies { .. }),
+                Node::Expr(e) => {
+                    matches!(e.kind(), ExprKind::As { .. } | ExprKind::Satisfies { .. })
+                }
                 Node::Stmt(statement) => matches!(statement.kind(), StmtKind::TypeAlias(_)),
                 Node::Type(ty) => matches!(ty.kind(), crate::ast::TypeKind::Predicate { .. }),
                 _ => false,
@@ -1822,7 +1968,9 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     if let Node::Member(member) = at
         && member.kind() == MemberKind::Property
         && matches!(member.parent(), Node::Class(_))
-        && member.key().is_some_and(|key| key.span(file).contains(previous.span()))
+        && member
+            .key()
+            .is_some_and(|key| key.span(file).contains(previous.span()))
     {
         return false;
     }
@@ -1834,7 +1982,10 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
             ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. }
         ),
         Node::Stmt(statement) => {
-            matches!(statement.kind(), StmtKind::ImportEquals(_) | StmtKind::TypeAlias(_))
+            matches!(
+                statement.kind(),
+                StmtKind::ImportEquals(_) | StmtKind::TypeAlias(_)
+            )
         }
         _ => false,
     };

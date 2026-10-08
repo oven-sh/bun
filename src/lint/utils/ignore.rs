@@ -75,7 +75,9 @@ impl Ignore {
             }
             // Empty segments are left out of the directories.
             IgnoreVersion::V7 => {
-                let mut segments = strings::split(path, b"/").filter(|it| !it.is_empty()).peekable();
+                let mut segments = strings::split(path, b"/")
+                    .filter(|it| !it.is_empty())
+                    .peekable();
                 let mut parent = Vec::with_capacity(path.len());
                 while let Some(segment) = segments.next() {
                     if segments.peek().is_none() {
@@ -162,7 +164,11 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
         }
         i += backslashes;
         let is_before_space = s.get(i).is_some_and(|c| is_space(*c));
-        let kept = if is_before_space { backslashes - backslashes % 2 } else { backslashes };
+        let kept = if is_before_space {
+            backslashes - backslashes % 2
+        } else {
+            backslashes
+        };
         out.extend(std::iter::repeat_n('\\', kept));
         if is_before_space {
             out.push(' ');
@@ -194,7 +200,10 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
         }
     }
     if end > carets {
-        s = "^(?:.*\\/)?".chars().chain(s[end..].iter().copied()).collect();
+        s = "^(?:.*\\/)?"
+            .chars()
+            .chain(s[end..].iter().copied())
+            .collect();
     }
 
     // A pattern with a `/` that is not its last character is relative to the root.
@@ -209,7 +218,14 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
     let mut i = 0;
     while i < s.len() {
         if has_at(&s, i, "\\/\\*\\*") && (i + 6 == s.len() || has_at(&s, i + 6, "\\/")) {
-            out.extend(if i + 6 < s.len() { "(?:\\/[^\\/]+)*" } else { "\\/.+" }.chars());
+            out.extend(
+                if i + 6 < s.len() {
+                    "(?:\\/[^\\/]+)*"
+                } else {
+                    "\\/.+"
+                }
+                .chars(),
+            );
             i += 6;
         } else {
             out.push(s[i]);
@@ -225,7 +241,10 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
             count += 1;
         }
         let mut ends = (1..=count).rev().map(|n| at + 2 * n);
-        ends.find(|&end| s.get(end).is_some_and(|c| !text::is_line_terminator(*c as u32)))
+        ends.find(|&end| {
+            s.get(end)
+                .is_some_and(|c| !text::is_line_terminator(*c as u32))
+        })
     };
     let mut out = Vec::with_capacity(s.len() * 2);
     let (mut copied, mut i) = (0, 0);
@@ -256,7 +275,10 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
     let mut i = 0;
     while i < s.len() {
         let is_escaped_twice = has_at(&s, i, "\\\\\\")
-            && matches!(s.get(i + 3), Some('$' | '.' | '|' | '*' | '+' | '(' | ')' | '{' | '^'));
+            && matches!(
+                s.get(i + 3),
+                Some('$' | '.' | '|' | '*' | '+' | '(' | ')' | '{' | '^')
+            );
         out.push(s[i]);
         i += if is_escaped_twice { 3 } else { 1 };
     }
@@ -332,4 +354,3 @@ fn ignore_regex_source(pattern: &str, version: IgnoreVersion) -> String {
 
     s.into_iter().collect()
 }
-

@@ -17,8 +17,8 @@
 //! | `CatchClause.range` | [`catch_clause_span`] |
 
 use crate::ast::{
-    BinOp, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name,
-    Node, Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
+    BinOp, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name, Node,
+    Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
 };
 use crate::estree::{NodeType, Sink};
 use crate::span::{Span, Spanned};
@@ -59,7 +59,13 @@ pub fn is_in_optional_chain(e: Expr<'_>) -> bool {
 
 #[inline]
 fn is_comma(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
+    matches!(
+        e.kind(),
+        ExprKind::Binary {
+            op: BinOp::Comma,
+            ..
+        }
+    )
 }
 
 /// Whether `e` is the `a, b` of `a, b, c`, which ESTree has no node for.
@@ -150,7 +156,10 @@ pub fn is_assignment_target(mut e: Expr<'_>) -> bool {
             },
             Node::Stmt(statement) => {
                 let head = match statement.kind() {
-                    StmtKind::Expr(_) => statement.parent().as_stmt().filter(|_| is_for_init(statement)),
+                    StmtKind::Expr(_) => statement
+                        .parent()
+                        .as_stmt()
+                        .filter(|_| is_for_init(statement)),
                     _ => Some(statement),
                 };
                 return matches!(
@@ -366,7 +375,8 @@ pub fn is_in_type_query(e: Expr<'_>) -> bool {
     let mut at = e;
     loop {
         match at.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == at) => {
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == at) =>
+            {
                 at = parent;
             }
             Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
@@ -520,7 +530,9 @@ fn type_name_of_type(ty: TypeNode<'_>) -> &'static str {
     match ty.kind() {
         TypeKind::Error => "TSUnknownKeyword",
         TypeKind::Heritage { .. } | TypeKind::Ref { .. } => match ty.parent() {
-            Node::Class(class) if class.implements().iter().any(|it| it == ty) => "TSClassImplements",
+            Node::Class(class) if class.implements().iter().any(|it| it == ty) => {
+                "TSClassImplements"
+            }
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Interface(_)) => {
                 "TSInterfaceHeritage"
             }
@@ -558,7 +570,10 @@ fn type_name_of_type(ty: TypeNode<'_>) -> &'static str {
         TypeKind::Mapped(_) => "TSMappedType",
         TypeKind::IndexedAccess { .. } => "TSIndexedAccessType",
         TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol => "TSTypeOperator",
-        TypeKind::Typeof { .. } | TypeKind::Import { is_typeof: true, .. } => "TSTypeQuery",
+        TypeKind::Typeof { .. }
+        | TypeKind::Import {
+            is_typeof: true, ..
+        } => "TSTypeQuery",
         TypeKind::Import { .. } => "TSImportType",
         TypeKind::Predicate { .. } => "TSTypePredicate",
     }

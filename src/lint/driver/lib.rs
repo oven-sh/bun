@@ -17,5 +17,6 @@ mod lint;
 mod paths;
 mod results;
 mod run;
+mod typed;
 
 pub use run::{Environment, Outcome, Script, Stream, run};

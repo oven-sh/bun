@@ -6,8 +6,10 @@ use crate::discover::{self, Status, Target};
 use crate::format::{self, Format};
 use crate::lint::{Context, elapsed};
 use crate::results::{Counts, FileResult};
+use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
+use bun_lint::context::Severity;
 use bun_lint::linter::{Linter, Registry};
 use bun_threading::Guarded;
 use std::io::Write;
@@ -259,10 +261,54 @@ impl Run<'_> {
             let noun: &[u8] = if unsupported.len() == 1 { b" file was" } else { b" files were" };
             loader.warn(&[&count, noun, b" skipped: only JavaScript and TypeScript can be linted, without a processor."]);
         }
-        let started = Instant::now();
-        let (mut results, mut failure) = (Guarded::new(Vec::with_capacity(supported.len())), Guarded::new(None));
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
-        pool.for_each(supported.len(), 1, &|index| match context.lint_file(&supported[index], &on_circular_fixes) {
+        let mut results = Vec::with_capacity(supported.len());
+
+        // Those that need types first. What turns out to be in no program is linted without.
+        let started = Instant::now();
+        let mut without_types: Vec<&Target> = Vec::with_capacity(supported.len());
+        let mut with_types: Vec<(&Target, Typed)> = Vec::new();
+        let mut rules_without_types: Vec<&'static str> = Vec::new();
+        for target in &supported {
+            let Status::Matched(config) = &target.status else {
+                without_types.push(target);
+                continue;
+            };
+            let mut needing = config.rules.iter().filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
+            if loader.wants_types(&target.loaded, config) {
+                match needing.next() {
+                    Some(_) => with_types.push((target, Typed { path: &target.path, config })),
+                    None => without_types.push(target),
+                }
+                continue;
+            }
+            for rule in needing.map(|it| it.entry.meta.name) {
+                if !rules_without_types.contains(&rule) {
+                    rules_without_types.push(rule);
+                }
+            }
+            without_types.push(target);
+        }
+        if !rules_without_types.is_empty() {
+            let count = format!("{}", rules_without_types.len()).into_bytes();
+            let noun: &[u8] = if rules_without_types.len() == 1 { b" rule needs" } else { b" rules need" };
+            loader.warn(&[&count, noun, b" types, which the configuration does not ask for, and did not run. Use --type-aware to run them."]);
+        }
+        if !with_types.is_empty() {
+            let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
+            let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
+            for (target, result) in targets.into_iter().zip(linted) {
+                match result {
+                    Some(result) => results.push(result),
+                    None => without_types.push(target),
+                }
+            }
+        }
+        phases.checking = started.elapsed().as_secs_f64();
+
+        let started = Instant::now();
+        let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
+        pool.for_each(without_types.len(), 1, &|index| match context.lint_file(without_types[index], &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
             Ok(None) => {}
             Err(error) => {
@@ -397,8 +443,9 @@ impl Run<'_> {
         let cpu = |nanos: &AtomicU64| nanos.load(Ordering::Relaxed) as f64 / 1e6;
         let _ = writeln!(
             self.out.stderr,
-            "  wall: {:.1}ms finding files and configurations, {:.1}ms linting, {:.1}ms formatting, {:.1}ms in all, on {} threads\n  cpu:  {:.1}ms reading, {:.1}ms parsing and binding, {:.1}ms in rules",
+            "  wall: {:.1}ms finding files and configurations, {:.1}ms type checking and linting, {:.1}ms linting without types, {:.1}ms formatting, {:.1}ms in all, on {} threads\n  cpu:  {:.1}ms reading, {:.1}ms parsing and binding, {:.1}ms in rules",
             phases.discovery * 1e3,
+            phases.checking * 1e3,
             phases.linting * 1e3,
             phases.formatting * 1e3,
             self.began.elapsed().as_secs_f64() * 1e3,
@@ -414,6 +461,8 @@ impl Run<'_> {
 #[derive(Default)]
 struct Phases {
     discovery: f64,
+    /// With types.
+    checking: f64,
     linting: f64,
     formatting: f64,
 }

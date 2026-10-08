@@ -10,7 +10,7 @@ use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Config, Linter, RcFlavor};
+use bun_lint::linter::{Config, Linter, RcFlavor, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
@@ -72,6 +72,8 @@ pub(crate) struct Loaded {
     pub(crate) flavor: Flavor,
     /// `None`: there is no file.
     pub(crate) path: Option<Vec<u8>>,
+    /// `options.typeAware` of an `.oxlintrc.json`.
+    pub(crate) is_type_aware: bool,
 }
 
 pub(crate) type Found = Result<Arc<Loaded>, Fatal>;
@@ -336,6 +338,7 @@ impl<'l> Loader<'l> {
             config: self.flat(root, bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
             flavor: Flavor::BuiltIn,
             path: None,
+            is_type_aware: false,
         }))
     }
 
@@ -367,6 +370,7 @@ impl<'l> Loader<'l> {
             },
             |it| it.0,
         );
+        let is_type_aware = json.get(b"options").and_then(|it| it.get(b"typeAware")).and_then(Json::as_bool) == Some(true);
         let config = match flavor {
             Flavor::Eslint | Flavor::BuiltIn => {
                 let is_empty = match &json {
@@ -395,6 +399,7 @@ impl<'l> Loader<'l> {
             config,
             flavor,
             path: Some(path.to_vec()),
+            is_type_aware: is_type_aware && flavor == Flavor::Oxlint,
         }))
     }
 
@@ -431,6 +436,7 @@ impl<'l> Loader<'l> {
                 config: self.flat(base_path, Json::Array(Vec::new()))?,
                 flavor: Flavor::Eslint,
                 path: None,
+                is_type_aware: false,
             })),
             b"" => self.built_in(),
             path => self.read(path, base_path),
@@ -489,6 +495,15 @@ impl<'l> Loader<'l> {
             Some(name) => self.load(&paths::join(directory, name), directory),
             None => Ok(Arc::clone(inherited)),
         }
+    }
+
+    /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.
+    pub(crate) fn wants_types(&self, loaded: &Loaded, config: &ResolvedConfig) -> bool {
+        self.options.type_aware.unwrap_or(match loaded.flavor {
+            Flavor::Eslint | Flavor::EslintRc => config.language.wants_types,
+            Flavor::Oxlint => loaded.is_type_aware,
+            Flavor::BuiltIn => false,
+        })
     }
 
     /// Whether `.gitignore` counts for what has the configuration `loaded`.

@@ -207,18 +207,6 @@ fn error<T>(parts: &[&[u8]]) -> Result<T, UsageError> {
     Err(UsageError(parts.concat()))
 }
 
-/// `maxWarnings` as `max-warnings`: optionator takes both.
-fn dasherize(name: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(name.len() + 2);
-    for &byte in name {
-        if byte.is_ascii_uppercase() {
-            out.push(b'-');
-        }
-        out.push(byte.to_ascii_lowercase());
-    }
-    out
-}
-
 fn find_long(name: &[u8]) -> Option<&'static Param> {
     let is_it = |param: &&Param| param.names.long == Some(name) || param.names.long_aliases.contains(&name);
     PARAMS.iter().find(is_it)
@@ -264,7 +252,7 @@ fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError> {
         b"off" | b"0" => Ok(Severity::Off),
         b"warn" | b"1" => Ok(Severity::Warn),
         b"error" | b"2" => Ok(Severity::Error),
-        _ => error(&[b"Option --", name, b": '", value, b"' not one of off, warn, error, 0, 1, or 2."]),
+        _ => error(&[b"Option ", name, b": '", value, b"' not one of off, warn, error, 0, 1, or 2."]),
     }
 }
 
@@ -291,7 +279,6 @@ impl Options {
         match name {
             b"config" => self.config = owned(),
             b"config-lookup" => self.config_lookup = is_on,
-            b"no-config-lookup" => self.config_lookup = !is_on,
             b"rule" => object(name, text, &mut self.rule)?,
             b"global" => self.global.extend(list(text)),
             b"parser-options" => object(name, text, &mut self.parser_options)?,
@@ -315,9 +302,7 @@ impl Options {
             }
             b"ignore-pattern" => self.ignore_pattern.push(text.to_vec()),
             b"ignore" => self.ignore = is_on,
-            b"no-ignore" => self.ignore = !is_on,
             b"warn-ignored" => self.warn_ignored = is_on,
-            b"no-warn-ignored" => self.warn_ignored = !is_on,
             b"stdin" => self.stdin = is_on,
             b"stdin-filename" => self.stdin_filename = owned(),
             b"quiet" => self.quiet = is_on,
@@ -334,21 +319,17 @@ impl Options {
             b"format" => self.format = owned(),
             b"output-file" => self.output_file = owned(),
             b"color" => self.color = Some(is_on),
-            b"no-color" => self.color = Some(!is_on),
             b"inline-config" => self.inline_config = is_on,
-            b"no-inline-config" => self.inline_config = !is_on,
             b"report-unused-disable-directives" => self.report_unused_disable_directives = is_on,
             b"report-unused-disable-directives-severity" => {
                 self.report_unused_disable_directives_severity = Some(severity(name, text)?);
             }
             b"report-unused-inline-configs" => self.report_unused_inline_configs = Some(severity(name, text)?),
             b"error-on-unmatched-pattern" => self.error_on_unmatched_pattern = is_on,
-            b"no-error-on-unmatched-pattern" => self.error_on_unmatched_pattern = !is_on,
             b"pass-on-no-patterns" => self.pass_on_no_patterns = is_on,
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
             b"print-config" => self.print_config = owned(),
             b"type-aware" => self.type_aware = Some(is_on),
-            b"no-type-aware" => self.type_aware = Some(!is_on),
             b"project" => self.project = owned(),
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}
@@ -380,7 +361,7 @@ impl Options {
             b"ignore-path" => self.ignore_path = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"cache-strategy" if !matches!(text, b"metadata" | b"content") => {
-                return error(&[b"Option --cache-strategy: '", text, b"' not one of metadata or content."]);
+                return error(&[b"Option cache-strategy: '", text, b"' not one of metadata or content."]);
             }
             b"debug" | b"flag" | b"cache-file" | b"cache-location" | b"cache-strategy" => {}
             _ => {
@@ -392,66 +373,86 @@ impl Options {
         Ok(())
     }
 
-    /// `args`: what follows `lint` on the command line.
+    /// `args`: what follows `lint` on the command line. They are read as optionator, which ESLint
+    /// uses, reads them.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = Options::default();
+        // The flag that the next argument is the value of.
+        let mut awaited: Option<&'static Param> = None;
+        let name_of = |param: &'static Param| param.names.long.unwrap_or_default();
+        let is_flag = |param: &Param| param.takes_value == clap::Values::None;
+        let boolean = |name: &[u8], value: &[u8]| match value {
+            b"true" => Ok(true),
+            b"false" => Ok(false),
+            _ => error(&[b"Invalid value for option '", name, b"' - expected type Boolean, received value: ", value, b"."]),
+        };
         let mut args = args.iter().copied();
         while let Some(arg) = args.next() {
-            let (param, written, mut value, is_on): (&Param, &[u8], Option<&[u8]>, bool) = match arg {
-                b"--" => {
-                    options.patterns.extend(args.by_ref().map(<[u8]>::to_vec));
-                    break;
+            if arg == b"--" {
+                options.patterns.extend(args.by_ref().map(<[u8]>::to_vec));
+                break;
+            }
+            // `/^(--?)([a-zA-Z][-a-zA-Z0-9]*)(=)?(.*)?$/`
+            let dashes = arg.iter().take_while(|byte| **byte == b'-').count().min(2);
+            let rest = &arg[dashes..];
+            let name_len = rest.iter().take_while(|byte| byte.is_ascii_alphanumeric() || **byte == b'-').count();
+            if dashes > 0 && rest.first().is_some_and(u8::is_ascii_alphabetic) {
+                if let Some(param) = awaited {
+                    return error(&[b"Value for '", name_of(param), b"' of type '", param.id.value, b"' required."]);
                 }
-                [b'-', b'-', rest @ ..] => {
-                    let (name, value) = match strings::index_of_char_usize(rest, b'=') {
-                        Some(equals) => (&rest[..equals], Some(&rest[equals + 1..])),
-                        None => (rest, None),
-                    };
-                    let name = dasherize(name);
-                    let written = &arg[..arg.len() - value.map_or(0, |it| it.len() + 1)];
-                    match (find_long(&name), name.strip_prefix(b"no-").and_then(find_long)) {
-                        (Some(param), _) => (param, written, value, true),
-                        (None, Some(param)) if param.takes_value == clap::Values::None => (param, written, value, false),
-                        _ => return unknown(written, &name),
-                    }
-                }
-                [b'-', shorts @ ..] if !shorts.is_empty() => {
-                    // All but the last of `-abc` are flags. The first that takes a value has the rest.
-                    let mut found = None;
-                    for (at, &short) in shorts.iter().enumerate() {
-                        let Some(param) = find_short(short) else {
-                            return unknown(arg, &shorts[at..=at]);
+                let (name, value) = (&rest[..name_len], rest[name_len..].strip_prefix(b"="));
+                if dashes == 1 {
+                    for (at, short) in name.iter().enumerate() {
+                        let Some(param) = find_short(*short) else {
+                            return unknown(&[b'-', *short], &name[at..=at]);
                         };
-                        let rest = &shorts[at + 1..];
-                        if param.takes_value != clap::Values::None || rest.is_empty() {
-                            let value = (!rest.is_empty()).then(|| rest.strip_prefix(b"=").unwrap_or(rest));
-                            found = Some((param, arg, value, true));
-                            break;
+                        match (at + 1 == name.len(), is_flag(param), value) {
+                            (true, true, Some(value)) => options.set(name_of(param), None, boolean(name_of(param), value)?)?,
+                            (true, false, Some(value)) => options.set(name_of(param), Some(value), true)?,
+                            (true, false, None) => awaited = Some(param),
+                            (_, true, _) => options.set(name_of(param), None, true)?,
+                            (false, false, _) => {
+                                return error(&[
+                                    b"Can't set argument '",
+                                    &name[at..=at],
+                                    b"' when not last flag in a group of short flags.",
+                                ]);
+                            }
                         }
-                        options.set(param.names.long.unwrap_or_default(), None, true)?;
                     }
-                    match found {
-                        Some(found) => found,
-                        None => continue,
-                    }
-                }
-                pattern => {
-                    options.patterns.push(pattern.to_vec());
                     continue;
                 }
-            };
-            let name = param.names.long.unwrap_or_default();
-            if param.takes_value == clap::Values::None {
-                if value.is_some() {
-                    return error(&[b"Option '", written, b"' does not take a value."]);
+                let (positive, is_negated) = match name.strip_prefix(b"no-") {
+                    Some(positive) if !positive.is_empty() => (positive, true),
+                    _ => (name, false),
+                };
+                let Some(param) = find_long(positive) else {
+                    return unknown(&[b"--", positive].concat(), positive);
+                };
+                match (is_flag(param), value) {
+                    (true, Some(value)) => options.set(name_of(param), None, boolean(positive, value)? != is_negated)?,
+                    (true, None) => options.set(name_of(param), None, !is_negated)?,
+                    (false, _) if is_negated => {
+                        return error(&[b"Only use 'no-' prefix for Boolean options, not with '", positive, b"'."]);
+                    }
+                    (false, Some(value)) => options.set(name_of(param), Some(value), true)?,
+                    (false, None) => awaited = Some(param),
                 }
-            } else if value.is_none() {
-                value = args.next();
-                if value.is_none() {
-                    return error(&[b"Value for '", name, b"' of type '", param.id.value, b"' required."]);
-                }
+            } else if let [b'-', number @ ..] = arg
+                && number.first().is_some_and(u8::is_ascii_digit)
+                && number.last().is_some_and(u8::is_ascii_digit)
+                && number.iter().all(|byte| byte.is_ascii_digit() || *byte == b'.')
+                && strings::count_char(number, b'.') <= 1
+            {
+                return error(&[b"No -NUM option defined."]);
+            } else if let Some(param) = awaited.take() {
+                options.set(name_of(param), Some(arg), true)?;
+            } else {
+                options.patterns.push(arg.to_vec());
             }
-            options.set(name, value, is_on)?;
+        }
+        if let Some(param) = awaited {
+            return error(&[b"Value for '", name_of(param), b"' of type '", param.id.value, b"' required."]);
         }
         Ok(options)
     }

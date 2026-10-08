@@ -998,7 +998,7 @@ describe("bun test", () => {
         input: `
           import { test, expect } from "bun:test";
 
-          test.each(${JSON.stringify(input)})("with an object: %o", (o) => {
+          test.each(${JSON.stringify(input)})("with an object: %j", (o) => {
             expect(o).toBe(o);
           });
         `,
@@ -1027,7 +1027,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
+      expect(stderr).toContain(`(pass) with an object: { foo: "bar", nested: { again: { a: 2 } } }`);
     });
     test("check formatting for %#", () => {
       const numbers = [
@@ -1069,7 +1069,17 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`%`);
     });
-    test.todo("check formatting for %p", () => {});
+    test("check formatting for %p", () => {
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test } from "bun:test";
+
+          test.each([[{ foo: "bar", nested: [1, { a: 2 }] }, "str"]])("with %p and %p", () => {});
+        `,
+      });
+      expect(stderr).toContain(`(pass) with { foo: "bar", nested: [ 1, { a: 2 } ] } and "str"`);
+    });
 
     describe("$variable syntax", () => {
       test("should replace $variables with object properties in test names", () => {
@@ -1272,12 +1282,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("underscore");
-        expect(stderr).toContain("dollar");
-        expect(stderr).toContain("mix");
-        expect(stderr).toContain("$123invalid");
-        expect(stderr).toContain("$hasdash");
-        expect(stderr).toContain("$hasspace");
+        expect(stderr).toContain("(pass) Edge: underscore | dollar | mix | $123invalid | $has-dash | $has space");
       });
 
       test("handles deeply nested properties with arrays", () => {
@@ -1373,7 +1378,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("1 | $missing| $a.b.c| 1");
+        expect(stderr).toContain("(pass) 1 | $missing | $a.b.c | 1");
       });
     });
   });

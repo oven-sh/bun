@@ -653,180 +653,221 @@ pub(crate) mod on_unhandled_rejection {
     }
 }
 
-fn consume_arg(
-    global_this: &JSGlobalObject,
-    should_write: bool,
-    str_idx: &mut usize,
-    args_idx: &mut usize,
-    array_list: &mut Vec<u8>,
-    arg: JSValue,
-    fallback: &[u8],
-) -> JsResult<()> {
-    if should_write {
-        let owned_slice = arg.to_utf8(global_this)?;
-        array_list.extend_from_slice(owned_slice.slice());
-    } else {
-        array_list.extend_from_slice(fallback);
-    }
-    *str_idx += 1;
-    *args_idx += 1;
+fn write_to_string(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
+    title.extend_from_slice(value.to_utf8(global)?.slice());
     Ok(())
 }
 
-/// Generate test label by positionally injecting parameters with printf formatting
+fn write_inspected(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
+    if value.is_any_error() {
+        title.push(b'[');
+        write_to_string(global, value, title)?;
+        title.push(b']');
+        return Ok(());
+    }
+    let mut formatter = crate::test_runner::expect::make_formatter(global);
+    formatter.single_line = true;
+    formatter.format_value::<false>(value, title)
+}
+
+/// Node's `hasBuiltInToString`: `util.format("%s")` inspects such an object instead of calling its `toString`.
+fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue) -> JsResult<bool> {
+    const BUILTINS: [&[u8]; 9] = [
+        b"Object", b"Array", b"Date", b"RegExp", b"Boolean", b"Number", b"String", b"Symbol", b"BigInt",
+    ];
+    let mut owner = object;
+    loop {
+        if !owner.is_object() {
+            return Ok(true);
+        }
+        if let Some(to_string) = owner.get_own(global, &bun_core::String::static_("toString"))? {
+            if !to_string.is_callable() {
+                return Ok(true);
+            }
+            break;
+        }
+        owner = owner.get_prototype(global)?;
+    }
+    if owner == object {
+        return Ok(false);
+    }
+    let Some(constructor) = owner.get_own(global, &bun_core::String::static_("constructor"))? else {
+        return Ok(false);
+    };
+    let name = constructor.get_name(global)?;
+    Ok(BUILTINS.iter().any(|builtin| name.eq_ascii(builtin)))
+}
+
+fn write_json(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
+    let thrown = match value.json_stringify_fast(global) {
+        Ok(json) if json.is_empty() => {
+            title.extend_from_slice(b"undefined");
+            return Ok(());
+        }
+        Ok(json) => {
+            title.extend_from_slice(json.to_utf8().slice());
+            return Ok(());
+        }
+        Err(jsc::JsError::Thrown) => global.take_exception(jsc::JsError::Thrown),
+        Err(err) => return Err(err),
+    };
+    if let Some(error) = thrown.to_error()
+        && let Some(message) = error.get(global, "message")?
+    {
+        let message = message.to_bun_string(global)?;
+        if message.eq_ascii(b"JSON.stringify cannot serialize cyclic structures.") {
+            title.extend_from_slice(b"[Circular]");
+            return Ok(());
+        }
+        if message.eq_ascii(b"JSON.stringify cannot serialize BigInt.") {
+            return write_inspected(global, value, title);
+        }
+    }
+    Err(global.throw_value(thrown))
+}
+
+fn trim_start_js_whitespace(text: &[u8]) -> &[u8] {
+    let end = bun_core::lexer::end_of_run(text, 0, |c| {
+        bun_core::lexer::is_whitespace(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)
+    });
+    &text[end..]
+}
+
+fn split_sign(text: &[u8]) -> (f64, &[u8]) {
+    match text.split_first() {
+        Some((b'-', rest)) => (-1.0, rest),
+        Some((b'+', rest)) => (1.0, rest),
+        _ => (1.0, text),
+    }
+}
+
+/// `parseInt(text)`
+fn parse_int(text: &[u8]) -> f64 {
+    let (sign, text) = split_sign(trim_start_js_whitespace(text));
+    if let Some(hex) = text.strip_prefix(b"0x").or_else(|| text.strip_prefix(b"0X")) {
+        let digits = hex.iter().map_while(|&c| bun_core::fmt::hex_digit_value(c)).map(f64::from);
+        return sign * digits.reduce(|value, digit| value * 16.0 + digit).unwrap_or(f64::NAN);
+    }
+    let len = text.iter().take_while(|c| c.is_ascii_digit()).count();
+    sign * bun_core::fmt::parse_double(&text[..len]).unwrap_or(f64::NAN)
+}
+
+/// `parseFloat(text)`
+fn parse_float(text: &[u8]) -> f64 {
+    let text = trim_start_js_whitespace(text);
+    bun_core::fmt::parse_double(text).unwrap_or_else(|_| {
+        let (sign, text) = split_sign(text);
+        if text.starts_with(b"Infinity") { sign * f64::INFINITY } else { f64::NAN }
+    })
+}
+
+/// What Jest prints for `%<specifier>`: `util.format`, and pretty-format for `%p`.
+fn write_placeholder(
+    global: &JSGlobalObject,
+    specifier: u8,
+    value: JSValue,
+    title: &mut Vec<u8>,
+) -> JsResult<()> {
+    let number = match specifier {
+        b's' if value.is_string()
+            || value.is_function()
+            || value.is_any_error()
+            || (value.is_object() && !has_builtin_to_string(global, value)?) =>
+        {
+            return write_to_string(global, value, title);
+        }
+        b'j' => return write_json(global, value, title),
+        b'c' => return Ok(()),
+        b'd' | b'i' if value.is_big_int() => return write_inspected(global, value, title),
+        b'd' | b'i' | b'f' if value.is_symbol() => f64::NAN,
+        b'd' => value.to_number(global)?,
+        b'i' => parse_int(value.to_utf8(global)?.slice()),
+        b'f' => parse_float(value.to_utf8(global)?.slice()),
+        _ => return write_inspected(global, value, title),
+    };
+    write_inspected(global, JSValue::js_number(number), title)
+}
+
+/// Length of the `a.b.c` at the start of `text`.
+fn property_path_len(text: &[u8]) -> usize {
+    use bun_js_parser::js_lexer::{is_identifier_continue, is_identifier_start};
+    if !is_identifier_start(bun_core::lexer::char_and_size(text, 0).0) {
+        return 0;
+    }
+    let mut end = bun_core::lexer::end_of_run(text, 0, is_identifier_continue);
+    while text.get(end) == Some(&b'.') {
+        let next = bun_core::lexer::end_of_run(text, end + 1, is_identifier_continue);
+        if next == end + 1 {
+            break;
+        }
+        end = next;
+    }
+    end
+}
+
+/// `None` when `path` is empty or one of its steps does not exist.
+fn get_property_path(global: &JSGlobalObject, object: JSValue, path: &[u8]) -> JsResult<Option<JSValue>> {
+    let mut value = object;
+    for key in bun_core::strings::split(path, b".") {
+        if key.is_empty() || value.is_undefined_or_null() {
+            return Ok(None);
+        }
+        value = value.get_if_property_exists_from_path(global, bun_string_jsc::create_utf8_for_js(global, key)?)?;
+        if value.is_empty() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(value))
+}
+
+/// The title of one `.each()` row: `%` placeholders take `function_args` in order, `$a.b` reads the first one.
 pub(crate) fn format_label(
     global_this: &JSGlobalObject,
     label: &[u8],
     function_args: &[JSValue],
     test_idx: usize,
 ) -> JsResult<Box<[u8]>> {
-    let mut idx: usize = 0;
-    let mut args_idx: usize = 0;
-    let mut list: Vec<u8> = Vec::with_capacity(label.len());
+    let object_row = function_args.first().copied().filter(|row| row.is_object());
+    let mut args = function_args.iter();
+    let mut title: Vec<u8> = Vec::with_capacity(label.len());
+    let mut rest = label;
 
-    while idx < label.len() {
-        let char = label[idx];
-
-        if char == b'$'
-            && idx + 1 < label.len()
-            && function_args.len() > 0
-            && function_args[0].is_object()
-        {
-            let var_start = idx + 1;
-            let mut var_end = var_start;
-
-            if bun_js_parser::js_lexer::is_identifier_start(label[var_end] as i32) {
-                var_end += 1;
-
-                while var_end < label.len() {
-                    let c = label[var_end];
-                    if c == b'.' {
-                        if var_end + 1 < label.len()
-                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1] as i32)
-                        {
-                            var_end += 1;
-                        } else {
-                            break;
-                        }
-                    } else if bun_js_parser::js_lexer::is_identifier_continue(c as i32) {
-                        var_end += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                let var_path = &label[var_start..var_end];
-                let value = function_args[0].get_if_property_exists_from_path(
-                    global_this,
-                    bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
-                )?;
-                if !value.is_empty_or_undefined_or_null() {
-                    // For primitive strings, use toString() to avoid adding quotes
-                    // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
-                    if value.is_string() {
-                        let owned_slice = value.to_utf8(global_this)?;
-                        list.extend_from_slice(owned_slice.slice());
-                    } else {
-                        let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                        // formatter cleanup handled by Drop.
-                        formatter.format_value::<false>(value, &mut list)?;
-                    }
-                    idx = var_end;
+    while let Some((&char, after)) = rest.split_first() {
+        rest = after;
+        match (char, after.first().copied(), object_row) {
+            (b'%', Some(b'%'), _) => title.push(b'%'),
+            (b'%', Some(b'#'), _) | (b'$', Some(b'#'), Some(_)) => write!(&mut title, "{}", test_idx).unwrap(),
+            (b'%', Some(b'$'), _) => write!(&mut title, "{}", test_idx + 1).unwrap(),
+            (b'%', Some(specifier @ (b's' | b'd' | b'i' | b'f' | b'j' | b'o' | b'O' | b'p' | b'c')), _) => {
+                let Some(&arg) = args.next() else {
+                    title.push(b'%');
                     continue;
-                }
-            } else {
-                while var_end < label.len()
-                    && (bun_js_parser::js_lexer::is_identifier_continue(label[var_end] as i32)
-                        && label[var_end] != b'$')
-                {
-                    var_end += 1;
-                }
+                };
+                write_placeholder(global_this, specifier, arg, &mut title)?;
             }
-
-            list.push(b'$');
-            list.extend_from_slice(&label[var_start..var_end]);
-            idx = var_end;
-        } else if char == b'%' && (idx + 1 < label.len()) && !(args_idx >= function_args.len()) {
-            let current_arg = function_args[args_idx];
-
-            match label[idx + 1] {
-                b's' => {
-                    consume_arg(
-                        global_this,
-                        !current_arg.is_empty() && current_arg.js_type().is_string(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%s",
-                    )?;
+            (b'$', Some(_), Some(row)) => {
+                let (path, after_path) = after.split_at(property_path_len(after));
+                rest = after_path;
+                match get_property_path(global_this, row, path)? {
+                    // https://github.com/jestjs/jest/issues/7689
+                    Some(value) if value.is_string() => write_to_string(global_this, value, &mut title)?,
+                    Some(value) => write_inspected(global_this, value, &mut title)?,
+                    None => {
+                        title.push(b'$');
+                        title.extend_from_slice(path);
+                    }
                 }
-                b'i' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_any_int(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%i",
-                    )?;
-                }
-                b'd' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_number(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%d",
-                    )?;
-                }
-                b'f' => {
-                    consume_arg(
-                        global_this,
-                        current_arg.is_number(),
-                        &mut idx,
-                        &mut args_idx,
-                        &mut list,
-                        current_arg,
-                        b"%f",
-                    )?;
-                }
-                b'j' | b'o' => {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    let str = current_arg.json_stringify_fast(global_this)?;
-                    let owned_slice = str.to_owned_slice();
-                    list.extend_from_slice(&owned_slice);
-                    idx += 1;
-                    args_idx += 1;
-                }
-                b'p' => {
-                    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                    formatter.format_value::<false>(current_arg, &mut list)?;
-                    idx += 1;
-                    args_idx += 1;
-                }
-                b'#' => {
-                    write!(&mut list, "{}", test_idx).unwrap();
-                    idx += 1;
-                }
-                b'%' => {
-                    list.push(b'%');
-                    idx += 1;
-                }
-                _ => {
-                    // ignore unrecognized fmt
-                }
+                continue;
             }
-        } else {
-            list.push(char);
+            _ => {
+                title.push(char);
+                continue;
+            }
         }
-        idx += 1;
+        rest = &after[1..];
     }
 
-    Ok(list.into_boxed_slice())
+    Ok(title.into_boxed_slice())
 }
 
 pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {

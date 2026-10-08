@@ -349,17 +349,22 @@ test.each([
 
 Use these specifiers to format the test title:
 
-| Specifier | Description             |
-| --------- | ----------------------- |
-| `%p`      | pretty-format           |
-| `%s`      | String                  |
-| `%d`      | Number                  |
-| `%i`      | Integer                 |
-| `%f`      | Floating point          |
-| `%j`      | JSON                    |
-| `%o`      | Object                  |
-| `%#`      | Index of the test case  |
-| `%%`      | Single percent sign (%) |
+| Specifier  | Description                         |
+| ---------- | ----------------------------------- |
+| `%p`       | pretty-format                       |
+| `%s`       | String                              |
+| `%d`       | Number                              |
+| `%i`       | Integer (`parseInt`)                |
+| `%f`       | Floating point (`parseFloat`)       |
+| `%j`       | JSON                                |
+| `%o`, `%O` | Object                              |
+| `%#`       | Index of the test case              |
+| `%$`       | Number of the test case (index + 1) |
+| `%%`       | Single percent sign (%)             |
+
+Each specifier accepts any value and converts it, as `util.format` does: `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line.
+
+When a row is an object, `$name` and `$user.name` print its properties and `$#` prints the index of the test case. A `$name` the row does not have is left as written.
 
 #### Examples
 
@@ -378,8 +383,8 @@ test.each([
   [{ name: "Alice" }, { a: 1, b: 2 }],
   [{ name: "Bob" }, { x: 5, y: 10 }],
 ])("user %p with data %p", (user, data) => {
-  // "user { name: 'Alice' } with data { a: 1, b: 2 }"
-  // "user { name: 'Bob' } with data { x: 5, y: 10 }"
+  // 'user { name: "Alice" } with data { a: 1, b: 2 }'
+  // 'user { name: "Bob" } with data { x: 5, y: 10 }'
 });
 
 // %# for index

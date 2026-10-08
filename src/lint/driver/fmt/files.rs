@@ -42,6 +42,16 @@ pub(crate) enum Language {
     Unknown,
 }
 
+/// `EXCLUDE_FILENAMES` of oxfmt: what a tool has written, and is never formatted.
+pub(crate) fn is_left_alone_by_oxfmt(path: &[u8]) -> bool {
+    matches!(
+        paths::basename(path),
+        b"package-lock.json" | b"pnpm-lock.yaml" | b"yarn.lock" | b"MODULE.bazel.lock" | b"bun.lock" | b"deno.lock" | b"composer.lock"
+            | b"Package.resolved" | b"Pipfile.lock" | b"flake.lock" | b"mcmod.info"
+            | b"Cargo.lock" | b"Gopkg.lock" | b"pdm.lock" | b"poetry.lock" | b"uv.lock"
+    )
+}
+
 /// A language that the formatter has.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Kind {
@@ -480,7 +490,7 @@ pub(crate) fn expand_as_oxfmt(
         }
     }
     // Nothing is said about a file that there is no parser for, and it does not count.
-    found.retain(|it| language_of(&it.path) != Language::Unknown);
+    found.retain(|it| language_of(&it.path) != Language::Unknown && !is_left_alone_by_oxfmt(&it.path));
     found.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);
     if found.is_empty() && error_on_unmatched_pattern {

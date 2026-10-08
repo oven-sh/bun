@@ -367,7 +367,8 @@ impl Run<'_> {
             }
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
-        if files::language_of(&path) == Language::Unknown && options.options.parser.is_none() {
+        let is_left_alone = configs.flavor == Flavor::Oxfmt && files::is_left_alone_by_oxfmt(&path);
+        if is_left_alone || (files::language_of(&path) == Language::Unknown && options.options.parser.is_none()) {
             let only_looks = self.options.check || self.options.list_different;
             let mut out = self.fail_to_start(configs.flavor, &[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
             // As Prettier's `handleError`.

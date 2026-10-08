@@ -134,6 +134,9 @@ const cases = [
   { name: "editorconfig and the configuration", files: configured({ tabWidth: 3 }, { ".editorconfig": "[*]\nindent_style = space\nindent_size = 8\nmax_line_length = 40\n" }), write: true },
 
   // ───────────── stdin ─────────────
+  { name: "lock files", files: configured({}, { "package-lock.json": '{"a":1}', "pnpm-lock.yaml": "a:   1\n", "bun.lock": '{"a":1}', "deno.lock": '{"a":1}', "b.yaml": "a:   1\n" }), write: true },
+  { name: "a lock file that is named", files: configured({}, { "package-lock.json": '{"a":1}' }), args: ["package-lock.json"], write: true },
+  { name: "a lock file on stdin", files: project, args: ["--stdin-filepath", "package-lock.json"], stdin: '{"a":1}' },
   { name: "stdin", files: project, args: ["--stdin-filepath", "x.js"], stdin: ugly },
   { name: "stdin with a configuration", files: configured({ semi: false }), args: ["--stdin-filepath=src/x.ts"], stdin: ugly },
   { name: "stdin with a nested configuration", files: configured({}, { "src/.oxfmtrc.json": `{"semi": false}` }), args: ["--stdin-filepath", "src/x.ts"], stdin: ugly },

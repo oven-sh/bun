@@ -292,8 +292,17 @@ unsafe fn bytes<'a>(p: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
+/// Tests 32 bytes at a time without a branch in between, which the compiler turns into vector instructions: what is measured
+/// with these stand-ins should not be far from what the kernels do.
 fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
-    text.iter().position(|&c| f(c)).unwrap_or(text.len())
+    let mut at = 0;
+    for chunk in text.chunks_exact(32) {
+        if chunk.iter().fold(false, |is_found, &c| is_found | f(c)) {
+            break;
+        }
+        at += 32;
+    }
+    at + text[at..].iter().position(|&c| f(c)).unwrap_or(text.len() - at)
 }
 
 #[unsafe(no_mangle)]
@@ -327,7 +336,18 @@ unsafe extern "C" fn highway_index_of_any_char(
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let chars = unsafe { bytes(chars, chars_len) };
     // SAFETY: the caller passes a slice, as a pointer and a length.
-    first(unsafe { bytes(p, len) }, |c| chars.contains(&c))
+    let text = unsafe { bytes(p, len) };
+    match *chars {
+        [a] => first(text, |c| c == a),
+        [a, b] => first(text, |c| (c == a) | (c == b)),
+        [a, b, d] => first(text, |c| (c == a) | (c == b) | (c == d)),
+        [a, b, d, e] => first(text, |c| (c == a) | (c == b) | (c == d) | (c == e)),
+        _ => {
+            let mut is_in_set = [false; 256];
+            chars.iter().for_each(|&c| is_in_set[c as usize] = true);
+            text.iter().position(|&c| is_in_set[c as usize]).unwrap_or(len)
+        }
+    }
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_last_index_of_any_char(
@@ -359,13 +379,20 @@ unsafe extern "C" fn highway_memmem(
     if hay.len() < needle.len() {
         return core::ptr::null();
     }
-    match (0..=hay.len() - needle.len())
-        .find(|&i| hay[i] == needle[0] && hay[i..i + needle.len()] == *needle)
-    {
-        // SAFETY: `i` is a position in `hay`, which begins at `h`.
-        Some(i) => unsafe { h.add(i) },
-        None => core::ptr::null(),
+    let last = hay.len() - needle.len();
+    let mut at = 0;
+    while at <= last {
+        at += first(&hay[at..=last], |c| c == needle[0]);
+        if at > last {
+            break;
+        }
+        if hay[at..at + needle.len()] == *needle {
+            // SAFETY: `at` is a position in `hay`, which begins at `h`.
+            return unsafe { h.add(at) };
+        }
+        at += 1;
     }
+    core::ptr::null()
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_memrmem(

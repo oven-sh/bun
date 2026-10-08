@@ -489,7 +489,7 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
     let is_simple = |e: Expr<'_>| SimpleArgument::new(e).is_simple_with_depth(1);
     match argument.kind() {
         ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. }
-            if !argument.is_angle_bracket_assertion() =>
+            if !argument.is_angle_bracket_assertion() || f.file().is_flow() =>
         {
             argument.type_annotation().is_none_or(is_simple_ts_type) && is_simple(expr)
         }
@@ -516,6 +516,7 @@ fn can_group_expression_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> b
         ExprKind::Array(elements) => {
             !elements.is_empty() || f.comments().has_comment_in_span(argument.span())
         }
+        ExprKind::As { .. } if argument.is_flow_type_cast() => false,
         ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. } => {
             can_group_expression_argument(expr, f)
         }

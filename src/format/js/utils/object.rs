@@ -150,6 +150,7 @@ fn unquoted<'a>(
                     && is_parser_for_programs(f)
                     && is_simple_number(content)
                     && is_canonical_simple_number(content)
+                    && !f.file().is_flow()
                     && !crate::pragma::is_flow_file(f.file().text(), f.filepath()))
         }
     };

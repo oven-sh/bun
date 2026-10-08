@@ -200,12 +200,14 @@ impl T {
         )
     }
 
-    /// Whether a member access, a call, a `!`, type arguments or a template can start with it.
+    /// Whether a member access, a call, a `!`, type arguments or a template can start with it, or
+    /// the braces of Flow's `match (a) { }` and `R { a: 1 }`.
     #[inline(always)]
     pub(crate) fn can_follow_member_expression(self) -> bool {
         matches!(
             self,
             T::Dot
+                | T::OpenBrace
                 | T::OpenParen
                 | T::OpenBracket
                 | T::Exclamation

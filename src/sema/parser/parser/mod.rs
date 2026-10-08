@@ -38,6 +38,8 @@ pub(crate) mod ctx {
     pub(crate) const TYPE: u32 = 1 << 7;
     /// In Flow: `A => B` is no type. The `=>` is that of the arrow function whose return type is `A`.
     pub(crate) const NO_ANONYMOUS_FUNCTION_TYPE: u32 = 1 << 8;
+    /// In Flow: `A { }` is no record expression. The `{` is that of the class that extends `A`.
+    pub(crate) const NO_RECORD: u32 = 1 << 9;
 }
 
 macro_rules! stacks {
@@ -160,6 +162,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) is_flow: bool,
     /// A `<` after an expression can start type arguments: not in JavaScript, but in Flow.
     pub(crate) has_type_arguments_in_expressions: bool,
+    /// In Flow: where the last expression statement starts.
+    pub(crate) flow_statement_start: u32,
     pub(crate) has_top_level_await: bool,
     /// `notParenthesizedArrow`: the positions at which a speculative parse has found that no arrow
     /// function starts.
@@ -222,6 +226,7 @@ impl<'a> Parser<'a> {
             is_ecmascript,
             is_flow,
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
+            flow_statement_start: u32::MAX,
             has_top_level_await: false,
             not_arrows: Vec::new(),
             unclaimed_nullable_types: 0,

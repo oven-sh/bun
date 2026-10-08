@@ -110,7 +110,8 @@ impl Kind {
         if matches!(
             extension,
             b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
-        ) {
+        ) || name.ends_with(b".js.flow")
+        {
             return Some(Kind::Script);
         }
         let json = || bun_format::json::parser_for_path(path).map(Kind::Json);

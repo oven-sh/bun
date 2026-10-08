@@ -25,6 +25,11 @@ pub mod range;
 pub mod verify;
 pub mod yaml;
 
+/// What a caller does for a file of Flow.
+pub mod flow {
+    pub use crate::js::print::flow::{may_have_comment_types, uncommented};
+}
+
 /// Sorting imports.
 pub mod sort_imports {
     pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};

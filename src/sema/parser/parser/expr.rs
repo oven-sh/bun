@@ -160,7 +160,7 @@ impl Parser<'_> {
 
     /// Whether `e`, which was just parsed, is in parentheses.
     #[inline(always)]
-    fn is_parenthesized(&self, e: ExprId) -> bool {
+    pub(crate) fn is_parenthesized(&self, e: ExprId) -> bool {
         self.f.parens.last().is_some_and(|last| last.0 == e)
     }
 
@@ -957,6 +957,12 @@ impl Parser<'_> {
                         }
                     };
                 }
+                T::OpenBrace if allows_calls && self.is_flow => {
+                    match self.flow_braces_after_expression(start, expression) {
+                        Some(with_braces) => expression = with_braces,
+                        None => return expression,
+                    }
+                }
                 _ => return expression,
             }
             non_null = ExprId::NONE;
@@ -1151,7 +1157,7 @@ impl Parser<'_> {
 
     /// `parsePrimaryExpression`
     #[inline]
-    fn primary_expression(&mut self) -> ExprId {
+    pub(crate) fn primary_expression(&mut self) -> ExprId {
         match self.token() {
             T::Identifier => {
                 let name = self.lx.atom;
@@ -1398,7 +1404,7 @@ impl Parser<'_> {
     // ───────────────────────────── object literals ─────────────────────────────
 
     /// `parseObjectLiteralExpression`
-    fn object_literal(&mut self) -> ExprId {
+    pub(crate) fn object_literal(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
         let cleared = self.disallow_in_if_brackets_end_it() | ctx::DECORATOR;

@@ -8,7 +8,8 @@ pub(crate) fn write_ts_tuple_type<'a>(
     elements: List<'a, TupleElem<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write!(f, "[");
+    let needs_parentheses = f.file().is_flow() && super::flow::needs_parentheses(ty);
+    write!(f, [needs_parentheses.then_some("("), "["]);
     if elements.is_empty() {
         write!(
             f,
@@ -30,7 +31,7 @@ pub(crate) fn write_ts_tuple_type<'a>(
         });
         write!(f, group(&soft_block_indent(&element_types)));
     }
-    write!(f, "]");
+    write!(f, ["]", needs_parentheses.then_some(")")]);
 }
 
 /// An element and the comments around it are a group, as in Prettier's `printArrayElements`: a

@@ -332,8 +332,8 @@ struct FormatClass<'a>(Class<'a>);
 impl<'a> Format<'a> for FormatClass<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let class = self.0;
-        if super::flow::is_declared_class(class) {
-            return super::flow::write_declared_class(class, f);
+        if class.file().is_flow() && super::flow::write_class(class, f) {
+            return;
         }
         let node = AstNodes::Class(class);
         let parent = node.parent();
@@ -752,6 +752,13 @@ impl FormatClassElementWithSemicolon<'_> {
                 !value.is_async()
                     && !matches!(next.kind(), MemberKind::Getter | MemberKind::Setter)
                     && (is_computed || value.is_generator())
+        // Flow's `+a`, `-a`
+        if next.kind() == MemberKind::Property
+            && (has_modifier(next, Flags::IN) || has_modifier(next, Flags::OUT))
+            && !has_modifier(next, Flags::AMBIENT)
+        {
+            return true;
+        }
             }),
             AstNodes::TSIndexSignature(_) => true,
             _ => false,

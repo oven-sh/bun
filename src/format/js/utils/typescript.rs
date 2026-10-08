@@ -25,6 +25,7 @@ pub(crate) fn without_lone_operator(mut ty: TypeNode<'_>) -> TypeNode<'_> {
     while let TypeKind::Union(types) | TypeKind::Intersection(types) = ty.kind()
         && types.len() == 1
         && let Some(only) = types.first()
+        && !crate::js::print::flow::is_interface_type(ty)
     {
         ty = only;
     }

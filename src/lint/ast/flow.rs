@@ -32,6 +32,13 @@ impl Expr<'_> {
     pub fn is_flow_type_cast(self) -> bool {
         self.file.is_flow && self.is_angle_bracket_assertion()
     }
+
+    /// Whether a `<` follows: `R<> { }` has type arguments, of which there are none.
+    pub fn is_before_flow_type_arguments(self) -> bool {
+        self.file
+            .slice(next_token(self.file.text(), self.outer_span().end))
+            == b"<"
+    }
 }
 
 impl Modifier<'_> {
@@ -91,11 +98,10 @@ impl<'a> TypeParam<'a> {
         )
     }
 
-    /// `T: Bound`, as opposed to `T extends Bound`.
-    pub fn has_flow_colon(self) -> bool {
+    /// The token after the name: `:` or `extends` before a bound, `in` in a mapped type.
+    pub fn flow_token_after_name(self) -> &'a [u8] {
         self.file
             .slice(next_token(self.file.text(), self.name().span().end))
-            == b":"
     }
 }
 

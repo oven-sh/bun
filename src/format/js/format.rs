@@ -602,7 +602,9 @@ fn write_call_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 
 #[inline(never)]
 fn write_new_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    if let Some(call) = e.as_call_like() {
+    if let Some(call) = e.as_call_like()
+        && !(f.file().is_flow() && print::flow::write_expression_with_braces(e, call, f))
+    {
         print::call_like_expression::write_new_expression(e, call, f);
     }
 }

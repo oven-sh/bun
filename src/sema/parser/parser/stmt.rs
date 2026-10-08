@@ -1085,6 +1085,9 @@ impl Parser<'_> {
     /// `parseExpressionOrLabeledStatement`
     fn expression_or_labeled_statement(&mut self) -> StmtId {
         let start = self.start();
+        if self.is_flow {
+            self.flow_statement_start = start.pos;
+        }
         // TypeScript 5 has `allowInAnd(parseExpression)` here, the native parser has not.
         let expression = match self.options.dialect.typescript_5 || self.is_ecmascript {
             true => self.expression_allowing_in(),

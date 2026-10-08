@@ -63,6 +63,8 @@ fn kinds(path: &[u8]) -> &'static [bool] {
 struct How<'h> {
     path: &'h [u8],
     is_script: bool,
+    /// It is parsed as Flow.
+    is_flow: bool,
     resolved: &'h Resolved,
     verifies: bool,
     /// For the names in a file with syntax errors. They are freed when the run ends.
@@ -98,7 +100,10 @@ fn with_tree<'h, R>(
     let arena = session.arena();
     let options = language.parse_options(path);
     bun_js_parser::sema::with_summary_in_place(
-        Dialect::babel(how.is_script),
+        match how.is_flow {
+            true => Dialect::flow(how.is_script),
+            false => Dialect::babel(how.is_script),
+        },
         (arena, session),
         path,
         options.script_kind,
@@ -229,6 +234,7 @@ fn parse_javascript(
     let how = How {
         path,
         is_script,
+        is_flow: false,
         resolved: &Resolved::default(),
         verifies: false,
         atoms: &Interner::new_in(&names),
@@ -356,11 +362,40 @@ fn format(
 
 fn print<'a>(
     (file, program): (&'a File<'a>, &Program<'a>),
+    // `babel` hands a file of Flow to `babel-flow`, which reads what is in `/*:: */` and `/*: */` as code.
+    let is_flow = match options.parser.as_deref() {
+        Some(b"flow" | b"babel-flow") => true,
+        Some(b"babel") | None => bun_lint::linter::goes_to_flow(&text, name),
+        Some(_) => false,
+    };
+    let has_comment_types = is_flow
+        && options.parser.as_deref() != Some(b"flow")
+        && !name.ends_with(b".js.flow")
+        && bun_format::flow::may_have_comment_types(&text);
+    let text = match has_comment_types {
+        true => {
+            let how = How {
+                path,
+                is_script: false,
+                is_flow,
+                resolved,
+                verifies: false,
+                atoms,
+                memory,
+            };
+            with_file(&how, &text, |file, _, _| {
+                bun_format::flow::uncommented(file)
+            })
+            .map_or(text, Cow::Owned)
+        }
+        false => text,
+    };
     first_error: Option<&Diagnostic>,
     how: &How,
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
+            is_flow,
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
     let takes_types = matches!(
         options.parser.as_deref(),

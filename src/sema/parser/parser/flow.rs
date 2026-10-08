@@ -34,6 +34,15 @@
 //! | `component A(a: T, 'b' as c: U) renders V { }`, `hook useA() { }` | `Fn` with the word as its last modifier. A parameter starts at its outer name |
 //! | `enum A of string { B = "b", ... }` | `Enum`. The token after the name is the `of`. The `...` is a member without a name |
 //! | `import typeof A`, `import { typeof A }` | `type_only`. The word is at `clause_start`, at `ImportSpec::start` |
+//! | `match (a) { b => { } }` as a statement | `Switch`, whose `expr` is the call `match (a)`. The `test` of a case is its pattern, its body the block |
+//! | `match (a) { b => c }` as an expression | `New` that starts with its `callee`, the call `match (a)`. Its argument is an `Object`: a case is a property whose computed key is the pattern |
+//! | `R { a: 1 }`, `R<T> { a: 1 }` | `New` that starts with its `callee`, with the `Object` as its argument |
+//! | a pattern | an expression. `a \| b`: `BitOr`. `a as b`: `In`. `a if (b)`: `And`. `const a`: `Unary(Void)`, which starts with the keyword. `...`: a spread of `Missing`. `const a` in an object pattern: a property without a key. `A { b: c }`: as `R { a: 1 }` |
+//! | `record A implements B { a: T = b, c() { } }` | `Class` with the word as its last modifier. A property ends before its `,` |
+//!
+//! There is no second parser here to compare with. What is right is what Prettier 3.9.9 prints with
+//! `--parser flow` (flow-parser 0.322) and `--parser babel-flow`: its tests in `tests/format/flow`,
+//! and real files through the npm package.
 
 use super::stmt::Start;
 use super::{Parser, ctx, take_span};
@@ -559,15 +568,16 @@ impl Parser<'_> {
         self.take_ids(base)
     }
 
-    /// The type arguments of a call, at the `<`, if that is what it is. `is_in_new`: of a `new`
-    /// expression, which needs no arguments.
+    /// The type arguments of a call or of a record expression, at the `<`, if that is what it is.
+    /// `is_in_new`: of a `new` expression, which needs no arguments.
     pub(crate) fn flow_type_arguments_in_expression(
         &mut self,
         is_in_new: bool,
     ) -> Option<IdList<TypeNodeId>> {
         self.try_parse(|p| {
             let type_arguments = p.flow_type_arguments();
-            (is_in_new || p.token() == T::OpenParen).then_some(type_arguments)
+            let is_before_braces = p.token() == T::OpenBrace && !p.newline_before();
+            (is_in_new || p.token() == T::OpenParen || is_before_braces).then_some(type_arguments)
         })
     }
 
@@ -1136,7 +1146,7 @@ impl Parser<'_> {
         }
         match self.lx.text() {
             b"opaque" => self.peek() == T::Type,
-            b"component" | b"hook" => self.look_ahead(|p| {
+            b"component" | b"hook" | b"record" => self.look_ahead(|p| {
                 p.next();
                 p.is_identifier() && !p.newline_before()
             }),
@@ -1151,6 +1161,12 @@ impl Parser<'_> {
         start: Start,
         expression: ExprId,
     ) -> StmtId {
+        if self.token() == T::OpenBrace
+            && !self.newline_before()
+            && self.flow_is_match_head(expression)
+        {
+            return self.flow_match_statement(start, expression);
+        }
         let word = match self.f.exprs.last() {
             Some(&Expr {
                 kind: ExprKind::Ident(word),
@@ -1166,6 +1182,7 @@ impl Parser<'_> {
             b"opaque" => (Flags::empty(), Some(b'o')),
             b"component" => (Flags::empty(), Some(b'c')),
             b"hook" => (Flags::empty(), Some(b'h')),
+            b"record" => (Flags::empty(), Some(b'r')),
             _ => {
                 self.fail();
                 return StmtId::NONE;
@@ -1211,6 +1228,7 @@ impl Parser<'_> {
         match first {
             Some(b'o') => self.flow_opaque_type(start, base, flags),
             Some(b'c') => self.flow_component(start, base, flags),
+            Some(b'r') => self.flow_record(start, base, flags),
             _ if is_ambient => self.flow_declare_function_rest(start, base, flags),
             _ => {
                 let (name, name_pos) = self.identifier();
@@ -1655,5 +1673,476 @@ impl Parser<'_> {
             start,
         });
         self.finish_type(TypeNodeKind::Fn(func), start)
+    }
+
+    // ───────────────────────────── match ─────────────────────────────
+
+    /// Whether `e`, which was just parsed, is `match (a)`, `match (a, b)`.
+    fn flow_is_match_head(&self, e: ExprId) -> bool {
+        let Some(&Expr {
+            kind: ExprKind::Call(call),
+            ..
+        }) = self.f.exprs.get(e.idx())
+        else {
+            return false;
+        };
+        let Some(call) = self.f.calls.get(call.idx()) else {
+            return false;
+        };
+        let is_match = |it: &Expr| match it.kind {
+            ExprKind::Ident(name) => it.end - it.pos == 5 && self.lx.text_of(name) == b"match",
+            _ => false,
+        };
+        call.chain == Chain::No
+            && call.type_args.is_empty()
+            && !call.args.is_empty()
+            && self.f.exprs.get(call.callee.idx()).is_some_and(is_match)
+            && !self.is_parenthesized(e)
+    }
+
+    /// At a `{` after `expression`, which starts at `start`: the match expression or the record
+    /// expression that the two are. `None`: the `{` is not part of the expression.
+    pub(crate) fn flow_braces_after_expression(
+        &mut self,
+        start: u32,
+        expression: ExprId,
+    ) -> Option<ExprId> {
+        if self.newline_before() || self.has_context(ctx::NO_RECORD) {
+            return None;
+        }
+        if self.flow_is_match_head(expression) {
+            // That is a statement.
+            if start == self.flow_statement_start {
+                return None;
+            }
+            return Some(self.flow_match_expression(start, expression));
+        }
+        if self.is_parenthesized(expression) {
+            return None;
+        }
+        let is_constructor = |p: &Self, e: ExprId| match p.f.exprs.get(e.idx()).map(|it| it.kind) {
+            Some(ExprKind::Ident(name)) => !p
+                .lx
+                .text_of(name)
+                .first()
+                .is_none_or(u8::is_ascii_lowercase),
+            Some(
+                ExprKind::Dot {
+                    chain: Chain::No, ..
+                }
+                | ExprKind::Index {
+                    chain: Chain::No, ..
+                },
+            ) => true,
+            _ => false,
+        };
+        let (mut constructor, mut type_args) = (expression, IdList::EMPTY);
+        if expression.idx() + 1 == self.f.exprs.len()
+            && let Some(&Expr {
+                kind:
+                    ExprKind::Instantiation {
+                        expr,
+                        type_args: written,
+                    },
+                ..
+            }) = self.f.exprs.last()
+        {
+            if !is_constructor(self, expr) {
+                return None;
+            }
+            self.f.exprs.pop();
+            (constructor, type_args) = (expr, written);
+        } else if !is_constructor(self, expression) {
+            return None;
+        }
+        let properties = self.object_literal();
+        Some(self.flow_expression_with_braces(start, constructor, type_args, properties))
+    }
+
+    /// `head { }`
+    fn flow_expression_with_braces(
+        &mut self,
+        start: u32,
+        head: ExprId,
+        type_args: IdList<TypeNodeId>,
+        braces: ExprId,
+    ) -> ExprId {
+        let base = self.s.ids.len();
+        self.s.ids.push(braces.0);
+        let args = self.take_ids(base);
+        let call = self.f.add_call(Call {
+            callee: head,
+            args,
+            type_args,
+            close_pos: u32::MAX,
+            chain: Chain::No,
+            template: ExprId::NONE,
+        });
+        self.finish_expr(ExprKind::New(call), start)
+    }
+
+    /// `match (a) { b => c, d if (e) => f }`, at the `{`. `head`: the `match (a)`.
+    fn flow_match_expression(&mut self, start: u32, head: ExprId) -> ExprId {
+        if self.is_too_deep() {
+            return ExprId::NONE;
+        }
+        let open = self.pos();
+        self.next();
+        let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR | ctx::NO_RECORD);
+        let base = self.s.props.len();
+        while self.is_in_list(T::CloseBrace) {
+            let pos = self.pos();
+            let pattern = self.flow_match_pattern_and_guard();
+            self.expect(T::EqualsGreaterThan);
+            let value = self.assignment_expression();
+            self.s.props.push(Prop {
+                kind: PropKind::Init,
+                key: PropKey::Computed(pattern),
+                name_kind: NameKind::Identifier,
+                value,
+                pos,
+                start: pos,
+                end: self.prev_end(),
+                postfix_token: 0,
+            });
+            if !self.eat(T::Comma) {
+                break;
+            }
+        }
+        self.context = saved;
+        self.expect(T::CloseBrace);
+        let cases = take_span!(self, props, base);
+        let cases = self.finish_expr(ExprKind::Object(cases), open);
+        self.flow_expression_with_braces(start, head, IdList::EMPTY, cases)
+    }
+
+    /// `match (a) { b => { } c if (d) => { } }`, at the `{`. `head`: the `match (a)`.
+    fn flow_match_statement(&mut self, start: Start, head: ExprId) -> StmtId {
+        self.next();
+        let base = self.s.cases.len();
+        while self.is_in_list(T::CloseBrace) {
+            let pos = self.pos();
+            let test = self.flow_match_pattern_and_guard();
+            self.expect(T::EqualsGreaterThan);
+            if self.token() != T::OpenBrace {
+                self.fail();
+                break;
+            }
+            let ids = self.s.ids.len();
+            let block = self.block();
+            self.s.ids.push(block.0);
+            let body = self.take_ids(ids);
+            self.s.cases.push(Case {
+                test,
+                body,
+                pos,
+                end: self.prev_end(),
+            });
+            self.eat(T::Comma);
+        }
+        self.expect(T::CloseBrace);
+        let cases = take_span!(self, cases, base);
+        self.add_stmt(StmtKind::Switch { expr: head, cases }, start, Span::EMPTY)
+    }
+
+    /// `pattern`, `pattern if (guard)`
+    fn flow_match_pattern_and_guard(&mut self) -> ExprId {
+        let start = self.pos();
+        let left = self.flow_match_pattern();
+        if !self.eat(T::If) {
+            return left;
+        }
+        self.expect(T::OpenParen);
+        let right = self.expression_allowing_in();
+        self.expect(T::CloseParen);
+        let op = BinOp::And;
+        self.finish_expr(ExprKind::Binary { op, left, right }, start)
+    }
+
+    /// `a`, `a | b`, `| a | b`, `a as b`, `a | b as const c`
+    fn flow_match_pattern(&mut self) -> ExprId {
+        if self.is_too_deep() {
+            return ExprId::NONE;
+        }
+        let start = self.pos();
+        self.eat(T::Bar);
+        let mut left = self.flow_match_subpattern();
+        while self.eat(T::Bar) {
+            let (op, right) = (BinOp::BitOr, self.flow_match_subpattern());
+            left = self.finish_expr(ExprKind::Binary { op, left, right }, start);
+        }
+        if self.eat(T::As) {
+            let right = match self.token() {
+                T::Const | T::Var | T::Let => self.flow_match_binding(),
+                _ => self.flow_match_name(),
+            };
+            let op = BinOp::In;
+            left = self.finish_expr(ExprKind::Binary { op, left, right }, start);
+        }
+        left
+    }
+
+    /// A name that a pattern binds, or that it starts with.
+    fn flow_match_name(&mut self) -> ExprId {
+        let end = self.lx.end;
+        let (name, pos) = self.identifier();
+        self.add_expr(ExprKind::Ident(name), pos, end)
+    }
+
+    /// `const a`, at the keyword.
+    fn flow_match_binding(&mut self) -> ExprId {
+        let start = self.pos();
+        self.next();
+        let (op, operand) = (UnOp::Void, self.flow_match_name());
+        self.finish_expr(ExprKind::Unary { op, operand }, start)
+    }
+
+    /// `...`, `...const a`, at the `...`: what is after the dots.
+    fn flow_match_rest(&mut self) -> ExprId {
+        self.next();
+        match self.token() {
+            T::Const | T::Var | T::Let => self.flow_match_binding(),
+            _ => {
+                let end = self.prev_end();
+                self.add_expr(ExprKind::Missing, end, end)
+            }
+        }
+    }
+
+    fn flow_match_subpattern(&mut self) -> ExprId {
+        let start = self.pos();
+        match self.token() {
+            T::Null | T::True | T::False | T::Number | T::BigInt | T::String => {
+                self.primary_expression()
+            }
+            T::Plus | T::Minus => {
+                let op = match self.token() {
+                    T::Plus => UnOp::Plus,
+                    _ => UnOp::Minus,
+                };
+                self.next();
+                if !matches!(self.token(), T::Number | T::BigInt) {
+                    self.fail();
+                    return ExprId::NONE;
+                }
+                let operand = self.primary_expression();
+                self.finish_expr(ExprKind::Unary { op, operand }, start)
+            }
+            T::Const | T::Var | T::Let => self.flow_match_binding(),
+            T::OpenParen => {
+                self.next();
+                let pattern = self.flow_match_pattern();
+                self.expect(T::CloseParen);
+                pattern
+            }
+            T::OpenBrace => self.flow_match_object_pattern(),
+            T::OpenBracket => {
+                self.next();
+                let base = self.s.ids.len();
+                while self.is_in_list(T::CloseBracket) {
+                    if self.token() == T::DotDotDot {
+                        let dots = self.pos();
+                        let rest = self.flow_match_rest();
+                        let rest = self.finish_expr(ExprKind::Spread(rest), dots);
+                        self.s.ids.push(rest.0);
+                        break;
+                    }
+                    let element = self.flow_match_pattern();
+                    self.s.ids.push(element.0);
+                    if !self.eat(T::Comma) {
+                        break;
+                    }
+                }
+                self.expect(T::CloseBracket);
+                let elements = self.take_ids(base);
+                self.finish_expr(ExprKind::Array(elements), start)
+            }
+            _ => {
+                let mut pattern = self.flow_match_name();
+                loop {
+                    let (obj, chain) = (pattern, Chain::No);
+                    if self.eat(T::Dot) {
+                        let (name, name_pos) = self.identifier_name();
+                        let kind = ExprKind::Dot {
+                            obj,
+                            name,
+                            name_pos,
+                            chain,
+                        };
+                        pattern = self.finish_expr(kind, start);
+                    } else if self.eat(T::OpenBracket) {
+                        if !matches!(self.token(), T::Number | T::BigInt | T::String) {
+                            self.fail();
+                            return ExprId::NONE;
+                        }
+                        let index = self.primary_expression();
+                        self.expect(T::CloseBracket);
+                        pattern = self.finish_expr(ExprKind::Index { obj, index, chain }, start);
+                    } else {
+                        break;
+                    }
+                }
+                if self.token() != T::OpenBrace {
+                    return pattern;
+                }
+                let properties = self.flow_match_object_pattern();
+                self.flow_expression_with_braces(start, pattern, IdList::EMPTY, properties)
+            }
+        }
+    }
+
+    /// `{ a: b, const c, ...const d }`, at the `{`.
+    fn flow_match_object_pattern(&mut self) -> ExprId {
+        let open = self.pos();
+        self.next();
+        let base = self.s.props.len();
+        while self.is_in_list(T::CloseBrace) {
+            let pos = self.pos();
+            let mut prop = Prop {
+                kind: PropKind::Init,
+                key: PropKey::None,
+                name_kind: NameKind::Identifier,
+                value: ExprId::NONE,
+                pos,
+                start: pos,
+                end: 0,
+                postfix_token: 0,
+            };
+            match self.token() {
+                T::DotDotDot => {
+                    prop.kind = PropKind::Spread;
+                    prop.value = self.flow_match_rest();
+                }
+                T::Const | T::Var | T::Let => prop.value = self.flow_match_binding(),
+                T::OpenBracket | T::PrivateIdentifier => self.fail(),
+                _ => {
+                    (prop.key, prop.name_kind, _) = self.property_name();
+                    self.expect(T::Colon);
+                    prop.value = self.flow_match_pattern();
+                }
+            }
+            prop.end = self.prev_end();
+            self.s.props.push(prop);
+            if prop.kind == PropKind::Spread || !self.eat(T::Comma) {
+                break;
+            }
+        }
+        self.expect(T::CloseBrace);
+        let properties = take_span!(self, props, base);
+        self.finish_expr(ExprKind::Object(properties), open)
+    }
+
+    // ───────────────────────────── records ─────────────────────────────
+
+    /// `record A<T> implements B { a: T = b, static c: U = d, e() { } }`, after `record`, which is
+    /// the last of the modifiers.
+    fn flow_record(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+        let (name, name_pos) = self.identifier();
+        let type_params = self.type_parameters();
+        let implements = match self.eat(T::Implements) {
+            true => self.flow_heritage(),
+            false => IdList::EMPTY,
+        };
+        self.expect(T::OpenBrace);
+        self.classes_around += 1;
+        let first = self.s.members.len();
+        while self.is_in_list(T::CloseBrace) {
+            self.flow_record_member();
+        }
+        self.classes_around -= 1;
+        self.expect(T::CloseBrace);
+        let members = take_span!(self, members, first);
+        let modifiers = self.take_modifiers(base);
+        let class = self.f.add_class(Class {
+            name,
+            name_pos,
+            flags: flags & (Flags::EXPORT | Flags::DEFAULT),
+            type_params,
+            extends: ExprId::NONE,
+            extends_args: IdList::EMPTY,
+            other_extends: IdList::EMPTY,
+            implements,
+            other_implements: IdList::EMPTY,
+            members,
+            start: start.pos,
+            modifiers,
+        });
+        self.add_stmt(StmtKind::Class(class), start, modifiers)
+    }
+
+    /// Whether the token, `static` or `async`, is a modifier and not a name.
+    fn flow_is_at_modifier_in_record(&mut self) -> bool {
+        !matches!(
+            self.peek(),
+            T::Colon | T::LessThan | T::OpenParen | T::CloseBrace | T::Eof
+        )
+    }
+
+    fn flow_record_member(&mut self) {
+        let start = self.start();
+        let first_modifier = self.s.modifiers.len();
+        let mut flags = Flags::empty();
+        for (token, flag) in [(T::Static, Flags::STATIC), (T::Async, Flags::ASYNC)] {
+            if self.token() == token && self.flow_is_at_modifier_in_record() {
+                flags |= flag;
+                self.modifier_token(flag);
+            }
+        }
+        let is_generator = self.eat(T::Asterisk);
+        if matches!(self.token(), T::OpenBracket | T::PrivateIdentifier) {
+            return self.fail();
+        }
+        let name_token = self.token();
+        let (mut key, name_kind, name_pos) = self.property_name();
+        match (name_token, name_kind) {
+            (T::BigInt, _) => {
+                key = PropKey::None;
+                flags |= Flags::LITERAL_NAME;
+            }
+            (_, NameKind::StringLiteral) => flags |= Flags::STRING_NAME | Flags::LITERAL_NAME,
+            (_, NameKind::NumericLiteral) => flags |= Flags::LITERAL_NAME,
+            _ => {}
+        }
+        let mut member = Member {
+            kind: MemberKind::Property,
+            key,
+            flags,
+            ty: TypeNodeId::NONE,
+            init: ExprId::NONE,
+            func: FnId::NONE,
+            name_pos,
+            start: start.pos,
+            loc: TextRange::default(),
+            modifiers: Span::EMPTY,
+        };
+        let mut end = 0;
+        if self.token() == T::Colon && !is_generator && !flags.contains(Flags::ASYNC) {
+            member.ty = self.type_annotation();
+            let cleared = ctx::YIELD | ctx::AWAIT | ctx::DISALLOW_IN | ctx::TOP_LEVEL;
+            let saved = self.enter_context(0, cleared);
+            member.init = self.optional_initializer();
+            self.context = saved;
+            end = self.prev_end();
+            if self.token() != T::CloseBrace {
+                self.expect(T::Comma);
+            }
+        } else if matches!(self.token(), T::OpenParen | T::LessThan) {
+            member.kind = MemberKind::Method;
+            let fn_flags = match is_generator {
+                true => flags | Flags::GENERATOR,
+                false => flags,
+            };
+            let name = key.name().unwrap_or(Atom::NONE);
+            member.func = self.function_rest(FnKind::Method, fn_flags, name, name_pos, start.pos);
+            end = self.prev_end();
+        } else {
+            self.fail();
+        }
+        member.loc = TextRange {
+            pos: start.full,
+            end,
+        };
+        member.modifiers = self.take_modifiers(first_modifier);
+        self.s.members.push(member);
     }
 }

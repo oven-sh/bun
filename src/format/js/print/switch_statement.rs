@@ -10,6 +10,9 @@ pub(crate) fn write_switch_statement<'a>(
     cases: List<'a, Case<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    if f.file().is_flow() && super::flow::write_match_statement(statement, discriminant, cases, f) {
+        return;
+    }
     write!(
         f,
         [

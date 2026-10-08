@@ -307,6 +307,21 @@ fn format_text_with_cursor(
     };
     let format_as = |is_script: bool| {
         let dialect = match is_flow {
+    // `babel-flow` reads what is in `/*:: */` and `/*: */` as code.
+    let has_comment_types = is_flow
+        && options.parser.as_deref() != Some(b"flow")
+        && !name.ends_with(b".js.flow")
+        && bun_format::flow::may_have_comment_types(&code);
+    let code = match has_comment_types {
+        true => with_file_as(
+            Dialect::flow(false),
+            path,
+            &code,
+            bun_format::flow::uncommented,
+        )
+        .map_or(code, std::borrow::Cow::Owned),
+        false => code,
+    };
             true => Dialect::flow(is_script),
             false => Dialect::babel(is_script),
         };

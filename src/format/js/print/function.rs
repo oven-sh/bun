@@ -329,9 +329,12 @@ fn can_group_function_parameters(func: Func<'_>) -> bool {
     match type_parameters.len() {
         0 => {}
         1 => {
+            // Prettier does not ask for the `bound` of Flow.
+            let has_constraint =
+                |it: TypeParam<'_>| it.constraint().is_some() && !it.file().is_flow();
             if type_parameters
                 .first()
-                .is_some_and(|first| first.constraint().is_some() || first.default().is_some())
+                .is_some_and(|first| has_constraint(first) || first.default().is_some())
             {
                 return false;
             }

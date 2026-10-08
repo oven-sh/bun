@@ -465,7 +465,10 @@ pub(crate) fn should_hug_function_parameters<'a>(
                     }))
         }
     };
-    is_huggable && !has_modifier(only_parameter) && !has_comments_around(only_parameter)
+    is_huggable
+        && !has_modifier(only_parameter)
+        && !(f.file().is_flow() && super::flow::is_component(func, f))
+        && !has_comments_around(only_parameter)
 }
 
 /// Whether all parameters are plain names, without default values. A rest parameter is not.

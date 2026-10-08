@@ -98,7 +98,9 @@ impl Parser<'_> {
                 self.fail();
             }
             // `parseExpressionWithTypeArguments`
+            let saved = self.enter_context(ctx::NO_RECORD, 0);
             extends = self.left_hand_side_expression();
+            self.context = saved;
             if extends.idx() + 1 == self.f.exprs.len()
                 && let Some(&Expr {
                     kind: ExprKind::Instantiation { expr, type_args },

@@ -498,6 +498,48 @@ impl<'a> Expr<'a> {
         !continues || self.is_parenthesized()
     }
 
+    /// It is assigned to by destructuring, or is part of what is: the `[a, b]` of `[a, b] = c`, the
+    /// `{ a }` of `for ({ a } of b)`, and in these the `a = 1` that is a default and the `...a`.
+    /// Such an `Array`, `Object`, `Assign` or `Spread` is ESLint's `ArrayPattern`, `ObjectPattern`,
+    /// `AssignmentPattern` or `RestElement`. Parentheses make what is in them an ordinary
+    /// expression.
+    pub fn is_assignment_target(self) -> bool {
+        let mut at = self;
+        loop {
+            if at.is_parenthesized() {
+                return false;
+            }
+            at = match at.parent() {
+                Node::Expr(parent) => match parent.kind() {
+                    ExprKind::Assign { target, .. } => return target == at,
+                    ExprKind::Array(_) | ExprKind::Spread(_) => parent,
+                    _ => return false,
+                },
+                Node::Prop(prop) if prop.value() == Some(at) && !prop.is_jsx_attribute() => match prop.parent() {
+                    Node::Expr(object) => object,
+                    _ => return false,
+                },
+                Node::Stmt(parent) => {
+                    return match parent.kind() {
+                        super::StmtKind::ForIn { left, .. } | super::StmtKind::ForOf { left, .. } => {
+                            matches!(left.kind(), super::StmtKind::Expr(head) if head == at)
+                        }
+                        _ => false,
+                    };
+                }
+                _ => return false,
+            };
+        }
+    }
+
+    /// It is the `a.b.c` of the type `typeof a.b.c`, or a part of it. ESLint has a
+    /// `TSQualifiedName` there, not a `MemberExpression`.
+    #[inline]
+    pub fn is_in_type_query(self) -> bool {
+        let operands = self.file.bound.type_query_operands;
+        !operands.is_empty() && operands.binary_search(&self.id).is_ok()
+    }
+
     /// Without the syntax around it that only concerns types: `e as T`, `<T>e`, `e as const`,
     /// `e satisfies T`, `e!`. Parentheses are not nodes, so `(e as T)!` is `e` too.
     pub fn skip_type_wrappers(self) -> Expr<'a> {
@@ -745,6 +787,11 @@ impl<'a> Template<'a> {
     /// The value of the piece of text at `i`. `None` if it has an invalid escape, which a tagged
     /// template allows.
     pub fn cooked(self, i: usize) -> Option<Name<'a>> {
+        self.text_of_scanner(i).filter(|_| !has_invalid_escape(self.raw(i)))
+    }
+
+    /// The same, where TypeScript's scanner leaves an invalid escape as it is written.
+    pub(crate) fn text_of_scanner(self, i: usize) -> Option<Name<'a>> {
         let file = self.expr.file;
         let at = self.exprs.start as usize + self.exprs.len() + i;
         if i >= self.quasi_count() {
@@ -781,6 +828,36 @@ impl<'a> Template<'a> {
     pub fn as_static(self) -> Option<Name<'a>> {
         self.exprs.is_empty().then(|| self.cooked(0)).flatten()
     }
+}
+
+/// Whether the text `raw` of a template has an escape that is not one: `\u` and `\x` without their
+/// digits, `\1` to `\9`, `\0` before a digit.
+fn has_invalid_escape(raw: &[u8]) -> bool {
+    let is_hex = |bytes: Option<&[u8]>| bytes.is_some_and(|it| !it.is_empty() && it.iter().all(u8::is_ascii_hexdigit));
+    let mut rest = raw;
+    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\\') {
+        let after = rest.get(at + 2..).unwrap_or_default();
+        let is_valid = match rest.get(at + 1) {
+            Some(b'x') => is_hex(after.get(..2)),
+            Some(b'u') if after.first() == Some(&b'{') => {
+                let digits = bun_core::strings::index_of_char_usize(after, b'}').and_then(|end| after.get(1..end));
+                is_hex(digits)
+                    && digits.is_some_and(|it| {
+                        let digits = it.iter().skip_while(|b| **b == b'0').count();
+                        digits < 6 || digits == 6 && it[it.len() - 6..].starts_with(b"10")
+                    })
+            }
+            Some(b'u') => is_hex(after.get(..4)),
+            Some(b'0') => !after.first().is_some_and(u8::is_ascii_digit),
+            Some(b'1'..=b'9') => false,
+            _ => true,
+        };
+        if !is_valid {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 /// From `at`, which is inside the text of a template: the position after the next `${`.
@@ -883,6 +960,41 @@ pub enum JsxChild<'a> {
     Whitespace(Span),
 }
 
+/// See [`Jsx::children_with_whitespace`].
+#[derive(Copy, Clone)]
+pub struct JsxChildren<'a> {
+    /// Where what has been returned ends.
+    at: u32,
+    /// Where the closing tag starts.
+    end: u32,
+    children: super::ListIter<'a, Expr<'a>>,
+    /// The child after the whitespace that has been returned.
+    pending: Option<Expr<'a>>,
+}
+
+impl<'a> Iterator for JsxChildren<'a> {
+    type Item = JsxChild<'a>;
+
+    fn next(&mut self) -> Option<JsxChild<'a>> {
+        if let Some(child) = self.pending.take() {
+            return Some(JsxChild::Expr(child));
+        }
+        let Some(child) = self.children.next() else {
+            let rest = Span::new(self.at, self.end);
+            self.at = self.end;
+            return (!rest.is_empty()).then_some(JsxChild::Whitespace(rest));
+        };
+        let span = child.jsx_container_span().unwrap_or_else(|| child.span());
+        let before = Span::new(self.at, span.start);
+        self.at = span.end;
+        if before.is_empty() {
+            return Some(JsxChild::Expr(child));
+        }
+        self.pending = Some(child);
+        Some(JsxChild::Whitespace(before))
+    }
+}
+
 /// `<tag attrs>children</tag>`, `<tag attrs />`, `<>children</>`
 #[derive(Copy, Clone)]
 pub struct Jsx<'a> {
@@ -955,29 +1067,14 @@ impl<'a> Jsx<'a> {
 
     /// The children, and the whitespace between them that is not among [`Jsx::children`]: all that
     /// ESLint has as `children`.
-    pub fn children_with_whitespace(self) -> impl Iterator<Item = JsxChild<'a>> + 'a {
-        let mut at = self.opening_span().end;
-        let end = self.closing_span().map_or(at, |it| it.start);
-        let mut children = self.children().iter();
-        let mut pending = None;
-        std::iter::from_fn(move || {
-            if let Some(child) = pending.take() {
-                return Some(JsxChild::Expr(child));
-            }
-            let Some(child) = children.next() else {
-                let rest = Span::new(at, end);
-                at = end;
-                return (!rest.is_empty()).then_some(JsxChild::Whitespace(rest));
-            };
-            let span = child.jsx_container_span().unwrap_or_else(|| child.span());
-            let before = Span::new(at, span.start);
-            at = span.end;
-            if before.is_empty() {
-                return Some(JsxChild::Expr(child));
-            }
-            pending = Some(child);
-            Some(JsxChild::Whitespace(before))
-        })
+    pub fn children_with_whitespace(self) -> JsxChildren<'a> {
+        let at = self.opening_span().end;
+        JsxChildren {
+            at,
+            end: self.closing_span().map_or(at, |it| it.start),
+            children: self.children().iter(),
+            pending: None,
+        }
     }
 
     #[inline]

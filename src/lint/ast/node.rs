@@ -299,6 +299,7 @@ impl<'a> Node<'a> {
                 Some(&MemberOwner::TypeLiteral(t)) => Node::Type(TypeNode::new(file, t)),
                 Some(MemberOwner::None) | None => Node::File(file),
             },
+            Node::Prop(p) if file.is_import_attribute(p.id()) => file.parents().of_import_attribute(file, p.id()),
             Node::Prop(p) => match bound.prop_owner.get(p.id().idx()) {
                 Some(&owner) if owner.is_some() => Node::Expr(Expr::new(file, owner)),
                 _ => Node::File(file),

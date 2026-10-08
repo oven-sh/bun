@@ -1,12 +1,17 @@
 //! `bun-lint ast ..`
 //!
-//! - `estree <file>`: the ESTree of a file as JSON.
-//! - `estree-batch <inputs.jsonl>`: the same for many. A line of the input is
+//! - `estree <file> [--espree]`: the ESTree of a file as JSON, as typescript-estree or as espree
+//!   has it.
+//! - `estree-batch <inputs.jsonl> [--espree]`: the same for many. A line of the input is
 //!   `{"id": .., "filename": .., "code": ..}`, a line of the output `{"id": .., "ast": ..}` or
 //!   `{"id": .., "error": ..}`.
+//! - `schema`: the types of ESTree nodes with their fields and visitor keys, as JSON.
 //! - `check <file>..`: whether `bun_lint::ast` is consistent with itself for these files.
 //! - `check-batch <inputs.jsonl>`: the same for many, summarized by the kind of problem.
 //! - `bench <file>`: how long the ways through a file take.
+
+#[path = "estree/json.rs"]
+mod estree_json;
 
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{
@@ -14,7 +19,8 @@ use bun_lint::ast::{
     assign_op_text, bin_op_text, un_op_text,
 };
 use bun_lint::context::Severity;
-use bun_lint::estree::{NodeType, Sink};
+use bun_lint::estree::{NodeType, VNode, Value};
+use bun_lint::language::{Parser, SourceType};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::rule::{Kind, Listeners, Meta, Rule};
@@ -26,8 +32,9 @@ use std::sync::Mutex;
 
 pub(crate) fn run(args: &[String]) {
     match args {
-        [command, path] if command == "estree" => estree(path),
-        [command, path] if command == "estree-batch" => estree_batch(path),
+        [command, path, flags @ ..] if command == "estree" => estree(path, &language_of(flags)),
+        [command, path, flags @ ..] if command == "estree-batch" => estree_batch(path, &language_of(flags)),
+        [command] if command == "schema" => schema(),
         [command, paths @ ..] if command == "check" && !paths.is_empty() => check_files(paths),
         [command, path] if command == "check-batch" => check_batch(path),
         [command, path] if command == "bench" => bench(path),
@@ -36,6 +43,19 @@ pub(crate) fn run(args: &[String]) {
 }
 
 // ───────────────────────────── inputs ─────────────────────────────
+
+/// What makes the ESTree that of `parse(code)` of typescript-estree, or with `--espree` that of
+/// espree for a module.
+fn language_of(flags: &[String]) -> LanguageOptions {
+    match flags.iter().any(|it| it == "--espree") {
+        true => LanguageOptions::default(),
+        false => LanguageOptions {
+            parser: Parser::TypeScript,
+            source_type: SourceType::Script,
+            ..LanguageOptions::default()
+        },
+    }
+}
 
 struct Input {
     id: String,
@@ -59,10 +79,13 @@ fn read_inputs(path: &str) -> Vec<Input> {
 }
 
 /// Calls `then` with the file of `input`. `Err` if it panics.
-fn with_input<R>(input: &Input, then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> Result<R, String> {
-    let language = LanguageOptions::default();
+fn with_input<R>(
+    input: &Input,
+    language: &LanguageOptions,
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> Result<R, String> {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::with_file(&input.filename, &input.code, &language, then)
+        crate::with_file(&input.filename, &input.code, language, then)
     }));
     outcome.map_err(|panic| match panic.downcast_ref::<String>() {
         Some(message) => message.clone(),
@@ -72,22 +95,20 @@ fn with_input<R>(input: &Input, then: impl for<'a> FnOnce(&'a File<'a>) -> R) ->
 
 // ───────────────────────────── ESTree ─────────────────────────────
 
-fn estree(path: &str) {
+fn estree(path: &str, language: &LanguageOptions) {
     let code = std::fs::read(path).expect("the file");
-    crate::with_file(path, &code, &LanguageOptions::default(), |file| {
+    crate::with_file(path, &code, language, |file| {
         if file.has_parse_errors() {
             return println!("the parser rejects the code");
         }
         let mut out = Vec::new();
-        if !bun_lint::estree::write_json(file, &mut out) {
-            return println!("the syntax is nested too deeply");
-        }
+        estree_json::write_json(file, &mut out);
         out.push(b'\n');
         let _ = std::io::stdout().write_all(&out);
     });
 }
 
-fn estree_batch(path: &str) {
+fn estree_batch(path: &str, language: &LanguageOptions) {
     std::panic::set_hook(Box::new(|_| {}));
     let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
     let mut out = Vec::new();
@@ -95,10 +116,12 @@ fn estree_batch(path: &str) {
         out.clear();
         let _ = write!(out, "{{\"id\":{:?},\"ast\":", input.id);
         let prefix = out.len();
-        let outcome = with_input(&input, |file| match file.has_parse_errors() {
+        let outcome = with_input(&input, language, |file| match file.has_parse_errors() {
             true => Err("parse".to_owned()),
-            false if bun_lint::estree::write_json(file, &mut out) => Ok(()),
-            false => Err("depth".to_owned()),
+            false => {
+                estree_json::write_json(file, &mut out);
+                Ok(())
+            }
         });
         if let Err(error) = outcome.map_err(|panic| format!("panic: {panic}")).flatten() {
             out.truncate(prefix - "\"ast\":".len());
@@ -107,6 +130,25 @@ fn estree_batch(path: &str) {
         out.extend_from_slice(b"}\n");
         let _ = stdout.write_all(&out);
     }
+}
+
+fn schema() {
+    let mut types = Vec::new();
+    for node_type in NodeType::ALL {
+        let names = |only: &dyn Fn(&bun_lint::estree::FieldEntry) -> bool| {
+            let fields = node_type.fields().iter().filter(|it| only(it));
+            fields.map(|it| format!("{:?}", it.field.name())).collect::<Vec<_>>().join(",")
+        };
+        types.push(format!(
+            "{:?}:{{\"keys\":[{}],\"espreeKeys\":[{}],\"fields\":[{}],\"espreeFields\":[{}]}}",
+            node_type.name(),
+            names(&|it| it.is_child),
+            names(&|it| it.is_child && !it.is_typescript_only),
+            names(&|_| true),
+            names(&|it| !it.is_typescript_only),
+        ));
+    }
+    println!("{{{}}}", types.join(","));
 }
 
 // ───────────────────────────── self-check ─────────────────────────────
@@ -376,61 +418,70 @@ fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
     }
 }
 
-/// Collects what the ESTree of a file says about things that `bun_lint::ast` has an accessor for.
-#[derive(Default)]
-struct Facts {
-    chains: Vec<Span>,
-    directives: Vec<Span>,
-    open: Vec<(NodeType, Span)>,
-    is_directive: bool,
-}
-
-impl Sink for Facts {
-    fn start_node(&mut self, node_type: NodeType, span: Span) {
-        if node_type == NodeType::ChainExpression {
-            self.chains.push(span);
-        }
-        self.open.push((node_type, span));
-    }
-    fn end_node(&mut self) {
-        self.open.pop();
-    }
-    fn start_object(&mut self) {}
-    fn end_object(&mut self) {}
-    fn start_list(&mut self) {}
-    fn end_list(&mut self) {}
-    fn field(&mut self, name: &'static str) {
-        self.is_directive = name == "directive";
-    }
-    fn null(&mut self) {}
-    fn boolean(&mut self, _: bool) {}
-    fn number(&mut self, _: f64) {}
-    fn string(&mut self, _: &[u8]) {
-        // typescript-estree has directives in static blocks, ESLint's own parser has not.
-        let in_static_block = self.open.len() >= 2 && self.open[self.open.len() - 2].0 == NodeType::StaticBlock;
-        if std::mem::take(&mut self.is_directive)
-            && !in_static_block
-            && let Some(&(_, span)) = self.open.last()
-        {
-            self.directives.push(span);
-        }
-    }
-}
-
-/// Compares accessors that answer from below with the ESTree, which is made from above.
-fn check_against_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems: &mut Vec<Problem>) {
-    let mut facts = Facts::default();
-    bun_lint::estree::convert(file, &mut facts);
+/// Goes down the virtual ESTree and checks each edge, and compares accessors of `bun_lint::ast` that
+/// answer from below with the tree, which is made from above.
+fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems: &mut Vec<Problem>) {
+    let describe_v = |v: VNode| format!("{} of {}", v.node_type().name(), describe(v.base()));
+    let place_v = |v: VNode| format!("{v:?} {:?} {:?}", v.span(), String::from_utf8_lossy(file.slice(v.span())).chars().take(50).collect::<String>());
+    let mut all: HashMap<VNode, u32> = HashMap::new();
     let (mut chains, mut directives) = (Vec::new(), Vec::new());
+    let mut pending = vec![VNode::program(file)];
+    while let Some(v) = pending.pop() {
+        let times = all.entry(v).or_insert(0);
+        *times += 1;
+        if *times > 1 {
+            problems.push((format!("estree: reached twice: {}", describe_v(v)), place_v(v)));
+            continue;
+        }
+        let node_type = v.node_type();
+        if !node_type.listens_to().contains(v.base()) {
+            problems.push((format!("estree: listens_to lacks {}", describe_v(v)), place_v(v)));
+        }
+        if node_type == NodeType::ChainExpression {
+            chains.push(v.span());
+        }
+        // typescript-estree has directives in static blocks, ESLint's own parser has not.
+        let in_static_block = v.parent().is_some_and(|it| it.node_type() == NodeType::StaticBlock);
+        if !in_static_block && matches!(v.field(bun_lint::estree::Field::Directive), Value::Str(_)) {
+            directives.push(v.span());
+        }
+        v.for_each_child(|child| {
+            if child.parent() != Some(v) {
+                let actual = child.parent().map_or("none".to_owned(), describe_v);
+                let kind = format!("estree: parent of {} in {} is {actual}", describe_v(child), describe_v(v));
+                problems.push((kind, place_v(child)));
+            }
+            pending.push(child);
+        });
+    }
+    // Every node is found from the node of `bun_lint::ast` that it is made of, and nothing else.
+    let mut found: HashMap<VNode, u32> = HashMap::new();
+    for &node in reached.keys() {
+        VNode::for_each_at(node, &mut |v| *found.entry(v).or_insert(0) += 1);
+    }
+    for (&v, &times) in &found {
+        if times > 1 {
+            problems.push((format!("estree: for_each_at finds twice: {}", describe_v(v)), place_v(v)));
+        }
+        if !all.contains_key(&v) {
+            problems.push((format!("estree: for_each_at finds what is not in the tree: {}", describe_v(v)), place_v(v)));
+        }
+    }
+    for &v in all.keys() {
+        if !found.contains_key(&v) {
+            problems.push((format!("estree: for_each_at does not find {}", describe_v(v)), place_v(v)));
+        }
+    }
+    let (mut chain_roots, mut with_directive) = (Vec::new(), Vec::new());
     for &node in reached.keys() {
         match node {
-            Node::Expr(e) if e.is_chain_root() => chains.push(e.span()),
-            Node::Stmt(s) if s.directive().is_some() => directives.push(s.span()),
+            Node::Expr(e) if e.is_chain_root() => chain_roots.push(e.span()),
+            Node::Stmt(s) if s.directive().is_some() => with_directive.push(s.span()),
             _ => {}
         }
     }
     for (what, mut expected, mut actual) in
-        [("is_chain_root", facts.chains, chains), ("directive", facts.directives, directives)]
+        [("is_chain_root", chains, chain_roots), ("directive", directives, with_directive)]
     {
         expected.sort();
         actual.sort();
@@ -482,7 +533,7 @@ impl Rule for Everything {
         on.finish(|_, cx| {
             let mut problems = Vec::new();
             let reached = check_tree(cx.file(), &mut problems);
-            check_against_estree(cx.file(), &reached, &mut problems);
+            check_estree(cx.file(), &reached, &mut problems);
             for (&node, &times) in &cx.state {
                 if times > 1 {
                     problems.push((format!("listener called twice: {}", describe(node)), place(node)));
@@ -518,7 +569,7 @@ fn check<'a>(file: &'a File<'a>) -> Vec<Problem> {
 fn check_files(paths: &[String]) {
     for path in paths {
         let code = std::fs::read(path).expect("the file");
-        crate::with_file(path, &code, &LanguageOptions::default(), |file| {
+        crate::with_file(path, &code, &language_of(&[]), |file| {
             if file.has_parse_errors() {
                 return println!("{path}: the parser rejects the code");
             }
@@ -535,7 +586,7 @@ fn check_batch(path: &str) {
     let (mut checked, mut rejected, mut with_problems) = (0, 0, 0);
     let mut by_kind: BTreeMap<String, (usize, Vec<String>)> = BTreeMap::new();
     for input in &inputs {
-        let outcome = with_input(input, |file| (!file.has_parse_errors()).then(|| check(file)));
+        let outcome = with_input(input, &language_of(&[]), |file| (!file.has_parse_errors()).then(|| check(file)));
         let problems = match outcome {
             Ok(None) => {
                 rejected += 1;
@@ -611,7 +662,7 @@ fn bench(path: &str) {
         });
         time("estree json", &mut || {
             let mut out = Vec::new();
-            bun_lint::estree::write_json(file, &mut out);
+            estree_json::write_json(file, &mut out);
             out.len()
         });
     });

@@ -26,7 +26,7 @@ pub mod walk;
 
 pub use decl::*;
 pub use expr::*;
-pub use list::List;
+pub use list::{Iter as ListIter, List};
 pub use name::{Ident, Name};
 pub use node::{Ancestors, Node};
 pub use pat::*;
@@ -279,11 +279,12 @@ impl<'a> File<'a> {
 
     /// ESLint's `Program.sourceType` is `"module"`. ESLint's own parser repeats
     /// `languageOptions.sourceType`. `@typescript-eslint/parser` also says so of every file that
-    /// [has module syntax](File::has_module_syntax).
+    /// [has module syntax](File::has_module_syntax) or an `import.meta`.
     pub fn is_module_program(&self) -> bool {
         use crate::language::{Parser, SourceType};
         self.language.scope_source_type() == SourceType::Module
-            || self.language.parser == Parser::TypeScript && self.has_module_syntax
+            || self.language.parser == Parser::TypeScript
+                && (self.has_module_syntax || self.hir.exprs.iter().any(|it| matches!(it.kind, hir::ExprKind::ImportMeta)))
     }
 
     /// It has an `import` or an `export` at the top level, or its extension says that it is a
@@ -346,6 +347,12 @@ impl<'a> File<'a> {
     #[inline]
     pub(crate) fn name(&'a self, atom: Atom) -> Name<'a> {
         Name::new(self, atom)
+    }
+
+    /// `text` as a name.
+    #[inline]
+    pub(crate) fn intern(&'a self, text: &[u8]) -> Name<'a> {
+        Name::new(self, self.atoms.intern(text))
     }
 
     #[inline]

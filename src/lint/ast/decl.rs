@@ -534,6 +534,12 @@ impl<'a> Key<'a> {
         matches!(self.kind, KeyKind::Private(_))
     }
 
+    /// It is the name of a JSX attribute.
+    #[inline]
+    pub fn is_jsx(self) -> bool {
+        self.is_jsx
+    }
+
     /// The name of the property, unless it takes evaluating an expression to know it. That of
     /// `#a` includes the `#`.
     pub fn name(self) -> Option<Name<'a>> {
@@ -971,6 +977,13 @@ impl<'a> Prop<'a> {
         self.raw().name_kind == NameKind::Jsx
     }
 
+    /// It is a `key: "value"` of `with { .. }` after a module specifier or in an import type:
+    /// [`ImportAttributes::entries`]. It is not a node of the tree, its value is.
+    #[inline]
+    pub fn is_import_attribute(self) -> bool {
+        self.file.is_import_attribute(self.id)
+    }
+
     /// From its first token: `async`, `get`, `set`, `*`, `...`, or the name.
     pub fn span(self) -> Span {
         let raw = self.raw();
@@ -981,7 +994,8 @@ impl<'a> Prop<'a> {
         Span::new(raw.start, end)
     }
 
-    /// The object literal or the JSX element.
+    /// The object literal or the JSX element. For an [import attribute](Prop::is_import_attribute),
+    /// the `Stmt` of the import or the export, or the `TypeNode` of the import type.
     #[inline]
     pub fn parent(self) -> Node<'a> {
         Node::Prop(self).parent()

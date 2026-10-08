@@ -43,7 +43,11 @@ fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Format
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),
     });
-    string_width(&printed) as usize
+    // With a line break in it, it is not one string to Prettier, which asks for the width of nothing else.
+    match bun_core::strings::contains_char(&printed, b'\n') {
+        true => usize::MAX,
+        false => string_width(&printed) as usize,
+    }
 }
 
 impl<'a> Format<'a> for FormatKey<'a> {

@@ -20,7 +20,7 @@ use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{Declaration, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind};
+use bun_sema::bind::{BindOptions, bind_for_lint};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
@@ -77,6 +77,7 @@ pub struct Graph<'h> {
     store: &'h Store,
     /// By the path of the `tsconfig.json`. Empty: there is none.
     resolvers: ShardedMap<Vec<u8>, Resolver<'h>>,
+    loading: Guarded<()>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
@@ -114,7 +115,7 @@ pub fn with_file<R>(
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind(&hir, bind_options, &atoms, arena);
+    let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
     if hir.ran_out_of_stack || bound.ran_out_of_stack {
         return None;
     }
@@ -145,6 +146,7 @@ impl<'h> Graph<'h> {
         Graph {
             store,
             resolvers: ShardedMap::default(),
+            loading: Guarded::new(()),
             configs: ShardedMap::default(),
             packages: ShardedMap::default(),
             recorded: Guarded::new(Vec::new()),
@@ -163,7 +165,7 @@ impl<'h> Graph<'h> {
             options.push((b"module".to_vec(), Json::String(b"esnext".to_vec())));
             options.push((b"moduleResolution".to_vec(), Json::String(b"bundler".to_vec())));
             // With a file, so that the directory is not searched for files.
-            without_config(disk, directory, Json::Object(options), vec![b"index.ts".to_vec()])
+            without_config(&WithoutListings(disk), directory, Json::Object(options), vec![b"index.ts".to_vec()])
         })
     }
 
@@ -176,6 +178,11 @@ impl<'h> Graph<'h> {
                 self.configs.insert_ref(directory.to_vec(), found)
             }
         };
+        if let Some(resolver) = self.resolvers.get_ref(&config[..]) {
+            return resolver;
+        }
+        // One thread reads a configuration, the others that need it wait.
+        let _loading = self.loading.lock();
         if let Some(resolver) = self.resolvers.get_ref(&config[..]) {
             return resolver;
         }
@@ -450,7 +457,8 @@ impl Host for WithoutListings<'_> {
     fn parse_package_json(&self, arena: &bun_sema::session::Arena, text: &[u8]) -> Option<Json> {
         self.0.parse_package_json(arena, text)
     }
+    /// On this thread: it can be one of a pool, all of whose threads would wait for each other.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        self.0.parallel(count, work);
+        (0..count).for_each(work);
     }
 }

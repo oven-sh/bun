@@ -589,10 +589,7 @@ impl Parser<'_> {
             let member = self.start();
             let (name, name_kind) = match self.token() {
                 T::String => (self.lx.atom, NameKind::StringLiteral),
-                token if token.is_identifier_or_keyword() => {
-                    let name = self.note_identifier(self.lx.atom, member.pos);
-                    (name, NameKind::Identifier)
-                }
+                token if token.is_identifier_or_keyword() => (self.lx.atom, NameKind::Identifier),
                 // A number, a computed name and so on are errors.
                 _ => {
                     self.refuse(Refusal::Reported);

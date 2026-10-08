@@ -92,6 +92,14 @@ function ask(sourceCode: any, ast: any, seed: number): { queries: Query[]; expec
     add("paddedBetween", a, b, false, () => ranges(sourceCode.getTokensBetween(a, b, 1)));
     add("commentsExist", a, b, false, () => [Number(sourceCode.commentsExistBetween(a, b))]);
   }
+  // Not a method of ESLint.
+  for (let i = 0; i < 20; i++) {
+    const offset = next(sourceCode.text.length + 1);
+    const point: Target = { type: "offset", range: [offset, offset] };
+    const around = (list: Target[]) => list.filter(it => it.range[0] <= offset && offset < it.range[1]);
+    add("around", point, [0, 0], false, () => ranges(around(ast.tokens)));
+    add("around", point, [0, 0], true, () => ranges(around([...ast.tokens, ...ast.comments])));
+  }
   // Neighbours, which is what rules ask about.
   const inOrder = [...ast.tokens, ...ast.comments].sort((a, b) => a.range[0] - b.range[0]);
   for (let i = 0; i + 1 < inOrder.length && i < 60; i++) {

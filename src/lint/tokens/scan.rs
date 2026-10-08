@@ -369,16 +369,21 @@ const fn first_equal_to(bytes: u64, byte: u8) -> u64 {
 }
 
 /// The position of the first byte of `text` from `at` that is one of `stops`, or the end of `text`.
-///
-/// What is searched for is some tens of bytes away: too near for a call of a vectorized search of
-/// `bun_core::strings` to pay off.
 #[inline]
-fn find<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
+fn find(text: &[u8], at: usize, stops: &[u8]) -> usize {
+    let rest = text.get(at..).unwrap_or_default();
+    strings::index_of_any(rest, stops).map_or(text.len(), |found| at + found)
+}
+
+/// `find` for what is likely within a few bytes, as the end of a string is: too near for the call
+/// of a vectorized search to pay off.
+#[inline]
+fn find_nearby<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
     let first = |bytes: u64| {
         let found = stops.iter().fold(0, |found, &stop| found | first_equal_to(bytes, stop));
         (found & HIGH_BITS).trailing_zeros() / 8
     };
-    loop {
+    for _ in 0..2 {
         let chunk = Chunk::at(text, at);
         let (low, high) = (first(chunk.0), first(chunk.1));
         let plain = (low + if low == 8 { high } else { 0 }) as usize;
@@ -387,6 +392,7 @@ fn find<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
             return at.min(text.len());
         }
     }
+    find(text, at, &stops)
 }
 
 /// 16 bytes of the text, to classify at once: a loop over the bytes of a word or of an indentation
@@ -750,9 +756,9 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
             let regex = self.marks.next_regex(self.at);
             let code = &text[..regex.map_or(text.len(), |regex| regex.0)];
             let at = match (self.frames.is_empty(), self.marks.elements.list.is_empty()) {
-                (true, true) => find(code, self.at, [b'/', b'"', b'\'', b'`']),
-                (true, false) => find(code, self.at, [b'/', b'"', b'\'', b'`', b'<']),
-                (false, _) => find(code, self.at, [b'/', b'"', b'\'', b'`', b'<', b'>', b'{', b'}']),
+                (true, true) => find(code, self.at, b"/\"'`"),
+                (true, false) => find(code, self.at, b"/\"'`<"),
+                (false, _) => find(code, self.at, b"/\"'`<>{}"),
             };
             if at == code.len() {
                 self.at = regex.map_or(text.len(), |regex| regex.1);
@@ -1064,7 +1070,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
         loop {
-            end = find(text, end, [quote, b'\\', b'\n', b'\r']);
+            end = find_nearby(text, end, [quote, b'\\', b'\n', b'\r']);
             match text.get(end) {
                 Some(b'\\') => end += if text[end + 1..].starts_with(b"\r\n") { 3 } else { 2 },
                 Some(&b) => {
@@ -1083,7 +1089,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
         loop {
-            end = find(text, end, [b'`', b'\\', b'$']) + 1;
+            end = find(text, end, b"`\\$") + 1;
             match self.byte(end - 1) {
                 b'\\' => end += 1,
                 b'$' if self.byte(end) == b'{' => {
@@ -1113,7 +1119,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
         let mut end = self.at + 2;
         loop {
             // 0xE2 starts U+2028 and U+2029, which end a line too.
-            end = find(text, end, [b'\n', b'\r', 0xE2]);
+            end = find(text, end, b"\n\r\xE2");
             if self.byte(end) != 0xE2 || lexer::starts_with_line_break(&text[end..]) {
                 break;
             }
@@ -1123,15 +1129,9 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
     }
 
     fn block_comment(&mut self) {
-        let text = self.text;
-        let mut end = self.at + 3;
-        loop {
-            end = find(text, end, [b'/']) + 1;
-            if end > text.len() || text[end - 2] == b'*' {
-                break;
-            }
-        }
-        self.comment(TokenKind::Block, end.min(text.len()));
+        let rest = &self.text[self.at + 2..];
+        let len = strings::index_of(rest, b"*/").map_or(rest.len(), |found| found + 2);
+        self.comment(TokenKind::Block, self.at + 2 + len);
     }
 
     /// Past whitespace and comments.
@@ -1193,7 +1193,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
                     return Mode::Code;
                 }
                 b'"' | b'\'' => {
-                    self.token(TokenKind::JsxText, at, find(self.text, at + 1, [first]) + 1);
+                    self.token(TokenKind::JsxText, at, find_nearby(self.text, at + 1, [first]) + 1);
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80.. => self.jsx_name(),
                 _ => self.punctuator(1),
@@ -1238,7 +1238,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
     /// The text between JSX tags, up to and including the `{` or the `<` that ends it.
     fn children(&mut self) -> Mode {
         let (text, start) = (self.text, self.at);
-        let end = find(text, start, [b'{', b'<']);
+        let end = find(text, start, b"{<");
         if end > start {
             self.token(TokenKind::JsxText, start, end);
         }

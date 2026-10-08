@@ -116,6 +116,7 @@ fn answer<'a>(file: &'a File<'a>, query: &[Json]) -> Vec<u32> {
         b"tokenAfter" => one(file.token_after(a), &mut || file.tokens_after(a).with_comments().next()),
         b"secondBefore" => ranges(&mut with(file.tokens_before(a)).nth(1).into_iter()),
         b"at" => one(file.token_at(a.start), &mut || file.token_or_comment_at(a.start)),
+        b"around" => one(file.token_around(a.start), &mut || file.token_or_comment_around(a.start)),
         b"commentsBefore" => ranges(&mut file.comments_before(a)),
         b"commentsAfter" => ranges(&mut file.comments_after(a)),
         b"commentsIn" => ranges(&mut file.comments_in(a)),

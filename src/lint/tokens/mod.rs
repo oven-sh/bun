@@ -41,6 +41,7 @@
 //! | `getTokens(node, 1, 2)`, `getTokensBetween(a, b, 1)` | `.padded(1, 2)`, `.padded(1, 1)` |
 //! | `getTokenByRangeStart(i)` | `file.token_at(i)` |
 //! | `getTokenByRangeStart(i, { includeComments: true })` | `file.token_or_comment_at(i)` |
+//! | (what is at an index of the text) | `file.token_around(i)`, `file.comment_around(i)`, `file.token_or_comment_around(i)` |
 //! | `ast.tokens` | `file.tokens()` |
 //! | `getAllComments()`, `ast.comments` | `file.comments()` |
 //! | `getCommentsBefore(x)` | `file.comments_before(x)` |
@@ -364,6 +365,12 @@ fn within(all: &[RawToken], span: Span) -> &[RawToken] {
     &all[first..first + count]
 }
 
+/// The one of `all` that `offset` is in.
+fn around(all: &[RawToken], offset: u32) -> Option<&RawToken> {
+    let after = all.partition_point(|token| token.start <= offset);
+    all.get(after.checked_sub(1)?).filter(|token| offset < token.end)
+}
+
 /// Whether there is nothing but whitespace in `text`, which is next to a comment.
 fn is_whitespace(text: &[u8]) -> bool {
     let mut at = 0;
@@ -512,6 +519,21 @@ impl<'a> File<'a> {
             let at = comments.binary_search_by_key(&offset, |comment| comment.start).ok()?;
             self.token(comments.get(at))
         })
+    }
+
+    /// The token that `offset` is in: `start <= offset < end`. `None` between tokens.
+    pub fn token_around(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.token(around(self.raw_tokens(), offset))
+    }
+
+    /// The comment that `offset` is in.
+    pub fn comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.token(around(self.raw_comments(), offset))
+    }
+
+    /// The token or the comment that `offset` is in. `None` in whitespace.
+    pub fn token_or_comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.comment_around(offset).or_else(|| self.token_around(offset))
     }
 
     fn comments_within(&'a self, span: Span) -> Tokens<'a> {

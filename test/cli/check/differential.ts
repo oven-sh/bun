@@ -26,15 +26,16 @@ export const env = {
   NO_COLOR: "1",
 };
 
-/** What `cmd` prints, sorted, without the path of `root`. */
+/** What `cmd` prints, without the path of `root`. And how it ended, if it crashed: that prints nothing. */
 export async function linesOf(cmd: string[], cwd: string, root: string) {
   await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const prefix = new RegExp(root.replaceAll("\\", "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
   return stdout
     .split(/\r?\n/)
     .filter(line => line.trim())
-    .map(line => line.replace(prefix, ""));
+    .map(line => line.replace(prefix, ""))
+    .concat(exitCode < 128 && !proc.signalCode ? [] : [`exit code ${exitCode}, signal ${proc.signalCode}`]);
 }
 
 /**
@@ -110,15 +111,18 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             }
           });
         const different: Record<string, object> = {};
-        await inTurns([...cases.entries()], async ([index, [name, it]]) => {
+        await inTurns(cases, async ([name, it]) => {
           const cwd = join(root, name);
-          // In this order: `tsc -b` writes files.
           const build = it.build ? ["-b"] : [];
-          // One thread checks all files in one task, several divide them. Every other program takes the first way.
-          const threads = index % 2 ? ["--threads=1"] : [];
-          const ours = await linesOf([bunExe(), "check", ...build, ...threads], cwd, root);
+          // One thread divides the files in another way.
+          const [ours, onOneThread] = await Promise.all([
+            linesOf([bunExe(), "check", ...build], cwd, root),
+            linesOf([bunExe(), "check", ...build, "--threads=1"], cwd, root),
+          ]);
+          // After them: `tsc -b` writes files.
           const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
+          else if (!Bun.deepEquals(theirs, onOneThread)) different[name] = { theirs, onOneThread };
         });
         expect(different).toEqual({});
       },

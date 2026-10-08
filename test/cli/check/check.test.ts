@@ -2907,6 +2907,37 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // The literal has its members when the properties that assignments declare are added, and above eight properties
+    // a name is looked up in an index.
+    test.each([
+      ["allowJs alone", [], "", 0],
+      [
+        "checkJs",
+        ["--checkJs"],
+        `a.js(5,5): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ a(): void; b(): void; c(): void; d(): void; e(): void; f(): void; g(): void; h(): void; i(): void; }'.
+a.js(5,10): error TS2304: Cannot find name 'k'.`,
+        1,
+      ],
+    ])(
+      "an object literal of nine methods in JavaScript, one of which assigns to this[k], %s",
+      async (_, flags, expected, code) => {
+        using dir = project({
+          "a.js": `const o = {
+  a() {}, b() {}, c() {}, d() {},
+  e() {}, f() {}, g() {},
+  h() {
+    this[k] = 1;
+  },
+  i() {},
+};
+`,
+        });
+        const { stdout, exitCode } = await check(dir, ["--allowJs", ...flags]);
+        expect(stdout).toBe(expected);
+        expect(exitCode).toBe(code);
+      },
+    );
+
     // The way Kobalte types a component that renders as any element. Where `Elements[keyof Elements]` is a
     // parameter its members meet in one intersection. Whether that is `never` is decided name by name, and
     // comparing every pair of members for every name took minutes here.

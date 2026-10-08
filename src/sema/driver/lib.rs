@@ -184,6 +184,13 @@ pub struct PlanOptions {
     pub split_publishes_everything: bool,
     /// Whether one thread gets the plan of several. For measuring the tasks one at a time.
     pub tasks_on_one_thread: bool,
+    /// The cost estimate at which a task of `Plan::of_one_thread` is complete.
+    pub one_thread_task_cost: usize,
+    /// The cost estimate of a program above which one thread gets the plan of several. The tasks of
+    /// `Plan::of_one_thread` publish nothing, so each begins with nothing: VS Code, of three times
+    /// this cost, takes 8% to 25% longer in 13 to 4 of them, and 6% longer and 1.8 times the memory
+    /// in one.
+    pub one_thread_max_cost: usize,
     /// `--checkers`. Nonzero: `checkerPool` is used, and none of the above applies.
     pub checkers: usize,
     /// One checker (`checkers`) hands out symbol ids as `tsc --singleThreaded` does. Not for
@@ -208,6 +215,8 @@ impl Default for PlanOptions {
             split_tolerates: 0,
             split_publishes_everything: false,
             tasks_on_one_thread: false,
+            one_thread_task_cost: 256 << 10,
+            one_thread_max_cost: 1 << 20,
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
@@ -249,17 +258,24 @@ impl Plan {
         }
     }
 
-    /// All `count` files in program order, like `tsc --singleThreaded`. Every task computes its own
-    /// copy of what it shares with the other tasks of its step. That occupies threads that have
-    /// nothing else to do, and one thread has: it is a fifth to a half of all the work.
-    fn of_one_thread(count: usize) -> Plan {
-        Plan {
-            steps: match count {
-                0 => Vec::new(),
-                _ => vec![vec![(0..count).collect()]],
-            },
-            ahead: Vec::new(),
-        }
+    /// The tasks of one thread for `count` files: in program order, like `tsc --singleThreaded`,
+    /// and as few as `one_thread_task_cost` allows. Most programs are one task.
+    ///
+    /// Every task computes its own copy of what it shares with the other tasks of its step. That
+    /// occupies threads that have nothing else to do, and one thread has: with the plan of several
+    /// threads it is a fifth to a half of all the work. But a task keeps what it has computed until
+    /// it ends, so its size is what the memory grows by.
+    fn of_one_thread(
+        count: usize,
+        size_of: &dyn Fn(usize) -> usize,
+        options: &PlanOptions,
+    ) -> Vec<Task> {
+        let options = PlanOptions {
+            min_tasks: 0,
+            chunk_bytes: options.one_thread_task_cost,
+            ..*options
+        };
+        Plan::cut((0..count).collect(), size_of, &options)
     }
 
     /// `count`: the number of files to check. `size_of(i)`: the source size of file `i` in bytes.
@@ -3043,14 +3059,13 @@ fn check_named_files(
     // A type node is a type to compute too. A declaration file has no expressions: next.js checks one of 2.9 MB that takes 23% of the
     // instructions of the check.
     let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
-    let costs: Vec<usize> = (to_check.iter())
-        .map(|&file| {
-            let hir = program.files.hir(file);
-            let tags = hir.exprs.iter().map(|it| it.kind.tag());
-            let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
-            tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
-        })
-        .collect();
+    let cost_of = |file: FileId| {
+        let hir = program.files.hir(file);
+        let tags = hir.exprs.iter().map(|it| it.kind.tag());
+        let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
+        tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+    };
+    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
     // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
     // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
@@ -3083,10 +3098,20 @@ fn check_named_files(
         }
         ranges
     };
+    // Of all the files, so that those that are only emitted are not divided over an empty published state.
+    let cost =
+        costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
+    let is_one_thread = threads == 1
+        && !request.plan_options.tasks_on_one_thread
+        && cost <= request.plan_options.one_thread_max_cost;
     let plan = match request.plan_options.checkers {
-        0 if threads == 1 && !request.plan_options.tasks_on_one_thread => {
-            Plan::of_one_thread(to_check.len())
-        }
+        0 if is_one_thread => Plan {
+            steps: match Plan::of_one_thread(to_check.len(), &size_of, &request.plan_options) {
+                tasks if tasks.is_empty() => Vec::new(),
+                tasks => vec![tasks],
+            },
+            ahead: Vec::new(),
+        },
         0 => Plan::new(
             to_check.len(),
             &bytes_of,
@@ -3272,12 +3297,20 @@ fn check_named_files(
             }
         }
         if !type_checked {
-            // Not a function of the thread count, like the tasks of the plan.
-            let tasks = request.plan_options.min_tasks.max(1);
-            let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
-            let tasks: Vec<&[FileId]> = tasks.collect();
+            // Like the tasks of the plan.
+            let tasks: Vec<Vec<FileId>> = if is_one_thread {
+                let cost_of = |index: usize| cost_of(only_emitted[index]);
+                Plan::of_one_thread(only_emitted.len(), &cost_of, &request.plan_options)
+                    .into_iter()
+                    .map(|task| task.into_iter().map(|index| only_emitted[index]).collect())
+                    .collect()
+            } else {
+                let tasks = request.plan_options.min_tasks.max(1);
+                let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
+                tasks.map(<[FileId]>::to_vec).collect()
+            };
             host.parallel(tasks.len(), &|i| {
-                accept(check_chunk(tasks[i], expected, None));
+                accept(check_chunk(&tasks[i], expected, None));
             });
         }
         finish_files();

@@ -1802,6 +1802,9 @@ fn run_one(
             task_clock: None,
             plan_options: bun_sema_driver::PlanOptions {
                 reproduces_symbol_ids: false,
+                // The tests run side by side, each on one thread. The plan of several threads is the
+                // one with steps, publishing and validation.
+                tasks_on_one_thread: true,
                 ..Default::default()
             },
             retains_everything: false,

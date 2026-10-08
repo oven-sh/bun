@@ -27,7 +27,7 @@ const tsconfig = JSON.stringify({
   },
 });
 
-test.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
+test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
   using dir = tempDir("bun-check-differential", {
     "tsconfig.json": tsconfig,
     ...modulesInRings(isDebug || isASAN ? 24 : 60),

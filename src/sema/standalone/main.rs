@@ -282,6 +282,11 @@ fn run(args: &[String]) {
                 chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
                 min_tasks: number("--min-tasks=", defaults.min_tasks),
                 tasks_on_one_thread: has("--tasks-on-one-thread"),
+                one_thread_task_cost: number(
+                    "--one-thread-task-cost=",
+                    defaults.one_thread_task_cost,
+                ),
+                one_thread_max_cost: number("--one-thread-max-cost=", defaults.one_thread_max_cost),
                 type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
                 split_files: number("--split-files=", defaults.split_files as usize) as u32,
                 split_tolerates: number("--split-tolerates=", 0) as u8,

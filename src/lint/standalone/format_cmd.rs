@@ -19,6 +19,7 @@ mod bench;
 mod conformance;
 mod cursor;
 mod sort_imports;
+mod value;
 mod verify;
 
 use crate::host::{self, output, output_line};
@@ -528,6 +529,7 @@ pub(crate) fn run(args: &[String]) {
             conformance::run(&args, raw, bun_format_conformance::run_oxfmt_tests)
         }
         Some("check-idempotent") => check_idempotent(&args),
+        Some("value") => value::run(&args),
         Some("verify") => verify::verify(&args),
         Some("verify-pairs") => verify::verify_pairs(&args),
         Some("bench") => bench::bench(&args),

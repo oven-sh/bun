@@ -580,6 +580,10 @@ describe.concurrent("bun format", () => {
       [".prettierrc.yaml", `semi: false\n`],
       [".prettierrc.json5", `{ semi: false, }`],
       [".prettierrc.toml", `semi = false\n`],
+      [".prettierrc.yml", `\ufeffsemi: false\n`],
+      [".prettierrc", `x: &x\n  semi: false\noverrides:\n  - files: "*.ts"\n    options: *x\n`],
+      [".prettierrc.toml", `[[overrides]]\nfiles = "*.ts"\n[overrides.options]\nsemi = false\n`],
+      ["package.yaml", `name: p\nprettier:\n  semi: false\n`],
       [".prettierrc.js", `module.exports = { semi: false };`],
       [".prettierrc.mjs", `export default { semi: false };`],
       [".prettierrc.ts", `const semi: boolean = false;\nexport default { semi };`],
@@ -590,6 +594,26 @@ describe.concurrent("bun format", () => {
     test.each(configs)("%s: %s", async (name, text) => {
       const result = await format({ [name]: text, "src/a.ts": ugly }, ["src"], { reads: ["src/a.ts"] });
       expect(result.files).toEqual({ "src/a.ts": noSemi });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each([
+      [".prettierrc", `semi: [\n`],
+      [".prettierrc", `1\n`],
+      [".prettierrc.yaml", `a: b: c\n`],
+      [".prettierrc.json5", `{ semi: }`],
+      [".prettierrc.toml", `semi = \n`],
+    ])("%s that cannot be read: %s", async (name, text) => {
+      const result = await format({ [name]: text, "a.ts": ugly }, ["a.ts"], { reads: ["a.ts"] });
+      expect(result.files).toEqual({ "a.ts": ugly });
+      expect(result.stderr).toContain("Cannot load the configuration file");
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("a package.yaml that cannot be read has no configuration", async () => {
+      const files = { "package.yaml": `name: [\n`, ".prettierrc": `semi: false\n`, "a.ts": ugly };
+      const result = await format(files, ["a.ts"], { reads: ["a.ts"] });
+      expect(result.files).toEqual({ "a.ts": noSemi });
       expect(result.exitCode).toBe(0);
     });
 

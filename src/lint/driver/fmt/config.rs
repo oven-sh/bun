@@ -15,6 +15,7 @@ use crate::{evaluate, fs, paths};
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::sort_imports::{Settings as SortSettings, SortImports};
+use bun_lint::json::{self, Notation};
 use bun_lint::linter::{Glob, write_json};
 use bun_lint::options::Json;
 use bun_sema::util::FxHashMap;
@@ -502,32 +503,64 @@ impl<'c> Configs<'c> {
                 self.options.config_cache,
             )
         };
+        let fail = |why: &[u8]| {
+            Fatal([b"Cannot load the configuration file ", path, b":\n", why].concat())
+        };
+        let parse = |notation| json::parse_as(notation, &read()?).map_err(|why| fail(&why));
         let json = if name == b"package.json" {
             let text = read()?;
             // Most have no such word in them.
             if !strings::contains(&text, b"\"prettier\"") {
                 return Ok(None);
             }
-            match bun_lint::json::parse(&text)
+            match json::parse(&text)
                 .as_ref()
                 .and_then(|it| it.get(b"prettier"))
             {
                 None | Some(Json::Null | Json::Bool(false)) => return Ok(None),
-                // The name of a package.
-                Some(Json::String(_)) => run()?,
+                Some(config) => config.clone(),
+            }
+        } else if name == b"package.yaml" {
+            // One that cannot be read has no configuration, as for Prettier.
+            match json::parse_as(Notation::Yaml, &read()?)
+                .as_ref()
+                .ok()
+                .and_then(|it| it.get(b"prettier"))
+            {
+                None | Some(Json::Null | Json::Bool(false)) => return Ok(None),
                 Some(config) => config.clone(),
             }
         } else if name.ends_with(b".json") || name.ends_with(b".jsonc") {
-            bun_lint::json::parse(&read()?)
+            json::parse(&read()?)
                 .ok_or_else(|| Fatal([b"JSON Error in \"", path, b"\""].concat()))?
         } else if name == b".prettierrc" {
             // YAML, which JSON is a part of.
-            match bun_lint::json::parse(&read()?) {
+            let text = read()?;
+            match json::parse(&text) {
                 Some(json @ Json::Object(_)) => json,
-                _ => run()?,
+                _ => json::parse_as(Notation::Yaml, &text).map_err(|why| fail(&why))?,
             }
+        } else if name.ends_with(b".yaml") || name.ends_with(b".yml") {
+            parse(Notation::Yaml)?
+        } else if name.ends_with(b".json5") {
+            parse(Notation::Json5)?
+        } else if name.ends_with(b".toml") {
+            parse(Notation::Toml)?
         } else {
             run()?
+        };
+        let json = match json {
+            // The name of a package or of a file that has the configuration.
+            Json::String(_) => run()?,
+            Json::Bool(_) | Json::Number(_) => {
+                let kind: &[u8] = match json {
+                    Json::Bool(_) => b"boolean",
+                    _ => b"number",
+                };
+                let start: &[u8] = b"Config is only allowed to be an object, but received ";
+                return Err(fail(&[start, kind, b" in \"", path, b"\""].concat()));
+            }
+            json => json,
         };
         if matches!(json, Json::Null) {
             return Ok(None);

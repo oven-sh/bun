@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Disallow labeled statements.
 pub struct NoLabels {
@@ -36,19 +37,31 @@ impl NoLabels {
             StmtKind::Continue(Some(name)) => (name, UNEXPECTED_LABEL_IN_CONTINUE),
             _ => return,
         };
-        let target = Node::Stmt(stmt).ancestors().find_map(|it| match it.as_stmt()?.kind() {
-            StmtKind::Labeled { label, body } if label == name => Some(body),
-            _ => None,
-        });
-        if !target.is_some_and(|body| self.allows(body)) {
+        let is_allowed = cx.state.get(&name).and_then(|around| around.last());
+        if is_allowed != Some(&true) {
             cx.report(stmt, message);
+        }
+    }
+
+    /// In source order: before (`is_entered`) and after what is in a labeled statement, and at a `break` or a `continue`.
+    fn visit<'a>(&self, node: Node<'a>, is_entered: bool, cx: &mut Cx<'a, Self>) {
+        let Node::Stmt(stmt) = node else {
+            return;
+        };
+        match stmt.kind() {
+            StmtKind::Labeled { label, body } if is_entered => cx.state.entry(label).or_default().push(self.allows(body)),
+            StmtKind::Labeled { label, .. } => {
+                cx.state.get_mut(&label).and_then(Vec::pop);
+            }
+            _ => self.check_jump(stmt, cx),
         }
     }
 }
 
 impl Rule for NoLabels {
     const META: Meta = Meta::eslint("no-labels", Kind::Suggestion);
-    type State<'a> = ();
+    /// For each name, whether the labels of that name around the current statement are allowed, the innermost last.
+    type State<'a> = FxHashMap<Name<'a>, Vec<bool>>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -58,8 +71,15 @@ impl Rule for NoLabels {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         on.stmts([StmtTag::Labeled], Self::check_labeled);
-        on.stmts([StmtTag::Break, StmtTag::Continue], Self::check_jump);
+        if !self.allow_loop && !self.allow_switch {
+            // Whatever has the label.
+            on.stmts([StmtTag::Break, StmtTag::Continue], Self::check_jump);
+        } else if file.has_stmts([StmtTag::Labeled]) && file.has_stmts([StmtTag::Break, StmtTag::Continue]) {
+            on.enter([StmtTag::Labeled, StmtTag::Break, StmtTag::Continue], |rule, node, cx| rule.visit(node, true, cx));
+            on.exit(StmtTag::Labeled, |rule, node, cx| rule.visit(node, false, cx));
+        }
+        FxHashMap::default()
     }
 }

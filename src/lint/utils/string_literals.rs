@@ -83,7 +83,8 @@ impl<'a> StringLiteral<'a> {
                 name => name,
             },
             StringLiteralRole::AttributeKey => "ImportAttribute",
-            StringLiteralRole::Type | StringLiteralRole::ImportTypeSource => "TSLiteralType",
+            StringLiteralRole::Type => "TSLiteralType",
+            StringLiteralRole::ImportTypeSource => "TSImportType",
             StringLiteralRole::TypeTemplateElement => "TSTemplateLiteralType",
         }
     }

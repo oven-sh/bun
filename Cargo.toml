@@ -24,6 +24,10 @@ members = [
   "src/sema/baselines",
   "src/sema/driver",
   "src/sema/standalone",
+  "src/lint",
+  "src/lint/eslint",
+  "src/lint/typescript",
+  "src/lint/standalone",
   "src/semver",
   "src/sourcemap",
   "src/sql",
@@ -372,6 +376,9 @@ bun_safety = { path = "src/safety" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
+bun_lint = { path = "src/lint" }
+bun_lint_eslint = { path = "src/lint/eslint" }
+bun_lint_typescript = { path = "src/lint/typescript" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }

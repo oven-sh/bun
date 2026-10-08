@@ -68,7 +68,7 @@ mod related;
 mod related_expected;
 mod shape;
 mod sink;
-pub(crate) mod spans;
+pub mod spans;
 mod symbol_ids;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/symbol_writer.rs"]

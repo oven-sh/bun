@@ -1,0 +1,21 @@
+[package]
+name = "bun_lint_standalone"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bun-lint"
+path = "main.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_lint_eslint.workspace = true
+bun_lint_typescript.workspace = true
+bun_sema.workspace = true
+bun_sema_standalone = { path = "../../sema/standalone" }
+bun_js_parser.workspace = true
+bun_core.workspace = true
+bstr.workspace = true
+
+[lints]
+workspace = true

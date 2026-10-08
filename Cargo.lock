@@ -973,6 +973,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lint"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_alloc",
+ "bun_collections",
+ "bun_core",
+ "bun_paths",
+ "bun_sema",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_lint_eslint"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_lint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_lint_standalone"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_js_parser",
+ "bun_lint",
+ "bun_lint_eslint",
+ "bun_lint_typescript",
+ "bun_sema",
+ "bun_sema_standalone",
+]
+
+[[package]]
+name = "bun_lint_typescript"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_lint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_lsquic_sys"
 version = "0.0.0"
 dependencies = [

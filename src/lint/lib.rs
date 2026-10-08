@@ -1,0 +1,42 @@
+//! The linter: an API for writing lint rules on the syntax and the types that `bun check` works
+//! from, and what runs them.
+//!
+//! - [`ast`]: the syntax of a file.
+//! - [`semantic`]: scopes, symbols, references.
+//! - [`tokens`]: tokens and comments.
+//! - [`types`]: types.
+//! - [`code_path`]: ESLint's code path analysis.
+//! - [`rule`]: what a rule is. Start there.
+//!
+//! The rules are in the crates `bun_lint_eslint` and `bun_lint_typescript`.
+
+pub mod ast;
+pub mod code_path;
+pub mod context;
+pub mod fix;
+pub mod json;
+pub mod options;
+pub mod regex;
+pub mod rule;
+pub mod runner;
+pub mod semantic;
+pub mod source;
+pub mod span;
+pub mod tokens;
+pub mod types;
+
+/// What a rule imports.
+pub mod prelude {
+    pub use crate::ast::*;
+    pub use crate::code_path::{CodePath, Origin, Segment};
+    pub use crate::context::{Cx, IntoText, Report};
+    pub use crate::fix::{Fix, Fixer};
+    pub use crate::options::{Json, Object, Options};
+    pub use crate::regex::Regex;
+    pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, Presets, Rule};
+    pub use crate::semantic::{
+        Declaration, Reference, ReferenceFlags, Scope, ScopeKind, SymFlags, Symbol,
+    };
+    pub use crate::span::{Position, Span, Spanned};
+    pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};
+}

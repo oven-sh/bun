@@ -58,6 +58,10 @@ pub struct FormatOptions {
     pub require_pragma: bool,
     /// A file with `@noformat` or `@noprettier` in a comment at its top is not formatted.
     pub check_ignore_pragma: bool,
+    /// The text is code in Markdown: Prettier's `parentParser`. A statement that is nothing but JSX gets no
+    /// semicolon. A line break that is part of a text (in a template, in a comment) is written as `\r\n`, to
+    /// tell it from the others: Markdown indents what follows it in another way.
+    pub is_in_markdown: bool,
     /// Whose output to produce where the two differ.
     pub flavor: Flavor,
     /// oxfmt's `sortPackageJson`: the keys of a `package.json` are put in the usual order.

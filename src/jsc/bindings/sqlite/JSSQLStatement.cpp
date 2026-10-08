@@ -941,13 +941,16 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
 
         // A string over SQLite's length limit fails here, before the conversion allocates its UTF-8 form.
         if (roped->length() > bindLengthCheckFloor) [[unlikely]] {
-            const size_t limit = static_cast<size_t>(sqlite3_limit(db, SQLITE_LIMIT_LENGTH, -1));
-            const size_t utf8Length = roped->is8Bit()
-                ? Bun__encoding__byteLengthLatin1AsUTF8(roped->span8().data(), roped->length())
-                : Bun__encoding__byteLengthUTF16AsUTF8(roped->span16().data(), roped->length());
-            if (utf8Length > limit) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, String::fromUTF8(sqlite3_errstr(SQLITE_TOOBIG))));
-                return false;
+            const uint64_t limit = static_cast<uint64_t>(sqlite3_limit(db, SQLITE_LIMIT_LENGTH, -1));
+            const bool canExceedLimit = static_cast<uint64_t>(roped->length()) * (roped->is8Bit() ? 2 : 3) > limit;
+            if (canExceedLimit) {
+                const uint64_t utf8Length = roped->is8Bit()
+                    ? Bun__encoding__byteLengthLatin1AsUTF8(roped->span8().data(), roped->length())
+                    : Bun__encoding__byteLengthUTF16AsUTF8(roped->span16().data(), roped->length());
+                if (utf8Length > limit) {
+                    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, String::fromUTF8(sqlite3_errstr(SQLITE_TOOBIG))));
+                    return false;
+                }
             }
         }
 

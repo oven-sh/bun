@@ -5,6 +5,7 @@
 //   bun prettier-fixtures.mjs --prettier=<checkout of prettier> --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring] [--show]
 //
 // `bun format` writes unless told otherwise, so Prettier is given `--write` where the command line only prints.
+// `--record=<file>` writes the fixtures and what Prettier does with them, for `test/cli/format/prettier-cli/prettier-cli.test.ts`.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -18,6 +19,8 @@ const only = flag("only");
 const show = process.argv.includes("--show");
 
 const compared = /\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql)$/;
+// The languages that `bun format` leaves alone.
+const notCompared = /\.(md|markdown|mdx|ya?ml|html?|vue|hbs|handlebars)$|(^|\/)\.(prettierrc|stylelintrc|lintstagedrc)$/;
 // What `bun format` does not have, or has on purpose in another way.
 const leftOut = /^--(cache|debug-|file-info|support-info|plugin|help|version|experimental-cli|no-plugin-search|log-level=?debug|find-config-path|(no-)?unknown)|^-[hva]$/;
 // Plugins do not load.
@@ -43,7 +46,7 @@ function readAll(root) {
   const files = {};
   for (const entry of fs.readdirSync(root, { withFileTypes: true, recursive: true })) {
     const file = path.join(entry.parentPath, entry.name);
-    if (entry.isFile() && compared.test(entry.name)) files[path.relative(root, file)] = fs.readFileSync(file, "utf8");
+    if (entry.isFile() && !notCompared.test(entry.name)) files[path.relative(root, file)] = fs.readFileSync(file, "utf8");
   }
   return files;
 }
@@ -62,6 +65,20 @@ function run(command, it, args) {
 }
 
 const listed = text => [...new Set(text.split("\n").map(line => line.replace(/^\[warn\] /, "")).filter(line => compared.test(line) && !line.includes(" ")))].sort().join("\n");
+
+// Every file of a directory of fixtures. A link is `{ link }`.
+function fixturesOf(root) {
+  const files = {};
+  for (const entry of fs.readdirSync(root, { withFileTypes: true, recursive: true })) {
+    const file = path.join(entry.parentPath, entry.name);
+    if (entry.isSymbolicLink()) files[path.relative(root, file)] = { link: fs.readlinkSync(file) };
+    else if (entry.isFile()) files[path.relative(root, file)] = fs.readFileSync(file, "utf8");
+  }
+  const links = Object.keys(files).filter(name => typeof files[name] !== "string");
+  for (const name of Object.keys(files)) if (links.some(link => name.startsWith(`${link}/`))) delete files[name];
+  return files;
+}
+const record = { fixtures: {}, cases: [] };
 
 let [passed, skipped] = [0, 0];
 const failed = [];
@@ -82,6 +99,18 @@ for (const it of commandLines()) {
   const looks = it.args.some(arg => ["--check", "-c", "-l", "--list-different"].includes(arg));
   const expected = run(prettier, it, looks || isStdin || it.args.includes("--write") ? it.args : ["--write", ...it.args]);
   const actual = run(bin, it, it.args);
+  const top = it.directory.split("/").slice(0, 2).join("/");
+  record.fixtures[top] ??= fixturesOf(path.join(integration, top));
+  record.cases.push({
+    test: it.test,
+    directory: it.directory,
+    args: it.args,
+    input: it.options.input,
+    exitCode: expected.status,
+    changed: Object.fromEntries(Object.entries(expected.files).filter(([file, text]) => record.fixtures[top][path.relative(top, file)] !== text)),
+    listed: looks && !isStdin ? listed(expected.stdout + expected.stderr).split("\n").filter(Boolean) : undefined,
+    stdout: isStdin ? expected.stdout : undefined,
+  });
   const problems = [];
   if (expected.status !== actual.status) problems.push(`exit code: expected ${expected.status}, got ${actual.status}`);
   for (const file of new Set([...Object.keys(expected.files), ...Object.keys(actual.files)])) {
@@ -97,5 +126,6 @@ for (const it of commandLines()) {
     if (show) console.log(`${problems.join("\n")}\n--- stderr of Prettier\n${expected.stderr}\n--- stderr of bun format\n${actual.stderr}\n`);
   }
 }
+if (flag("record")) fs.writeFileSync(flag("record"), JSON.stringify(record, null, 1) + "\n");
 console.log(`${passed} passed, ${failed.length} failed, ${skipped} left out`);
 process.exit(failed.length ? 1 : 0);

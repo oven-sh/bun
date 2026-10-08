@@ -2526,7 +2526,7 @@ void JSStatementSync::invalidateRowStructure()
 // statement can return the *same* column count with *different*
 // names — a count-only key would serve a stale {oldName: value}
 // structure forever (bun:sqlite defends the same technique with a
-// per-db write-version; keying on reset-generation gives the same
+// per-statement re-prepare count; keying on reset-generation gives the same
 // correctness for the simpler cost of rebuilding once per
 // run/get/all/iterate rather than once per schema change). Within
 // a single .all() / .iterate() the generation is constant, so the

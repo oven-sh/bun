@@ -71,7 +71,7 @@ const env = {
   // Of the script that runs the tests.
   npm_lifecycle_event: undefined,
   npm_package_json: undefined,
-  BUN_INTERNAL_CHECK_SCRIPTS: undefined,
+  BUN_INTERNAL_SCRIPTS_OF_COMMANDS: undefined,
   NO_COLOR: "1",
 };
 

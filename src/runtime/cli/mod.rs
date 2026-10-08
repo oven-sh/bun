@@ -338,6 +338,10 @@ pub(crate) mod add_command;
 pub(crate) mod audit_command;
 #[path = "check_command.rs"]
 pub(crate) mod check_command;
+#[path = "lint_command.rs"]
+pub(crate) mod lint_command;
+#[path = "script_or_command.rs"]
+pub(crate) mod script_or_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
@@ -645,9 +649,10 @@ pub(crate) mod help_command {
 
 <b>Commands:<r>
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
-            <d>lint<r>                 Run a package.json script
+            <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
+  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1048,9 +1053,15 @@ pub(crate) mod command {
             return Tag::AuditCommand;
         }
         if x == RootCommandMatcher::case(b"check") {
-            return match super::check_command::is_package_script() {
+            return match super::script_or_command::is_package_script(b"check") {
                 true => Tag::AutoCommand,
                 false => Tag::CheckCommand,
+            };
+        }
+        if x == RootCommandMatcher::case(b"lint") {
+            return match super::script_or_command::is_package_script(b"lint") {
+                true => Tag::AutoCommand,
+                false => Tag::LintCommand,
             };
         }
         if x == RootCommandMatcher::case(b"info") {
@@ -1314,6 +1325,7 @@ pub(crate) mod command {
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
             Tag::CheckCommand => exec_check(log),
+            Tag::LintCommand => exec_lint(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1581,6 +1593,17 @@ pub(crate) mod command {
         // After the flags of `bun`, and those of `BUN_OPTIONS`.
         let check = argv.iter().position(|arg| arg.as_bytes() == b"check");
         super::check_command::CheckCommand::exec(&argv[check.map_or(argv.len(), |at| at + 1)..])
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
+        // LintCommand parses its own argv.
+        init(Tag::LintCommand, log)?;
+        let argv = argv_zslice();
+        // After the flags of `bun`, and those of `BUN_OPTIONS`.
+        let lint = argv.iter().position(|arg| arg.as_bytes() == b"lint");
+        super::lint_command::LintCommand::exec(&argv[lint.map_or(argv.len(), |at| at + 1)..])
     }
 
     #[cold]
@@ -2234,6 +2257,43 @@ Execute a shell script directly from Bun.
   <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                Output::flush();
+            }
+            Tag::LintCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun lint<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Lint JavaScript and TypeScript with the rules of ESLint and typescript-eslint, using all CPU cores.
+
+  Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r>.
+  Without a configuration file: <b>eslint:recommended<r>, and <b>typescript-eslint/recommended<r> for TypeScript.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::lint_command::PARAMS);
+                pretty!(
+                    "
+
+<b>Examples:<r>
+  <d>Lint the current directory<r>
+  <b><green>bun lint<r>
+
+  <d>Lint some files and directories<r>
+  <b><green>bun lint<r> <blue>src test/a.test.ts<r>
+
+  <d>Fix what can be fixed<r>
+  <b><green>bun lint<r> <cyan>--fix<r>
+
+  <d>Fail on warnings too<r>
+  <b><green>bun lint<r> <cyan>--max-warnings 0<r>
+
+  <d>Try a rule without editing the configuration<r>
+  <b><green>bun lint<r> <cyan>--rule<r> <blue>'eqeqeq: error'<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/lint<r>
 "
                 );
                 Output::flush();

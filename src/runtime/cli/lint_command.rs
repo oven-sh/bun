@@ -97,7 +97,10 @@ pub(crate) fn run_and_exit(
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
-    for cwd in cwd_before(command).into_iter().chain(cwd) {
+    if let Some(cwd) = cwd_before(command) {
+        change_directory(cwd);
+    }
+    if let Some(cwd) = cwd {
         change_directory(cwd);
     }
     // One at a time: a process is started with state that threads share.

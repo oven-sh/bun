@@ -996,8 +996,29 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sema",
+ "bun_threading",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_lint_driver"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_clap",
+ "bun_core",
+ "bun_format",
+ "bun_js_parser",
+ "bun_lint",
+ "bun_lint_eslint",
+ "bun_lint_typescript",
+ "bun_paths",
+ "bun_sema",
+ "bun_sema_driver",
+ "bun_sys",
+ "bun_threading",
 ]
 
 [[package]]
@@ -1020,6 +1041,7 @@ dependencies = [
  "bun_format",
  "bun_js_parser",
  "bun_lint",
+ "bun_lint_driver",
  "bun_lint_eslint",
  "bun_lint_typescript",
  "bun_sema",
@@ -1339,6 +1361,7 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lint_driver",
  "bun_lsquic_sys",
  "bun_md",
  "bun_opaque",

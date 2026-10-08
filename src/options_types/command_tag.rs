@@ -24,6 +24,7 @@ pub enum Tag {
     InstallCommand,
     InstallCompletionsCommand,
     LinkCommand,
+    LintCommand,
     PackageManagerCommand,
     RemoveCommand,
     RunCommand,
@@ -68,6 +69,7 @@ impl Tag {
             Tag::InstallCommand => b'i',
             Tag::InstallCompletionsCommand => b'C',
             Tag::LinkCommand => b'l',
+            Tag::LintCommand => b'L',
             Tag::PackageManagerCommand => b'P',
             Tag::RemoveCommand => b'R',
             Tag::RunCommand => b'r',
@@ -154,6 +156,7 @@ impl Tag {
         Self::InstallCommand,
         Self::InstallCompletionsCommand,
         Self::LinkCommand,
+        Self::LintCommand,
         Self::PackageManagerCommand,
         Self::RemoveCommand,
         Self::RunCommand,
@@ -265,6 +268,7 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::PruneCommand as usize] = false;
     a[Tag::BunxCommand as usize] = false;
     a[Tag::CheckCommand as usize] = false;
+    a[Tag::LintCommand as usize] = false;
     a[Tag::CreateCommand as usize] = false;
     a[Tag::InfoCommand as usize] = false;
     a[Tag::InstallCommand as usize] = false;

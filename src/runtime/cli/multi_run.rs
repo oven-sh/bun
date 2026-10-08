@@ -168,7 +168,7 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = crate::cli::check_command::with_package_script(
+            envp = crate::cli::script_or_command::with_package_script(
                 unsafe { &mut *env_ptr },
                 &self.config.name,
                 &self.config.cwd,

@@ -353,7 +353,8 @@ impl<'a> Param<'a> {
             .flatten()
             .max()
             .unwrap_or(raw.pos),
-            end => end,
+            // The HIR has the end of a name that is written with an escape too early.
+            end => end.max(self.pat().span().end),
         };
         Span::new(raw.pos, end)
     }

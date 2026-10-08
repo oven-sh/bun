@@ -51,7 +51,15 @@ impl<'a> Pat<'a> {
     /// Without a type annotation or a default value, which belong to what contains the pattern.
     #[inline]
     pub fn span(self) -> Span {
-        (self.try_raw()).map_or(Span::default(), |raw| Span::new(raw.pos, raw.end))
+        match self.try_raw() {
+            Some(&hir::Pat {
+                kind: hir::PatKind::Ident(_),
+                pos,
+                end,
+            }) => Span::new(pos, self.file.end_of_identifier(pos, end)),
+            Some(raw) => Span::new(raw.pos, raw.end),
+            None => Span::default(),
+        }
     }
 
     #[inline]
@@ -125,7 +133,8 @@ impl<'a> PatProp<'a> {
 
     #[inline]
     pub fn span(self) -> Span {
-        Span::new(self.raw().pos, self.raw().end)
+        // The HIR has the end of a name that is written with an escape too early.
+        Span::new(self.raw().pos, self.raw().end.max(self.value().span().end))
     }
 
     /// The object pattern.

@@ -334,14 +334,28 @@ impl<'a> VNode<'a> {
     /// of a type without a traversal: listen for these kinds, and of what is made of each such node
     /// take those of the type.
     pub fn for_each_at(node: Node<'a>, visit: &mut dyn FnMut(VNode<'a>)) {
+        VNode::for_each_with_type_at(node, &mut |v, _| visit(v));
+    }
+
+    /// The same. `visit` is also given the type of the node, which is known here.
+    pub fn for_each_with_type_at(node: Node<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
         // The parts of a node are a tree of their own, except where the outermost is missing.
-        fn descend<'a>(v: VNode<'a>, visit: &mut dyn FnMut(VNode<'a>)) {
-            visit(v);
-            v.for_each_child(|child| {
-                if child.base == v.base {
-                    descend(child, visit);
+        fn descend<'a>(v: VNode<'a>, visit: &mut dyn FnMut(VNode<'a>, super::NodeType)) {
+            let node_type = v.node_type();
+            visit(v, node_type);
+            let parts = node_type.fields().iter().take_while(|it| it.is_child).filter(|it| it.is_part);
+            for entry in parts {
+                if !entry.is_in(v.dialect()) {
+                    continue;
                 }
-            });
+                match (entry.get)(v) {
+                    super::Value::Node(child) if child.base == v.base => descend(child, visit),
+                    super::Value::Nodes(children) => {
+                        children.flatten().filter(|child| child.base == v.base).for_each(|child| descend(child, visit));
+                    }
+                    _ => {}
+                }
+            }
         }
         let mut root = |v: Option<VNode<'a>>| {
             if let Some(v) = v.filter(|v| v.base == node) {

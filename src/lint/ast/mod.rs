@@ -166,6 +166,8 @@ pub(crate) struct Lazy {
     pub(crate) lines: OnceCell<crate::source::Lines>,
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
     pub(crate) parents: OnceCell<node::Parents>,
+    /// The text has a `\u`.
+    has_unicode_escapes: OnceCell<bool>,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
@@ -325,6 +327,21 @@ impl<'a> File<'a> {
     #[inline]
     pub fn has_bom(&self) -> bool {
         self.hir.text.starts_with(b"\xEF\xBB\xBF")
+    }
+
+    /// Where the identifier at `pos` ends. The HIR says `end`, which for some identifiers that are
+    /// written with an escape is `pos` and the length of the name.
+    #[inline]
+    pub(crate) fn end_of_identifier(&self, pos: u32, end: u32) -> u32 {
+        let has_escapes = self.lazy.has_unicode_escapes.get_or_init(|| bun_core::strings::contains(self.hir.text, b"\\u"));
+        if !*has_escapes {
+            return end;
+        }
+        let written = self.hir.text.get(pos as usize..).unwrap_or_default();
+        match bun_core::strings::contains_char(written.get(..(end - pos.min(end)) as usize).unwrap_or_default(), b'\\') {
+            true => end.max(pos + crate::tokens::token_len(written) as u32),
+            false => end,
+        }
     }
 
     /// The end of the token before the one that starts at `at`, over whitespace and comments. 0 if

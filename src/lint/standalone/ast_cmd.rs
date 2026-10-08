@@ -35,6 +35,7 @@ pub(crate) fn run(args: &[String]) {
         [command, path, flags @ ..] if command == "estree" => estree(path, &language_of(flags)),
         [command, path, flags @ ..] if command == "estree-batch" => estree_batch(path, &language_of(flags)),
         [command] if command == "schema" => schema(),
+        [command, path] if command == "parts" => parts(path),
         [command, paths @ ..] if command == "check" && !paths.is_empty() => check_files(paths),
         [command, path] if command == "check-batch" => check_batch(path),
         [command, path] if command == "bench" => bench(path),
@@ -145,6 +146,30 @@ fn estree_batch(path: &str, language: &LanguageOptions) {
         out.extend_from_slice(b"}\n");
         let _ = stdout.write_all(&out);
     }
+}
+
+/// The fields in which a child is made of the same node of `bun_lint::ast` as its parent.
+fn parts(path: &str) {
+    let mut found = std::collections::BTreeSet::new();
+    for input in read_inputs(path) {
+        let _ = with_input(&input, &language_of(&[]), |file| {
+            let mut pending = vec![VNode::program(file)];
+            while let Some(v) = pending.pop() {
+                for entry in v.node_type().fields().iter().take_while(|it| it.is_child) {
+                    let is_part = match (entry.get)(v) {
+                        Value::Node(it) => it.base() == v.base(),
+                        Value::Nodes(list) => list.flatten().any(|it| it.base() == v.base()),
+                        _ => false,
+                    };
+                    if is_part {
+                        found.insert(format!("{}.{:?}", v.node_type().name(), entry.field));
+                    }
+                }
+                v.for_each_child(|child| pending.push(child));
+            }
+        });
+    }
+    found.iter().for_each(|it| println!("{it}"));
 }
 
 fn schema() {
@@ -459,6 +484,16 @@ fn check_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, proble
         let in_static_block = v.parent().is_some_and(|it| it.node_type() == NodeType::StaticBlock);
         if !in_static_block && matches!(v.field(bun_lint::estree_for_tests::Field::Directive), Value::Str(_)) {
             directives.push(v.span());
+        }
+        for entry in node_type.fields().iter().filter(|it| it.is_child && !it.is_part) {
+            let is_part = match (entry.get)(v) {
+                Value::Node(it) => it.base() == v.base(),
+                Value::Nodes(list) => list.flatten().any(|it| it.base() == v.base()),
+                _ => false,
+            };
+            if is_part {
+                problems.push((format!("estree: {}.{:?} is a part", node_type.name(), entry.field), place_v(v)));
+            }
         }
         v.for_each_child(|child| {
             if child.parent() != Some(v) {

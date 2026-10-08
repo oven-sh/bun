@@ -244,7 +244,7 @@ impl<'a> AssignmentLike<'a> {
     /// Prettier's `chooseLayout`.
     fn layout(&self, is_left_short: bool, left_may_break: bool, f: &mut Formatter<'a>) -> AssignmentLikeLayout {
         let right_expression = self.get_right_expression();
-        let mut is_type_cast = false;
+        let (mut is_type_cast, mut starts_with_type_cast) = (false, false);
         if let Some(e) = right_expression {
             if let Some(layout) = self.chain_formatting_layout(e) {
                 return layout;
@@ -259,6 +259,7 @@ impl<'a> AssignmentLike<'a> {
                 LeadingComments::None => {}
                 LeadingComments::Break => return AssignmentLikeLayout::BreakAfterOperator,
                 LeadingComments::TypeCast => is_type_cast = true,
+                LeadingComments::TypeCastOfLeftEdge => starts_with_type_cast = true,
             }
             if let AstNodes::CallExpression(call) = e.as_ast_nodes()
                 && call.callee().is_some_and(|callee| matches!(callee.kind(), ExprKind::Ident(_)) && callee.text() == b"require")
@@ -270,7 +271,8 @@ impl<'a> AssignmentLike<'a> {
         if self.should_break_left_hand_side(left_may_break) {
             return AssignmentLikeLayout::BreakLeftHandSide;
         }
-        if !is_type_cast && right_expression.is_some_and(|right| should_break_after_operator(right, is_left_short, f)) {
+        if !is_type_cast && right_expression
+                .is_some_and(|right| should_break_after_operator(right, is_left_short, starts_with_type_cast, f)) {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
         if !left_may_break
@@ -409,6 +411,8 @@ enum LeadingComments {
     Break,
     /// `/** @type {T} */ (e)`: the right side is in parentheses.
     TypeCast,
+    /// `/** @type {T} */ (a).b`, `/** @type {T} */ (a) || b`: what the right side starts with is.
+    TypeCastOfLeftEdge,
 }
 
 fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> LeadingComments {
@@ -427,14 +431,22 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
             return LeadingComments::Break;
         }
         if f.comments().is_type_cast_comment(comment) {
-            return LeadingComments::TypeCast;
+            return match right.is_parenthesized() {
+                true => LeadingComments::TypeCast,
+                false => LeadingComments::TypeCastOfLeftEdge,
+            };
         }
     }
     LeadingComments::None
 }
 
 /// Prettier's `shouldBreakAfterOperator`.
-fn should_break_after_operator<'a>(right: Expr<'a>, is_left_short: bool, f: &mut Formatter<'a>) -> bool {
+fn should_break_after_operator<'a>(
+    right: Expr<'a>,
+    is_left_short: bool,
+    starts_with_type_cast: bool,
+    f: &mut Formatter<'a>,
+) -> bool {
     let can_inline = |e: Expr<'a>| BinaryLikeExpression::new(e).is_some_and(|it| it.should_inline_logical_expression());
     match right.as_ast_nodes() {
         AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_) | AstNodes::SequenceExpression(_) => true,
@@ -453,7 +465,7 @@ fn should_break_after_operator<'a>(right: Expr<'a>, is_left_short: bool, f: &mut
         _ => {
             let inner_expression = get_innermost_expression(right);
             matches!(inner_expression.kind(), ExprKind::String(_))
-                || is_poorly_breakable_member_or_call_chain(inner_expression, f)
+                || (!starts_with_type_cast && is_poorly_breakable_member_or_call_chain(inner_expression, f))
         }
     }
 }

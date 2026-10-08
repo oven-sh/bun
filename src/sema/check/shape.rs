@@ -6688,28 +6688,55 @@ impl<'p, 's> Checker<'p, 's> {
         let is_literal = |c: &Self, t: TypeId| {
             c.is_boolean(t) || c.is_pattern_literal(t) || c.every_type(t, |c, m| c.is_unit(m))
         };
+        // The names in the order of `getPropertiesOfUnionOrIntersectionType`, and for each the members
+        // in order. `createUnionOrIntersectionProperty` compares every symbol with the first
+        // (`singleProp`, `firstType`), so the cost is linear in the number of members:
+        // `JSX.IntrinsicElements[keyof JSX.IntrinsicElements]` in a parameter has hundreds.
         let mut may = false;
-        for (at, &later) in all.iter().enumerate().skip(1) {
-            for prop in &later.shape().props {
-                for &earlier in &all[..at] {
-                    let Some(other) = earlier.resolved.prop(prop.name) else {
+        let mut seen = crate::util::FxHashSet::<Atom>::default();
+        for (at, &member) in all.iter().enumerate() {
+            let rest = &all[at + 1..];
+            if rest.is_empty() {
+                break;
+            }
+            for prop in &member.shape().props {
+                // Of two members only the first gets here, and all its names are new.
+                if all.len() > 2 && !seen.insert(prop.name) {
+                    continue;
+                }
+                let mut first: Option<(Prop<'s>, TypeId)> = None;
+                let (mut some, mut every) = (prop.flags, prop.flags);
+                let (mut is_non_uniform, mut has_literal) = (false, false);
+                for &later in rest {
+                    let Some(other) = later.resolved.prop(prop.name) else {
                         continue;
                     };
-                    let (mut first, mut second) =
-                        (other.clone_in(self.arena), prop.clone_in(self.arena));
-                    self.instantiate_prop(&mut first, earlier.mapper);
+                    let mut second = other.clone_in(self.arena);
                     self.instantiate_prop(&mut second, later.mapper);
-                    // The same property reached through two paths.
-                    if first == second {
-                        continue;
-                    }
-                    let first = self.type_of_prop(&first, MapperId::IDENTITY);
+                    let first_type = match &first {
+                        // The same property reached through two paths.
+                        Some((single, _)) if *single == second => continue,
+                        Some((_, first_type)) => *first_type,
+                        None => {
+                            let mut single = prop.clone_in(self.arena);
+                            self.instantiate_prop(&mut single, member.mapper);
+                            if single == second {
+                                continue;
+                            }
+                            let first_type = self.type_of_prop(&single, MapperId::IDENTITY);
+                            has_literal = is_literal(self, first_type);
+                            first = Some((single, first_type));
+                            first_type
+                        }
+                    };
                     let second = self.type_of_prop(&second, MapperId::IDENTITY);
-                    may |= (prop.flags | other.flags).contains(PropFlags::PRIVATE)
-                        || !(prop.flags & other.flags).contains(PropFlags::OPTIONAL)
-                            && first != second
-                            && (is_literal(self, first) || is_literal(self, second));
+                    (some, every) = (some | other.flags, every & other.flags);
+                    is_non_uniform |= second != first_type;
+                    has_literal = has_literal || is_literal(self, second);
                 }
+                may |= first.is_some()
+                    && (some.contains(PropFlags::PRIVATE)
+                        || !every.contains(PropFlags::OPTIONAL) && is_non_uniform && has_literal);
             }
         }
         may

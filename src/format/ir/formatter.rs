@@ -388,7 +388,7 @@ impl<'a> Formatter<'a> {
             cleaned,
             next_group_id: Cell::new(1),
             source,
-            width_is_len: super::width::is_width_len(source),
+            width_is_len: super::width::is_width_len(source) && !bun_core::strings::contains(source, b"\\u"),
             context,
         }
     }
@@ -490,13 +490,32 @@ impl<'a> Formatter<'a> {
         let len = span.len();
         let width = match self.width_is_len {
             true => len,
-            false => self.string_width(self.source.get(span.range()).unwrap_or_default()),
+            false => {
+                let text = self.source.get(span.range()).unwrap_or_default();
+                if bun_core::strings::contains_char(text, b'\\') && self.write_name_without_escapes(text) {
+                    return;
+                }
+                self.string_width(text)
+            }
         };
         self.write_element(FormatElement::SourceText(Text {
             start: span.start,
             len,
             width: TextWidth::single(width),
         }));
+    }
+
+    /// `\u0061b` is written `ab`: Prettier prints the name of an identifier, not its text. Returns
+    /// whether `text` is a name, with or without the `.` or `?.` before it.
+    #[cold]
+    fn write_name_without_escapes(&mut self, text: &[u8]) -> bool {
+        if !matches!(text.first(), Some(b'\\' | b'#' | b'.' | b'?' | b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z' | 0x80..)) {
+            return false;
+        }
+        let name = crate::verify::without_unicode_escapes(text);
+        let width = TextWidth::single(self.string_width(&name));
+        self.write_owned_text(&name, width);
+        true
     }
 
     /// Writes `text`, which can be anything but has no `\r`. It is not copied if it is part of

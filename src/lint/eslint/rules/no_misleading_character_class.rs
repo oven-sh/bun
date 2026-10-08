@@ -9,6 +9,7 @@ use bun_lint::utils::regular_expressions::{UnicodeFlag, is_valid_with_unicode_fl
 use bun_lint::utils::unicode::{
     is_combining_character, is_emoji_modifier, is_regional_indicator_symbol, is_surrogate_pair,
 };
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -319,7 +320,7 @@ impl NoMisleadingCharacterClass {
         let is_valid_with_u = |pattern: &[u8]| is_valid_with_unicode_flag(ecma_version, pattern, UnicodeFlag::U);
 
         // The literals whose flags are replaced by those given to `RegExp`.
-        let mut checked_pattern_nodes: SmallVec<[Expr<'a>; 2]> = SmallVec::new();
+        let mut checked_pattern_nodes: FxHashSet<Expr<'a>> = FxHashSet::default();
         for reference in ReferenceTracker::new(file).iterate_global_references(&TRACE_MAP) {
             let (Some(ref_node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
@@ -332,7 +333,7 @@ impl NoMisleadingCharacterClass {
             let pattern = match (pattern_node.kind(), flags_node) {
                 (ExprKind::Regex(_), None) => continue,
                 (ExprKind::Regex(literal), Some(_)) => {
-                    checked_pattern_nodes.push(pattern_node);
+                    checked_pattern_nodes.insert(pattern_node);
                     Cow::Borrowed(literal.pattern())
                 }
                 _ => match get_static_value(pattern_node, scope) {
@@ -350,8 +351,10 @@ impl NoMisleadingCharacterClass {
                     None => continue,
                 },
             };
+            // The same for each of the characters that are reported.
+            let is_valid = OnceCell::new();
             let unicode_fixer = |fixer: Fixer<'a>| {
-                if !is_valid_with_u(&pattern) {
+                if !*is_valid.get_or_init(|| is_valid_with_u(&pattern)) {
                     return None;
                 }
                 let Some(flags_node) = flags_node else {
@@ -373,8 +376,10 @@ impl NoMisleadingCharacterClass {
             if let ExprKind::Regex(literal) = e.kind()
                 && !checked_pattern_nodes.contains(&e)
             {
-                let unicode_fixer =
-                    |fixer: Fixer<'a>| is_valid_with_u(literal.pattern()).then(|| fixer.insert_after(e, "u"));
+                let is_valid = OnceCell::new();
+                let unicode_fixer = |fixer: Fixer<'a>| {
+                    (*is_valid.get_or_init(|| is_valid_with_u(literal.pattern()))).then(|| fixer.insert_after(e, "u"))
+                };
                 self.verify(e, literal.pattern(), literal.flags(), unicode_fixer, cx);
             }
         }

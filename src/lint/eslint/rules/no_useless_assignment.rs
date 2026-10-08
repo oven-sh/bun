@@ -1,5 +1,6 @@
 use bun_lint::code_path::{CurrentSegments, Event, Step, starts_code_path, steps_of_code_path};
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::collections::hash_map::Entry;
@@ -45,6 +46,8 @@ pub struct State<'a> {
     code_path_start_scopes: StartScopes<'a>,
     /// For `code_path_scope`.
     code_path_scopes: Nearest<'a>,
+    /// For `written_by`.
+    writers: AncestorMemo<'a, Writer<'a>>,
     /// By the id of a segment: from the start of the first identifier in it to the end of the last.
     /// Only identifiers that are expressions count, as only the place of those is asked for.
     identifier_ranges: Vec<Span>,
@@ -1180,47 +1183,37 @@ struct Written<'a> {
     node: Node<'a>,
 }
 
+/// `Written::node` and `Written::expression` of the assignment that a node is a target of.
+type Writer<'a> = Option<(Node<'a>, Option<Span>)>;
+
 /// The assignment that a reference that writes is part of. `None` if the rule does not see one: the
 /// head of a `for`-`in`, the default value of a parameter.
-fn written_by<'a>(reference: Reference<'a>) -> Option<Written<'a>> {
-    let identifier = reference.span();
-    let mut current = reference.node();
-    loop {
-        let parent = current.parent();
-        match parent {
-            Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_) | Node::Prop(_) => {}
-            Node::VarDecl(declarator) => {
-                return Some(Written {
-                    identifier,
-                    expression: Some(declarator.init()?.span()),
-                    node: parent,
-                });
+fn written_by<'a>(
+    reference: Reference<'a>,
+    writers: &mut AncestorMemo<'a, Writer<'a>>,
+) -> Option<Written<'a>> {
+    let writer = writers.find(reference.node(), |current, parent| match parent {
+        Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_) | Node::Prop(_) => None,
+        Node::VarDecl(declarator) => Some(declarator.init().map(|it| (parent, Some(it.span())))),
+        Node::Expr(e) => match e.kind() {
+            ExprKind::Assign { target, value, .. } if Node::Expr(target) == current => {
+                (!utils::is_assignment_target(e)).then(|| Some((parent, Some(value.span()))))
             }
-            Node::Expr(e) => match e.kind() {
-                ExprKind::Assign { target, value, .. } if Node::Expr(target) == current => {
-                    if !utils::is_assignment_target(e) {
-                        return Some(Written {
-                            identifier,
-                            expression: Some(value.span()),
-                            node: parent,
-                        });
-                    }
-                }
-                ExprKind::Unary { .. } if matches!(current, Node::Expr(it) if it.tag() == ExprTag::Ident) =>
-                {
-                    return Some(Written {
-                        identifier,
-                        expression: None,
-                        node: parent,
-                    });
-                }
-                ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => {}
-                _ => return None,
-            },
-            _ => return None,
-        }
-        current = parent;
-    }
+            ExprKind::Unary { .. } if matches!(current, Node::Expr(it) if it.tag() == ExprTag::Ident) =>
+            {
+                Some(Some((parent, None)))
+            }
+            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => None,
+            _ => Some(None),
+        },
+        _ => Some(None),
+    });
+    let (node, expression) = writer??;
+    Some(Written {
+        identifier: reference.span(),
+        expression,
+        node,
+    })
 }
 
 /// The scope that the code path around `scope` starts with.
@@ -1854,14 +1847,15 @@ impl NoUselessAssignment {
             return;
         }
         let mut uses = Uses::of(variable);
-        let nearest = &mut cx.state.code_path_scopes;
+        let (nearest, writers) = (&mut cx.state.code_path_scopes, &mut cx.state.writers);
         let scope = code_path_scope(variable.scope(), nearest);
         // What a function assigns to a variable from outside it is not looked at.
         let is_unknown = variable
             .references()
             .filter(|it| it.is_write())
             .any(|reference| {
-                written_by(reference).is_some_and(|written| !uses.is_known_to_be_read(&written))
+                written_by(reference, writers)
+                    .is_some_and(|written| !uses.is_known_to_be_read(&written))
                     && code_path_scope(reference.scope(), nearest) == scope
             });
         if !is_unknown {

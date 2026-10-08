@@ -13,6 +13,7 @@ mod regex_cmd;
 mod semantic_cmd;
 mod tokens_cmd;
 mod types_cmd;
+mod utils_eslint_cmd;
 
 use bun_lint::ast::File;
 use bun_lint::context::{Diagnostic, Severity};
@@ -382,6 +383,7 @@ fn main() {
         Some("types") => types_cmd::run(&args[1..]),
         Some("linter") => linter_cmd::run(&args[1..]),
         Some("format") => format_cmd::run(&args[1..]),
+        Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
         _ => println!("usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"),
     }
 }

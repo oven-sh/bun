@@ -1267,7 +1267,7 @@ pub fn is_global_reference(e: Expr<'_>) -> bool {
     let (Some(name), file) = (e.as_ident(), e.file()) else {
         return false;
     };
-    file.global(name.bytes()).is_some()
+    file.global_named(name).is_some()
         && e.reference().is_some_and(|it| it.global().is_some())
         && file.scope().get_name(name).is_none()
 }

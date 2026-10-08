@@ -14,14 +14,19 @@ fn var_kind_text(kind: VarKind) -> &'static str {
     }
 }
 
+/// `for (;;) var a = 1, b = 2;`: oxfmt does not give each variable a line of its own.
+fn body_of_for_loop_is_written_like_its_head(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `const a = 1, b = 2;`
 pub(crate) fn write_variable_declaration<'a>(
     statement: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    // Whether it ends with a `;`, and whether it is in a loop: in its head, or all of its body.
-    let (semicolon, is_parent_for_loop) = match statement.parent() {
+    // Whether it ends with a `;`, which it does not in the head of a loop, and whether it is in a loop.
+    let (semicolon, is_in_for_loop) = match statement.parent() {
         _ if !statement.modifiers().is_empty() && statement.is_exported() => (statement.is_default_export(), false),
         Node::Stmt(parent) => match parent.tag() {
             StmtTag::For => (parent.for_init() != Some(statement), true),
@@ -30,6 +35,7 @@ pub(crate) fn write_variable_declaration<'a>(
         },
         _ => (true, false),
     };
+    let is_parent_for_loop = is_in_for_loop && (!semicolon || body_of_for_loop_is_written_like_its_head(f));
 
     if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT) {
         write!(f, ["declare", space()]);

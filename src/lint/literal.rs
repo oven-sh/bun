@@ -101,10 +101,9 @@ impl<'a> File<'a> {
         }
         self.every_import_spec(|it| name(it.imported().span(), Node::ImportSpec(it)));
         self.every_export_spec(|it| {
+            // Two nodes for ESLint, also where it is written once: `export { "a" } from "b"`.
             name(it.local().span(), Node::ExportSpec(it));
-            if it.is_renamed() {
-                name(it.exported().span(), Node::ExportSpec(it));
-            }
+            name(it.exported().span(), Node::ExportSpec(it));
         });
         self.every_type_of(&[TypeTag::StringLit], |ty| name(ty.span(), Node::Type(ty)));
         self.every_expr_of(&[ExprTag::String], |e| {

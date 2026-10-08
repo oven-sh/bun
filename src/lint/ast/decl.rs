@@ -481,16 +481,15 @@ impl<'a> Key<'a> {
         name_kind: NameKind,
         start: u32,
     ) -> Option<Key<'a>> {
+        // The HIR has no name for a `bigint`, or in a binding pattern the literal as it is written.
+        let bigint = || {
+            let rest = file.text().get(start as usize..)?;
+            let literal = rest.get(..crate::tokens::token_len(rest))?;
+            (rest.first()?.is_ascii_digit() && literal.ends_with(b"n"))
+                .then(|| KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal)))))
+        };
         let kind = match key {
-            // The HIR has no name for a `bigint`.
-            hir::PropKey::None => {
-                let rest = file.text().get(start as usize..)?;
-                let literal = rest.get(..crate::tokens::token_len(rest))?;
-                if !rest.first()?.is_ascii_digit() || !literal.ends_with(b"n") {
-                    return None;
-                }
-                KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal))))
-            }
+            hir::PropKey::None => bigint()?,
             hir::PropKey::Private(name) => KeyKind::Private(file.private_name(name)),
             hir::PropKey::Computed(e) => KeyKind::Computed(Expr::new(file, e)),
             hir::PropKey::Name(name) => {
@@ -499,6 +498,9 @@ impl<'a> Key<'a> {
                     // The HIR does not tell for the keys of `with { "type": "json" }`.
                     NameKind::Identifier if matches!(file.text().get(start as usize), Some(b'"' | b'\'')) => {
                         KeyKind::String(name)
+                    }
+                    NameKind::Identifier if file.text().get(start as usize).is_some_and(u8::is_ascii_digit) => {
+                        bigint().unwrap_or(KeyKind::Ident(name))
                     }
                     NameKind::Identifier | NameKind::Jsx => KeyKind::Ident(name),
                     NameKind::StringLiteral => KeyKind::String(name),

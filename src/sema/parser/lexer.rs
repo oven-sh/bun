@@ -1144,6 +1144,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Whether what cannot follow a number directly is at `pos`.
+    fn is_at_start_of_name(&self, pos: usize) -> bool {
+        match self.src.get(pos) {
+            Some(&c @ ..0x80) => is_name_byte(c) || c == b'\\',
+            Some(_) => decode(&self.src[pos..]).is_none_or(|(c, _)| is_identifier_part(c)),
+            None => false,
+        }
+    }
+
     /// `010`, which is 8, or `08` and `08.5`, which are decimal.
     fn number_with_leading_zero(&mut self, start: usize) -> Option<(T, usize)> {
         let src = self.src;
@@ -1181,8 +1190,7 @@ impl<'a> Lexer<'a> {
             let text: Vec<u8> = src[start..end].iter().copied().filter(|&c| c != b'_').collect();
             self.number = core::str::from_utf8(&text).ok()?.parse().ok()?;
         }
-        // A name cannot follow a number directly.
-        if matches!(src.get(end), Some(&c) if is_name_byte(c) || c == b'\\' || c >= 0x80) {
+        if self.is_at_start_of_name(end) {
             return None;
         }
         Some((T::Number, end))
@@ -1248,8 +1256,7 @@ impl<'a> Lexer<'a> {
             T::Number
         };
         self.buffer = text;
-        // A name cannot follow a number directly.
-        if matches!(src.get(end), Some(&c) if is_name_byte(c) || c == b'\\' || c >= 0x80) {
+        if self.is_at_start_of_name(end) {
             return None;
         }
         Some((token, end))

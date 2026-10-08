@@ -319,6 +319,9 @@ impl Run<'_> {
         if let threads @ 1.. = threads_to_lint_on(self.options, context.js_plugins) {
             pool.threads.store(threads, Ordering::Relaxed);
         }
+        if context.js_plugins.has_plugins() {
+            bun_sema_driver::keep_to_the_same_threads();
+        }
         if is_oxlint && self.options.error_on_unmatched_pattern && !targets.iter().any(|it| matches!(it.status, Status::Matched(_))) {
             return Err(Fatal(NO_FILES_FOR_OXLINT.to_vec()));
         }

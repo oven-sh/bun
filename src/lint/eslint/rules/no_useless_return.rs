@@ -1,7 +1,7 @@
 use bun_lint::code_path::{Event, Step, steps_of_code_path};
 use bun_lint::prelude::*;
 use bun_lint::utils::fix_tracker::FixTracker;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// Disallow redundant return statements.
@@ -31,7 +31,7 @@ struct ScopeInfo<'a> {
 #[derive(Default)]
 pub struct State<'a> {
     /// What the code paths to analyze start with.
-    roots: Vec<Node<'a>>,
+    roots: FxHashSet<Node<'a>>,
     /// For each of the code paths around the current node, the innermost last.
     scopes: Vec<ScopeInfo<'a>>,
     segments: SegmentInfoMap<'a>,
@@ -191,7 +191,16 @@ fn is_known_to_be_useful(statement: Stmt<'_>) -> bool {
             _ => None,
         };
         if let Some(list) = list {
-            let mut after = list.iter().skip_while(|it| *it != current).skip(1);
+            // The first one that ends after it.
+            let (mut next, mut end) = (0, list.len());
+            while next < end {
+                let middle = next + (end - next) / 2;
+                if list.get(middle).is_some_and(|it| it.span().end <= current.span().end) {
+                    next = middle + 1;
+                } else {
+                    end = middle;
+                }
+            }
             let is_executed = |it: Stmt<'_>| {
                 matches!(
                     it.tag(),
@@ -208,7 +217,7 @@ fn is_known_to_be_useful(statement: Stmt<'_>) -> bool {
                         | StmtTag::DoWhile
                 ) || matches!(it.kind(), StmtKind::Return(Some(_)))
             };
-            if let Some(next) = after.next() {
+            if let Some(next) = list.get(next) {
                 return is_executed(next);
             }
         }
@@ -343,9 +352,7 @@ impl Rule for NoUselessReturn {
             }
             let function = Node::Stmt(statement).enclosing_function();
             let root = function.map_or(Node::File(cx.file()), Node::Func);
-            if !cx.state.roots.contains(&root) {
-                cx.state.roots.push(root);
-            }
+            cx.state.roots.insert(root);
         });
         on.finish(|rule, cx| {
             for root in std::mem::take(&mut cx.state.roots) {

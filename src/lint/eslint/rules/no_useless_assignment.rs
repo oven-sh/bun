@@ -34,7 +34,7 @@ struct ScopeStack<'a> {
 pub struct State<'a> {
     /// What the code paths to analyze start with: those that assign to a variable where the
     /// statements alone do not tell that the value is read.
-    roots: Vec<Node<'a>>,
+    roots: FxHashSet<Node<'a>>,
     stack: Vec<ScopeStack<'a>>,
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
@@ -794,9 +794,7 @@ impl NoUselessAssignment {
             (ScopeKind::ClassStaticBlock, Node::Func(func)) => func.owner(),
             (_, node) => node,
         };
-        if !cx.state.roots.contains(&root) {
-            cx.state.roots.push(root);
-        }
+        cx.state.roots.insert(root);
     }
 
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {

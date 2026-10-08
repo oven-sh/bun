@@ -245,6 +245,25 @@ fn should_hug_js_expression(e: Expr<'_>, root: HtmlRoot) -> bool {
     }
 }
 
+impl Hug {
+    /// Whether `formatAttributeValue` hugs a root with `e` in it. `None`: it is not called.
+    fn of_expression(self, e: Expr<'_>, root: HtmlRoot) -> Option<bool> {
+        match self {
+            Hug::Expression => Some(should_hug_js_expression(e, root)),
+            _ => self.of_other_kinds(),
+        }
+    }
+
+    /// The same for a root that `shouldHugJsExpression` says no to.
+    pub(crate) fn of_other_kinds(self) -> Option<bool> {
+        match self {
+            Hug::Always => Some(true),
+            Hug::Never | Hug::Expression => Some(false),
+            Hug::Bare => None,
+        }
+    }
+}
+
 /// Writes `content` the way `formatAttributeValue` returns it.
 pub(crate) fn write_hugged<'b>(
     should_hug: Option<bool>,
@@ -369,12 +388,7 @@ fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
             }
         }
     });
-    let should_hug = match hug {
-        Hug::Always => Some(true),
-        Hug::Never | Hug::Expression => Some(false),
-        Hug::Bare => None,
-    };
-    write_hugged(should_hug, &content, f);
+    write_hugged(hug.of_other_kinds(), &content, f);
     true
 }
 
@@ -406,12 +420,7 @@ pub(crate) fn write_expression(
             let Some(e) = expression_of(file) else {
                 return false;
             };
-            let should_hug = match hug {
-                Hug::Always => Some(true),
-                Hug::Never => Some(false),
-                Hug::Expression => Some(should_hug_js_expression(e, in_html.root)),
-                Hug::Bare => None,
-            };
+            let should_hug = hug.of_expression(e, in_html.root);
             let content = format_with(|f| {
                 write!(f, e);
                 let rest = f.comments().unprinted_comments();
@@ -470,12 +479,7 @@ pub(crate) fn write_angular_expression(
                 None => return,
             },
         };
-        let should_hug = match hug {
-            Hug::Always => Some(true),
-            Hug::Never => Some(false),
-            Hug::Expression => Some(should_hug_js_expression(e, in_html.root)),
-            Hug::Bare => None,
-        };
+        let should_hug = hug.of_expression(e, in_html.root);
         // Only in an `NGChainedExpression` is an assignment without parentheses.
         let needs_parentheses = e.tag() == ExprTag::Assign && in_html.root != HtmlRoot::NgAction;
         let content = format_with(|f| {
@@ -514,12 +518,8 @@ pub(crate) fn write_program_in_attribute(
         SourceType::Unknown,
         in_html,
         &mut |file, f| {
-            let should_hug = match hug {
-                Hug::Always => Some(true),
-                Hug::Never | Hug::Expression => Some(false),
-                Hug::Bare => None,
-            };
-            write_hugged(should_hug, &format_with(|f| write_statements(file, f)), f);
+            let content = format_with(|f| write_statements(file, f));
+            write_hugged(hug.of_other_kinds(), &content, f);
             true
         },
     )

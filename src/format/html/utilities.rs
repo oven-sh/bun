@@ -1,6 +1,6 @@
 //! Prettier's `language-html/utilities/index.js` and `utilities/html-whitespace.js`.
 
-use super::ast::{Attribute, Flags, Id, Kind, Node, Tree};
+use super::ast::{Attribute, Flags, Id, Kind, Node, Span, Tree};
 use super::data::{self, Display};
 use super::{Options, Parser};
 use crate::css::text;
@@ -217,9 +217,12 @@ fn is_text_or_interpolation(node: &Node<'_>) -> bool {
     matches!(node.kind, Kind::Text | Kind::Interpolation)
 }
 
-/// By how many lines `end` is below `start`, up to two.
-fn lines_between(options: &Options<'_>, start: u32, end: u32) -> usize {
-    let Some(between) = options.original_text.get(start as usize..end as usize) else {
+/// By how many lines the start of `second` is below the end of `first`, up to two.
+fn lines_between(options: &Options<'_>, first: Span, second: Span) -> usize {
+    let Some(between) = options
+        .original_text
+        .get(first.end as usize..second.start as usize)
+    else {
         return 0;
     };
     match strings::index_of_char_usize(between, b'\n') {
@@ -382,7 +385,7 @@ impl<'a> Tree<'a> {
         self[id].kind == Kind::FrontMatter
             || self
                 .next_of(id)
-                .is_some_and(|next| lines_between(options, self[id].span.end, next.span.start) > 1)
+                .is_some_and(|next| lines_between(options, self[id].span, next.span) > 1)
     }
 
     /// `hasNonTextChild`
@@ -450,11 +453,11 @@ impl<'a> Tree<'a> {
         let node = &self[id];
         node.has(Flags::HAS_LEADING_SPACES)
             && match (self.prev_of(id), self.parent_of(id)) {
-                (Some(prev), _) => lines_between(options, prev.span.end, node.span.start) > 0,
+                (Some(prev), _) => lines_between(options, prev.span, node.span) > 0,
                 (None, Some(parent)) => {
                     parent.kind == Kind::Root
                         || parent.start_span().is_some_and(|span| {
-                            lines_between(options, span.end, node.span.start) > 0
+                            lines_between(options, span, node.span) > 0
                         })
                 }
                 (None, None) => false,
@@ -465,11 +468,11 @@ impl<'a> Tree<'a> {
         let node = &self[id];
         node.has(Flags::HAS_TRAILING_SPACES)
             && match (self.next_of(id), self.parent_of(id)) {
-                (Some(next), _) => lines_between(options, node.span.end, next.span.start) > 0,
+                (Some(next), _) => lines_between(options, node.span, next.span) > 0,
                 (None, Some(parent)) => {
                     parent.kind == Kind::Root
                         || parent.end_span().is_some_and(|span| {
-                            lines_between(options, node.span.end, span.start) > 0
+                            lines_between(options, node.span, span) > 0
                         })
                 }
                 (None, None) => false,

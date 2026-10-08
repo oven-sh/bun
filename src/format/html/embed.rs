@@ -4,6 +4,7 @@ use super::ast::{Attribute, Flags, Id, Kind};
 use super::js::{self, Hug, SourceType, Syntax};
 use super::parse::collapse_white_space;
 use super::printer::Printer;
+use super::writer::Attempt;
 use super::utilities::{
     dedent_string, html_split, html_trim, html_trim_preserve_indentation, is_script_like_tag,
     should_unquote_attribute_value, unescape_quote_entities,
@@ -508,6 +509,16 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     ) -> bool {
         let attempt = self.out.start_attempt_behind_text();
         let is_written = write_value(self);
+        self.print_attribute_with_attempt(attr, attempt, is_written)
+    }
+
+    /// `attempt`: what the value has been written in. `is_written`: it is one.
+    fn print_attribute_with_attempt(
+        &mut self,
+        attr: &Attribute<'_>,
+        attempt: Attempt,
+        is_written: bool,
+    ) -> bool {
         let Some(value) = self.out.end_attempt_as_content(attempt, is_written) else {
             return false;
         };

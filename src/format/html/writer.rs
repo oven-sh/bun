@@ -203,6 +203,11 @@ impl<'w, 'f> Writer<'w, 'f> {
     pub(crate) fn built_text(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
         let start = self.f.storage.text.len();
         build(&mut self.f.storage.text);
+        self.text_built_from(start);
+    }
+
+    /// What has been appended to the texts of the document from `start` on.
+    fn text_built_from(&mut self, start: usize) {
         let Some(text) = self
             .f
             .storage

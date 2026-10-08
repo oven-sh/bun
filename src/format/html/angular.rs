@@ -70,15 +70,6 @@ impl<'c> LineComment<'c> {
     }
 }
 
-/// Whether `formatAttributeValue` hugs a root that `shouldHugJsExpression` says no to. `None`: it is not called.
-fn should_hug_other_kinds(hug: Hug) -> Option<bool> {
-    match hug {
-        Hug::Always => Some(true),
-        Hug::Never | Hug::Expression => Some(false),
-        Hug::Bare => None,
-    }
-}
-
 /// `/^[$_a-z][\w$]*(?:-[$_a-z][\w$])*$/i.test(name)`
 fn is_plain_microsyntax_key(name: &[u8]) -> bool {
     let is_start = |byte: u8| byte.is_ascii_alphabetic() || matches!(byte, b'$' | b'_');
@@ -198,7 +189,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 })
             }
             // Nothing that `shouldHugJsExpression` hugs.
-            Code::Printed(printed) => self.write_hugged(should_hug_other_kinds(hug), |printer| {
+            Code::Printed(printed) => self.write_hugged(hug.of_other_kinds(), |printer| {
                 printer.out.foreign(|f| {
                     js::write_string(ignored.unwrap_or(printed), f);
                     write_rest(f);
@@ -242,7 +233,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             });
         }
         // An `NGEmptyExpression` or an `NGChainedExpression`.
-        self.write_hugged(should_hug_other_kinds(hug), |printer| {
+        self.write_hugged(hug.of_other_kinds(), |printer| {
             if !is_action {
                 return true;
             }
@@ -333,7 +324,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         {
             return false;
         }
-        self.write_hugged(should_hug_other_kinds(hug), |printer| {
+        self.write_hugged(hug.of_other_kinds(), |printer| {
             let mut is_written = true;
             for (index, part) in body.iter().enumerate() {
                 if is_ng_for_of(part, index) {

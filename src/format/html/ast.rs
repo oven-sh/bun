@@ -372,17 +372,17 @@ impl<'a> Tree<'a> {
         }
     }
 
-    /// Puts `child`, which is nowhere, before `target`.
-    pub(crate) fn insert_before(&mut self, target: Id, child: Id) {
+    /// Puts `added`, which is nowhere, before `target`.
+    pub(crate) fn insert_before(&mut self, target: Id, added: Id) {
         let (parent, prev) = (self[target].parent, self[target].prev);
-        let node = &mut self[child];
+        let node = &mut self[added];
         (node.parent, node.prev, node.next) = (parent, prev, target);
-        self[target].prev = child;
+        self[target].prev = added;
         match some(prev) {
-            Some(prev) => self[prev].next = child,
+            Some(prev) => self[prev].next = added,
             None => {
                 if let Some(parent) = some(parent) {
-                    self[parent].first_child = child;
+                    self[parent].first_child = added;
                 }
             }
         }

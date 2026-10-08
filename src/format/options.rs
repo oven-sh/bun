@@ -58,6 +58,8 @@ pub struct FormatOptions {
     pub check_ignore_pragma: bool,
     /// Whose output to produce where the two differ.
     pub flavor: Flavor,
+    /// oxfmt's `sortPackageJson`: the keys of a `package.json` are put in the usual order.
+    pub sort_package_json: Option<crate::json::SortPackageJson>,
     /// How imports are sorted, if they are.
     pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,
 }
@@ -173,6 +175,11 @@ impl FormatOptions {
             b"insertPragma" => self.insert_pragma = boolean()?,
             b"requirePragma" => self.require_pragma = boolean()?,
             b"checkIgnorePragma" => self.check_ignore_pragma = boolean()?,
+            // oxfmt's: `true`, `false` or `{ "sortScripts": true }`.
+            b"sortPackageJson" => self.sort_package_json = boolean()?.then(Default::default),
+            b"sortPackageJson.sortScripts" => {
+                self.sort_package_json.get_or_insert_default().sort_scripts = boolean()?;
+            }
             // Not an option of Prettier. The kind of the configuration file decides.
             b"flavor" => {
                 self.flavor = match value {

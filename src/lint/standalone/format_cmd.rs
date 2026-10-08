@@ -95,6 +95,12 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         None => bun_format::json::parser_for_path(name),
     };
     if let Some(parser) = json_parser {
+        let mut sorted = Vec::new();
+        let is_package_json = name == b"package.json" || name.ends_with(b"/package.json");
+        let code = match options.sort_package_json.filter(|_| is_package_json) {
+            Some(sort) if bun_format::json::sort_package_json(code, sort, &mut sorted) => &sorted[..],
+            _ => code,
+        };
         let mut out = Vec::new();
         return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
     }

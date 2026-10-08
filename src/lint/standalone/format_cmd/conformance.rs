@@ -17,6 +17,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Babel parses";
+const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
 const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language";
 
@@ -51,6 +52,8 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("js/babel-plugins/throw-expressions", PROPOSAL),
     ("js/babel-plugins/v8intrinsic", PROPOSAL),
     ("misc/babel-redirect-to-babel-flow", FLOW),
+    ("typescript/definite/definite.ts", BABEL_TS),
+    ("typescript/definite/without-annotation.ts", BABEL_TS),
     ("js/embeded", EMBEDDED),
     ("js/multiparser-comments", EMBEDDED),
     ("js/multiparser-css", EMBEDDED),

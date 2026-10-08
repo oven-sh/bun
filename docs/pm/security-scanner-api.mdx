@@ -82,6 +82,13 @@ bun install
 
 Consult your scanner's documentation for which environment variables to set and any other required configuration.
 
+Bun runs the scanner in a separate process. That process gets the environment variables of your shell. The `--no-env-file` and `--env-file` flags of `bun install` and the other package manager commands also apply to the scanner:
+
+- `--no-env-file`: Bun loads no [`.env` file](/runtime/environment-variables) for the scanner. `env = false` in `bunfig.toml` does the same.
+- `--env-file`: Bun passes the values of the files you name to the scanner process as environment variables.
+
+The scanner can still read a `.env` file itself. If your scanner takes its token from `.env`, set the token in your shell or name the file with `--env-file`.
+
 ### Authoring your own scanner
 
 For a complete example with tests and CI setup, see the official template:

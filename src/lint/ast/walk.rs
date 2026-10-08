@@ -359,9 +359,23 @@ pub fn walk<'a>(file: &'a File<'a>, visitor: &mut impl Visitor<'a>) {
     walk_node(Node::File(file), visitor);
 }
 
-/// Visits `node` and everything in it, in source order. It does not recurse: how deep the syntax
-/// is nested does not matter.
+/// Visits `node` and everything in it, in source order. However deep the syntax is nested, it does
+/// not run out of stack.
 pub fn walk_node<'a>(node: Node<'a>, visitor: &mut impl Visitor<'a>) {
+    recurse(node, visitor, bun_core::StackCheck::init());
+}
+
+fn recurse<'a, V: Visitor<'a>>(node: Node<'a>, visitor: &mut V, stack: bun_core::StackCheck) {
+    if !stack.is_safe_to_recurse() {
+        return walk_without_recursion(node, visitor);
+    }
+    visitor.enter(node);
+    node.children_into(&mut |child| recurse(child, visitor, stack));
+    visitor.exit(node);
+}
+
+#[cold]
+fn walk_without_recursion<'a>(node: Node<'a>, visitor: &mut impl Visitor<'a>) {
     enum Step<'a> {
         Enter(Node<'a>),
         Exit(Node<'a>),

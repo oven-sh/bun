@@ -331,29 +331,16 @@ impl<'a> Expr<'a> {
 
     #[inline]
     pub fn is_parenthesized(self) -> bool {
-        let parens = self.file.hir.parens;
-        if parens.is_empty() {
-            return false;
-        }
-        let mut id = self.id;
-        loop {
-            if parens.binary_search_by_key(&id.0, |p| p.0.0).is_ok() {
-                return true;
-            }
-            match self.file.jsdoc_cast_around(id) {
-                Some(cast) => id = cast,
-                None => return false,
-            }
-        }
+        self.file.is_parenthesized(self.id)
     }
 
     /// With all the parentheses around it.
     #[inline]
     pub fn outer_span(self) -> Span {
-        if self.file.hir.parens.is_empty() {
-            return self.span();
+        match self.is_parenthesized() {
+            true => self.parens().next_back().unwrap_or_else(|| self.span()),
+            false => self.span(),
         }
-        self.parens().next_back().unwrap_or_else(|| self.span())
     }
 
     /// What it is directly part of.

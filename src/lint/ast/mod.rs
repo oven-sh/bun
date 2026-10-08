@@ -165,6 +165,8 @@ pub(crate) struct Lazy {
     pub(crate) lines: OnceCell<crate::source::Lines>,
     pub(crate) tokens: OnceCell<crate::tokens::TokenStore>,
     pub(crate) parents: OnceCell<node::Parents>,
+    /// A bit for each expression: it is in parentheses.
+    parenthesized: OnceCell<Box<[u64]>>,
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
     pub(crate) by_kind: OnceCell<crate::runner::ByKind>,
     pub(crate) code_paths: crate::code_path::Store,
@@ -322,6 +324,26 @@ impl<'a> File<'a> {
     #[inline]
     pub fn has_bom(&self) -> bool {
         self.hir.text.starts_with(b"\xEF\xBB\xBF")
+    }
+
+    /// Whether the expression `id` is in parentheses, its own or those after a JSDoc cast.
+    #[inline]
+    pub(crate) fn is_parenthesized(&self, id: hir::ExprId) -> bool {
+        if self.hir.parens.is_empty() {
+            return false;
+        }
+        let bits = self.lazy.parenthesized.get_or_init(|| {
+            let mut bits = vec![0u64; self.hir.exprs.len() / 64 + 1].into_boxed_slice();
+            for &(id, ..) in self.hir.parens {
+                for id in [id, self.written_expr(id)] {
+                    if let Some(word) = bits.get_mut(id.idx() / 64) {
+                        *word |= 1 << (id.idx() % 64);
+                    }
+                }
+            }
+            bits
+        });
+        bits.get(id.idx() / 64).is_some_and(|word| word & (1 << (id.idx() % 64)) != 0)
     }
 
     /// Every expression that is in parentheses, once each, in no particular order.

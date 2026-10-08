@@ -264,7 +264,7 @@ impl<'a> Node<'a> {
             }
             Node::Stmt(s) => match of_parent(bound.stmt_parent.get(s.id().idx())) {
                 // The binder records the `switch` for what is in a clause.
-                Node::Stmt(parent) => match parent.kind() {
+                Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {
                     StmtKind::Switch { cases, .. } => {
                         let start = s.span().start;
                         (cases.iter().find(|case| case.span().contains_offset(start)))

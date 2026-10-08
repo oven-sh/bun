@@ -675,6 +675,38 @@ fn bench(path: &str) {
             walk(file, &mut count);
             count.0
         });
+        struct Collect<'a>(Vec<Node<'a>>);
+        impl<'a> Visitor<'a> for Collect<'a> {
+            fn enter(&mut self, node: Node<'a>) {
+                self.0.push(node);
+            }
+            fn exit(&mut self, _: Node<'a>) {}
+        }
+        let mut nodes = Collect(Vec::new());
+        walk(file, &mut nodes);
+        let nodes = nodes.0;
+        time("span of each", &mut || nodes.iter().map(|it| it.span().end as usize).sum());
+        time("parent of each", &mut || nodes.iter().filter(|it| matches!(it.parent(), Node::Expr(_))).count());
+        time("kind of each expression", &mut || {
+            let kinds = nodes.iter().filter_map(|it| it.as_expr()).map(|it| it.kind());
+            kinds.filter(|it| matches!(it, ExprKind::Call(_) | ExprKind::String(_))).count()
+        });
+        time("outer_span of each expression", &mut || {
+            nodes.iter().filter_map(|it| it.as_expr()).map(|it| it.outer_span().end as usize).sum()
+        });
+        time("children of each", &mut || {
+            let mut count = 0;
+            nodes.iter().for_each(|it| it.for_each_child(|_| count += 1));
+            count
+        });
+        time("virtual walk", &mut || {
+            let (mut count, mut pending) = (0, vec![VNode::program(file)]);
+            while let Some(v) = pending.pop() {
+                count += 1;
+                v.for_each_child(|child| pending.push(child));
+            }
+            count
+        });
         time("estree json", &mut || {
             let mut out = Vec::new();
             estree_json::write_json(file, &mut out);

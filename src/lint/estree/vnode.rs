@@ -612,7 +612,9 @@ impl<'a> VNode<'a> {
     /// ESTree's `type`.
     pub fn node_type(self) -> NodeType {
         use NodeType::*;
-        if let Some((leaf, _)) = self.leaf() {
+        if self.part != Part::Main
+            && let Some((leaf, _)) = self.leaf()
+        {
             return leaf.node_type();
         }
         match (self.base, self.part) {
@@ -731,11 +733,15 @@ fn expr_type(e: Expr, part: Part) -> NodeType {
     }
     match e.kind() {
         ExprKind::Missing => JSXEmptyExpression,
+        ExprKind::Ident(_) | ExprKind::This if e.is_jsx_tag_name() => JSXIdentifier,
         ExprKind::This => ThisExpression,
         ExprKind::Super => Super,
-        // The others are leaves.
         ExprKind::String(_) if e.is_jsx_text() => JSXText,
-        ExprKind::String(_) => JSXNamespacedName,
+        ExprKind::String(_) if e.is_jsx_tag_name() => match bun_core::strings::contains_char(e.text(), b':') {
+            true => JSXNamespacedName,
+            false => JSXIdentifier,
+        },
+        ExprKind::String(_) => Literal,
         ExprKind::Ident(_) => Identifier,
         ExprKind::PrivateIdentifier(_) => PrivateIdentifier,
         ExprKind::Null
@@ -941,7 +947,9 @@ fn member_type(member: Member) -> NodeType {
 impl<'a> VNode<'a> {
     /// ESTree's `range`, in bytes.
     pub fn span(self) -> Span {
-        if let Some((_, span)) = self.leaf() {
+        if self.part != Part::Main
+            && let Some((_, span)) = self.leaf()
+        {
             return span;
         }
         self.span_of_part().unwrap_or_else(|| self.base.span())

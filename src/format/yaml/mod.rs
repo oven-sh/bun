@@ -108,7 +108,10 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
         out.extend_from_slice(original);
         return Ok(());
     }
-    if options.insert_pragma && !options.require_pragma && !has_pragma(&text, [b"format", b"prettier"]) {
+    // Nothing in YAML is something that Prettier formats on its own.
+    let is_range =
+        options.range_start.is_some_and(|start| start > 0) || options.range_end.is_some_and(|end| (end as usize) < text.len());
+    if options.insert_pragma && !options.require_pragma && !is_range && !has_pragma(&text, [b"format", b"prettier"]) {
         text = Cow::Owned([b"# @format\n\n", &text[..]].concat());
     }
     let start = out.len();
@@ -120,6 +123,10 @@ pub fn format(text: &[u8], options: &FormatOptions, _scratch: &mut Scratch, out:
     }
     // It has to be YAML in any case.
     let document = document(&text, options).inspect_err(|_| out.truncate(start))?;
+    if is_range {
+        doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(&text)), options, original, out);
+        return Ok(());
+    }
     if options.filepath.as_deref().is_some_and(can_be_json) {
         let end = out.len();
         if crate::json::format(&text, crate::json::Parser::Json, options, &mut Default::default(), out).is_ok() {

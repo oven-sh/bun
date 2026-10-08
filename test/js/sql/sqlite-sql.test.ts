@@ -1583,8 +1583,7 @@ describe("SQL helpers", () => {
   // A nested fragment gives its values to the outer query by index. An object
   // of named parameters cannot be merged that way, so the outer query rejects.
   describe.each([false, true])("unsafe nested in another query (strict: %p)", strict => {
-    const nestedValuesError =
-      "Nested sql.unsafe() fragment values must be an array, received an object. An object of named parameters cannot be nested in another query";
+    const nestedValuesError = "Nested sql.unsafe() fragment values must be an array, received an object";
     const owners = [
       { id: 1, owner: "alice" },
       { id: 2, owner: "bob" },

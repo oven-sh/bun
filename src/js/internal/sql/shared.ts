@@ -425,15 +425,10 @@ function normalizeQuery(
           // Checked before the recursion: its string arm turns 0, false and "" into []. $isArray covers a Proxy.
           const fragment_values = (value as QueryType<any, any>)[_values];
           if (!$isJSArray(fragment_values) && fragment_values != null && !$isArray(fragment_values)) {
-            let received = "a " + typeof fragment_values;
-            if (typeof fragment_values === "object") {
-              const prototype = Object.getPrototypeOf(fragment_values);
-              received =
-                prototype === null || prototype === Object.prototype
-                  ? "an object. An object of named parameters cannot be nested in another query"
-                  : "an object";
-            }
-            throw new SyntaxError("Nested sql.unsafe() fragment values must be an array, received " + received);
+            throw new SyntaxError(
+              "Nested sql.unsafe() fragment values must be an array, received " +
+                (typeof fragment_values === "object" ? "an object" : "a " + typeof fragment_values),
+            );
           }
           const [sub_query, sub_values] = normalizeQuery(
             adapter,

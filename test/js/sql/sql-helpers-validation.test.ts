@@ -81,12 +81,9 @@ describe.each(adapters)("%s helper validation", (_adapter, makeSql) => {
 
   test("a nested sql.unsafe() fragment whose values are not an array is rejected", async () => {
     await using sql = makeSql();
-    // The sentence about named parameters is for a plain object. Other objects get the type alone.
-    const plainObject = received("an object. An object of named parameters cannot be nested in another query");
     const notArrays: [unknown, string][] = [
-      [{ $o: "bob" }, plainObject],
-      [{}, plainObject],
-      [Object.create(null), plainObject],
+      [{ $o: "bob" }, received("an object")],
+      [{}, received("an object")],
       [new Uint8Array([1]), received("an object")],
       [new Date(0), received("an object")],
       [new Map(), received("an object")],

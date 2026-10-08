@@ -215,7 +215,7 @@ bun test/cli/format/oracle/compare.ts --bin=$B --prettier=<dir with node_modules
 $B format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst)   # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
 ```
 
-`conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `src/format/conformance/prettier.rs` is all that it leaves out, with the reason. `test/cli/format/{prettier,oxfmt}/expected.txt` is what the two commands print: write them again in the commit that makes one more case pass.
+`conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `src/format/conformance/prettier.rs` is all that it leaves out, with the reason. `test/cli/format/{prettier,oxfmt}/expected.txt` is what the two commands printed when the files were last written. `test/cli/format/conformance.test.ts` is red if a check fails that is not in them, or if more is left out than they say. What is in them and passes by now is no reason to be red, so a fix need not come with them.
 
 `test/cli/format/own/cases` has small inputs of our own for what only real code or a fuzzer has shown, with what Prettier and oxfmt print. **A fix of that kind comes with its input**, in the same commit. None of them fails, so there is no list of expected failures: see its README.
 

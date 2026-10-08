@@ -6,7 +6,8 @@ import { collect, concatenate } from "./bundle.ts";
 // The tests of Prettier and of oxfmt, and inputs of our own, run on `bun format`. See the README.md of prettier, oxfmt and own.
 // `src/format/conformance` runs them: it says what is checked, and what is left out and why.
 //
-// `<suite>/expected.txt` is what the runner prints: the checks that fail, one per line, and the totals.
+// `<suite>/expected.txt` is what the runner printed when it was last written: the checks that fail, one per line, the totals, and what is
+// not run and why.
 
 // The runner is compiled into debug and canary builds only.
 const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
@@ -41,15 +42,16 @@ test.skipIf(!hasRunner).concurrent.each([
     // Of our own inputs none fails.
     const expected = suite === "own" ? "" : await Bun.file(join(import.meta.dir, suite, "expected.txt")).text();
 
-    if (every === 1 && suite !== "own") {
-      expect(stdout).toBe(expected);
-    } else {
-      // Nothing fails that is not known to.
-      const known = new Set(expected.split("\n"));
-      expect(stdout.split("\n").filter(line => line.startsWith("FAIL ") && !known.has(line))).toEqual([]);
-      // And something has run.
-      expect(stdout).toMatch(/^(?:format|as Prettier prints them): [1-9]/m);
-    }
+    // Nothing fails that is not known to. What is known to fail and passes by now is no reason to be red: the list is written
+    // again from time to time, not with every fix.
+    const known = new Set(expected.split("\n"));
+    const lines = stdout.split("\n");
+    expect(lines.filter(line => line.startsWith("FAIL ") && !known.has(line))).toEqual([]);
+    // Nothing more is left out than is said.
+    const isNotRun = (line: string) => line.startsWith("not run: ");
+    expect(lines.filter(isNotRun)).toEqual(expected.split("\n").filter(isNotRun));
+    // And something has run.
+    expect(stdout).toMatch(/^(?:format|as Prettier prints them): [1-9]/m);
     expect(exitCode).toBe(0);
   },
   5 * 60_000,

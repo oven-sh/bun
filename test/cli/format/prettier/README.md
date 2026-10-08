@@ -24,7 +24,7 @@ bun bd test test/cli/format/conformance.test.ts
 
 `bun-lint` is the crate `bun_lint_standalone`. The runner is the crate `bun_format_conformance` (`src/format/conformance`): it says what is checked, and what is left out and why.
 
-`expected.txt` is what it prints: the checks that fail, and the totals. Whoever makes one more pass writes the file again, in the same commit:
+`expected.txt` is what it printed when the file was last written: the checks that fail, the totals, and what is not run and why. The test is red if a check fails that is not in it, or if what is not run is not what it says. A check that is in it and passes by now is no reason to be red, so a fix need not come with the file. To write it again:
 
 ```sh
 bun-lint format conformance <(zstd -dc test/cli/format/prettier/bundle.zst) > test/cli/format/prettier/expected.txt

@@ -1098,38 +1098,108 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.symbol(symbol))
     }
 
-    /// `getSymbolsInScope`: the innermost declaration of each name, and only that.
+    /// `getSymbolsInScope(node, meaning)`. Unlike `resolveName` it looks at the flags of a symbol
+    /// itself and of what it exports, never at those of the target of an alias, so an
+    /// `import x = a.b` hides no `x` unless `meaning` has `ALIAS`. `arguments` is not among them.
     pub fn symbols_in_scope(&mut self, node: NodeRef, meaning: SymbolFlags) -> &'c [SymbolRef] {
-        let Some(mut scope) = self.scope_at(node) else {
-            return &[];
+        let found = self.copy_symbols_in_scope(node, meaning, None);
+        let symbols: Vec<SymbolRef> = found.into_iter().map(|it| self.symbol(it)).collect();
+        self.list(&symbols)
+    }
+
+    /// `getSymbolsInScope(node, meaning).find(it => it.name === name)`, without the others.
+    pub fn symbol_in_scope(&mut self, node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef> {
+        let name = self.c.atoms().lookup(name)?;
+        let found = self.copy_symbols_in_scope(node, meaning, Some(name)).pop()?;
+        Some(self.symbol(found))
+    }
+
+    /// `only`: nothing but the symbol that has this name.
+    fn copy_symbols_in_scope(&self, node: NodeRef, meaning: SymbolFlags, only: Option<Atom>) -> Vec<Sym> {
+        let Some((hir, at)) = self.valid(node) else {
+            return Vec::new();
         };
-        let (files, bound) = (self.c.files(), self.c.bound(node.file));
+        let Some(mut scope) = self.scope_at(node).filter(|_| !hir.is_in_with(hir.start(at))) else {
+            return Vec::new();
+        };
+        let (files, bound, file) = (self.c.files(), self.c.bound(node.file), node.file);
         let meaning = SymFlags::from(meaning);
-        let mut seen: FxHashMap<Atom, ()> = FxHashMap::default();
-        let mut found: Vec<Sym> = Vec::new();
-        let mut depth = 0;
+        let (mut seen, mut found) = (FxHashMap::<Atom, ()>::default(), Vec::new());
+        // `copySymbol`, `symbolsToArray`
+        let mut copy = |name: Atom, symbol: Sym, meaning: SymFlags| {
+            // `getCombinedLocalAndExportSymbolFlags`
+            let own = files.symbol(symbol);
+            let exported = match own.export_symbol.is_some() {
+                true => bound.symbols[own.export_symbol.idx()].flags,
+                false => SymFlags::empty(),
+            };
+            let text = files.atoms.bytes(name);
+            let is_reserved = text.first() == Some(&0xFE) || text == b"this";
+            if (own.flags | exported).intersects(meaning) && seen.insert(name, ()).is_none() && !is_reserved {
+                found.push(symbol);
+            }
+        };
+        let (mut is_static, mut depth) = (false, 0);
         while let Some(at) = bound.scopes.get(scope.idx()) {
-            let mut names: smallvec::SmallVec<[Atom; 16]> = smallvec::SmallVec::new();
-            if at.locals.is_some() {
-                names.extend(bound.table(at.locals).iter().map(|it| it.0));
-            }
-            if at.symbol.is_some() {
-                names.extend(files.each_export(files.sym(node.file, at.symbol)).map(|it| it.0));
-            }
-            for name in names {
-                if seen.insert(name, ()).is_none()
-                    && let Some(symbol) = files.resolve_name(node.file, scope, name, meaning)
-                {
-                    found.push(symbol);
+            // The declarations of a script are globals.
+            let is_global_source_file = at.kind == ScopeKind::File && at.symbol.is_none();
+            // The type parameters of a class or an interface are among its members, which a static
+            // member does not see.
+            let meaning_of_locals = match at.kind {
+                ScopeKind::Class(_) | ScopeKind::Interface(_) if is_static => SymFlags::empty(),
+                ScopeKind::Class(_) | ScopeKind::Interface(_) => meaning & SymFlags::TYPE,
+                _ => meaning,
+            };
+            if !is_global_source_file && !meaning_of_locals.is_empty() {
+                match only {
+                    Some(name) => {
+                        if let Some(id) = bound.lookup(at.locals, name) {
+                            copy(name, Sym { file, id }, meaning_of_locals);
+                        }
+                    }
+                    None => bound.table(at.locals).iter().for_each(|&(name, id)| copy(name, Sym { file, id }, meaning_of_locals)),
                 }
             }
+            let meaning_of_exports = match at.kind {
+                ScopeKind::File | ScopeKind::Module(_) => meaning & SymFlags::MODULE_MEMBER,
+                ScopeKind::Enum(_) => meaning & SymFlags::ENUM_MEMBER,
+                _ => SymFlags::empty(),
+            };
+            if at.symbol.is_some() && !meaning_of_exports.is_empty() {
+                let container = files.sym(file, at.symbol);
+                // `copyLocallyVisibleExportSymbols`
+                let is_visible = |name: Atom, symbol: Sym| {
+                    let is_reexport = |it: &(FileId, Decl)| matches!(it.1, Decl::ExportSpec(_) | Decl::ExportStarAs(_));
+                    matches!(at.kind, ScopeKind::Enum(_)) || name != known::default && !files.decls_of(symbol).iter().any(is_reexport)
+                };
+                match only {
+                    Some(name) => {
+                        if let Some(symbol) = files.export(container, name).filter(|&it| is_visible(name, it)) {
+                            copy(name, symbol, meaning_of_exports);
+                        }
+                    }
+                    None => {
+                        for (name, symbol) in files.each_export(container).filter(|&(name, it)| is_visible(name, it)) {
+                            copy(name, symbol, meaning_of_exports);
+                        }
+                    }
+                }
+            }
+            is_static = at.kind == ScopeKind::StaticMember;
             scope = at.parent;
             depth += 1;
             if scope.is_none() || depth > 4096 {
                 break;
             }
         }
-        let symbols: Vec<SymbolRef> = found.into_iter().map(|it| self.symbol(it)).collect();
-        self.list(&symbols)
+        match only {
+            Some(name) => {
+                if let Some(&symbol) = files.globals.get(name) {
+                    copy(name, symbol, meaning);
+                }
+            }
+            None => files.globals.iter().for_each(|&(name, symbol)| copy(name, symbol, meaning)),
+        }
+        found
     }
 }

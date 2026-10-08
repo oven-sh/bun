@@ -438,6 +438,27 @@ fn dump_profiles<'a>(file: &'a File<'a>) -> String {
                 None => "null".to_owned(),
             }),
         ]);
+        // `getSymbolsInScope`, without what other files declare.
+        if node.kind() == SyntaxKind::Identifier {
+            let here = file.type_checker().source_file();
+            for (field, meaning) in [
+                ("valuesInScope", SymbolFlags::VALUE),
+                ("typesInScope", SymbolFlags::TYPE),
+                ("namespacesInScope", SymbolFlags::NAMESPACE),
+                ("variablesInScope", SymbolFlags::BLOCK_SCOPED_VARIABLE),
+            ] {
+                let in_scope = file.type_checker().get_symbols_in_scope(node, meaning);
+                let declared_here = in_scope.filter(|it| it.declarations().any(|declaration| declaration.get_source_file() == here));
+                let mut names: Vec<String> = declared_here
+                    .map(|it| {
+                        let one = file.type_checker().get_symbol_in_scope(node, meaning, it.name());
+                        format!("{}{}", json_string(it.name()), if one == Some(it) { "" } else { "!" })
+                    })
+                    .collect();
+                names.sort();
+                fields.push((field, list(&mut names.into_iter())));
+            }
+        }
         if matches!(node.kind(), SyntaxKind::CallExpression | SyntaxKind::NewExpression | SyntaxKind::TaggedTemplateExpression) {
             let signature = node.get_resolved_signature();
             fields.push(("resolved", signature.map_or_else(|| "null".to_owned(), |it| json_string(&it.to_text()))));

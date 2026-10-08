@@ -248,6 +248,22 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
             const found = typeUtils.isUnsafeAssignment(type, receiver, checker, services.tsNodeToESTreeNodeMap.get(node) ?? null);
             return found ? [text(found.sender), text(found.receiver)] : false;
           });
+          if (ts.isIdentifier(node)) {
+            for (const [name, meaning] of [
+              ["valuesInScope", ts.SymbolFlags.Value],
+              ["typesInScope", ts.SymbolFlags.Type],
+              ["namespacesInScope", ts.SymbolFlags.Namespace],
+              ["variablesInScope", ts.SymbolFlags.BlockScopedVariable],
+            ] as const) {
+              field(name, () =>
+                checker
+                  .getSymbolsInScope(node, meaning)
+                  .filter(it => it.declarations?.some(declaration => declaration.getSourceFile() === sourceFile))
+                  .map(it => it.name)
+                  .sort((a, b) => (Buffer.compare(Buffer.from(JSON.stringify(a)), Buffer.from(JSON.stringify(b))))),
+              );
+            }
+          }
           if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) {
             const signature = checker.getResolvedSignature(node);
             field("resolved", () => (signature ? checker.signatureToString(signature) : null));

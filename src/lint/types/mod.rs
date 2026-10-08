@@ -243,6 +243,7 @@ queries! {
     fn signature_from_declaration(node: NodeRef) -> Option<SigId>;
     fn shorthand_assignment_value_symbol(node: NodeRef) -> Option<SymbolRef>;
     fn symbols_in_scope(node: NodeRef, meaning: SymbolFlags) -> &'a [SymbolRef];
+    fn symbol_in_scope(node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef>;
     fn resolve_name(node: NodeRef, name: &[u8], meaning: SymbolFlags, exclude_globals: bool) -> Option<SymbolRef>;
     fn accessed_property_name(node: NodeRef) -> Option<&'a [u8]>;
     fn constant_value(node: NodeRef) -> Option<LiteralValue<'a>>;
@@ -477,8 +478,17 @@ impl<'a> Types<'a> {
         node.locate(self.file).get_shorthand_assignment_value_symbol()
     }
 
-    /// `checker.getSymbolsInScope(node, meaning)`. To find one name, [`Types::resolve_name`] is
-    /// much cheaper.
+    /// `checker.getSymbolsInScope(node, meaning).find(it => it.name === name)`, which does not make
+    /// the list. It is not [`Types::resolve_name`]: an alias counts for what it is, not for what it
+    /// is an alias of.
+    pub fn get_symbol_in_scope(self, node: impl Locate<'a>, meaning: SymbolFlags, name: &[u8]) -> Option<TsSymbol<'a>> {
+        let (file, node) = (self.file, node.locate(self.file).raw());
+        let symbol = file.query(|q| q.symbol_in_scope(node, meaning, name))?;
+        Some(TsSymbol::new(file, symbol))
+    }
+
+    /// `checker.getSymbolsInScope(node, meaning)`, with all the globals. To find one name:
+    /// [`Types::get_symbol_in_scope`].
     pub fn get_symbols_in_scope(
         self,
         node: impl Locate<'a>,

@@ -14,48 +14,19 @@
 //! test/cli/lint/oracle/ast compares that with what typescript-estree and espree make of the same
 //! code.
 
-mod convert;
 mod field;
-mod json;
 mod parent;
 mod schema;
 mod value;
 mod views;
 mod vnode;
 
-pub use convert::convert;
 pub use field::Field;
-pub use json::{JsonSink, write_json};
 pub use schema::{FieldEntry, NodeType};
 pub use value::{Nodes, Object, Value};
 pub use vnode::VNode;
 
 use crate::ast::File;
-use crate::span::Span;
-
-/// Receives a tree of ESTree nodes, in the order of a depth-first walk.
-///
-/// A value is a node, a list, a plain object or a primitive. After [`Sink::start_node`] and
-/// [`Sink::start_object`] come pairs of a [`Sink::field`] and a value, after [`Sink::start_list`]
-/// come values.
-pub trait Sink {
-    /// `span` is in bytes.
-    fn start_node(&mut self, node_type: NodeType, span: Span);
-    fn end_node(&mut self);
-    /// An object that is not a node: the `value` of a `TemplateElement`, the `regex` of a
-    /// `Literal`.
-    fn start_object(&mut self);
-    fn end_object(&mut self);
-    fn start_list(&mut self);
-    fn end_list(&mut self);
-    /// The name of the field that the next value is for.
-    fn field(&mut self, name: &'static str);
-    fn null(&mut self);
-    fn boolean(&mut self, value: bool);
-    fn number(&mut self, value: f64);
-    /// `value` is WTF-8: UTF-8 in which a lone surrogate is encoded like any other code point.
-    fn string(&mut self, value: &[u8]);
-}
 
 /// Which parser's ESTree.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -2321,11 +2321,7 @@ pub mod bv2_impl {
             let scb_bitset = if self.graph.server_component_boundaries.list.len() > 0 {
                 let scbs = self.graph.server_component_boundaries.slice();
                 let mut bitset = scbs.bit_set(self.graph.input_files.len())?;
-                for (row, &reference) in scbs
-                    .list
-                    .items_reference_source_index()
-                    .iter()
-                    .enumerate()
+                for (row, &reference) in scbs.list.items_reference_source_index().iter().enumerate()
                 {
                     bitset.set(reference as usize);
                     scb_rows_by_reference.put(reference, row as u32)?;
@@ -2686,9 +2682,7 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    let existing = self
-                        .path_to_source_index_map(target)
-                        .get(path_primary.text);
+                    let existing = self.path_to_source_index_map(target).get(path_primary.text);
                     let idx = if let Some(existing) = existing {
                         existing
                     } else {
@@ -3050,8 +3044,8 @@ pub mod bv2_impl {
             result.path_pair.primary = path;
             let side_effects = result.primary_side_effects_data;
             let crate::Graph::SourceSlot::New(source_index) =
-                self.graph
-                    .get_or_put_source(path_slice, target, |index| crate::Graph::InputFile {
+                self.graph.get_or_put_source(path_slice, target, |index| {
+                    crate::Graph::InputFile {
                         source: bun_ast::Source {
                             path: path_as_static(&path),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3061,7 +3055,8 @@ pub mod bv2_impl {
                         loader,
                         side_effects,
                         ..Default::default()
-                    })?
+                    }
+                })?
             else {
                 return Ok(());
             };
@@ -3161,8 +3156,8 @@ pub mod bv2_impl {
             }
             let side_effects = result.primary_side_effects_data;
             let crate::Graph::SourceSlot::New(source_index) =
-                self.graph
-                    .get_or_put_source(path.text, target, |index| crate::Graph::InputFile {
+                self.graph.get_or_put_source(path.text, target, |index| {
+                    crate::Graph::InputFile {
                         source: bun_ast::Source {
                             path: path_as_static(&path),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3172,7 +3167,8 @@ pub mod bv2_impl {
                         loader,
                         side_effects,
                         ..Default::default()
-                    })?
+                    }
+                })?
             else {
                 return Ok(None);
             };
@@ -5373,7 +5369,8 @@ pub mod bv2_impl {
                             // when the Box itself is moved into the Vec.
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
-                            path = this.graph.input_files.items_source()[source_index as usize].path;
+                            path =
+                                this.graph.input_files.items_source()[source_index as usize].path;
 
                             // We need to parse this
                             let source_index = Index::init(source_index);

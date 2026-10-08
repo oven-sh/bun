@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
@@ -563,6 +563,55 @@ export default function Counter() {
     }
 
     expect(foundCounterBundle).toBe(true);
+  });
+
+  test("a client component that a page and another client component import is bundled once", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-nested-client", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { Outer } from "../components/Outer";
+import { Inner } from "../components/Inner";
+
+export default function IndexPage() {
+  return <main><Outer /><Inner /></main>;
+}`,
+      "components/Outer.tsx": `"use client";
+import { Inner } from "./Inner";
+
+export function Outer() {
+  return <div id="outer"><Inner /></div>;
+}`,
+      "components/Inner.tsx": `"use client";
+
+export function Inner() {
+  return <span>inner module marker</span>;
+}`,
+      "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
+      '<main><div id="outer"><span>inner module marker</span></div><span>inner module marker</span></main>',
+    );
+
+    // The client build of Inner.tsx is in one chunk, and no chunk imports a file that is not written.
+    const chunkDir = path.join(dir, "dist", "_bun");
+    const chunks = readdirSync(chunkDir).filter(file => file.endsWith(".js"));
+    const chunksWithInner: string[] = [];
+    const missingImports: string[] = [];
+    for (const chunk of chunks) {
+      const code = await Bun.file(path.join(chunkDir, chunk)).text();
+      if (code.includes("inner module marker")) chunksWithInner.push(chunk);
+      for (const [, imported] of code.matchAll(/from"\.\/([^"]+)"/g)) {
+        if (!chunks.includes(imported)) missingImports.push(`${chunk} imports ${imported}`);
+      }
+    }
+    expect({ count: chunksWithInner.length, missingImports }).toEqual({ count: 1, missingImports: [] });
   });
 
   test("inline flight data is escaped as a single unit across stream chunks", async () => {

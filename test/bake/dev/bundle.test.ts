@@ -412,6 +412,174 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+const separateSSRGraphFramework = {
+  ...minimalFramework,
+  serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph: true },
+};
+
+// Reads a client component through the SSR graph, like the render of a page does.
+const ssrRoute = (file: string, name: string) =>
+  `import { ${name} } from "../${file}" with { bunBakeGraph: "ssr" };\n` +
+  `export default function () { return new Response("ssr " + ${name}()); }`;
+
+devTest('a "use client" file that another "use client" file imports', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "A.ts": `"use client";\nimport { b } from "./B";\nexport const a = () => "a" + b;`,
+    "B.ts": `"use client";\nexport const b = "b1";`,
+    "routes/index.ts": `import "../A"; import "../B"; export default function () { return new Response("index"); }`,
+    "routes/ssr.ts": ssrRoute("A", "a"),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    await dev.fetch("/ssr").equals("ssr ab1");
+    await dev.write("B.ts", `"use client";\nexport const b = "b2";`);
+    await dev.fetch("/").equals("index");
+    await dev.fetch("/ssr").equals("ssr ab2");
+  },
+});
+
+devTest('a "use client" file gets a "use client" importer in the bundle that builds it again', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "B.ts": `"use client";\nexport const b = "b1";`,
+    "routes/index.ts": `import "../B"; export default function () { return new Response("index"); }`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("B.ts", `"use client";\nexport const b = "b2";`);
+      await dev.write("A.ts", `"use client";\nimport { b } from "./B";\nexport const a = "a" + b;`);
+      await dev.write(
+        "routes/index.ts",
+        `import "../A";\nimport "../B";\nexport default function () { return new Response("index2"); }`,
+      );
+    }
+    await dev.fetch("/").equals("index2");
+  },
+});
+
+devTest('each graph loads a "use client" file one time', {
+  framework: separateSSRGraphFramework,
+  pluginFile: `
+    export default [
+      {
+        name: "count-loads",
+        setup(build) {
+          const loads = (globalThis.loads = {});
+          build.onLoad({ filter: /[AB]\\.ts$/ }, args => {
+            const key = args.path.slice(-4) + " " + args.side;
+            loads[key] = (loads[key] ?? 0) + 1;
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "A.ts": `"use client";\nimport { b } from "./B";\nexport const a = "a" + b;`,
+    "B.ts": `"use client";\nexport const b = "b";`,
+    // The server graph holds A.ts and not B.ts.
+    "routes/index.ts": `import "../A"; export default function () { return Response.json(Object.entries(globalThis.loads).sort()); }`,
+  },
+  async test(dev) {
+    // A.ts: the server graph's load and the SSR copy. B.ts: the client graph's load and the SSR graph's load.
+    await dev.fetch("/").equals([
+      ["A.ts server", 2],
+      ["B.ts client", 1],
+      ["B.ts server", 1],
+    ]);
+  },
+});
+
+devTest('removing "use client" rebuilds the SSR copy', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "Comp.ts": `"use client";\nexport const value = () => "v1";`,
+    "routes/index.ts": `import "../Comp"; export default function () { return new Response("index"); }`,
+    "routes/ssr.ts": ssrRoute("Comp", "value"),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    await dev.write("Comp.ts", `export const value = () => "v2";`);
+    await dev.fetch("/ssr").equals("ssr v2");
+  },
+});
+
+devTest('removing "use client" from a file that other modules import in the client and SSR graphs', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "A.ts": `"use client";\nimport { b } from "./B";\nexport const a = () => "a" + b;`,
+    "B.ts": `"use client";\nexport const b = "b1";`,
+    "routes/index.ts": `import "../A"; import { b } from "../B"; export default function () { return new Response("index " + typeof b); }`,
+    "routes/ssr.ts": ssrRoute("A", "a"),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index object");
+    await dev.fetch("/ssr").equals("ssr ab1");
+    // The SSR copy of A.ts is not built again by this save. It imports the SSR copy of B.ts.
+    await dev.write("B.ts", `export const b = "b2";`);
+    await dev.fetch("/ssr").equals("ssr ab2");
+    await dev.fetch("/").equals("index string");
+    await dev.write("B.ts", `export const b = "b3";`);
+    await dev.fetch("/ssr").equals("ssr ab3");
+  },
+});
+
+devTest('a "use client" file that only the browser build rejects, while the SSR graph builds it again', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "A.ts": `"use client";\nimport { b } from "./B";\nexport const a = "a" + b;`,
+    "B.ts": `"use client";\nexport const b = "b1";`,
+    "routes/index.ts": `import "../A"; import "../B"; export default function () { return new Response("index"); }`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      await dev.write("B.ts", `"use client";\nimport bun from "bun";\nexport const b = "b2" + typeof bun;`);
+      await dev.write("A.ts", `"use client";\nimport { b } from "./B";\nexport const a = "A" + b;`);
+    }
+    const failed = await dev.fetch("/");
+    expect(failed.status).toBe(500);
+    expect(await failed.text()).toContain("<title>Bun - Build Failed</title>");
+    await dev.write("B.ts", `"use client";\nexport const b = "b3";`, { errors: null });
+    await dev.fetch("/").equals("index");
+  },
+});
+
+devTest('a route that imports a "use client" file with a syntax error stays failed', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "Comp.ts": `"use client";\nexport const value = ;`,
+    "routes/index.ts": `import "../Comp"; export default function () { return new Response("index"); }`,
+  },
+  async test(dev) {
+    const failed = await dev.fetch("/");
+    expect(failed.status).toBe(500);
+    expect(await failed.text()).toContain("<title>Bun - Build Failed</title>");
+    await dev.write("Comp.ts", `"use client";\nexport const value = "v1";`, { errors: null });
+    await dev.fetch("/").equals("index");
+  },
+});
+
+devTest('a route that imports a "use client" file stays failed when only its SSR copy fails', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "node_modules/only-browser/package.json": JSON.stringify({
+      name: "only-browser",
+      exports: { browser: "./index.js" },
+    }),
+    "node_modules/only-browser/index.js": `export const x = "x";`,
+    "Comp.ts": `"use client";\nimport { x } from "only-browser";\nexport const value = x;`,
+    "routes/index.ts": `import "../Comp"; export default function () { return new Response("index"); }`,
+  },
+  async test(dev) {
+    const failed = await dev.fetch("/");
+    expect(failed.status).toBe(500);
+    expect(await failed.text()).toContain("<title>Bun - Build Failed</title>");
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

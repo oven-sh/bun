@@ -1513,7 +1513,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
-                let key = ServerSideKey::new(abs_path, matches!(SIDE, Side::Server) && is_ssr_graph);
+                let key =
+                    ServerSideKey::new(abs_path, matches!(SIDE, Side::Server) && is_ssr_graph);
                 let gop = self.bundled_files.get_or_put(key.get())?;
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(key.get());
@@ -1574,9 +1575,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
-            let owner_display_name = unsafe {
-                (*dev).relative_path(&mut *buf, file_of_server_side_key(key.slice()))
-            };
+            let owner_display_name =
+                unsafe { (*dev).relative_path(&mut *buf, file_of_server_side_key(key.slice())) };
             SerializedFailure::init_from_log(
                 match SIDE {
                     Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),

@@ -3776,8 +3776,8 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         // The follow-up bundle finishes this build. Its cleanup sends the signal.
         dev.next_bundle.follow_up_had_hmr_event |= had_sent_hmr_event;
     } else {
-        let had_sent_hmr_event = had_sent_hmr_event
-            || ::core::mem::take(&mut dev.next_bundle.follow_up_had_hmr_event);
+        let had_sent_hmr_event =
+            had_sent_hmr_event || ::core::mem::take(&mut dev.next_bundle.follow_up_had_hmr_event);
         dev.publish(
             HmrTopic::TestingWatchSynchronization,
             &[

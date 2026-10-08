@@ -294,7 +294,7 @@ impl<'a> Context<'a> {
                 self.extract_end_comments(node)?;
                 let id = self.new_node(Kind::Alias, self.position(start, end));
                 self.transform_content_properties(id, node, props)?;
-                self.node(id).value = node.source.clone();
+                self.node(id).value.clone_from(&node.source);
                 Ok(id)
             }
             NodeKind::Map { flow: true, items } => self.transform_flow_map(node, items, props),
@@ -356,7 +356,7 @@ impl<'a> Context<'a> {
                 };
                 let id = self.new_node(kind, self.position(start, end));
                 self.transform_content_properties(id, node, props)?;
-                self.node(id).value = node.source.clone();
+                self.node(id).value.clone_from(&node.source);
                 Ok(id)
             }
         }
@@ -536,9 +536,9 @@ impl<'a> Context<'a> {
         }
         let key_start = explicit_key_ind
             .map(|it| it.offset)
-            .or(item.key.as_ref().map(|key| key.offset()))
-            .or(map_value_ind.map(|it| it.offset))
-            .or(item.value.as_ref().map(|value| value.offset()))
+            .or_else(|| item.key.as_ref().map(|key| key.offset()))
+            .or_else(|| map_value_ind.map(|it| it.offset))
+            .or_else(|| item.value.as_ref().map(|value| value.offset()))
             .ok_or(Unexpected)?;
         let key_end = match (&item.key, explicit_key_ind) {
             (Some(_), _) => pair.key.range[1],
@@ -546,7 +546,7 @@ impl<'a> Context<'a> {
             (None, None) => key_start,
         };
         let value_start = pair.value.as_ref().map(|value| {
-            map_value_ind.map(|it| it.offset).or(item.value.as_ref().map(|it| it.offset())).unwrap_or(value.range[0])
+            map_value_ind.map(|it| it.offset).or_else(|| item.value.as_ref().map(|it| it.offset())).unwrap_or(value.range[0])
         });
 
         // `transformAstPair`
@@ -1091,7 +1091,7 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
     };
     let children = context.transform_documents(documents, cst_tokens)?;
     let root = context.new_node(Kind::Root, context.position(0, text.len() as u32));
-    context.node(root).children = children.clone();
+    context.node(root).children.clone_from(&children);
     let Context {
         mut nodes, mut comments, ..
     } = context;

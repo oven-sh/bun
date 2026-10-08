@@ -509,7 +509,7 @@ fn is_base64(value: &[u8]) -> bool {
     }
     match padding {
         0 => count % 4 != 1,
-        1 | 2 => (count + padding) % 4 == 0,
+        1 | 2 => (count + padding).is_multiple_of(4),
         _ => false,
     }
 }
@@ -1001,7 +1001,7 @@ impl<'a> Context<'a> {
                 &PropsOptions {
                     is_flow: false,
                     indicator: TokenType::ExplicitKeyInd,
-                    next: key.map(NextToken::Token).or(first_of_sep.map(NextToken::Source)),
+                    next: key.map(NextToken::Token).or_else(|| first_of_sep.map(NextToken::Source)),
                     offset,
                     parent_indent: map_indent,
                     start_on_newline: true,
@@ -1151,7 +1151,7 @@ impl<'a> Context<'a> {
                 &PropsOptions {
                     is_flow: true,
                     indicator: TokenType::ExplicitKeyInd,
-                    next: key.map(NextToken::Token).or(first_of_sep.map(NextToken::Source)),
+                    next: key.map(NextToken::Token).or_else(|| first_of_sep.map(NextToken::Source)),
                     offset,
                     parent_indent: *indent,
                     start_on_newline: false,
@@ -1307,7 +1307,7 @@ fn compose_doc<'t, 'a>(text: &'a [u8], directives: Directives, token: &'t Token)
         &PropsOptions {
             is_flow: false,
             indicator: TokenType::DocStart,
-            next: value.map(NextToken::Token).or(first_of_end.map(NextToken::Source)),
+            next: value.map(NextToken::Token).or_else(|| first_of_end.map(NextToken::Source)),
             offset: *offset,
             parent_indent: 0,
             start_on_newline: true,

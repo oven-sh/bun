@@ -239,7 +239,7 @@ impl<'a> FormatLiteralStringToken<'a> {
 }
 
 /// Appends `text` with `\r\n` and `\r` replaced by `\n`.
-fn push_with_normalized_newlines(out: &mut Vec<u8>, text: &[u8]) {
+pub(crate) fn push_with_normalized_newlines(out: &mut Vec<u8>, text: &[u8]) {
     let mut rest = text;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
         out.extend_from_slice(&rest[..at]);

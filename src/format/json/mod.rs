@@ -8,6 +8,12 @@
 //!   is on one line if it fits, comments are kept.
 //! - `json-stringify` is printed like `JSON.stringify(value, null, 2)` does. It has no comments.
 
+mod comments;
+mod document;
+mod parser;
+mod writer;
+
+use crate::options::{Expand, IndentStyle, QuoteProperties, QuoteStyle};
 use crate::{FormatError, FormatOptions};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -108,9 +114,67 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     EXTENSIONS.iter().find(|(extension, _)| basename.ends_with(extension)).map(|(_, parser)| *parser)
 }
 
+/// What the options and the parser come down to.
+struct Config {
+    parser: Parser,
+    print_width: u32,
+    indent_width: u32,
+    indent_style: IndentStyle,
+    line_ending: &'static [u8],
+    bracket_spacing: bool,
+    /// `objectWrap: "preserve"`: an object with a line break after its `{` stays broken.
+    preserves_wrap: bool,
+    trailing_comma: bool,
+    quote_properties: QuoteProperties,
+    /// The quotes of all strings. `None`: those that take fewer escapes.
+    string_quote: Option<QuoteStyle>,
+    /// The quotes of a string that has as many of one kind in it as of the other.
+    preferred_quote: QuoteStyle,
+    /// The quotes of a name that is written without.
+    name_quote: QuoteStyle,
+}
+
+impl Config {
+    fn new(parser: Parser, options: &FormatOptions, text: &[u8]) -> Config {
+        // Prettier's `printString`. `json5` with `quoteProps: "preserve"` is how JSON with trailing
+        // commas was asked for before there was `jsonc`.
+        let is_double = parser != Parser::Json5
+            || (options.quote_properties == QuoteProperties::Preserve && options.quote_style.is_double());
+        Config {
+            parser,
+            print_width: u32::from(options.line_width.value()),
+            indent_width: u32::from(options.indent_width.value()),
+            indent_style: options.indent_style,
+            line_ending: options.line_ending.resolve(text).as_bytes(),
+            bracket_spacing: options.bracket_spacing.value(),
+            preserves_wrap: options.expand == Expand::Auto,
+            trailing_comma: matches!(parser, Parser::Jsonc | Parser::Json5) && !options.trailing_commas.is_none(),
+            quote_properties: options.quote_properties,
+            string_quote: is_double.then_some(QuoteStyle::Double),
+            preferred_quote: options.quote_style,
+            name_quote: if is_double { QuoteStyle::Double } else { options.quote_style },
+        }
+    }
+
+    #[inline]
+    fn is_stringify(&self) -> bool {
+        self.parser == Parser::JsonStringify
+    }
+}
+
 /// Everything that is allocated to format a document. It is reused for the next one.
 #[derive(Default)]
-pub struct Scratch {}
+pub struct Scratch {
+    tree: parser::Tree,
+    frames: writer::Frames,
+    attached: Vec<comments::Attached>,
+    document_frames: document::Frames,
+    storage: crate::ir::formatter::Storage,
+    propagate: crate::ir::document::PropagateBuffers,
+    printer: crate::ir::printer::PrinterBuffers,
+    /// The text with `\n` for every line break, if it has others.
+    normalized: Vec<u8>,
+}
 
 /// Appends the formatted `text` to `out`.
 pub fn format(
@@ -120,6 +184,62 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    let _ = (text, parser, options, scratch, out);
-    Err(FormatError::SyntaxError)
+    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let config = Config::new(parser, options, text);
+    let printer_options = crate::ir::printer::PrinterOptions::new(options, text);
+    let (bom, text) = match text.strip_prefix(BOM) {
+        Some(text) => (BOM, text),
+        None => (&[][..], text),
+    };
+    let Scratch {
+        tree,
+        frames,
+        attached,
+        document_frames,
+        storage,
+        propagate,
+        printer,
+        normalized,
+    } = scratch;
+    let text = match bun_core::strings::contains_char(text, b'\r') {
+        true => {
+            normalize_line_breaks(text, normalized);
+            &normalized[..]
+        }
+        false => text,
+    };
+
+    parser::parse(text, &config, tree).map_err(|_| FormatError::SyntaxError)?;
+    if tree.comments.is_empty() {
+        // Nothing but white space is nothing.
+        if !tree.nodes.is_empty() {
+            out.extend_from_slice(bom);
+            writer::write(text, tree, &config, frames, out);
+        }
+        return Ok(());
+    }
+    // Only `jsonc` takes a document that is nothing but comments.
+    if config.is_stringify() || (tree.nodes.is_empty() && parser != Parser::Jsonc) {
+        return Err(FormatError::SyntaxError);
+    }
+    out.extend_from_slice(bom);
+    comments::attach(text, tree, attached);
+    let root = document::build(text, tree, attached, &config, document_frames, storage);
+    crate::ir::document::propagate_expand(root, storage, propagate);
+    crate::ir::printer::print(root, storage, text, printer_options, printer, out)
+        .map_err(|_| FormatError::InvalidDocument)
+}
+
+/// `\r\n` and `\r` are `\n` in `out`.
+fn normalize_line_breaks(text: &[u8], out: &mut Vec<u8>) {
+    out.clear();
+    out.reserve(text.len());
+    let mut rest = text;
+    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
+        out.extend_from_slice(&rest[..at]);
+        out.push(b'\n');
+        rest = &rest[at + 1..];
+        rest = rest.strip_prefix(b"\n").unwrap_or(rest);
+    }
+    out.extend_from_slice(rest);
 }

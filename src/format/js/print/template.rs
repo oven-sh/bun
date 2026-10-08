@@ -7,6 +7,7 @@ use super::type_parameters::type_arguments;
 use crate::ir::width::string_width;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::string::push_with_normalized_newlines;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -71,7 +72,8 @@ impl TemplateElementIndention {
 
     /// That of the last line of `text`. If it is all on one line, `previous_indention`.
     fn after_last_new_line(text: &[u8], tab_width: u32, previous_indention: Self) -> Self {
-        let Some(new_line) = bun_core::strings::last_index_of_char(text, b'\n') else {
+        use bun_core::strings::last_index_of_char;
+        let Some(new_line) = last_index_of_char(text, b'\n').max(last_index_of_char(text, b'\r')) else {
             return previous_indention;
         };
         let mut size: u32 = 0;
@@ -141,7 +143,7 @@ impl<'a> TemplateLike<'a> {
                 expression: self.expression(i)?,
                 interpolation: self.interpolation_span(i),
                 indention,
-                after_new_line: indention.0 == 0 && quasi_text.ends_with(b"\n"),
+                after_new_line: indention.0 == 0 && matches!(quasi_text.last(), Some(b'\n' | b'\r')),
             })
         })
     }
@@ -152,7 +154,12 @@ impl<'a> Format<'a> for TemplateLike<'a> {
         write!(f, [line_suffix_boundary(), "`"]);
         let mut expressions = self.expressions(false, f);
         for i in 0..self.quasi_count() {
-            write!(f, [text(self.raw(i)), expressions.next()]);
+            let raw = self.raw(i);
+            match bun_core::strings::contains_char(raw, b'\r') {
+                true => f.write_built_text(|out| push_with_normalized_newlines(out, raw)),
+                false => write!(f, text(raw)),
+            }
+            write!(f, expressions.next());
         }
         write!(f, "`");
     }
@@ -209,7 +216,9 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             return write!(f, "${}");
         };
 
-        let layout = match f.source_text().contains_newline(self.interpolation) || element.will_break(f) {
+        let interpolation = f.source_text().text_for(&self.interpolation);
+        let has_line_break = bun_core::strings::index_of_any(interpolation, b"\r\n").is_some();
+        let layout = match has_line_break || element.will_break(f) {
             true => TemplateElementLayout::Fit,
             false => TemplateElementLayout::SingleLine,
         };
@@ -371,7 +380,9 @@ impl EachTemplateTable {
             let will_break = bun_core::strings::contains_char(&text, b'\n');
             table.entry(EachTemplateElement::Column(EachTemplateColumn::new(text, will_break)));
 
-            if index + 1 < template.quasi_count() && bun_core::strings::contains_char(template.raw(index + 1), b'\n') {
+            if index + 1 < template.quasi_count()
+                && bun_core::strings::index_of_any(template.raw(index + 1), b"\r\n").is_some()
+            {
                 table.entry(EachTemplateElement::LineBreak);
             }
         }

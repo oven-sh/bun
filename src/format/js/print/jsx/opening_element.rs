@@ -20,7 +20,7 @@ fn as_string_literal_attribute_value(attribute: Prop<'_>) -> Option<Expr<'_>> {
 }
 
 fn has_line_break(string: Expr<'_>) -> bool {
-    bun_core::strings::contains_char(string.text(), b'\n')
+    bun_core::strings::index_of_any(string.text(), b"\r\n").is_some()
 }
 
 impl<'a> FormatOpeningElement<'a> {

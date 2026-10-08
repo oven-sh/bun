@@ -193,6 +193,11 @@ fn is_negated_logical_expression(test: Expr<'_>) -> bool {
     matches!(argument.kind(), ExprKind::Binary { op, .. } if op.is_logical())
 }
 
+/// Prettier 3.9 writes `if (!(` on one line. oxfmt follows 3.8, which breaks after `if (`.
+fn hugs_negated_condition(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `printIfOrWhileConditionOrWithStatementObject`: all there is in the head of an `if`,
 /// a `while`, a `do` or a `with`.
 struct FormatCondition<'a> {
@@ -204,7 +209,7 @@ impl<'a> Format<'a> for FormatCondition<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let test = self.test;
         if f.is_quiet() {
-            return match is_negated_logical_expression(test) {
+            return match is_negated_logical_expression(test) && hugs_negated_condition(f) {
                 true => write!(f, test),
                 false => write!(f, group(&soft_block_indent(&test))),
             };
@@ -221,7 +226,7 @@ impl<'a> Format<'a> for FormatCondition<'a> {
             write!(f, FormatTrailingComments::Comments(comments));
             f.comments_mut().restore_view_limit(previous_limit);
         });
-        match !has_comments && is_negated_logical_expression(test) {
+        match !has_comments && is_negated_logical_expression(test) && hugs_negated_condition(f) {
             true => write!(f, content),
             false => write!(f, group(&soft_block_indent(&content))),
         }

@@ -4,6 +4,7 @@ use super::semicolon::OptionalSemicolon;
 use super::statements::{
     CommentPlacement, comment_placements, expression_statement_needs_semicolon, follows_type_cast_comment,
 };
+use crate::ir::element::TextWidth;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -12,7 +13,8 @@ use smallvec::SmallVec;
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
     if source.starts_with(b"\xEF\xBB\xBF") {
-        write!(f, text(&source[..3]));
+        // Prettier takes it off before it formats: it has no width.
+        f.write_text(&source[..3], Some(TextWidth::single(0)));
     }
     write_hashbang(f);
     write!(f, FormatStatements(file.body()));

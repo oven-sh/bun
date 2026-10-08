@@ -77,6 +77,9 @@ impl TripleSlashReference {
             },
             _ => return,
         };
+        if cx.has_reported_too_much() {
+            return;
+        }
         let report = |directive: &Directive<'a>| {
             cx.report(directive.comment, TRIPLE_SLASH_REFERENCE).data("module", directive.module);
         };

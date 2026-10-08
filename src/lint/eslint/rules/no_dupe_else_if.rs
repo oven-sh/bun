@@ -78,13 +78,15 @@ fn split_all<'a>(operator: BinOp, e: Expr<'a>, into: &mut Vec<Expr<'a>>) {
 }
 
 /// Whether `e` has more than `limit` operands of `||` and `&&`. What is left of `limit` otherwise.
-fn count_operands(e: Expr<'_>, mut limit: usize) -> Option<usize> {
+fn count_operands(e: Expr<'_>, limit: usize) -> Option<usize> {
+    // One, and one more for each operator.
+    let mut limit = limit.checked_sub(1)?;
     let mut pending: SmallVec<[Expr<'_>; 8]> = SmallVec::new();
     pending.push(e);
     while let Some(e) = pending.pop() {
-        match e.kind() {
-            ExprKind::Binary { op: BinOp::Or | BinOp::And, left, right } => pending.extend([right, left]),
-            _ => limit = limit.checked_sub(1)?,
+        if let ExprKind::Binary { op: BinOp::Or | BinOp::And, left, right } = e.kind() {
+            limit = limit.checked_sub(1)?;
+            pending.extend([left, right]);
         }
     }
     Some(limit)
@@ -117,6 +119,9 @@ const LOGICAL: u32 = 1 << 31;
 
 impl<'a> LongChain<'a> {
     fn number_of(&mut self, e: Expr<'a>) -> u32 {
+        if !matches!(e.kind(), ExprKind::Binary { op: BinOp::Or | BinOp::And, .. }) {
+            return self.tokens.number_of(self.file, e);
+        }
         let mut steps = vec![Step::Number(e)];
         let mut numbers: Vec<u32> = Vec::new();
         while let Some(step) = steps.pop() {

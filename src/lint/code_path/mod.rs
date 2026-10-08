@@ -74,7 +74,7 @@ pub use analyzer::{Step, Steps};
 pub use reach::Method;
 use reach::Reach;
 
-use crate::ast::{Case, File, Func, Handle, Node, Stmt};
+use crate::ast::{Case, File, Func, Handle, MemberKind, Node, Stmt};
 use crate::rule::NodeTags;
 use smallvec::SmallVec;
 use std::cell::{Cell, OnceCell, RefCell};
@@ -176,8 +176,35 @@ impl<'a> Func<'a> {
         enter: impl Into<NodeTags>,
         exit: impl Into<NodeTags>,
     ) -> Steps<'a> {
-        analyzer::steps_in(self, enter.into(), exit.into())
+        analyzer::steps_of(Node::Func(self), enter.into(), exit.into(), false)
     }
+}
+
+/// Whether a code path starts with `node`: it is the file, a function with a body, a static block
+/// (the `Member`), or the initializer of a field that is a `PropertyDefinition` for ESLint, which
+/// one with `accessor` is not.
+pub fn starts_code_path(node: Node<'_>) -> bool {
+    match node {
+        Node::File(_) => true,
+        Node::Func(func) => analyzer::has_code_path(func),
+        Node::Member(member) => member.kind() == MemberKind::StaticBlock,
+        Node::Expr(e) => matches!(
+            e.parent(),
+            Node::Member(member) if analyzer::is_property_definition(member) && member.init() == Some(e)
+        ),
+        _ => false,
+    }
+}
+
+/// [`Func::code_path_steps`] for one code path alone: that of the file (`Node::File`), of a function
+/// (`Node::Func`), of a static block (`Node::Member`) or of the initializer of a field
+/// (`Node::Expr`). The code paths in it start and end at once: what is in them is left out.
+pub fn steps_of_code_path<'a>(
+    root: Node<'a>,
+    enter: impl Into<NodeTags>,
+    exit: impl Into<NodeTags>,
+) -> Steps<'a> {
+    analyzer::steps_of(root, enter.into(), exit.into(), true)
 }
 
 impl<'a> File<'a> {
@@ -211,6 +238,16 @@ impl<'a> Stmt<'a> {
     /// each. It needs no listener for code paths.
     pub fn is_reachable(self) -> bool {
         self.file().reach().is_reachable(self)
+    }
+}
+
+impl<'a> Stmt<'a> {
+    /// Whether execution is known to be able to reach the end of the statement, and so what
+    /// follows it. If this does not hold, it may still be able to.
+    ///
+    /// See [`Stmt::is_reachable`] for what it costs.
+    pub fn is_known_to_complete(self) -> bool {
+        self.file().reach().is_known_to_complete(self)
     }
 }
 

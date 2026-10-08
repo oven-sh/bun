@@ -76,11 +76,13 @@ fn has_this_or_super(node: Node<'_>) -> bool {
 }
 
 /// Whether it can be told from the statements of the body alone that there is no `this` or `super`
-/// before `super()` is called: that is a statement of its own there, and there is none in what
-/// precedes it and in its arguments.
+/// before `super()` is called: that is a statement of its own there, and there is none in the
+/// parameters, in what precedes it and in its arguments.
 fn calls_super_first(constructor: Func<'_>) -> bool {
     first_super_statement(constructor).is_some_and(|(mut before, call)| {
-        !before.any(|it| has_this_or_super(it.into())) && !call.args().iter().any(|it| has_this_or_super(it.into()))
+        !constructor.params().iter().any(|it| has_this_or_super(it.into()))
+            && !before.any(|it| has_this_or_super(it.into()))
+            && !call.args().iter().any(|it| has_this_or_super(it.into()))
     })
 }
 

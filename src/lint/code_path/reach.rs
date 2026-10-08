@@ -26,6 +26,8 @@ pub(crate) struct Reach {
     /// The statements that cannot be reached.
     unreachable: Marks,
     has_unreachable: bool,
+    /// The statements whose end can be reached. Not known where the analysis has answered.
+    ends: Marks,
     /// The cases whose end can be reached.
     case_ends: Marks,
     /// The functions whose end can be reached.
@@ -38,6 +40,7 @@ impl Reach {
         let mut reach = Reach {
             unreachable: Marks::new(file.hir.stmts.len()),
             has_unreachable: false,
+            ends: Marks::new(file.hir.stmts.len()),
             case_ends: Marks::new(file.hir.cases.len()),
             fn_ends: Marks::new(file.hir.fns.len()),
             is_end_reachable: true,
@@ -63,6 +66,11 @@ impl Reach {
     }
 
     #[inline]
+    pub(super) fn is_known_to_complete(&self, stmt: Stmt) -> bool {
+        self.ends.has(stmt.id().idx())
+    }
+
+    #[inline]
     pub(super) fn is_case_end_reachable(&self, case: Case) -> bool {
         self.case_ends.has(case.id().idx())
     }
@@ -80,6 +88,7 @@ impl Reach {
     /// What the analysis has found.
     pub(super) fn set_statement(&mut self, stmt: Stmt, is_reachable: bool) {
         self.unreachable.set(stmt.id().idx(), !is_reachable);
+        self.ends.set(stmt.id().idx(), false);
     }
 
     /// What the analysis has found.
@@ -340,6 +349,11 @@ impl<'a> Quick<'_> {
             _ => self.may_throw(stmt.into()),
         }
         self.depth -= 1;
+        if self.head != 0
+            && let Some(reach) = &mut self.reach
+        {
+            reach.ends.add(stmt.id().idx());
+        }
     }
 
     // ── `break`, `continue`, `return`, `throw` ──

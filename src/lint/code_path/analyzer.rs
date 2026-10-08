@@ -404,9 +404,11 @@ impl<'s, 'a> Builder<'s, 'a> {
         self.spare_states.push(state);
     }
 
-    /// Whether a code path has started with the node that has been entered last.
-    fn has_started_code_path(&self) -> bool {
-        matches!(self.ancestors.last(), Some(it) if it.is.intersects(Is::HAS_CODE_PATH | Is::FIELD_INITIALIZER))
+    /// Whether a code path other than the outermost has started with the node that has been entered
+    /// last.
+    fn has_started_inner_code_path(&self) -> bool {
+        self.states.len() > 1
+            && matches!(self.ancestors.last(), Some(it) if it.is.intersects(Is::HAS_CODE_PATH | Is::FIELD_INITIALIZER))
     }
 
     #[inline]
@@ -1083,7 +1085,7 @@ impl<'a> Recorder<'_, 'a> {
             // Where nothing has thrown yet in a `try` block, every name matters.
             let is_left_out = matters.is_some_and(|it| it.is_nothing_in(node))
                 && !self.builder.is_before_first_throwable()
-                || is_shallow && self.builder.has_started_code_path();
+                || is_shallow && self.builder.has_started_inner_code_path();
             if is_left_out {
                 self.exit(node);
                 continue;
@@ -1123,11 +1125,19 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
     }
 }
 
-/// [`steps`] for `func` alone, with the functions in it. Its code path has no `upper()`.
+/// [`steps`] for the code path that starts with `root` alone: the file, a function, a static block
+/// or the initializer of a field. It has no `upper()`.
+///
+/// `is_shallow`: without what is in the code paths in it.
 ///
 /// What has been analyzed before stays valid.
-pub(super) fn steps_in<'a>(func: Func<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'a> {
-    let file = func.file();
+pub(super) fn steps_of<'a>(
+    root: Node<'a>,
+    enter: NodeTags,
+    exit: NodeTags,
+    is_shallow: bool,
+) -> Steps<'a> {
+    let file = root.file();
     let store = &file.lazy.code_paths;
     let first_segment = store.segment_count();
     let mut recorder = Recorder {
@@ -1136,17 +1146,19 @@ pub(super) fn steps_in<'a>(func: Func<'a>, enter: NodeTags, exit: NodeTags) -> S
         enter,
         exit,
     };
-    // A function expression or declaration starts its code path, a member does not.
-    let owner = func.owner();
-    let root = match owner {
-        Node::Member(_) => {
-            let is = Is::empty();
-            recorder.builder.ancestors.push(Frame { node: owner, is });
-            Node::Func(func)
-        }
-        _ => owner,
+    // What makes a code path start depends on what is around it.
+    let (around, first) = match root {
+        Node::Func(func) => match func.owner() {
+            owner @ Node::Member(_) => (Some((owner, Is::empty())), root),
+            owner => (None, owner),
+        },
+        Node::Expr(_) => (Some((root.parent(), Is::PLACES_CHILDREN)), root),
+        _ => (None, root),
     };
-    recorder.walk(vec![root], None, false);
+    if let Some((node, is)) = around {
+        recorder.builder.ancestors.push(Frame { node, is });
+    }
+    recorder.walk(vec![first], None, is_shallow);
     store.finish(first_segment);
     Steps {
         file,

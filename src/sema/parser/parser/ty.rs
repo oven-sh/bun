@@ -398,13 +398,19 @@ impl Parser<'_> {
             T::Minus => !is_in_parameter && matches!(self.peek(), T::Number | T::BigInt),
             // "Only consider '(' the start of a type if followed by ')', '...', an identifier, a
             // modifier, or something that starts a type."
+            // A loop over the parentheses that follow each other, where TypeScript recurses.
             T::OpenParen => {
                 !is_in_parameter
                     && self.look_ahead(|p| {
-                        p.next();
-                        p.token() == T::CloseParen
-                            || p.is_start_of_parameter()
-                            || p.is_start_of_type(false)
+                        loop {
+                            p.next();
+                            if p.token() == T::CloseParen || p.is_start_of_parameter() {
+                                return true;
+                            }
+                            if p.token() != T::OpenParen {
+                                return p.is_start_of_type(false);
+                            }
+                        }
                     })
             }
             _ => self.is_identifier(),

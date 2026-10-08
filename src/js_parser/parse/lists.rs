@@ -578,13 +578,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             && matches!(p.lexer.token, T::TNumericLiteral | T::TBigIntegerLiteral)
                     })
             }
+            // A loop over the parentheses that follow each other, where TypeScript recurses.
             T::TOpenParen => {
                 !in_start_of_parameter
                     && self.look_ahead(|p| {
-                        p.step()
-                            && (p.lexer.token == T::TCloseParen
-                                || p.is_start_of_parameter()
-                                || p.is_start_of_type(false))
+                        loop {
+                            if !p.step() {
+                                return false;
+                            }
+                            if p.lexer.token == T::TCloseParen || p.is_start_of_parameter() {
+                                return true;
+                            }
+                            if p.token() != T::TOpenParen {
+                                return p.is_start_of_type(false);
+                            }
+                        }
                     })
             }
             // Type keywords such as `string` are identifiers in this lexer.

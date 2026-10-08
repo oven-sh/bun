@@ -536,7 +536,7 @@ impl Run<'_> {
 
         let mut has_unused_suppressions = false;
         if !options.stdin {
-            match self.apply_suppressions(&mut results) {
+            match self.apply_suppressions(&mut results, of_cwd.as_ref().is_some_and(|it| it.flavor == Flavor::Oxlint)) {
                 Ok(has_unused) => has_unused_suppressions = has_unused,
                 Err(Fatal(error)) => return self.fail(&error),
             }
@@ -621,10 +621,11 @@ impl Run<'_> {
 
     /// What ESLint's `cli.execute` does about `eslint-suppressions.json`. Returns whether that has
     /// what does not occur.
-    fn apply_suppressions(&self, results: &mut [FileResult]) -> Result<bool, Fatal> {
+    fn apply_suppressions(&self, results: &mut [FileResult], is_oxlint: bool) -> Result<bool, Fatal> {
         let (options, cwd) = (self.options, &self.environment.cwd);
         let location = options.suppressions_location.as_deref().map(paths::from_native);
-        let path = paths::resolve(cwd, location.as_deref().unwrap_or(suppressions::DEFAULT_FILE_NAME));
+        let default = if is_oxlint { suppressions::FILE_NAME_OF_OXLINT } else { suppressions::DEFAULT_FILE_NAME };
+        let path = paths::resolve(cwd, location.as_deref().unwrap_or(default));
         let writes = options.suppress_all || options.suppress_rule.is_some();
         let exists = fs::is_file(&path);
         if location.is_some() && !exists && !writes {

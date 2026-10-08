@@ -10,6 +10,8 @@ use bun_lint::options::Json;
 use std::io::Write;
 
 pub(crate) const DEFAULT_FILE_NAME: &[u8] = b"eslint-suppressions.json";
+/// The same file, where the configuration is oxlint's.
+pub(crate) const FILE_NAME_OF_OXLINT: &[u8] = b"oxlint-suppressions.json";
 
 /// By rule: how many errors.
 type ByRule = Vec<(Vec<u8>, u64)>;

@@ -1,11 +1,12 @@
 // What typescript-eslint's syntactic `util/` functions say about every node of the `code` of the conformance cases,
 // to compare `bun-lint utils-ts batch` with.
 //
-//   TYPESCRIPT_ESLINT=<checkout, built> bun oracle.ts <test/cli/lint/conformance/fixtures> <out directory> [rule..]
+//   TYPESCRIPT_ESLINT=<checkout, built> [CORPUS=<directory>:<directory>..] bun oracle.ts <test/cli/lint/conformance/fixtures> <out directory> [rule..]
 //
 // Writes `cases.jsonl` (the input of `bun-lint utils-ts batch`) and `expected.jsonl`. A line of the latter is
 // `{ id, rows: [[function, start, end, result], ..] }`, where `start` and `end` are the range of the node. Only ASCII code,
-// so that offsets in UTF-16 code units are offsets in bytes. With rule names, only the cases of those rules.
+// so that offsets in UTF-16 code units are offsets in bytes. With rule names, only the cases of those rules. With `CORPUS`,
+// also the `.js`, `.jsx`, `.ts` and `.tsx` files in those directories.
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -71,7 +72,7 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
       } catch {
         return;
       }
-      rows.push(JSON.stringify([name, ...node.range, value ?? null]));
+      if (value !== undefined) rows.push(JSON.stringify([name, ...node.range, value]));
     };
     const parent = node.parent;
     if (EXPRESSIONS.has(node.type)) {
@@ -119,10 +120,21 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
         util.isStartOfArrowFunctionBodyNeedingParentheses(node, first, sourceCode),
       );
       row("needsPrecedingSemicolon", () => util.needsPrecedingSemicolon(sourceCode, node));
-      row("getThisExpression", () => util.getThisExpression(node)?.range);
+      row("getThisExpression", () => util.getThisExpression(node)?.range ?? null);
       row("getTextWithParentheses", () => util.getTextWithParentheses(sourceCode, node));
       row("getStaticStringValue", () => util.getStaticStringValue(node));
-      row("getParentFunctionNode", () => getParentFunctionNode(node)?.range);
+      row("getParentFunctionNode", () => getParentFunctionNode(node)?.range ?? null);
+      if (node.type === "CallExpression") {
+        // The halves of `isArrayMethodCallWithPredicate` and `isPromiseAggregatorMethod` that do not look at types.
+        const called = () => (node.callee.type === "MemberExpression" ? util.getStaticMemberAccessValue(node.callee, context) : undefined);
+        row("isArrayMethodCallWithPredicate", () =>
+          ["every", "filter", "find", "findIndex", "findLast", "findLastIndex", "some"].includes(called()) ? node.callee.object.range : null,
+        );
+        row("isPromiseAggregatorMethod", () => (["all", "allSettled", "race", "any"].includes(called()) ? node.callee.object.range : null));
+      }
+      if (EXPRESSIONS.has(parent?.type) && parent.type !== "ChainExpression" && parent.parent?.type !== "ChainExpression") {
+        row("getMovedNodeCode(parent)", () => util.getMovedNodeCode({ destinationNode: parent, nodeToMove: node, sourceCode }));
+      }
       row("predicates", () => [
         util.isNullLiteral(node),
         util.isUndefinedIdentifier(node),
@@ -161,6 +173,9 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
         row("walkStatements", () => [...util.walkStatements(node.body.body)].map(it => it.range[0]));
       }
     }
+    row("isClassOrTypeElement", () => util.isClassOrTypeElement(node) || undefined);
+    row("isVariableDeclarator", () => util.isVariableDeclarator(node) || undefined);
+    row("isLoop", () => util.isLoop(node) || undefined);
     if (util.isFunctionOrFunctionType(node)) {
       row("isFunctionType", () => [util.isFunction(node), util.isFunctionType(node), util.isTSFunctionType(node), util.isTSConstructorType(node)]);
     }
@@ -182,6 +197,21 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
   simpleTraverse(parsed.ast, { enter() {} }, true);
   simpleTraverse(parsed.ast, { enter: visit }, false);
 
+  const tokens = sourceCode.getTokens(parsed.ast, { includeComments: true });
+  tokens.forEach((token: any, i: number) => {
+    const bits = [
+      util.isOptionalChainPunctuator(token),
+      util.isNonNullAssertionPunctuator(token),
+      util.isAwaitKeyword(token),
+      util.isTypeKeyword(token),
+      util.isImportKeyword(token),
+      i + 1 < tokens.length && util.isTokenOnSameLine(token, tokens[i + 1]),
+    ];
+    rows.push(JSON.stringify(["tokens", ...token.range, bits]));
+    if (util.isAwaitKeyword(token)) {
+      rows.push(JSON.stringify(["getAwaitTokenRemovalRange", ...token.range, util.getAwaitTokenRemovalRange(sourceCode, token)]));
+    }
+  });
   for (const scope of parsed.scopeManager.scopes) {
     for (const variable of scope.variables) {
       for (const def of variable.defs) {
@@ -197,32 +227,46 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
 const seen = new Set<string>();
 const cases: string[] = [];
 const expected: string[] = [];
+function addCase(rule: string, one: Parameters<typeof analyze>[0]) {
+  const identity = JSON.stringify(one);
+  if (seen.has(identity) || !/^[\x00-\x7f]*$/.test(one.code)) return;
+  seen.add(identity);
+  let rows;
+  try {
+    rows = analyze(one);
+  } catch {
+    return;
+  }
+  const id = cases.length;
+  cases.push(JSON.stringify({ id, rule, ...one }));
+  expected.push(`{"id":${id},"rows":[${rows.join(",")}]}`);
+}
 for (const plugin of ["eslint", "typescript-eslint"]) {
   for (const file of readdirSync(join(fixtures, plugin)).sort()) {
     if (!file.endsWith(".json") || (rules.length && !rules.includes(file.slice(0, -5)))) continue;
     for (const it of JSON.parse(readFileSync(join(fixtures, plugin, file), "utf8")).cases ?? []) {
       const language = it.languageOptions ?? {};
       const parserOptions = language.parserOptions ?? {};
-      if (it.skip || !/^[\x00-\x7f]*$/.test(it.code)) continue;
-      const one = {
+      if (it.skip) continue;
+      addCase(file.slice(0, -5), {
         filename: language.parser === "typescript" ? it.filename.replace(/^.*\//, "") : parserOptions.ecmaFeatures?.jsx ? "file.jsx" : "file.js",
         code: it.code,
         sourceType: parserOptions.sourceType ?? language.sourceType ?? "module",
         parserOptions: { ecmaFeatures: parserOptions.ecmaFeatures },
-      };
-      const identity = JSON.stringify(one);
-      if (seen.has(identity)) continue;
-      seen.add(identity);
-      let rows;
-      try {
-        rows = analyze(one);
-      } catch {
-        continue;
-      }
-      const id = cases.length;
-      cases.push(JSON.stringify({ id, rule: file.slice(0, -5), ...one }));
-      expected.push(`{"id":${id},"rows":[${rows.join(",")}]}`);
+      });
     }
+  }
+}
+for (const directory of (process.env.CORPUS ?? "").split(":").filter(Boolean)) {
+  for (const file of readdirSync(directory, { recursive: true }) as string[]) {
+    if (!/\.(js|jsx|ts|tsx)$/.test(file) || file.includes("node_modules")) continue;
+    const jsx = /x$/.test(file);
+    addCase(file, {
+      filename: file.replace(/^.*\//, ""),
+      code: readFileSync(join(directory, file), "utf8"),
+      sourceType: "module",
+      parserOptions: { ecmaFeatures: jsx ? { jsx } : undefined },
+    });
   }
 }
 mkdirSync(out, { recursive: true });

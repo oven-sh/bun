@@ -104,6 +104,23 @@ impl Rows {
         self.row("getStaticStringValue", at, optional_string(ts_utils::get_static_string_value(e)));
         let function = ts_utils::get_parent_function_node(e);
         self.row("getParentFunctionNode", at, optional_range(function.map(|it| estree_span(Node::Func(it)))));
+        if matches!(e.kind(), ExprKind::Call(_)) {
+            let mut object = None;
+            ts_utils::is_array_method_call_with_predicate(e, |it| {
+                object = Some(it.span());
+                true
+            });
+            self.row("isArrayMethodCallWithPredicate", at, optional_range(object));
+            let mut object = None;
+            ts_utils::is_promise_aggregator_method(e, |it| {
+                object = Some(it.span());
+                true
+            });
+            self.row("isPromiseAggregatorMethod", at, optional_range(object));
+        }
+        if let Node::Expr(parent) = estree_parent(Node::Expr(e)) {
+            self.row("getMovedNodeCode(parent)", at, string(&ts_utils::get_moved_node_code(parent, e)));
+        }
         let predicates = [
             ts_utils::is_null_literal(e),
             ts_utils::is_undefined_identifier(e),
@@ -151,6 +168,15 @@ impl Rows {
 impl<'a> Visitor<'a> for Rows {
     fn enter(&mut self, node: Node<'a>) {
         let at = node.span();
+        for (name, holds) in [
+            ("isClassOrTypeElement", ts_utils::is_class_or_type_element(node)),
+            ("isVariableDeclarator", ts_utils::is_variable_declarator(node)),
+            ("isLoop", ts_utils::is_loop(node)),
+        ] {
+            if holds {
+                self.row(name, estree_span(node), true);
+            }
+        }
         match node {
             Node::Expr(e) => self.expr(e),
             Node::Func(func) => self.func(func),
@@ -266,6 +292,21 @@ fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
         }
         let mut rows = Rows::default();
         walk(file, &mut rows);
+        let mut tokens = file.tokens().with_comments().peekable();
+        while let Some(token) = tokens.next() {
+            let bits = [
+                ts_utils::is_optional_chain_punctuator(&token),
+                ts_utils::is_non_null_assertion_punctuator(&token),
+                ts_utils::is_await_keyword(&token),
+                ts_utils::is_type_keyword(&token),
+                ts_utils::is_import_keyword(&token),
+                tokens.peek().is_some_and(|next| ts_utils::is_token_on_same_line(file, token, next)),
+            ];
+            rows.row("tokens", token.span(), list(bits));
+            if ts_utils::is_await_keyword(&token) {
+                rows.row("getAwaitTokenRemovalRange", token.span(), range(ts_utils::get_await_token_removal_range(file, token)));
+            }
+        }
         for symbol in file.symbols() {
             for declaration in symbol.declarations() {
                 if let Some(name) = declaration.name_span() {

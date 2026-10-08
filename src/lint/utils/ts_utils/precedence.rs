@@ -1,7 +1,7 @@
 //! `getOperatorPrecedence.ts`, `getWrappedCode.ts`, `isHigherPrecedenceThanAwait.ts`.
 
-use super::estree::is_member_expression;
 use crate::ast::{BinOp, Expr, ExprKind, FnKind, Node, PropKind, UnOp};
+use crate::utils::ast_utils::is_member_expression;
 use std::borrow::Cow;
 
 /// typescript-eslint's `OperatorPrecedence`, which is TypeScript's. It is ordered: a greater one

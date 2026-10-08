@@ -1,10 +1,11 @@
 //! `getWrappingFixer.ts`.
 
-use super::estree::{is_expression_statement, is_member_expression};
+use super::estree::is_expression_statement;
 use super::precedence::parenthesize;
 use crate::ast::{BinOp, Expr, ExprKind, FnBody, FnKind, Node, Stmt, StmtKind, TypeKind, UnOp};
 use crate::context::IntoText;
 use crate::fix::{Fix, Fixer};
+use crate::utils::ast_utils::is_member_expression;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 

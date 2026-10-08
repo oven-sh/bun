@@ -41,25 +41,6 @@ pub(super) fn is_pattern(e: Expr<'_>) -> bool {
     }
 }
 
-/// Whether `e` is a `MemberExpression`. The `a.b` of `typeof a.b` is a `TSQualifiedName`, that of
-/// `<a.b />` a `JSXMemberExpression`.
-pub(super) fn is_member_expression(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Index { .. } => true,
-        ExprKind::Dot { .. } => {
-            let mut at = e;
-            loop {
-                match at.parent() {
-                    Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { .. }) => at = parent,
-                    Node::Type(_) => return false,
-                    _ => return !e.is_jsx_tag_name(),
-                }
-            }
-        }
-        _ => false,
-    }
-}
-
 /// Whether `statement` is an `ExpressionStatement`.
 #[inline]
 pub(super) fn is_expression_statement(statement: Stmt<'_>) -> bool {

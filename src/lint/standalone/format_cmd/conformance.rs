@@ -416,7 +416,7 @@ pub(super) fn run(args: &Args) {
     let filter = args.flag("filter");
     let report = args.flag("report").map(PathBuf::from);
     let is_verbose = args.flag("verbose").is_some();
-    let languages = args.flag("languages").unwrap_or("js,jsx,typescript,json,misc");
+    let languages = args.flag("languages").unwrap_or("js,jsx,typescript,json,css,less,scss,misc");
     // The message of a panic would be printed for each.
     std::panic::set_hook(Box::new(|_| {}));
 

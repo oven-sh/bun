@@ -43,6 +43,12 @@ pub(crate) fn resolve(base: &[u8], path: &[u8]) -> Vec<u8> {
 /// `toRelativePath`: the way from the directory `base` to `path`. Empty if they are the same. It
 /// starts with `..` if `path` is outside of `base`.
 pub(crate) fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
+    // What follows the base as it is written is the answer if there is nothing in it to resolve.
+    if let Some([b'/', rest @ ..]) = path.strip_prefix(base)
+        && strings::split(rest, b"/").all(|name| !matches!(name, b"" | b"." | b".."))
+    {
+        return rest.to_vec();
+    }
     let (base, path) = (names(base), names(path));
     let common = base.iter().zip(&path).take_while(|(a, b)| a == b).count();
     let mut parts: Vec<&[u8]> = vec![b".."; base.len() - common];

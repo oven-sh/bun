@@ -383,9 +383,6 @@ impl Parser<'_> {
                 return flags;
             }
             let flag = modifier_flag(token);
-            if flags.contains(flag) {
-                self.report();
-            }
             flags |= flag;
             self.s.modifiers.push(Modifier {
                 kind: ModifierKind::Keyword(flag),
@@ -431,11 +428,11 @@ impl Parser<'_> {
         if self.is_ecmascript && flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
             self.report();
         }
-        if flags.contains(Flags::ASYNC) && self.token() != T::Function
-            || flags.contains(Flags::DEFAULT) && !flags.contains(Flags::EXPORT)
-        {
-            self.report();
-        }
+        // Only its modifiers say that `default class {}` has `default`.
+        let flags = match flags.contains(Flags::EXPORT) {
+            true => flags,
+            false => flags - Flags::DEFAULT,
+        };
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;

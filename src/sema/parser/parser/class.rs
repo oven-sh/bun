@@ -52,7 +52,7 @@ impl Parser<'_> {
         // A default export without a name is placed at `export`.
         let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
         let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
-        let unnamed_at = match modifiers.iter().find(is_export) {
+        let unnamed_at = match modifiers.iter().rfind(is_export) {
             Some(export) if flags.contains(Flags::DEFAULT) => export.pos,
             _ => self.pos(),
         };
@@ -69,6 +69,10 @@ impl Parser<'_> {
         let type_params = self.type_parameters();
         let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
         if self.eat(T::Extends) {
+            // `isHeritageClauseExtendsOrImplementsKeyword`: the list is empty.
+            if matches!(self.token(), T::Extends | T::Implements) {
+                self.report();
+            }
             // `isListElement`
             if !self.is_start_of_left_hand_side_expression()
                 && !(self.is_ecmascript && self.token() == T::LessThan)
@@ -273,10 +277,7 @@ impl Parser<'_> {
             if member.kind != MemberKind::Method {
                 self.context = saved;
                 member.flags.set(Flags::AMBIENT, is_parent_ambient);
-                // Only its modifiers say that `static async constructor() {}` is async.
-                if member.flags.contains(Flags::ASYNC) && !member.flags.contains(Flags::STATIC) {
-                    self.refuse(Refusal::Reported);
-                }
+                // Only its modifiers say that `async constructor() {}` is async.
                 member.flags -= Flags::ASYNC;
             }
             let mut fn_flags = member.flags;

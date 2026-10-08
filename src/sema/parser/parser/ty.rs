@@ -1168,9 +1168,6 @@ impl Parser<'_> {
             let first_modifier = self.s.modifiers.len();
             if self.token().is_modifier() {
                 member.flags = self.modifiers(false, false, false);
-                if member.flags != Flags::READONLY && !member.flags.is_empty() {
-                    self.refuse(Refusal::Reported);
-                }
             }
             member.modifiers = self.take_modifiers(first_modifier);
             let mut fn_kind = FnKind::Method;

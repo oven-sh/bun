@@ -49,7 +49,7 @@ impl Parser<'_> {
             // A default export without a name is placed at `export`.
             let is_export = |it: &&Modifier| it.kind == ModifierKind::Keyword(Flags::EXPORT);
             let modifiers = self.s.modifiers.get(base..).unwrap_or_default();
-            (Atom::NONE, modifiers.iter().find(is_export).map_or(start.pos, |it| it.pos))
+            (Atom::NONE, modifiers.iter().rfind(is_export).map_or(start.pos, |it| it.pos))
         };
         let func = self.function_rest(FnKind::Decl, fn_flags, name, name_pos, start.pos);
         let modifiers = self.take_modifiers(base);
@@ -71,9 +71,6 @@ impl Parser<'_> {
         let saved = self.enter_context(signature_context(flags), ctx::YIELD | ctx::AWAIT);
         let (mut name, mut name_pos) = (Atom::NONE, start);
         if self.is_binding_identifier() {
-            if !self.is_identifier() {
-                self.refuse(Refusal::Reported);
-            }
             (name, name_pos) = (self.lx.atom, self.pos());
             self.note_identifier(name, name_pos);
             self.next();
@@ -241,10 +238,6 @@ impl Parser<'_> {
             if !self.eat(T::Comma) {
                 break;
             }
-            let is_rest = |it: &Param| it.flags.contains(Flags::REST);
-            if self.token() == close && self.s.params.last().is_some_and(is_rest) {
-                self.report();
-            }
         }
         self.context = saved;
         let params: Span<ParamId> = take_span!(self, params, base);
@@ -306,7 +299,8 @@ impl Parser<'_> {
         if is_this {
             pat = self.f.pat(PatKind::Ident(known::this), self.lx.start, self.lx.end);
             self.next();
-            if self.s.params.len() != base || !flags.is_empty() {
+            // A decorator of `this` is an error of the parser.
+            if token.is_modifier() || token == T::At {
                 self.refuse(Refusal::Reported);
             }
         } else {
@@ -343,6 +337,9 @@ impl Parser<'_> {
     /// stack from `first` on: `node.Modifiers().Loc`, if a keyword is among them.
     #[cold]
     fn check_js_parameter_modifiers(&mut self, first: usize, start: u32) {
+        if self.has_failed() {
+            return;
+        }
         let modifiers = self.s.modifiers.get(first..).unwrap_or_default();
         let end_of = |it: &Modifier| match it.kind {
             ModifierKind::Keyword(flag) => it.pos + modifier_text(flag).len() as u32,
@@ -523,9 +520,6 @@ impl Parser<'_> {
             }
             return None;
         }
-        if self.newline_before() {
-            self.refuse(Refusal::Reported);
-        }
         let anchor = self.pos();
         self.next();
         let (body, open) = self.arrow_function_body(flags, allow_return_type);
@@ -581,9 +575,6 @@ impl Parser<'_> {
         start: u32,
         allow_return_type: bool,
     ) -> ExprId {
-        if self.newline_before() {
-            self.refuse(Refusal::Reported);
-        }
         let pat = self.f.pat(PatKind::Ident(name), pos, end);
         let param = self.f.add_param(Param {
             pat,

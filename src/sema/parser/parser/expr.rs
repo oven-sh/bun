@@ -208,9 +208,8 @@ impl Parser<'_> {
                 if self.has_context(ctx::YIELD) {
                     return self.yield_expression();
                 }
-                // `isYieldExpression`: it is read as one, and reported.
+                // `isYieldExpression`: it is read as one. The checker reports it.
                 if !self.is_ecmascript && self.next_is_word_or_literal_on_same_line() {
-                    self.report();
                     return self.yield_expression();
                 }
             }
@@ -1423,11 +1422,8 @@ impl Parser<'_> {
         let first_modifier = self.s.modifiers.len();
         if token.is_modifier() || token == T::At {
             flags = self.modifiers(true, false, false);
-            if flags.intersects(!Flags::ASYNC)
-                || self.s.modifiers[first_modifier..]
-                    .iter()
-                    .any(|it| matches!(it.kind, ModifierKind::Decorator(_)))
-            {
+            let is_decorator = |it: &Modifier| matches!(it.kind, ModifierKind::Decorator(_));
+            if self.s.modifiers[first_modifier..].iter().any(is_decorator) {
                 self.refuse(Refusal::Reported);
             }
         }
@@ -1455,8 +1451,12 @@ impl Parser<'_> {
         if self.classes_around == 0 && matches!(key, PropKey::Private(_)) || is_bigint {
             key = PropKey::None;
         }
-        if matches!(self.token(), T::Question | T::Exclamation) {
-            self.refuse(Refusal::Reported);
+        // "Disallowing of optional property assignments and definite assignment assertion happens in
+        // the grammar checker."
+        let mut postfix_token = 0;
+        if kind == PropKind::Init && matches!(self.token(), T::Question | T::Exclamation) {
+            postfix_token = self.pos();
+            self.next();
         }
         let is_function =
             kind != PropKind::Init || is_generator || matches!(self.token(), T::OpenParen | T::LessThan);
@@ -1483,9 +1483,6 @@ impl Parser<'_> {
                 pos,
                 start,
             );
-            if !has_body(&self.f[func]) {
-                self.refuse(Refusal::Reported);
-            }
             // The function expression starts at its parameters.
             self.finish_expr(ExprKind::Fn(func), self.f[func].anchor)
         } else if is_identifier && self.token() != T::Colon {
@@ -1513,12 +1510,13 @@ impl Parser<'_> {
             self.expect(T::Colon);
             self.assignment_expression_allowing_in()
         };
+        let mut modifiers = Span::EMPTY;
         if self.s.modifiers.len() > first_modifier {
-            let list = self.take_modifiers(first_modifier);
+            modifiers = self.take_modifiers(first_modifier);
             let index = (self.s.props.len() - base) as u32;
-            self.s.prop_modifiers.push((index, list));
+            self.s.prop_modifiers.push((index, modifiers));
         }
-        self.s.props.push(Prop {
+        let prop = Prop {
             kind,
             key,
             name_kind,
@@ -1526,8 +1524,12 @@ impl Parser<'_> {
             pos,
             start,
             end: self.prev_end(),
-            postfix_token: 0,
-        });
+            postfix_token,
+        };
+        if self.options.is_javascript && is_function {
+            self.check_js_method_of_object(&prop, modifiers);
+        }
+        self.s.props.push(prop);
     }
 
     /// The position of the first token of `e` that is neither a parenthesis nor part of `<T>`.

@@ -1,6 +1,6 @@
 //! Binding patterns.
 
-use super::{Parser, take_span};
+use super::{Parser, ctx, take_span};
 use crate::token::T;
 use bun_sema::hir::*;
 
@@ -107,7 +107,11 @@ impl Parser<'_> {
                 let is_identifier = self.is_binding_identifier();
                 let is_bigint = self.token() == T::BigInt;
                 let name_end = self.lx.end;
-                let (mut key, name_kind, key_pos) = self.property_name();
+                let (mut key, mut name_kind, key_pos) = self.property_name();
+                // In a type nothing asks whether the name is in quotes.
+                if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
+                    name_kind = NameKind::Identifier;
+                }
                 // `name.Text()` ends with the `n`.
                 if is_bigint && let PropKey::Name(digits) = key {
                     let text = [self.lx.text_of(digits), b"n"].concat();

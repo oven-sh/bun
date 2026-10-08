@@ -63,6 +63,10 @@ impl Parser<'_> {
     /// (`is_class_declaration`), or a node for which `CanHaveIllegalDecorators` is true.
     #[cold]
     pub(crate) fn check_js_decorators(&mut self, list: Span<ModifierId>, is_class_declaration: bool) {
+        // Nodes can be missing.
+        if self.has_failed() {
+            return;
+        }
         let file = &self.f;
         let modifiers = file.modifier_list(list);
         // Each with its index and its range.
@@ -103,7 +107,7 @@ impl Parser<'_> {
     /// For the declaration `id`.
     #[cold]
     pub(crate) fn check_js_statement(&mut self, id: StmtId) {
-        let Some(&stmt) = self.f.stmts.get(id.idx()) else {
+        let Some(&stmt) = self.f.stmts.get(id.idx()).filter(|_| !self.has_failed()) else {
             return;
         };
         match stmt.kind {
@@ -148,9 +152,33 @@ impl Parser<'_> {
         self.js_error(at, code, what);
     }
 
+    /// For a method or an accessor in an object literal.
+    #[cold]
+    pub(crate) fn check_js_method_of_object(&mut self, prop: &Prop, modifiers: Span<ModifierId>) {
+        if self.has_failed() {
+            return;
+        }
+        let postfix = self.lx.src.get(prop.postfix_token as usize);
+        if prop.kind == PropKind::Method && prop.postfix_token != 0 && postfix == Some(&b'?') {
+            self.js_error((prop.postfix_token, 0), 8009, b"?");
+        }
+        if let Some(&Expr {
+            kind: ExprKind::Fn(func),
+            ..
+        }) = self.f.exprs.get(prop.value.idx())
+            && !has_body_node(&self.f[func])
+        {
+            self.js_error((prop.start, prop.end), 8017, b"");
+        }
+        self.check_js_modifiers(modifiers, false);
+    }
+
     /// For a class member. `question`: the position of the `?` after its name.
     #[cold]
     pub(crate) fn check_js_member(&mut self, member: &Member, question: Option<u32>) {
+        if self.has_failed() {
+            return;
+        }
         if matches!(member.kind, MemberKind::Property | MemberKind::Method)
             && let Some(question) = question
         {

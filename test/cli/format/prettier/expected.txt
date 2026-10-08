@@ -18,7 +18,6 @@ FAIL rejected js/optional-chaining-assignment/invalid-for-in.js
 FAIL rejected js/optional-chaining-assignment/invalid-for-of.js
 FAIL rejected js/optional-chaining-assignment/invalid-inc-postfix.js
 FAIL rejected js/optional-chaining-assignment/invalid-inc-prefix.js
-FAIL format js/range/issue-7082.js rangeEnd=42 rangeStart=29
 FAIL rejected js/source-phase-imports/no-named.js
 FAIL format jsx/cursor/before-first-jsx-text.js cursorOffset=2
 FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts
@@ -27,17 +26,17 @@ FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-module.ts
 FAIL rejected typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts
 FAIL format css/cursor/test.css cursorOffset=19
 FAIL format css/yaml/dirty.css
-css: format 159/161 (0 syntax errors), rejected 2/2, second format 134/134, CRLF 159/159, CR 159/159, BOM 158/158
-js: format 1303/1306 (0 syntax errors), rejected 39/58, second format 1017/1017, CRLF 1293/1293, CR 1293/1293, BOM 1299/1299
+css: format 160/162 (0 syntax errors), rejected 2/2, second format 135/135, CRLF 160/160, CR 160/160, BOM 159/159
+js: format 1325/1327 (0 syntax errors), rejected 39/58, second format 1036/1036, CRLF 1315/1315, CR 1315/1315, BOM 1321/1321
 json: format 785/785 (0 syntax errors), rejected 0/0, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
-jsx: format 183/184 (0 syntax errors), rejected 0/0, second format 165/165, CRLF 182/182, CR 182/182, BOM 183/183
+jsx: format 185/186 (0 syntax errors), rejected 0/0, second format 166/166, CRLF 184/184, CR 184/184, BOM 185/185
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
 misc: format 236/236 (0 syntax errors), rejected 0/0, second format 207/207, CRLF 30/30, CR 30/30, BOM 235/235
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
-typescript: format 745/745 (0 syntax errors), rejected 24/28, second format 598/598, CRLF 744/744, CR 744/744, BOM 732/732
-format: 3785/3791 (99.84%)
-all checks: 17872/17901 (99.84%)
+typescript: format 746/746 (0 syntax errors), rejected 24/28, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
+format: 3811/3816 (99.87%)
+all checks: 17998/18026 (99.84%)
 not run: 17: Flow's type syntax
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
-not run: 67: embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language
+not run: 42: embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language
 not run: 66: syntax of a proposal at stage 2 or below, which only Babel parses

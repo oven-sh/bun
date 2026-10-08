@@ -1490,6 +1490,54 @@ declare module "bun" {
    * YAML related APIs
    */
   namespace YAML {
+    interface ParseOptions {
+      /**
+       * Limits how much the aliases (`*name`) of a document may multiply its data. It behaves as the
+       * option of the same name of the `yaml` package on npm for every number and, unlike it, a value that
+       * is not a number throws instead of being ignored:
+       *
+       * - `0` rejects every alias.
+       * - A negative number or `Infinity` turns the check off.
+       * - For any other number, an anchor counts `1` and each of its aliases `1` more. That count is
+       *   multiplied by the largest such product among the aliases written inside the anchored node (`1` if
+       *   it holds only scalars), and the result may not exceed the limit. One alias of a scalar needs `2`.
+       * - Anything else but `undefined` throws a `TypeError`, and `NaN` a `RangeError`.
+       *
+       * Each document of a stream is counted on its own. Exceeding the limit throws a `ReferenceError`.
+       * Without this option a built-in limit, high enough for hand-written documents, stops exponential
+       * expansion with a `SyntaxError`. Whatever the option, that limit still holds for what the parser
+       * itself goes over again: the source of each merge key (`<<`) and a collection used as a mapping key.
+       *
+       * @example
+       * ```ts
+       * import { YAML } from "bun";
+       *
+       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 2 }); // { a: [1, 2], b: [1, 2] }
+       * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 1 }); // ReferenceError
+       * ```
+       */
+      maxAliasCount?: number | undefined;
+
+      /**
+       * How deep the sequences and mappings of a document may nest. A scalar has depth `0`, `[]` depth `1`
+       * and `a: [1]` depth `2`. What an alias refers to counts as if it were written in the alias's place,
+       * and an alias to a collection that contains it, which nests without end, is rejected. The array that
+       * holds the documents of a multi-document stream is not counted.
+       *
+       * Exceeding it throws a `SyntaxError`. Without this option the depth is limited by the stack alone,
+       * and exceeding that throws a `RangeError`.
+       *
+       * @example
+       * ```ts
+       * import { YAML } from "bun";
+       *
+       * YAML.parse("a: [1]", { maxDepth: 2 }); // { a: [1] }
+       * YAML.parse("a: [1]", { maxDepth: 1 }); // SyntaxError
+       * ```
+       */
+      maxDepth?: number | undefined;
+    }
+
     /**
      * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
      * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
@@ -1512,6 +1560,24 @@ declare module "bun" {
      * ```
      */
     export function parse(input: string): unknown;
+    /**
+     * Parse a YAML string into a JavaScript value, with limits for input from an untrusted source.
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @param options The limits, see {@link ParseOptions}
+     * @returns A JavaScript value, or an array of them for a multi-document stream
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * YAML.parse("a: &x [1, 2]\nb: *x", { maxAliasCount: 0 }); // ReferenceError
+     * YAML.parse("a: [[1]]", { maxDepth: 2 }); // SyntaxError
+     * ```
+     */
+    export function parse(input: string, options?: ParseOptions): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or

@@ -16,6 +16,10 @@ pub(crate) struct LintCommand;
 /// For the help.
 pub(crate) use bun_lint_driver::cli::PARAMS;
 
+/// Whether `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release
+/// build has none of it.
+const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+
 fn change_directory(cwd: &[u8]) {
     // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
     let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
@@ -140,6 +144,14 @@ impl LintCommand {
     /// `args`: what follows `lint`.
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+        if HAS_TEST_RUNNER
+            && let [b"--run-eslint-tests", rest @ ..] = &args[..]
+        {
+            run_and_exit(b"lint", None, |environment| Outcome {
+                exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(rest, environment)),
+                ..Outcome::default()
+            })
+        }
         let options = match Options::parse(&args) {
             Ok(options) => options,
             Err(UsageError(message)) => usage_error("lint", &message),

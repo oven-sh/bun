@@ -2706,30 +2706,48 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       const electronPreinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+      const lockfile = () => file(join(packageDir, "bun.lock")).text();
+      async function reinstall(options: { frozenLockfile?: boolean } = {}) {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        const { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false, ...options });
+        expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+        return err;
+      }
 
       await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" } }));
       await runBunInstall(testEnv, packageDir);
       // electron is on the default list
       expect(await exists(electronPreinstall)).toBeTrue();
-      expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("trustedDependencies");
+      const lockfileWithoutList = await lockfile();
+      expect(lockfileWithoutList).not.toContain("trustedDependencies");
 
       await writeFile(
         packageJson,
         JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" }, trustedDependencies: [] }),
       );
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      let { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false });
-      expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+
+      // A frozen install cannot record the list in bun.lock. It still takes it from package.json.
+      await reinstall({ frozenLockfile: true });
       expect(await exists(electronPreinstall)).toBeFalse();
+      expect(await lockfile()).toBe(lockfileWithoutList);
+
       // The lockfile has no list and package.json now has one: that is a change, so the
       // lockfile is saved again, now with the empty list.
+      let err = await reinstall();
+      expect(await exists(electronPreinstall)).toBeFalse();
       expect(err).toContain("Saved lockfile");
-      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"trustedDependencies": [],`);
+      expect(await lockfile()).toContain(`"trustedDependencies": [],`);
 
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      ({ err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
+      err = await reinstall();
       expect(await exists(electronPreinstall)).toBeFalse();
       expect(err).not.toContain("Saved lockfile");
+
+      // Without the list the default list applies again, and bun.lock drops the key.
+      await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" } }));
+      err = await reinstall();
+      expect(await exists(electronPreinstall)).toBeTrue();
+      expect(err).toContain("Saved lockfile");
+      expect(await lockfile()).toBe(lockfileWithoutList);
     });
 
     test("an empty trustedDependencies list in a workspace package turns the default list off on every install", async () => {

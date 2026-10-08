@@ -198,7 +198,10 @@ pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
     if rest > 0 {
         pretty!(out, meta.color, "  <d>and {} of {}<r>\n", plural(rest, "more problem"), plural(groups.len() - shown - compact, "other kind"));
     }
-    pretty!(out, meta.color, "\n<cyan>bun lint --all<r><d>  show every problem<r>");
+    if compact > 0 {
+        out.push(b'\n');
+    }
+    pretty!(out, meta.color, "<cyan>bun lint --all<r><d>  show every problem<r>");
 }
 
 /// An attribute value, without the quotes.

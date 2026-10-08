@@ -15,7 +15,7 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
@@ -46,6 +46,8 @@ pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
+    /// `node_modules/<alias>` is a link to a workspace or `link:` folder.
+    pub(crate) link: bool,
 }
 
 pub struct PackageInstaller<'a> {
@@ -362,6 +364,34 @@ fn abs_node_modules_path(
     let mut abs = AbsPath::from(top).unwrap_or_oom();
     abs.append(rel.as_bytes()).unwrap_or_oom();
     abs
+}
+
+/// Removes `node_modules/<alias>` of `tree_id`, the entry the hoisted linker
+/// placed, after an optional lifecycle script of that package failed. The next
+/// install then places the package and runs its scripts again. A link is
+/// unlinked by its `node_modules` name and never followed: the script cwd can
+/// be the folder the link points to.
+pub(crate) fn discard_failed_optional(
+    lockfile: &Lockfile,
+    tree_id: lockfile::tree::Id,
+    alias: &[u8],
+    link: bool,
+) {
+    let mut path =
+        abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
+    path.append(alias).unwrap_or_oom();
+    let Some(parent) = bun_core::dirname(path.slice()) else {
+        return;
+    };
+    let Ok(dir) = Dir::open(parent) else {
+        return;
+    };
+    let name = bun_paths::basename(path.slice());
+    let _ = if link {
+        crate::prune::remove_link(&dir, name)
+    } else {
+        dir.delete_tree(name)
+    };
 }
 
 /// A dependency alias becomes the install destination inside `node_modules`
@@ -796,7 +826,10 @@ impl<'a> PackageInstaller<'a> {
                     entry.list,
                     optional,
                     output_in_foreground,
-                    None,
+                    Some(InstallCtx::Hoisted {
+                        tree_id,
+                        link: entry.link,
+                    }),
                 ) {
                     if log_level != Options::LogLevel::Silent {
                         if log_level.show_progress() {
@@ -927,7 +960,10 @@ impl<'a> PackageInstaller<'a> {
                 entry.list,
                 optional,
                 output_in_foreground,
-                None,
+                Some(InstallCtx::Hoisted {
+                    tree_id: entry.tree_id,
+                    link: entry.link,
+                }),
             ) {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
@@ -2445,6 +2481,10 @@ impl<'a> PackageInstaller<'a> {
                 list: scripts_list,
                 tree_id: self.current_tree_id,
                 optional,
+                link: matches!(
+                    resolution.tag,
+                    resolution::Tag::Workspace | resolution::Tag::Symlink
+                ),
             });
 
             return true;

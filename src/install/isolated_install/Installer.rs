@@ -405,32 +405,16 @@ impl<'a> Installer<'a> {
         }
 
         // attempt deleting the package so the next install will install it again
-        match pkg_res.tag {
-            ResolutionTag::Uninitialized
-            | ResolutionTag::SingleFileModule
-            | ResolutionTag::Root
-            | ResolutionTag::Workspace
-            | ResolutionTag::Symlink => {}
+        if Self::is_store_copy(pkg_res.tag) {
+            let mut store_path = AutoRelPath::init();
 
-            // to be safe make sure we only delete packages in the store
-            ResolutionTag::Npm
-            | ResolutionTag::Git
-            | ResolutionTag::Github
-            | ResolutionTag::LocalTarball
-            | ResolutionTag::RemoteTarball
-            | ResolutionTag::Folder => {
-                let mut store_path = AutoRelPath::init();
+            // OOM/capacity: fire-and-forget
+            let _ = store_path.append_fmt(format_args!(
+                "node_modules/{}",
+                store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
+            ));
 
-                // OOM/capacity: fire-and-forget
-                let _ = store_path.append_fmt(format_args!(
-                    "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
-
-                let _ = sys::unlink(store_path.slice_z());
-            }
-
-            _ => {}
+            let _ = sys::unlink(store_path.slice_z());
         }
 
         if self.manager().options.enable.fail_early() {
@@ -441,6 +425,45 @@ impl<'a> Installer<'a> {
 
         self.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
+    }
+
+    /// To be safe, only these are deleted: the entry is a copy bun made in the
+    /// store. A root, workspace or `link:` entry is the user's own folder.
+    fn is_store_copy(tag: ResolutionTag) -> bool {
+        matches!(
+            tag,
+            ResolutionTag::Npm
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+                | ResolutionTag::Folder
+        )
+    }
+
+    /// Called from main thread. A lifecycle script of an optional dependency
+    /// failed: the entry is done and its dependents resume, then its store
+    /// copy is removed so the next install installs it again. Returns false
+    /// when the entry has no store copy.
+    pub(crate) fn on_optional_scripts_failed(&mut self, entry_id: StoreEntryId) -> bool {
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Release);
+        self.on_task_complete(entry_id, CompleteState::Skipped);
+
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        if !Self::is_store_copy(self.lockfile().packages.items_resolution()[pkg_id as usize].tag) {
+            return false;
+        }
+
+        let mut path = AutoAbsPath::init_top_level_dir();
+        self.append_store_path(&mut path, entry_id);
+        if let Some(parent) = bun_core::dirname(path.slice())
+            && let Ok(dir) = sys::Dir::open(parent)
+        {
+            let _ = dir.delete_tree(paths::basename(path.slice()));
+        }
+        true
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {

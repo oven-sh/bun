@@ -209,7 +209,7 @@ impl Linter {
 
         // ESLint's `markExportedVariables`.
         for name in file.exported_in_comments() {
-            if let Some(symbol) = std::str::from_utf8(name).ok().and_then(|name| file.scope().get(name)) {
+            if let Some(symbol) = file.scope().get_bytes(name) {
                 symbol.mark_exported();
             }
         }
@@ -281,7 +281,10 @@ fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locat
         message_id: Some(diagnostic.message_id),
         line,
         column,
-        end: (!diagnostic.has_no_end).then(|| locator.position(diagnostic.span.end)),
+        end: (!diagnostic.has_no_end).then(|| match diagnostic.end_position {
+            Some(end) => (end.line, end.column + 1),
+            None => locator.position(diagnostic.span.end),
+        }),
         is_fatal: false,
         fix: diagnostic.fix,
         suggestions: diagnostic.suggestions,

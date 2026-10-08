@@ -106,6 +106,9 @@ const QMARK: &[u8] = b"[^/]";
 const STAR: &[u8] = b"[^/]*?";
 const STAR_NO_EMPTY: &[u8] = b"[^/]+?";
 const MAX_EXTGLOB_RECURSION: usize = 2;
+/// `minimatch` has no such limit: extglobs that can be merged with the one around them nest as deep
+/// as the pattern is long.
+const MAX_NESTING: usize = 128;
 
 fn is_extglob_type(byte: u8) -> bool {
     matches!(byte, b'!' | b'?' | b'+' | b'*' | b'@')
@@ -395,6 +398,8 @@ struct Ast {
     nodes: Vec<Node>,
     negs: Vec<usize>,
     has_filled_negs: bool,
+    /// How many extglobs are being parsed.
+    nesting: usize,
 }
 
 impl Ast {
@@ -431,6 +436,7 @@ impl Ast {
             nodes: Vec::new(),
             negs: Vec::new(),
             has_filled_negs: false,
+            nesting: 0,
         };
         let root = ast.create(None, None);
         ast.parse(pattern, root, 0, 0);
@@ -476,9 +482,11 @@ impl Ast {
                 continue;
             }
             let can_adopt = is_extglob && self.can_adopt_type(node, c, adoption_any);
-            if is_extglob_type(c) && text.get(i) == Some(&b'(') && (depth <= MAX_EXTGLOB_RECURSION || can_adopt) {
+            let is_nested = depth <= MAX_EXTGLOB_RECURSION || can_adopt;
+            if is_extglob_type(c) && text.get(i) == Some(&b'(') && is_nested && self.nesting < MAX_NESTING {
                 self.push_text(part, std::mem::take(&mut acc));
                 let ext = self.create(Some(c), Some(part));
+                self.nesting += 1;
                 if is_extglob {
                     self.push_node(part, ext);
                     i = self.parse(text, ext, i, depth + usize::from(!can_adopt));
@@ -486,6 +494,7 @@ impl Ast {
                     i = self.parse(text, ext, i, depth + 1);
                     self.push_node(part, ext);
                 }
+                self.nesting -= 1;
                 continue;
             }
             if is_extglob && c == b'|' {
@@ -893,6 +902,7 @@ pub(crate) fn split_path(path: &[u8]) -> PathParts<'_> {
 
 /// `new Minimatch(pattern, { dot: true })`
 pub(crate) struct Minimatch {
+    /// It matches nothing.
     is_comment: bool,
     is_empty: bool,
     is_negated: bool,
@@ -925,8 +935,10 @@ const MAX_GLOBSTAR_RECURSION: usize = 200;
 
 impl Minimatch {
     pub(crate) fn new(pattern: &[u8]) -> Minimatch {
+        // `assertValidPattern` throws for a longer one.
+        const MAX_PATTERN_LENGTH: usize = 1024 * 64;
         let mut it = Minimatch {
-            is_comment: pattern.first() == Some(&b'#'),
+            is_comment: pattern.first() == Some(&b'#') || pattern.len() > MAX_PATTERN_LENGTH,
             is_empty: pattern.is_empty(),
             is_negated: false,
             set: Vec::new(),

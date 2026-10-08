@@ -1,8 +1,9 @@
 use bun_lint::code_path::{CurrentSegments, Event, Step, starts_code_path, steps_of_code_path};
 use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
-use std::collections::VecDeque;
+use smallvec::{SmallVec, smallvec};
+use std::collections::hash_map::Entry;
+use std::ops::Range;
 
 /// Disallow variable assignments when the value is not used.
 pub struct NoUselessAssignment;
@@ -26,8 +27,11 @@ type Assignments<'a> = SmallVec<[Assignment<'a>; 1]>;
 /// What is kept for a code path.
 struct ScopeStack<'a> {
     scope: Scope<'a>,
-    assignments: FxHashMap<Symbol<'a>, Assignments<'a>>,
+    /// `None` for a variable that is not looked at.
+    assignments: FxHashMap<Symbol<'a>, Option<Assignments<'a>>>,
+    /// In the order of the source.
     try_statement_blocks: Vec<Span>,
+    segments: Segments<'a>,
 }
 
 #[derive(Default)]
@@ -47,22 +51,17 @@ pub struct State<'a> {
 const NO_IDENTIFIERS: Span = Span::new(u32::MAX, 0);
 
 /// ESLint's `extractIdentifiersFromPattern`, for the target of an assignment.
-fn extract_identifiers_from_pattern<'a>(pattern: Expr<'a>, visit: &mut dyn FnMut(Expr<'a>)) {
-    match pattern.kind() {
-        ExprKind::Ident(_) => visit(pattern),
-        ExprKind::Object(properties) => {
-            for value in properties.iter().filter_map(Prop::value) {
-                extract_identifiers_from_pattern(value, visit);
-            }
+fn extract_identifiers_from_pattern<'a>(pattern: Expr<'a>, mut visit: impl FnMut(Expr<'a>)) {
+    let mut stack: SmallVec<[Expr<'a>; 8]> = smallvec![pattern];
+    while let Some(pattern) = stack.pop() {
+        match pattern.kind() {
+            ExprKind::Ident(_) => visit(pattern),
+            ExprKind::Object(properties) => stack.extend(properties.iter().filter_map(Prop::value)),
+            ExprKind::Array(elements) => stack.extend(elements),
+            ExprKind::Spread(argument) => stack.push(argument),
+            ExprKind::Assign { target, .. } => stack.push(target),
+            _ => {}
         }
-        ExprKind::Array(elements) => {
-            for element in elements {
-                extract_identifiers_from_pattern(element, visit);
-            }
-        }
-        ExprKind::Spread(argument) => extract_identifiers_from_pattern(argument, visit),
-        ExprKind::Assign { target, .. } => extract_identifiers_from_pattern(target, visit),
-        _ => {}
     }
 }
 
@@ -77,10 +76,6 @@ fn is_identifier_used_between_assigned_and_equal_sign(assignment: &Assignment<'_
     assignment.expression.is_some_and(|expression| {
         assignment.identifier.end <= identifier.start && identifier.end <= expression.start
     })
-}
-
-fn is_identifier_used_in_segment(ranges: &[Span], segment: Segment<'_>, identifier: Span) -> bool {
-    ranges.get(segment.id() as usize).is_some_and(|range| range.contains(identifier))
 }
 
 fn get_code_path_start_scope<'a>(starts: &FxHashSet<Scope<'a>>, scope: Scope<'a>) -> Option<Scope<'a>> {
@@ -99,94 +94,662 @@ fn is_exported(variable: Symbol<'_>) -> bool {
     }) || variable.references().any(|reference| matches!(reference.node(), Node::ExportSpec(_)))
 }
 
-/// The segments that follow those of an assignment, as far as they have been asked for.
-struct SubsequentSegments<'a> {
-    /// With the index of the first assignment in the segment. What follows that need not be looked
-    /// at, as the value it assigns is what is used there.
-    results: Vec<(Segment<'a>, Option<usize>)>,
-    seen: FxHashSet<Segment<'a>>,
-    queue: VecDeque<Segment<'a>>,
+const NONE: u32 = u32::MAX;
+
+fn intersection(a: Range<usize>, b: Range<usize>) -> Range<usize> {
+    a.start.max(b.start)..a.end.min(b.end)
 }
 
-impl<'a> SubsequentSegments<'a> {
-    fn new(target: &Assignment<'a>) -> Self {
-        SubsequentSegments {
-            results: Vec::new(),
-            seen: FxHashSet::default(),
-            queue: target.segments.iter().flat_map(|segment| segment.next_segments()).collect(),
+/// Whether something of `range` is not in `without`.
+fn is_any_outside(range: &Range<usize>, without: &Range<usize>) -> bool {
+    range.start < range.end && (range.start < without.start || without.end < range.end)
+}
+
+/// Lists of numbers, one after the other.
+struct Lists {
+    starts: Vec<u32>,
+    items: Vec<u32>,
+}
+
+impl Lists {
+    /// `pairs`: the number of a list with an item of it, sorted.
+    fn new(count: usize, pairs: &[(u32, u32)]) -> Lists {
+        let mut starts = vec![0u32; count + 1];
+        for &(list, _) in pairs {
+            starts[list as usize + 1] += 1;
+        }
+        for list in 0..count {
+            starts[list + 1] += starts[list];
+        }
+        Lists {
+            starts,
+            items: pairs.iter().map(|it| it.1).collect(),
         }
     }
 
-    fn get(
-        &mut self,
-        index: usize,
-        all: &[Assignment<'a>],
-        target: &Assignment<'a>,
-    ) -> Option<(Segment<'a>, Option<usize>)> {
-        while index >= self.results.len() {
-            let next = self.queue.pop_front()?;
-            if !self.seen.insert(next) {
-                continue;
-            }
-            let assignment = all.iter().position(|other| {
-                other.segments.contains(&next)
-                    && !is_identifier_used_between_assigned_and_equal_sign(other, target.identifier)
-            });
-            if assignment.is_none() {
-                self.queue.extend(next.next_segments());
-            }
-            self.results.push((next, assignment));
-        }
-        self.results.get(index).copied()
+    fn get(&self, list: u32) -> &[u32] {
+        &self.items[self.starts[list as usize] as usize..self.starts[list as usize + 1] as usize]
     }
 }
 
-/// Whether nothing reads the value that `all[index]` assigns. `read_references`: where the variable
-/// is read, all in the same code path.
-fn is_assignment_unused(index: usize, all: &[Assignment<'_>], read_references: &[Span], ranges: &[Span]) -> bool {
-    let Some(target) = all.get(index) else {
-        return false;
+/// The least of any part of a list of numbers, in the logarithm of its length.
+struct Minima {
+    /// The numbers are `tree[size..]`, and `tree[i]` is the lesser of `tree[2 * i]` and
+    /// `tree[2 * i + 1]`.
+    tree: Vec<u32>,
+    size: usize,
+}
+
+impl Minima {
+    fn new(numbers: &[u32]) -> Minima {
+        let size = numbers.len().next_power_of_two();
+        let mut tree = vec![u32::MAX; 2 * size];
+        tree[size..size + numbers.len()].copy_from_slice(numbers);
+        for at in (1..size).rev() {
+            tree[at] = tree[2 * at].min(tree[2 * at + 1]);
+        }
+        Minima { tree, size }
+    }
+
+    fn least_of(&self, part: Range<usize>) -> u32 {
+        let (mut from, mut to, mut least) = (part.start + self.size, part.end + self.size, u32::MAX);
+        while from < to {
+            if from % 2 == 1 {
+                least = least.min(self.tree[from]);
+                from += 1;
+            }
+            if to % 2 == 1 {
+                to -= 1;
+                least = least.min(self.tree[to]);
+            }
+            from /= 2;
+            to /= 2;
+        }
+        least
+    }
+
+    /// Calls `visit` with the index of each number of `part` that is at most `limit`.
+    fn for_each_up_to(&self, part: &Range<usize>, limit: u32, visit: &mut impl FnMut(usize)) {
+        self.for_each_below(1, 0..self.size, part, limit, visit);
+    }
+
+    /// `all`: what `tree[at]` is the least of. It halves with each call.
+    fn for_each_below(
+        &self,
+        at: usize,
+        all: Range<usize>,
+        part: &Range<usize>,
+        limit: u32,
+        visit: &mut impl FnMut(usize),
+    ) {
+        if self.tree[at] > limit || all.end <= part.start || part.end <= all.start {
+            return;
+        }
+        if at >= self.size {
+            return visit(all.start);
+        }
+        let middle = all.start + (all.end - all.start) / 2;
+        self.for_each_below(2 * at, all.start..middle, part, limit, visit);
+        self.for_each_below(2 * at + 1, middle..all.end, part, limit, visit);
+    }
+}
+
+/// The forest that the algorithm of Lengauer and Tarjan grows: the nodes from some number on are
+/// linked to the node from which the search has come to them.
+struct Forest {
+    /// A node further up in the tree of a linked node.
+    ancestors: Vec<u32>,
+    /// The node with the least semidominator from a linked node up to below `ancestors`.
+    labels: Vec<u32>,
+    semidominators: Vec<u32>,
+    path: Vec<u32>,
+}
+
+impl Forest {
+    /// The node with the least semidominator from `node` up to below the root of its tree, if the
+    /// nodes from `linked` on are linked. The way up is made short for the next time.
+    fn least(&mut self, node: u32, linked: u32) -> u32 {
+        let mut top = node as usize;
+        while self.ancestors[top] >= linked {
+            self.path.push(top as u32);
+            top = self.ancestors[top] as usize;
+        }
+        while let Some(it) = self.path.pop() {
+            let it = it as usize;
+            self.ancestors[it] = self.ancestors[top];
+            if self.semidominators[self.labels[top] as usize] < self.semidominators[self.labels[it] as usize] {
+                self.labels[it] = self.labels[top];
+            }
+            top = it;
+        }
+        self.labels[node as usize]
+    }
+}
+
+/// The immediate dominator of each node of a graph, in `m log n` for `n` nodes and `m` edges. The
+/// nodes are numbered in the order of a depth first search from node 0. `parents`: from where the
+/// search has come to each node. `prev`: where the edges to it come from.
+fn immediate_dominators(parents: &[u32], prev: &Lists) -> Vec<u32> {
+    let count = parents.len();
+    let numbers: Vec<u32> = (0..count as u32).collect();
+    let mut forest = Forest {
+        ancestors: parents.to_vec(),
+        labels: numbers.clone(),
+        semidominators: numbers,
+        path: Vec::new(),
     };
-    // Another assignment in the same segment, after this one.
-    let other_assignment_after_target = all.iter().enumerate().find_map(|(i, assignment)| {
-        let is_after = i != index
-            && assignment.segments.iter().any(|segment| target.segments.contains(segment))
-            && (is_identifier_evaluated_after_assignment(target, assignment.identifier)
-                // `x = (x = 1)`
-                || assignment.expression.is_some_and(|expression| expression.contains(target.identifier)));
-        is_after.then_some(assignment)
-    });
-    let mut subsequent_segments = None;
+    let mut dominators = vec![0u32; count];
+    // The nodes with the same semidominator, as a linked list.
+    let (mut first_with, mut next_with) = (vec![NONE; count], vec![NONE; count]);
+    for node in (1..count as u32).rev() {
+        let parent = parents[node as usize];
+        let mut semidominator = parent;
+        for &from in prev.get(node) {
+            let least = forest.least(from, node + 1);
+            semidominator = semidominator.min(forest.semidominators[least as usize]);
+        }
+        forest.semidominators[node as usize] = semidominator;
+        next_with[node as usize] = std::mem::replace(&mut first_with[semidominator as usize], node);
+        let mut it = std::mem::replace(&mut first_with[parent as usize], NONE);
+        while it != NONE {
+            let least = forest.least(it, node);
+            let is_above = forest.semidominators[least as usize] < forest.semidominators[it as usize];
+            // The dominator of `least` is its own, and is known later.
+            dominators[it as usize] = if is_above { least } else { parent };
+            it = next_with[it as usize];
+        }
+    }
+    for node in 1..count {
+        if dominators[node] != forest.semidominators[node] {
+            dominators[node] = dominators[dominators[node] as usize];
+        }
+    }
+    dominators
+}
 
-    for &reference in read_references {
-        if is_identifier_evaluated_after_assignment(target, reference)
-            && (is_identifier_used_between_assigned_and_equal_sign(target, reference)
-                || target.segments.iter().any(|&segment| is_identifier_used_in_segment(ranges, segment, reference)))
-        {
-            if other_assignment_after_target
-                .is_some_and(|other| is_identifier_evaluated_after_assignment(other, reference))
-            {
-                continue;
+/// The reachable segments of a code path with their dominator tree, to follow the value of a
+/// variable without passing through the segments that have nothing to do with it.
+///
+/// A segment has the number that a walk through the tree gives it when it enters it, so that what it
+/// dominates are the numbers from its own to `last`.
+struct Graph {
+    /// By the id of a segment.
+    numbers: FxHashMap<u32, u32>,
+    last: Vec<u32>,
+    /// How far it is from the root of the tree.
+    levels: Vec<u32>,
+    /// The segments that precede, sorted.
+    prev: Lists,
+    /// The edges that do not come from the immediate dominator of their target, by where they come
+    /// from. `target` is in the dominance frontier of the segments on the way up the tree from
+    /// `source`, as far as the level in `frontier_levels`. For a segment that is on the way up from
+    /// several edges to a target, that holds for one of them.
+    frontier_sources: Vec<u32>,
+    frontier_targets: Vec<u32>,
+    frontier_levels: Minima,
+    /// The ranges of the identifiers in the segments, each with the number of the segment, by where
+    /// they start.
+    ranges: Vec<(Span, u32)>,
+    /// The greatest end of `ranges[..=i]`.
+    ends: Vec<u32>,
+}
+
+impl Graph {
+    /// It takes `n log n` for `n` segments.
+    fn new(initial: Segment<'_>, started: &[Segment<'_>], identifier_ranges: &[Span]) -> Graph {
+        let mut found: FxHashMap<u32, u32> = FxHashMap::default();
+        let mut parents: Vec<u32> = Vec::new();
+        // The target comes first.
+        let mut edges: Vec<(u32, u32)> = Vec::new();
+        let mut stack = vec![(initial, NONE)];
+        while let Some((segment, from)) = stack.pop() {
+            let node = *found.entry(segment.id()).or_insert(parents.len() as u32);
+            if from != NONE {
+                edges.push((node, from));
             }
-            return false;
+            if node as usize == parents.len() {
+                parents.push(if from == NONE { 0 } else { from });
+                stack.extend(segment.next_segments().into_iter().map(|next| (next, node)));
+            }
         }
-        if other_assignment_after_target.is_some() {
-            continue;
+        let count = parents.len();
+        edges.sort_unstable();
+        edges.dedup();
+        let dominators = immediate_dominators(&parents, &Lists::new(count, &edges));
+
+        // A dominator has been found before what it dominates.
+        let mut sizes = vec![1u32; count];
+        for node in (1..count).rev() {
+            sizes[dominators[node] as usize] += sizes[node];
         }
-        let subsequent_segments = subsequent_segments.get_or_insert_with(|| SubsequentSegments::new(target));
-        let mut at = 0;
-        while let Some((segment, assignment)) = subsequent_segments.get(at, all, target) {
-            at += 1;
-            if is_identifier_used_in_segment(ranges, segment, reference)
-                && !assignment
-                    .and_then(|it| all.get(it))
-                    .is_some_and(|it| is_identifier_evaluated_after_assignment(it, reference))
-            {
-                return false;
+        let (mut numbers, mut levels, mut last) = (vec![0u32; count], vec![0u32; count], vec![0u32; count]);
+        // The number for the next of the segments that it dominates immediately.
+        let mut free = vec![1u32; count];
+        for node in 1..count {
+            let dominator = dominators[node] as usize;
+            numbers[node] = free[dominator];
+            free[dominator] += sizes[node];
+            free[node] = numbers[node] + 1;
+            levels[numbers[node] as usize] = levels[numbers[dominator] as usize] + 1;
+        }
+        for node in 0..count {
+            last[numbers[node] as usize] = numbers[node] + sizes[node] - 1;
+        }
+
+        let mut frontier: Vec<(u32, u32, u32)> = Vec::new();
+        for edge in &mut edges {
+            // Nothing dominates the root.
+            let is_from_dominator = edge.0 != 0 && dominators[edge.0 as usize] == edge.1;
+            *edge = (numbers[edge.0 as usize], numbers[edge.1 as usize]);
+            if !is_from_dominator {
+                frontier.push((edge.0, edge.1, 0));
+            }
+        }
+        edges.sort_unstable();
+        frontier.sort_unstable();
+        let least_levels = Minima::new(&levels);
+        let mut previous = None;
+        for (target, source, level) in &mut frontier {
+            *level = match previous {
+                // Below what dominates both: the rest of the way up is that of the previous one.
+                Some((it, before)) if it == *target => least_levels.least_of(before as usize + 1..*source as usize + 1),
+                _ => levels[*target as usize],
+            };
+            previous = Some((*target, *source));
+        }
+        frontier.sort_unstable_by_key(|it| it.1);
+        let frontier_levels: Vec<u32> = frontier.iter().map(|it| it.2).collect();
+
+        for node in found.values_mut() {
+            *node = numbers[*node as usize];
+        }
+        let mut ranges: Vec<(Span, u32)> = (started.iter())
+            .filter_map(|it| Some((*identifier_ranges.get(it.id() as usize)?, *found.get(&it.id())?)))
+            .filter(|it| it.0 != NO_IDENTIFIERS)
+            .collect();
+        if !ranges.is_sorted_by_key(|it| it.0.start) {
+            ranges.sort_by_key(|it| it.0.start);
+        }
+        let mut end = 0;
+        Graph {
+            numbers: found,
+            last,
+            levels,
+            prev: Lists::new(count, &edges),
+            frontier_sources: frontier.iter().map(|it| it.1).collect(),
+            frontier_targets: frontier.iter().map(|it| it.0).collect(),
+            frontier_levels: Minima::new(&frontier_levels),
+            ends: (ranges.iter())
+                .map(|it| {
+                    end = end.max(it.0.end);
+                    end
+                })
+                .collect(),
+            ranges,
+        }
+    }
+
+    /// Calls `visit` with each segment of the dominance frontier of `segment`: those that it does not
+    /// dominate, or that are itself, with an edge from a segment that it dominates.
+    fn for_each_in_frontier(&self, segment: u32, mut visit: impl FnMut(u32)) {
+        let from = self.frontier_sources.partition_point(|&it| it < segment);
+        let to = self.frontier_sources.partition_point(|&it| it <= self.last[segment as usize]);
+        self.frontier_levels.for_each_up_to(&(from..to), self.levels[segment as usize], &mut |at| {
+            visit(self.frontier_targets[at]);
+        });
+    }
+
+    /// Calls `visit` with each segment whose range has `identifier` in it.
+    fn for_each_around(&self, identifier: Span, mut visit: impl FnMut(u32)) {
+        let mut at = self.ranges.partition_point(|it| it.0.start <= identifier.start);
+        while at > 0 && self.ends[at - 1] >= identifier.end {
+            at -= 1;
+            if self.ranges[at].0.end >= identifier.end {
+                visit(self.ranges[at].1);
             }
         }
     }
-    true
+}
+
+/// What a segment is for a variable.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Place {
+    /// It is read there before anything is assigned to it.
+    Read,
+    /// Something is assigned to it there before it is read.
+    Assigned,
+    /// Neither: ways from the others meet there.
+    Join,
+}
+
+/// What is known about a variable once the graph has been asked.
+struct Later {
+    /// The numbers of the segments with an assignment from whose end there is a way to a place
+    /// where the variable is read, on which nothing is assigned to it. Sorted.
+    read_after: Vec<u32>,
+    /// The greatest start of the `expression` of `assignments[..=i]`.
+    expression_starts: Vec<u32>,
+}
+
+/// Where a variable is assigned to and where it is read, all in one code path.
+struct Variable<'a, 'v> {
+    /// In the order of the source.
+    assignments: &'v [Assignment<'a>],
+    /// In the order of the source.
+    reads: &'v [Span],
+    /// `State::identifier_ranges`
+    ranges: &'v [Span],
+    /// The id of a segment with the index of an assignment that was made in it, sorted.
+    in_segments: SmallVec<[(u32, u32); 8]>,
+    later: Option<Later>,
+}
+
+/// The segments of a code path.
+struct Segments<'a> {
+    initial: Segment<'a>,
+    /// The reachable ones, in the order in which they start.
+    started: Vec<Segment<'a>>,
+    graph: Option<Graph>,
+}
+
+impl<'a, 'v> Variable<'a, 'v> {
+    fn new(assignments: &'v [Assignment<'a>], reads: &'v [Span], ranges: &'v [Span]) -> Self {
+        let mut in_segments: SmallVec<[(u32, u32); 8]> = (assignments.iter().enumerate())
+            .flat_map(|(index, it)| it.segments.iter().map(move |segment| (segment.id(), index as u32)))
+            .collect();
+        in_segments.sort_unstable();
+        Variable {
+            assignments,
+            reads,
+            ranges,
+            in_segments,
+            later: None,
+        }
+    }
+
+    /// How many of `reads` start before `offset`.
+    fn reads_before(&self, offset: u32) -> usize {
+        self.reads.partition_point(|it| it.start < offset)
+    }
+
+    /// Which of `reads` are in `span`.
+    fn reads_in(&self, span: Span) -> Range<usize> {
+        self.reads_before(span.start)..self.reads.partition_point(|it| it.end <= span.end)
+    }
+
+    /// ESLint's `isIdentifierUsedInSegment`, for all of `reads`.
+    fn reads_in_segment(&self, id: u32) -> Range<usize> {
+        self.ranges.get(id as usize).map_or(0..0, |&range| self.reads_in(range))
+    }
+
+    /// Whether the variable is read in a segment, and if `first` is assigned there, not after that.
+    fn is_read_in(&self, id: u32, first: Option<&Assignment<'a>>) -> bool {
+        let all = self.reads_in_segment(id);
+        let Some(first) = first else {
+            return !all.is_empty();
+        };
+        all.start < all.end.min(self.reads_before(first.identifier.end))
+            || first.expression.is_some_and(|it| !intersection(all, self.reads_in(it)).is_empty())
+    }
+
+    /// For each assignment, the index of the first of the others that was made in one of its
+    /// segments and is evaluated after it, or `NONE`.
+    fn next_assignments(&self) -> SmallVec<[u32; 8]> {
+        let mut next: SmallVec<[u32; 8]> = smallvec![NONE; self.assignments.len()];
+        let get = |index: u32| self.assignments.get(index as usize);
+        let expression = |index: u32| get(index).and_then(|it| it.expression).unwrap_or_default();
+        // The assignments whose expression the walk is in, the outermost first, and those whose
+        // expression is still to come, the last to come first: `[x, y = (x = 1)] = z`.
+        let (mut around, mut ahead): (SmallVec<[u32; 4]>, SmallVec<[u32; 4]>) = Default::default();
+        for in_segment in self.in_segments.chunk_by(|a, b| a.0 == b.0) {
+            around.clear();
+            ahead.clear();
+            for (at, &(_, index)) in in_segment.iter().enumerate() {
+                let (Some(target), Some(found)) = (get(index), next.get_mut(index as usize)) else {
+                    continue;
+                };
+                let identifier = target.identifier;
+                while around.last().is_some_and(|&it| expression(it).end < identifier.end) {
+                    around.pop();
+                }
+                let started = ahead.partition_point(|&it| expression(it).start > identifier.start);
+                around.extend(ahead.drain(started..).filter(|&it| expression(it).end >= identifier.end));
+                // `x = (x = 1)`
+                if let Some(&outermost) = around.first() {
+                    *found = outermost.min(*found);
+                }
+                if target.expression.is_some() {
+                    ahead.push(index);
+                }
+                // What is in its expression is evaluated before it.
+                let rest = &in_segment[at + 1..];
+                let is_before = |it: &(u32, u32)| {
+                    get(it.1).is_some_and(|it| !is_identifier_evaluated_after_assignment(target, it.identifier))
+                };
+                let skipped = if rest.first().is_some_and(is_before) { rest.partition_point(is_before) } else { 0 };
+                if let Some(&(_, following)) = rest.get(skipped) {
+                    *found = following.min(*found);
+                }
+            }
+        }
+        next
+    }
+
+    /// Whether the variable is read in a segment of `target` after it, and if `next` is given, not
+    /// after that.
+    fn is_read_at_once(&self, target: &Assignment<'a>, next: Option<&Assignment<'a>>) -> bool {
+        let after = self.reads_before(target.identifier.end)..self.reads.len();
+        // `x = id`: it is evaluated before the assignment.
+        let before = target.expression.map_or(0..0, |it| self.reads_in(it));
+        // `let { x, y = x } = obj`
+        let between = target.expression.map_or(0, |it| self.reads.partition_point(|read| read.end <= it.start));
+        let in_segments = target.segments.iter().map(|it| self.reads_in_segment(it.id()));
+        std::iter::once(0..between).chain(in_segments).any(|place| {
+            let place = intersection(place, after.clone());
+            let Some(next) = next else {
+                return is_any_outside(&place, &before);
+            };
+            let until_next = place.start..place.end.min(self.reads_before(next.identifier.end));
+            is_any_outside(&until_next, &before)
+                || (next.expression)
+                    .is_some_and(|it| is_any_outside(&intersection(place, self.reads_in(it)), &before))
+        })
+    }
+
+    /// Goes from the end of the segments of `target` through those where nothing is assigned to the
+    /// variable, and tells whether it is read on the way. `None` if that takes more than `limit`
+    /// segments.
+    fn search(&self, target: &Assignment<'a>, limit: usize) -> Option<bool> {
+        const FEW: usize = 32;
+        let mut few: SmallVec<[u32; FEW]> = SmallVec::new();
+        let mut many: FxHashSet<u32> = FxHashSet::default();
+        let mut stack: SmallVec<[Segment<'a>; 16]> = target.segments.iter().flat_map(|it| it.next_segments()).collect();
+        while let Some(segment) = stack.pop() {
+            let id = segment.id();
+            if few.contains(&id) || few.len() == FEW && !many.insert(id) {
+                continue;
+            }
+            if few.len() < FEW {
+                few.push(id);
+            }
+            if few.len() + many.len() > limit {
+                return None;
+            }
+            let from = self.in_segments.partition_point(|it| it.0 < id);
+            let first = (self.in_segments.iter().skip(from))
+                .take_while(|it| it.0 == id)
+                .filter_map(|it| self.assignments.get(it.1 as usize))
+                .find(|it| !is_identifier_used_between_assigned_and_equal_sign(it, target.identifier));
+            if self.is_read_in(id, first) {
+                return Some(true);
+            }
+            if first.is_none() {
+                stack.extend(segment.next_segments());
+            }
+        }
+        Some(false)
+    }
+
+    /// What `search` finds for all the assignments at once, in `m log n` for the `m` segments that the
+    /// variable is used in and those where ways from these meet, of `n` segments in all.
+    ///
+    /// It is how a compiler brings a variable into static single assignment form: at the end of a
+    /// segment the variable has the value that it has at the end of the nearest segment of these
+    /// that dominates it.
+    fn segments_read_after(&self, graph: &Graph) -> Vec<u32> {
+        let mut places: Vec<(u32, Place)> = Vec::new();
+        let mut known: FxHashSet<u32> = FxHashSet::default();
+        for in_segment in self.in_segments.chunk_by(|a, b| a.0 == b.0) {
+            if let Some(&(id, first)) = in_segment.first()
+                && let Some(&segment) = graph.numbers.get(&id)
+            {
+                let is_read = self.is_read_in(id, self.assignments.get(first as usize));
+                known.insert(segment);
+                places.push((segment, if is_read { Place::Read } else { Place::Assigned }));
+            }
+        }
+        for &read in self.reads {
+            graph.for_each_around(read, |segment| {
+                if known.insert(segment) {
+                    places.push((segment, Place::Read));
+                }
+            });
+        }
+        let (used, mut at) = (places.len(), 0);
+        while let Some(&(segment, _)) = places.get(at) {
+            at += 1;
+            graph.for_each_in_frontier(segment, |join| {
+                if known.insert(join) {
+                    places.push((join, Place::Join));
+                }
+            });
+            // Going through all the segments takes less.
+            if places.len() > graph.last.len() / 32 {
+                places.truncate(used);
+                return Self::segments_read_after_among_all(&places, graph);
+            }
+        }
+        places.sort_unstable_by_key(|it| it.0);
+
+        // From each of these numbers to the next, the index of the nearest of `places` that dominates.
+        let mut nearest: Vec<(u32, u32)> = Vec::with_capacity(2 * places.len());
+        let mut around: Vec<(u32, u32)> = Vec::new();
+        for (index, &(segment, _)) in places.iter().enumerate() {
+            while let Some(&(_, last)) = around.last().filter(|it| it.1 < segment) {
+                around.pop();
+                nearest.push((last + 1, around.last().map_or(NONE, |it| it.0)));
+            }
+            nearest.push((segment, index as u32));
+            around.push((index as u32, graph.last[segment as usize]));
+        }
+        while let Some((_, last)) = around.pop() {
+            nearest.push((last + 1, around.last().map_or(NONE, |it| it.0)));
+        }
+
+        // Back from where it is read.
+        let mut is_reached = vec![false; places.len()];
+        let mut stack: Vec<u32> = (places.iter().enumerate())
+            .filter(|it| it.1.1 == Place::Read)
+            .map(|it| it.0 as u32)
+            .collect();
+        while let Some(index) = stack.pop() {
+            let mut reach = |from: u32| {
+                if let Some(is_reached) = is_reached.get_mut(from as usize)
+                    && !std::mem::replace(is_reached, true)
+                    && places[from as usize].1 == Place::Join
+                {
+                    stack.push(from);
+                }
+            };
+            let prev = graph.prev.get(places[index as usize].0);
+            if prev.len() <= nearest.len() {
+                for &segment in prev {
+                    let at = nearest.partition_point(|it| it.0 <= segment);
+                    reach(at.checked_sub(1).map_or(NONE, |at| nearest[at].1));
+                }
+            } else {
+                for (at, &(from, place)) in nearest.iter().enumerate() {
+                    let to = nearest.get(at + 1).map_or(u32::MAX, |it| it.0);
+                    if prev.get(prev.partition_point(|&it| it < from)).is_some_and(|&it| it < to) {
+                        reach(place);
+                    }
+                }
+            }
+        }
+        (places.iter().zip(is_reached))
+            .filter(|(place, is_reached)| *is_reached && place.1 != Place::Join)
+            .map(|(place, _)| place.0)
+            .collect()
+    }
+
+    /// What `segments_read_after` returns, in `n` for `n` segments in all. `places`: the segments that
+    /// the variable is used in.
+    fn segments_read_after_among_all(places: &[(u32, Place)], graph: &Graph) -> Vec<u32> {
+        let mut all = vec![(Place::Join, false); graph.last.len()];
+        for &(segment, place) in places {
+            all[segment as usize].0 = place;
+        }
+        let is_read = |it: &&(u32, Place)| it.1 == Place::Read;
+        let mut stack: Vec<u32> = places.iter().filter(is_read).map(|it| it.0).collect();
+        while let Some(segment) = stack.pop() {
+            for &from in graph.prev.get(segment) {
+                let (place, is_reached) = &mut all[from as usize];
+                if !std::mem::replace(is_reached, true) && *place == Place::Join {
+                    stack.push(from);
+                }
+            }
+        }
+        let mut found: Vec<u32> = places.iter().map(|it| it.0).filter(|&it| all[it as usize].1).collect();
+        found.sort_unstable();
+        found
+    }
+
+    /// Whether the variable is read in a segment after those of `assignments[index]`, before
+    /// something else is assigned to it.
+    fn is_read_later(&mut self, index: usize, target: &Assignment<'a>, segments: &mut Segments<'a>) -> bool {
+        if let Some(is_read) = self.search(target, 32) {
+            return is_read;
+        }
+        let graph = (segments.graph)
+            .get_or_insert_with(|| Graph::new(segments.initial, &segments.started, self.ranges));
+        if self.later.is_none() {
+            let mut start = 0;
+            self.later = Some(Later {
+                read_after: self.segments_read_after(graph),
+                expression_starts: (self.assignments.iter())
+                    .map(|it| {
+                        start = start.max(it.expression.map_or(0, |it| it.start));
+                        start
+                    })
+                    .collect(),
+            });
+        }
+        let numbers: Option<SmallVec<[u32; 2]>> =
+            target.segments.iter().map(|it| graph.numbers.get(&it.id()).copied()).collect();
+        match (&self.later, numbers) {
+            // `[x, y = (x = 1)] = z`: for the inner assignment the outer one does not count.
+            (Some(later), Some(numbers))
+                if !index
+                    .checked_sub(1)
+                    .and_then(|it| later.expression_starts.get(it))
+                    .is_some_and(|&start| start >= target.identifier.end) =>
+            {
+                numbers.iter().any(|it| later.read_after.binary_search(it).is_ok())
+            }
+            _ => self.search(target, usize::MAX).unwrap_or(true),
+        }
+    }
+
+    /// Whether nothing reads the value that `assignments[index]` assigns. `next`: what
+    /// `next_assignments` tells for it.
+    fn is_assignment_unused(&mut self, index: usize, next: u32, segments: &mut Segments<'a>) -> bool {
+        let assignments = self.assignments;
+        let Some(target) = assignments.get(index) else {
+            return false;
+        };
+        let next = assignments.get(next as usize);
+        !self.is_read_at_once(target, next) && (next.is_some() || !self.is_read_later(index, target, segments))
+    }
 }
 
 // ───────────────────────────── without code paths ─────────────────────────────
@@ -302,8 +865,8 @@ fn is_literal(e: Expr<'_>) -> bool {
     )
 }
 
-/// The index of the statement of `list` that `offset` is in, or of the first one after it.
-fn index_at<'a>(list: List<'a, Stmt<'a>>, offset: u32) -> usize {
+/// The index of the element of `list` that `offset` is in, or of the first one after it.
+fn index_at<'a, T: Handle<'a> + Spanned>(list: List<'a, T>, offset: u32) -> usize {
     let (mut low, mut high) = (0, list.len());
     while low < high {
         let middle = low + (high - low) / 2;
@@ -405,7 +968,15 @@ impl<'a> Uses<'a> {
     }
 
     fn declarations(&self, declarators: List<'a, VarDecl<'a>>) -> Flow<'a> {
-        for declarator in declarators {
+        let (Some(first), Some(last)) = (declarators.first(), declarators.last()) else {
+            return Flow::Through;
+        };
+        let Some(next) = self.within(first.span().to(last.span())).first() else {
+            return Flow::Through;
+        };
+        let mut at = index_at(declarators, next.start);
+        while let Some(declarator) = declarators.get(at) {
+            at += 1;
             match self.optional_expression(declarator.init()) {
                 Flow::Through if self.within(declarator.span()).is_empty() => {}
                 Flow::Read => return Flow::Read,
@@ -523,6 +1094,10 @@ impl<'a> Uses<'a> {
             }
             StmtKind::Switch { expr, cases } => {
                 through!(self.expression(expr));
+                let Some(budget) = self.budget.checked_sub(cases.len() as u32) else {
+                    return Flow::Unknown;
+                };
+                self.budget = budget;
                 if cases.iter().any(|case| self.optional_expression(case.test()) != Flow::Through) {
                     return Flow::Unknown;
                 }
@@ -570,11 +1145,15 @@ impl<'a> Uses<'a> {
     /// on which nothing is assigned to the variable. ESLint lets the first name that is evaluated
     /// in the block throw, which at the latest is that of the variable, before it is assigned to.
     /// In another `try` statement in the block it throws for that.
-    fn throws_before_write(&self, block: Stmt<'a>) -> bool {
-        let Some(first) = self.within(block.span()).first() else {
+    fn throws_before_write(&mut self, block: Stmt<'a>) -> bool {
+        let Some(&first) = self.within(block.span()).first() else {
             return false;
         };
         for statement in block.as_block().into_iter().flatten() {
+            let Some(budget) = self.budget.checked_sub(1) else {
+                return false;
+            };
+            self.budget = budget;
             match statement.kind() {
                 _ if statement.span().end <= first.start => {
                     if !matches!(statement.tag(), StmtTag::Expr | StmtTag::Var) {
@@ -709,10 +1288,15 @@ impl<'a> Uses<'a> {
                     && let StmtKind::Switch { cases, .. } = switch.kind()
                 {
                     // It falls through to the following cases.
-                    let mut following = cases.iter().skip_while(|it| *it != case).skip(1);
+                    let mut following = index_at(cases, case.span().start) + 1;
                     while flow == Flow::Through
-                        && let Some(next) = following.next()
+                        && let Some(next) = cases.get(following)
                     {
+                        following += 1;
+                        let Some(budget) = self.budget.checked_sub(1) else {
+                            return false;
+                        };
+                        self.budget = budget;
                         flow = self.statements(next.body(), 0);
                     }
                     around = Node::Stmt(switch);
@@ -865,8 +1449,23 @@ impl NoUselessAssignment {
         }
     }
 
-    fn verify<'a>(target: ScopeStack<'a>, cx: &Cx<'a, Self>) {
-        'variables: for (variable, mut assignments) in target.assignments {
+    fn verify<'a>(mut target: ScopeStack<'a>, cx: &Cx<'a, Self>) {
+        // Each block ends where the last of those up to it ends: a block that starts before an
+        // identifier is around it if one of these ends after it.
+        let mut end = 0;
+        for block in &mut target.try_statement_blocks {
+            end = end.max(block.end);
+            block.end = end;
+        }
+        let is_in_try_statement_block = |identifier: Span| {
+            let blocks = &target.try_statement_blocks;
+            let before = blocks.partition_point(|block| block.start <= identifier.start);
+            before.checked_sub(1).and_then(|it| blocks.get(it)).is_some_and(|block| identifier.end <= block.end)
+        };
+        'variables: for (variable, assignments) in target.assignments {
+            let Some(mut assignments) = assignments else {
+                continue;
+            };
             let mut read_references: SmallVec<[Span; 8]> = SmallVec::new();
             for reference in variable.references().filter(|it| it.is_read()) {
                 // It can be called at any time.
@@ -880,11 +1479,16 @@ impl NoUselessAssignment {
             if read_references.is_empty() {
                 continue;
             }
+            if !read_references.is_sorted_by_key(|it| it.start) {
+                read_references.sort_unstable_by_key(|it| it.start);
+            }
             assignments.sort_by_key(|it| it.identifier.start);
-            for (index, assignment) in assignments.iter().enumerate() {
+            let mut uses = Variable::new(&assignments, &read_references, &cx.state.identifier_ranges);
+            let next = uses.next_assignments();
+            for (index, (assignment, &next)) in assignments.iter().zip(&next).enumerate() {
                 let identifier = assignment.identifier;
-                if !target.try_statement_blocks.iter().any(|block| block.contains(identifier))
-                    && is_assignment_unused(index, &assignments, &read_references, &cx.state.identifier_ranges)
+                if !is_in_try_statement_block(identifier)
+                    && uses.is_assignment_unused(index, next, &mut target.segments)
                 {
                     cx.report(identifier, UNNECESSARY_ASSIGNMENT).data("name", variable.name());
                 }
@@ -902,26 +1506,36 @@ impl NoUselessAssignment {
         let (Some(variable), Some(top)) = (variable, state.stack.last_mut()) else {
             return;
         };
-        let scope = variable.scope();
-        if get_code_path_start_scope(&state.code_path_start_scopes, scope) != Some(top.scope)
-            || variable.is_marked_used()
-            || scope.kind() == ScopeKind::Module && is_exported(variable)
-        {
-            return;
+        let assignments = match top.assignments.entry(variable) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let scope = variable.scope();
+                let is_ignored = get_code_path_start_scope(&state.code_path_start_scopes, scope) != Some(top.scope)
+                    || variable.is_marked_used()
+                    || scope.kind() == ScopeKind::Module && is_exported(variable);
+                entry.insert((!is_ignored).then(SmallVec::new))
+            }
+        };
+        if let Some(assignments) = assignments {
+            assignments.push(Assignment {
+                identifier,
+                expression,
+                segments: state.current_segments.iter().collect(),
+            });
         }
-        top.assignments.entry(variable).or_default().push(Assignment {
-            identifier,
-            expression,
-            segments: state.current_segments.iter().collect(),
-        });
     }
 
-    fn on_code_path_start<'a>(&self, _: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn on_code_path_start<'a>(&self, path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let scope = node.scope();
         cx.state.stack.push(ScopeStack {
             scope,
             assignments: FxHashMap::default(),
             try_statement_blocks: Vec::new(),
+            segments: Segments {
+                initial: path.initial_segment(),
+                started: Vec::new(),
+                graph: None,
+            },
         });
         cx.state.current_segments.code_path_start();
         cx.state.code_path_start_scopes.insert(scope);
@@ -936,6 +1550,9 @@ impl NoUselessAssignment {
 
     fn on_segment_start<'a>(&self, segment: Segment<'a>, _: Node<'a>, cx: &mut Cx<'a, Self>) {
         cx.state.current_segments.segment_start(segment);
+        if let Some(top) = cx.state.stack.last_mut() {
+            top.segments.started.push(segment);
+        }
         let needed = segment.id() as usize + 1;
         if cx.state.identifier_ranges.len() < needed {
             cx.state.identifier_ranges.resize(needed, NO_IDENTIFIERS);
@@ -999,7 +1616,7 @@ impl NoUselessAssignment {
             },
             _ => return,
         };
-        extract_identifiers_from_pattern(pattern, &mut |identifier| {
+        extract_identifiers_from_pattern(pattern, |identifier| {
             let variable = identifier.reference().and_then(Reference::symbol);
             Self::add_assignment(variable, identifier.span(), expression, cx);
         });

@@ -447,6 +447,19 @@ pub(crate) struct Comments<'a> {
     has_suppression_comments: bool,
 }
 
+/// How many of `comments`, from the first one on, end before `pos`.
+///
+/// The ends ascend as the starts do: a moved comment has no width, and comes before a comment that
+/// starts where it is. Mostly the answer is 0 or 1, but all comments in a node are before its end.
+fn count_that_end_before(comments: &[Comment], pos: u32) -> usize {
+    const NEAR: usize = 4;
+    let near = comments.iter().take(NEAR).take_while(|comment| comment.end() < pos).count();
+    match comments.get(NEAR..) {
+        Some(rest) if near == NEAR => NEAR + rest.partition_point(|comment| comment.end() < pos),
+        _ => near,
+    }
+}
+
 impl<'a> Comments<'a> {
     pub(crate) fn new(source_text: SourceText<'a>, comments: &'a [Comment]) -> Self {
         let flags = comments.iter().fold(0, |flags, comment| flags | comment.flags);
@@ -575,14 +588,12 @@ impl<'a> Comments<'a> {
     /// The comments that end at or after `pos`.
     pub(crate) fn comments_after(&self, pos: u32) -> &'a [Comment] {
         let comments = self.unprinted_comments();
-        let start = comments.iter().take_while(|c| c.end() < pos).count();
-        &comments[start..]
+        &comments[count_that_end_before(comments, pos)..]
     }
 
     pub(crate) fn comments_in_range(&self, start: u32, end: u32) -> &'a [Comment] {
         let comments = self.comments_after(start);
-        let count = comments.iter().take_while(|c| c.end() <= end).count();
-        &comments[..count]
+        &comments[..count_that_end_before(comments, end.saturating_add(1))]
     }
 
     /// The comments after `start` that are before the first `character` outside of a comment.

@@ -116,7 +116,8 @@ pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         ExprKind::ImportMeta => write!(f, "import.meta"),
         _ => {
             let text = e.text();
-            let is_in_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
+            // With its escapes: `new.t\u0061rget`, `new.t\u{61}rget`.
+            let is_in_name = |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'\\' | b'{' | b'}' | 0x80..);
             let name = text.iter().rposition(|byte| !is_in_name(byte)).map_or(0, |at| at + 1);
             match text.get(name..) {
                 Some(b"target") | None => write!(f, "new.target"),

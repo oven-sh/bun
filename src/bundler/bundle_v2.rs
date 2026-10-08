@@ -2927,7 +2927,7 @@ pub mod bv2_impl {
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
                     unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
-            } else if cfg!(windows) && path.pretty.contains(&b'\\') {
+            } else if cfg!(windows) && strings::contains_char(path.pretty, b'\\') {
                 // A file reached through a symlink (a package in an isolated install's store)
                 // keeps the symlink's path as its pretty one, spelled with backslashes here.
                 let pretty: &mut [u8] = self.arena().alloc_slice_copy(path.pretty);

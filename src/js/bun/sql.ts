@@ -277,9 +277,7 @@ const SQL = function SQL(
     }
   }
 
-  /// Ends a closing transaction: cancels what is pending, then sends `before` (XA END) and `rollback`.
-  /// Callers memoize it in state.rollback, so the wire sees one ROLLBACK.
-  /// Declared here and not in onTransactionConnected: one function per SQL instance, not one per transaction.
+  /// Rolls a closing transaction back. Declared outside onTransactionConnected: no closure per transaction.
   async function rollbackTransaction(
     state: TransactionState,
     pooledConnection: PooledConnection,
@@ -910,8 +908,9 @@ const SQL = function SQL(
       return resolve(transaction_result);
     } catch (err) {
       try {
-        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (state.connectionState & ReservedConnectionState.closing) {
+        const { connectionState } = state;
+        if (!(connectionState & ReservedConnectionState.closed) && needs_rollback) {
+          if (connectionState & ReservedConnectionState.closing) {
             // close() owns the ROLLBACK: join it, or send it if close() still waits
             await (state.rollback ??= rollbackTransaction(
               state,

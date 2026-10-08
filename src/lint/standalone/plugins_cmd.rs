@@ -62,7 +62,12 @@ fn cycles(args: &[String]) {
     let mut rule = vec![Json::Number(1.0)];
     rule.extend_from_slice(options.as_ref().and_then(Json::as_array).unwrap_or_default());
     let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(vec![(b"import/no-cycle".to_vec(), Json::Array(rule))]))]);
-    let config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
+    let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
+    // As with a configuration of oxlint.
+    config.language.parser = bun_lint::language::Parser::TypeScript;
+    config.language.experimental_decorators = true;
+    config.language.refuses_what_parser_refuses = false;
+    config.skips_unknown_rules = true;
     let mut paths = Vec::new();
     for arg in args.iter().filter(|a| !a.starts_with("--") && !a.starts_with('[')) {
         crate::collect(&std::fs::canonicalize(arg).expect("a path"), &mut paths);

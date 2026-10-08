@@ -17,7 +17,7 @@
 
 use bun_core::strings;
 use bun_lint::ast::File;
-use bun_lint::language::LanguageOptions;
+use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{Declaration, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, bind};
@@ -96,7 +96,8 @@ pub fn with_file<R>(
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
     let how = language.parse_options(path);
-    let (mut hir, _) = bun_js_parser::sema::summarize(
+    let (mut hir, _) = bun_js_parser::sema::summarize_as(
+        how.dialect,
         arena,
         path,
         how.script_kind,
@@ -208,7 +209,13 @@ impl<'h> Graph<'h> {
     /// Reads the file at `path`, which is not linted, for what it imports.
     fn read(&self, path: &[u8]) -> Option<Recorded<'h>> {
         let text = self.store.disk().read(path)?;
-        with_file(path, &text, &LanguageOptions::default(), None, |file| {
+        // Whatever can be parsed.
+        let language = LanguageOptions {
+            parser: Parser::TypeScript,
+            experimental_decorators: true,
+            ..LanguageOptions::default()
+        };
+        with_file(path, &text, &language, None, |file| {
             // As eslint-plugin-import: nothing is known of a file that cannot be parsed.
             let requests = if file.has_parse_errors() { Vec::new() } else { requests_of(file) };
             self.make_record(path.to_vec(), &requests, false, None)

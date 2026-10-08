@@ -20,7 +20,7 @@
 // first, which is also where oxlint looks for a comment that disables the rule.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import Module, { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -122,7 +122,8 @@ function requireWithStubs(file: string, stubs: Record<string, unknown>, globals:
     return request in stubs ? `stub:${request}` : resolveFilename.call(this, request, ...rest);
   };
   module._load = function (request: string, ...rest: unknown[]) {
-    return request in stubs ? stubs[request] : load.call(this, request, ...rest);
+    const name = request.replace(/^stub:/, "");
+    return name in stubs ? stubs[name] : load.call(this, request, ...rest);
   };
   const run = (_: string, body: () => void) => body();
   Object.assign(globalThis, { describe: run, context: run, it: () => {}, before: () => {}, after: () => {}, ...globals });
@@ -134,12 +135,18 @@ function requireWithStubs(file: string, stubs: Record<string, unknown>, globals:
   }
 }
 
-/** Bundles a module, which may be TypeScript, into one CommonJS file, and loads that. */
-function bundle(entry: string, name: string): any {
-  const file = join(scratch, `${name}.cjs`);
-  execFileSync("bun", ["build", entry, "--target=node", "--format=cjs", `--outfile=${file}`, "--external=eslint"], {
+/** Bundles a module, which may be TypeScript, into one CommonJS file. `directory`: where to, if it has to find packages. */
+function bundleFile(entry: string, name: string, directory = scratch): string {
+  const file = join(directory, `${name}.cjs`);
+  const packages = directory === scratch ? ["--external=eslint"] : ["--packages=external"];
+  execFileSync("bun", ["build", entry, "--target=node", "--format=cjs", `--outfile=${file}`, ...packages], {
     stdio: ["ignore", "ignore", "inherit"],
   });
+  return file;
+}
+
+function bundle(entry: string, name: string, directory?: string): any {
+  const file = bundleFile(entry, name, directory);
   return createRequire(file)(file);
 }
 
@@ -201,6 +208,175 @@ function reactHooks(rule: string): { rule: RuleModule; cases: Raw[] } {
 }
 
 // ---------------------------------------------------------------------------
+// import
+// ---------------------------------------------------------------------------
+
+/** What `flatConfigs.typescript` of the plugin sets, without which it does not look into TypeScript. */
+const IMPORT_TYPESCRIPT_SETTINGS = {
+  "import/extensions": [".ts", ".cts", ".mts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+  "import/external-module-folders": ["node_modules", "node_modules/@types"],
+  "import/parsers": { "@typescript-eslint/parser": [".ts", ".cts", ".mts", ".tsx"] },
+  "import/resolver": { node: { extensions: [".ts", ".cts", ".mts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] } },
+};
+
+/** The files that the cases of `import/*` are, and that they import. */
+function copyImportProject(): string {
+  const project = join(out, "import-project");
+  if (casesFile) return join(import.meta.dirname, "fixtures/import-project");
+  const files = join(realpathSync(requiredEnv("ESLINT_PLUGIN_IMPORT_DIR")), "tests/files");
+  rmSync(project, { recursive: true, force: true });
+  mkdirSync(project, { recursive: true });
+  for (const name of ["cycles", "bar.js", "package.json"]) cpSync(join(files, name), join(project, name), { recursive: true });
+  const ofOxlint = join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/fixtures/import/cycles");
+  for (const name of ["typescript", "issue_21252"]) cpSync(join(ofOxlint, name), join(project, "cycles", name), { recursive: true });
+  return project;
+}
+
+function importPlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string } {
+  const root = realpathSync(requiredEnv("ESLINT_PLUGIN_IMPORT_DIR"));
+  const built = join(root, "node_modules/.extract-plugins");
+  mkdirSync(built, { recursive: true });
+  const module: RuleModule = bundle(join(root, `src/rules/${rule}.js`), rule, built);
+  const cwd = copyImportProject();
+  if (casesFile) return { rule: module, cases: [], cwd };
+  const parser = (name: string) => ({ foreignParser: name });
+  runs.length = 0;
+  const before = process.cwd();
+  process.chdir(root);
+  try {
+    requireWithStubs(bundleFile(join(root, `tests/src/rules/${rule}.js`), `${rule}.test`, built), {
+      // With a parser of Babel for every version: see `tests/src/utils.js`.
+      "eslint/package.json": { version: "9.99.0" },
+      eslint: { RuleTester: RecordingRuleTester },
+      "typescript/package.json": { version: "5.9.0" },
+      "@typescript-eslint/parser/package.json": { version: "8.71.1" },
+      [`rules/${rule}`]: module,
+      espree: parser("espree"),
+      "babel-eslint": parser("babel"),
+      "@babel/eslint-parser": parser("babel"),
+      "@typescript-eslint/parser": parser("typescript"),
+    });
+  } finally {
+    process.chdir(before);
+  }
+  const files = join(root, "tests/files");
+  const cases: Raw[] = [];
+  for (const run of runs) {
+    for (const valid of [true, false]) {
+      for (const item of valid ? run.valid : run.invalid) {
+        if (typeof item === "string") throw new Error("a case that is a string");
+        const { parser: used, ...languageOptions } = { ...run.config.languageOptions, ...item.languageOptions };
+        const name: string = used?.foreignParser ?? "espree";
+        // The options for Babel, and a version that only espree looks at.
+        if (name === "babel") (delete languageOptions.parserOptions, delete languageOptions.ecmaVersion);
+        cases.push({
+          valid,
+          name: item.name ?? null,
+          code: item.code,
+          options: item.options,
+          filename: isAbsolute(item.filename) ? relative(files, item.filename) : item.filename,
+          settings: item.settings,
+          languageOptions: { ...languageOptions, parser: name === "typescript" ? "typescript" : "espree" },
+          foreignParser: name === "babel" ? "babel-eslint" : undefined,
+          upstream: item,
+        });
+      }
+    }
+  }
+  return { rule: module, cases, cwd };
+}
+
+/** oxlint's `change_rule_path(..)`, by the line of the case. */
+function importCasesOfOxlint(rule: string): Raw[] {
+  const path = `import/${rule.replaceAll("-", "_")}.rs`;
+  const source = readFileSync(join(realpathSync(requiredEnv("OXC_DIR")), "crates/oxc_linter/src/rules", path), "utf8");
+  const paths = [...source.matchAll(/\.change_rule_path\("([^"]+)"\)/g)].map(it => ({
+    line: source.slice(0, it.index).split("\n").length,
+    path: it[1],
+  }));
+  // Nothing can judge what only oxlint can be told to do.
+  const judged = oxlintCases(path).filter(it => (it.options?.[0] as Config | undefined)?.ignoreTypes !== false);
+  return judged.map(it => {
+    const line = Number(/:(\d+) /.exec(it.name!)![1]);
+    return {
+      ...it,
+      filename: paths.find(it => it.line > line)?.path ?? "foo.js",
+      settings: rule === "no-cycle" ? IMPORT_TYPESCRIPT_SETTINGS : undefined,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// n
+// ---------------------------------------------------------------------------
+
+/** The directories with a `package.json` that says which versions of Node.js are supported. */
+function copyNodeProject(root: string): string {
+  const project = join(out, "n-project");
+  if (casesFile) return join(import.meta.dirname, "fixtures/n-project");
+  rmSync(project, { recursive: true, force: true });
+  mkdirSync(project, { recursive: true });
+  for (const name of ["no-unsupported-features--ecma", "no-unsupported-features"]) {
+    cpSync(join(root, "tests/fixtures", name), join(project, name), { recursive: true });
+  }
+  return project;
+}
+
+function nodePlugin(rule: string): { rule: RuleModule; cases: Raw[]; cwd: string } {
+  const root = realpathSync(requiredEnv("ESLINT_PLUGIN_N_DIR"));
+  const cwd = copyNodeProject(root);
+  // Next to the test, which looks for its fixtures from where it is.
+  const directory = join(root, "tests/lib/rules", dirname(rule));
+  const name = rule.slice(rule.indexOf("/") + 1);
+  runs.length = 0;
+  const globals = createRequire(join(root, "package.json"))("globals");
+  /** `RuleTester` of `tests/test-helpers.js` */
+  class NodeRuleTester extends RecordingRuleTester {
+    constructor(config: Config = { languageOptions: {} }) {
+      const { env, ...languageOptions } = config.languageOptions;
+      if (env?.node === false) languageOptions.globals ??= {};
+      const defaults = { ecmaVersion: 6, sourceType: "commonjs", globals: { ...globals.es2015, ...globals.node } };
+      super({ ...config, languageOptions: { ...defaults, ...languageOptions } });
+    }
+    run(title: string, rule: RuleModule, tests: { valid: (string | Config)[]; invalid: Config[] }) {
+      const isRun = (item: string | Config) => typeof item === "string" || !item.skip;
+      super.run(title, rule, { valid: tests.valid.filter(isRun), invalid: tests.invalid.filter(isRun) });
+    }
+  }
+  requireWithStubs(bundleFile(join(directory, `${name}.js`), `.extract-${name}`, directory), {
+    "#test-helpers": { RuleTester: NodeRuleTester },
+    // For a test that imports the file of the helpers.
+    eslint: { RuleTester: RecordingRuleTester },
+    "eslint/package.json": { version: requireFromEslint("./package.json").version },
+    "eslint/use-at-your-own-risk": {},
+    "@typescript-eslint/parser": { foreignParser: "typescript" },
+  });
+  const module = runs[0].rule;
+  if (casesFile) return { rule: module, cases: [], cwd };
+  const fixtures = join(root, "tests/fixtures");
+  const cases: Raw[] = [];
+  for (const run of runs) {
+    for (const valid of [true, false]) {
+      for (const given of valid ? run.valid : run.invalid) {
+        const item = typeof given === "string" ? { code: given } : given;
+        const { parser, ...languageOptions } = { ...run.config.languageOptions, ...item.languageOptions };
+        cases.push({
+          valid,
+          name: item.name ?? null,
+          code: item.code,
+          options: item.options,
+          filename: item.filename && isAbsolute(item.filename) ? relative(fixtures, item.filename) : item.filename,
+          settings: item.settings,
+          languageOptions: { ...languageOptions, parser: parser ? "typescript" : "espree" },
+          upstream: item,
+        });
+      }
+    }
+  }
+  return { rule: module, cases, cwd };
+}
+
+// ---------------------------------------------------------------------------
 // The tests of oxlint
 // ---------------------------------------------------------------------------
 
@@ -246,6 +422,21 @@ function attempts(raw: Raw): Attempt[] {
   return parser === "espree" ? [first] : [first, ...typescript];
 }
 
+/** eslint-plugin-import loads the parsers in `import/parsers` by their names, from where it is. */
+function settingsToLintWith(settings: Config): Config {
+  const parsers = settings["import/parsers"];
+  if (!parsers?.["@typescript-eslint/parser"]) return settings;
+  const { "@typescript-eslint/parser": extensions, ...others } = parsers;
+  return { ...settings, "import/parsers": { ...others, [requireFromEslint.resolve("@typescript-eslint/parser")]: extensions } };
+}
+
+/** `ignoreTypes` is an option of oxlint. What it turns on is what eslint-plugin-import always does. */
+function optionsToLintWith(id: string, options: unknown[]): unknown[] {
+  if (id !== "import/no-cycle" || (options[0] as Config | undefined)?.ignoreTypes !== true) return options;
+  const { ignoreTypes: _, ...others } = options[0] as Config;
+  return [others];
+}
+
 function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCase {
   const slash = id.indexOf("/");
   const [prefix, name] = [id.slice(0, slash), id.slice(slash + 1)];
@@ -264,11 +455,11 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
         globals: given.globals ?? {},
         parserOptions,
       },
-      settings: raw.settings ?? {},
+      settings: settingsToLintWith(raw.settings ?? {}),
       linterOptions: { reportUnusedDisableDirectives: "off" },
-      rules: { [id]: ["error", ...options] },
+      rules: { [id]: ["error", ...optionsToLintWith(id, options)] },
     };
-    const filename = cwd ? resolve(cwd, attempt.filename) : attempt.filename;
+    const filename = cwd && !attempt.filename.startsWith("<") ? resolve(cwd, attempt.filename) : attempt.filename;
     const messages: LintMessage[] = linter.verify(raw.code, [config], { filename });
     last = { attempt, messages, parserOptions };
     if (!messages.some(it => it.fatal)) break;
@@ -277,6 +468,9 @@ function record(id: string, rule: RuleModule, raw: Raw, cwd?: string): FixtureCa
   const fatal = messages.find(it => it.fatal);
   let skip: string | null = null;
   if (fatal) skip = raw.foreignParser ? `parser: ${raw.foreignParser}` : `fatal: ${fatal.message}`;
+  const resolver = raw.settings?.["import/resolver"];
+  const isNode = resolver === undefined || resolver === "node" || (typeof resolver === "object" && Object.keys(resolver).join() === "node");
+  if (!isNode) skip ??= `resolver: ${JSON.stringify(resolver)}`;
   const dropped: string[] = [];
   const jsonOptions = jsonPart(options, dropped, "options") as unknown[];
   const settings = jsonPart(raw.settings ?? {}, dropped, "settings") as Config;
@@ -414,6 +608,11 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
     if (plugin === "react-hooks") {
       loaded = reactHooks(name);
       if (!casesFile) loaded.cases.push(...oxlintCases(`react/${name.replaceAll("-", "_")}.rs`));
+    } else if (plugin === "import") {
+      loaded = importPlugin(name);
+      if (!casesFile) loaded.cases.push(...importCasesOfOxlint(name));
+    } else if (plugin === "n") {
+      loaded = nodePlugin(name);
     } else {
       throw new Error(`unknown: ${id}`);
     }
@@ -423,7 +622,9 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
       const made = record(id, loaded.rule, raw, loaded.cwd);
       if (raw.upstream && !made.skip) {
         const problems = compareWithUpstream(raw.upstream as any, raw.valid, made, loaded.rule, interpolate);
-        if (problems.length > 0) disagreements.push(`#${index}: ${problems.join("; ")}`);
+        // The files that it imports are Flow.
+        if (problems.length > 0 && raw.foreignParser) made.skip = `parser: ${raw.foreignParser}`;
+        else if (problems.length > 0) disagreements.push(`#${index}: ${problems.join("; ")}`);
       }
       // ESLint is the judge of what oxlint tests.
       if (!raw.upstream) made.valid = made.messages.length === 0;
@@ -439,6 +640,3 @@ for (const id of wanted.length > 0 ? wanted : ALL) {
   console.log(`${id}: ${cases.length} cases, ${skipped} skipped, ${disagreements.length} disagree with what upstream asserts`);
   for (const line of disagreements) console.log(`  ${line}`);
 }
-
-// Not used yet by every plugin.
-void [cpSync, existsSync, isAbsolute, relative];

@@ -1,12 +1,12 @@
 # `bun format`
 
-A formatter for JavaScript, JSX, TypeScript, JSON and CSS whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
+A formatter for JavaScript, JSX, TypeScript, JSON, CSS, Less, SCSS and GraphQL whose output is byte for byte that of Prettier. The target is the released **3.9.9**: its source, its snapshots, and the npm package as an oracle.
 
 - **The specification is Prettier**: `src/language-js/**`, `src/document/**`, `src/main/comments/**`, and its snapshot tests, `tests/format/{js,jsx,typescript}/**/__snapshots__/format.test.js.snap`.
 - **The code is a port of oxc's formatter** (`crates/oxc_formatter_core`, `crates/oxc_formatter`), which is a port of Biome's, which is modelled on Prettier. Where oxc deviates from Prettier, Prettier wins. Both are MIT licensed. See the crate docs in `lib.rs`.
 - **There is no AST of its own**. It prints straight from the type checker's HIR through the handles of `bun_lint::ast` (`src/lint/CLAUDE.md` has the table ESTree → handles).
 
-Not there: formatting of embedded languages (CSS, GraphQL, HTML, Markdown in templates: they are printed as they are), JSDoc formatting, Tailwind class sorting, Vue/Svelte/Angular, Flow, Babel-only proposals, plugins.
+Not there: HTML and Markdown in templates (they are printed as they are. CSS and GraphQL in templates are formatted: `css/embed.rs`, `graphql/embed.rs`), JSDoc formatting, Tailwind class sorting, Vue/Svelte/Angular, Flow, Babel-only proposals, plugins.
 
 ## The pipeline
 
@@ -20,7 +20,7 @@ File (HIR + binder tables)                     bun_lint::ast
 
 `ir/run.rs` has the entry point, `format(file, &options, &mut scratch, &mut out)`. `Scratch` holds every buffer, so that formatting the next file allocates nothing.
 
-What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON and CSS by `options.parser` or the name of the file (`json::format`, `css::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format` (which is `format` if there is no range).
+What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON, style sheets and GraphQL by `options.parser` or the name of the file (`json::format`, `css::format`, `graphql::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format_with_cursor` (which is `format` if there is no range and no cursor).
 
 **Import sorting** (`js/sort_imports/`, option `FormatOptions::sort_imports`, compiled once per run from `sort_imports::Settings`) has four flavours. `@trivago`/`@ianvs` `importOrder*` and prettier-plugin-organize-imports are text → text preprocessors in Prettier, so they are here too: `sort_imports::sorted_text(file, how)` gives the text that has to be parsed and formatted instead of the file, byte for byte the plugin's (`babel.rs`: @babel/parser's comment attachment over the HIR, `generator.rs`: @babel/generator's printer for imports, `trivago.rs`/`ianvs.rs`: the plugins, `organize.rs`: TypeScript's organizeImports and textChanges), or `None` if formatting the file as it is gives the same (`layout.rs`): only a file whose imports move is parsed twice. oxfmt's `sortImports` (`oxfmt/`) happens inside `format`: `FormatStatements` tells an `ImportRun` what it is about to write, a run of imports is captured and written as `Interned` sub-ranges, one per line, in sorted order. Tests: `bun-lint format sort-imports cases|bench|serve`, oracles in `test/cli/format/oracle/sort-imports/`.
 
@@ -35,7 +35,8 @@ What a caller does with a file, in this order, is `format_text` in `src/lint/sta
 | `js/print/` | one function per kind of node | `print/` |
 | `js/utils/` | what several kinds of nodes share: assignments, member chains, conditionals, strings, numbers | `utils/` |
 | `js/sort_imports/` | import sorting: `@trivago`/`@ianvs` `importOrder*`, oxfmt's `sortImports` | |
-| `json/`, `css/` | JSON (`json`, `json5`, `jsonc`, `json-stringify`) and style sheets, each with a parser of its own | |
+| `json/`, `css/`, `graphql/` | JSON (`json`, `json5`, `jsonc`, `json-stringify`), style sheets (`css`, `less`, `scss`) and GraphQL, each with a parser of its own. `embed.rs` in the last two: the same in the templates of JavaScript | |
+| `conformance/` | the crate `bun_format_conformance`: runs the tests of Prettier and of oxfmt | |
 | `pragma.rs`, `range.rs`, `cursor.rs` | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js` | |
 | `verify.rs` | a check that formatting did not change the tokens | `detect_code_removal` (different) |
 
@@ -51,7 +52,7 @@ Same name unless listed. `print/mod.rs` of oxc (1900 lines) is split:
 | literals | `print/literals.rs` |
 | enums, interfaces, modules, `import =`, `export =` | `print/ts_declarations.rs` |
 | keyword types, references, literals, signatures, predicates, `typeof`, `import()` types | `print/ts_types.rs`, and the one-liners in `format.rs::write_type` |
-| `template/mod.rs` | `print/template.rs` (`template/embed/` is not ported) |
+| `template/mod.rs` | `print/template.rs` (`template/embed/`: `css/embed.rs`, `graphql/embed.rs`, after Prettier's `embed/*.js`) |
 | `oxc_syntax` operators and precedence | `utils/operators.rs` |
 | `oxc_formatter_core` `buffer.rs`, `arguments.rs`, `state.rs`, `format_extensions.rs` | `ir/formatter.rs` |
 
@@ -182,7 +183,7 @@ A node that is not ported yet is written as it is in the source: `write!(f, Form
 $B format file a.ts --semi=false --printWidth=100     # format one file
 $B format ir a.ts                                      # the document
 $B format conformance <(zstd -dc test/cli/format/prettier/bundle.zst)   # or $P/tests/format: table per directory, totals, what is not run and why
-$B format conformance $P/tests/format --languages=css --verbose
+$B format conformance $P/tests/format --languages=css --table
 $B format conformance $P/tests/format --filter=js/arrow --report=report
 diff -u report/<case>.expected report/<case>.actual
 $B format check-idempotent <files or directories>

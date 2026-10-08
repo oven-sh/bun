@@ -290,8 +290,6 @@ impl core::fmt::Display for FailReason {
 
         let template = self.get_format_template();
 
-        // The two variants whose template contains `{s}` take the text from
-        // `capture_failure_text`.
         match self {
             FailReason::InterpreterNotFound => {
                 writer.write_str("interpreter executable \"")?;
@@ -417,22 +415,16 @@ fn capture_failure_text(text: &[u16]) {
 
 /// Reads back what [`capture_failure_text`] stored.
 fn captured_failure_text() -> &'static str {
-    // `FAILURE_REASON_LEN` is set before a reason with `{s}` is raised;
-    // safe atomic load (`usize` is `Copy`, no cell-deref needed).
     let len = FAILURE_REASON_LEN.load(core::sync::atomic::Ordering::Relaxed);
     debug_assert_ne!(len, usize::MAX);
     let data = FAILURE_REASON_DATA.get().cast::<u8>().cast_const();
-    // SAFETY: `FAILURE_REASON_DATA` is a static `[u8; 512]`; `len ≤ 512` was
-    // bounded by the producer, and this path is single-threaded (standalone exe
-    // / just-before-exit), so the bytes are stable.
+    // SAFETY: `capture_failure_text` wrote `len ≤ 512` bytes of the static, and
+    // this path is single-threaded (standalone exe / just-before-exit).
     let text = unsafe { bun_core::ffi::slice(data, len) };
     if DBG {
-        // Safe atomic store; debug-only reset to the `None` sentinel.
         FAILURE_REASON_LEN.store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
     }
-    // SAFETY: every byte of `FAILURE_REASON_DATA[..len]` is printable ASCII
-    // (see `capture_failure_text`), which is valid UTF-8. Avoids `bstr` so the
-    // standalone PE stays `#![no_std]` (`bstr` pulls `alloc`).
+    // SAFETY: `capture_failure_text` writes printable ASCII only.
     unsafe { core::str::from_utf8_unchecked(text) }
 }
 
@@ -1793,22 +1785,16 @@ const SPACE: u16 = ' ' as u16;
 const TAB: u16 = '\t' as u16;
 const BACKSLASH: u16 = '\\' as u16;
 
-/// True when cmd.exe reads `unit` as syntax: `%` `&` `|` `<` `>` `^` or a line
-/// break.
-///
-/// The set of `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`.
-/// Here the text is a command line, where a `"` is the quoting around an
-/// argument. On its own it starts no command and reads no variable.
+/// True for `%` `&` `|` `<` `>` `^` and a line break: the set of
+/// `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`. The text
+/// here is a command line, where a `"` is the quoting around an argument.
 fn is_cmd_special_character(unit: u16) -> bool {
     matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)
 }
 
-/// Returns the argument of `tail` that holds the first character cmd.exe reads
-/// as syntax, or `None` when the arguments hold none. `tail` is the part of a
-/// command line after the file to run.
-///
-/// The quotes only end an argument. A character counts inside them too, because
-/// cmd.exe reads `%NAME%` inside quotes and drops the quoting of the argument.
+/// Returns the argument of `tail` (the command line after the file to run) that
+/// holds a character cmd.exe reads as syntax. Quotes only end an argument: a
+/// character counts inside them too.
 fn find_cmd_special_argument(tail: &[u16]) -> Option<&[u16]> {
     let mut start: usize = 0;
     let mut found = false;
@@ -1842,8 +1828,7 @@ fn find_cmd_special_argument(tail: &[u16]) -> Option<&[u16]> {
     if found { Some(&tail[start..]) } else { None }
 }
 
-/// Drops the quotes around an argument of a command line, so the failure
-/// message shows the argument the way it was passed.
+/// Drops the quotes around an argument of a command line.
 fn unquote_argument(argument: &[u16]) -> &[u16] {
     if argument.len() >= 2 && argument[0] == QUOTE && argument[argument.len() - 1] == QUOTE {
         return &argument[1..argument.len() - 1];
@@ -1853,14 +1838,11 @@ fn unquote_argument(argument: &[u16]) -> &[u16] {
 
 /// Returns the first part of `command_line`: the file `CreateProcessW` runs.
 ///
-/// The walk stops at the NUL, at the end of the first argument, or at the
-/// longest command line Windows takes. It reads the units one at a time: a
-/// `wcslen` over the whole line becomes a call into the C runtime, which the
-/// standalone shim does not link.
+/// Not `ffi::wstr_units`: its walk to the NUL compiles to a `wcslen` call, and
+/// the standalone shim links no C runtime.
 ///
 /// # Safety
-/// `command_line` must point to at least one unit and hold a NUL within
-/// `BUF2_U16_LEN` units.
+/// `command_line` must hold a NUL within `BUF2_U16_LEN` units.
 unsafe fn program_of_command_line<'a>(command_line: *const u16) -> &'a [u16] {
     // SAFETY: the caller guarantees one readable unit.
     let quoted = unsafe { *command_line } == QUOTE;

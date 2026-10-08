@@ -34,8 +34,14 @@ impl Rule for NoMultiStr {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<u32> {
         // A line break in a string follows a `\`, or is U+2028 or U+2029.
-        let breaks: [&[u8]; 4] = [b"\\\n", b"\\\r", b"\xE2\x80\xA8", b"\xE2\x80\xA9"];
-        if !breaks.iter().any(|it| strings::contains(file.text(), it)) {
+        let text = file.text();
+        let (mut at, mut has_break) = (0, false);
+        while !has_break && let Some(found) = text.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
+            at += found + 1;
+            has_break = matches!(text.get(at), Some(b'\n' | b'\r'));
+        }
+        let not_ascii = strings::first_non_ascii(text).and_then(|first| text.get(first as usize..)).unwrap_or_default();
+        if !has_break && !strings::contains(not_ascii, b"\xE2\x80\xA8") && !strings::contains(not_ascii, b"\xE2\x80\xA9") {
             return Vec::new();
         }
         on.exprs([ExprTag::String], |_, e, cx| {

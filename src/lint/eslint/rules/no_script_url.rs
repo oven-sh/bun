@@ -53,6 +53,10 @@ impl Rule for NoScriptUrl {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         on.string_literals(|_, literal, cx| {
+            // After the quote: the `j`, an escape, or an entity in JSX.
+            if !matches!(literal.text().get(1), Some(b'j' | b'J' | b'\\' | b'&')) {
+                return;
+            }
             let found = match literal.owner() {
                 // The value of a JSX attribute is written differently.
                 Node::Expr(e) => e.as_string().is_some_and(is_script_url),

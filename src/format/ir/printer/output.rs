@@ -77,6 +77,17 @@ impl<'o> Out<'o> {
         {
             return self.block(block, range.len());
         }
+        self.long_part(text, range);
+    }
+
+    #[inline(never)]
+    fn long_part(&mut self, text: &[u8], range: std::ops::Range<usize>) {
+        const LONG: usize = 4 * BLOCK;
+        if range.len() <= LONG
+            && let Some(block) = text.get(range.start..).and_then(|rest| rest.first_chunk::<LONG>())
+        {
+            return self.block(block, range.len());
+        }
         self.bytes(text.get(range).unwrap_or_default());
     }
 
@@ -86,6 +97,9 @@ impl<'o> Out<'o> {
     }
 
     pub(super) fn repeat(&mut self, byte: u8, count: usize) {
+        if count <= 2 * BLOCK {
+            return self.block(&[byte; 2 * BLOCK], count);
+        }
         self.next(count).fill(byte);
         self.len += count;
     }

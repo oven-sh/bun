@@ -828,7 +828,9 @@ impl<'d> Printer<'d> {
             IndentStyle::Tab => self.out.repeat(b'\t', level),
             IndentStyle::Space => self.out.repeat(b' ', width),
         }
-        self.out.repeat(b' ', align);
+        if align > 0 {
+            self.out.repeat(b' ', align);
+        }
         self.line_width += width + align;
         if !self.pending_space {
             self.move_pending_marks();
@@ -869,7 +871,10 @@ impl<'d> Printer<'d> {
 
     #[inline]
     fn print_line_break(&mut self) {
-        self.out.bytes(self.options.line_ending.as_bytes());
+        match self.options.line_ending {
+            LineEnding::Lf | LineEnding::Auto => self.out.byte(b'\n'),
+            line_ending => self.out.bytes(line_ending.as_bytes()),
+        }
         self.line_width = 0;
     }
 }

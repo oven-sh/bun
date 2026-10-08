@@ -5,7 +5,7 @@ use bun_format::Scratch;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, InternerPerThread};
-use bun_sema::bind::{BindOptions, bind_for_format};
+use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
 use std::hash::Hasher as _;
@@ -38,8 +38,9 @@ fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], atoms: &dyn Intern,
                 before_es2020: false,
                 before_es2017: false,
             };
-            let bound = bind_for_format(&hir, bind_options, atoms, arena);
-            then(&File::new(path.as_bytes(), &hir, &bound, atoms, &language, None))
+            let mut recycled = Recycled::of_this_thread();
+            let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
+            then(&File::new(path.as_bytes(), &hir, bound, atoms, &language, None))
         },
     )
 }

@@ -18,7 +18,7 @@
 //! - `nodes.span()`: the range that the node has in oxc.
 //! - `nodes.ancestors()`: itself, its parent, and so on up to `Program`.
 
-use super::print::flow::is_declared_class;
+use super::print::flow::{is_declared_class, is_flow_declare_export};
 use bun_lint::ast::{
     BinOp, Case, Chain, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind,
     Func, ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp,
@@ -1201,7 +1201,10 @@ impl<'a> AstNodes<'a> {
                 declaration.span()
             }
             N::ExportNamedDeclaration(statement) | N::ExportDefaultDeclaration(statement) => {
-                statement.export_span().unwrap_or_else(|| statement.span())
+                match is_flow_declare_export(statement) {
+                    true => statement.span(),
+                    false => statement.export_span().unwrap_or_else(|| statement.span()),
+                }
             }
             N::CatchClause(statement) => statement
                 .catch_clause_span()

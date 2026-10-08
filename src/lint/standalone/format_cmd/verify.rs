@@ -14,7 +14,7 @@ use std::io::{BufRead as _, Read as _, Write as _};
 
 /// Parses `code` the way `bun format` does and calls `then` with the tree, and with what its names are of.
 fn with_tree<R>(
-    is_script: bool,
+    dialect: Dialect,
     path: &str,
     code: &[u8],
     then: impl for<'a, 's> FnOnce(
@@ -33,7 +33,7 @@ fn with_tree<R>(
         } else {
             Parser::Espree
         },
-        source_type: if is_script {
+        source_type: if dialect.script {
             SourceType::Script
         } else {
             SourceType::Module
@@ -44,7 +44,7 @@ fn with_tree<R>(
     let atoms = Interner::new_in(&session);
     let how = language.parse_options(path.as_bytes());
     bun_js_parser::sema::with_summary_in_place(
-        Dialect::babel(is_script),
+        dialect,
         (session.arena(), &session),
         path.as_bytes(),
         how.script_kind,
@@ -65,8 +65,9 @@ fn compare(
     scratch: &mut Scratch,
 ) -> Option<Result<(), String>> {
     let mut compare_as = |is_script: bool| {
+        let dialect = super::dialect_of(options, before, name.as_bytes(), is_script);
         with_tree(
-            is_script,
+            dialect,
             name,
             before,
             |summary, atoms, session, language| {
@@ -83,7 +84,7 @@ fn compare(
                 let file = File::new(name.as_bytes(), &hir, &bound, atoms, language, None)
                     .with_text(before);
                 let program = Program::new(&hir, before, atoms);
-                let result = with_tree(is_script, name, after, |summary, atoms, _, _| {
+                let result = with_tree(dialect, name, after, |summary, atoms, _, _| {
                     let program_after = match &summary {
                         Summary::InPlace(hir) => Program::new(&**hir, after, atoms),
                         Summary::InArena(hir) => Program::new(hir, after, atoms),

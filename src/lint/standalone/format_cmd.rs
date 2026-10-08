@@ -301,17 +301,10 @@ fn format_text_with_cursor(
         }
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
-    // `babel` hands a file of Flow to `babel-flow`.
-    let is_flow = match options.parser.as_deref() {
-        Some(b"flow" | b"babel-flow") => true,
-        Some(b"babel") | None => bun_lint::linter::goes_to_flow(&code, name),
-        Some(_) => false,
-    };
     // `babel-flow` reads what is in `/*:: */` and `/*: */` as code.
-    let has_comment_types = is_flow
-        && options.parser.as_deref() != Some(b"flow")
-        && !name.ends_with(b".js.flow")
-        && bun_format::flow::may_have_comment_types(&code);
+    let module = dialect_of(options, &code, name, false);
+    let has_comment_types =
+        module.flow && module.babel && bun_format::flow::may_have_comment_types(&code);
     let code = match has_comment_types {
         true => with_file_as(
             Dialect::flow(false),
@@ -323,10 +316,7 @@ fn format_text_with_cursor(
         false => code,
     };
     let format_as = |is_script: bool| {
-        let dialect = match is_flow {
-            true => Dialect::flow(is_script),
-            false => Dialect::babel(is_script),
-        };
+        let dialect = dialect_of(options, &code, name, is_script);
         let how = options.sort_imports.as_deref();
         with_bound_file_as(
             how.is_some_and(|it| it.needs_symbols()),
@@ -349,6 +339,23 @@ fn format_text_with_cursor(
         Some(b"cjs" | b"cts") => format_as(true),
         Some(b"mjs" | b"mts") => format_as(false),
         _ => format_as(false).or_else(|_| format_as(true)),
+    }
+}
+
+/// Whose reading of JavaScript Prettier formats `code`, the text of the file called `name`, by.
+fn dialect_of(options: &FormatOptions, code: &[u8], name: &[u8], is_script: bool) -> Dialect {
+    // `babel` hands a file of Flow to `babel-flow`.
+    let is_flow = match options.parser.as_deref() {
+        Some(b"flow" | b"babel-flow") => true,
+        Some(b"babel") | None => bun_lint::linter::goes_to_flow(code, name),
+        Some(_) => false,
+    };
+    match is_flow {
+        true => Dialect {
+            babel: bun_format::flow::goes_to_babel(options, name),
+            ..Dialect::flow(is_script)
+        },
+        false => Dialect::babel(is_script),
     }
 }
 

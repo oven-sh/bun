@@ -101,7 +101,10 @@ fn with_tree<'h, R>(
     let options = language.parse_options(path);
     bun_js_parser::sema::with_summary_in_place(
         match how.is_flow {
-            true => Dialect::flow(how.is_script),
+            true => Dialect {
+                babel: bun_format::flow::goes_to_babel(&how.resolved.options, path),
+                ..Dialect::flow(how.is_script)
+            },
             false => Dialect::babel(how.is_script),
         },
         (arena, session),
@@ -366,8 +369,7 @@ fn format(
         Some(_) => false,
     };
     let has_comment_types = is_flow
-        && options.parser.as_deref() != Some(b"flow")
-        && !name.ends_with(b".js.flow")
+        && bun_format::flow::goes_to_babel(options, path)
         && bun_format::flow::may_have_comment_types(&text);
     let text = match has_comment_types {
         true => {

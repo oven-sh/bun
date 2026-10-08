@@ -399,6 +399,9 @@ fn loc_end<'a>(node: AstNodes<'a>, comments: &Comments<'a>) -> u32 {
 /// `TSExportAssignment`, starts with `TSDeclare`, or ends with `Statement` or `Declaration`.
 fn is_source_element(node: AstNodes<'_>) -> bool {
     use AstNodes as N;
+    if crate::js::print::flow::is_no_source_element(node) {
+        return false;
+    }
     match node {
         N::Directive(_)
         | N::BlockStatement(_)

@@ -13,7 +13,9 @@ use super::parameters::FormatFormalParameters;
 use super::semicolon::OptionalSemicolon;
 use super::ts_types::{write_ts_interface_signatures, write_ts_signatures};
 use super::type_parameters::{type_arguments, type_parameters};
-use crate::js::format::{FormatTypeAnnotation, format_node, identifier};
+use crate::js::format::{
+    ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
+};
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::typescript::is_simple_type;
 use crate::prelude::*;
@@ -47,8 +49,12 @@ pub(crate) fn write_variance_sign<'a>(modifiers: List<'a, Modifier<'a>>, f: &mut
 
 /// Whether the word `word`, which TypeScript has no flag for, is among `modifiers`.
 fn has_word<'a>(modifiers: List<'a, Modifier<'a>>, word: &[u8], f: &Formatter<'a>) -> bool {
+    has_word_in(f.file(), modifiers, word)
+}
+
+fn has_word_in<'a>(file: &'a File<'a>, modifiers: List<'a, Modifier<'a>>, word: &[u8]) -> bool {
     modifiers.iter().any(|it| {
-        it.decorator().is_none() && it.flag().is_empty() && f.file().slice(it.token_span()) == word
+        it.decorator().is_none() && it.flag().is_empty() && file.slice(it.token_span()) == word
     })
 }
 
@@ -59,6 +65,27 @@ fn is_declared<'a>(modifiers: List<'a, Modifier<'a>>) -> bool {
 /// `declare export`: the `declare` has no flag, so that what is exported is written without it.
 pub(crate) fn is_declare_export<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     has_word(statement.modifiers(), b"declare", f)
+}
+
+/// The same, for a statement of any file.
+pub(crate) fn is_flow_declare_export(statement: Stmt<'_>) -> bool {
+    statement.file().is_flow() && has_word_in(statement.file(), statement.modifiers(), b"declare")
+}
+
+/// What Prettier's `isJsSourceElement` leaves out: the type parameters of Flow, and what is in
+/// `declare export`.
+pub(crate) fn is_no_source_element(node: AstNodes<'_>) -> bool {
+    match node {
+        AstNodes::TSTypeParameterDeclaration(owner) => owner.file().is_flow(),
+        AstNodes::ExportNamedDeclaration(_)
+        | AstNodes::ExportDefaultDeclaration(_)
+        | AstNodes::Program(_) => false,
+        _ => matches!(
+            node.parent(),
+            AstNodes::ExportNamedDeclaration(statement) | AstNodes::ExportDefaultDeclaration(statement)
+                if is_flow_declare_export(statement)
+        ),
+    }
 }
 
 // ───────────────────────────── expressions ─────────────────────────────
@@ -555,6 +582,25 @@ pub(crate) fn write_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatter<
     write!(f, element.flow_type());
 }
 
+/// `[...]`: the comments in it dangle, and are written behind the dots. Returns whether `ty` is that.
+pub(crate) fn write_tuple_of_unknown_elements<'a>(
+    ty: TypeNode<'a>,
+    elements: List<'a, TupleElem<'a>>,
+    f: &mut Formatter<'a>,
+) -> bool {
+    if elements.len() != 1 || !is_inexact_tuple(elements) {
+        return false;
+    }
+    let comments = f.comments().comments_before(ty.span().end);
+    let has_line_comment = comments.iter().any(|it| it.is_line());
+    let content = format_args!("...", format_dangling_comments(ty.span()));
+    write!(
+        f,
+        group(&format_args!("[", soft_block_indent(&content), "]")).should_expand(has_line_comment)
+    );
+    true
+}
+
 /// The `...` that ends an inexact tuple type, after which there is no comma.
 pub(crate) fn is_inexact_tuple<'a>(elements: List<'a, TupleElem<'a>>) -> bool {
     elements.last().is_some_and(|it| it.flow_type().is_none())
@@ -585,6 +631,31 @@ pub(crate) fn write_object_type<'a>(
             f,
             format_dangling_comments(ty.span()).with_soft_block_indent()
         ),
+        // Prettier has no node for the `...`: the comments dangle.
+        Some(first)
+            if is_inexact_mark(first) && f.comments().has_comment_before(first.span().start) =>
+        {
+            let comments = f.comments().comments_before(first.span().start);
+            let has_line_comment = comments.iter().any(|it| it.is_line());
+            let ends_line = comments.last().is_some_and(|it| it.followed_by_newline());
+            let content = format_with(|f| {
+                write!(
+                    f,
+                    FormatDanglingComments::Comments {
+                        comments,
+                        indent: DanglingIndentMode::None
+                    }
+                );
+                match has_line_comment || ends_line {
+                    true => write!(f, hard_line_break()),
+                    false => write!(f, soft_line_break_or_space()),
+                }
+                write!(f, "...");
+            });
+            let inner =
+                soft_block_indent_with_maybe_space(&content, f.options().bracket_spacing.value());
+            write!(f, group(&inner).should_expand(has_line_comment));
+        }
         Some(first) => {
             let should_expand = f.options().expand == Expand::Auto
                 && !is_inexact_mark(first)
@@ -899,6 +970,11 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
             );
         }
     }
+    // Prettier's `shouldOmitSemicolon` does not know records.
+    if is_record && matches!(class.owner(), Node::Stmt(statement) if statement.is_default_export())
+    {
+        write!(f, OptionalSemicolon);
+    }
 }
 
 /// `hook` or `function`: what the declaration of `func` starts with. A component, and a function
@@ -1015,7 +1091,13 @@ pub(crate) fn write_expression_with_braces<'a>(
                     join.entry(case.span(), &content);
                 }
             });
-            write_match(head, cases.is_empty(), &format_cases, f);
+            write_match(
+                head,
+                braces.span().start,
+                cases.is_empty(),
+                &format_cases,
+                f,
+            );
         }
         _ => {
             let type_args = call.type_args();
@@ -1044,6 +1126,7 @@ pub(crate) fn write_match_statement<'a>(
     cases: List<'a, Case<'a>>,
     f: &mut Formatter<'a>,
 ) -> bool {
+    let head_end = head.span().end;
     let Some(head) = head
         .as_call()
         .filter(|_| head.span().start == statement.span().start)
@@ -1060,26 +1143,41 @@ pub(crate) fn write_match_statement<'a>(
                     f,
                     |f| {
                         write_match_pattern_and_guard(case.test(), f);
-                        write!(f, [" => ", case.body().first()]);
+                        let body = case.body().first();
+                        let is_empty = body.is_some_and(|it| {
+                            matches!(it.kind(), StmtKind::Block(statements) if statements.is_empty())
+                                && !f.comments().has_comment_in_span(it.span())
+                        });
+                        match is_empty {
+                            true => write!(f, " => {}"),
+                            false => write!(f, [" => ", body]),
+                        }
                     },
                 );
             });
             join.entry(case.span(), &content);
         }
     });
-    write_match(head, cases.is_empty(), &format_cases, f);
+    let open_brace = skip_trivia(f.file().text(), head_end);
+    write_match(head, open_brace, cases.is_empty(), &format_cases, f);
     true
 }
 
-/// Prettier's `printMatch`. `head`: the `match (a)`.
-fn write_match<'a>(head: Call<'a>, is_empty: bool, cases: &impl Format<'a>, f: &mut Formatter<'a>) {
+/// Prettier's `printMatch`. `head`: the `match (a)`. `open_brace`: where the `{` is.
+fn write_match<'a>(
+    head: Call<'a>,
+    open_brace: u32,
+    is_empty: bool,
+    cases: &impl Format<'a>,
+    f: &mut Formatter<'a>,
+) {
     let argument = format_with(|f| {
-        f.join_with(soft_line_break_or_space())
-            .entries_with_trailing_separator(
-                head.args().iter(),
-                ",",
-                TrailingSeparator::Disallowed,
-            );
+        write!(f, head.args().first());
+        // What is behind the `{` on its line trails the argument.
+        if !f.is_quiet() {
+            let comments = f.comments().end_of_line_comments_after(open_brace + 1);
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
     });
     write!(
         f,
@@ -1107,11 +1205,20 @@ fn write_match_pattern_and_guard<'a>(pattern: Option<Expr<'a>>, f: &mut Formatte
             right,
         } => {
             write_match_pattern(left, PatternParent::Case, f);
+            // It is in no `&&`.
+            let guard = format_with(|f| {
+                format_node(
+                    right.span(),
+                    || right.ast_parent(),
+                    f,
+                    |f| write_expression(right, ExprOptions::None, f),
+                );
+            });
             write!(
                 f,
                 group(&indent(&format_args!(
                     soft_line_break_or_space(),
-                    "if (", right, ")"
+                    "if (", guard, ")"
                 )))
             );
         }
@@ -1469,6 +1576,13 @@ impl<'a> Format<'a> for FormatRecordProperty<'a> {
 
 // ───────────────────────────── comment types ─────────────────────────────
 
+/// Which of Prettier's two parsers reads a file of Flow at `path`: `babel-flow`, as opposed to
+/// `flow`, which somebody has to ask for, by name or with `.js.flow`.
+pub fn goes_to_babel(options: &FormatOptions, path: &[u8]) -> bool {
+    let name = options.filepath.as_deref().filter(|it| !it.is_empty());
+    options.parser.as_deref() != Some(b"flow") && !name.unwrap_or(path).ends_with(b".js.flow")
+}
+
 /// Whether `text` has something that looks like a comment for which [`uncommented`] is there.
 pub fn may_have_comment_types(text: &[u8]) -> bool {
     let mut rest = text;
@@ -1520,20 +1634,26 @@ pub fn uncommented<'a>(file: &'a File<'a>) -> Option<Vec<u8>> {
         out.extend_from_slice(code);
         copied = span.end as usize;
         // For Prettier no empty line follows what ends before a `*/`.
-        let rest = text.get(copied..).unwrap_or_default();
-        let is_blank = |b: &u8| matches!(b, b' ' | b'\t' | b'\r');
-        let mut line_end = rest.iter().take_while(|b| is_blank(b)).count();
-        if rest.get(line_end) != Some(&b'\n') {
-            continue;
-        }
-        out.extend_from_slice(rest.get(..=line_end).unwrap_or_default());
-        loop {
-            copied += line_end + 1;
-            let rest = text.get(copied..).unwrap_or_default();
-            line_end = rest.iter().take_while(|b| is_blank(b)).count();
-            if rest.get(line_end) != Some(&b'\n') {
-                break;
+        // The length of the line that `rest` starts with, if there are only blanks on it.
+        let blank_line = |rest: &[u8]| {
+            let blanks = rest
+                .iter()
+                .take_while(|b| matches!(b, b' ' | b'\t'))
+                .count();
+            match rest.get(blanks..) {
+                Some([b'\r', b'\n', ..]) => Some(blanks + 2),
+                Some([b'\r' | b'\n', ..]) => Some(blanks + 1),
+                _ => None,
             }
+        };
+        let rest = text.get(copied..).unwrap_or_default();
+        let Some(line) = blank_line(rest) else {
+            continue;
+        };
+        out.extend_from_slice(rest.get(..line).unwrap_or_default());
+        copied += line;
+        while let Some(line) = blank_line(text.get(copied..).unwrap_or_default()) {
+            copied += line;
         }
     }
     let mut out = out?;

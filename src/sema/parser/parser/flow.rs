@@ -574,6 +574,19 @@ impl Parser<'_> {
         &mut self,
         is_in_new: bool,
     ) -> Option<IdList<TypeNodeId>> {
+        // flow-parser takes `async<T>(` for the start of an arrow function, which this is not.
+        if !self.options.dialect.babel
+            && let Some(&Expr {
+                kind: ExprKind::Ident(name),
+                end,
+                ..
+            }) = self.f.exprs.last()
+            && end == self.prev_end()
+            && self.lx.text_of(name) == b"async"
+        {
+            self.fail();
+            return None;
+        }
         self.try_parse(|p| {
             let type_arguments = p.flow_type_arguments();
             let is_before_braces = p.token() == T::OpenBrace && !p.newline_before();
@@ -790,6 +803,9 @@ impl Parser<'_> {
         if self.is_at_label() {
             (name, ..) = self.word();
             optional = self.eat(T::Question);
+            if optional && has_dots {
+                self.fail();
+            }
             self.expect(T::Colon);
         }
         // `...` alone: there can be more elements.
@@ -1251,10 +1267,38 @@ impl Parser<'_> {
         }
     }
 
+    /// The name of a type that is declared, which is not that of a type of the language.
+    fn flow_type_name(&mut self) -> (Atom, u32) {
+        if matches!(
+            self.lx.text(),
+            b"any"
+                | b"bigint"
+                | b"bool"
+                | b"boolean"
+                | b"empty"
+                | b"extends"
+                | b"false"
+                | b"interface"
+                | b"mixed"
+                | b"null"
+                | b"number"
+                | b"static"
+                | b"string"
+                | b"symbol"
+                | b"true"
+                | b"typeof"
+                | b"void"
+                | b"_"
+        ) {
+            self.fail();
+        }
+        self.identifier()
+    }
+
     /// `type A<T> = B`, at `type`.
     pub(crate) fn flow_type_alias(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         self.next();
-        let (name, name_pos) = self.identifier();
+        let (name, name_pos) = self.flow_type_name();
         let type_params = self.type_parameters();
         self.expect(T::Equals);
         let ty = self.flow_type();
@@ -1693,9 +1737,17 @@ impl Parser<'_> {
             ExprKind::Ident(name) => it.end - it.pos == 5 && self.lx.text_of(name) == b"match",
             _ => false,
         };
+        let is_spread = |i| {
+            let argument: ExprId = self.f.id_at(call.args, i);
+            matches!(
+                self.f.exprs.get(argument.idx()).map(|it| it.kind),
+                Some(ExprKind::Spread(_))
+            )
+        };
         call.chain == Chain::No
             && call.type_args.is_empty()
             && !call.args.is_empty()
+            && !(0..call.args.len()).any(is_spread)
             && self.f.exprs.get(call.callee.idx()).is_some_and(is_match)
             && !self.is_parenthesized(e)
     }
@@ -1781,11 +1833,49 @@ impl Parser<'_> {
         self.finish_expr(ExprKind::New(call), start)
     }
 
+    /// `match (a, b)` is `match ((a, b))`: the argument of `head`, which was just parsed, is one
+    /// expression.
+    fn flow_match_head(&mut self, head: ExprId) -> ExprId {
+        let Some(&Expr {
+            kind: ExprKind::Call(call),
+            pos,
+            end,
+        }) = self.f.exprs.last()
+        else {
+            return head;
+        };
+        let args = self
+            .f
+            .calls
+            .get(call.idx())
+            .map_or(IdList::EMPTY, |it| it.args);
+        if args.len() < 2 || head.idx() + 1 != self.f.exprs.len() {
+            return head;
+        }
+        self.f.exprs.pop();
+        let mut left: ExprId = self.f.id_at(args, 0);
+        let start = self.f.exprs.get(left.idx()).map_or(pos, |it| it.pos);
+        for i in 1..args.len() {
+            let right: ExprId = self.f.id_at(args, i);
+            let end = self.f.exprs.get(right.idx()).map_or(end, |it| it.end);
+            let op = BinOp::Comma;
+            left = self.add_expr(ExprKind::Binary { op, left, right }, start, end);
+        }
+        let base = self.s.ids.len();
+        self.s.ids.push(left.0);
+        let argument = self.take_ids(base);
+        if let Some(call) = self.f.calls.get_mut(call.idx()) {
+            call.args = argument;
+        }
+        self.add_expr(ExprKind::Call(call), pos, end)
+    }
+
     /// `match (a) { b => c, d if (e) => f }`, at the `{`. `head`: the `match (a)`.
     fn flow_match_expression(&mut self, start: u32, head: ExprId) -> ExprId {
         if self.is_too_deep() {
             return ExprId::NONE;
         }
+        let head = self.flow_match_head(head);
         let open = self.pos();
         self.next();
         let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR | ctx::NO_RECORD);
@@ -1818,6 +1908,7 @@ impl Parser<'_> {
 
     /// `match (a) { b => { } c if (d) => { } }`, at the `{`. `head`: the `match (a)`.
     fn flow_match_statement(&mut self, start: Start, head: ExprId) -> StmtId {
+        let head = self.flow_match_head(head);
         self.next();
         let base = self.s.cases.len();
         while self.is_in_list(T::CloseBrace) {

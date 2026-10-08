@@ -8,6 +8,9 @@ pub(crate) fn write_ts_tuple_type<'a>(
     elements: List<'a, TupleElem<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    if f.file().is_flow() && super::flow::write_tuple_of_unknown_elements(ty, elements, f) {
+        return;
+    }
     let needs_parentheses = f.file().is_flow() && super::flow::needs_parentheses(ty);
     write!(f, [needs_parentheses.then_some("("), "["]);
     if elements.is_empty() {

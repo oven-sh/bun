@@ -27,7 +27,7 @@ pub mod yaml;
 
 /// What a caller does for a file of Flow.
 pub mod flow {
-    pub use crate::js::print::flow::{may_have_comment_types, uncommented};
+    pub use crate::js::print::flow::{goes_to_babel, may_have_comment_types, uncommented};
 }
 
 /// Sorting imports.

@@ -307,7 +307,12 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
         let (signature, mut span) = (self.signature, self.signature.span());
         if !f.is_quiet() {
             if f.comments().is_suppressed(span.start) {
-                return write!(f, signature);
+                write!(f, signature);
+                // It is not part of a member of Flow's.
+                if f.file().is_flow() {
+                    self.write_separator(f);
+                }
+                return;
             }
             if f.comments().has_trailing_suppression_comment(span.end) {
                 write!(

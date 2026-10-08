@@ -9,6 +9,7 @@ use smallvec::SmallVec;
 /// What a step of the analysis works with.
 pub(super) struct Cx<'e, 'a> {
     pub(super) file: &'a File<'a>,
+    store: &'e Store,
     /// ESLint's `analyzer.currentNode`.
     pub(super) node: Node<'a>,
     /// Whether an event is told with `node` even if that is a function expression.
@@ -20,11 +21,13 @@ impl<'e, 'a> Cx<'e, 'a> {
     #[inline]
     pub(super) fn new(
         file: &'a File<'a>,
+        store: &'e Store,
         node: Node<'a>,
         emit: &'e mut dyn FnMut(Event<'a>),
     ) -> Self {
         Cx {
             file,
+            store,
             node,
             keeps_function_expression: false,
             emit,
@@ -32,8 +35,8 @@ impl<'e, 'a> Cx<'e, 'a> {
     }
 
     #[inline]
-    pub(super) fn store(&self) -> &'a Store {
-        &self.file.lazy.code_paths
+    pub(super) fn store(&self) -> &'e Store {
+        self.store
     }
 
     /// The node that an event is told with: a function is a `Func`, whatever owns it.

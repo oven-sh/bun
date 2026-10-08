@@ -11,7 +11,7 @@
 
 use super::matters::Matters;
 use super::state::{ChoiceKind, Cx, LoopKind, State};
-use super::{CodePath, Event, Origin, Segment, SegmentIds};
+use super::{CodePath, Event, Origin, Segment, SegmentIds, Store};
 use crate::ast::{
     BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, Member,
     MemberKind, Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
@@ -57,8 +57,10 @@ struct Frame<'a> {
 }
 
 /// ESLint's `CodePathAnalyzer`.
-struct Builder<'a> {
+struct Builder<'s, 'a> {
     file: &'a File<'a>,
+    /// Where the graphs are built.
+    store: &'s Store,
     /// The states of the code paths that have started and not ended.
     states: Vec<State>,
     /// Those of code paths that have ended, to be used again.
@@ -314,7 +316,18 @@ fn with_default(default: Option<Expr>) -> Is {
     }
 }
 
-impl<'a> Builder<'a> {
+impl<'s, 'a> Builder<'s, 'a> {
+    fn new(file: &'a File<'a>, store: &'s Store) -> Self {
+        Builder {
+            file,
+            store,
+            states: Vec::new(),
+            spare_states: Vec::new(),
+            ancestors: Vec::new(),
+            is_settled: false,
+        }
+    }
+
     // ───────────────────────────── events ─────────────────────────────
 
     /// `forwardCurrentToHead`
@@ -390,10 +403,14 @@ impl<'a> Builder<'a> {
         self.spare_states.push(state);
     }
 
+    /// Whether a code path has started with the node that has been entered last.
+    fn has_started_code_path(&self) -> bool {
+        matches!(self.ancestors.last(), Some(it) if it.is.intersects(Is::HAS_CODE_PATH | Is::FIELD_INITIALIZER))
+    }
+
     #[inline]
     fn is_before_first_throwable(&self) -> bool {
-        let store = &self.file.lazy.code_paths;
-        matches!(self.states.last(), Some(state) if state.is_before_first_throwable(store))
+        matches!(self.states.last(), Some(state) if state.is_before_first_throwable(self.store))
     }
 
     /// Leaving a node that may throw. If it is an `Identifier` of ESTree for which
@@ -722,7 +739,7 @@ impl<'a> Builder<'a> {
     #[inline(never)]
     fn enter_what_matters(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         self.is_settled = false;
-        let cx = &mut Cx::new(self.file, node, emit);
+        let cx = &mut Cx::new(self.file, self.store, node, emit);
         let parent = self.ancestors.last().copied();
         let mut is = Is::empty();
         if let Some(parent) = parent
@@ -914,7 +931,7 @@ impl<'a> Builder<'a> {
 
     #[inline(never)]
     fn leave_what_matters(&mut self, node: Node<'a>, is: Is, emit: &mut dyn FnMut(Event<'a>)) {
-        let cx = &mut Cx::new(self.file, node, emit);
+        let cx = &mut Cx::new(self.file, self.store, node, emit);
         let store = cx.store();
         let dont_forward = is.contains(Is::HAS_EXIT)
             && match node {
@@ -963,7 +980,7 @@ impl<'a> Builder<'a> {
     #[inline(never)]
     fn postprocess(&mut self, node: Node<'a>, is: Is, emit: &mut dyn FnMut(Event<'a>)) {
         self.is_settled = false;
-        let cx = &mut Cx::new(self.file, node, emit);
+        let cx = &mut Cx::new(self.file, self.store, node, emit);
         if is.contains(Is::HAS_CODE_PATH) {
             self.end_code_path(cx);
         }
@@ -1002,14 +1019,14 @@ pub enum Step<'a> {
     Event(Event<'a>),
 }
 
-struct Recorder<'a> {
-    builder: Builder<'a>,
+struct Recorder<'s, 'a> {
+    builder: Builder<'s, 'a>,
     steps: Vec<Step<'a>>,
     enter: NodeTags,
     exit: NodeTags,
 }
 
-impl<'a> Recorder<'a> {
+impl<'a> Recorder<'_, 'a> {
     #[inline]
     fn enter(&mut self, node: Node<'a>) {
         let steps = &mut self.steps;
@@ -1032,13 +1049,15 @@ impl<'a> Recorder<'a> {
             .after_exit(node, &mut |event| steps.push(Step::Event(event)));
     }
 
-    /// `ast::walk::walk`, without what does not matter.
-    fn walk(&mut self, matters: &Matters) {
+    /// `ast::walk::walk_node` for each of `nodes`, the last first, without what does not matter.
+    ///
+    /// `is_shallow`: it does not go into what has a code path of its own.
+    fn walk(&mut self, nodes: Vec<Node<'a>>, matters: &Matters, is_shallow: bool) {
         enum Todo<'a> {
             Enter(Node<'a>),
             Exit(Node<'a>),
         }
-        let mut todo = vec![Todo::Enter(Node::File(self.builder.file))];
+        let mut todo: Vec<Todo<'a>> = nodes.into_iter().map(Todo::Enter).collect();
         while let Some(next) = todo.pop() {
             let node = match next {
                 Todo::Enter(node) => node,
@@ -1049,7 +1068,10 @@ impl<'a> Recorder<'a> {
             };
             self.enter(node);
             // Where nothing has thrown yet in a `try` block, every name matters.
-            if matters.is_nothing_in(node) && !self.builder.is_before_first_throwable() {
+            let is_left_out = matters.is_nothing_in(node)
+                && !self.builder.is_before_first_throwable()
+                || is_shallow && self.builder.has_started_code_path();
+            if is_left_out {
                 self.exit(node);
                 continue;
             }
@@ -1071,23 +1093,45 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
     let statements = file.hir.stmts.len();
     file.lazy.code_paths.clear(statements);
     let mut recorder = Recorder {
-        builder: Builder {
-            file,
-            states: Vec::new(),
-            spare_states: Vec::new(),
-            ancestors: Vec::new(),
-            is_settled: false,
-        },
+        builder: Builder::new(file, &file.lazy.code_paths),
         steps: Vec::with_capacity(2 * statements),
         enter,
         exit,
     };
-    recorder.walk(&Matters::new(file, enter | exit));
+    recorder.walk(
+        vec![Node::File(file)],
+        &Matters::new(file, enter | exit),
+        false,
+    );
     file.lazy.code_paths.finish();
     Steps {
         file,
         steps: recorder.steps.into_iter(),
     }
+}
+
+/// Analyzes `func` alone, without the functions in it. Returns whether its end can be reached.
+pub(super) fn is_end_reachable(func: Func) -> bool {
+    let (file, store) = (func.file(), &Store::default());
+    let mut recorder = Recorder {
+        builder: Builder::new(file, store),
+        steps: Vec::new(),
+        enter: NodeTags::EMPTY,
+        exit: NodeTags::EMPTY,
+    };
+    let node = Node::Func(func);
+    recorder.builder.start_code_path(
+        Origin::Function,
+        &mut Cx::new(file, store, node, &mut |_| {}),
+    );
+    let mut children = node.children();
+    children.reverse();
+    recorder.walk(
+        children,
+        file.lazy.code_paths.what_matters_to_nobody(file),
+        true,
+    );
+    matches!(recorder.builder.states.last(), Some(state) if state.is_reachable(store))
 }
 
 /// See [`steps`].

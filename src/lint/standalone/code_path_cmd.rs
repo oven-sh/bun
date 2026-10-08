@@ -452,6 +452,8 @@ struct Log<'a> {
     incomplete: Vec<usize>,
     /// The segments of the code paths that have not ended, those of the outermost first.
     segments: Vec<Segment<'a>>,
+    /// The code paths that have not ended.
+    paths: Vec<CodePath<'a>>,
 }
 
 fn write_node(line: &mut String, (name, span): (&str, Span)) {
@@ -469,6 +471,17 @@ impl<'a> Log<'a> {
     }
 
     fn node(&mut self, prefix: &str, node: Node) {
+        // What analyzing the function alone says has to agree.
+        if let (Node::Func(func), "<", Some(path)) = (node, prefix, self.paths.last())
+            && func.has_body()
+            && func.kind() != FnKind::StaticBlock
+            && func.is_end_reachable() != path.is_current_reachable()
+        {
+            self.lines.push(format!(
+                "is_end_reachable is wrong at {}",
+                func.span().start
+            ));
+        }
         if is_type_syntax(node) {
             match prefix {
                 ">" => self.type_depth += 1,
@@ -489,8 +502,12 @@ impl<'a> Log<'a> {
 
     fn tell(&mut self, event: Event<'a>) {
         match event {
-            Event::CodePathStart(path, node) => self.event(format!("path+ {path}"), node),
+            Event::CodePathStart(path, node) => {
+                self.paths.push(path);
+                self.event(format!("path+ {path}"), node);
+            }
             Event::CodePathEnd(path, node) => {
+                self.paths.pop();
                 self.graph(path);
                 self.event(format!("path- {path}"), node);
             }
@@ -907,10 +924,10 @@ pub(crate) fn run(args: &[String]) {
         [command, path] if command == "bench" => bench(path),
         [command] if command == "upstream" => upstream(),
         // For a profiler.
-        [command, path] if command == "analyze" => {
+        [command, path, rounds] if command == "analyze" => {
             let code = std::fs::read(path).expect("the file");
             crate::with_file(path, &code, &LanguageOptions::default(), |file| {
-                for _ in 0..500 {
+                for _ in 0..rounds.parse().unwrap_or(1) {
                     steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count();
                 }
             });

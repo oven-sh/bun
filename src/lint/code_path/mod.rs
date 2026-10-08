@@ -61,9 +61,10 @@ pub(crate) use analyzer::Analyzer;
 #[doc(hidden)]
 pub use analyzer::{Step, Steps, steps};
 
-use crate::ast::{File, Node};
+use crate::ast::{File, Func, Node};
+use crate::rule::NodeTags;
 use smallvec::SmallVec;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 /// ESLint's `codePath.origin`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -121,6 +122,27 @@ pub(crate) struct Store {
     segments: RefCell<Vec<SegmentData>>,
     /// Counts the calls of `flatten_unused`.
     epoch: Cell<u32>,
+    /// What matters to the analysis itself.
+    matters: OnceCell<matters::Matters>,
+}
+
+impl Store {
+    fn what_matters_to_nobody<'a>(&self, file: &'a File<'a>) -> &matters::Matters {
+        self.matters
+            .get_or_init(|| matters::Matters::new(file, NodeTags::EMPTY))
+    }
+}
+
+impl Func<'_> {
+    /// Whether execution can reach the end of the body: what ESLint's rules ask with
+    /// `isAnySegmentReachable(currentSegments)` when they leave the function.
+    ///
+    /// It analyzes this function alone, in time proportional to its size without the functions in
+    /// it. A rule that asks nothing else of a few functions needs no listener for code paths,
+    /// which make the linter analyze the whole file.
+    pub fn is_end_reachable(self) -> bool {
+        analyzer::is_end_reachable(self)
+    }
 }
 
 pub type Segments<'a> = SmallVec<[Segment<'a>; 2]>;

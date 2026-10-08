@@ -26,16 +26,68 @@ impl Range {
     pub(crate) fn of(self, text: &[u8]) -> &[u8] {
         text.get(self.start as usize..self.end as usize).unwrap_or_default()
     }
+}
 
-    /// `self + next`, where `next` follows `self` in the text, or one of them is empty.
-    fn join(self, next: Range) -> Range {
-        if self.is_empty() {
-            next
-        } else if next.is_empty() {
-            self
+/// The text, and the strings that are not a part of it: `postcss-less` drops tokens and uses others
+/// twice. A range that starts behind the text is a range of those.
+struct Texts<'a> {
+    css: &'a [u8],
+    extra: Vec<u8>,
+}
+
+/// Where the ranges of `extra` start. There is a gap, for the end of the text not to touch them.
+fn extra_start(css: &[u8]) -> usize {
+    css.len() + 1
+}
+
+/// The text of `range`, which is a range of `css` or of `extra`.
+pub(crate) fn text_of_range<'a>(range: Range, css: &'a [u8], extra: &'a [u8]) -> &'a [u8] {
+    match (range.start as usize).checked_sub(extra_start(css)) {
+        Some(start) => extra.get(start..range.end as usize - extra_start(css)).unwrap_or_default(),
+        None => range.of(css),
+    }
+}
+
+impl Texts<'_> {
+    fn of(&self, range: Range) -> &[u8] {
+        text_of_range(range, self.css, &self.extra)
+    }
+
+    /// `a + b`
+    fn join(&mut self, a: Range, b: Range) -> Range {
+        if a.is_empty() {
+            b
+        } else if b.is_empty() {
+            a
+        } else if a.end == b.start {
+            Range::new(a.start, b.end)
         } else {
-            Range::new(self.start, next.end)
+            let offset = extra_start(self.css);
+            // What has been added last grows in place.
+            let (start, parts) = match (a.start as usize).checked_sub(offset) {
+                Some(start) if a.end as usize - offset == self.extra.len() => (start, &[b][..]),
+                _ => (self.extra.len(), &[a, b][..]),
+            };
+            for &range in parts {
+                match (range.start as usize).checked_sub(extra_start(self.css)) {
+                    Some(from) => self.extra.extend_from_within(from..range.end as usize - extra_start(self.css)),
+                    None => self.extra.extend_from_slice(range.of(self.css)),
+                }
+            }
+            Range::new((offset + start) as u32, (offset + self.extra.len()) as u32)
         }
+    }
+
+    /// The texts of `tokens`, one after the other.
+    fn range_of(&mut self, tokens: &[Token]) -> Range {
+        tokens.iter().fold(Range::default(), |all, token| self.join(all, token.range))
+    }
+
+    fn spaces_and_comments_from_end(&mut self, tokens: &mut Vec<Token>) -> Range {
+        let keep = tokens.iter().rposition(|token| !token.is_space_or_comment()).map_or(0, |at| at + 1);
+        let range = self.range_of(&tokens[keep..]);
+        tokens.truncate(keep);
+        range
     }
 }
 
@@ -97,6 +149,8 @@ struct Tokenizer<'a> {
     /// `None` is an `undefined` that has been given back.
     returned: Vec<Option<Token>>,
     last_bad_paren: Option<usize>,
+    /// Where the first `)` is behind the last `(` that was looked at, if that is known.
+    next_close: Option<Option<usize>>,
 }
 
 fn is_space(byte: Option<&u8>) -> bool {
@@ -198,10 +252,14 @@ impl<'a> Tokenizer<'a> {
                         close => close.ok_or(SyntaxError)?,
                     };
                     (kind, next) = (TokenKind::Brackets, close);
-                } else if self.last_bad_paren.is_some_and(|last| pos <= last) {
+                } else if !is_scss && self.last_bad_paren.is_some_and(|last| pos <= last) {
                     (kind, next) = (TokenKind::Control(b'('), pos);
                 } else {
-                    let close = text::index_of_char_from(css, b')', pos + 1);
+                    let close = match self.next_close {
+                        Some(close) if close.is_none_or(|at| at > pos) => close,
+                        _ => text::index_of_char_from(css, b')', pos + 1),
+                    };
+                    self.next_close = Some(close);
                     // `/.[\r\n"'(/\\]/`
                     let is_bad = |content: &[u8]| {
                         (1..content.len()).any(|at| {
@@ -392,10 +450,13 @@ pub(crate) struct Node {
 pub(crate) struct Tree {
     /// The first is the root.
     pub(crate) nodes: Vec<Node>,
+    /// See `text_of_range`.
+    pub(crate) extra: Vec<u8>,
 }
 
 struct Parser<'a> {
     css: &'a [u8],
+    texts: Texts<'a>,
     syntax: Syntax,
     tokenizer: Tokenizer<'a>,
     nodes: Vec<Node>,
@@ -411,13 +472,6 @@ struct Parser<'a> {
 
 /// How deep rules can be nested. What writes them is recursive.
 const MAX_DEPTH: u32 = 256;
-
-fn range_of(tokens: &[Token]) -> Range {
-    match (tokens.first(), tokens.last()) {
-        (Some(first), Some(last)) => Range::new(first.range.start, last.range.end),
-        _ => Range::default(),
-    }
-}
 
 /// `raw`: the text of `tokens` without the comments that have a space next to them, or `None` if that
 /// is all of their text.
@@ -440,13 +494,6 @@ fn clean(css: &[u8], tokens: &[Token], custom_property: bool) -> Option<Box<[u8]
         }
     }
     (!is_clean).then(|| value.into_boxed_slice())
-}
-
-fn spaces_and_comments_from_end(tokens: &mut Vec<Token>) -> Range {
-    let keep = tokens.iter().rposition(|token| !token.is_space_or_comment()).map_or(0, |at| at + 1);
-    let range = range_of(&tokens[keep..]);
-    tokens.truncate(keep);
-    range
 }
 
 /// `/extend\(.+\)/i.test(text)`
@@ -503,7 +550,7 @@ impl<'a> Parser<'a> {
         while !self.tokenizer.end_of_file() {
             let token = self.tokenizer.next_token(false)?.ok_or(SyntaxError)?;
             match token.kind {
-                TokenKind::Space => self.spaces = self.spaces.join(token.range),
+                TokenKind::Space => self.spaces = self.texts.join(self.spaces, token.range),
                 TokenKind::Control(b';') => self.free_semicolon(token),
                 TokenKind::Control(b'}') => self.end(token)?,
                 TokenKind::Comment => self.comment(token),
@@ -530,11 +577,11 @@ impl<'a> Parser<'a> {
     /// What `end` and `endFile` have in common.
     fn close_current(&mut self) {
         let (current, semicolon, spaces) = (self.current, self.semicolon, std::mem::take(&mut self.spaces));
-        let node = self.node(current);
+        let node = &mut self.nodes[current as usize];
         if node.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty()) {
             node.semicolon = semicolon;
         }
-        node.after = node.after.join(spaces);
+        node.after = self.texts.join(node.after, spaces);
         self.semicolon = false;
     }
 
@@ -552,7 +599,7 @@ impl<'a> Parser<'a> {
     }
 
     fn free_semicolon(&mut self, token: Token) {
-        self.spaces = self.spaces.join(token.range);
+        self.spaces = self.texts.join(self.spaces, token.range);
         let current = self.current;
         let Some(&prev) = self.node(current).nodes.as_ref().and_then(|nodes| nodes.last()) else {
             return;
@@ -657,12 +704,12 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let between = spaces_and_comments_from_end(&mut params);
+        let between = self.texts.spaces_and_comments_from_end(&mut params);
         self.node(id).between = between;
         if !params.is_empty() {
             let skip = params.iter().position(|token| !token.is_space_or_comment()).unwrap_or(params.len());
             let (after_name, params) = params.split_at(skip);
-            let (after_name, range) = (range_of(after_name), range_of(params));
+            let (after_name, range) = (self.texts.range_of(after_name), self.texts.range_of(params));
             let clean_params = clean(self.css, params, false);
             let node = self.node(id);
             node.after_name = after_name;
@@ -745,11 +792,12 @@ impl<'a> Parser<'a> {
         tokens.pop();
         let start = tokens.first().map_or(0, |token| token.start);
         let id = self.new_node(Kind::Rule, start);
-        let between = spaces_and_comments_from_end(&mut tokens);
+        let between = self.texts.spaces_and_comments_from_end(&mut tokens);
         let clean_selector = clean(self.css, &tokens, false);
+        let selector = self.texts.range_of(&tokens);
         let node = self.node(id);
         node.between = between;
-        node.selector = range_of(&tokens);
+        node.selector = selector;
         node.clean_selector = clean_selector;
         self.open(id)
     }
@@ -787,12 +835,13 @@ impl<'a> Parser<'a> {
             let token = tokens[index];
             let text = self.text_of(token);
             if is(text, b"!important") {
-                let string = range_of(&tokens[index..]);
+                let string = self.texts.range_of(&tokens[index..]);
                 tokens.truncate(index);
                 let keep = tokens.iter().rposition(|it| it.kind != TokenKind::Space).map_or(0, |at| at + 1);
-                let string = range_of(&tokens[keep..]).join(string);
+                let spaces = self.texts.range_of(&tokens[keep..]);
+                let string = self.texts.join(spaces, string);
                 tokens.truncate(keep);
-                let is_plain = string.of(self.css) == b" !important";
+                let is_plain = self.texts.of(string) == b" !important";
                 let node = self.node(id);
                 node.important = true;
                 node.raw_important = (!is_plain).then_some(string);
@@ -802,16 +851,16 @@ impl<'a> Parser<'a> {
                 let mut string = Range::default();
                 let mut j = index;
                 while j > 0 {
-                    let starts_with_bang = text::trim(string.of(self.css)).starts_with(b"!");
+                    let starts_with_bang = text::trim(self.texts.of(string)).starts_with(b"!");
                     if starts_with_bang && cache.get(j).is_some_and(|it| it.kind != TokenKind::Space) {
                         break;
                     }
                     if let Some(token) = cache.pop() {
-                        string = token.range.join(string);
+                        string = self.texts.join(token.range, string);
                     }
                     j -= 1;
                 }
-                if text::trim(string.of(self.css)).starts_with(b"!") {
+                if text::trim(self.texts.of(string)).starts_with(b"!") {
                     let node = self.node(id);
                     node.important = true;
                     node.raw_important = Some(string);
@@ -837,16 +886,16 @@ impl<'a> Parser<'a> {
         self.node(id).end = end.map(|at| at + 1);
 
         let start = tokens.iter().position(|token| token.kind == TokenKind::Word).ok_or(SyntaxError)?;
-        let before = range_of(&tokens[..start]);
-        let node = self.node(id);
-        node.before = node.before.join(before);
+        let before = self.texts.range_of(&tokens[..start]);
+        let node = &mut self.nodes[id as usize];
+        node.before = self.texts.join(node.before, before);
         node.start = tokens[start].start;
 
         let prop_len = tokens[start..]
             .iter()
             .position(|token| token.is(b':') || token.is_space_or_comment())
             .unwrap_or(tokens.len() - start);
-        let mut prop = range_of(&tokens[start..start + prop_len]);
+        let mut prop = self.texts.range_of(&tokens[start..start + prop_len]);
         let mut at = start + prop_len;
 
         let between_start = at;
@@ -859,11 +908,11 @@ impl<'a> Parser<'a> {
                 return Err(SyntaxError);
             }
         }
-        let mut between = range_of(&tokens[between_start..at]);
+        let mut between = self.texts.range_of(&tokens[between_start..at]);
 
-        if matches!(prop.of(self.css).first(), Some(b'_' | b'*')) {
-            let node = self.node(id);
-            node.before = node.before.join(Range::new(prop.start, prop.start + 1));
+        if matches!(self.texts.of(prop).first(), Some(b'_' | b'*')) {
+            let node = &mut self.nodes[id as usize];
+            node.before = self.texts.join(node.before, Range::new(prop.start, prop.start + 1));
             prop.start += 1;
         }
 
@@ -876,16 +925,17 @@ impl<'a> Parser<'a> {
         self.take_important(id, &mut tokens, 0, true);
 
         let has_word = tokens.iter().any(|token| !token.is_space_or_comment());
-        let mut value = range_of(&tokens);
+        let mut value = self.texts.range_of(&tokens);
+        let first_spaces_range = self.texts.range_of(&first_spaces);
         let clean_value;
         if has_word {
-            between = between.join(range_of(&first_spaces));
+            between = self.texts.join(between, first_spaces_range);
             clean_value = clean(self.css, &tokens, custom_property);
         } else {
-            value = range_of(&first_spaces).join(value);
+            value = self.texts.join(first_spaces_range, value);
             clean_value = clean(self.css, &[&first_spaces[..], &tokens[..]].concat(), custom_property);
         }
-        let extend = self.syntax == Syntax::Less && has_extend(clean_value.as_deref().unwrap_or(value.of(self.css)), b"extend(");
+        let extend = self.syntax == Syntax::Less && has_extend(clean_value.as_deref().unwrap_or(self.texts.of(value)), b"extend(");
         let node = self.node(id);
         node.prop = prop;
         node.between = between;
@@ -955,16 +1005,16 @@ impl<'a> Parser<'a> {
         self.node(id).end = last.last_position().map(|at| at + 1);
 
         let start = tokens.iter().position(|token| token.kind == TokenKind::Word).ok_or(SyntaxError)?;
-        let before = range_of(&tokens[..start]);
-        let node = self.node(id);
-        node.before = node.before.join(before);
+        let before = self.texts.range_of(&tokens[..start]);
+        let node = &mut self.nodes[id as usize];
+        node.before = self.texts.join(node.before, before);
         node.start = tokens[start].start;
 
         let prop_len = tokens[start..]
             .iter()
             .position(|token| token.is(b':') || token.is_space_or_comment())
             .unwrap_or(tokens.len() - start);
-        let mut prop = range_of(&tokens[start..start + prop_len]);
+        let mut prop = self.texts.range_of(&tokens[start..start + prop_len]);
         let mut at = start + prop_len;
         let between_start = at;
         while let Some(&token) = tokens.get(at) {
@@ -973,23 +1023,24 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        if matches!(prop.of(self.css).first(), Some(b'_' | b'*')) {
-            let node = self.node(id);
-            node.before = node.before.join(Range::new(prop.start, prop.start + 1));
+        if matches!(self.texts.of(prop).first(), Some(b'_' | b'*')) {
+            let node = &mut self.nodes[id as usize];
+            node.before = self.texts.join(node.before, Range::new(prop.start, prop.start + 1));
             prop.start += 1;
         }
         while tokens.get(at).is_some_and(|token| token.is_space_or_comment()) {
             at += 1;
         }
-        let between = range_of(&tokens[between_start..at]);
+        let between = self.texts.range_of(&tokens[between_start..at]);
         let mut tokens = tokens.split_off(at);
         self.take_important(id, &mut tokens, 1, false);
 
         let clean_value = clean(self.css, &tokens, false);
+        let value = self.texts.range_of(&tokens);
         let node = self.node(id);
         node.prop = prop;
         node.between = between;
-        node.value = range_of(&tokens);
+        node.value = value;
         node.clean_value = clean_value;
         if self.colon(&tokens)?.is_some() {
             return Err(SyntaxError);
@@ -1030,20 +1081,26 @@ impl<'a> Parser<'a> {
         self.base_atrule(token.start, name)?;
 
         // `nodes/variable.js`
-        let css = self.css;
-        let id = self.last_node;
-        let node = self.node(id);
-        if !node.name.of(css).ends_with(b":") {
+        let node = &mut self.nodes[self.last_node as usize];
+        let name = self.texts.of(node.name);
+        if !name.ends_with(b":") {
             return Ok(());
         }
-        node.name.end -= 1;
-        node.after_name = Range::new(node.name.end, node.name.end + 1).join(node.after_name);
+        // `name.replace(":", "")` takes the first colon, which need not be the last.
+        let first_colon = bun_core::strings::index_of_char_usize(name, b':').unwrap_or(0) as u32;
+        let last_colon = Range::new(node.name.end - 1, node.name.end);
+        node.name = self.texts.join(
+            Range::new(node.name.start, node.name.start + first_colon),
+            Range::new(node.name.start + first_colon + 1, node.name.end),
+        );
+        node.after_name = self.texts.join(last_colon, node.after_name);
         node.variable = true;
         // `/^:(\s+)?/`
-        let params = node.clean_params.as_deref().unwrap_or(node.params.of(css));
+        let params = node.clean_params.as_deref().unwrap_or(self.texts.of(node.params));
         if let Some(rest) = params.strip_prefix(b":") {
             node.value_skips = 1 + text::leading_white_space_len(rest) as u32;
-            node.after_name.end = node.params.start + node.value_skips;
+            let skipped = Range::new(node.params.start, node.params.start + node.value_skips);
+            node.after_name = self.texts.join(node.after_name, skipped);
         }
         Ok(())
     }
@@ -1051,7 +1108,7 @@ impl<'a> Parser<'a> {
     fn less_each(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
         let first_paren = tokens.iter().position(|token| token.is(b'(')).ok_or(SyntaxError)?;
         let last_paren = tokens.iter().rposition(|token| token.is(b')')).ok_or(SyntaxError)?;
-        let params = range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
+        let params = self.texts.range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
         tokens.drain(first_paren..(first_paren + last_paren).min(tokens.len()));
         for &token in tokens.iter().rev() {
             self.tokenizer.back(Some(token));
@@ -1083,7 +1140,7 @@ impl<'a> Parser<'a> {
             let contents = tokens.get(first_paren..(last_paren + first_paren).min(tokens.len())).unwrap_or_default();
             let brackets = Token {
                 kind: TokenKind::Brackets,
-                range: range_of(contents),
+                range: Range::new(contents.first().map_or(0, |it| it.range.start), contents.last().map_or(0, |it| it.range.end)),
                 start: tokens[first_paren].start,
                 last: None,
                 inline: false,
@@ -1106,7 +1163,7 @@ impl<'a> Parser<'a> {
         if let Some(start) = important_start {
             let combined = Token {
                 kind: TokenKind::Word,
-                range: range_of(&tokens[start..important_end]),
+                range: Range::new(tokens[start].range.start, tokens[important_end - 1].range.end),
                 start: tokens[start].start,
                 last: tokens[start].last,
                 inline: false,
@@ -1153,10 +1210,8 @@ impl<'a> Parser<'a> {
             }
         }
         self.base_rule(tokens)?;
-        let css = self.css;
-        let id = self.last_node;
-        let node = self.node(id);
-        node.extend = has_extend(node.clean_selector.as_deref().unwrap_or(node.selector.of(css)), b":extend(");
+        let node = &mut self.nodes[self.last_node as usize];
+        node.extend = has_extend(node.clean_selector.as_deref().unwrap_or(self.texts.of(node.selector)), b":extend(");
         Ok(())
     }
 
@@ -1224,11 +1279,16 @@ pub(crate) fn parse_custom_property_set(css: &[u8], syntax: Syntax, start: u32) 
 }
 
 fn parse_from(css: &[u8], syntax: Syntax, pos: usize, is_custom_property_set: bool) -> Result<Tree, SyntaxError> {
-    if css.len() >= u32::MAX as usize {
+    // Half of the numbers are for `Texts::extra`, which is no longer than the text.
+    if css.len() >= (u32::MAX / 2) as usize {
         return Err(SyntaxError);
     }
     let mut parser = Parser {
         css,
+        texts: Texts {
+            css,
+            extra: Vec::new(),
+        },
         syntax,
         tokenizer: Tokenizer {
             css,
@@ -1238,6 +1298,7 @@ fn parse_from(css: &[u8], syntax: Syntax, pos: usize, is_custom_property_set: bo
             buffer: Vec::new(),
             returned: Vec::new(),
             last_bad_paren: None,
+            next_close: None,
         },
         nodes: vec![Node {
             nodes: Some(Vec::new()),
@@ -1251,5 +1312,8 @@ fn parse_from(css: &[u8], syntax: Syntax, pos: usize, is_custom_property_set: bo
         is_custom_property_set,
     };
     parser.parse()?;
-    Ok(Tree { nodes: parser.nodes })
+    Ok(Tree {
+        nodes: parser.nodes,
+        extra: parser.texts.extra,
+    })
 }

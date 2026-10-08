@@ -459,7 +459,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         match node.kind {
             SelectorKind::Root => {
                 let custom_selector = match self.inside_at_rule(&[b"custom-selector"]) {
-                    true => self.css_ancestor(Kind::AtRule).and_then(|it| it.custom_selector),
+                    true => self.css_ancestor(Kind::AtRule).and_then(|it| it.custom_selector.as_deref()),
                     false => None,
                 };
                 let separator = match self.inside_at_rule(&[b"extend", b"custom-selector", b"nest"]) {

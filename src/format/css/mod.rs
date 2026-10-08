@@ -217,7 +217,8 @@ pub fn format(
         }
     }
 
-    let root = parse::parse(&blanked, text, parser).map_err(|_| FormatError::SyntaxError)?;
+    let tree = postcss::parse(&blanked, parser).map_err(|_| FormatError::SyntaxError)?;
+    let root = parse::parse(&tree, &blanked, text, parser).map_err(|_| FormatError::SyntaxError)?;
     let mut printer = printer::Printer {
         text,
         syntax: parser,

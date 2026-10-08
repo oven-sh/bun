@@ -48,7 +48,7 @@ pub(crate) struct CssNode<'a> {
     pub(crate) inline: bool,
     pub(crate) selector: Option<SelectorNode<'a>>,
     /// `raws.selector`
-    pub(crate) raw_selector: &'a [u8],
+    pub(crate) raw_selector: Cow<'a, [u8]>,
     pub(crate) is_scss_nested_property: bool,
     pub(crate) prop: Cow<'a, [u8]>,
     pub(crate) value: Value<'a>,
@@ -61,8 +61,8 @@ pub(crate) struct CssNode<'a> {
     pub(crate) name: &'a [u8],
     pub(crate) params: Params<'a>,
     /// `raws.params`
-    pub(crate) raw_params: &'a [u8],
-    pub(crate) custom_selector: Option<&'a [u8]>,
+    pub(crate) raw_params: Cow<'a, [u8]>,
+    pub(crate) custom_selector: Option<Cow<'a, [u8]>>,
     /// What `postcss-less` and Prettier say of a node of Less.
     pub(crate) extend: bool,
     pub(crate) mixin: bool,
@@ -83,7 +83,23 @@ struct Context<'a> {
     text: &'a [u8],
     /// `options.originalText`
     original_text: &'a [u8],
+    /// `Tree::extra`
+    extra: &'a [u8],
     syntax: Syntax,
+}
+
+/// The part of `text` from `start` to `end`.
+fn slice<'a>(text: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
+    match text {
+        Cow::Borrowed(text) => Cow::Borrowed(text.get(start..end).unwrap_or_default()),
+        Cow::Owned(text) => Cow::Owned(text.get(start..end).unwrap_or_default().to_vec()),
+    }
+}
+
+/// `text.trim()`
+fn trim<'a>(text: &Cow<'a, [u8]>) -> Cow<'a, [u8]> {
+    let start = text.len() - text::trim_start(text).len();
+    slice(text, start, start + text::trim(text).len())
 }
 
 /// `/(\s*)(!default).*$/` or the same with `!global`: where the match starts.
@@ -189,7 +205,25 @@ fn is_scss_nested_property(selector: &[u8]) -> bool {
 
 impl<'a> Context<'a> {
     fn of(&self, range: Range) -> &'a [u8] {
-        range.of(self.text)
+        postcss::text_of_range(range, self.text, self.extra)
+    }
+
+    /// The texts of `ranges`, one after the other.
+    fn concat(&self, ranges: &[Range]) -> Cow<'a, [u8]> {
+        let mut all = Range::default();
+        for (index, &range) in ranges.iter().enumerate() {
+            if all.is_empty() {
+                all = range;
+            } else if range.is_empty() {
+            } else if all.end == range.start {
+                all.end = range.end;
+            } else {
+                let mut text = self.of(all).to_vec();
+                ranges[index..].iter().for_each(|&range| text.extend_from_slice(self.of(range)));
+                return Cow::Owned(text);
+            }
+        }
+        Cow::Borrowed(self.of(all))
     }
 
     /// What `parseNestedCSS` does with an at-rule of Less only. Returns whether that is all.
@@ -227,14 +261,8 @@ impl<'a> Context<'a> {
 
         if raw.mixin {
             // `raws.identifier + name + raws.afterName + raws.params`
-            let source = match text::trim(node.after_name).is_empty() {
-                true => {
-                    let start = raw.identifier.start as usize;
-                    let len = 1 + node.name.len() + node.after_name.len() + node.raw_params.len();
-                    Cow::Borrowed(self.text.get(start..start + len).unwrap_or_default())
-                }
-                false => Cow::Owned([self.of(raw.identifier), node.name, node.after_name, node.raw_params].concat()),
-            };
+            let source = [self.of(raw.identifier), node.name, node.after_name, &node.raw_params].concat();
+            let source = Cow::Owned(source);
             node.selector = Some(parse_selector(source));
             return Ok(true);
         }
@@ -294,7 +322,7 @@ impl<'a> Context<'a> {
             text: self.of(raw.text),
             inline: raw.inline || raw.raw_inline,
             selector: None,
-            raw_selector: b"",
+            raw_selector: Cow::Borrowed(b""),
             is_scss_nested_property: false,
             prop: Cow::Borrowed(self.of(raw.prop)),
             value: Value::None,
@@ -306,7 +334,7 @@ impl<'a> Context<'a> {
             raw_scss_global: None,
             name: self.of(raw.name),
             params: Params::None,
-            raw_params: b"",
+            raw_params: Cow::Borrowed(b""),
             custom_selector: None,
             extend: raw.extend,
             mixin: raw.mixin,
@@ -317,15 +345,14 @@ impl<'a> Context<'a> {
         match raw.kind {
             Kind::Root | Kind::Comment => {}
             Kind::Rule => {
-                let mut selector = raw.selector;
-                if !text::trim(&node.between).is_empty() {
-                    selector = Range::new(selector.start, raw.between.end);
-                }
-                node.raw_selector = self.of(selector);
-                if !text::trim(node.raw_selector).is_empty() {
+                node.raw_selector = match text::trim(&node.between).is_empty() {
+                    true => Cow::Borrowed(self.of(raw.selector)),
+                    false => self.concat(&[raw.selector, raw.between]),
+                };
+                if !text::trim(&node.raw_selector).is_empty() {
                     let clean = raw.clean_selector.as_deref().unwrap_or(self.of(raw.selector));
                     node.is_scss_nested_property = self.syntax == Syntax::Scss && is_scss_nested_property(clean);
-                    node.selector = Some(parse_selector(Cow::Borrowed(node.raw_selector)));
+                    node.selector = Some(parse_selector(node.raw_selector.clone()));
                 }
             }
             Kind::Decl => self.convert_declaration(raw, &mut node)?,
@@ -369,6 +396,8 @@ impl<'a> Context<'a> {
                 )
                 && let [only] = *tree.nodes[0].nodes.as_deref().unwrap_or_default()
                 && tree.nodes[only as usize].kind == Kind::Rule
+                // What is in it would not live long enough.
+                && tree.extra.is_empty()
             {
                 rules = self.convert(&tree, only).ok().and_then(|rule| rule.nodes);
             }
@@ -433,15 +462,13 @@ impl<'a> Context<'a> {
     }
 
     fn convert_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<(), SyntaxError> {
-        let mut range = raw.params;
-        if !text::trim(node.after_name).is_empty() {
-            range = Range::new(raw.after_name.start, range.end.max(raw.after_name.end));
-        }
-        if !text::trim(&node.between).is_empty() {
-            range = Range::new(if range.is_empty() { raw.between.start } else { range.start }, raw.between.end);
-        }
-        let params = text::trim(self.of(range));
-        node.raw_params = params;
+        let has_text = |range: Range| !text::trim(self.of(range)).is_empty();
+        let params = trim(&self.concat(&[
+            if has_text(raw.after_name) { raw.after_name } else { Range::default() },
+            raw.params,
+            if has_text(raw.between) { raw.between } else { Range::default() },
+        ]));
+        node.raw_params = params.clone();
         if self.syntax == Syntax::Less && self.convert_less_at_rule(raw, node)? {
             return Ok(());
         }
@@ -451,25 +478,26 @@ impl<'a> Context<'a> {
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
             // `node.params.match(/:--\S+\s+/)[0].trim()`
-            let clean = self.of(raw.params);
-            let start = text::index_of_from(clean, b":--", 0).ok_or(SyntaxError)?;
+            let clean: Cow<'a, [u8]> = match &raw.clean_params {
+                Some(clean) => Cow::Owned(clean.to_vec()),
+                None => Cow::Borrowed(self.of(raw.params)),
+            };
+            let start = text::index_of_from(&clean, b":--", 0).ok_or(SyntaxError)?;
             let name_len = clean[start..].iter().position(|&b| text::starts_with_white_space(&[b])).ok_or(SyntaxError)?;
             if name_len <= 3 {
                 return Err(SyntaxError);
             }
-            let custom_selector = &clean[start..start + name_len];
-            node.custom_selector = Some(custom_selector);
-            let rest = text::trim(clean.get(custom_selector.len()..).unwrap_or_default());
-            node.selector = Some(parse_selector(Cow::Borrowed(rest)));
+            node.custom_selector = Some(slice(&clean, start, start + name_len));
+            node.selector = Some(parse_selector(trim(&slice(&clean, name_len, clean.len()))));
             return Ok(());
         }
         if params.is_empty() {
             return Ok(());
         }
         if matches!(name, b"warn" | b"error") {
-            node.params = Params::Unknown(Cow::Borrowed(params));
+            node.params = Params::Unknown(params.clone());
         } else if matches!(name, b"extend" | b"nest") {
-            node.selector = Some(parse_selector(Cow::Borrowed(params)));
+            node.selector = Some(parse_selector(params.clone()));
         } else if name == b"at-root" {
             // `/^\(\s*(?:without|with)\s*:.+\)$/s`
             let is_query = params.strip_prefix(b"(").and_then(|it| it.strip_suffix(b")")).is_some_and(|inner| {
@@ -478,11 +506,11 @@ impl<'a> Context<'a> {
                 rest.and_then(|it| text::trim_start(it).strip_prefix(b":")).is_some_and(|it| !it.is_empty())
             });
             match is_query {
-                true => node.params = Params::Value(value(Cow::Borrowed(params))?),
-                false => node.selector = Some(parse_selector(Cow::Borrowed(params))),
+                true => node.params = Params::Value(value(params.clone())?),
+                false => node.selector = Some(parse_selector(params.clone())),
             }
         } else if matches!(&*name.to_ascii_lowercase(), b"import" | b"use" | b"forward") {
-            node.params = Params::Value(value(Cow::Borrowed(params))?);
+            node.params = Params::Value(value(params.clone())?);
         } else if matches!(
             name,
             b"namespace"
@@ -500,7 +528,7 @@ impl<'a> Context<'a> {
                 | b"define-mixin"
                 | b"add-mixin"
         ) {
-            let mut text = Cow::Borrowed(params);
+            let mut text = params.clone();
             if let Some(moved) = move_space_behind_dots(&text) {
                 text = Cow::Owned(moved);
             }
@@ -509,32 +537,41 @@ impl<'a> Context<'a> {
             }
             node.value = Value::Parsed(value(text)?);
         } else if matches!(&*name.to_ascii_lowercase(), b"media" | b"custom-media") {
-            node.params = if text::includes(params, b"#{") {
+            node.params = if text::includes(&params, b"#{") {
                 // What Prettier makes of it is lost, and the string of `postcss` stays.
                 Params::Text(match &raw.clean_params {
                     Some(clean) => Cow::Owned(clean.to_vec()),
                     None => Cow::Borrowed(self.of(raw.params)),
                 })
             } else {
-                match media_query::parse(params) {
-                    Ok(list) => Params::Media(list),
-                    Err(_) => Params::Unknown(Cow::Borrowed(params)),
+                match params {
+                    Cow::Borrowed(text) => match media_query::parse(text) {
+                        Ok(list) => Params::Media(list),
+                        Err(_) => Params::Unknown(params.clone()),
+                    },
+                    Cow::Owned(_) => Params::Unknown(params.clone()),
                 }
             };
         } else {
-            node.params = Params::Text(Cow::Borrowed(params));
+            node.params = Params::Text(params.clone());
         }
         Ok(())
     }
 }
 
-/// Prettier's `parseCss`, `parseLess` and `parseScss`. `text`: what `postcss` gets of `original_text`.
-pub(crate) fn parse<'a>(text: &'a [u8], original_text: &'a [u8], syntax: Syntax) -> Result<CssNode<'a>, SyntaxError> {
-    let tree = postcss::parse(text, syntax)?;
+/// What Prettier's `parseCss`, `parseLess` and `parseScss` make of the result of `postcss`. `text`: what
+/// `postcss` has got of `original_text`.
+pub(crate) fn parse<'a>(
+    tree: &'a Tree,
+    text: &'a [u8],
+    original_text: &'a [u8],
+    syntax: Syntax,
+) -> Result<CssNode<'a>, SyntaxError> {
     let context = Context {
         text,
         original_text,
+        extra: &tree.extra,
         syntax,
     };
-    context.convert(&tree, 0)
+    context.convert(tree, 0)
 }

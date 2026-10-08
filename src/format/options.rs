@@ -73,6 +73,8 @@ pub struct FormatOptions {
     pub sort_package_json: Option<crate::json::SortPackageJson>,
     /// How imports are sorted, if they are.
     pub sort_imports: Option<std::sync::Arc<crate::sort_imports::SortImports>>,
+    /// oxfmt's `jsdoc`: how JSDoc comments are formatted, if they are.
+    pub jsdoc: Option<JsdocOptions>,
 }
 
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
@@ -214,6 +216,38 @@ impl FormatOptions {
             b"sortPackageJson.sortScripts" => {
                 self.sort_package_json.get_or_insert_default().sort_scripts = boolean()?;
             }
+            // oxfmt's: `true`, `false` or an object, whose properties come as `jsdoc.<name>`.
+            b"jsdoc" => self.jsdoc = (value == b"{}" || boolean()?).then(Default::default),
+            _ if name.starts_with(b"jsdoc.") => {
+                let jsdoc = self.jsdoc.get_or_insert_default();
+                match &name[b"jsdoc.".len()..] {
+                    b"capitalizeDescriptions" => jsdoc.capitalize_descriptions = boolean()?,
+                    b"commentLineStrategy" => {
+                        jsdoc.comment_line_strategy = match value {
+                            b"singleLine" => CommentLineStrategy::SingleLine,
+                            b"multiline" => CommentLineStrategy::Multiline,
+                            b"keep" => CommentLineStrategy::Keep,
+                            _ => return Err(InvalidOption),
+                        };
+                    }
+                    b"separateTagGroups" => jsdoc.separate_tag_groups = boolean()?,
+                    b"separateReturnsFromParam" => jsdoc.separate_returns_from_param = boolean()?,
+                    b"bracketSpacing" => jsdoc.bracket_spacing = boolean()?,
+                    b"descriptionWithDot" => jsdoc.description_with_dot = boolean()?,
+                    b"addDefaultToDescription" => jsdoc.add_default_to_description = boolean()?,
+                    b"preferCodeFences" => jsdoc.prefer_code_fences = boolean()?,
+                    b"lineWrappingStyle" => {
+                        jsdoc.line_wrapping_style = match value {
+                            b"greedy" => LineWrappingStyle::Greedy,
+                            b"balance" => LineWrappingStyle::Balance,
+                            _ => return Err(InvalidOption),
+                        };
+                    }
+                    b"descriptionTag" => jsdoc.description_tag = boolean()?,
+                    b"keepUnparsableExampleIndent" => jsdoc.keep_unparsable_example_indent = boolean()?,
+                    _ => return Err(InvalidOption),
+                }
+            }
             // Not an option of Prettier. The kind of the configuration file decides.
             b"flavor" => {
                 self.flavor = match value {
@@ -226,6 +260,71 @@ impl FormatOptions {
         }
         Ok(())
     }
+}
+
+/// oxfmt's `jsdoc`, which has the options of prettier-plugin-jsdoc.
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+pub struct JsdocOptions {
+    /// The first letter of a description is made a capital one.
+    pub capitalize_descriptions: bool,
+    pub comment_line_strategy: CommentLineStrategy,
+    /// An empty line between tags of different kinds.
+    pub separate_tag_groups: bool,
+    /// An empty line between the last `@param` and `@returns`.
+    pub separate_returns_from_param: bool,
+    /// `{ string }` instead of `{string}`.
+    pub bracket_spacing: bool,
+    /// A description ends with a dot.
+    pub description_with_dot: bool,
+    /// "Default is `value`" at the end of the description of `@param [name=value]`.
+    pub add_default_to_description: bool,
+    /// Code without a language is between fences instead of being indented.
+    pub prefer_code_fences: bool,
+    pub line_wrapping_style: LineWrappingStyle,
+    /// The description comes after `@description`.
+    pub description_tag: bool,
+    /// An `@example` that cannot be parsed keeps its indentation.
+    pub keep_unparsable_example_indent: bool,
+}
+
+impl Default for JsdocOptions {
+    fn default() -> Self {
+        JsdocOptions {
+            capitalize_descriptions: true,
+            comment_line_strategy: CommentLineStrategy::SingleLine,
+            separate_tag_groups: false,
+            separate_returns_from_param: false,
+            bracket_spacing: false,
+            description_with_dot: false,
+            add_default_to_description: true,
+            prefer_code_fences: false,
+            line_wrapping_style: LineWrappingStyle::Greedy,
+            description_tag: false,
+            keep_unparsable_example_indent: false,
+        }
+    }
+}
+
+/// Whether a JSDoc comment is on one line.
+#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum CommentLineStrategy {
+    /// If it can be.
+    #[default]
+    SingleLine,
+    /// Never.
+    Multiline,
+    /// If it is.
+    Keep,
+}
+
+/// How descriptions in JSDoc comments are broken into lines.
+#[derive(Debug, Default, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum LineWrappingStyle {
+    /// As much on each line as fits.
+    #[default]
+    Greedy,
+    /// The lines stay as they are if all of them fit.
+    Balance,
 }
 
 /// Which white space in HTML counts.

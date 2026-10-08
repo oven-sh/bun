@@ -32,8 +32,9 @@ impl RuleId {
     pub fn write_to(&self, out: &mut Vec<u8>) {
         match self {
             RuleId::Known(meta) => {
-                if meta.plugin == Plugin::TypeScript {
-                    out.extend_from_slice(b"@typescript-eslint/");
+                if meta.plugin != Plugin::Eslint {
+                    out.extend_from_slice(meta.plugin.prefix().as_bytes());
+                    out.push(b'/');
                 }
                 out.extend_from_slice(meta.name.as_bytes());
             }

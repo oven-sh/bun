@@ -55,7 +55,7 @@ pub fn parse_rule_id(id: &[u8]) -> (&[u8], &[u8]) {
 }
 
 impl Registry {
-    /// `lists`: `bun_lint_eslint::RULES`, `bun_lint_typescript::RULES`.
+    /// `lists`: `bun_lint_eslint::RULES`, `bun_lint_typescript::RULES`, `bun_lint_plugins::RULES`.
     pub fn new(lists: &[&'static [RuleEntry]]) -> Registry {
         let mut rules: Vec<_> = lists.iter().flat_map(|list| list.iter()).collect();
         rules.sort_by_key(|it| (it.meta.plugin as u8, it.meta.name));
@@ -117,15 +117,10 @@ impl Registry {
     /// The rule that a configuration or a comment calls `id`: `no-debugger`,
     /// `@typescript-eslint/no-explicit-any`. The names that oxlint has for the same plugins are
     /// understood too: `eslint/no-debugger`, `typescript/no-explicit-any`,
-    /// `typescript-eslint/no-explicit-any`.
+    /// `typescript-eslint/no-explicit-any`, `react/rules-of-hooks`, `node/no-unsupported-features/es-syntax`.
     pub fn find(&self, id: &[u8]) -> Option<&'static RuleEntry> {
         let (plugin, name) = parse_rule_id(id);
-        let plugin = match plugin {
-            b"" | b"eslint" => Plugin::Eslint,
-            b"@typescript-eslint" | b"typescript-eslint" | b"typescript" => Plugin::TypeScript,
-            _ => return None,
-        };
-        self.get(plugin, name)
+        self.get(Plugin::of_prefix(plugin)?, name)
     }
 }
 

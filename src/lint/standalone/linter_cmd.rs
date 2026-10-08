@@ -39,6 +39,7 @@ pub(crate) fn linter() -> &'static Linter {
         Linter::new(Registry::new(&[
             bun_lint_eslint::RULES,
             bun_lint_typescript::RULES,
+            bun_lint_plugins::RULES,
         ]))
     })
 }
@@ -107,7 +108,7 @@ pub(crate) fn lint_case(
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
     config.linter.report_unused_disable_directives = match entry.meta.plugin {
         Plugin::TypeScript => Severity::Warn,
-        Plugin::Eslint => Severity::Off,
+        _ => Severity::Off,
     };
     with_file(filename, code, &config.language, |file| {
         let messages = linter()

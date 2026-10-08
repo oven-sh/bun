@@ -1013,6 +1013,7 @@ dependencies = [
  "bun_js_parser",
  "bun_lint",
  "bun_lint_eslint",
+ "bun_lint_plugins",
  "bun_lint_typescript",
  "bun_paths",
  "bun_sema",
@@ -1033,6 +1034,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lint_plugins"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_lint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_lint_standalone"
 version = "0.0.0"
 dependencies = [
@@ -1043,6 +1055,7 @@ dependencies = [
  "bun_lint",
  "bun_lint_driver",
  "bun_lint_eslint",
+ "bun_lint_plugins",
  "bun_lint_typescript",
  "bun_sema",
  "bun_sema_driver",

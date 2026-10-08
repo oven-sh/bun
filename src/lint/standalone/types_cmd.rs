@@ -89,7 +89,7 @@ fn config_of(entry: &'static RuleEntry, options: &[Json], language_options: &Jso
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
     config.linter.report_unused_disable_directives = match entry.meta.plugin {
         Plugin::TypeScript => Severity::Warn,
-        Plugin::Eslint => Severity::Off,
+        _ => Severity::Off,
     };
     config
 }

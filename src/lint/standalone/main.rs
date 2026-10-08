@@ -33,8 +33,23 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn find_rule(plugin: Plugin, name: &str) -> Option<&'static RuleEntry> {
-    let all = bun_lint_eslint::RULES.iter().chain(bun_lint_typescript::RULES);
-    all.into_iter().find(|it| it.meta.plugin == plugin && it.meta.name == name)
+    all_rules().find(|it| it.meta.plugin == plugin && it.meta.name == name)
+}
+
+fn all_rules() -> impl Iterator<Item = &'static RuleEntry> {
+    bun_lint_eslint::RULES.iter().chain(bun_lint_typescript::RULES).chain(bun_lint_plugins::RULES)
+}
+
+/// The fixtures in `directory`, by the name of the rule, which has a `/` if the fixture is in a directory of `directory`.
+fn fixtures_in(directory: &std::path::Path, prefix: &str, into: &mut Vec<(String, std::path::PathBuf)>) {
+    for path in std::fs::read_dir(directory).into_iter().flatten().flatten().map(|it| it.path()) {
+        let name = format!("{prefix}{}", path.file_stem().unwrap_or_default().to_string_lossy());
+        if path.is_dir() {
+            fixtures_in(&path, &format!("{name}/"), into);
+        } else {
+            into.push((name, path));
+        }
+    }
 }
 
 /// What a rule reports for `code`, as ESLint would print it, and the code after one pass of fixes.
@@ -207,17 +222,22 @@ fn conformance(args: &[String]) {
     std::panic::set_hook(Box::new(|_| {}));
     let mut total = Tally::default();
     let (mut implemented, mut perfect, mut missing) = (0, 0, Vec::new());
-    for (directory, plugin) in [("eslint", Plugin::Eslint), ("typescript-eslint", Plugin::TypeScript)] {
+    let plugins = [
+        ("eslint", Plugin::Eslint),
+        ("typescript-eslint", Plugin::TypeScript),
+        ("react-hooks", Plugin::ReactHooks),
+        ("import", Plugin::Import),
+        ("n", Plugin::Node),
+        ("oxc", Plugin::Oxc),
+    ];
+    for (directory, plugin) in plugins {
         if only_plugin.is_some_and(|only| only != directory) {
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(format!("{root}/{directory}")) else {
-            continue;
-        };
-        let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
+        let mut paths = Vec::new();
+        fixtures_in(std::path::Path::new(&format!("{root}/{directory}")), "", &mut paths);
         paths.sort();
-        for path in paths {
-            let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        for (name, path) in paths {
             if only_rule.is_some_and(|only| only != name) {
                 continue;
             }
@@ -243,8 +263,9 @@ fn conformance(args: &[String]) {
                 print!("{failures}");
             }
             if let Some(report) = report {
-                let _ = std::fs::create_dir_all(format!("{report}/{directory}"));
-                let _ = std::fs::write(format!("{report}/{directory}/{name}.txt"), failures);
+                let file = std::path::PathBuf::from(format!("{report}/{directory}/{name}.txt"));
+                let _ = std::fs::create_dir_all(file.parent().unwrap_or(&file));
+                let _ = std::fs::write(file, failures);
             }
             total.passed += tally.passed;
             total.failed += tally.failed;
@@ -264,11 +285,7 @@ fn run_one(args: &[String]) {
     let [rule, path, rest @ ..] = args else {
         return println!("usage: bun-lint run <rule> <file> [options as JSON]");
     };
-    let (plugin, name) = match rule.strip_prefix("@typescript-eslint/") {
-        Some(name) => (Plugin::TypeScript, name),
-        None => (Plugin::Eslint, rule.as_str()),
-    };
-    let Some(entry) = find_rule(plugin, name) else {
+    let Some(entry) = linter_cmd::linter().registry().find(rule.as_bytes()) else {
         return println!("no such rule: {rule}");
     };
     let code = std::fs::read(path).expect("the file");
@@ -316,8 +333,7 @@ fn bench(args: &[String]) {
         .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
         .collect();
     let bytes: usize = files.iter().map(|it| it.1.len()).sum();
-    let all = bun_lint_eslint::RULES.iter().chain(bun_lint_typescript::RULES);
-    let built: Vec<_> = all
+    let built: Vec<_> = all_rules()
         .filter(|it| !it.meta.requires_types && only.as_ref().is_none_or(|only| only.contains(&it.meta.name)))
         .map(|it| (it.build)(&Options::default()))
         .collect();

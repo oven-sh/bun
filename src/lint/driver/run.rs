@@ -395,7 +395,7 @@ impl Run<'_> {
             Ok(format) => format,
             Err(error) => return self.fail(&error),
         };
-        let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES]));
+        let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES]));
         let loader = Loader::new(&linter, options, environment);
         let timing = Timing {
             is_on: options.timing,

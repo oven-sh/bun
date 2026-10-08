@@ -8,7 +8,7 @@
 //! - [`code_path`]: ESLint's code path analysis.
 //! - [`rule`]: what a rule is. Start there.
 //!
-//! The rules are in the crates `bun_lint_eslint` and `bun_lint_typescript`.
+//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript` and `bun_lint_plugins`.
 
 pub mod ast;
 pub mod code_path;

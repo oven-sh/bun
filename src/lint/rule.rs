@@ -69,6 +69,42 @@ pub enum Plugin {
     Eslint,
     /// `@typescript-eslint/no-explicit-any`
     TypeScript,
+    /// `react-hooks/rules-of-hooks`
+    ReactHooks,
+    /// `import/no-cycle`
+    Import,
+    /// `n/no-unsupported-features/es-syntax`
+    Node,
+    /// `oxc/no-accumulating-spread`
+    Oxc,
+}
+
+impl Plugin {
+    /// What is before the `/` in the name that a rule is reported under. Empty for a rule of ESLint.
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Plugin::Eslint => "",
+            Plugin::TypeScript => "@typescript-eslint",
+            Plugin::ReactHooks => "react-hooks",
+            Plugin::Import => "import",
+            Plugin::Node => "n",
+            Plugin::Oxc => "oxc",
+        }
+    }
+
+    /// The plugin that a configuration or a comment calls `prefix`: by the name that is usual with ESLint, or by one that oxlint
+    /// has for it. oxlint has the rules of `react-hooks` in `react`.
+    pub fn of_prefix(prefix: &[u8]) -> Option<Plugin> {
+        Some(match prefix {
+            b"" | b"eslint" => Plugin::Eslint,
+            b"@typescript-eslint" | b"typescript-eslint" | b"typescript" => Plugin::TypeScript,
+            b"react-hooks" | b"react_hooks" | b"react" => Plugin::ReactHooks,
+            b"import" | b"import-x" => Plugin::Import,
+            b"n" | b"node" => Plugin::Node,
+            b"oxc" => Plugin::Oxc,
+            _ => return None,
+        })
+    }
 }
 
 /// ESLint's `meta.type`.
@@ -146,6 +182,11 @@ impl Meta {
 
     pub const fn typescript(name: &'static str, kind: Kind) -> Meta {
         Meta::new(Plugin::TypeScript, name, kind)
+    }
+
+    /// A rule of another plugin.
+    pub const fn plugin(plugin: Plugin, name: &'static str, kind: Kind) -> Meta {
+        Meta::new(plugin, name, kind)
     }
 
     pub const fn fixable(mut self, fixable: Fixable) -> Meta {

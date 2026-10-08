@@ -18,9 +18,10 @@ use std::collections::BTreeMap;
 const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Babel parses";
 const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
-const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshot of js/comments/html-like, made with `acorn`, has them formatted";
+const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded HTML or Markdown, which needs a formatter for that language";
+const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular, Handlebars, MDX";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 
 /// What is not run, and why. A case is left out if its path contains the text.
@@ -73,6 +74,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("markdown/cursor/17227.md", EMBEDDED),
     ("misc/front-matter/with-plugins", PLUGIN),
     ("js/_errors_/html-like-comments.js", HTML_LIKE_COMMENT),
+    ("jsx/jsx-test-suite/rejected-snippets/0.js", HTML_LIKE_COMMENT),
     ("typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts", ONLY_BABEL_TS_REJECTS),
     ("typescript/_errors_/babel-ts2/multiline-declaration-interface.ts", ONLY_BABEL_TS_REJECTS),
     ("typescript/_errors_/babel-ts2/multiline-declaration-module.ts", ONLY_BABEL_TS_REJECTS),
@@ -367,8 +369,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 // JSON or a style sheet: the parser is not left to the name of the file.
                 let first_parser = case.parsers.first().map(Vec::as_slice);
                 let named_parser = first_parser.filter(|it| it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql" | b"yaml" | b"markdown"));
-                // Another language.
                 if !case.parsers.is_empty() && named_parser.is_none() && !case.parsers.iter().any(|it| is_javascript_parser(it)) {
+                    *excluded.entry(OTHER_LANGUAGE).or_default() += 1;
                     continue;
                 }
                 if let Some(&(_, reason)) = EXCLUDED.iter().find(|it| strings::contains(&id, it.0.as_bytes())) {
@@ -432,7 +434,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let expected = match case.expected {
                     Expected::Output(expected) => expected,
                     Expected::Error(parsers) => {
-                        // A snippet that is rejected is not in the snapshot.
+                        // The text of a snippet that is rejected is not in the snapshot: `sync.ts` writes it to `rejected-snippets`.
                         if (parsers.is_empty() || parsers.iter().any(|it| it == ours)) && on_disk.is_some() {
                             let is_rejected = format(original).is_err_and(|it| it == Failure::SyntaxError);
                             tally.errors.add(is_rejected);

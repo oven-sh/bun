@@ -86,5 +86,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     }
     output_line!("as Prettier prints them: {as_prettier}");
     output_line!("as oxfmt prints them, in its flavor: {as_oxfmt}");
-    output_line!("not run: {other_options}: an option that Prettier does not have");
+    if other_options > 0 {
+        output_line!("not run: {other_options}: an option that is not there");
+    }
 }

@@ -5129,8 +5129,7 @@ impl DevServer {
         }
         match side {
             bake::Graph::Client => check!(&self.client_graph, |_file| true),
-            // One server record stands for the file in the server graph and in the SSR graph.
-            // Only a JS record says which of the two bundled it.
+            // One server record stands for both server-side graphs. Only a JS record says which bundled it.
             bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
                 file.file_kind() != FileKind::Js
                     || if side == bake::Graph::Ssr {

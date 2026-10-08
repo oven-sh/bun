@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Enforce consistent indentation.
 ///
@@ -151,9 +152,28 @@ fn statement_span(statement: Stmt<'_>) -> Span {
     statement.export_span().unwrap_or_else(|| statement.span())
 }
 
+/// What the walks up from a node find.
+#[derive(Default)]
+pub struct State<'a> {
+    declarators: AncestorMemo<'a, Declarator<'a>>,
+    /// Whether what is around a call is as [`is_outer_iife`] wants it.
+    outer_calls: AncestorMemo<'a, bool>,
+    around_members: AncestorMemo<'a, AroundMember<'a>>,
+    around_members_in_arrows: AncestorMemo<'a, AroundMember<'a>>,
+}
+
+/// What decides whether a `MemberExpression` in it is checked.
+#[derive(Copy, Clone)]
+enum AroundMember<'a> {
+    /// A variable declaration or an assignment.
+    Assignment,
+    FunctionExpression,
+    Arrow(Func<'a>),
+}
+
 /// ESLint's `getVariableDeclaratorNode`
-fn get_variable_declarator_node(node: Node<'_>) -> Option<Declarator<'_>> {
-    node.ancestors().find_map(as_declarator)
+fn get_variable_declarator_node<'a>(node: Node<'a>, state: &mut State<'a>) -> Option<Declarator<'a>> {
+    state.declarators.find(node, |_, it| as_declarator(it))
 }
 
 /// `None` for the parameter of a `catch`.
@@ -187,15 +207,17 @@ fn is_assignment_expression(e: Expr<'_>) -> bool {
 }
 
 /// ESLint's `isOuterIIFE`
-fn is_outer_iife(func: Func<'_>) -> bool {
-    let (Node::Expr(node), Node::Expr(parent)) = (func.owner(), utils::estree_parent(Node::Func(func))) else {
+fn is_outer_iife<'a>(func: Func<'a>, state: &mut State<'a>) -> bool {
+    let Node::Expr(node) = func.owner() else {
+        return false;
+    };
+    let Node::Expr(parent) = node.parent() else {
         return false;
     };
     if !matches!(parent.kind(), ExprKind::Call(call) if call.callee() == node) || parent.is_chain_root() {
         return false;
     }
-    let mut statement = utils::estree_parent(Node::Expr(parent));
-    loop {
+    let is_outer = state.outer_calls.find(Node::Expr(parent), |_, statement| {
         let is_legal = match statement {
             Node::Expr(e) => match e.kind() {
                 ExprKind::Unary { op, .. } => matches!(op, UnOp::Not | UnOp::BitNot | UnOp::Plus | UnOp::Minus),
@@ -204,17 +226,17 @@ fn is_outer_iife(func: Func<'_>) -> bool {
             },
             Node::VarDecl(_) => as_declarator(statement).is_some(),
             Node::Stmt(it) => {
-                return (it.tag() == StmtTag::Var || utils::is_expression_statement(it))
-                    && !it.is_exported()
-                    && matches!(it.parent(), Node::File(_));
+                return Some(
+                    (it.tag() == StmtTag::Var || utils::is_expression_statement(it))
+                        && !it.is_exported()
+                        && matches!(it.parent(), Node::File(_)),
+                );
             }
             _ => false,
         };
-        if !is_legal {
-            return false;
-        }
-        statement = utils::estree_parent(statement);
-    }
+        (!is_legal).then_some(false)
+    });
+    is_outer == Some(true)
 }
 
 /// ESLint's `isWrappedInParenthesis`, from the text of a `return` statement and of its argument.
@@ -259,7 +281,7 @@ impl IndentLegacy {
         match declarator {
             Some(it)
                 if file.line_of(it.declaration.span_without_export().start) == file.line_of(start)
-                    && it.declarations.len() > 1 =>
+                    && it.declarations.iter().nth(1).is_some() =>
             {
                 self.variable_offset(it.node.var_kind())
             }
@@ -387,12 +409,13 @@ impl IndentLegacy {
 
     /// ESLint's `checkIndentInFunctionBlock`. `body_option`: how many times its statements are
     /// indented, unless it is an outer IIFE.
-    fn check_indent_in_function_block<'a>(&self, cx: &Cx<'a, Self>, func: Func<'a>, body: Span, body_option: f64) {
+    fn check_indent_in_function_block<'a>(&self, cx: &mut Cx<'a, Self>, func: Func<'a>, body: Span, body_option: f64) {
         let file = cx.file();
         let callee_node = func.estree_span();
         let mut indent = self.good_char_at(file, callee_node.start);
 
-        if let (Node::Expr(owner), Node::Expr(callee_parent)) = (func.owner(), utils::estree_parent(Node::Func(func)))
+        if let Node::Expr(owner) = func.owner()
+            && let Node::Expr(callee_parent) = owner.parent()
             && let ExprKind::Call(call) = callee_parent.kind()
             && call.args().get(1) == Some(owner)
             && call.args().first().is_some_and(|first| !is_single_line_node(file, first.span()))
@@ -404,11 +427,12 @@ impl IndentLegacy {
 
         let function_offset = self.indent_size
             * match self.outer_iife_body {
-                Some(outer_iife_body) if is_outer_iife(func) => outer_iife_body,
+                Some(outer_iife_body) if is_outer_iife(func, &mut cx.state) => outer_iife_body,
                 _ => body_option,
             };
         indent += function_offset;
-        indent += self.offset_in_var_on_top(file, body.start, get_variable_declarator_node(Node::Func(func)));
+        let declarator = get_variable_declarator_node(Node::Func(func), &mut cx.state);
+        indent += self.offset_in_var_on_top(file, body.start, declarator);
 
         if let Some(statements) = func.body_statements() {
             self.check_statements_indent(cx, statements, indent);
@@ -418,7 +442,7 @@ impl IndentLegacy {
 
     /// What ESLint does with a `FunctionDeclaration`, a `FunctionExpression`, and the
     /// `BlockStatement` that is the body of one of these or of an arrow function.
-    fn check_function<'a>(&self, cx: &Cx<'a, Self>, func: Func<'a>) {
+    fn check_function<'a>(&self, cx: &mut Cx<'a, Self>, func: Func<'a>) {
         let options = match func.kind() {
             FnKind::Decl => self.function_declaration,
             FnKind::Arrow => FunctionOptions {
@@ -454,7 +478,7 @@ impl IndentLegacy {
     }
 
     /// ESLint's `checkIndentInArrayOrObjectBlock`
-    fn check_indent_in_array_or_object_block<'a>(&self, cx: &Cx<'a, Self>, e: Expr<'a>) {
+    fn check_indent_in_array_or_object_block<'a>(&self, cx: &mut Cx<'a, Self>, e: Expr<'a>) {
         let (file, node, size) = (cx.file(), e.span(), self.indent_size);
         if is_single_line_node(file, node) || utils::is_assignment_target(e) {
             return;
@@ -464,11 +488,17 @@ impl IndentLegacy {
             ExprKind::Object(list) => (Elements::Object(list), self.object_expression),
             _ => return,
         };
-        let parent_var_node = get_variable_declarator_node(Node::Expr(e));
+        let parent_var_node = get_variable_declarator_node(Node::Expr(e), &mut cx.state);
 
         let mut node_indent;
         if is_node_first_in_line(file, node.start) {
-            let parent = utils::estree_parent(Node::Expr(e));
+            // All of `a, b, c` starts where its `a, b` starts, which is nearer.
+            let parent = match e.parent() {
+                parent @ Node::Expr(sequence) if matches!(sequence.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) => {
+                    parent
+                }
+                _ => utils::estree_parent(Node::Expr(e)),
+            };
             // ESLint has a `JSXExpressionContainer` or an `AssignmentPattern` between the two.
             let container = e.jsx_container_span();
             let parent_start = match (container, parent) {
@@ -508,7 +538,7 @@ impl IndentLegacy {
                             Some(Offset::Number(arguments)) => node_indent += arguments * size,
                             Some(Offset::First) => {
                                 if let Some(first) = call.args().first()
-                                    && call.args().iter().any(|it| it == e)
+                                    && call.callee() != e
                                 {
                                     node_indent = column(file, first.span().start);
                                 }
@@ -719,7 +749,7 @@ impl IndentLegacy {
         }
     }
 
-    fn check_member_expression<'a>(&self, cx: &Cx<'a, Self>, e: Expr<'a>) {
+    fn check_member_expression<'a>(&self, cx: &mut Cx<'a, Self>, e: Expr<'a>) {
         let (file, node) = (cx.file(), e.span());
         let Some(option) = self.member_expression else {
             return;
@@ -729,15 +759,23 @@ impl IndentLegacy {
         }
 
         // The typical layout of variable declarations and assignments alters what is expected.
-        let mut is_in_arrow_function = false;
-        for ancestor in Node::Expr(e).ancestors() {
-            match ancestor {
-                Node::VarDecl(_) if !is_in_arrow_function && as_declarator(ancestor).is_some() => return,
-                Node::Expr(ancestor) if is_assignment_expression(ancestor) => return,
-                Node::Func(func) if is_function_expression(func) => break,
-                Node::Func(func) if func.is_arrow() => is_in_arrow_function = true,
-                _ => {}
-            }
+        let mut around = cx.state.around_members.find(Node::Expr(e), |_, ancestor| match ancestor {
+            Node::VarDecl(_) if as_declarator(ancestor).is_some() => Some(AroundMember::Assignment),
+            Node::Expr(ancestor) if is_assignment_expression(ancestor) => Some(AroundMember::Assignment),
+            Node::Func(func) if is_function_expression(func) => Some(AroundMember::FunctionExpression),
+            Node::Func(func) if func.is_arrow() => Some(AroundMember::Arrow(func)),
+            _ => None,
+        });
+        // A variable declaration around an arrow function does not count.
+        if let Some(AroundMember::Arrow(arrow)) = around {
+            around = cx.state.around_members_in_arrows.find(Node::Func(arrow), |_, ancestor| match ancestor {
+                Node::Expr(ancestor) if is_assignment_expression(ancestor) => Some(AroundMember::Assignment),
+                Node::Func(func) if is_function_expression(func) => Some(AroundMember::FunctionExpression),
+                _ => None,
+            });
+        }
+        if matches!(around, Some(AroundMember::Assignment)) {
+            return;
         }
 
         let property_indent = self.good_char_at(file, node.start) + self.indent_size * option;
@@ -764,7 +802,7 @@ impl Rule for IndentLegacy {
     const META: Meta = Meta::eslint("indent-legacy", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let is_tab = options.str(0) == Some("tab");
@@ -791,7 +829,7 @@ impl Rule for IndentLegacy {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.finish(|rule, cx| {
             // Root nodes should have no indent.
             let needed = rule.good_char_at(cx.file(), cx.program_span().start);
@@ -824,5 +862,6 @@ impl Rule for IndentLegacy {
         if self.member_expression.is_some() {
             on.exprs([ExprTag::Dot, ExprTag::Index], |rule, e, cx| rule.check_member_expression(cx, e));
         }
+        State::default()
     }
 }

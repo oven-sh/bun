@@ -49,7 +49,7 @@ impl<'a> FormatArguments<'a> {
 
     /// No comma is allowed after the last argument of `import()`.
     fn trailing_commas(&self) -> Option<FormatTrailingCommas> {
-        (!matches!(self.parent, AstNodes::ImportExpression(_))).then_some(FormatTrailingCommas::All)
+        (!matches!(self.parent, AstNodes::ImportExpression(_))).then_some(FormatTrailingCommas::Arguments)
     }
 }
 
@@ -116,8 +116,8 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             && let Some(group_layout) = arguments_grouped_layout(self.args, f)
         {
             write_grouped_arguments(self, group_layout, f);
-        } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call)) {
-            let trailing_separator = FormatTrailingCommas::All.trailing_separator(f.options());
+        } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call, f)) {
+            let trailing_separator = FormatTrailingCommas::Arguments.trailing_separator(f.options());
             write!(
                 f,
                 [
@@ -271,9 +271,18 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
 
 /// Whether `e` is a template that is written as the language in it.
 pub(super) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    has_embed_label_of_other_than_html(e, f) || crate::html::in_js::label(e, f).is_some()
+}
+
+fn has_embed_label_of_other_than_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     crate::css::embed::has_embed_label(e, f)
         || crate::graphql::embed::has_embed_label(e, f)
         || crate::markdown::embed::has_embed_label(e, f)
+}
+
+/// `label?.embed && label?.hug !== false`
+fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    has_embed_label_of_other_than_html(e, f) || crate::html::in_js::label(e, f) == Some(crate::html::in_js::Label::Embed)
 }
 
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.
@@ -281,7 +290,7 @@ fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
-    if args.len() == 1 && args.first().is_some_and(|only| has_embed_label(only, f)) {
+    if args.len() == 1 && args.first().is_some_and(|only| has_embed_label_with_hug(only, f)) {
         return Some(GroupedCallArgumentLayout::GroupedLastArgument);
     }
     if args.len() == 2 {

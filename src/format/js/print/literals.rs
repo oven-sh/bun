@@ -4,13 +4,13 @@ use crate::prelude::*;
 use crate::write;
 
 pub(crate) fn write_numeric_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    write!(f, format_number_token(e.text()));
+    write!(f, format_number_token(f.source_text().text_for(&e)));
 }
 
 pub(crate) fn write_string_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let is_jsx = matches!(e.parent(), Node::Prop(property) if property.is_jsx_attribute())
         && matches!(e.ast_parent(), AstNodes::JSXAttribute(_));
-    write!(f, FormatLiteralStringToken::new(e.text(), is_jsx, StringLiteralParentKind::Expression));
+    write!(f, FormatLiteralStringToken::new(f.source_text().text_for(&e), is_jsx, StringLiteralParentKind::Expression));
 }
 
 pub(crate) fn write_big_int_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {

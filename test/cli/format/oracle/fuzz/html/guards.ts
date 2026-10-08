@@ -1,0 +1,111 @@
+// Not a comparison: shapes of HTML, Vue and Angular templates that nest without end or that take a careless formatter time in proportion to
+// the square of their size. Each is formatted at a size and at four times that size. It fails if the process dies, if it takes longer than
+// the limit, or if four times the size takes more than ten times as long.
+//
+//   bun guards.ts <bun-lint> <directory for a temporary directory> [-size=20000] [-limit=10000]
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+const [bin, scratch, ...args] = process.argv.slice(2);
+const flag = (name: string, otherwise: string) =>
+  (args.find(it => it.startsWith(`-${name}=`)) ?? `-${name}=${otherwise}`).slice(name.length + 2);
+const [size, limit] = [+flag("size", "20000"), +flag("limit", "10000")];
+
+const times = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+// The name of the file, and the text for a size.
+const shapes: Record<string, [string, (n: number) => string]> = {
+  "nested blocks": ["a.html", n => times("<div>", n) + times("</div>", n)],
+  "nested inline": ["a.html", n => times("<b>", n) + "a" + times("</b>", n)],
+  "nested, never closed": ["a.html", n => times("<div><span>", n)],
+  "nested lists": ["a.html", n => times("<ul><li>", n)],
+  "nested unknown": ["a.html", n => times("<x-y>", n)],
+  "nested svg": ["a.html", n => "<svg>" + times("<g>", n)],
+  "nested templates": ["a.vue", n => times("<template>", n) + times("</template>", n)],
+  "nested blocks of Angular": ["a.component.html", n => times("@if (a) {", n) + times("}", n)],
+  "nested ICU": ["a.component.html", n => times("{a, plural, =0 {", n) + times("}}", n)],
+  "nested conditional comments": ["a.html", n => times("<!--[if IE]><p>", n) + times("</p><![endif]-->", n)],
+  "nested parentheses in an expression": [
+    "a.vue",
+    n => `<template><a :b="${times("(", n)}1${times(")", n)}"></a></template>`,
+  ],
+  "nested arrays in an interpolation": ["a.vue", n => `<template>{{ ${times("[", n)}${times("]", n)} }}</template>`],
+  "nested pipes": ["a.component.html", n => `{{ ${times("(a | ", n)}b${times(")", n)} }}`],
+  "siblings, block": ["a.html", n => times("<p>a</p>\n", n)],
+  "siblings, inline": ["a.html", n => times("<b>a</b> ", n)],
+  "siblings, inline, no space": ["a.html", n => times("<b>a</b>", n)],
+  "siblings, void": ["a.html", n => times("<br>", n)],
+  "paragraphs that are not closed": ["a.html", n => times("<p>a", n)],
+  "items that are not closed": ["a.html", n => "<ul>" + times("<li>a", n)],
+  "cells that are not closed": ["a.html", n => "<table>" + times("<tr><td>a", n)],
+  "end tags without a start": ["a.html", n => "<div>" + times("</b>", n)],
+  "words": ["a.html", n => times("word ", n)],
+  "one word": ["a.html", n => times("w", n)],
+  "lines": ["a.html", n => times("a\n", n)],
+  "empty lines": ["a.html", n => "a" + times("\n", n) + "b"],
+  "empty lines between elements": ["a.html", n => times("<p>a</p>\n\n\n\n", n)],
+  "pre": ["a.html", n => "<pre>" + times("a\n", n) + "</pre>"],
+  "textarea": ["a.html", n => "<textarea>" + times(" a\n", n) + "</textarea>"],
+  "comments": ["a.html", n => times("<!-- a -->", n)],
+  "a comment that is not closed": ["a.html", n => times("<!-- a ", n)],
+  "ignored": ["a.html", n => times("<!-- prettier-ignore -->\n<p>  a </p>\n", n)],
+  "display comments": ["a.html", n => times("<!-- display: block --><b>a</b>", n)],
+  "attributes": ["a.html", n => "<a" + times(" b=c", n) + "></a>"],
+  "attributes without a value": ["a.html", n => "<a" + times(" b", n) + ">"],
+  "a long value": ["a.html", n => `<a b="${times("c ", n)}"></a>`],
+  "classes": ["a.html", n => `<a class="${times("c ", n)}"></a>`],
+  "a style attribute": ["a.html", n => `<a style="${times("b:c;", n)}"></a>`],
+  "srcset": ["a.html", n => `<img srcset="${times("a 1x,", n)}b 2x">`],
+  "quotes in a value": ["a.html", n => `<a b='${times('"', n)}'></a>`],
+  "entities": ["a.html", n => times("&amp;", n)],
+  "ampersands": ["a.html", n => times("&", n)],
+  "less than": ["a.html", n => times("< ", n)],
+  "start tags that do not end": ["a.html", n => times("<a ", n)],
+  "interpolations": ["a.vue", n => "<template><p>" + times("{{ a }} ", n) + "</p></template>"],
+  "interpolations that do not end": ["a.vue", n => "<template><p>" + times("{{ a ", n) + "</p></template>"],
+  "interpolations in Angular": ["a.component.html", n => times("{{ a | b }}", n)],
+  "braces": ["a.component.html", n => times("{", n)],
+  "at signs": ["a.component.html", n => times("@", n)],
+  "declarations": ["a.component.html", n => times("@let a = 1;\n", n)],
+  "filters": ["a.vue", n => `<template>{{ a${times(" | b", n)} }}</template>`],
+  "pipes": ["a.component.html", n => `{{ a${times(" | b", n)} }}`],
+  "statements in a handler": ["a.vue", n => `<template><a @b="${times("c();", n)}"></a></template>`],
+  "bindings": ["a.vue", n => "<template><a" + times(' :b="c"', n) + "></a></template>"],
+  "scripts": ["a.html", n => times("<script>a</script>", n)],
+  "style sheets": ["a.html", n => times("<style>a{b:c}</style>", n)],
+  "a script that is not closed": ["a.html", n => "<script>" + times("a;", n)],
+  "custom blocks": ["a.vue", n => times("<i18n>{}</i18n>\n", n)],
+  "front matter that does not end": ["a.html", n => "---\n" + times("a: b\n", n)],
+  "doctypes": ["a.html", n => times("<!doctype html>", n)],
+  "CDATA": ["a.html", n => "<svg>" + times("<![CDATA[a]]>", n) + "</svg>"],
+  "options": ["a.html", n => "<select>" + times("<option>a", n)],
+};
+
+const directory = mkdtempSync(join(resolve(scratch), "html-guards-"));
+let failures = 0;
+try {
+  for (const [name, [file, make]] of Object.entries(shapes)) {
+    const took: number[] = [];
+    let problem = "";
+    for (const n of [size, size * 4]) {
+      const path = join(directory, file);
+      writeFileSync(path, make(n));
+      const start = performance.now();
+      const result = Bun.spawnSync([bin, "format", "file", path], {
+        timeout: limit,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      took.push(performance.now() - start);
+      if (result.exitCode !== 0)
+        problem ||= result.signalCode ? `ended by ${result.signalCode}` : `exit code ${result.exitCode}`;
+    }
+    // What a process costs by itself does not count.
+    if (!problem && took[1] > 300 && took[1] > 10 * took[0]) problem = "not in proportion";
+    if (problem) failures++;
+    console.log(
+      `${problem ? "FAIL" : "ok  "} ${name}: ${took.map(it => `${it.toFixed(0)} ms`).join(", ")}${problem && ` (${problem})`}`,
+    );
+  }
+} finally {
+  rmSync(directory, { recursive: true });
+}
+console.log(`${failures} of ${Object.keys(shapes).length} fail`);

@@ -22,10 +22,10 @@ use crate::prelude::*;
 
 /// `connect(a, b, c)(d)`: `call` is the callee of a call that has fewer arguments, but some.
 #[inline]
-pub(crate) fn is_long_curried_call(call: Expr<'_>) -> bool {
+pub(crate) fn is_long_curried_call(call: Expr<'_>, f: &Formatter<'_>) -> bool {
     call.call().is_some_and(|call| call.args().len() > 1)
         && may_be_followed_by_arguments(call)
-        && matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent))
+        && matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent, f))
 }
 
 /// Whether what is behind `callee` can be between a callee and its arguments: whitespace, a comment, a
@@ -36,13 +36,14 @@ fn may_be_followed_by_arguments(callee: Expr<'_>) -> bool {
         .is_some_and(|&next| next <= b' ' || !next.is_ascii() || matches!(next, b'(' | b')' | b'<' | b'?' | b'/'))
 }
 
-/// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`.
-fn is_long_curried_callee<'a>(call: Expr<'a>, parent: Expr<'a>) -> bool {
+/// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`, unless the tree is
+/// Babel's.
+fn is_long_curried_callee<'a>(call: Expr<'a>, parent: Expr<'a>, f: &Formatter<'_>) -> bool {
     let (Some(this), Some(parent)) = (call.call(), parent.call()) else {
         return false;
     };
     parent.callee() == call
-        && !is_chain_root(call)
+        && (f.context().has_tree_of_babel() || !is_chain_root(call))
         && this.args().len() > parent.args().len()
         && !parent.args().is_empty()
 }

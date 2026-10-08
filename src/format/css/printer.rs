@@ -81,6 +81,9 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) trailing_comma: bool,
     /// Nothing depends on it, but for what is kept of one flavor not to be taken for the other if that changes.
     pub(crate) is_oxfmt: bool,
+    /// Prettier's `__isHTMLStyleAttribute`: the declarations are on one line if they fit. It is not in the key of the memo: the
+    /// sink has to be `Sink::to_document()`, for which nothing is kept.
+    pub(crate) is_html_style_attribute: bool,
     /// The nodes of the value that what is being printed is in.
     pub(crate) value_stack: Vec<ValueId>,
     /// For a text that is made to be written.
@@ -279,7 +282,10 @@ impl<'a> Printer<'a, '_> {
             }
             previous = Some(last);
             if end != 0 {
-                self.sink.hard_line();
+                match self.is_html_style_attribute {
+                    true => self.sink.line(),
+                    false => self.sink.hard_line(),
+                }
                 let last_end = match last.end {
                     Some(end) if !last.inline => (end as usize).min(text.len()),
                     _ => {
@@ -414,7 +420,7 @@ impl<'a> Printer<'a, '_> {
                     printer.sink.end_indent();
                     printer.sink.end_indent();
                 }
-                printer.print_rest_of_declaration(&scope);
+                printer.print_rest_of_declaration(&scope, raw);
             });
         }
         let statement = Statement::new(scope, &parsed.selectors, &parsed.values);
@@ -440,7 +446,7 @@ impl<'a> Printer<'a, '_> {
                 printer.sink.end_indent();
                 printer.sink.end_indent();
             }
-            printer.print_rest_of_declaration(scope);
+            printer.print_rest_of_declaration(scope, raw);
         };
         match node.has_block {
             false => write(self),
@@ -523,7 +529,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     /// What follows the value, up to the `{` if there is a block.
-    fn print_rest_of_declaration(&mut self, scope: &Scope<'_, 'a>) {
+    fn print_rest_of_declaration(&mut self, scope: &Scope<'_, 'a>, raw: &Node) {
         let node = scope.node;
         let mut bang = |raw: Option<&[u8]>, is_set: bool, word: &'static str, allows_space: bool| match raw {
             Some(raw) => self.sink.text(&normalize_bang(raw, word.as_bytes(), allows_space)),
@@ -540,6 +546,7 @@ impl<'a> Printer<'a, '_> {
             true => self.sink.token(" {"),
             // `isTemplatePropNode`
             false if node.prop.starts_with(b"@prettier-placeholder") && self.has_no_semicolon(scope) => {}
+            false if self.is_html_style_attribute && raw.next_sibling == 0 => self.sink.if_break(";"),
             false => self.sink.token(";"),
         }
     }

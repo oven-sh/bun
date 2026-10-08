@@ -47,8 +47,13 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
         out.insert(0, b'0');
     }
 
-    if let Some(dot) = bun_core::strings::index_of_char_usize(&out, b'.') {
-        // `(\.\d+?)0+(?=e|$)` becomes `$1`
+    // Angular takes a number with more than one dot. Each of the two is done at the first dot where it can be.
+    let next_dot = |out: &[u8], from: usize| {
+        out.get(from..).and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'.')).map(|at| from + at)
+    };
+    // `(\.\d+?)0+(?=e|$)` becomes `$1`
+    let mut from = 0;
+    while let Some(dot) = next_dot(&out, from) {
         let fraction = dot + 1;
         let fraction_end = fraction + out.iter().skip(fraction).take_while(|b| b.is_ascii_digit()).count();
         if matches!(out.get(fraction_end), None | Some(b'e')) {
@@ -57,12 +62,19 @@ pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
             let kept_end = (fraction_end - zeros).max(fraction + 1);
             if kept_end < fraction_end {
                 out.drain(kept_end..fraction_end);
+                break;
             }
         }
-        // `\.(?=e|$)` is removed
-        if matches!(out.get(fraction), None | Some(b'e')) {
+        from = fraction;
+    }
+    // `\.(?=e|$)` is removed
+    let mut from = 0;
+    while let Some(dot) = next_dot(&out, from) {
+        if matches!(out.get(dot + 1), None | Some(b'e')) {
             out.remove(dot);
+            break;
         }
+        from = dot + 1;
     }
 
     match out[..] == *text {

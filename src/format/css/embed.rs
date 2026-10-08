@@ -62,7 +62,8 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
 
 struct Writer<'a> {
     has_placeholders: bool,
-    template: Template<'a>,
+    /// What the placeholders stand for the substitutions of.
+    template: Option<Template<'a>>,
     /// What is written is in an item of a `fill`, and in no group in that.
     is_directly_in_fill: bool,
     is_in_line_suffix: bool,
@@ -96,7 +97,7 @@ impl<'a> Writer<'a> {
         }
         let width = match TextWidth::from_text(text, 0) {
             width if !width.is_multiline() => width,
-            _ => TextWidth::multiline(
+            _ => TextWidth::multiline_string(
                 bun_core::strings::split(text, b"\n").map(|line| TextWidth::from_text(line, 0).value()).sum(),
             ),
         };
@@ -128,7 +129,9 @@ impl<'a> Writer<'a> {
                 let mut rest = &text[..];
                 while let Some((start, end, number)) = find_placeholder(rest) {
                     self.write_with_literal_lines(&rest[..start], f);
-                    write_embedded_template_expression(self.template, number, f);
+                    if let Some(template) = self.template {
+                        write_embedded_template_expression(template, number, f);
+                    }
                     rest = &rest[end..];
                 }
                 self.write_with_literal_lines(rest, f);
@@ -144,6 +147,12 @@ impl<'a> Writer<'a> {
                     }
                     // The group is broken, so this is two line breaks as well.
                     if let [Doc::Line(Line::Hard), Doc::BreakParent, Doc::Line(Line::Space | Line::Soft), ..] = parts[index..] {
+                        f.write_element(FormatElement::Line(LineMode::Empty));
+                        index += 3;
+                        continue;
+                    }
+                    // The same the other way round: declarations in the `style` attribute of HTML with an empty line between them.
+                    if let [Doc::Line(Line::Space | Line::Soft), Doc::Line(Line::Hard), Doc::BreakParent, ..] = parts[index..] {
                         f.write_element(FormatElement::Line(LineMode::Empty));
                         index += 3;
                         continue;
@@ -221,6 +230,17 @@ impl<'a> Writer<'a> {
     }
 }
 
+/// Writes `document`, which is that of a style sheet, as a part of the document that `f` writes.
+pub(crate) fn write_document(document: &Doc<'_>, f: &mut Formatter<'_>) {
+    let mut writer = Writer {
+        has_placeholders: false,
+        template: None,
+        is_directly_in_fill: false,
+        is_in_line_suffix: false,
+    };
+    writer.write(document, f);
+}
+
 /// What is done with the document of a template.
 enum Action<'w, 'a> {
     /// Only whether there is one is asked.
@@ -256,7 +276,7 @@ fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: 
         f.write_element(FormatElement::Line(LineMode::Hard));
         let mut writer = Writer {
             has_placeholders: count > 0,
-            template,
+            template: Some(template),
             is_directly_in_fill: false,
             is_in_line_suffix: false,
         };
@@ -339,10 +359,15 @@ fn is_angular_component_styles(parent: AstNodes<'_>) -> bool {
         AstNodes::ArrayExpression(_) => parent.parent(),
         _ => parent,
     };
+    is_angular_component_property(property, b"styles")
+}
+
+/// Whether `property` is the property `name` of the object in `@Component({ .. })`.
+pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8]) -> bool {
     let AstNodes::ObjectProperty(prop) = property else {
         return false;
     };
-    if !has_name(prop, b"styles") || prop.kind() != PropKind::Init {
+    if !has_name(prop, name) || prop.kind() != PropKind::Init {
         return false;
     }
     let AstNodes::ObjectExpression(object) = property.parent() else {

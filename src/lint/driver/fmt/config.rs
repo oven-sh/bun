@@ -587,6 +587,7 @@ impl<'c> Configs<'c> {
         let mut sort = SortSettings::default();
         let _ = resolved.options.set(b"filepath", path);
         resolved.options.format_javascript = Some(super::format_javascript);
+        resolved.options.parse_javascript = Some(super::parse_javascript);
         if self.flavor == Flavor::Oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.

@@ -4,7 +4,7 @@ use super::comments::{Comment, Comments};
 use super::source_text::SourceText;
 use crate::cursor::CursorRegion;
 use crate::ir::element::FormatElement;
-use crate::options::FormatOptions;
+use crate::options::{FormatOptions, HtmlRoot};
 use bun_lint::ast::{Expr, File};
 use bun_lint::span::{Span, Spanned};
 use rustc_hash::FxHashMap;
@@ -13,6 +13,8 @@ use std::cell::Cell;
 pub(crate) struct JsFormatContext<'a> {
     /// `None` for a document that is not written for JavaScript.
     file: Option<&'a File<'a>>,
+    /// See [`JsFormatContext::has_tree_of_babel`].
+    has_tree_of_babel: bool,
     options: FormatOptions,
     comments: Comments<'a>,
     /// What has been formatted ahead of its turn, by the span of the node: an argument that was
@@ -31,12 +33,15 @@ pub(crate) struct JsFormatContext<'a> {
     /// The last member access with many member accesses around it, and whether it stays on the line
     /// of its object. The one around it has the same answer.
     pub(crate) long_member_chain: Cell<Option<(Expr<'a>, bool)>>,
+    /// Whether the `a | b` that is being written is a value and a filter of Vue.
+    pub(crate) is_vue_filter_sequence: Cell<bool>,
 }
 
 impl<'a> JsFormatContext<'a> {
     pub(crate) fn new(file: &'a File<'a>, options: FormatOptions, comments: &'a [Comment]) -> Self {
         Self {
             file: Some(file),
+            has_tree_of_babel: file.is_javascript() || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program),
             ..Self::without_file(file.text(), options, comments)
         }
     }
@@ -46,6 +51,7 @@ impl<'a> JsFormatContext<'a> {
     pub(crate) fn without_file(source: &'a [u8], options: FormatOptions, comments: &'a [Comment]) -> Self {
         Self {
             file: None,
+            has_tree_of_babel: false,
             options,
             comments: Comments::new(SourceText::new(source), comments),
             cached_elements: FxHashMap::default(),
@@ -55,12 +61,20 @@ impl<'a> JsFormatContext<'a> {
             stack_check: bun_core::StackCheck::init(),
             ran_out_of_stack: false,
             long_member_chain: Cell::new(None),
+            is_vue_filter_sequence: Cell::new(false),
         }
     }
 
     #[inline]
     pub(crate) fn file(&self) -> &'a File<'a> {
         self.file.expect("only what writes JavaScript asks for the file, and there is one then")
+    }
+
+    /// Whether Prettier reads the code with a parser that has no `ChainExpression` around an optional chain: Babel, which
+    /// reads JavaScript and every expression in HTML, in TypeScript too, or `angular-estree-parser`.
+    #[inline]
+    pub(crate) fn has_tree_of_babel(&self) -> bool {
+        self.has_tree_of_babel
     }
 
     /// Whether there is stack left to write one more expression, statement or type in what is being

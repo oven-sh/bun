@@ -10,13 +10,13 @@ use crate::prelude::*;
 /// different answers.
 #[inline]
 pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    e.tag() == ExprTag::Call && (f.file().is_javascript() || !is_chain_root(e))
+    e.tag() == ExprTag::Call && (f.context().has_tree_of_babel() || !is_chain_root(e))
 }
 
 /// Prettier's `isMemberExpression`. See [`is_call_expression`].
 #[inline]
 pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && (f.file().is_javascript() || !is_chain_root(e))
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && (f.context().has_tree_of_babel() || !is_chain_root(e))
 }
 
 /// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` is

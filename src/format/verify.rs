@@ -75,7 +75,7 @@ impl std::fmt::Display for Difference {
     }
 }
 
-/// Whether the text of the template `e` may be formatted as a style sheet, as GraphQL or as Markdown.
+/// Whether the text of the template `e` may be formatted as a style sheet, as GraphQL, as HTML or as Markdown.
 fn is_in_another_language(e: Expr<'_>) -> bool {
     let has_tag = match e.parent() {
         Node::Expr(parent) => match parent.kind() {
@@ -88,7 +88,10 @@ fn is_in_another_language(e: Expr<'_>) -> bool {
         _ => false,
     };
     let before = e.file().text().get(..e.span().start as usize).unwrap_or_default();
-    has_tag || before.trim_ascii_end().ends_with(b"/* GraphQL */") || crate::css::embed::is_embed_css(e)
+    has_tag
+        || before.trim_ascii_end().ends_with(b"/* GraphQL */")
+        || crate::css::embed::is_embed_css(e)
+        || crate::html::in_js::can_be_html(e)
 }
 
 /// Whether the template `e` is the table of a `` describe.each`..` ``.

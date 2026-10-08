@@ -104,12 +104,45 @@ fn is_single_jsx_statement_in_markdown<'a>(statement: Stmt<'a>, expression: Expr
         && f.file().body().len() == 1
 }
 
+/// Prettier's `shouldPrintSemicolon` for a statement that is all of the value of an attribute in HTML. `None`: it is not,
+/// and the statement ends like any other.
+fn semicolon_of_only_statement_in_html<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
+    let in_html = f.options().in_html;
+    if !(in_html.is_inline_event_handler || in_html.root == HtmlRoot::VueEventBinding)
+        || f.file().body().len() != 1
+        || !matches!(statement.ast_parent(), AstNodes::Program(_))
+    {
+        return None;
+    }
+    if in_html.is_inline_event_handler {
+        return Some(false);
+    }
+    // `unwrapVueEventBindingTsNode`
+    let mut expression = expression;
+    while let ExprKind::As { expr, .. }
+    | ExprKind::Satisfies { expr, .. }
+    | ExprKind::Instantiation { expr, .. }
+    | ExprKind::AsConst(expr)
+    | ExprKind::NonNull(expr) = expression.kind()
+    {
+        expression = expr;
+    }
+    // A function, or the path to one: Vue calls it.
+    Some(match expression.kind() {
+        ExprKind::Fn(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
+        ExprKind::Ident(_) => expression.text() != b"undefined",
+        _ => false,
+    })
+}
+
 pub(crate) fn write_expression_statement<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &mut Formatter<'a>) {
     if is_single_jsx_statement_in_markdown(statement, expression, f) {
         return write!(f, expression);
     }
+    let semicolon_in_html = semicolon_of_only_statement_in_html(statement, expression, f);
     // Before a type cast comment, `FormatStatements` has written the `;`.
     if f.options().semicolons.is_as_needed()
+        && semicolon_in_html.is_none()
         && expression_statement_needs_semicolon(statement, expression, f)
         && !follows_type_cast_comment(statement.span().start, f)
     {
@@ -121,7 +154,12 @@ pub(crate) fn write_expression_statement<'a>(statement: Stmt<'a>, expression: Ex
     }
     // Prettier's `handleParenthesizedExpressionTrailingComment`: `(a /* comment */);` is
     // `a; /* comment */`.
-    write!(f, [FormatNodeWithoutTrailingComments(&expression), OptionalSemicolon]);
+    write!(f, FormatNodeWithoutTrailingComments(&expression));
+    match semicolon_in_html {
+        None => write!(f, OptionalSemicolon),
+        Some(true) => write!(f, ";"),
+        Some(false) => {}
+    }
     if !f.is_quiet() {
         let end = f.comments().without_semicolon(statement.span()).end;
         write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));

@@ -13,10 +13,10 @@ fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
     matches!(e.kind(), ExprKind::Ident(_)) && names.contains(&e.text())
 }
 
-/// Whether a comment that is exactly `/* GraphQL */` is right before `start`, with nothing but other
-/// comments between. `is_statement`: a statement starts at `start`, and empty statements before it are
+/// Whether a block comment with exactly `language` in it, like ` GraphQL `, is right before `start`, with nothing
+/// but other comments between. `is_statement`: a statement starts at `start`, and empty statements before it are
 /// nothing either.
-fn follows_language_comment(start: u32, is_statement: bool, f: &Formatter<'_>) -> bool {
+fn follows_language_comment(start: u32, is_statement: bool, language: &[u8], f: &Formatter<'_>) -> bool {
     let source = f.source_text();
     let unprinted = f.comments().comments_before(start);
     let (mut position, mut has_empty_statement) = (start, false);
@@ -33,7 +33,7 @@ fn follows_language_comment(start: u32, is_statement: bool, f: &Formatter<'_>) -
             has_empty_statement = true;
         }
         position = comment.span.start;
-        if !comment.is_block() || source.text_for(&comment.content_span()) != b" GraphQL " {
+        if !comment.is_block() || source.text_for(&comment.content_span()) != language {
             continue;
         }
         if !has_empty_statement {
@@ -54,26 +54,26 @@ fn follows_language_comment(start: u32, is_statement: bool, f: &Formatter<'_>) -
 
 /// Whether the comment leads `e`. A comment leads the outermost of the nodes that start behind it, and
 /// parentheses are not nodes.
-fn is_led_by_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
+fn is_led_by_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, language: &[u8], f: &Formatter<'a>) -> bool {
     let outer_start = e.outer_span().start;
-    (e.is_parenthesized() && follows_language_comment(e.span().start, false, f))
-        || (parent.span().start != outer_start && follows_language_comment(outer_start, false, f))
+    (e.is_parenthesized() && follows_language_comment(e.span().start, false, language, f))
+        || (parent.span().start != outer_start && follows_language_comment(outer_start, false, language, f))
 }
 
-/// Prettier's `hasLanguageComment`
-fn has_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
-    is_led_by_language_comment(e, parent, f)
+/// Prettier's `hasLanguageComment`. `language`: what is between the `/*` and the `*/`.
+pub(crate) fn has_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>, language: &[u8], f: &Formatter<'a>) -> bool {
+    is_led_by_language_comment(e, parent, language, f)
         || match parent {
-            AstNodes::ExpressionStatement(_) => follows_language_comment(parent.span().start, true, f),
+            AstNodes::ExpressionStatement(_) => follows_language_comment(parent.span().start, true, language, f),
             AstNodes::TSAsExpression(cast) => {
-                matches!(cast.kind(), ExprKind::AsConst(_)) && is_led_by_language_comment(cast, parent.parent(), f)
+                matches!(cast.kind(), ExprKind::AsConst(_)) && is_led_by_language_comment(cast, parent.parent(), language, f)
             }
             _ => false,
         }
 }
 
 /// Prettier's `isEmbedGraphQL`. `e`: a template.
-fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let parent = e.ast_parent();
     let is_marked = match parent {
         AstNodes::TaggedTemplateExpression(tagged) => match tagged.kind() {
@@ -90,7 +90,7 @@ fn is_embed_graphql<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         AstNodes::CallExpression(call) => call.callee().is_some_and(|callee| is_identifier(callee, &[b"graphql"])),
         _ => false,
     };
-    is_marked || has_language_comment(e, parent, f)
+    is_marked || has_language_comment(e, parent, b" GraphQL ", f)
 }
 
 /// The text between two substitutions.

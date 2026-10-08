@@ -1,5 +1,6 @@
 //! The expressions that take only a few lines each.
 
+use super::binary_like_expression::is_argument_of_angular_pipe;
 use super::class::format_grouped_parameters_with_return_type_for_method;
 use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
@@ -20,8 +21,51 @@ pub(crate) fn write_chain_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     FormatExpr::in_chain_expression(e).fmt(f);
 }
 
+/// Prettier's `isFollowedByRightBracket`, for an object between `{{` and `}}` in HTML that is written without spaces in its
+/// braces: the `}` of another object follows its own, and `}}` would be the end.
+fn is_followed_by_right_bracket_in_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if !f.options().in_html.is_in_interpolation || f.options().bracket_spacing.value() {
+        return false;
+    }
+    let mut current = e;
+    loop {
+        let parent = current.ast_parent();
+        current = match parent {
+            AstNodes::ObjectProperty(property) => {
+                return property.value() == Some(current)
+                    && matches!(parent.parent(), AstNodes::ObjectExpression(object)
+                        if matches!(object.kind(), ExprKind::Object(props) if props.last() == Some(property)));
+            }
+            AstNodes::BinaryExpression(it) | AstNodes::LogicalExpression(it) if it.right() == Some(current) => it,
+            AstNodes::ConditionalExpression(it) if it.alternate() == Some(current) => it,
+            AstNodes::UnaryExpression(it) => it,
+            // The last argument of a pipe of Angular.
+            AstNodes::CallExpression(it)
+                if f.options().in_html.root.is_angular()
+                    && is_argument_of_angular_pipe(current)
+                    && it.as_call().is_some_and(|call| call.args().last() == Some(current)) =>
+            {
+                match it.parent() {
+                    Node::Expr(pipe) => pipe,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+    }
+}
+
 /// `{ a: 1 }`
 pub(crate) fn write_object_expression<'a>(e: Expr<'a>, props: List<'a, Prop<'a>>, f: &mut Formatter<'a>) {
+    if is_followed_by_right_bracket_in_html(e, f) {
+        write!(f, "(");
+        write_object_expression_without_parentheses(e, props, f);
+        return write!(f, ")");
+    }
+    write_object_expression_without_parentheses(e, props, f);
+}
+
+fn write_object_expression_without_parentheses<'a>(e: Expr<'a>, props: List<'a, Prop<'a>>, f: &mut Formatter<'a>) {
     let is_consistent = f.options().quote_properties.is_consistent();
     if is_consistent {
         let quote_needed = props.iter().any(|property| {

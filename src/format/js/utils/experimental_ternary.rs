@@ -12,6 +12,7 @@ use super::assignment_like::is_short_argument;
 use super::conditional::ConditionalLike;
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::parentheses;
+use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -214,8 +215,13 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         ConditionalLike::TSConditionalType(_) => false,
     };
     // So that what follows is right behind the `)`: `(a ? b : c\n).d`
-    let break_closing_paren =
-        matches!(parent, AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_)) && !is_ts_conditional;
+    let break_closing_paren = !is_ts_conditional
+        && match parent {
+            AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
+            // It is the left side.
+            AstNodes::BinaryExpression(binary) => binary.binary_operator().is_some_and(|operator| is_angular_pipe(operator, f)),
+            _ => false,
+        };
     let break_ts_closing_paren = match conditional {
         ConditionalLike::TSConditionalType(ty) => parentheses::ts_type::needs_parentheses(ty, f),
         ConditionalLike::ConditionalExpression(_) => false,
@@ -484,7 +490,7 @@ fn should_extra_indent(conditional: Expr<'_>) -> bool {
 /// those that are the value of a property of a node of ESTree. What is in a list, like the
 /// arguments of a call, does not count.
 fn is_simple_expression_by_node_count<'a>(e: Expr<'a>, max: u32, f: &Formatter<'a>) -> bool {
-    inner_node_count(e, max, f.file().is_javascript()) <= max
+    inner_node_count(e, max, f.context().has_tree_of_babel()) <= max
 }
 
 /// The count can stop at anything above `max`. Babel, which reads JavaScript for Prettier, has no

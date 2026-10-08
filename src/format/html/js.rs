@@ -1,0 +1,377 @@
+//! JavaScript and TypeScript in HTML: Prettier's `textToDoc` for the parsers of `language-js`.
+//!
+//! The code is parsed by itself, and written by the formatter for JavaScript to the document that the HTML is written
+//! to, so that where its lines are broken depends on where it is.
+
+use super::map_strings::{MapString, write_mapped};
+use crate::ir::element::{Interned, TextWidth};
+use crate::js::context::JsFormatContext;
+use crate::js::print::program::FormatStatements;
+use crate::options::{HtmlRoot, InHtml};
+use crate::prelude::*;
+use crate::{format_args, write};
+use bun_core::strings;
+use bun_lint::linter::{TypesInJavaScript, refused_by_prettier_with};
+
+/// The parsers of Prettier for programs.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Syntax {
+    /// `babel`: JavaScript with JSX.
+    Babel,
+    /// `babel-ts`: TypeScript, with JSX if that can be.
+    BabelTs,
+    /// `typescript`, for a file whose name does not say whether it has JSX.
+    TypeScript,
+}
+
+/// `sourceType`
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum SourceType {
+    Script,
+    Module,
+    /// A module, or else a script.
+    Unknown,
+}
+
+/// The name of a file whose text is `(`, an expression and `)`. See `AstNodes::parent`.
+const EXPRESSION_JSX: &[u8] = b"\0.jsx";
+const EXPRESSION_TS: &[u8] = b"\0.ts";
+
+/// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
+fn is_probably_jsx(text: &[u8]) -> bool {
+    // `</` with the start of a line before it and no quote in between.
+    let mut from = 0;
+    while let Some(at) = strings::index_of(&text[from..], b"</").map(|at| from + at) {
+        let before = &text[..at];
+        match before.iter().rposition(|byte| matches!(byte, b'"' | b'\'' | b'`')) {
+            None => return true,
+            Some(quote) if strings::contains_char(&before[quote..], b'\n') => return true,
+            Some(_) => from = at + 2,
+        }
+    }
+    strings::split(text, b"\n").any(|line| {
+        line.len() >= 4 && line[0] != b'/' && line[1] != b'/' && strings::contains(&line[2..], b"/>")
+    })
+}
+
+/// The options for code that is in HTML that is formatted with `options`.
+pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
+    FormatOptions {
+        // In an attribute, double quotes would have to be written as entities.
+        quote_style: if in_html.is_in_attribute { QuoteStyle::Single } else { options.quote_style },
+        in_html: InHtml {
+            quote_style: options.quote_style,
+            ..in_html
+        },
+        parser: None,
+        filepath: None,
+        range_start: None,
+        range_end: None,
+        cursor_offset: None,
+        insert_pragma: false,
+        require_pragma: false,
+        check_ignore_pragma: false,
+        is_in_markdown: false,
+        is_mdx_jsx: false,
+        is_mdx_es_syntax: false,
+        sort_imports: None,
+        ..options.clone()
+    }
+}
+
+type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
+
+/// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
+/// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
+/// parsed: nothing has been written then.
+fn with_file(f: &mut Formatter<'_>, code: &[u8], paths: &[&[u8]], source_type: SourceType, in_html: InHtml, write: Write<'_>) -> bool {
+    let Some(parse) = f.options().parse_javascript else {
+        return false;
+    };
+    let options = options_in_html(f.options(), in_html);
+    let kinds: &[bool] = match source_type {
+        SourceType::Script => &[true],
+        SourceType::Module => &[false],
+        SourceType::Unknown => &[false, true],
+    };
+    for path in paths {
+        for &is_script in kinds {
+            let mut result = None;
+            parse(path, code, is_script, &mut |file| {
+                if file.has_parse_errors() || refused_by_prettier_with(file, TypesInJavaScript::Refused) {
+                    return;
+                }
+                let comments = file.extension(|| {
+                    let mut comments = Vec::new();
+                    crate::js::comments::collect(file, options.flavor, &mut comments);
+                    comments
+                });
+                let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
+                let context = JsFormatContext::new(file, options.clone(), comments);
+                result = Some(f.write_embedded(context, file.text(), |f| write(file, f)));
+            });
+            if let Some(result) = result {
+                return result;
+            }
+        }
+    }
+    false
+}
+
+fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
+    match syntax {
+        Syntax::Babel => &[b"dummy.jsx"],
+        Syntax::BabelTs => &[b"dummy.tsx", b"dummy.ts"],
+        Syntax::TypeScript => match is_probably_jsx(code) {
+            true => &[b"dummy.tsx", b"dummy.ts"],
+            false => &[b"dummy.ts", b"dummy.tsx"],
+        },
+    }
+}
+
+/// What Prettier makes of a `Program`, without the line break at the end.
+fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
+    // Nothing that a comment could belong to.
+    if file.body().iter().all(|it| matches!(it.kind(), StmtKind::Empty)) {
+        let comments = f.comments().unprinted_comments();
+        let indent = DanglingIndentMode::None;
+        return write!(f, FormatDanglingComments::Comments { comments, indent });
+    }
+    write!(f, FormatStatements(file.body()));
+    let rest = f.comments().unprinted_comments();
+    write!(f, FormatTrailingComments::Comments(rest));
+}
+
+/// `textToDoc(code, { parser })` for a program. Returns whether it has been written.
+pub(crate) fn write_program(f: &mut Formatter<'_>, code: &[u8], syntax: Syntax, source_type: SourceType, in_html: InHtml) -> bool {
+    with_file(f, code, paths_of(syntax, code), source_type, in_html, &mut |file, f| {
+        write_statements(file, f);
+        true
+    })
+}
+
+/// What `formatAttributeValue` puts around the document.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Hug {
+    /// `group(doc)`
+    Always,
+    /// `printExpand(doc)`
+    Never,
+    /// `shouldHugJsExpression`
+    Expression,
+    /// Nothing: it is `textToDoc` that is called.
+    Bare,
+}
+
+/// `shouldHugJsExpression`, for the node in the root.
+fn should_hug_js_expression(e: Expr<'_>, root: HtmlRoot) -> bool {
+    match e.as_ast_nodes() {
+        AstNodes::ObjectExpression(_) | AstNodes::ArrayExpression(_) => true,
+        AstNodes::TemplateLiteral(_) | AstNodes::StringLiteral(_) => {
+            matches!(root, HtmlRoot::VueExpression | HtmlRoot::NgBinding | HtmlRoot::NgDirective)
+        }
+        _ => false,
+    }
+}
+
+/// Writes `content` the way `formatAttributeValue` returns it.
+pub(crate) fn write_hugged<'b>(should_hug: Option<bool>, content: &impl Format<'b>, f: &mut Formatter<'b>) {
+    match should_hug {
+        None => write!(f, content),
+        Some(true) => write!(f, group(content)),
+        Some(false) => write!(f, [indent(&format_args!(soft_line_break(), content)), soft_line_break()]),
+    }
+}
+
+/// The expression that `file` is made of, if its text is `(`, an expression, a line break and `)`.
+fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
+    let mut statements = file.body().iter();
+    let (Some(statement), None) = (statements.next(), statements.next()) else {
+        return None;
+    };
+    let StmtKind::Expr(e) = statement.kind() else {
+        return None;
+    };
+    let outer = e.outer_span();
+    (e.span().start > 0 && outer.start == 0 && outer.end as usize == file.text().len()).then_some(e)
+}
+
+/// `formatAttributeValue(code, textToDoc, { parser })` for the parsers that take an expression. Returns whether it has
+/// been written.
+pub(crate) fn write_expression(f: &mut Formatter<'_>, code: &[u8], is_typescript: bool, in_html: InHtml, hug: Hug) -> bool {
+    let wrapped = [b"(", code, b"\n)"].concat();
+    let path = if is_typescript { EXPRESSION_TS } else { EXPRESSION_JSX };
+    with_file(f, &wrapped, &[path], SourceType::Module, in_html, &mut |file, f| {
+        let Some(e) = expression_of(file) else {
+            return false;
+        };
+        let should_hug = match hug {
+            Hug::Always => Some(true),
+            Hug::Never => Some(false),
+            Hug::Expression => Some(should_hug_js_expression(e, in_html.root)),
+            Hug::Bare => None,
+        };
+        let content = format_with(|f| {
+            write!(f, e);
+            let rest = f.comments().unprinted_comments();
+            write!(f, FormatTrailingComments::Comments(rest));
+        });
+        write_hugged(should_hug, &content, f);
+        true
+    })
+}
+
+/// An expression of Angular.
+pub(crate) struct AngularExpression<'c> {
+    /// `(`, the expression as TypeScript, a line break and `)`.
+    pub(crate) code: &'c [u8],
+    /// The same, as long, with the names as they are written where those are no names to TypeScript.
+    pub(crate) shown: Option<&'c [u8]>,
+    /// What is written in its place: it has a `prettier-ignore` comment.
+    pub(crate) ignored: Option<&'c [u8]>,
+}
+
+/// One string to Prettier, whatever is in it.
+pub(crate) fn write_string(text: &[u8], f: &mut Formatter<'_>) {
+    let width = strings::contains_char(text, b'\n')
+        .then(|| TextWidth::multiline_string(strings::split(text, b"\n").map(|line| f.string_width(line)).sum()));
+    f.write_text(text, width);
+}
+
+/// `formatAttributeValue(code, textToDoc, { parser })` for the parsers of `angular-estree-parser`, if the root is one
+/// expression. `write_rest` writes what follows the expression. Returns whether it has been written.
+pub(crate) fn write_angular_expression(
+    f: &mut Formatter<'_>,
+    expression: &AngularExpression<'_>,
+    in_html: InHtml,
+    hug: Hug,
+    write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
+) -> bool {
+    let Some(parse) = f.options().parse_javascript else {
+        return false;
+    };
+    let options = options_in_html(f.options(), in_html);
+    let mut is_written = false;
+    parse(EXPRESSION_TS, expression.code, false, &mut |file| {
+        let Some(e) = expression_of(file).filter(|_| !file.has_parse_errors()) else {
+            return;
+        };
+        let source = match expression.shown {
+            None => file.text(),
+            Some(shown) => match file.extension(|| shown.to_vec()) {
+                Some(shown) => &shown[..],
+                None => return,
+            },
+        };
+        let should_hug = match hug {
+            Hug::Always => Some(true),
+            Hug::Never => Some(false),
+            Hug::Expression => Some(should_hug_js_expression(e, in_html.root)),
+            Hug::Bare => None,
+        };
+        // Only in an `NGChainedExpression` is an assignment without parentheses.
+        let needs_parentheses = e.tag() == ExprTag::Assign && in_html.root != HtmlRoot::NgAction;
+        let content = format_with(|f| {
+            match expression.ignored {
+                Some(text) => write_string(text, f),
+                None => write!(f, [needs_parentheses.then_some("("), e, needs_parentheses.then_some(")")]),
+            }
+            write_rest(f);
+        });
+        let context = JsFormatContext::new(file, options.clone(), &[]);
+        f.write_embedded(context, source, |f| write_hugged(should_hug, &content, f));
+        is_written = true;
+    });
+    is_written
+}
+
+/// The same for a program. For `shouldHugJsExpression` the root is a `File`, which is not hugged.
+pub(crate) fn write_program_in_attribute(f: &mut Formatter<'_>, code: &[u8], syntax: Syntax, in_html: InHtml, hug: Hug) -> bool {
+    with_file(f, code, paths_of(syntax, code), SourceType::Unknown, in_html, &mut |file, f| {
+        let should_hug = match hug {
+            Hug::Always => Some(true),
+            Hug::Never | Hug::Expression => Some(false),
+            Hug::Bare => None,
+        };
+        write_hugged(should_hug, &format_with(|f| write_statements(file, f)), f);
+        true
+    })
+}
+
+/// What `printHtmlBinding` prints of a program that is one declaration.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Binding {
+    /// `__isVueBindings`: the parameters of `function _(..) {}`.
+    Parameters,
+    /// `__isVueForBindingLeft`: the same, in parentheses if there is more than one.
+    ForLeft,
+    /// `__isEmbeddedTypescriptGenericParameters`: the type parameters of `type T<..> = any`.
+    TypeParameters,
+}
+
+/// `group(printHtmlBinding(..))`, for `before`, `code` and `after` put together. Returns whether it has been written.
+pub(crate) fn write_binding(f: &mut Formatter<'_>, code: &[u8], is_typescript: bool, in_html: InHtml, binding: Binding) -> bool {
+    let (before, after): (&[u8], &[u8]) = match binding {
+        Binding::Parameters | Binding::ForLeft => (b"function _(", b") {}"),
+        Binding::TypeParameters => (b"type T<", b"> = any"),
+    };
+    let program = [before, code, after].concat();
+    let syntax = if is_typescript { Syntax::BabelTs } else { Syntax::Babel };
+    with_file(f, &program, paths_of(syntax, &program), SourceType::Unknown, in_html, &mut |file, f| {
+        let Some(statement) = file.body().iter().next() else {
+            return false;
+        };
+        let separator = format_with(|f| write!(f, [",", soft_line_break_or_space()]));
+        match (binding, statement.kind()) {
+            (Binding::TypeParameters, StmtKind::TypeAlias(alias)) => {
+                let content = format_with(|f| {
+                    f.join_with(&separator).entries(alias.type_params().iter());
+                });
+                // The root is a `File`, which `shouldHugJsExpression` has nothing to say about.
+                write_hugged(Some(false), &content, f);
+            }
+            (Binding::Parameters | Binding::ForLeft, StmtKind::Fn(func)) => {
+                let params = func.params();
+                let list = format_with(|f| {
+                    f.join_with(&separator).entries(params.iter());
+                });
+                match binding == Binding::ForLeft && params.len() != 1 {
+                    true => write!(f, group(&format_args!("(", indent(&format_args!(soft_line_break(), group(&list))), soft_line_break(), ")"))),
+                    false => write!(f, group(&list)),
+                }
+            }
+            _ => return false,
+        }
+        true
+    })
+}
+
+// ───────────────────────────── `"` in the value of an attribute ─────────────────────────────
+
+/// `(doc) => (typeof doc === "string" ? doc.replaceAll('"', "&quot;") : doc)`
+struct QuoteEntities;
+
+impl MapString for QuoteEntities {
+    fn changes(&self, text: &[u8]) -> bool {
+        strings::contains_char(text, b'"')
+    }
+
+    fn write(&mut self, text: &[u8], is_one_string: bool, f: &mut Formatter<'_>) {
+        let mut replaced = Vec::with_capacity(text.len() + 16);
+        for (index, part) in strings::split(text, b"\"").enumerate() {
+            if index > 0 {
+                replaced.extend_from_slice(b"&quot;");
+            }
+            replaced.extend_from_slice(part);
+        }
+        match is_one_string {
+            true => write_string(&replaced, f),
+            false => f.write_text(&replaced, None),
+        }
+    }
+}
+
+/// Writes `content`, which has been captured, as the value of an attribute between double quotes.
+pub(crate) fn write_with_quote_entities(content: Interned, f: &mut Formatter<'_>) {
+    write_mapped(content, &mut QuoteEntities, f);
+}

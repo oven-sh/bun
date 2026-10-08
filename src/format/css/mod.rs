@@ -248,6 +248,7 @@ fn parse_and_print<'o>(
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         is_oxfmt: options.flavor.is_oxfmt(),
+        is_html_style_attribute: options.in_html.is_style_attribute,
         value_stack: Vec::new(),
         scratch: Vec::new(),
         has_failed: false,

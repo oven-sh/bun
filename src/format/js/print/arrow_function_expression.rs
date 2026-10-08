@@ -315,9 +315,13 @@ fn may_break_after_short_prefix<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
         ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Jsx(_) => true,
         ExprKind::Fn(func) => func.is_arrow(),
         ExprKind::Template(_) | ExprKind::TaggedTemplate(_) => {
-            is_multiline_and_starts_on_same_line(body, f.source_text()) || crate::css::embed::has_embed_label(body, f)
-                || crate::graphql::embed::has_embed_label(body, f)
-                || crate::markdown::embed::has_embed_label(body, f)
+            let html = crate::html::in_js::label(body, f);
+            html != Some(crate::html::in_js::Label::EmbedWithoutHug)
+                && (html.is_some()
+                    || is_multiline_and_starts_on_same_line(body, f.source_text())
+                    || crate::css::embed::has_embed_label(body, f)
+                    || crate::graphql::embed::has_embed_label(body, f)
+                    || crate::markdown::embed::has_embed_label(body, f))
         }
         _ => false,
     }

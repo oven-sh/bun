@@ -65,7 +65,7 @@ pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::Node
 }
 
 /// Prettier's `inferParser(options, { language })`: the parser for code in `language`.
-fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
     Some(match language {
         // The names of languages, then other names for them, then extensions of files.
         b"json.stringify" | b"geojson" | b"jsonl" | b"sarif" | b"topojson" | b"importmap" => b"json-stringify",
@@ -83,6 +83,12 @@ fn infer_parser(language: &[u8]) -> Option<&'static [u8]> {
         b"typescript" | b"tsx" | b"ts" | b"typescriptreact" | b"cts" | b"mts" | b"angular-ts" => b"typescript",
         b"graphql" | b"gql" | b"graphqls" => b"graphql",
         b"handlebars" | b"hbs" | b"htmlbars" => b"glimmer",
+        b"html" | b"hta" | b"htm" | b"html.hl" | b"inc" | b"xht" => b"html",
+        // `xhtml` is another name for two languages, of which this is the first.
+        b"angular" | b"xhtml" | b"component.html" => b"angular",
+        b"vue" => b"vue",
+        b"lightning web components" | b"LWC" | b"lwc" => b"lwc",
+        b"mjml" | b"MJML" => b"mjml",
         b"markdown" | b"md" | b"pandoc" | b"livemd" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn" | b"mkdown" | b"ronn" | b"scd"
         | b"workbook" => b"markdown",
         b"css" | b"postcss" | b"wxss" | b"pcss" => b"css",
@@ -107,7 +113,11 @@ fn format_embedded(
         return Some(Vec::new());
     }
     let is_mdx_jsx = language == MDX_JSX;
-    let parser = if is_mdx_jsx || language == MDX_ES_SYNTAX { b"babel" } else { infer_parser(language)? };
+    let parser: &[u8] = match language {
+        _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
+        b"angular-html" => b"angular",
+        _ => infer_parser(language)?,
+    };
     let in_fragment;
     let code = match is_mdx_jsx {
         true => {
@@ -147,6 +157,8 @@ fn format_embedded(
         crate::json::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
         crate::css::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
+    } else if let Some(parser) = crate::html::Parser::from_name(parser) {
+        options.embedded_html && crate::html::format(b"", code, parser, &options, &mut Default::default(), &mut out).is_ok()
     } else {
         match parser {
             b"graphql" => crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok(),

@@ -17,6 +17,7 @@ use crate::{format_args, write};
 pub(crate) fn write_template_literal<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) {
     if !embed::write_template(e, template, f)
         && !crate::graphql::embed::write_template(e, template, f)
+        && !crate::html::in_js::write_template(e, template, f)
         && !crate::markdown::embed::write_template(e, template, f)
     {
         TemplateLike::TemplateLiteral(template).fmt(f);

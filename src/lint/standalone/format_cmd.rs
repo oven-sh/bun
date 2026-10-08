@@ -106,6 +106,11 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
     formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
 }
 
+/// For `FormatOptions::parse_javascript`.
+fn parse_javascript(path: &[u8], code: &[u8], is_script: bool, then: &mut dyn for<'b> FnMut(&'b File<'b>)) {
+    with_file_as(Dialect::babel(is_script), &crate::text(path), code, |file| then(file));
+}
+
 fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> Result<WithCursor, FormatError> {
     let with_format_javascript;
     let options = match options.format_javascript {
@@ -113,6 +118,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         None => {
             with_format_javascript = FormatOptions {
                 format_javascript: Some(format_javascript),
+                parse_javascript: Some(parse_javascript),
                 ..options.clone()
             };
             &with_format_javascript
@@ -205,6 +211,14 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         let mut out = Vec::new();
         return bun_format::graphql::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
+    let html_parser = match &options.parser {
+        Some(parser) => bun_format::html::Parser::from_name(parser),
+        None => bun_format::html::parser_for_path(name),
+    };
+    if let Some(parser) = html_parser {
+        let mut out = Vec::new();
+        return bun_format::html::format_with_cursor(name, code, parser, options, &mut Default::default(), &mut out).map(|cursor| (out, cursor));
+    }
     let code = match bun_format::pragma::before_parsing(code, options) {
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok((code.to_vec(), options.cursor_offset)),
         bun_format::pragma::BeforeParsing::Format(code) => code,
@@ -271,6 +285,7 @@ impl Args {
             }
         }
         parsed.options.sort_imports = sort_imports::from_flags(&parsed.flags);
+        parsed.options.embedded_html = parsed.flags.contains_key("embeddedHtml");
         parsed
     }
 

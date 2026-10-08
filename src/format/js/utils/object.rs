@@ -98,13 +98,19 @@ fn printed_key<'a>(key: Key<'a>, span: Span, parent: AstNodes<'a>, f: &Formatter
             // Prettier's `isKeySafeToQuote`: not in TypeScript, where it changes the type, and only
             // if the number is written the way it is converted to a string.
             let is_safe_to_quote =
-                f.file().is_javascript() && is_simple_number(&printed) && name.bytes() == &*printed;
+                f.context().has_tree_of_babel() && is_simple_number(&printed) && name.bytes() == &*printed;
             match is_safe_to_quote && should_quote_keys(parent, f) {
                 true => quoted(&printed, f),
                 false => printed,
             }
         }
     }
+}
+
+/// Whether Prettier's `parser` is `babel` and the like, not one of those for an expression in HTML, which it does not
+/// name where it takes a number out of its quotes.
+fn is_parser_for_programs(f: &Formatter<'_>) -> bool {
+    matches!(f.options().in_html.root, HtmlRoot::None | HtmlRoot::Program)
 }
 
 /// Prettier's `isKeySafeToUnquote`. `string`: a string literal that is the name of `parent`.
@@ -125,6 +131,7 @@ fn unquoted<'a>(string: &'a [u8], parent: Option<AstNodes<'a>>, f: &Formatter<'a
         _ => {
             is_es5_identifier_name(content)
                 || (is_javascript
+                    && is_parser_for_programs(f)
                     && is_simple_number(content)
                     && is_canonical_simple_number(content)
                     && !crate::pragma::is_flow_file(f.file().text(), f.filepath()))

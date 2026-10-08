@@ -405,6 +405,13 @@ fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
     is_element && is_assignment_target(e)
 }
 
+/// Whether `statement` is in the place of Prettier's `JsExpressionRoot`: the text of the file is `(`, an expression that is in
+/// HTML, and `)`. The name of such a file starts with a NUL. The parent of the expression is the file then.
+#[inline]
+fn is_expression_root(statement: Stmt<'_>) -> bool {
+    statement.file().path().first() == Some(&0) && matches!(statement.parent(), Node::File(_))
+}
+
 fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
     use AstNodes as N;
     if above < Level::Chain && is_chain_root(e) {
@@ -442,6 +449,7 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
             StmtTag::Expr if e.tag() == ExprTag::String && statement.directive().is_some() => {
                 N::Directive(statement)
             }
+            StmtTag::Expr if is_expression_root(statement) => N::Program(Program(statement.file())),
             StmtTag::Expr => N::ExpressionStatement(ExpressionStatement::Stmt(statement)),
             _ => inner_of_stmt(statement),
         },

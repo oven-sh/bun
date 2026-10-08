@@ -64,6 +64,8 @@ pub(crate) enum Kind {
     Mdx,
     GraphQl,
     Handlebars,
+    /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
+    Html(bun_format::html::Parser),
 }
 
 impl Kind {
@@ -80,7 +82,8 @@ impl Kind {
                 b"glimmer" => Some(Kind::Handlebars),
                 _ => None,
             };
-            return Some(json().or_else(css).or_else(other).unwrap_or(Kind::Script));
+            let html = || bun_format::html::Parser::from_name(parser).map(Kind::Html);
+            return Some(json().or_else(css).or_else(html).or_else(other).unwrap_or(Kind::Script));
         }
         let name = paths::basename(path);
         let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
@@ -94,7 +97,8 @@ impl Kind {
         let mdx = || bun_format::markdown::is_mdx_path(path).then_some(Kind::Mdx);
         let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
         let handlebars = || bun_format::handlebars::is_handlebars_path(path).then_some(Kind::Handlebars);
-        json().or_else(css).or_else(yaml).or_else(markdown).or_else(mdx).or_else(graphql).or_else(handlebars)
+        let html = || bun_format::html::parser_for_path(path).map(Kind::Html);
+        json().or_else(css).or_else(yaml).or_else(markdown).or_else(mdx).or_else(graphql).or_else(handlebars).or_else(html)
     }
 }
 
@@ -104,6 +108,8 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
         Some(Kind::Mdx) => return Language::Other,
         // Not by itself yet. Only for who asks: `--parser glimmer`.
         Some(Kind::Handlebars) => return Language::Other,
+        // Not by itself yet. Only for who asks: `--parser html`, `vue`, `angular`, `lwc`, `mjml`.
+        Some(Kind::Html(_)) => return Language::Other,
         Some(_) => return Language::Supported,
         None => {}
     }

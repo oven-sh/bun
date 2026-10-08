@@ -62,7 +62,7 @@ impl<'a> BinaryLikeExpression<'a> {
     /// Whether the right side is a logical expression with the same operator: `a && (b && c)`.
     /// Prettier rebalances the tree after parsing: to it, that is `(a && b) && c`.
     fn right_with_same_operator(&self, f: &Formatter<'a>) -> Option<BinaryLikeExpression<'a>> {
-        match self.is_logical() {
+        match self.is_logical() && !is_tree_as_it_is_parsed(f) {
             true => BinaryLikeExpression::new(self.right)
                 .filter(|right| right.operator == self.operator && !is_cast_target(right.expr, f)),
             false => None,
@@ -82,8 +82,14 @@ impl<'a> BinaryLikeExpression<'a> {
     }
 
     /// Whether `parent` indents it already.
-    fn should_not_indent_if_parent_indents(&self, parent: AstNodes<'a>) -> bool {
+    fn should_not_indent_if_parent_indents(&self, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
         match parent {
+            AstNodes::Program(_) => match f.options().in_html.root {
+                // Prettier's `NGRoot`.
+                HtmlRoot::NgAction | HtmlRoot::NgDirective | HtmlRoot::NgInterpolation => false,
+                // The same for `__ng_binding`, and `JsExpressionRoot`.
+                _ => self.operator != BinOp::BitOr,
+            },
             AstNodes::ReturnStatement(_)
             | AstNodes::ThrowStatement(_)
             | AstNodes::ForStatement(_)
@@ -91,13 +97,15 @@ impl<'a> BinaryLikeExpression<'a> {
             | AstNodes::UnaryExpression(_) => true,
             AstNodes::JSXExpressionContainer(_) => matches!(parent.parent(), AstNodes::JSXAttribute(_)),
             AstNodes::ExpressionStatement(statement) => statement.is_arrow_function_body(),
-            AstNodes::ConditionalExpression(_) => !matches!(
-                parent.parent(),
-                AstNodes::ReturnStatement(_)
-                    | AstNodes::ThrowStatement(_)
-                    | AstNodes::CallExpression(_)
-                    | AstNodes::NewExpression(_)
-            ),
+            AstNodes::ConditionalExpression(conditional) => {
+                !matches!(
+                    parent.parent(),
+                    AstNodes::ReturnStatement(_)
+                        | AstNodes::ThrowStatement(_)
+                        | AstNodes::CallExpression(_)
+                        | AstNodes::NewExpression(_)
+                ) || (f.options().in_html.root.is_angular() && is_argument_of_angular_pipe(conditional))
+            }
             // `Boolean(a && b)`
             AstNodes::CallExpression(call_expression) => call_expression.call().is_some_and(|call| {
                 let callee = call.callee();
@@ -126,6 +134,24 @@ pub(crate) fn write_binary_like_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a
 
 impl<'a> Format<'a> for BinaryLikeExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if self.operator != BinOp::BitOr || f.options().in_html.root != HtmlRoot::VueExpression {
+            return self.write(f);
+        }
+        // Prettier's `isVueFilterSequenceExpression`: nothing is around it but the same, up to the root. What is
+        // around this one is being written.
+        let is_filter_sequence = match self.parent() {
+            AstNodes::Program(_) => true,
+            AstNodes::BinaryExpression(parent) if parent.binary_op() == Some(BinOp::BitOr) => f.context().is_vue_filter_sequence.get(),
+            _ => false,
+        };
+        let outer = f.context().is_vue_filter_sequence.replace(is_filter_sequence);
+        self.write(f);
+        f.context().is_vue_filter_sequence.set(outer);
+    }
+}
+
+impl<'a> BinaryLikeExpression<'a> {
+    fn write(&self, f: &mut Formatter<'a>) {
         let parent = self.parent();
         // For Prettier it is in a `ParenthesizedExpression` then, which is none of what is asked for.
         let is_in_type_cast = is_cast_target(self.expr, f);
@@ -149,7 +175,7 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
             );
         }
 
-        if !is_in_type_cast && self.should_not_indent_if_parent_indents(parent) {
+        if !is_in_type_cast && self.should_not_indent_if_parent_indents(parent, f) {
             return write!(f, group(&format_with(|f| format_flattened_logical_expression(*self, false, f))));
         }
 
@@ -293,6 +319,9 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         let is_jsx = right.tag() == ExprTag::Jsx;
 
         let operator_and_right_expression = format_with(|f| {
+            if is_angular_pipe(binary_like_expression.operator, f) {
+                return write_name_and_arguments_of_angular_pipe(right, f);
+            }
             let is_inlined = binary_like_expression.should_inline_logical_expression(f);
             write_operator(binary_like_expression.operator, right, is_inlined, f);
             if is_inlined && !is_jsx && f.comments().has_leading_own_line_comment(right.span().start) {
@@ -317,12 +346,16 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             }
         });
 
-        // Both are logical expressions, or both are binary expressions.
+        // Both are logical expressions, or both are binary expressions, or both are pipes of Angular.
+        let is_pipe = is_angular_pipe(binary_like_expression.operator, f);
         let is_same_kind = |other: Expr<'a>| match other.binary_op() {
             None | Some(BinOp::Comma) => false,
-            Some(operator) => operator.is_logical() == binary_like_expression.is_logical(),
+            Some(operator) => {
+                operator.is_logical() == binary_like_expression.is_logical() && is_angular_pipe(operator, f) == is_pipe
+            }
         };
         let should_group = !(matches!(binary_like_expression.expr.parent(), Node::Expr(parent) if is_same_kind(parent))
+            || (is_pipe && is_argument_of_angular_pipe(binary_like_expression.expr))
             || is_same_kind(left)
             || is_same_kind(right)
             || (inside_parenthesis && logical_operator.is_some()));
@@ -346,11 +379,59 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
     }
 }
 
+/// Whether `operator`, which is being written, is the `|` before a filter of Vue: a line is broken before it.
+fn is_before_vue_filter(operator: BinOp, f: &Formatter<'_>) -> bool {
+    operator == BinOp::BitOr && f.context().is_vue_filter_sequence.get()
+}
+
+/// Prettier rebalances the trees of its parsers for JavaScript, not the tree of its parser for Angular.
+fn is_tree_as_it_is_parsed(f: &Formatter<'_>) -> bool {
+    f.options().in_html.root.is_angular()
+}
+
+/// Whether an expression with `operator` is Prettier's `NGPipeExpression`. Angular has no bitwise operators: `a | b: c : d`
+/// is parsed as `a | b(c, d)`.
+#[inline]
+pub(crate) fn is_angular_pipe(operator: BinOp, f: &Formatter<'_>) -> bool {
+    operator == BinOp::BitOr && f.options().in_html.root.is_angular()
+}
+
+/// Whether `e`, which is in an expression of Angular, is one of the `arguments` of an `NGPipeExpression`.
+pub(crate) fn is_argument_of_angular_pipe(e: Expr<'_>) -> bool {
+    matches!(e.parent(), Node::Expr(call) if call.tag() == ExprTag::Call
+        && call.callee() != Some(e)
+        && matches!(call.parent(), Node::Expr(pipe) if pipe.binary_op() == Some(BinOp::BitOr) && pipe.right() == Some(call)))
+}
+
+/// `| b: c : d`. `right`: `b(c, d)`.
+fn write_name_and_arguments_of_angular_pipe<'a>(right: Expr<'a>, f: &mut Formatter<'a>) {
+    let call = right.as_call();
+    let name = call.map_or(right, Call::callee);
+    write!(f, [soft_line_break_or_space(), "| ", source_text(name.span())]);
+    let Some(call) = call else {
+        return;
+    };
+    let arguments = format_with(|f| {
+        write!(f, [soft_line_break(), ": "]);
+        f.join_with(format_args!(soft_line_break_or_space(), ": ")).entries(call.args().iter().map(|argument| {
+            format_with(move |f: &mut Formatter<'a>| {
+                let needs_parentheses = matches!(argument.tag(), ExprTag::Cond) || argument.binary_op() == Some(BinOp::BitOr);
+                let (open, close) = (needs_parentheses.then_some("("), needs_parentheses.then_some(")"));
+                write!(f, align(2, &group(&format_args!(open, argument, close))));
+            })
+        }));
+    });
+    write!(f, group(&indent(&arguments)));
+}
+
 /// Writes `operator` and what is around it. `right`: the operand after it. `is_inlined`: it stays on the line of
 /// the operator.
 fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mut Formatter<'a>) {
     if is_inlined {
         return write!(f, [operator_after_space(operator), space()]);
+    }
+    if is_before_vue_filter(operator, f) && !f.comments().has_leading_own_line_comment(right.span().start) {
+        return write!(f, [soft_line_break_or_space(), operator.as_str(), space()]);
     }
     if f.options().experimental_operator_position.is_end() {
         return write!(f, [operator_after_space(operator), soft_line_break_or_space()]);

@@ -1752,6 +1752,32 @@ pub(crate) fn format_with<'a>(
     Ok(Some(resolve(source, offset, locate(file, offset.bytes), names, formatted, first.zip(second)) as u32))
 }
 
+/// `options.cursor_offset` as an offset in `source`, for a language whose tree is looked at elsewhere.
+pub(crate) fn cursor_offset_in_bytes(source: &[u8], options: &FormatOptions) -> Option<u32> {
+    offset_in(source, options).map(|offset| offset.bytes)
+}
+
+/// Where the cursor, which is at `offset` in `source`, is in `formatted`. `marks`: where the start and the end of `region`
+/// are in `formatted`, if the printer came by both.
+pub(crate) fn cursor_in_region(source: &[u8], offset: u32, region: Region, formatted: &[u8], marks: Option<(u32, u32)>) -> u32 {
+    // HTML has a text end before the blanks at its end once it has been printed. Prettier does not ask whether the
+    // cursor is still in a node that has been printed as it was.
+    if let (Region::Node(span), Some((start, end))) = (region, marks)
+        && offset > span.end
+        && start < end
+        && let (Some(old), Some(new)) = (source.get(span.start as usize..span.end as usize), formatted.get(start as usize..end as usize))
+        && old == new
+    {
+        let behind = source.get(span.start as usize..offset as usize).unwrap_or_default();
+        return (count_units(formatted.get(..start as usize).unwrap_or_default()) + count_units(behind)) as u32;
+    }
+    let offset = Offset {
+        bytes: offset,
+        is_in_character: false,
+    };
+    resolve(source, offset, region, (false, false), formatted, marks) as u32
+}
+
 /// Where the cursor, which is at `options.cursor_offset` in `source`, is in `formatted`, which is what
 /// has become of all of `source`: what Prettier says if it does not learn where the part around the
 /// cursor ends up. For the languages whose trees are not looked at here.

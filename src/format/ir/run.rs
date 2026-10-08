@@ -49,6 +49,13 @@ pub(crate) fn format_with_marks<'a>(
     Ok(scratch.printer.marks)
 }
 
+impl Scratch {
+    /// Where the marks around the cursor were in what has been printed last.
+    pub(crate) fn marks(&self) -> [Option<u32>; 2] {
+        self.printer.marks
+    }
+}
+
 /// Appends the text of the document `root`, which [`write_with`] has returned, to `out`.
 pub(crate) fn print(
     root: Interned,

@@ -63,6 +63,12 @@ pub(crate) fn is_canonical_simple_number(text: &[u8]) -> bool {
     (number == 0.0 || (1e-6..1e21).contains(&number)) && number.to_string().as_bytes() == text
 }
 
+/// Prettier's `__isInHtmlAttribute`: between the double quotes of an attribute, a string has single quotes whatever is in
+/// it. `quote_style` is set to that.
+fn is_in_html_attribute(options: &FormatOptions) -> bool {
+    options.in_html.is_in_attribute
+}
+
 struct StringInformation {
     current_quote: QuoteStyle,
     /// The one that takes fewer escapes.
@@ -114,7 +120,14 @@ impl<'a> FormatLiteralStringToken<'a> {
             };
         }
 
-        let information = self.compute_string_information(chosen_quote_style);
+        let is_directive = self.parent_kind == StringLiteralParentKind::Directive;
+        let mut information = self.compute_string_information(match is_in_html_attribute(options) && is_directive {
+            true => options.in_html.quote_style,
+            false => chosen_quote_style,
+        });
+        if is_in_html_attribute(options) && !is_directive {
+            information.preferred_quote = QuoteStyle::Single;
+        }
         let content = self.raw_content();
         let text = match self.parent_kind {
             StringLiteralParentKind::Expression => self.normalize_string_literal(&information),
@@ -274,7 +287,7 @@ impl FormatLiteralStringToken<'_> {
     fn is_clean_ascii(&self, f: &Formatter<'_>) -> bool {
         let quote = f.options().quote_style.as_byte();
         !self.jsx
-            && self.parent_kind != StringLiteralParentKind::ImportAttribute
+            && self.parent_kind == StringLiteralParentKind::Expression
             && matches!(self.string, [first, content @ .., last]
                 if *first == quote && *last == quote && is_printable_ascii_without(content, quote))
     }

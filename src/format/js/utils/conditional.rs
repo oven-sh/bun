@@ -1,6 +1,7 @@
 //! `a ? b : c` and `A extends B ? C : D`. Prettier's `printTernary`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::write;
 
@@ -271,13 +272,15 @@ impl<'a> FormatConditionalLike<'a> {
         }
     }
 
-    fn is_parent_static_member_expression(&self, layout: ConditionalLayout) -> bool {
+    fn is_parent_static_member_expression(&self, layout: ConditionalLayout, f: &Formatter<'a>) -> bool {
         layout.is_root()
             && matches!(self.conditional, ConditionalLike::ConditionalExpression(_))
-            && matches!(
-                self.conditional.parent(),
-                AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_)
-            )
+            && match self.conditional.parent() {
+                AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
+                // It is the left side.
+                AstNodes::BinaryExpression(binary) => binary.binary_operator().is_some_and(|operator| is_angular_pipe(operator, f)),
+                _ => false,
+            }
     }
 
     fn format_test(&self, f: &mut Formatter<'a>, layout: ConditionalLayout) {
@@ -423,7 +426,7 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
             //   : c
             // ).d
             // ```
-            if !should_extra_indent && !is_jsx_chain && self.is_parent_static_member_expression(layout) {
+            if !should_extra_indent && !is_jsx_chain && self.is_parent_static_member_expression(layout, f) {
                 write!(f, soft_line_break());
             }
         });

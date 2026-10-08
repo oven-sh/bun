@@ -295,8 +295,7 @@ impl<'d> Printer<'d> {
                     return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
                 }
             }
-            FormatElement::IndentedLineGroup(id) => {
-                self.insert_group_mode(*id, mode);
+            FormatElement::IndentedLineGroup(_) => {
                 if !mode.is_flat() {
                     let width = measure.line_width + usize::from(measure.is_space_element_pending);
                     return Ok(if width > self.options.print_width { Fits::No } else { Fits::Yes });
@@ -343,9 +342,6 @@ impl<'d> Printer<'d> {
                         true => mode,
                         false => PrintMode::Expanded,
                     };
-                    if let Some(id) = group.id() {
-                        self.insert_group_mode(id, group_mode);
-                    }
                     let flat = group.flat();
                     if measure.uses_flat
                         && group_mode.is_flat()
@@ -362,7 +358,9 @@ impl<'d> Printer<'d> {
                     let group_mode = match condition.group_id {
                         None => mode,
                         Some(_) if measure.has_passed_group_ids => return Err(PrintError::MeasureAgain),
-                        Some(id) => self.group_mode(id).unwrap_or(mode),
+                        // As in Prettier, it is the mode that the group has been printed in. One that has only been measured
+                        // counts as being on one line.
+                        Some(id) => self.group_mode(id).unwrap_or(PrintMode::Flat),
                     };
                     if group_mode != condition.mode {
                         skip_conditional_content(&mut measure.elements)?;

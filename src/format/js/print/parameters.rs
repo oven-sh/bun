@@ -286,7 +286,7 @@ impl<'a> Format<'a> for ParameterList<'a> {
                 // Nothing can follow a rest parameter, not even a comma.
                 let trailing_separator = match self.func.params().last().is_some_and(Param::is_rest) {
                     true => TrailingSeparator::Disallowed,
-                    false => FormatTrailingCommas::All.trailing_separator(f.options()),
+                    false => FormatTrailingCommas::Arguments.trailing_separator(f.options()),
                 };
                 let has_modifiers = self.func.params().iter().any(has_modifier);
                 let mut joiner = match has_modifiers {

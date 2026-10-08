@@ -149,6 +149,7 @@ struct Scratches {
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
     handlebars: bun_format::handlebars::Scratch,
+    html: bun_format::html::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
@@ -169,6 +170,20 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
     let names = Session::new();
     let formatted = format(path, code, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false);
     formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
+}
+
+/// For the scripts and expressions in HTML: calls `then` with `code` parsed as the file at `path`.
+fn parse_javascript(path: &[u8], code: &[u8], is_script: bool, then: &mut dyn for<'b> FnMut(&'b File<'b>)) {
+    let names = Session::new();
+    let how = How {
+        path,
+        is_script,
+        resolved: &Resolved::default(),
+        verifies: false,
+        atoms: &Interner::new_in(&names),
+        memory: &names,
+    };
+    with_file(&how, code, |file, _, _| then(file));
 }
 
 /// The formatted text, and where the cursor is in it, if `cursorOffset` says where it was.
@@ -226,6 +241,14 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
         Some(Kind::Handlebars) => {
             let done = bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
             return finish(done, out, "Handlebars");
+        }
+        Some(Kind::Html(parser)) => {
+            let done = bun_format::html::format_with_cursor(name, text, parser, options, &mut scratch.html, &mut out);
+            if verifies && done.is_ok() && !bun_format::html::has_same_content(text, &out, parser, options) {
+                return Err(Failure::Bug("formatting would change what is in the file"));
+            }
+            let cursor = done.as_ref().ok().copied().flatten();
+            return finish(done.map(|_| ()), out, "HTML").map(|(out, _)| (out, cursor));
         }
     }
     let text = match bun_format::pragma::before_parsing(text, options) {
@@ -310,6 +333,7 @@ pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Re
     let resolved = Resolved {
         options: FormatOptions {
             format_javascript: Some(format_javascript),
+            parse_javascript: Some(parse_javascript),
             ..options.clone()
         },
         omits_final_newline: false,

@@ -71,8 +71,16 @@ pub struct FormatOptions {
     /// The text is `import` and `export` declarations in MDX. Anything else in it is an error: Prettier's
     /// `validateImportExport`.
     pub is_mdx_es_syntax: bool,
+    /// Whether HTML in the templates of JavaScript and in the blocks of code of Markdown is formatted.
+    pub embedded_html: bool,
+    /// In how many templates of JavaScript that are written as HTML the text is.
+    pub html_template_depth: u32,
     /// Formats the JavaScript and TypeScript in blocks of code in Markdown. Without it they stay as they are.
     pub format_javascript: Option<FormatJavaScript>,
+    /// Parses the JavaScript and TypeScript in HTML. Without it they stay as they are.
+    pub parse_javascript: Option<ParseJavaScript>,
+    /// What the code is in, if it is in HTML.
+    pub in_html: InHtml,
     /// Whose output to produce where the two differ.
     pub flavor: Flavor,
     /// oxfmt's `sortPackageJson`: the keys of a `package.json` are put in the usual order.
@@ -87,6 +95,59 @@ pub struct FormatOptions {
 /// says which of them it is, the code, the options, and where to append the result. It returns whether the
 /// code could be formatted.
 pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool;
+
+/// Parses JavaScript or TypeScript, which this crate cannot do by itself. It is given the name of a file that says which
+/// of them it is, the code, whether that is a script, and what to call with the file, errors or not.
+pub type ParseJavaScript = fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
+
+/// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
+/// what is less than a program.
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub struct InHtml {
+    pub root: HtmlRoot,
+    /// `__isInHtmlAttribute`: the code is between double quotes.
+    pub is_in_attribute: bool,
+    /// `__isInHtmlInterpolation`: `}}` follows the code.
+    pub is_in_interpolation: bool,
+    /// `__isHtmlInlineEventHandler`
+    pub is_inline_event_handler: bool,
+    /// `__isHTMLStyleAttribute`
+    pub is_style_attribute: bool,
+    /// `singleQuote`, which `quote_style` does not say in an attribute.
+    pub quote_style: QuoteStyle,
+}
+
+/// What the code is.
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum HtmlRoot {
+    /// It is not in HTML.
+    #[default]
+    None,
+    /// `babel`, `typescript`, `css`, ..
+    Program,
+    /// `__js_expression`, `__ts_expression`
+    JsExpression,
+    /// `__vue_expression`, `__vue_ts_expression`: `a | b` is a filter.
+    VueExpression,
+    /// `__vue_event_binding`, `__vue_ts_event_binding`
+    VueEventBinding,
+    /// `__ng_action`
+    NgAction,
+    /// `__ng_binding`
+    NgBinding,
+    /// `__ng_directive`
+    NgDirective,
+    /// `__ng_interpolation`
+    NgInterpolation,
+}
+
+impl HtmlRoot {
+    /// Prettier's `NGRoot`: the code is an expression of Angular, in which `a | b(c)` stands for the pipe `a | b: c`.
+    #[inline]
+    pub fn is_angular(self) -> bool {
+        matches!(self, HtmlRoot::NgAction | HtmlRoot::NgBinding | HtmlRoot::NgDirective | HtmlRoot::NgInterpolation)
+    }
+}
 
 /// An option has a value that Prettier does not accept, or there is no such option.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -113,6 +174,7 @@ impl FormatOptions {
         };
         let quotes = |single: bool| if single { QuoteStyle::Single } else { QuoteStyle::Double };
         match name {
+            b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u16::MAX),
             b"printWidth" => self.line_width = LineWidth(number(u32::from(u16::MAX))? as u16),
             // Markdown asks whether something is a multiple of it. Nothing is as wide as 255 columns.
             b"tabWidth" => self.indent_width = IndentWidth(number(u32::MAX)?.min(u32::from(u8::MAX)) as u8),
@@ -572,6 +634,8 @@ impl ArrowParentheses {
 #[derive(Debug, Copy, Clone)]
 pub enum FormatTrailingCommas {
     All,
+    /// After the last argument of a call and the last parameter of a function: like `All`, but Angular takes none there.
+    Arguments,
     ES5,
 }
 
@@ -591,10 +655,11 @@ impl FormatTrailingCommas {
     pub fn trailing_separator(self, options: &FormatOptions) -> TrailingSeparator {
         match self {
             _ if options.trailing_commas.is_none() => TrailingSeparator::Omit,
-            FormatTrailingCommas::All if !options.trailing_commas.is_all() => {
+            FormatTrailingCommas::All | FormatTrailingCommas::Arguments if !options.trailing_commas.is_all() => {
                 TrailingSeparator::Omit
             }
-            FormatTrailingCommas::All | FormatTrailingCommas::ES5 => TrailingSeparator::Allowed,
+            FormatTrailingCommas::Arguments if options.in_html.root.is_angular() => TrailingSeparator::Omit,
+            FormatTrailingCommas::All | FormatTrailingCommas::Arguments | FormatTrailingCommas::ES5 => TrailingSeparator::Allowed,
         }
     }
 }

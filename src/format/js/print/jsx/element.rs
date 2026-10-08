@@ -55,7 +55,8 @@ impl<'a> AnyJsxTagWithChildren<'a> {
             | AstNodes::JSXExpressionContainer(_)
             | AstNodes::ConditionalExpression(_)
             | AstNodes::CallExpression(_)
-            | AstNodes::NewExpression(_) => WrapState::NoWrap,
+            | AstNodes::NewExpression(_)
+            | AstNodes::Program(_) => WrapState::NoWrap,
             AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body() => WrapState::NoWrap,
             _ => WrapState::WrapOnBreak,
         }

@@ -41,10 +41,15 @@ pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatte
             write!(f, member);
         }
     });
-    match is_long_curried_call(call_expression) {
+    match is_long_curried_call(call_expression, f) {
         true => write!(f, content),
         false => write!(f, group(&content)),
     }
+}
+
+/// The statement that the code is parsed as is not there for Prettier: the root is a `JsExpressionRoot` or an `NGRoot`.
+fn is_all_of_expression_in_html(f: &Formatter<'_>) -> bool {
+    !matches!(f.options().in_html.root, HtmlRoot::None | HtmlRoot::Program | HtmlRoot::VueEventBinding)
 }
 
 /// A group ends before a member access that follows a call, and after a comment. Without either, a
@@ -109,7 +114,8 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                         // A name that is shorter than the indentation: the `.` would not even be
                         // to the right of it.
                         || (name.len() <= f.options().indent_width.value() as usize
-                            && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr))
+                            && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
+                            && !is_all_of_expression_in_html(f))
                 }
                 ExprTag::This => true,
                 _ => false,
@@ -224,7 +230,7 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
                     write!(f, FormatMemberChainGroup(group));
                 }
             });
-            return match is_long_curried_call(self.root) {
+            return match is_long_curried_call(self.root, f) {
                 true => write!(f, content),
                 false => write!(f, group(&content)),
             };

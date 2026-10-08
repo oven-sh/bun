@@ -1,7 +1,7 @@
 //! Which expressions need parentheses where they are. Prettier's `needsParentheses`.
 
 use crate::js::ast_nodes::ExpressionStatement;
-use crate::js::print::binary_like_expression::should_flatten;
+use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
 use crate::js::print::expressions::unary_argument_has_comments;
 use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
@@ -206,6 +206,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             N::ExpressionStatement(statement) => !statement.is_arrow_function_body(),
             _ => true,
         },
+        ExprKind::Binary { op, .. } if is_angular_pipe(op, f) => angular_pipe_needs_parentheses(e, parent),
         ExprKind::Binary { op, .. } => {
             matches!(parent, N::UpdateExpression(_))
                 || (op == BinOp::In && is_in_for_statement_initializer(e))
@@ -247,6 +248,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             _ => is_member_object(e, parent) || parent.is_call_like_callee(e),
         },
         ExprKind::Fn(func) if func.is_arrow() => match parent {
+            N::BinaryExpression(binary) if binary.binary_operator().is_some_and(|operator| is_angular_pipe(operator, f)) => false,
             N::BinaryExpression(_)
             | N::PrivateInExpression(_)
             | N::TSAsExpression(_)
@@ -457,8 +459,8 @@ fn assignment_needs_parentheses<'a>(e: Expr<'a>, left: Expr<'a>, parent: AstNode
             statement.is_arrow_function_body()
                 || (matches!(left.kind(), ExprKind::Object(_)) && is_assignment_target(left))
         }
-        // `interface A { [a = 1]; }`, `a = b = c`
-        N::TSPropertySignature(_) | N::AssignmentExpression(_) => false,
+        // `interface A { [a = 1]; }`, `a = b = c`, Prettier's `JsExpressionRoot`
+        N::TSPropertySignature(_) | N::AssignmentExpression(_) | N::Program(_) => false,
         // `({ a: (b = 1) } = c)`, which is an error. Not `({ [(a = 1)]: b } = c)`.
         N::AssignmentTargetPropertyProperty(property) => property.value() != Some(e),
         // `for (a = 1, b = 2; ; a++, b++)`
@@ -527,6 +529,9 @@ fn binary_or_cast_needs_parentheses<'a>(
     else {
         return false;
     };
+    if is_angular_pipe(parent_operator, f) {
+        return false;
+    }
     let parent_precedence = parent_operator.precedence();
     let is_parent_bitwise = parent_precedence.is_bitwise() || parent_precedence.is_shift();
     let Some(operator) = operator else {
@@ -541,6 +546,37 @@ fn binary_or_cast_needs_parentheses<'a>(
         || (parent_precedence < precedence && operator.is_remainder() && parent_precedence.is_additive())
         // `(a * 3) >> 5`
         || is_parent_bitwise
+}
+
+/// For Prettier's `NGPipeExpression`. One that is an argument of a pipe is written in parentheses by that pipe.
+fn angular_pipe_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
+    match parent {
+        N::Program(_) | N::ArrayExpression(_) | N::AssignmentExpression(_) => false,
+        // AngularJS needs those that are there.
+        N::ObjectProperty(_) => e.is_parenthesized(),
+        N::CallExpression(call) => call.callee() == Some(e),
+        // Babel's `MemberExpression`, not its `OptionalMemberExpression`.
+        N::ComputedMemberExpression(member) => member.object() == Some(e) || is_optional_member_expression_of_babel(member),
+        _ => true,
+    }
+}
+
+/// Whether `angular-estree-parser` makes an `OptionalMemberExpression` or an `OptionalCallExpression` of `e`. A tagged
+/// template ends an optional chain there.
+fn is_optional_member_expression_of_babel(mut e: Expr<'_>) -> bool {
+    loop {
+        let head = match e.tag() {
+            ExprTag::Dot | ExprTag::Index | ExprTag::Call if e.optional() => return true,
+            ExprTag::Dot | ExprTag::Index => e.object(),
+            ExprTag::Call => e.callee(),
+            ExprTag::NonNull => e.expression(),
+            _ => None,
+        };
+        match head {
+            Some(head) if !head.is_parenthesized() => e = head,
+            _ => return false,
+        }
+    }
 }
 
 /// Prettier's `isPathInForStatementInitializer`: `in` would end the initializer of a `for`
@@ -604,6 +640,7 @@ fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
         | N::FormalParameter(_)
         | N::ConditionalExpression(_)
         | N::ExpressionStatement(_)
+        | N::Program(_)
         | N::JSXAttribute(_)
         | N::JSXElement(_)
         | N::JSXFragment(_)

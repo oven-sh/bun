@@ -4,7 +4,7 @@
 //! files: `tests/format` of a checkout of Prettier.
 
 use super::Args;
-use bun_format::FormatError;
+use bun_format::{FormatError, FormatOptions};
 use bun_format_conformance::{Bundle, Failure, Flags, Format};
 use std::path::Path;
 
@@ -34,8 +34,14 @@ pub(super) fn run(args: &Args, raw: &[String], run: fn(&Bundle<'_>, &Flags<'_>, 
         false => Bundle::parse(&bytes).expect("a bundle"),
     };
     let raw: Vec<&[u8]> = raw.iter().map(String::as_bytes).collect();
-    run(&bundle, &Flags::parse(&raw), &|path, text, options| {
-        super::format_text_with_cursor(&crate::text(path), text, options).map_err(|error| match error {
+    let flags = Flags::parse(&raw);
+    let embedded_html = flags.languages.is_some_and(|languages| bun_core::strings::split(languages, b",").any(|language| language == b"html"));
+    run(&bundle, &flags, &|path, text, options| {
+        let options = FormatOptions {
+            embedded_html,
+            ..options.clone()
+        };
+        super::format_text_with_cursor(&crate::text(path), text, &options).map_err(|error| match error {
             FormatError::SyntaxError => Failure::SyntaxError,
             _ => Failure::Other,
         })

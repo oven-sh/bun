@@ -185,7 +185,7 @@ fn should_inline_in<'a>(
     }
 
     // Babel, which reads JavaScript for Prettier, has no `ChainExpression`.
-    let is_javascript = f.file().is_javascript() || has_no_chain_expression_in_the_way(f);
+    let is_javascript = f.context().has_tree_of_babel() || has_no_chain_expression_in_the_way(f);
     let is_transparent = |node: AstNodes<'a>| is_javascript && matches!(node, AstNodes::ChainExpression(_));
 
     let mut first_non_member_parent = parent;

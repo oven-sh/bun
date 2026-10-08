@@ -447,6 +447,57 @@ impl<'a> Formatter<'a> {
         (root, buffers)
     }
 
+    /// Calls `write` with a formatter for `source`, another text, that goes on with this document: a script in HTML.
+    ///
+    /// It has the elements, the ids of groups and what is known about the groups that are open, so that a forced line
+    /// break in what it writes breaks them. Ranges of the pool stay what they are. The ranges of `source` that it writes
+    /// become ranges of the source of this formatter if `source` is a part of that, and of a copy of `source` if not.
+    pub(crate) fn write_embedded<'b, R>(
+        &mut self,
+        context: JsFormatContext<'b>,
+        source: &'b [u8],
+        write: impl FnOnce(&mut Formatter<'b>) -> R,
+    ) -> R {
+        let first = self.storage.pool.len();
+        let mut odd_blocks = OddBlocks::default();
+        odd_blocks.mark(source);
+        let mut inner = Formatter {
+            storage: std::mem::take(&mut self.storage),
+            tracker: std::mem::take(&mut self.tracker),
+            spare: std::mem::take(&mut self.spare),
+            cleaned: std::mem::take(&mut self.cleaned),
+            next_group_id: Cell::new(self.next_group_id.get()),
+            source,
+            odd_blocks,
+            context,
+        };
+        let result = write(&mut inner);
+        self.context.ran_out_of_stack |= inner.context.ran_out_of_stack;
+        self.next_group_id.set(inner.next_group_id.get());
+        (self.storage, self.tracker, self.spare, self.cleaned) = (inner.storage, inner.tracker, inner.spare, inner.cleaned);
+
+        let (own, part) = (self.source.as_ptr_range(), source.as_ptr_range());
+        let offset = (own.start <= part.start && part.end <= own.end).then(|| (part.start.addr() - own.start.addr()) as u32);
+        let Storage { pool, text: owned, .. } = &mut self.storage;
+        let mut copy = None;
+        for element in pool.get_mut(first..).unwrap_or_default() {
+            if let FormatElement::SourceText(text) = element {
+                match offset {
+                    Some(offset) => text.start += offset,
+                    None => {
+                        text.start += *copy.get_or_insert_with(|| {
+                            let start = owned.len() as u32;
+                            owned.extend_from_slice(source);
+                            start
+                        });
+                        *element = FormatElement::OwnedText(*text);
+                    }
+                }
+            }
+        }
+        result
+    }
+
     // ───────────────────────────── the context ─────────────────────────────
 
     #[inline]

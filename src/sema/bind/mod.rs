@@ -4,7 +4,7 @@
 
 mod binder;
 
-use crate::atom::{Atom, Interner, known};
+use crate::atom::{Atom, known};
 use crate::hir::*;
 use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec};
 use crate::util::{FxBuild, FxHashMap, FxHashSet};
@@ -1857,7 +1857,7 @@ pub struct BindOptions {
 pub fn bind<'s>(
     file: &File,
     options: BindOptions,
-    atoms: &Interner,
+    atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
     binder::Binder::run(file, options, atoms).into_arena(arena)

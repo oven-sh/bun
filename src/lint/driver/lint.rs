@@ -10,9 +10,11 @@ use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId};
+use bun_lint::js_plugin::Host;
+use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId};
+use bun_lint_graph::Graph;
 use bun_lint::rule::Kind;
-use bun_sema::atom::Interner;
+use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, bind};
 use bun_sema::session::Session;
 use std::borrow::Cow;
@@ -28,7 +30,14 @@ pub(crate) struct Context<'c> {
     pub(crate) keeps_text: bool,
     /// Whether the fixes and the suggestions of messages are read, if only to be counted.
     pub(crate) reads_fixes: bool,
+    /// Runs the rules that are written in JavaScript.
+    pub(crate) js_plugins: &'c Host<'c>,
+    /// Which file imports which, for the rules that are about several files.
+    pub(crate) modules: &'c Graph<'c>,
     pub(crate) timing: &'c Timing,
+    /// The names in all files that are linted without types. They are freed when the run ends: what
+    /// they take is bounded by the distinct names and strings of the project.
+    pub(crate) atoms: &'c dyn Intern,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -36,7 +45,7 @@ fn only_errors(_: &RuleId, severity: Severity) -> bool {
 }
 
 impl Context<'_> {
-    pub(crate) fn lint_options(&self) -> LintOptions<'static> {
+    pub(crate) fn lint_options(&self) -> LintOptions<'_> {
         LintOptions {
             allow_inline_config: self.options.inline_config,
             // It is part of the configuration: see `Loader::override_config`.
@@ -47,7 +56,8 @@ impl Context<'_> {
                 true => Some(&only_errors),
                 false => None,
             },
-            ..LintOptions::default()
+            js_plugins: Some(self.js_plugins),
+            again: None,
         }
     }
 
@@ -81,7 +91,13 @@ impl Context<'_> {
                 Kind::Suggestion => FixType::Suggestion,
                 Kind::Layout => FixType::Layout,
             },
-            Some(_) => return false,
+            Some(RuleId::Js(rule)) => match rule.kind {
+                Some(Kind::Problem) => FixType::Problem,
+                Some(Kind::Suggestion) => FixType::Suggestion,
+                Some(Kind::Layout) => FixType::Layout,
+                None => return false,
+            },
+            Some(RuleId::Unknown(_)) => return false,
         })
     }
 
@@ -109,18 +125,48 @@ impl Context<'_> {
 
     /// Parses `text` as the file at `path` and lints it, without types.
     pub(crate) fn verify(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> LintResult {
+        self.verify_or_again(path, text, config, None)
+    }
+
+    /// Lints a file again that `modules` names when all files are linted.
+    pub(crate) fn lint_again(&self, result: &mut FileResult) -> Result<(), Fatal> {
+        let Some(config) = result.config.clone() else {
+            return Ok(());
+        };
+        let path = paths::from_native(&result.path);
+        let text = match result.text.take() {
+            Some(text) => text,
+            None => fs::read(&path).map_err(|error| Fatal([b"Cannot read ", &path[..], b": ", &fs::describe(&error)].concat()))?,
+        };
+        let previous = LintResult {
+            messages: std::mem::take(&mut result.messages),
+            suppressed: std::mem::take(&mut result.suppressed),
+            ..LintResult::default()
+        };
+        let again = Again {
+            previous: &previous,
+            had_types: result.had_types,
+        };
+        let linted = self.verify_or_again(&path, &text, &config, Some(again));
+        let had_types = result.had_types;
+        *result = self.result(std::mem::take(&mut result.path), linted, text, result.is_fixed, &config);
+        result.had_types = had_types;
+        Ok(())
+    }
+
+    fn verify_or_again(&self, path: &[u8], text: &[u8], config: &ResolvedConfig, again: Option<Again>) -> LintResult {
         let started = self.timing.now();
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
+        let atoms = self.atoms;
         let arena = session.arena();
         let how = config.language.parse_options(path);
-        let (mut hir, _) = bun_js_parser::sema::summarize_as(
+        let (mut hir, _) = bun_js_parser::sema::summarize_in(
             how.dialect,
-            arena,
+            (arena, &session),
             path,
             how.script_kind,
             text,
-            &atoms,
+            atoms,
             how.experimental_decorators,
             how.every_file_is_a_module,
         );
@@ -130,7 +176,7 @@ impl Context<'_> {
             before_es2020: false,
             before_es2017: false,
         };
-        let bound = bind(&hir, bind_options, &atoms, arena);
+        let bound = bind(&hir, bind_options, atoms, arena);
         let parsed = self.timing.add(&self.timing.parse, started);
         if hir.ran_out_of_stack || bound.ran_out_of_stack {
             return LintResult {
@@ -138,8 +184,13 @@ impl Context<'_> {
                 ..LintResult::default()
             };
         }
-        let file = File::new(path, &hir, &bound, &atoms, &config.language, None);
-        let mut result = self.linter.lint(&file, config, &self.lint_options());
+        let file = File::new(path, &hir, &bound, atoms, &config.language, None);
+        file.set_modules(self.modules);
+        let options = LintOptions {
+            again,
+            ..self.lint_options()
+        };
+        let mut result = self.linter.lint(&file, config, &options);
         self.promote_suggestions(&mut result);
         self.timing.add(&self.timing.rules, parsed);
         result
@@ -186,8 +237,8 @@ impl Context<'_> {
             text: (is_fixed || (self.keeps_text && is_reported)).then_some(text),
             messages: result.messages,
             suppressed: result.suppressed,
-            suppressed_by_file: 0,
             thrown: result.thrown,
+            had_types: false,
             is_fixed,
             is_ignored: false,
             config: Some(Arc::clone(config)),

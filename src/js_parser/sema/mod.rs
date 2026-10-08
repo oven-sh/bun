@@ -461,9 +461,9 @@ pub fn summarize<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
-    summarize_as(
+    summarize_with_recovery(
         Default::default(),
-        arena,
+        (arena, atoms.session()),
         path,
         script_kind,
         text,
@@ -473,7 +473,100 @@ pub fn summarize<'s>(
     )
 }
 
-/// [`summarize`] for a tool that follows another parser than that of `tsc`.
+thread_local! {
+    /// What `bun_sema_parser` keeps from one file to the next.
+    static DIRECT: core::cell::RefCell<bun_sema_parser::Scratch> = Default::default();
+}
+
+/// How many files `summarize_as` has handed to `bun_sema_parser`, and how many of them that parser
+/// has refused, by reason.
+#[derive(Default)]
+pub struct DirectParserCounts {
+    pub parsed: core::sync::atomic::AtomicU64,
+    pub refused: [core::sync::atomic::AtomicU64; bun_sema_parser::Refusal::COUNT],
+}
+
+/// The reasons that `DirectParserCounts::refused` is indexed by.
+pub const REFUSALS: [bun_sema_parser::Refusal; bun_sema_parser::Refusal::COUNT] =
+    bun_sema_parser::Refusal::ALL;
+
+pub static DIRECT_PARSER_COUNTS: DirectParserCounts = DirectParserCounts {
+    parsed: core::sync::atomic::AtomicU64::new(0),
+    refused: [const { core::sync::atomic::AtomicU64::new(0) }; bun_sema_parser::Refusal::COUNT],
+};
+
+/// `summarize_as` by `bun_sema_parser`. `None`: that parser refuses the text.
+fn summarize_directly<'s>(
+    dialect: bun_sema::resolve::Dialect,
+    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: &dyn bun_sema::atom::Intern,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+) -> Option<bun_sema::hir::File<'s>> {
+    use bun_sema::resolve::ScriptKind;
+    use core::sync::atomic::Ordering::Relaxed;
+    let by_name = script_kind.is_none();
+    let script_kind = script_kind.or_else(|| ScriptKind::from_file_name(path));
+    let is_js = script_kind.is_some_and(ScriptKind::is_javascript);
+    let is_json = by_name
+        && (path.len().checked_sub(b".json".len()))
+            .is_some_and(|dot| path[dot..].eq_ignore_ascii_case(b".json"));
+    let mut options = bun_sema_parser::Options {
+        is_declaration_file: by_name && bun_sema::resolve::is_declaration_file_name(path),
+        is_jsx: is_js || script_kind == Some(ScriptKind::Tsx),
+        is_javascript: is_js,
+        await_is_a_name: false,
+    };
+    let parsed = DIRECT.with_borrow_mut(|scratch| {
+        if is_json {
+            return Err(bun_sema_parser::Refusal::Json);
+        }
+        if is_js {
+            return Err(bun_sema_parser::Refusal::JavaScript);
+        }
+        let first = bun_sema_parser::parse(text, options, atoms, scratch).map_err(|it| it.why)?;
+        // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
+        // context at its top level.
+        let parse_again = first.has_top_level_await
+            && !every_file_is_a_module
+            && !first.file.has_module_syntax
+            && (dialect.script
+                || ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
+                    .iter()
+                    .any(|e| path.ends_with(e)))
+            && !(first.file.exprs.iter())
+                .any(|e| matches!(e.kind, bun_sema::hir::ExprKind::ImportMeta));
+        if !parse_again {
+            return Ok(first.file);
+        }
+        scratch.recycle(first.file);
+        options.await_is_a_name = true;
+        let second = bun_sema_parser::parse(text, options, atoms, scratch);
+        second.map(|it| it.file).map_err(|it| it.why)
+    });
+    let mut file = match parsed {
+        Ok(file) => file,
+        Err(why) => {
+            DIRECT_PARSER_COUNTS.refused[why as usize].fetch_add(1, Relaxed);
+            return None;
+        }
+    };
+    DIRECT_PARSER_COUNTS.parsed.fetch_add(1, Relaxed);
+    file.legacy_decorators = experimental_decorators;
+    let (mut file, emptied) = file.into_arena(arena, session);
+    // A very large file would leave its capacity to every later file.
+    if text.len() < 4 << 20 {
+        DIRECT.with_borrow_mut(|scratch| scratch.recycle(emptied));
+    }
+    file.finish_nodes();
+    Some(file)
+}
+
+/// [`summarize`] for a tool that follows another parser than that of `tsc`, and that reads no types
+/// from JSDoc comments.
 pub fn summarize_as<'s>(
     dialect: bun_sema::resolve::Dialect,
     arena: &'s bun_alloc::Arena,
@@ -481,6 +574,66 @@ pub fn summarize_as<'s>(
     script_kind: Option<bun_sema::resolve::ScriptKind>,
     text: &[u8],
     atoms: &bun_sema::atom::Interner<'s>,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+) -> (bun_sema::hir::File<'s>, core::time::Duration) {
+    summarize_in(
+        dialect,
+        (arena, atoms.session()),
+        path,
+        script_kind,
+        text,
+        atoms,
+        experimental_decorators,
+        every_file_is_a_module,
+    )
+}
+
+/// [`summarize_as`] with names that outlive the file: `atoms` can be of another session than
+/// `session`, which `arena` is of and which is dropped with the file.
+pub fn summarize_in<'s>(
+    dialect: bun_sema::resolve::Dialect,
+    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: &dyn bun_sema::atom::Intern,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+) -> (bun_sema::hir::File<'s>, core::time::Duration) {
+    let directly = summarize_directly(
+        dialect,
+        (arena, session),
+        path,
+        script_kind,
+        text,
+        atoms,
+        experimental_decorators,
+        every_file_is_a_module,
+    );
+    if let Some(file) = directly {
+        return (file, core::time::Duration::ZERO);
+    }
+    summarize_with_recovery(
+        dialect,
+        (arena, session),
+        path,
+        script_kind,
+        text,
+        atoms,
+        experimental_decorators,
+        every_file_is_a_module,
+    )
+}
+
+/// [`summarize_as`] by Bun's parser, which recovers from errors as TypeScript does.
+pub fn summarize_with_recovery<'s>(
+    dialect: bun_sema::resolve::Dialect,
+    (arena, session): (&'s bun_alloc::Arena, &'s bun_sema::session::Session),
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: &dyn bun_sema::atom::Intern,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
@@ -591,7 +744,7 @@ pub fn summarize_as<'s>(
         file.has_module_syntax = true;
     }
     // A very large file would leave its capacity to every later file.
-    let mut file = builder::into_arena(file, text.len() < 4 << 20, arena, atoms.session());
+    let mut file = builder::into_arena(file, text.len() < 4 << 20, arena, session);
     file.finish_nodes();
     if is_json {
         bun_sema::json::validate_json(&mut file, text);

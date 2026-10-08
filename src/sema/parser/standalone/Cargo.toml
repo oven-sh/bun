@@ -1,0 +1,20 @@
+[package]
+name = "bun_sema_parser_standalone"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bun-hir"
+path = "main.rs"
+
+[dependencies]
+bun_sema_parser.workspace = true
+bun_sema.workspace = true
+bun_sema_standalone = { path = "../../standalone" }
+bun_js_parser.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bstr.workspace = true
+
+[lints]
+workspace = true

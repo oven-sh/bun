@@ -11,8 +11,9 @@ use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::Channel;
+use bun_lint::js_plugin::{Channel, Host};
 use bun_lint::linter::{FileConfig, Linter, Registry};
+use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -410,7 +411,18 @@ impl Run<'_> {
             return self.fail(&refusal);
         }
         let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES]));
-        let loader = Loader::new(&linter, options, environment);
+        let pool = Pool::new(options.threads);
+        let script = Script {
+            source: bun_lint::js_plugin::BOOTSTRAP,
+            arguments: &[],
+            cwd: &environment.cwd,
+        };
+        let spawn_worker = || (environment.spawn_worker)(&script);
+        // No process is started unless a configuration has a plugin in JavaScript.
+        let js_plugins = Host::new(&spawn_worker, &environment.cwd, pool.threads);
+        let store = bun_lint_graph::Store::new(&environment.cwd);
+        let modules = bun_lint_graph::Graph::new(&store);
+        let loader = Loader::new(&linter, options, environment, &js_plugins);
         // One that cannot be read is reported when a file is linted with it.
         let of_cwd = loader.for_directory(&environment.cwd).ok();
         let format = match self.format(of_cwd.as_ref().is_some_and(|it| it.flavor == Flavor::Oxlint)) {
@@ -426,12 +438,17 @@ impl Run<'_> {
             is_on: options.timing,
             ..Timing::default()
         };
+        let names = bun_sema::session::Session::new();
+        let atoms = bun_sema::atom::Interner::new_in(&names);
         let context = Context {
+            atoms: &atoms,
             linter: &linter,
             options,
             cwd: &environment.cwd,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
+            js_plugins: &js_plugins,
+            modules: &modules,
             timing: &timing,
         };
         if let Some(file) = &options.print_config {
@@ -447,7 +464,6 @@ impl Run<'_> {
             self.out.stdout.push(b'\n');
             return self.out;
         }
-        let pool = Pool::new(options.threads);
         let mut phases = Phases::default();
         let linted = match options.stdin {
             true => match fs::read_stdin() {
@@ -477,6 +493,27 @@ impl Run<'_> {
             return self.out;
         }
 
+        // The rules that are about several files look at those that they have something to say about.
+        let started = Instant::now();
+        let again: FxHashSet<Vec<u8>> = modules.complete(&|count, work| pool.for_each(count, 1, work)).into_iter().collect();
+        if !again.is_empty() {
+            let mut at: Vec<usize> = (0..results.len()).filter(|&at| again.contains(&paths::from_native(&results[at].path))).collect();
+            at.reverse();
+            let mut picked: Vec<Guarded<Option<FileResult>>> = at.into_iter().map(|at| Guarded::new(Some(results.swap_remove(at)))).collect();
+            let mut failure = Guarded::new(None);
+            pool.for_each(picked.len(), 1, &|index| {
+                if let Some(result) = picked[index].lock().as_mut()
+                    && let Err(error) = context.lint_again(result)
+                {
+                    failure.lock().get_or_insert(error);
+                }
+            });
+            if let Some(Fatal(error)) = failure.get_mut().take() {
+                return self.fail(&error);
+            }
+            results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
+        }
+        phases.linting += started.elapsed().as_secs_f64();
         if let Some(thrown) = results.iter().find_map(|it| it.thrown.as_ref()) {
             return self.fail(thrown);
         }
@@ -644,6 +681,16 @@ impl Run<'_> {
             cpu(&timing.parse),
             cpu(&timing.rules),
         );
+        // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.
+        let counts = &bun_js_parser::sema::DIRECT_PARSER_COUNTS;
+        let _ = write!(self.out.stderr, "  parsed directly: {} files", counts.parsed.load(Ordering::Relaxed));
+        for (why, count) in bun_js_parser::sema::REFUSALS.iter().zip(&counts.refused) {
+            match count.load(Ordering::Relaxed) {
+                0 => {}
+                count => _ = write!(self.out.stderr, ", refused ({why:?}): {count}"),
+            }
+        }
+        self.out.stderr.push(b'\n');
     }
 }
 

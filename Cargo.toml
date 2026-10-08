@@ -23,6 +23,8 @@ members = [
   "src/sema",
   "src/sema/baselines",
   "src/sema/driver",
+  "src/sema/parser",
+  "src/sema/parser/standalone",
   "src/sema/standalone",
   "src/lint",
   "src/lint/eslint",
@@ -380,6 +382,7 @@ bun_safety = { path = "src/safety" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }
+bun_sema_parser = { path = "src/sema/parser" }
 bun_lint = { path = "src/lint" }
 bun_lint_eslint = { path = "src/lint/eslint" }
 bun_lint_typescript = { path = "src/lint/typescript" }

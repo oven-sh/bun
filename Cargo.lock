@@ -832,6 +832,7 @@ dependencies = [
  "bun_ptr",
  "bun_react_compiler",
  "bun_sema",
+ "bun_sema_parser",
  "bun_url",
  "bun_wyhash",
  "bytemuck",
@@ -1512,6 +1513,28 @@ dependencies = [
  "bun_sema",
  "bun_sys",
  "bun_threading",
+]
+
+[[package]]
+name = "bun_sema_parser"
+version = "0.0.0"
+dependencies = [
+ "bun_ast",
+ "bun_core",
+ "bun_sema",
+]
+
+[[package]]
+name = "bun_sema_parser_standalone"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_alloc",
+ "bun_core",
+ "bun_js_parser",
+ "bun_sema",
+ "bun_sema_parser",
+ "bun_sema_standalone",
 ]
 
 [[package]]

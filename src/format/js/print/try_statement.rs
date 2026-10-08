@@ -3,6 +3,9 @@ use crate::js::format::{
     FormatTypeAnnotation, format_node_without_comments, write_declaration,
     write_trailing_comments_of,
 };
+use crate::js::trivia::{
+    comments_stay_between_head_and_body, write_comments_between_blocks, write_head_body_separator,
+};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
 use crate::write;
@@ -15,8 +18,14 @@ fn has_comment_with_line_break(comments: &[Comment]) -> bool {
         .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
 }
 
-/// A block after `try`, `catch (e)` or `finally`. The comments after it are left to the caller.
+/// A space and a block after `try`, `catch (e)` or `finally`. The comments after it are left to the
+/// caller.
 fn write_block<'a>(block: Stmt<'a>, f: &mut Formatter<'a>) {
+    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+        write_head_body_separator(block.span().start, f);
+        return write!(f, FormatNodeWithoutTrailingComments(&block));
+    }
+    write!(f, space());
     match !f.is_quiet()
         && has_comment_with_line_break(f.comments().comments_before(block.span().start))
     {
@@ -34,7 +43,7 @@ pub(crate) fn write_try_statement<'a>(
     finalizer: Option<Stmt<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write!(f, ["try", space()]);
+    write!(f, "try");
     write_block(block, f);
 
     if let Some(handler) = handler {
@@ -49,7 +58,13 @@ pub(crate) fn write_try_statement<'a>(
     }
     if let Some(finalizer) = finalizer {
         // `} /* comment */ finally {`
-        if !f.is_quiet() {
+        if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+            let previous = handler.unwrap_or(block).span();
+            write_comments_between_blocks(
+                f.comments().comments_before_character(previous.end, b'f'),
+                f,
+            );
+        } else if !f.is_quiet() {
             let comments = f.comments().comments_before(finalizer.span().start);
             let mut position = handler.unwrap_or(block).span().end;
             let count = comments
@@ -67,7 +82,7 @@ pub(crate) fn write_try_statement<'a>(
                 write!(f, FormatTrailingComments::Comments(comments));
             }
         }
-        write!(f, [space(), "finally", space()]);
+        write!(f, [space(), "finally"]);
         write_block(finalizer, f);
     }
 }
@@ -87,7 +102,11 @@ fn write_catch_clause<'a>(
     // A comment with a line break next to it goes to the start of the block, where
     // `write_block_statement` takes it from the cache. Any other stays before `catch`.
     let leading_comments = f.comments().comments_before(node.span().start);
-    if has_comment_with_line_break(leading_comments) {
+    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+        if write_comments_between_blocks(leading_comments, f) {
+            write!(f, space());
+        }
+    } else if has_comment_with_line_break(leading_comments) {
         let is_empty =
             matches!(body.kind(), StmtKind::Block(statements) if is_empty_block(statements));
         let format_comments = format_with(|f| match is_empty {
@@ -110,15 +129,15 @@ fn write_catch_clause<'a>(
         );
     }
 
-    write!(f, ["catch", space()]);
+    write!(f, "catch");
     if let Some(param) = param {
+        write!(f, space());
         format_node_without_comments(
             param.span(),
             || node,
             f,
             |f| write_catch_parameter(param, body, f),
         );
-        write!(f, space());
     }
     write_block(body, f);
 }
@@ -141,12 +160,13 @@ fn write_catch_parameter<'a>(param: VarDecl<'a>, body: Stmt<'a>, f: &mut Formatt
         .comments()
         .comments_before_character(param.span().end, b')')
         .len()
-        .max(
-            before_body
+        .max(match comments_stay_between_head_and_body(f) {
+            true => 0,
+            false => before_body
                 .iter()
                 .rposition(|it| it.preceded_by_newline() || it.followed_by_newline())
                 .map_or(0, |at| at + 1),
-        );
+        });
     let trailing_comments = before_body.get(..count).unwrap_or_default();
     let trailing_comment_with_break = trailing_comments
         .iter()
@@ -163,6 +183,8 @@ fn write_catch_parameter<'a>(param: VarDecl<'a>, body: Stmt<'a>, f: &mut Formatt
         true => write!(f, soft_block_indent(&content)),
         false => write!(f, content),
     }
-    write_trailing_comments_of(AstNodes::CatchParameter(param), f);
+    if !comments_stay_between_head_and_body(f) {
+        write_trailing_comments_of(AstNodes::CatchParameter(param), f);
+    }
     write!(f, ")");
 }

@@ -2,6 +2,7 @@ use super::function::{FormatContentWithCacheMode, FormatFunctionBody};
 use super::parameters::{FormatFormalParameters, comments_between, has_only_simple_parameters};
 use super::type_parameters::type_parameters;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, write_expression};
+use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -157,6 +158,15 @@ fn write_arrow<'a>(
                 ]
             );
         } else {
+            // See `comments_stay_between_head_and_body`.
+            if !f.is_quiet()
+                && comments_stay_between_head_and_body(f)
+                && matches!(tail.body(), FnBody::Block(_))
+                && let Some(arrow_token) = tail.arrow_span()
+            {
+                let comments = f.comments().end_of_line_comments_after(arrow_token.end);
+                write!(f, FormatTrailingComments::Comments(comments));
+            }
             write!(
                 f,
                 [

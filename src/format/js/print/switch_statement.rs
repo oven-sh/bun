@@ -1,5 +1,8 @@
 use super::program::{FormatStatements, is_next_line_empty};
 use crate::js::format::write_declaration;
+use crate::js::trivia::{comments_stay_between_head_and_body, write_trailing_comments_before};
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::statement_body::FormatStatementBody;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -60,15 +63,33 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     {
         return write!(f, FormatSuppressedNode(case.span()));
     }
+    let consequent = case.body();
+    let mut statements = consequent
+        .iter()
+        .filter(|it| !matches!(it.kind(), StmtKind::Empty));
+    if !f.is_quiet()
+        && comments_stay_between_head_and_body(f)
+        && let (Some(block), None) = (statements.clone().next(), statements.clone().nth(1))
+        && matches!(block.kind(), StmtKind::Block(_))
+    {
+        match case.test() {
+            Some(test) => {
+                write!(
+                    f,
+                    ["case", space(), FormatNodeWithoutTrailingComments(&test)]
+                );
+                let follows_line_comment = write_trailing_comments_before(test.span().end, b':', f);
+                write!(f, [":", follows_line_comment.then_some(hard_line_break())]);
+            }
+            None => write!(f, ["default", ":"]),
+        }
+        return write!(f, FormatStatementBody::new(block));
+    }
     match case.test() {
         Some(test) => write!(f, ["case", space(), test, ":"]),
         None => write!(f, ["default", ":"]),
     }
 
-    let consequent = case.body();
-    let mut statements = consequent
-        .iter()
-        .filter(|it| !matches!(it.kind(), StmtKind::Empty));
     let Some(first_statement) = statements.next() else {
         // `default /* comment */:`
         if case.test().is_none() && f.comments().has_comment_before(case.span().end) {

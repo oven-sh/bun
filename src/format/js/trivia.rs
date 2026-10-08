@@ -57,6 +57,29 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
     }
 }
 
+/// `a ⏎ /* comment */; ⏎ b`: the `;`, which is that of `a`, is written before the comment. For oxfmt
+/// the comment stays on a line of its own, so the line breaks after it are counted from behind the `;`.
+/// For Prettier it is on the line of `b`.
+pub(crate) fn comment_before_semicolon_keeps_its_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// Where `comment`, which leads something, ends. See [`comment_before_semicolon_keeps_its_line`].
+fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) -> u32 {
+    let end = comment.span.end;
+    if !comment.preceded_by_newline() || !comment_before_semicolon_keeps_its_line(f) {
+        return end;
+    }
+    let rest = f.source_text().as_bytes().get(end as usize..);
+    let blanks = (rest.unwrap_or_default().iter())
+        .take_while(|b| matches!(b, b' ' | b'\t'))
+        .count() as u32;
+    match f.source_text().byte_at(end + blanks) {
+        Some(b';') => end + blanks + 1,
+        _ => end,
+    }
+}
+
 /// `node_start`: where the node starts that they lead.
 #[cold]
 fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut Formatter<'a>) {
@@ -72,7 +95,9 @@ fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut 
         }
         write!(f, comment);
 
-        let lines_after = f.source_text().lines_after(comment.span.end);
+        let lines_after = f
+            .source_text()
+            .lines_after(end_with_semicolon_of_statement_before(comment, f));
         match comment.kind {
             CommentKind::SingleLineBlock | CommentKind::MultiLineBlock => match lines_after {
                 0 => write!(f, space()),

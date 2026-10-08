@@ -398,6 +398,15 @@ pub(crate) fn write_with_statement<'a>(
 #[derive(Copy, Clone)]
 struct FormatForHead<'a>(Stmt<'a>);
 
+impl Spanned for FormatForHead<'_> {
+    fn span(&self) -> Span {
+        match self.0.kind() {
+            StmtKind::Expr(expression) => expression.span(),
+            _ => self.0.span(),
+        }
+    }
+}
+
 impl<'a> Format<'a> for FormatForHead<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         match self.0.kind() {
@@ -407,8 +416,59 @@ impl<'a> Format<'a> for FormatForHead<'a> {
     }
 }
 
+/// See `comments_stay_between_head_and_body`: `node`, which is before one of the two `;` in the head of
+/// a `for`, or nothing, the comments before the `;`, the `;` and the comments behind it on its line.
+/// `cursor`: where this part of the head starts. Returns where the next one starts.
+fn write_for_head_slot<'a, T: Format<'a> + Spanned>(
+    node: Option<&T>,
+    cursor: u32,
+    f: &mut Formatter<'a>,
+) -> u32 {
+    let anchor = node.map_or(cursor, |node| node.span().end);
+    if let Some(node) = node {
+        write!(f, FormatNodeWithoutTrailingComments(node));
+    }
+    // A line comment breaks the group of the head, so a line break follows the `;`.
+    write_trailing_comments_before(anchor, b';', f);
+    write!(f, ";");
+    let cursor = f.comments().position_after_character(anchor, b';');
+    FormatTrailingComments::Comments(f.comments().end_of_line_comments_after(cursor)).fmt(f);
+    cursor
+}
+
+/// See `comments_stay_between_head_and_body`: what is in the parentheses of a `for` that has comments
+/// before its body. Each stays on its side of the two `;` and of the `)`.
+fn write_for_head_with_comments_in_place<'a>(
+    statement: Stmt<'a>,
+    (init, test, update): (Option<Stmt<'a>>, Option<Expr<'a>>, Option<Expr<'a>>),
+    body: Stmt<'a>,
+    f: &mut Formatter<'a>,
+) {
+    let is_empty = init.is_none() && test.is_none() && update.is_none();
+    let start = statement.span().start;
+    let mut cursor = f.comments().position_after_character(start, b'(');
+    cursor = write_for_head_slot(init.map(FormatForHead).as_ref(), cursor, f);
+    if !is_empty {
+        write!(f, soft_line_break_or_space());
+    }
+    cursor = write_for_head_slot(test.as_ref(), cursor, f);
+    let Some(update) = update else {
+        write_trailing_comments_before(cursor, b')', f);
+        return;
+    };
+    write!(
+        f,
+        [
+            soft_line_break_or_space(),
+            FormatNodeWithoutTrailingComments(&update)
+        ]
+    );
+    let comments = f.comments().comments_before(Head::Before(body).end(f));
+    write!(f, FormatTrailingComments::Comments(comments));
+}
+
 pub(crate) fn write_for_statement<'a>(
-    _statement: Stmt<'a>,
+    statement: Stmt<'a>,
     init: Option<Stmt<'a>>,
     test: Option<Expr<'a>>,
     update: Option<Expr<'a>>,
@@ -416,6 +476,23 @@ pub(crate) fn write_for_statement<'a>(
     f: &mut Formatter<'a>,
 ) {
     let format_body = FormatStatementBody::new(body);
+    if !f.is_quiet()
+        && comments_stay_between_head_and_body(f)
+        && f.comments().has_comment_before(body.span().start)
+    {
+        let head = format_with(|f| {
+            write_for_head_with_comments_in_place(statement, (init, test, update), body, f);
+        });
+        return write!(
+            f,
+            group(&format_args!(
+                "for (",
+                group(&soft_block_indent(&head)),
+                ")",
+                format_body
+            ))
+        );
+    }
     if init.is_none() && test.is_none() && update.is_none() {
         return write!(f, group(&format_args!("for", space(), "(;;)", format_body)));
     }
@@ -598,10 +675,17 @@ pub(crate) fn write_for_in_statement<'a>(
             space(),
             "(",
             FormatInHead(Head::Before(body), &head),
+            boundary_before_parenthesis(f),
             ")",
             FormatStatementBody::new(body)
         ))
     );
+}
+
+/// See `comments_stay_between_head_and_body`: a line comment in the head of a `for (a in b)`, which does
+/// not break, is written before the `)`. In Prettier it comes out behind the `{`.
+fn boundary_before_parenthesis(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+    (!f.is_quiet() && comments_stay_between_head_and_body(f)).then_some(line_suffix_boundary())
 }
 
 pub(crate) fn write_for_of_statement<'a>(
@@ -625,6 +709,7 @@ pub(crate) fn write_for_of_statement<'a>(
             space(),
             "(",
             FormatInHead(Head::Before(body), &head),
+            boundary_before_parenthesis(f),
             ")",
             FormatStatementBody::new(body)
         ))

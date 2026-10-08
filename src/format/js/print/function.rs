@@ -7,6 +7,7 @@ use super::type_parameters::type_parameters;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression,
 };
+use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::end_of_line_comments;
@@ -232,7 +233,10 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
             };
         }
         let write = |f: &mut Formatter<'a>| {
-            write!(f, [FormatCommentsBeforeBody(func), space()]);
+            match comments_stay_between_head_and_body(f) && !func.is_arrow() {
+                true => write_head_body_separator(self.span().start, f),
+                false => write!(f, [FormatCommentsBeforeBody(func), space()]),
+            }
             if is_empty_block(statements) {
                 write!(
                     f,

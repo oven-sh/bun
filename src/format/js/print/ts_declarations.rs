@@ -10,6 +10,7 @@ use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::{union_breaks_one_per_line, write_ts_union_type_in};
 use crate::cursor::around_node;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
+use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
 use crate::js::utils::assignment_like::{
     AssignmentLikeLayout, operator_line_run, write_comments_before_operator,
 };
@@ -142,7 +143,9 @@ pub(crate) fn write_ts_interface_declaration<'a>(
         }
 
         // The comments on the line of the `{` stay before it. All others are in the body.
-        if !f.is_quiet() {
+        if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+            write_head_body_separator(body_span.start, f);
+        } else if !f.is_quiet() {
             let comments = f.comments().comments_before(body_span.start);
             if !comments
                 .iter()
@@ -172,6 +175,12 @@ pub(crate) fn write_ts_interface_declaration<'a>(
     write!(f, group(&content));
 }
 
+/// `type A = B /* comment */;` is `type A = B; /* comment */` for oxfmt, as after any other statement.
+/// Prettier does that only if the type is exported.
+fn comments_before_semicolon_of_type_alias_go_behind_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
 /// is a type.
 pub(crate) fn write_ts_type_alias_declaration<'a>(
@@ -187,10 +196,11 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
 
     // The comments before the `;` of an export are behind it: see `Comments::without_semicolon`.
     let is_exported = !f.is_quiet()
-        && matches!(
-            statement.as_ast_nodes(),
-            AstNodes::ExportNamedDeclaration(_)
-        );
+        && (comments_before_semicolon_of_type_alias_go_behind_it(f)
+            || matches!(
+                statement.as_ast_nodes(),
+                AstNodes::ExportNamedDeclaration(_)
+            ));
     let view_limit = is_exported.then(|| {
         let end = f.comments().without_semicolon(statement.span()).end;
         f.comments_mut().limit_comments_up_to(end)
@@ -430,11 +440,22 @@ pub(crate) fn write_ts_enum_declaration<'a>(
             is_const.then_some("const "),
             "enum",
             space(),
-            identifier(declaration.name(), node),
-            space(),
-            format_leading_comments(declaration.body_span())
         ]
     );
+    let name = identifier(declaration.name(), node);
+    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+        write!(f, FormatNodeWithoutTrailingComments(&name));
+        write_head_body_separator(declaration.body_span().start, f);
+    } else {
+        write!(
+            f,
+            [
+                name,
+                space(),
+                format_leading_comments(declaration.body_span())
+            ]
+        );
+    }
     if f.file().is_flow() {
         super::flow::write_explicit_type_of_enum(declaration, f);
     }
@@ -562,17 +583,22 @@ pub(crate) fn write_ts_module_declaration<'a>(
     }
     if let Some(view_limit) = view_limit {
         f.comments_mut().restore_view_limit(view_limit);
-        let following = body_span.map_or(0, |it| it.start);
-        write!(
-            f,
-            format_trailing_comments(statement.span(), innermost.name_span(), following)
-        );
+        if !(body_span.is_some() && comments_stay_between_head_and_body(f)) {
+            let following = body_span.map_or(0, |it| it.start);
+            write!(
+                f,
+                format_trailing_comments(statement.span(), innermost.name_span(), following)
+            );
+        }
     }
 
     let Some(span) = body_span else {
         return write!(f, OptionalSemicolon);
     };
-    write!(f, space());
+    match !f.is_quiet() && comments_stay_between_head_and_body(f) {
+        true => write_head_body_separator(span.start, f),
+        false => write!(f, space()),
+    }
     format_node(
         span,
         || node,

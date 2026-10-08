@@ -13,6 +13,7 @@ use crate::js::format::{
     terminator_of_what_is_ignored_follows_semi, write_trailing_comments_of,
 };
 use crate::js::parentheses::expression::needs_parentheses;
+use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
@@ -501,15 +502,19 @@ impl<'a> Format<'a> for FormatClass<'a> {
 
         // Prettier's `handleClassComments`: a comment before the `{` that starts or ends its line is
         // moved into the body.
-        let comments = f.comments().comments_before(body_span.start);
-        let count = comments
-            .iter()
-            .take_while(|it| !it.preceded_by_newline() && !it.followed_by_newline())
-            .count();
-        write!(
-            f,
-            FormatLeadingComments::Comments(comments.get(..count).unwrap_or_default())
-        );
+        if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+            write_head_body_separator(body_span.start, f);
+        } else {
+            let comments = f.comments().comments_before(body_span.start);
+            let count = comments
+                .iter()
+                .take_while(|it| !it.preceded_by_newline() && !it.followed_by_newline())
+                .count();
+            write!(
+                f,
+                FormatLeadingComments::Comments(comments.get(..count).unwrap_or_default())
+            );
+        }
 
         if class.members().is_empty() {
             write!(

@@ -8,6 +8,7 @@ use super::statements::{
 use crate::ir::element::TextWidth;
 use crate::js::format::FormatStatementBeforeAnother;
 use crate::js::sort_imports::ImportRun;
+use crate::js::trivia::comment_before_semicolon_keeps_its_line;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -156,7 +157,18 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 false => write_more_trailing_comments(previous_statement, comments, statement, f),
             };
             imports.before_separator(statement, placements.is_empty(), f);
-            match is_next_line_empty_after(previous_statement, f) {
+            // `a ⏎ /* comment */; ⏎ b`
+            let is_next_line_empty = match comments.first() {
+                Some(first)
+                    if first.preceded_by_newline()
+                        && first.span.start < previous_statement.span().end
+                        && comment_before_semicolon_keeps_its_line(f) =>
+                {
+                    f.lines_before(first.span) > 1
+                }
+                _ => is_next_line_empty_after(previous_statement, f),
+            };
+            match is_next_line_empty {
                 true => write!(f, empty_line()),
                 false => write!(f, hard_line_break()),
             }

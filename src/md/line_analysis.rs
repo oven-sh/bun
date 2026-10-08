@@ -246,11 +246,10 @@ impl Parser<'_> {
             return 3;
         }
 
-        // Type 4: <! followed by uppercase letter (declaration)
+        // Type 4: <! followed by a letter (declaration)
         if ch(self.text, off + 1) == b'!'
             && off + 2 < self.size
-            && ch(self.text, off + 2) >= b'A'
-            && ch(self.text, off + 2) <= b'Z'
+            && helpers::is_alpha(ch(self.text, off + 2))
         {
             return 4;
         }

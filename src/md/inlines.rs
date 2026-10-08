@@ -1028,12 +1028,8 @@ impl Parser<'_> {
             return None;
         }
 
-        // HTML declaration: <! followed by uppercase letter, ended by >
-        if c == b'!'
-            && pos + 1 < content.len()
-            && content[pos + 1] >= b'A'
-            && content[pos + 1] <= b'Z'
-        {
+        // HTML declaration: <! followed by a letter, ended by >
+        if c == b'!' && pos + 1 < content.len() && helpers::is_alpha(content[pos + 1]) {
             pos += 2;
             if self.html_scan_known_unterminated(content, HtmlScanKind::Declaration, pos) {
                 return None;

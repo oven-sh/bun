@@ -1821,3 +1821,9 @@ describe("closing code fences and containers", () => {
     );
   });
 });
+
+describe("HTML declarations", () => {
+  test("the letter behind <! can be a small one", () => {
+    expect(Markdown.html("<!a>\nb\n\nc <!d> e\n")).toBe("<!a>\n<p>b</p>\n<p>c <!d> e</p>\n");
+  });
+});

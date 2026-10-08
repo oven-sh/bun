@@ -57,22 +57,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("misc/babel-redirect-to-babel-flow", FLOW),
     ("typescript/definite/definite.ts", BABEL_TS),
     ("typescript/definite/without-annotation.ts", BABEL_TS),
-    ("js/embeded", EMBEDDED),
-    ("js/multiparser-comments", EMBEDDED),
-    ("js/multiparser-html", EMBEDDED),
-    ("typescript/angular-component-examples", EMBEDDED),
-    ("typescript/decorators-ts/angular.ts", EMBEDDED),
-    ("typescript/as/as-const-embedded.ts", EMBEDDED),
-    ("js/template-literals/expression-break.js", EMBEDDED),
-    ("misc/embedded-language-formatting/in-html", EMBEDDED),
-    ("misc/embedded-language-formatting/in-javascript", EMBEDDED),
-    ("misc/embedded-language-formatting/in-vue", EMBEDDED),
-    ("js/last-argument-expansion/embed.js", EMBEDDED),
     ("misc/plugins/embed", EMBEDDED),
-    ("markdown/code/angular/angular-html.md", EMBEDDED),
-    ("markdown/code/angular/angular-ts.md", EMBEDDED),
-    ("markdown/code/lwc/lwc.md", EMBEDDED),
-    ("markdown/cursor/17227.md", EMBEDDED),
     ("misc/front-matter/with-plugins", PLUGIN),
     ("js/_errors_/html-like-comments.js", HTML_LIKE_COMMENT),
     ("jsx/jsx-test-suite/rejected-snippets/0.js", HTML_LIKE_COMMENT),
@@ -259,7 +244,8 @@ fn parse_snapshots(text: &[u8]) -> Vec<Case> {
                 continue;
             };
             if name == b"parsers" {
-                let names = strings::split(trim_bytes(value, b"[]"), b", ");
+                // `[]`: it is left to the name of the file.
+                let names = strings::split(trim_bytes(value, b"[]"), b", ").filter(|it| !it.is_empty());
                 case.parsers = names.map(|it| trim_bytes(it, b"\"").to_vec()).collect();
             } else {
                 let value = value.strip_suffix(b" (default)").unwrap_or(value);
@@ -399,6 +385,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
             // `js/arrows`, whatever is below it.
             let group = strings::split(relative, b"/").take(2).collect::<Vec<_>>().join(&b"/"[..]);
 
+            let filenames = bundle.read(&[relative, b"/snippet-filenames.txt"].concat()).unwrap_or_default();
+
             for case in parse_snapshots(bundle.read(snapshot_file).unwrap_or_default()) {
                 let id = [relative, b"/", &case.name].concat();
                 if !flags.wants(&id) {
@@ -417,7 +405,19 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 };
                 let named_parser = first_parser.filter(is_named).or(rejecting_parser);
                 let ours = named_parser.unwrap_or_else(|| parser_of(&case.name, language));
-                if !case.parsers.is_empty() && named_parser.is_none() && !case.parsers.iter().any(|it| is_javascript_parser(it)) {
+                // Of a test that names no parser.
+                let inferred_parser: Option<&[u8]> = match strings::rsplit_once_char(&case.name, b'.').map_or(&b""[..], |it| it.1) {
+                    b"html" | b"htm" => Some(b"html"),
+                    b"vue" => Some(b"vue"),
+                    b"mjml" => Some(b"mjml"),
+                    b"hbs" | b"handlebars" => Some(b"glimmer"),
+                    _ => None,
+                };
+                let is_other_language = match case.parsers.is_empty() {
+                    true => inferred_parser.is_some_and(|it| !is_named(&it)),
+                    false => named_parser.is_none() && !case.parsers.iter().any(|it| is_javascript_parser(it)),
+                };
+                if is_other_language {
                     *excluded.entry(OTHER_LANGUAGE).or_default() += 1;
                     continue;
                 }
@@ -455,9 +455,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let (path, original) = match on_disk {
                     Some(input) => (id.clone(), input),
                     None => {
-                        // `snippet: test.cjs`: the name that the test gives the text. It is parsed
-                        // as the parser of the test says.
-                        let name = case.name.strip_prefix(b"snippet: ").filter(|it| strings::contains_char(it, b'.'));
+                        // The name of a file that the test gives the text, which `sync.ts` has noted. Or `snippet: test.cjs`.
+                        // It is parsed as the parser of the test says, if it says.
+                        let title = case.name.strip_prefix(b"snippet: ");
+                        let noted = strings::split(filenames, b"\n").filter_map(|line| strings::split_once(line, b"\t"));
+                        let noted = noted.filter(|it| Some(it.0) == title).map(|it| it.1).next();
+                        let name = noted.or(title.filter(|it| strings::contains_char(it, b'.')));
                         let _ = options.set(b"filepath", name.unwrap_or_default());
                         let extension: &[u8] = match (named_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",

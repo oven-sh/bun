@@ -27,8 +27,9 @@ type Options = { errors?: true | Record<string, true | string[]> } & Record<stri
 
 /**
  * What is in a `format.test.js` and in no snapshot: the expected output of a snippet, if it is next to the input, and the text of a snippet
- * that is rejected. The tests are run here with a `runFormatTest` that takes notes. They are written as the other fixtures are: in
- * `inline-outputs` next to the test a snapshot file, in `rejected-snippets` the inputs and a snapshot file.
+ * that is rejected, and the name of a file that a snippet is given. The tests are run here with a `runFormatTest` that takes notes. They are
+ * written as the other fixtures are: in `inline-outputs` next to the test a snapshot file, in `rejected-snippets` the inputs and a snapshot
+ * file. The names are in `snippet-filenames.txt`: the name of the snippet, a tab, the name of the file.
  */
 async function addFromTests(root: string, files: Map<string, Uint8Array>) {
   const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: [...ours, ...newParsers].map(value => ({ value })) }] }) };
@@ -40,6 +41,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
     if (!/\bsnippets\b/.test(code)) continue;
     const directory = dirname(test);
     let [outputs, rejected] = ["", ""];
+    const filenames = new Set<string>();
     const counts = new Map<string, number>();
     const runFormatTest = (fixtures: { snippets?: Snippet[] }, parsers: string[], rawOptions: Options = {}) => {
       // As in Prettier's `run-format-test.js` and `shouldThrowOnFormat`
@@ -49,7 +51,8 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
         for (const parser of parsers.filter(it => parsersIn(directory).includes(it))) {
           const list = errors === true || errors[parser];
           if (list === true || (Array.isArray(list) && filename !== undefined && list.includes(filename))) {
-            const file = fileFor(parser, String(counts.size));
+            // The name that the test gives it can be what it is about: `script.cjs`.
+            const file = filename === undefined ? fileFor(parser, String(counts.size)) : `${counts.size}/${filename}`;
             counts.set(file, 1);
             files.set(`${directory}/rejected-snippets/${file}`, Buffer.from(code));
             // The parser of a language that is being written is in the title, so that it is run only if that language is.
@@ -57,6 +60,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
             rejected += `\nexports[\`${file} ${kind} 1\`] = \`\n"snippet: ${escape(name)}, ${parser}"\n\`;\n`;
           }
         }
+        if (filename !== undefined) filenames.add(`${name}\t${filename}\n`);
         if (output === undefined) return;
         // The output is the same for all of them. The first of each language stands for the others.
         const families = new Map(parsers.filter(it => parsersIn(directory).includes(it)).map(it => [/^babel$|^typescript$/.test(it) ? "js" : it, it]).reverse());
@@ -80,6 +84,7 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
     await new (Object.getPrototypeOf(async function () {}).constructor)(...given.keys(), body)(...given.values());
     const snapshot = (text: string) => Buffer.from(`// Written by sync.ts\n${text}`);
     if (outputs) files.set(`${directory}/inline-outputs/__snapshots__/format.test.js.snap`, snapshot(outputs));
+    if (filenames.size > 0) files.set(`${directory}/snippet-filenames.txt`, Buffer.from([...filenames].join("")));
     if (rejected) files.set(`${directory}/rejected-snippets/__snapshots__/format.test.js.snap`, snapshot(rejected));
   }
 }

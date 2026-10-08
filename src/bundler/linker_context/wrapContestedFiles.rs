@@ -231,6 +231,7 @@ impl<'c, 'a> Contest<'c, 'a> {
             self.orders[walk.entry_id] = Some(walk.order);
         }
     }
+
     /// The part runs code, or gives a binding its value, when its file runs. A function declaration is hoisted, and the
     /// namespace objects print ahead of every file of the chunk.
     fn part_runs_at_load(&self, source_index: IndexInt, part_index: u32) -> bool {

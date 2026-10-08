@@ -16,7 +16,6 @@ bun_dispatch.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
-const_format.workspace = true
 enum-map.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true

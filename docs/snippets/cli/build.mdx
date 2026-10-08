@@ -18,6 +18,10 @@ bun build <entry points>
   How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all
 </ParamField>
 
+<ParamField path="--no-optimize-bytecode" type="boolean">
+  With <code>--bytecode</code>: skip the build-time bytecode optimization passes
+</ParamField>
+
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>
@@ -162,6 +166,10 @@ bun build <entry points>
 
 ### Development Features
 
+<ParamField path="--check" type="boolean">
+  Type check the entry points and everything they import. Nothing is bundled if there are type errors
+</ParamField>
+
 <ParamField path="--watch" type="boolean">
   Rebuild automatically when files change
 </ParamField>
@@ -187,6 +195,11 @@ bun build <entry points>
 
 <ParamField path="--compile-exec-argv" type="string">
   Prepend arguments to the standalone executable’s <code>execArgv</code>
+</ParamField>
+
+<ParamField path="--compile-jit-policy" type="number" default="1">
+  JIT tier-up threshold scale the executable starts with; <code>1</code> is the normal JIT policy. See
+  <code>Bun.unsafe.setJITPolicy</code>
 </ParamField>
 
 <ParamField path="--compile-autoload-dotenv" type="boolean" default="true">

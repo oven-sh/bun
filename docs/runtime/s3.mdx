@@ -439,7 +439,7 @@ const r2WithEndpoint = new S3Client({
 });
 ```
 
-With an explicit endpoint, the `bucket` property of a file is the bucket in the hostname of the endpoint. Bun reads it from AWS S3 and Cloudflare R2 hostnames. For any other hostname the property is `undefined`.
+With an explicit endpoint, the `bucket` property of a file is the bucket in the hostname of the endpoint when Bun recognises the hostname. Otherwise it is the `bucket` option.
 
 ---
 

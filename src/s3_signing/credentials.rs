@@ -1077,20 +1077,23 @@ pub struct SignOptions<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl S3Credentials {
-    /// The bucket a request with these credentials addresses, when the
+    /// The bucket that `S3File.bucket` and `Bun.inspect` report, when the
     /// credentials alone decide it. A virtual-hosted endpoint has the bucket in
-    /// its host, and `sign_request` does not send the `bucket` option there.
+    /// its host. When the host does not name it, this is the `bucket` option,
+    /// which `sign_request` does not send in that mode.
     #[inline]
     pub fn configured_bucket(&self) -> Option<&[u8]> {
         if self.virtual_hosted_style && !self.endpoint.is_empty() {
-            return guess_bucket(&self.endpoint);
+            if let Some(bucket) = guess_bucket(&self.endpoint) {
+                return Some(bucket);
+            }
         }
         (!self.bucket.is_empty()).then_some(&*self.bucket)
     }
 
     /// The bucket of the object at `path()`. `path` runs only for path-style
     /// credentials with no bucket, where the first `/` segment of the path is
-    /// the bucket.
+    /// the bucket. A virtual-hosted path is all key.
     #[inline]
     pub fn bucket_for<'a>(&'a self, path: impl FnOnce() -> &'a [u8]) -> Option<&'a [u8]> {
         if let Some(bucket) = self.configured_bucket() {
@@ -1107,18 +1110,12 @@ impl S3Credentials {
 }
 
 /// The bucket in the host of a virtual-hosted `endpoint` (`host[:port][/prefix]`),
-/// for the AWS S3 and Cloudflare R2 host shapes that name it. `None` for any
-/// other host: this is the value of `S3File.bucket`, and a wrong name is worse
-/// than none. Never used for signing.
+/// for the AWS S3 and Cloudflare R2 host shapes below. Never used for signing.
 fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
     let host = strings::split_once_char(endpoint, b'/').map_or(endpoint, |(host, _)| host);
     let host = strings::split_once_char(host, b':').map_or(host, |(host, _)| host);
-    // One trailing dot is the fully qualified form of the same host. A host
-    // with an empty label names nothing.
+    // One trailing dot is the fully qualified form of the same host.
     let host = host.strip_suffix(b".").unwrap_or(host);
-    if host.starts_with(b".") || strings::contains(host, b"..") {
-        return None;
-    }
     let bucket = if let Some(rest) = host
         .strip_suffix(b".amazonaws.com")
         .or_else(|| host.strip_suffix(b".amazonaws.com.cn"))
@@ -1143,7 +1140,8 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         // <bucket>.<account>.<jurisdiction>.r2.cloudflarestorage.com
         // Without the bucket label it is the account endpoint, which is
         // path-style. Two labels are that endpoint when the second is an R2
-        // jurisdiction, so this list must have every jurisdiction that R2 has.
+        // jurisdiction: keep this list equal to "Available jurisdictions" on
+        // the "Data location" page of the R2 docs.
         let rest = host.strip_suffix(b".r2.cloudflarestorage.com")?;
         let (bucket, rest) = strings::split_once_char(rest, b'.')?;
         let named = match strings::split_once_char(rest, b'.') {
@@ -1155,7 +1153,7 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         }
         bucket
     };
-    Some(bucket)
+    (!bucket.is_empty()).then_some(bucket)
 }
 
 pub fn guess_region(endpoint: &[u8]) -> &[u8] {

@@ -168,13 +168,13 @@ A node that is not ported yet is written as it is in the source: `write!(f, Form
 
 ## Testing
 
-Only through the build slot (`/root/lint-refs/FOUNDATION.md`). `B=/root/lint-refs/bin/<owner>/bun-lint`, `P=/root/lint-refs/prettier`.
+`B` is the `bun-lint` binary (the crate `bun_lint_standalone`, `src/lint/standalone/format_cmd.rs`), `P` a checkout of Prettier.
 
 ```sh
 $B format file a.ts --semi=false --printWidth=100     # format one file
 $B format ir a.ts                                      # the document
 $B format conformance $P/tests/format                  # table per directory, totals
-$B format conformance $P/tests/format --filter=js/arrow --report=/root/lint-refs/scratch/<owner>/report
+$B format conformance $P/tests/format --filter=js/arrow --report=report
 diff -u report/<case>.expected report/<case>.actual
 $B format check-idempotent <files or directories>
 $B format verify <files or directories>                # same tokens before and after

@@ -737,7 +737,16 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
         statement.kind(),
         StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
     );
+    let span = match ignored_statement_keeps_semicolon(f) {
+        true => Span::new(span.start, statement.span().end),
+        false => span,
+    };
     f.around_cursor(span, |f| write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(span)]));
+}
+
+/// Without semicolons, oxfmt leaves the `;` of a statement that it does not format.
+fn ignored_statement_keeps_semicolon(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `ExportNamedDeclaration.declaration`, `ExportDefaultDeclaration.declaration`: the statement

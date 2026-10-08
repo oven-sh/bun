@@ -105,7 +105,7 @@ function find(ast: any): { key: string } | undefined {
 let files = [...roots.flatMap(root => [...walk(root)])];
 // A fixed shuffle.
 let seed = 12345;
-const random = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+const random = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
 for (let i = files.length - 1; i > 0; i--) {
   const j = Math.floor(random() * (i + 1));
   [files[i], files[j]] = [files[j], files[i]];

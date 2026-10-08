@@ -19,7 +19,7 @@ const files: string[] = [];
 })(args.filter(it => !it.startsWith("-")));
 
 let seed = 12345;
-const random = (below: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >>> 8) % below;
+const random = (below: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8) % below;
 const input = join(mkdtempSync(join(tmpdir(), "graphql-fuzz-")), "input.graphql");
 let [same, total, shown] = [0, 0, 0];
 async function check(text: string, options: Record<string, unknown>, what: string) {

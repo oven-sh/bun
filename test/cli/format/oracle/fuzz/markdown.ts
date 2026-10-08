@@ -17,7 +17,7 @@ for (const it of args.filter(it => it.startsWith("--"))) {
 }
 
 let seed = +flag("seed", "1");
-const random = (below: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >>> 8) % below;
+const random = (below: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8) % below;
 const pick = <T>(from: T[]) => from[random(from.length)];
 
 const inputs: string[] = [];

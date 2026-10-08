@@ -1,6 +1,6 @@
 // Prints random JSX children, to be formatted at several widths by Prettier and by us.
 //   bun jsx-children.mjs <seed> > x.jsx
-let seed = Number(process.argv[2] ?? 1); const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+let seed = Number(process.argv[2] ?? 1); const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff;
 const pick = (a) => a[Math.floor(rnd() * a.length)];
 const words = ["a", "b", ",", ".", "…", "—", "😀", "foo", "bar", "lorem", "ipsum", "dolor", "consectetur", "adipiscing", "&nbsp;", "&middot;", "(", ")", "x,", "longerwordhere", "evenlongerwordthatgoeson", "é", "日本語"];
 const ws = [" ", " ", " ", "  ", "\n", "\n", "\n  ", " \n", "\n\n", "\n \n  ", "", "", ""];

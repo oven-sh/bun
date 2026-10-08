@@ -114,7 +114,7 @@ const ext = rest.find(o => o.startsWith("-ext="))?.slice(5) ?? "js";
 const tmp = `${temporary}/tmp-fuzz-${process.pid}.${ext}`;
 const two = Number(rest.find(o => o.startsWith("-two="))?.slice(5) ?? 0);
 let seed = 12345;
-const random = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed >>> 12) % n; };
+const random = (n: number) => { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return (seed >>> 12) % n; };
 async function check(template: string, code: string) {
   let expected: string;
   try { expected = await prettier.format(code, { parser: ext === "js" ? "babel" : "typescript", ...options }); } catch { rejected++; return; }

@@ -567,3 +567,17 @@ let x = <T>y
 declare let x: A<B<C>>
 export default x
 interface I { static: 1 }
+=== file.js
+x = /** @type {const} */ (false)
+x = /** @type {const} */ ([false])
+x = /** @type {const} */ ({ a: false })
+/** @typedef {{ if: string, default: number }} T */ if (a) b
+/** @type {import("x").default} */ var a = this
+/** @param {typeof this.x} a @this {Foo} */ function f(a) { return this }
+/** @satisfies {A<B<C>>} */ var x = a >> b
+=== file.ts
+let x = <const>y.const
+let x = <const>y as const
+let x = <const>(y as const)
+let x = <T>y as const
+let x = (<const>y).z as const

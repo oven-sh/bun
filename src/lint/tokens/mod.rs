@@ -9,8 +9,9 @@
 //!   to report, and look at tokens only then. After that a call is a binary search. The methods
 //!   that only return comments (`comments*`) need a scan that is several times cheaper.
 //!
-//! The tokens have the ranges and the types that ESLint's parser for the file gives them: espree
-//! for JavaScript, typescript-estree for TypeScript. See [`TokenKind`] for where the two differ.
+//! The tokens have the ranges and the types that ESLint's parser for the file gives them:
+//! typescript-estree for TypeScript and where `languageOptions.parser` says so, otherwise espree.
+//! See [`TokenKind`] for where the two differ.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -49,7 +50,7 @@
 //! | `getCommentsInside(node)` | `file.comments_in(node)` |
 //! | `commentsExistBetween(a, b)` | `file.comments_exist_between(a, b)` |
 //! | `isSpaceBetween(a, b)` | `file.is_space_between(a, b)` |
-//! | `token.type`, `token.value`, `token.range` | `token.kind()`, `token.text()` / `comment.comment_value()`, `token.span()` |
+//! | `token.type`, `token.value`, `token.range` | `token.kind()`, `token.value()` (`token.text()` is `getText(token)`), `token.span()` |
 //! | `isCommaToken`, `isOpeningParenToken`, .. | `utils::ast_utils`, or `token.is_punctuator(",")` |
 //!
 //! `x`, `a`, `b` are anything with a [`Span`]: a node, a token, a comment, a span. As in ESLint,
@@ -112,8 +113,8 @@ pub fn next_token(text: &[u8], at: u32) -> Span {
 /// ESLint's `token.type`.
 ///
 /// The parsers that ESLint uses agree on where the tokens are, and on their types except for some
-/// words. A JavaScript file gets what espree says and a TypeScript file what typescript-estree
-/// says:
+/// words. A JavaScript file gets what espree says, unless `languageOptions.parser` is
+/// `@typescript-eslint/parser`. Every other file gets what typescript-estree says:
 ///
 /// | | espree | typescript-estree |
 /// | --- | --- | --- |
@@ -149,7 +150,7 @@ pub enum TokenKind {
     RegularExpression,
     String,
     Template,
-    /// `// ..`. In a JavaScript file that is not a module also `<!-- ..` and, at the start of a
+    /// `// ..`. For espree, in a file that is not a module, also `<!-- ..` and, at the start of a
     /// line, `--> ..`.
     Line,
     /// `/* .. */`
@@ -223,6 +224,15 @@ impl<'a> Token<'a> {
             _ => self.span(),
         };
         self.file.slice(span)
+    }
+
+    /// ESLint's `token.value`: as it is written, but a comment without its delimiters and a private
+    /// identifier without its `#`. (espree also decodes the escape sequences of an identifier.)
+    pub fn value(self) -> &'a [u8] {
+        match self.raw.kind {
+            TokenKind::PrivateIdentifier => self.file.slice(self.span().shrink(1, 0)),
+            _ => self.comment_value(),
+        }
     }
 
     /// Whether it is written `text`.

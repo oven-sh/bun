@@ -15,6 +15,7 @@
 
 use super::{RawToken, TokenKind, skip_trivia, skip_trivia_back};
 use crate::ast::File;
+use crate::language::Parser;
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
 use bun_sema::hir::{
@@ -24,14 +25,15 @@ use bun_sema::hir::{
 /// The two parsers agree on where every token is. They disagree on the type of some words.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Dialect {
-    /// JavaScript files: espree, ESLint's default parser.
+    /// JavaScript files, unless the configuration says `@typescript-eslint/parser`: espree, ESLint's
+    /// default parser.
     /// - `static`, `let` and `yield` are a `Keyword` wherever they are, even as the name of a
     ///   property. Up to ES5 only `static` is.
     /// - Every name in a JSX tag is a `JSXIdentifier`.
     /// - Unless the file is a module, `<!--` starts a comment, and so does `-->` at the start of a
     ///   line.
     Espree { is_es5: bool },
-    /// TypeScript files: typescript-estree.
+    /// All other files: typescript-estree.
     /// - `implements`, `interface`, `let`, `package`, `private`, `protected`, `public`, `static`
     ///   and `yield` are a `Keyword` where they act as one and an `Identifier` where they are a name.
     /// - In a JSX tag `this` is a `Keyword`, and both names of `a:b` are an `Identifier`.
@@ -122,7 +124,6 @@ impl Marks {
         marks
     }
 
-    #[inline(never)]
     fn new(file: &File, dialect: Dialect) -> Marks {
         let (hir, text) = (&file.hir, file.text());
         let is_typescript = dialect == Dialect::TypeScript;
@@ -273,15 +274,14 @@ impl Marks {
         }
     }
 
-    /// The `const` of `a as const` and `<const>a` is the name of a type.
+    /// The `const` of `a as const` and `<const>a` is the name of a type. That of a JSDoc cast is in
+    /// a comment.
     fn as_const(&mut self, text: &[u8], e: &hir::Expr) {
-        let at = match text.get(e.pos as usize) {
-            Some(b'<') if !text.get(..e.end as usize).unwrap_or_default().ends_with(b"const") => {
-                skip_trivia(text, e.pos + 1)
+        for at in [skip_trivia(text, e.pos + 1), e.end.saturating_sub(5)] {
+            if text.get(at as usize..).is_some_and(|rest| rest.starts_with(b"const")) {
+                self.names.push(at);
             }
-            _ => e.end.saturating_sub(5),
-        };
-        self.names.push(at);
+        }
     }
 
     fn strict_mode_keywords(&mut self, file: &File) {
@@ -611,12 +611,12 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
 }
 
 fn has_html_comments(file: &File) -> bool {
-    file.is_javascript() && !file.is_module()
+    Dialect::of(file) != Dialect::TypeScript && !file.is_module()
 }
 
 impl Dialect {
     fn of(file: &File) -> Dialect {
-        match file.is_javascript() {
+        match file.is_javascript() && file.language().parser != Parser::TypeScript {
             true => Dialect::Espree {
                 is_es5: file.language().ecma_version <= 5,
             },

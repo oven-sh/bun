@@ -1,7 +1,7 @@
 //! `bun-lint tokens ..`
 //!
 //! - `dump <file>`: the tokens and the comments of a file, one per line.
-//! - `batch <cases.jsonl>`: for each line `{ path, code, ecmaVersion?, sourceType? }`, a line
+//! - `batch <cases.jsonl>`: for each line `{ path, code, parser?, ecmaVersion?, sourceType? }`, a line
 //!   `{ "errors": bool, "tokens": [type, start, end, ..], "comments": [..] }`. A type is an index
 //!   into `TYPES`, positions are in UTF-16 code units.
 //! - `query <cases.jsonl>`: the same with `queries: [[method, a.start, a.end, b.start, b.end, includeComments], ..]`.
@@ -10,7 +10,7 @@
 //! - `fuzz <rounds> <files..>`: scans damaged copies of the files, and checks that the tokens are in order and in bounds.
 
 use bun_lint::ast::File;
-use bun_lint::language::{LanguageOptions, SourceType};
+use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::options::Json;
 use bun_lint::span::Span;
 use bun_lint::tokens::{Token, TokenKind, Tokens};
@@ -56,6 +56,9 @@ fn language_of(case: &Json) -> LanguageOptions {
     let mut language = LanguageOptions::default();
     if let Some(Json::Number(version)) = case.get(b"ecmaVersion") {
         language.ecma_version = *version as u32;
+    }
+    if case.get(b"parser").and_then(Json::as_str) == Some(b"typescript") {
+        language.parser = Parser::TypeScript;
     }
     language.source_type = match case.get(b"sourceType").and_then(Json::as_str) {
         Some(b"script") => SourceType::Script,

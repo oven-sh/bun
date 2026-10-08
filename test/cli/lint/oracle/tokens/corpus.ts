@@ -129,6 +129,8 @@ export function casesFromArguments(args: string[]): Case[] {
     if (arg === "--listed") cases.push(...listedCases(args[i + 1]));
     if (arg === "--strings-of") cases.push(...stringCases(args[i + 1], loadParsers(args).espree));
   });
+  // As with `languageOptions.parser` set to `@typescript-eslint/parser` for all files.
+  if (args.includes("--typescript-parser")) for (const it of cases) it.parser = "typescript";
   return prepare(cases);
 }
 

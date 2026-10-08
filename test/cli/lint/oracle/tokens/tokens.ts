@@ -1,10 +1,19 @@
 // Compares the tokens and comments of `bun-lint tokens batch` with those of the parser that ESLint uses: espree for
 // JavaScript, typescript-estree for TypeScript.
 //
-//   bun tokens.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir>
-//                 [--fixtures <conformance/fixtures>].. [--files <dir>].. [--strings-of <file.js>].. [--listed edge-cases.txt] [--jobs N] [--examples N] [--rejected] [--compare-rejected] [--parsers]
+//   bun tokens.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir> <texts>.. [options]
 //
-// `--rejected` lists the cases that only `bun lint` rejects, `--compare-rejected` compares them nevertheless. `--parsers` compares typescript-estree with espree on the JavaScript cases instead: how the two differ.
+// Texts, each any number of times:
+//   --fixtures <conformance/fixtures>   the `code` of every test case
+//   --files <dir>                       the JavaScript and TypeScript files under it
+//   --strings-of <file.js>              the strings in it: the inputs of ESLint's own tests of `SourceCode`
+//   --listed <edge-cases.txt>
+// Options:
+//   --jobs N, --examples N
+//   --typescript-parser                 JavaScript is parsed by typescript-estree too, as `languageOptions.parser` can say
+//   --rejected                          lists the texts that only `bun lint` rejects
+//   --compare-rejected                  compares them nevertheless
+//   --parsers                           compares typescript-estree with espree on JavaScript instead: how the two differ
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,7 +75,7 @@ function run(cases: Case[], name: string): Result {
     });
   } else {
     const input = join(scratch, `cases-${name}.jsonl`);
-    writeFileSync(input, accepted.map(({ it }) => JSON.stringify({ path: it.path, code: it.code, ecmaVersion: it.ecmaVersion, sourceType: it.sourceType }) + "\n").join(""));
+    writeFileSync(input, accepted.map(({ it }) => JSON.stringify({ path: it.path, code: it.code, parser: it.parser, ecmaVersion: it.ecmaVersion, sourceType: it.sourceType }) + "\n").join(""));
     const ran = spawnSync(option(args, "--bin")!, ["tokens", "batch", input], { maxBuffer: 1 << 30, encoding: "utf8" });
     const lines = ran.stdout.split("\n").filter(Boolean);
     if (lines.length !== accepted.length) {

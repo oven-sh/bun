@@ -1,28 +1,11 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::ast_utils::get_static_string_value;
+use bun_lint::utils::ast_utils::{get_static_string_value, is_member_expression};
 use bun_lint::utils::estree_type_name;
 
 /// Disallow the use of the `__iterator__` property.
 pub struct NoIterator;
 
 const NO_ITERATOR: Message = Message::new("noIterator", "Reserved name '__iterator__'.");
-
-/// Whether ESLint has a `MemberExpression` for the `Dot`: not in the name of a JSX element, and not
-/// in the operand of a `typeof` type.
-fn is_member_expression(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } if obj == at => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() != Some(at) && jsx.close_tag() != Some(at),
-                _ => return true,
-            },
-            Node::Type(ty) => return !matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return true,
-        }
-    }
-}
 
 impl Rule for NoIterator {
     const META: Meta = Meta::eslint("no-iterator", Kind::Suggestion);

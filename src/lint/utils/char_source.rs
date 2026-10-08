@@ -40,7 +40,16 @@ struct Reader<'t> {
     units: Vec<CharInfo>,
 }
 
-impl Reader<'_> {
+impl<'t> Reader<'t> {
+    /// At the character after the opening delimiter.
+    fn new(source: &'t [u8]) -> Self {
+        Reader {
+            source,
+            at: 1,
+            units: Vec::with_capacity(source.len().saturating_sub(2)),
+        }
+    }
+
     /// Adds the code units of `c`, whose source is from `start` to the current position.
     fn push(&mut self, start: usize, c: u32) {
         let (start, end) = (start as u32, self.at as u32);
@@ -97,55 +106,57 @@ impl Reader<'_> {
         let start = self.at;
         let (c, size) = char_and_size(self.source, start + 1);
         self.at = start + 1 + size;
-        let c = match c as u32 {
-            _ if size == 0 => return,
-            0x62 => 0x08,
-            0x66 => 0x0C,
-            0x6E => 0x0A,
-            0x72 => 0x0D,
-            0x74 => 0x09,
-            0x76 => 0x0B,
-            0x78 => self.digits(16, 2),
-            0x75 => match self.braced_code_point() {
+        let c = match char::from_u32(c as u32) {
+            // The text ends with the backslash.
+            None => return,
+            Some('b') => 0x08,
+            Some('f') => 0x0C,
+            Some('n') => 0x0A,
+            Some('r') => 0x0D,
+            Some('t') => 0x09,
+            Some('v') => 0x0B,
+            Some('x') => self.digits(16, 2),
+            Some('u') => match self.braced_code_point() {
                 Some(c) => c,
                 None => self.digits(16, 4),
             },
-            0x0D => {
+            Some('\r') => {
                 if self.source.get(self.at) == Some(&b'\n') {
                     self.at += 1;
                 }
                 return;
             }
-            0x0A | 0x2028 | 0x2029 => return,
-            first @ 0x30..=0x37 => {
+            Some('\n' | '\u{2028}' | '\u{2029}') => return,
+            Some(first @ '0'..='7') => {
                 self.at -= 1;
-                self.digits(8, if first <= 0x33 { 3 } else { 2 })
+                self.digits(8, if first <= '3' { 3 } else { 2 })
             }
-            c => c,
+            Some(c) => c as u32,
         };
         self.push(start, c);
+    }
+
+    /// Reads a character that stands for itself.
+    fn character(&mut self) {
+        let start = self.at;
+        let (c, size) = char_and_size(self.source, start);
+        self.at += size;
+        self.push(start, c as u32);
     }
 }
 
 /// ESLint's `parseStringLiteral`. `source` is the literal with its quotes. The result has one
-/// element for each UTF-16 code unit of the value of the literal.
+/// element for each UTF-16 code unit of the value of the literal: for a pattern given to `RegExp`,
+/// `regex::Node::utf16_start` and `utf16_end` are indices into it.
 pub fn parse_string_literal(source: &[u8]) -> Vec<CharInfo> {
-    let mut reader = Reader {
-        source,
-        at: 1,
-        units: Vec::with_capacity(source.len().saturating_sub(2)),
-    };
+    let mut reader = Reader::new(source);
     let quote = source.first();
-    loop {
-        let start = reader.at;
-        match char_and_size(source, start) {
-            (_, 0) => break,
-            (_, 1) if source.get(start) == quote => break,
-            (0x5C, _) => reader.escape(),
-            (c, size) => {
-                reader.at += size;
-                reader.push(start, c as u32);
-            }
+    while let Some(c) = source.get(reader.at)
+        && Some(c) != quote
+    {
+        match c {
+            b'\\' => reader.escape(),
+            _ => reader.character(),
         }
     }
     reader.units
@@ -155,29 +166,17 @@ pub fn parse_string_literal(source: &[u8]) -> Vec<CharInfo> {
 /// and `}`, or a template literal without substitutions. The result has one element for each
 /// UTF-16 code unit of the cooked value.
 pub fn parse_template_token(source: &[u8]) -> Vec<CharInfo> {
-    let mut reader = Reader {
-        source,
-        at: 1,
-        units: Vec::with_capacity(source.len().saturating_sub(2)),
-    };
+    let mut reader = Reader::new(source);
     loop {
         let start = reader.at;
-        match char_and_size(source, start) {
-            (_, 0) | (0x60, _) => break,
-            (0x24, _) if source.get(start + 1) == Some(&b'{') => break,
-            (0x5C, _) => reader.escape(),
-            (0x0D, _) => {
-                reader.at += if source.get(start + 1) == Some(&b'\n') {
-                    2
-                } else {
-                    1
-                };
+        match source.get(start..).unwrap_or_default() {
+            [] | [b'`', ..] | [b'$', b'{', ..] => break,
+            [b'\\', ..] => reader.escape(),
+            [b'\r', rest @ ..] => {
+                reader.at += if rest.first() == Some(&b'\n') { 2 } else { 1 };
                 reader.push(start, 0x0A);
             }
-            (c, size) => {
-                reader.at += size;
-                reader.push(start, c as u32);
-            }
+            _ => reader.character(),
         }
     }
     reader.units

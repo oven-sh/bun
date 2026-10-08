@@ -35,7 +35,7 @@ fn hex(bytes: &[u8]) -> String {
     })
 }
 
-fn units(all: Vec<CharInfo>) -> String {
+fn units(all: &[CharInfo]) -> String {
     let each = all
         .iter()
         .map(|it| format!("{:x}:{}:{}", it.code_unit, it.start, it.end));
@@ -167,9 +167,9 @@ fn call(input: &str) {
                 let all = ast_utils::create_global_linebreak_matcher(&a);
                 ranges(&mut all.map(|(at, len)| at..at + len))
             }
-            "shebangPattern" => ast_utils::match_shebang(&a).map_or("null".into(), hex),
-            "parseStringLiteral" => units(parse_string_literal(&a)),
-            "parseTemplateToken" => units(parse_template_token(&a)),
+            "shebangPattern" => ast_utils::match_shebang(&a).map_or_else(|| "null".to_owned(), hex),
+            "parseStringLiteral" => units(&parse_string_literal(&a)),
+            "parseTemplateToken" => units(&parse_template_token(&a)),
             "normalizePackageName" => hex(&naming::normalize_package_name(&a, &b)),
             "getShorthandName" => hex(&naming::get_shorthand_name(&a, &b)),
             "getNamespaceFromTerm" => hex(naming::get_namespace_from_term(&a)),

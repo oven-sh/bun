@@ -9,10 +9,6 @@ fn has_prefix(name: &[u8], prefix: &[u8]) -> bool {
     matches!(name.strip_prefix(prefix), Some([] | [b'-', ..]))
 }
 
-fn concat(parts: &[&[u8]]) -> Vec<u8> {
-    parts.concat()
-}
-
 /// ESLint's `normalizePackageName`. `foo` becomes `eslint-plugin-foo` and `@scope/foo` becomes
 /// `@scope/eslint-plugin-foo`, for the `prefix` `eslint-plugin`.
 pub fn normalize_package_name<'t>(name: &'t [u8], prefix: &[u8]) -> Cow<'t, [u8]> {
@@ -27,7 +23,7 @@ pub fn normalize_package_name<'t>(name: &'t [u8], prefix: &[u8]) -> Cow<'t, [u8]
     if name.first() != Some(&b'@') {
         return match name.strip_prefix(prefix) {
             Some([b'-', ..]) => name,
-            _ => Cow::Owned(concat(&[prefix, b"-", &name])),
+            _ => Cow::Owned([prefix, b"-", &name].concat()),
         };
     }
     let (scope, rest) = match strings::index_of_char_usize(&name, b'/') {
@@ -43,9 +39,9 @@ pub fn normalize_package_name<'t>(name: &'t [u8], prefix: &[u8]) -> Cow<'t, [u8]
             if has_prefix(package, prefix) || has_line_break(rest) {
                 return name;
             }
-            Cow::Owned(concat(&[scope, b"/", prefix, b"-", rest]))
+            Cow::Owned([scope, b"/", prefix, b"-", rest].concat())
         }
-        _ => Cow::Owned(concat(&[scope, b"/", prefix])),
+        _ => Cow::Owned([scope, b"/", prefix].concat()),
     }
 }
 
@@ -66,7 +62,7 @@ pub fn get_shorthand_name<'t>(fullname: &'t [u8], prefix: &[u8]) -> Cow<'t, [u8]
     match fullname[slash + 1..].strip_prefix(prefix) {
         Some([]) => Cow::Borrowed(scope),
         Some([b'-', rest @ ..]) if !rest.is_empty() && !has_line_break(rest) => {
-            Cow::Owned(concat(&[scope, b"/", rest]))
+            Cow::Owned([scope, b"/", rest].concat())
         }
         _ => Cow::Borrowed(fullname),
     }

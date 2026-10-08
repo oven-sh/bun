@@ -3,10 +3,12 @@
 use super::{Args, collect_files};
 use bun_format::Scratch;
 use bun_lint::language::LanguageOptions;
+use std::hash::Hasher as _;
 
 /// `--check` does what `prettier --check` does: it reads each file, formats it and compares. Otherwise the files are read once,
 /// and parsed and formatted `--iterations` times. With `--only=parse` nothing is formatted: the difference between two runs
 /// under `perf stat` is what formatting costs, which the clocks here cannot tell on a machine that is busy.
+/// `--hashes=<file>` writes a hash of what each file is formatted to: two binaries agree if the files they write are the same.
 pub(super) fn bench(args: &Args) {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
     thread_local! {
@@ -24,6 +26,7 @@ pub(super) fn bench(args: &Args) {
     let language = LanguageOptions::default();
     let (parsing, formatting, bytes) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
     let (changed, failed) = (AtomicU64::new(0), AtomicU64::new(0));
+    let hashes: Vec<AtomicU64> = paths.iter().map(|_| AtomicU64::new(0)).collect();
     let started = std::time::Instant::now();
     for _ in 0..iterations {
         bun_sema_standalone::for_each_parallel(threads, paths.len(), |i| {
@@ -43,12 +46,21 @@ pub(super) fn bench(args: &Args) {
                         Ok(()) => changed.fetch_add(u64::from(out != code), Relaxed),
                         Err(_) => failed.fetch_add(1, Relaxed),
                     };
+                    if args.flag("hashes").is_some() {
+                        let mut hasher = std::hash::DefaultHasher::new();
+                        hasher.write(out);
+                        hashes[i].store(hasher.finish(), Relaxed);
+                    }
                 });
                 formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
             });
         });
     }
     let wall = started.elapsed().as_secs_f64();
+    if let Some(file) = args.flag("hashes") {
+        let lines: String = (paths.iter().zip(&hashes)).map(|(path, hash)| format!("{:016x} {path}\n", hash.load(Relaxed))).collect();
+        std::fs::write(file, lines).expect("the hashes are written");
+    }
     let megabytes = bytes.load(Relaxed) as f64 / 1e6;
     let per_pass = |count: &AtomicU64| count.load(Relaxed) / iterations.max(1) as u64;
     let seconds = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e9;

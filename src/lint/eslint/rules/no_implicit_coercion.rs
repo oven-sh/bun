@@ -133,8 +133,12 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
     };
 }
 
+// Each check quotes its operand, so none goes on once nothing more is shown: the operands of a chain are as long as the chain.
 impl NoImplicitCoercion {
     fn check_unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.has_reported_too_much() {
+            return;
+        }
         let ExprKind::Unary { op, operand } = e.kind() else {
             return;
         };
@@ -175,6 +179,9 @@ impl NoImplicitCoercion {
     }
 
     fn check_binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.has_reported_too_much() {
+            return;
+        }
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
@@ -207,6 +214,7 @@ impl NoImplicitCoercion {
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Assign { op: Some(BinOp::Add), target, value } = e.kind()
             && is_empty_string(value)
+            && !cx.has_reported_too_much()
         {
             let code = target.text();
             report(e, &[code, b" = String(", code, b")"].concat(), Remedy::Suggestion, cx);
@@ -214,6 +222,9 @@ impl NoImplicitCoercion {
     }
 
     fn check_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.has_reported_too_much() {
+            return;
+        }
         let ExprKind::Template(template) = e.kind() else {
             return;
         };

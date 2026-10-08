@@ -18,6 +18,7 @@ use crate::ast::{
 };
 use crate::rule::NodeTags;
 use bun_sema::atom::Atom;
+use bun_sema::hir;
 
 bitflags::bitflags! {
     /// What is known about a node that has been entered.
@@ -64,6 +65,8 @@ struct Builder<'a> {
     spare_states: Vec<State>,
     /// The nodes that have been entered and not left.
     ancestors: Vec<Frame<'a>>,
+    /// Whether the rules have been told about everything that has changed.
+    is_settled: bool,
 }
 
 fn choice_kind(op: BinOp) -> Option<ChoiceKind> {
@@ -264,6 +267,43 @@ fn place_of_expr<'a>(e: Expr<'a>, parent: Frame<'a>) -> Is {
     }
 }
 
+/// Whether `node` is nothing to the analysis, provided that it is not in a `try` statement and
+/// that it does not matter which child of its parent it is. This is what most nodes are.
+#[inline]
+fn is_plain(node: Node) -> bool {
+    use hir::ExprKind as K;
+    match node {
+        Node::Expr(e) => match e.try_raw().map(|raw| raw.kind) {
+            Some(K::Fn(_) | K::Cond { .. } | K::Yield { .. } | K::Jsx(_) | K::NonNull(_)) => false,
+            Some(K::Binary { op, .. }) => choice_kind(op).is_none() && op != BinOp::Comma,
+            Some(K::Assign { op, target, .. }) => {
+                let is_destructuring = matches!(
+                    e.file().hir.exprs.get(target.idx()).map(|raw| raw.kind),
+                    Some(K::Array(_) | K::Object(_))
+                );
+                !is_destructuring && op.and_then(choice_kind).is_none()
+            }
+            Some(K::Dot { chain, .. } | K::Index { chain, .. }) => chain == Chain::No,
+            Some(K::Call(call)) => {
+                (e.file().hir.calls.get(call.idx())).is_none_or(|call| call.chain == Chain::No)
+            }
+            _ => true,
+        },
+        Node::Stmt(stmt) => matches!(
+            stmt.tag(),
+            StmtTag::Expr | StmtTag::Var | StmtTag::Block | StmtTag::Class | StmtTag::Empty
+        ),
+        Node::Type(_)
+        | Node::TypeParam(_)
+        | Node::TupleElem(_)
+        | Node::Pat(_)
+        | Node::Prop(_)
+        | Node::VarDecl(_)
+        | Node::Class(_) => true,
+        _ => false,
+    }
+}
+
 /// What is known about a parameter or a part of a pattern, which ESTree has as an
 /// `AssignmentPattern` if it has a default value.
 #[inline]
@@ -280,11 +320,17 @@ impl<'a> Builder<'a> {
     /// `forwardCurrentToHead`
     #[inline]
     fn forward_current_to_head(&mut self, cx: &mut Cx<'_, 'a>) {
-        if let Some(state) = self.states.last_mut()
-            && state.current_segments[..] != *state.head_segments()
-        {
+        let Some(state) = self.states.last_mut() else {
+            return;
+        };
+        let is_current = match (&state.current_segments[..], state.head_segments()) {
+            ([current], [head]) => current == head,
+            (current, head) => current == head,
+        };
+        if !is_current {
             Self::forward(state, cx);
         }
+        self.is_settled = true;
     }
 
     #[cold]
@@ -320,6 +366,7 @@ impl<'a> Builder<'a> {
         let mut state = self.spare_states.pop().unwrap_or_else(State::new);
         state.reset(store, path);
         self.states.push(state);
+        self.is_settled = false;
         let node = cx.node_of_event();
         (cx.emit)(Event::CodePathStart(CodePath::new(cx.file, path), node));
     }
@@ -329,6 +376,7 @@ impl<'a> Builder<'a> {
             return;
         };
         let (store, node) = (cx.store(), cx.node_of_event());
+        self.is_settled = false;
         state.make_final(store);
         // `leaveFromCurrentSegment`
         for id in state.current_segments.drain(..) {
@@ -353,6 +401,7 @@ impl<'a> Builder<'a> {
     /// `isIdentifierReference` holds, what changes is told to the rules with the next node.
     #[inline]
     fn leave_throwable(&mut self, cx: &Cx<'_, 'a>) {
+        self.is_settled = false;
         if let Some(state) = self.states.last_mut() {
             state.make_first_throwable_path_in_try_or_catch_block(cx.store());
         }
@@ -531,19 +580,22 @@ impl<'a> Builder<'a> {
             self.forward_current_to_head(cx);
             cx.keeps_function_expression = false;
         }
+        // That it may throw matters in a `try` statement, and none starts inside an expression.
+        let may_throw = match self.states.last() {
+            Some(state) if state.is_in_try() => Is::HAS_EXIT,
+            _ => Is::empty(),
+        };
         let mut more = match e.tag() {
             ExprTag::Ident
             | ExprTag::New
             | ExprTag::ImportCall
             | ExprTag::NewTarget
             | ExprTag::ImportMeta
-            | ExprTag::Yield
-            | ExprTag::AsConst => return Is::HAS_EXIT,
+            | ExprTag::AsConst => return may_throw,
+            ExprTag::Yield => return Is::HAS_EXIT,
             ExprTag::Dot | ExprTag::Index | ExprTag::Call => match e.chain() {
-                Chain::No if is.contains(Is::JSX_NAME) => {
-                    return Is::HAS_EXIT | Is::PLACES_CHILDREN;
-                }
-                Chain::No => return Is::HAS_EXIT,
+                Chain::No if is.contains(Is::JSX_NAME) => return Is::PLACES_CHILDREN,
+                Chain::No => return may_throw,
                 _ => Is::IN_CHAIN | Is::HAS_EXIT | Is::PLACES_CHILDREN,
             },
             ExprTag::NonNull if is.contains(Is::CONTINUES_CHAIN) || is_non_null_after_chain(e) => {
@@ -656,7 +708,21 @@ impl<'a> Builder<'a> {
     }
 
     /// `enterNode`, up to where it calls the listeners of the node.
+    #[inline]
     fn enter(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+        let is_placed = matches!(self.ancestors.last(), Some(parent) if parent.is.contains(Is::PLACES_CHILDREN));
+        let is_in_try = matches!(self.states.last(), Some(state) if state.is_in_try());
+        if self.is_settled && !is_placed && !is_in_try && is_plain(node) {
+            let is = Is::empty();
+            self.ancestors.push(Frame { node, is });
+            return;
+        }
+        self.enter_what_matters(node, emit);
+    }
+
+    #[inline(never)]
+    fn enter_what_matters(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+        self.is_settled = false;
         let cx = &mut Cx::new(self.file, node, emit);
         let parent = self.ancestors.last().copied();
         let mut is = Is::empty();
@@ -680,8 +746,8 @@ impl<'a> Builder<'a> {
         is |= match node {
             Node::Expr(e) => self.enter_expr(e, is, parent, cx),
             Node::Stmt(stmt) => self.enter_stmt(stmt, parent, cx),
-            Node::Pat(pat) => match pat.tag() {
-                PatTag::Ident => Is::HAS_EXIT,
+            Node::Pat(pat) => match self.states.last() {
+                Some(state) if state.is_in_try() && pat.tag() == PatTag::Ident => Is::HAS_EXIT,
                 _ => Is::empty(),
             },
             Node::File(_) => {
@@ -838,12 +904,18 @@ impl<'a> Builder<'a> {
     }
 
     /// `leaveNode`, before it calls the listeners of the node.
+    #[inline]
     fn before_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let cx = &mut Cx::new(self.file, node, emit);
         let is = self.ancestors.last().map_or(Is::empty(), |frame| frame.is);
-        if is.contains(Is::ABSENT) {
+        if is.contains(Is::ABSENT) || self.is_settled && !is.contains(Is::HAS_EXIT) {
             return;
         }
+        self.leave_what_matters(node, is, emit);
+    }
+
+    #[inline(never)]
+    fn leave_what_matters(&mut self, node: Node<'a>, is: Is, emit: &mut dyn FnMut(Event<'a>)) {
+        let cx = &mut Cx::new(self.file, node, emit);
         let store = cx.store();
         let dont_forward = is.contains(Is::HAS_EXIT)
             && match node {
@@ -873,19 +945,25 @@ impl<'a> Builder<'a> {
                 }
                 _ => false,
             };
-        if !dont_forward {
-            self.forward_current_to_head(cx);
+        match dont_forward {
+            true => self.is_settled = false,
+            false => self.forward_current_to_head(cx),
         }
     }
 
     /// `leaveNode`, after it has called them: `postprocess`.
+    #[inline]
     fn after_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let Some(Frame { is, .. }) = self.ancestors.pop() else {
-            return;
-        };
-        if !is.contains(Is::HAS_POSTPROCESS) {
-            return;
+        if let Some(Frame { is, .. }) = self.ancestors.pop()
+            && is.contains(Is::HAS_POSTPROCESS)
+        {
+            self.postprocess(node, is, emit);
         }
+    }
+
+    #[inline(never)]
+    fn postprocess(&mut self, node: Node<'a>, is: Is, emit: &mut dyn FnMut(Event<'a>)) {
+        self.is_settled = false;
         let cx = &mut Cx::new(self.file, node, emit);
         if is.contains(Is::HAS_CODE_PATH) {
             self.end_code_path(cx);
@@ -968,6 +1046,7 @@ pub(crate) fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> 
             states: Vec::new(),
             spare_states: Vec::new(),
             ancestors: Vec::new(),
+            is_settled: false,
         },
         steps: Vec::new(),
         enter,

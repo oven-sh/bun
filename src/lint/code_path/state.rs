@@ -973,6 +973,11 @@ impl State {
         self.replace_head_with(store, Make::Next);
     }
 
+    #[inline]
+    pub(super) fn is_in_try(&self) -> bool {
+        !self.tries.is_empty()
+    }
+
     /// Whether `make_first_throwable_path_in_try_or_catch_block` would do anything.
     #[inline]
     pub(super) fn is_before_first_throwable(&self, store: &Store) -> bool {

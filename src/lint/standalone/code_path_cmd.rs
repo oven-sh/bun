@@ -820,6 +820,12 @@ fn bench(path: &str) {
             rule: &Idle,
             severity: Severity::Error,
         }];
+        struct Nothing;
+        impl<'a> bun_lint::ast::walk::Visitor<'a> for Nothing {
+            fn enter(&mut self, _: Node<'a>) {}
+            fn exit(&mut self, _: Node<'a>) {}
+        }
+        let walk = time(|| bun_lint::ast::walk::walk(file, &mut Nothing));
         let analysis = time(|| {
             bun_lint::code_path::analyze(file);
         });
@@ -827,7 +833,7 @@ fn bench(path: &str) {
             bun_lint::runner::run(file, &rules, false);
         });
         println!(
-            "{} bytes, {} events: parse and bind {parsing:?}, analysis {analysis:?}, a rule that listens {rule:?}",
+            "{} bytes, {} events: parse and bind {parsing:?}, a walk {walk:?}, analysis {analysis:?}, a rule that listens {rule:?}",
             code.len(),
             bun_lint::code_path::analyze(file),
         );
@@ -848,6 +854,15 @@ pub(crate) fn run(args: &[String]) {
         [command, path] if command == "batch" => batch(path),
         [command, path] if command == "bench" => bench(path),
         [command] if command == "upstream" => upstream(),
+        // For a profiler.
+        [command, path] if command == "analyze" => {
+            let code = std::fs::read(path).expect("the file");
+            crate::with_file(path, &code, &LanguageOptions::default(), |file| {
+                for _ in 0..500 {
+                    bun_lint::code_path::analyze(file);
+                }
+            });
+        }
         _ => println!(
             "usage: bun-lint code-path dot <file> | fixtures <directory> | trace <file> | batch <file> | upstream | bench <file>"
         ),

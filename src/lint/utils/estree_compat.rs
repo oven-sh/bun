@@ -652,8 +652,9 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
         Node::ImportSpec(_) => "ImportSpecifier",
         Node::ExportSpec(_) => "ExportSpecifier",
         Node::TupleElem(element) => match () {
-            () if element.name().is_some() => "TSNamedTupleMember",
+            // Of `...name: T`, the `name: T` is a `TSNamedTupleMember` in it.
             () if element.is_rest() => "TSRestType",
+            () if element.name().is_some() => "TSNamedTupleMember",
             () if element.is_optional() => "TSOptionalType",
             () => type_name_of_type(element.ty()),
         },

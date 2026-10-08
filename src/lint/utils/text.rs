@@ -23,10 +23,17 @@ use bun_core::strings;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-pub use crate::source::utf16_len;
+/// `text.length`
+pub fn utf16_len(text: &[u8]) -> u32 {
+    match strings::first_non_ascii(text) {
+        None => text.len() as u32,
+        Some(_) => code_points(text).map(|it| utf16_width(it.1)).sum(),
+    }
+}
 
 /// The code points of `text`, each with the offset in bytes where it starts. A byte that is not
-/// part of valid UTF-8 is U+FFFD.
+/// part of valid UTF-8 is U+FFFD. Half of a surrogate pair, which the value of a string literal
+/// such as `"\uD800"` has as three bytes, is itself.
 #[inline]
 pub fn code_points(text: &[u8]) -> CodePoints<'_> {
     CodePoints { text, at: 0 }
@@ -43,13 +50,21 @@ impl Iterator for CodePoints<'_> {
 
     #[inline]
     fn next(&mut self) -> Option<(usize, u32)> {
-        let (c, size) = char_and_size(self.text, self.at);
+        let at = self.at;
+        let (c, size) = match self.text.get(at..) {
+            Some(&[0xED, b @ 0xA0..=0xBF, c @ 0x80..=0xBF, ..]) => {
+                (0xD000 | u32::from(b & 0x3F) << 6 | u32::from(c & 0x3F), 3)
+            }
+            _ => {
+                let (c, size) = char_and_size(self.text, at);
+                (c as u32, size)
+            }
+        };
         if size == 0 {
             return None;
         }
-        let at = self.at;
         self.at += size;
-        Some((at, c as u32))
+        Some((at, c))
     }
 }
 

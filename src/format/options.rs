@@ -68,6 +68,9 @@ pub struct FormatOptions {
     /// The text is `<$>`, JSX that is in MDX, and `</$>`: Prettier's `rootMarker: "mdx"`. Only what is between the
     /// two is written.
     pub is_mdx_jsx: bool,
+    /// The text is `import` and `export` declarations in MDX. Anything else in it is an error: Prettier's
+    /// `validateImportExport`.
+    pub is_mdx_es_syntax: bool,
     /// Formats the JavaScript and TypeScript in blocks of code in Markdown. Without it they stay as they are.
     pub format_javascript: Option<FormatJavaScript>,
     /// Whose output to produce where the two differ.

@@ -1077,8 +1077,6 @@ pub struct SignOptions<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl S3Credentials {
-    /// The bucket in the host of a virtual-hosted endpoint, when `guess_bucket`
-    /// recognises the host.
     #[inline]
     fn endpoint_bucket(&self) -> Option<&[u8]> {
         if self.virtual_hosted_style && !self.endpoint.is_empty() {
@@ -1088,9 +1086,7 @@ impl S3Credentials {
         }
     }
 
-    /// The bucket that `Bun.inspect` prints: the bucket in the host of a
-    /// virtual-hosted endpoint, or else the `bucket` option, which
-    /// `sign_request` does not send in that mode.
+    /// For `Bun.inspect`: the bucket in a virtual-hosted endpoint host, else the `bucket` option.
     #[inline]
     pub fn configured_bucket(&self) -> Option<&[u8]> {
         if let Some(bucket) = self.endpoint_bucket() {
@@ -1099,16 +1095,13 @@ impl S3Credentials {
         (!self.bucket.is_empty()).then_some(&*self.bucket)
     }
 
-    /// The bucket that `S3File.bucket` reports. The `bucket` option comes
-    /// first: a guess from the host never replaces a configured name here.
-    /// Without the option, a virtual-hosted path is all key, so only the host
-    /// of the endpoint can name the bucket. In path style the first `/`
-    /// segment of `path()` is the bucket, and `path` runs only in that case.
+    /// For `S3File.bucket`: the `bucket` option first, so a guess from the host never replaces it.
     #[inline]
     pub fn bucket_for<'a>(&'a self, path: impl FnOnce() -> &'a [u8]) -> Option<&'a [u8]> {
         if !self.bucket.is_empty() {
             return Some(&*self.bucket);
         }
+        // A virtual-hosted path is all key.
         if self.virtual_hosted_style {
             return self.endpoint_bucket();
         }
@@ -1119,8 +1112,7 @@ impl S3Credentials {
     }
 }
 
-/// The bucket in the host of a virtual-hosted `endpoint` (`host[:port][/prefix]`),
-/// for the AWS S3 and Cloudflare R2 host shapes below. Never used for signing.
+/// The bucket in the host of a virtual-hosted `endpoint` (`host[:port][/prefix]`). Not for signing.
 fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
     let host = strings::split_once_char(endpoint, b'/').map_or(endpoint, |(host, _)| host);
     let host = strings::split_once_char(host, b':').map_or(host, |(host, _)| host);
@@ -1130,14 +1122,7 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         .strip_suffix(b".amazonaws.com")
         .or_else(|| host.strip_suffix(b".amazonaws.com.cn"))
     {
-        // https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
-        // https://docs.aws.amazon.com/AmazonS3/latest/userguide/dual-stack-endpoints.html
-        // <bucket>.s3.amazonaws.com
-        // <bucket>.s3.<region>.amazonaws.com
-        // <bucket>.s3.dualstack.<region>.amazonaws.com
-        // Read from the right: a bucket name can contain `.s3.`. A PrivateLink
-        // host (`[<bucket>.]bucket.vpce-<id>.s3.<region>.vpce.amazonaws.com`)
-        // does not match.
+        // <bucket>.s3[.dualstack][.<region>], https://docs.aws.amazon.com/AmazonS3/latest/userguide/VirtualHosting.html
         match rest.strip_suffix(b".s3") {
             Some(bucket) => bucket,
             None => {
@@ -1148,16 +1133,12 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
             }
         }
     } else {
-        // <bucket>.<account>.r2.cloudflarestorage.com
-        // <bucket>.<account>.<jurisdiction>.r2.cloudflarestorage.com
-        // Without the bucket label it is the account endpoint, which is
-        // path-style. Two labels are that endpoint when the second is an R2
-        // jurisdiction. Keep this list equal to "Available jurisdictions":
-        // https://developers.cloudflare.com/r2/reference/data-location/#available-jurisdictions
+        // <bucket>.<account>[.<jurisdiction>]. The account endpoint has no bucket label.
         let rest = host.strip_suffix(b".r2.cloudflarestorage.com")?;
         let (bucket, rest) = strings::split_once_char(rest, b'.')?;
         let named = match strings::split_once_char(rest, b'.') {
             Some((_, jurisdiction)) => !strings::contains_char(jurisdiction, b'.'),
+            // https://developers.cloudflare.com/r2/reference/data-location/#available-jurisdictions
             None => !matches!(rest, b"eu" | b"fedramp" | b"us"),
         };
         if !named {

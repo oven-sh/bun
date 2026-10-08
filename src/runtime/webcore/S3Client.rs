@@ -27,8 +27,8 @@ macro_rules! pfmt {
 }
 
 // ── Local extension shims ─────────────────────────────────────────────────
-// `bun_s3_signing::S3Credentials` exposes `guessRegion` as a
-// FREE fn and the JS-options parser lives in
+// `bun_s3_signing::S3Credentials` exposes `guessRegion` among its
+// FREE fns and the JS-options parser lives in
 // `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
 // an extension trait so call sites can use the associated-fn shape
 // (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).

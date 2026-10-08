@@ -176,7 +176,7 @@ impl<'a> File<'a> {
     /// of the program, computes their bits once, in [`Rule::new`](crate::rule::Rule::new).
     #[inline]
     pub fn mentions_bit(&self, bit: u32) -> bool {
-        self.hir.may_mention(bit)
+        self.hir.mentioned.get(bit as usize / 64).is_none_or(|word| word >> (bit % 64) & 1 != 0)
     }
 
     /// `text` as a name of this file, to compare the names of many nodes with: `name == wanted` compares two numbers, where

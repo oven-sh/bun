@@ -3794,12 +3794,6 @@ where
         let mut needs_content_range = self.flags.needs_content_range()
             && (sendfile.total > 0 || sendfile.remain < blob.size());
 
-        let size = if needs_content_range {
-            sendfile.remain
-        } else {
-            blob.size()
-        };
-
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), blob);
         // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
@@ -3893,7 +3887,7 @@ where
         }
 
         if self.flags.needs_content_length() {
-            resp.write_header_int(b"content-length", size as u64);
+            resp.write_header_int(b"content-length", sendfile.remain as u64);
             resp.mark_wrote_content_length_header();
             self.flags.set_needs_content_length(false);
         }

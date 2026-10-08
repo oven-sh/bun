@@ -37,7 +37,10 @@ impl Rule for PreferObjectHasOwn {
         PreferObjectHasOwn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("hasOwnProperty") {
+            return;
+        }
         on.exprs([ExprTag::Call], |_, e, cx| {
             let Some(callee) = e.as_call().map(Call::callee) else {
                 return;

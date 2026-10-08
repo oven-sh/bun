@@ -51,7 +51,7 @@ impl Rule for BanTslintComment {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !strings::contains(file.text(), b"tslint:") {
+        if !file.comments().any(|it| strings::contains(it.text(), b"tslint:")) {
             return;
         }
         on.finish(|_, cx| {

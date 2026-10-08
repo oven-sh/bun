@@ -329,7 +329,7 @@ impl Rule for PreferRegexLiterals {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         // Finding the calls takes resolving every name of the file.
-        if strings::contains(file.text(), b"RegExp") {
+        if file.mentions("RegExp") {
             on.finish(Self::check_calls);
         }
     }

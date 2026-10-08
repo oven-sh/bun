@@ -1,4 +1,3 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow the use of `undefined` as an identifier.
@@ -56,8 +55,7 @@ impl Rule for NoUndefined {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        // The name can be written with an escape.
-        if strings::contains(file.text(), b"undefined") || strings::contains(file.text(), b"\\u") {
+        if file.mentions("undefined") {
             on.symbols(Self::check_symbol);
             on.finish(Self::check_global);
         }

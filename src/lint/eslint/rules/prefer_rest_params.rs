@@ -22,7 +22,10 @@ impl Rule for PreferRestParams {
         PreferRestParams
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("arguments") {
+            return;
+        }
         on.exprs([ExprTag::Ident], |_, e, cx| {
             if !e.is_ident("arguments") || is_normal_member_access(e) {
                 return;

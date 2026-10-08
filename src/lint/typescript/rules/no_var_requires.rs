@@ -60,7 +60,10 @@ impl Rule for NoVarRequires {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("require") {
+            return;
+        }
         on.exprs([ExprTag::Call], Self::check);
     }
 }

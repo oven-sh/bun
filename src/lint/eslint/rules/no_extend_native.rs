@@ -66,7 +66,10 @@ impl Rule for NoExtendNative {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("prototype") {
+            return;
+        }
         on.exprs([ExprTag::Assign], Self::check_assignment);
         on.exprs([ExprTag::Call], Self::check_call);
     }

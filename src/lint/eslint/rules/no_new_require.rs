@@ -13,7 +13,10 @@ impl Rule for NoNewRequire {
         NoNewRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("require") {
+            return;
+        }
         on.exprs([ExprTag::New], |_, e, cx| {
             if let ExprKind::New(call) = e.kind()
                 && call.callee().is_ident("require")

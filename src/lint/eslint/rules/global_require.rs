@@ -36,7 +36,10 @@ impl Rule for GlobalRequire {
         GlobalRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("require") {
+            return;
+        }
         on.exprs([ExprTag::Call], |_, e, cx| {
             let Some(call) = e.as_call() else {
                 return;

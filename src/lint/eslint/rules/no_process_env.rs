@@ -29,7 +29,10 @@ impl Rule for NoProcessEnv {
         NoProcessEnv
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("process") {
+            return;
+        }
         on.exprs([ExprTag::Dot], |_, e, cx| {
             let ExprKind::Dot { obj, name, .. } = e.kind() else {
                 return;

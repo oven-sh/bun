@@ -522,6 +522,8 @@ fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locat
         fix: diagnostic.fix,
         suggestions: (diagnostic.suggestions.into_iter().map(Into::into)).collect(),
         suppressions: Vec::new(),
+        comments_apply_at: (diagnostic.comments_apply_at)
+            .map(|it| (locator.position(it.start), locator.position(it.end))),
     }
 }
 
@@ -539,6 +541,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
         fix: report.fix,
         suggestions: (report.suggestions.into_iter().map(Into::into)).collect(),
         suppressions: Vec::new(),
+        comments_apply_at: None,
     }
 }
 
@@ -580,6 +583,7 @@ fn js_failure(
         fix: None,
         suggestions: Vec::new(),
         suppressions: Vec::new(),
+        comments_apply_at: None,
     })
 }
 

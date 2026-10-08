@@ -15,7 +15,7 @@ impl Rule for SymbolDescription {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !ast_utils::is_configured_global(file, b"Symbol") {
+        if !file.mentions("Symbol") || !ast_utils::is_configured_global(file, b"Symbol") {
             return;
         }
         on.exprs([ExprTag::Call], |_, e, cx| {

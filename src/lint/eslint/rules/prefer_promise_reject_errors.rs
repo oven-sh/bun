@@ -89,7 +89,10 @@ impl Rule for PreferPromiseRejectErrors {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("Promise") {
+            return;
+        }
         on.exprs([ExprTag::Call], Self::check_call);
         on.exprs([ExprTag::New], Self::check_new);
     }

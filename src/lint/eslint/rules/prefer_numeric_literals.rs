@@ -91,7 +91,10 @@ impl Rule for PreferNumericLiterals {
         PreferNumericLiterals
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("parseInt") {
+            return;
+        }
         on.exprs([ExprTag::Call], Self::check);
     }
 }

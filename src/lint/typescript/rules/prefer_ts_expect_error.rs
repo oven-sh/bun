@@ -43,7 +43,7 @@ impl Rule for PreferTsExpectError {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !strings::contains(file.text(), TS_IGNORE) {
+        if !file.comments().any(|it| strings::contains(it.text(), TS_IGNORE)) {
             return;
         }
         on.finish(|_, cx| {

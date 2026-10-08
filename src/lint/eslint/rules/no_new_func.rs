@@ -38,7 +38,10 @@ impl Rule for NoNewFunc {
         NoNewFunc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("Function") {
+            return;
+        }
         on.exprs([ExprTag::Call, ExprTag::New], Self::check);
     }
 }

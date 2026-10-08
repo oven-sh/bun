@@ -106,7 +106,10 @@ impl Rule for NoPromiseExecutorReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("Promise") {
+            return;
+        }
         on.exprs([ExprTag::New], Self::check);
     }
 }

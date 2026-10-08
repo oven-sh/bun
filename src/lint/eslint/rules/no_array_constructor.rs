@@ -111,7 +111,10 @@ impl Rule for NoArrayConstructor {
         NoArrayConstructor
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("Array") {
+            return;
+        }
         on.exprs([ExprTag::Call, ExprTag::New], Self::check);
     }
 }

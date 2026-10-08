@@ -220,7 +220,7 @@ impl Rule for BanTsComment {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if strings::contains(file.text(), b"@ts-") {
+        if file.comments().any(|it| strings::contains(it.text(), b"@ts-")) {
             on.finish(Self::check);
         }
     }

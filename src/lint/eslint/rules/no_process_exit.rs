@@ -16,7 +16,10 @@ impl Rule for NoProcessExit {
         NoProcessExit
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("process") {
+            return;
+        }
         on.exprs([ExprTag::Call], |_, e, cx| {
             let ExprKind::Call(call) = e.kind() else {
                 return;

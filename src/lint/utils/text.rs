@@ -10,13 +10,18 @@
 //! | `s.toLowerCase()`, `s.toUpperCase()` | [`to_lower_case`], [`to_upper_case`] |
 //! | `s[0].toUpperCase() + s.slice(1)` | [`upper_case_first`] |
 //! | `String(n)` | [`number_to_string`] |
+//! | `Number(s)` | [`string_to_number`] |
 //! | `JSON.stringify(s)` | [`json_stringify`] |
-//! | `s.split(/\r\n\|[\r\n  ]/u)` | [`lines`] |
+//! | `a < b`, `a.localeCompare`-free sorting | [`compare`] |
+//! | `require("natural-compare")` | [`natural_compare`] |
+//! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
+//! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)` | [`lines`] |
 //! | `s.slice(a, b)` with UTF-16 indices | [`utf16_slice`], [`utf16_offset_to_byte`] |
 
 use bun_core::lexer::char_and_size;
 use bun_core::strings;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 
 pub use crate::source::utf16_len;
 
@@ -246,6 +251,57 @@ pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_sema::atom::number_to_string(n)
 }
 
+/// `Number(text)`: ECMAScript's `StringToNumber`. NaN if `text` is not a number.
+pub fn string_to_number(text: &[u8]) -> f64 {
+    let text = trim(text);
+    if text.is_empty() {
+        return 0.0;
+    }
+    if let [b'0', prefix, digits @ ..] = text
+        && let Some(radix) = match prefix {
+            b'x' | b'X' => Some(16u32),
+            b'o' | b'O' => Some(8),
+            b'b' | b'B' => Some(2),
+            _ => None,
+        }
+    {
+        let value = digits.iter().try_fold(0f64, |value, &c| {
+            Some(value * f64::from(radix) + f64::from(char::from(c).to_digit(radix)?))
+        });
+        return value.filter(|_| !digits.is_empty()).unwrap_or(f64::NAN);
+    }
+    let unsigned = match text {
+        [b'+' | b'-', rest @ ..] => rest,
+        _ => text,
+    };
+    if unsigned == b"Infinity" {
+        return if text[0] == b'-' { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    // `StrUnsignedDecimalLiteral`
+    let digits = |from: usize| unsigned[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+    let whole = digits(0);
+    let mut at = whole;
+    let mut fraction = 0;
+    if unsigned.get(at) == Some(&b'.') {
+        fraction = digits(at + 1);
+        at += 1 + fraction;
+    }
+    if whole + fraction == 0 {
+        return f64::NAN;
+    }
+    if let Some(b'e' | b'E') = unsigned.get(at) {
+        let sign = usize::from(matches!(unsigned.get(at + 1), Some(b'+' | b'-')));
+        match digits(at + 1 + sign) {
+            0 => return f64::NAN,
+            exponent => at += 1 + sign + exponent,
+        }
+    }
+    match at == unsigned.len() {
+        true => bun_core::fmt::parse_f64(text).unwrap_or(f64::NAN),
+        false => f64::NAN,
+    }
+}
+
 /// ECMAScript's `IdentifierStart`, without escapes.
 #[inline]
 pub fn is_identifier_start(c: u32) -> bool {
@@ -314,13 +370,13 @@ pub fn find_line_break(text: &[u8]) -> Option<(usize, usize)> {
     }
 }
 
-/// `/\r\n|[\r\n  ]/u.test(text)`
+/// `/\r\n|[\r\n\u2028\u2029]/u.test(text)`
 #[inline]
 pub fn has_line_break(text: &[u8]) -> bool {
     find_line_break(text).is_some()
 }
 
-/// `text.split(/\r\n|[\r\n  ]/u)`: the lines without their line breaks. There is always
+/// `text.split(/\r\n|[\r\n\u2028\u2029]/u)`: the lines without their line breaks. There is always
 /// at least one.
 #[inline]
 pub fn lines(text: &[u8]) -> Lines<'_> {
@@ -348,4 +404,138 @@ impl<'t> Iterator for Lines<'t> {
             }
         }
     }
+}
+
+/// `a < b`, `a === b` or `a > b` for strings: the order of UTF-16 code units, which is not that of
+/// the bytes where a character outside the BMP meets one from U+E000.
+pub fn compare(a: &[u8], b: &[u8]) -> Ordering {
+    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    match (a.get(common), b.get(common)) {
+        (Some(0xF0..), Some(0xEE | 0xEF)) => Ordering::Less,
+        (Some(0xEE | 0xEF), Some(0xF0..)) => Ordering::Greater,
+        (x, y) => x.cmp(&y),
+    }
+}
+
+/// The npm package `natural-compare`, which `sort-keys` and `member-ordering` sort by: as
+/// [`compare`], but a run of digits counts as the number it is, and the order of ASCII is punctuation,
+/// digits, upper case, lower case.
+pub fn natural_compare(a: &[u8], b: &[u8]) -> Ordering {
+    fn code_at<T: Copy + Into<u32>>(text: &[T], at: usize) -> u32 {
+        match text.get(at).map_or(0, |&c| c.into()) {
+            code @ (..45 | 128..) => code,
+            45 => 65,
+            code @ ..48 => code - 1,
+            code @ ..58 => code + 18,
+            code @ ..65 => code - 11,
+            code @ ..91 => code + 11,
+            code @ ..97 => code - 37,
+            code @ ..123 => code + 5,
+            code => code - 63,
+        }
+    }
+    /// The number that starts at `start`, and where it ends.
+    fn number_at<T: Copy + Into<u32>>(text: &[T], start: usize) -> (f64, usize) {
+        let (mut value, mut at) = (0.0, start);
+        while let code @ 66..76 = code_at(text, at) {
+            value = value * 10.0 + f64::from(code - 66);
+            at += 1;
+        }
+        (value, at)
+    }
+    fn compare_units<T: Copy + Into<u32>>(a: &[T], b: &[T]) -> Ordering {
+        let (mut at_a, mut at_b) = (0, 0);
+        loop {
+            let (code_a, code_b) = (code_at(a, at_a), code_at(b, at_b));
+            let is_number = |code| (67..76).contains(&code);
+            if is_number(code_a) && is_number(code_b) {
+                let ((value_a, end_a), (value_b, end_b)) = (number_at(a, at_a), number_at(b, at_b));
+                if value_a != value_b {
+                    return value_a.total_cmp(&value_b);
+                }
+                (at_a, at_b) = (end_a, end_b);
+                continue;
+            }
+            if code_a != code_b {
+                return code_a.cmp(&code_b);
+            }
+            if code_b == 0 {
+                return Ordering::Equal;
+            }
+            at_a += 1;
+            at_b += 1;
+        }
+    }
+    if a == b {
+        return Ordering::Equal;
+    }
+    if strings::first_non_ascii(a).is_none() && strings::first_non_ascii(b).is_none() {
+        return compare_units(a, b);
+    }
+    let units = |text: &[u8]| -> Vec<u16> {
+        let mut units = Vec::with_capacity(text.len());
+        for (_, c) in code_points(text) {
+            let c = char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER);
+            units.extend_from_slice(c.encode_utf16(&mut [0; 2]));
+        }
+        units
+    };
+    compare_units(&units(a), &units(b))
+}
+
+/// `esutils.keyword.isKeywordES6(name, false)`, or `null`, `true` or `false`.
+fn is_reserved_word_es6(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"if" | b"in"
+            | b"do"
+            | b"var"
+            | b"for"
+            | b"new"
+            | b"try"
+            | b"this"
+            | b"else"
+            | b"case"
+            | b"void"
+            | b"with"
+            | b"enum"
+            | b"while"
+            | b"break"
+            | b"catch"
+            | b"throw"
+            | b"const"
+            | b"yield"
+            | b"class"
+            | b"super"
+            | b"return"
+            | b"typeof"
+            | b"delete"
+            | b"switch"
+            | b"export"
+            | b"import"
+            | b"default"
+            | b"finally"
+            | b"extends"
+            | b"function"
+            | b"continue"
+            | b"debugger"
+            | b"instanceof"
+            | b"null"
+            | b"true"
+            | b"false"
+    )
+}
+
+/// `esutils.keyword.isIdentifierES6(name)`: an identifier that is not a reserved word outside of
+/// strict mode.
+pub fn is_identifier_es6(name: &[u8]) -> bool {
+    is_identifier_name(name) && !is_reserved_word_es6(name)
+}
+
+/// `esutils.keyword.isIdentifierES5(name)`: the same, but `yield` is an identifier and characters
+/// outside the BMP are not allowed.
+pub fn is_identifier_es5(name: &[u8]) -> bool {
+    is_identifier_name(name)
+        && (name == b"yield" || !is_reserved_word_es6(name))
+        && code_points(name).all(|it| it.1 <= 0xFFFF)
 }

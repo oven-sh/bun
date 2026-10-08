@@ -18,6 +18,7 @@
 //! | `./utils/regular-expressions` | [`regular_expressions`] | `is_valid_with_unicode_flag`, .. |
 //! | `./utils/string-utils`, `../shared/string-utils` | [`string_utils`] | `upper_case_first`, `get_grapheme_count` |
 //! | `../shared/naming`, `../shared/directives` | [`naming`], [`directives`] | |
+//! | `require("ignore")` | [`ignore`] | `Ignore::new(&patterns, ignores_case, IgnoreVersion::V5).ignores(path)` |
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
@@ -50,6 +51,7 @@
 //! | `getDirectivePrologue(node)` | `get_directive_prologue(file_or_func)` |
 //! | `isNullLiteral`, `isNullOrUndefined`, `isStringLiteral`, `isNumericLiteral`, `isStaticTemplateLiteral`, `isDecimalInteger`, `isCallee`, `couldBeError`, `getPrecedence`, `getBooleanValue`, `getStaticStringValue` | the same, on `Expr` |
 //! | `isLogicalExpression`, `isCoalesceExpression`, `isMixedLogicalAndCoalesceExpressions` | the same, on `Expr` |
+//! | `getPrecedence({ type: "BinaryExpression", operator })` | `get_binary_operator_precedence(op)` |
 //! | `isLogicalAssignmentOperator(node.operator)` | `is_logical_assignment_operator(op)` |
 //! | `getStaticPropertyName(node)` | `get_static_property_name(expr_or_prop_or_member)`, `get_static_key_name(key)` |
 //! | `skipChainExpression(node)` | `skip_chain_expression(e)`, the identity |
@@ -75,6 +77,7 @@ pub mod directives;
 pub mod eslint_utils;
 pub mod estree_compat;
 pub mod fix_tracker;
+pub mod ignore;
 pub mod keywords;
 pub mod naming;
 pub mod regular_expressions;
@@ -87,6 +90,6 @@ pub mod unicode;
 pub use estree_compat::{
     Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
     estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,
-    is_chain_root, is_in_optional_chain, is_sequence_root, last_sequence_expression, normalize,
+    is_chain_root, is_expression_statement, is_for_init, is_in_optional_chain, is_sequence_root, last_sequence_expression, normalize,
     sequence_expressions, sequence_root, type_annotation_span,
 };

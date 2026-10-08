@@ -16,15 +16,16 @@
 
 use super::estree_compat::{
     estree_parent, estree_span, get_node_by_range_index, is_assignment_target, is_chain_root,
+    is_expression_statement,
     type_annotation_span,
 };
 use super::text;
 use crate::ast::{
-    BinOp, Case, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind, Member,
-    MemberKind, Name, Node, PatKind, Prop, PropKind, Stmt, StmtKind, UnOp, VarKind,
+    BinOp, Case, Chain, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind, Member,
+    MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp, VarKind,
 };
 use crate::language::{Global, SourceType};
-use crate::semantic::{Reference, Scope, Symbol};
+use crate::semantic::{Declaration, Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
 use crate::tokens::{Token, TokenKind, skip_trivia, skip_trivia_back, token_len};
 use bun_core::strings;
@@ -87,7 +88,7 @@ pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
 pub fn is_statement_list_parent(parent: Node<'_>) -> bool {
     match parent {
         Node::File(_) | Node::Func(_) | Node::Case(_) => true,
-        Node::Stmt(statement) => matches!(statement.kind(), StmtKind::Block(_)),
+        Node::Stmt(statement) => matches!(statement.kind(), StmtKind::Block(_) | StmtKind::Switch { .. }),
         _ => false,
     }
 }
@@ -355,8 +356,8 @@ fn is_keyword_before_expression(word: &[u8]) -> bool {
 fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
     let mut first = None;
     let mut last = None;
-    // The last that is not a comment: whether a `/` after it divides.
-    let mut previous: Option<Piece<'_>> = None;
+    // Whether a `/` starts a regular expression, as opposed to dividing by what precedes it.
+    let mut is_regex_allowed = true;
     // For each open `{`, whether it is the `${` of a template.
     let mut braces: SmallVec<[bool; 8]> = SmallVec::new();
     let mut at = 0;
@@ -374,15 +375,7 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
             b'/' if next == Some(b'*') => {
                 (TokenKind::Block, at + 4 + strings::index_of(text.get(at + 2..)?, b"*/")?)
             }
-            b'/' if match previous {
-                None => true,
-                Some((TokenKind::Punctuator, text)) => !matches!(text, b")" | b"]" | b"}"),
-                Some((TokenKind::Keyword, _)) => true,
-                Some(_) => false,
-            } =>
-            {
-                (TokenKind::RegularExpression, end_of_regex(text, at)?)
-            }
+            b'/' if is_regex_allowed => (TokenKind::RegularExpression, end_of_regex(text, at)?),
             b'"' | b'\'' => (TokenKind::String, end_of_string(text, at)?),
             b'`' => {
                 let (end, opens) = end_of_template_piece(text, at + 1)?;
@@ -427,9 +420,12 @@ fn first_and_last_token(text: &[u8]) -> Option<(Piece<'_>, Piece<'_>)> {
         let piece = (kind, text.get(at..end)?);
         first = first.or(Some(piece));
         last = Some(piece);
-        if !kind.is_comment() {
-            previous = Some(piece);
-        }
+        is_regex_allowed = match piece {
+            (TokenKind::Punctuator, b"++" | b"--") => is_regex_allowed,
+            (TokenKind::Punctuator, text) => !matches!(text, b")" | b"]" | b"}"),
+            (TokenKind::Keyword, _) => true,
+            (kind, _) => kind.is_comment() && is_regex_allowed,
+        };
         at = end;
     }
     Some((first?, last?))
@@ -670,13 +666,14 @@ pub fn is_empty_function(func: Func<'_>) -> bool {
 /// ESLint's `isDirective`.
 #[inline]
 pub fn is_directive(statement: Stmt<'_>) -> bool {
-    statement.directive().is_some()
+    // ES3 has no directives.
+    statement.directive().is_some() && statement.file().language().ecma_version >= 5
 }
 
 /// ESLint's `isTopLevelExpressionStatement`: an expression statement directly in the file, in a
 /// namespace or in the body of a function.
 pub fn is_top_level_expression_statement(statement: Stmt<'_>) -> bool {
-    matches!(statement.kind(), StmtKind::Expr(_))
+    is_expression_statement(statement)
         && match statement.parent() {
             Node::File(_) => true,
             Node::Func(func) => func.kind() != FnKind::StaticBlock,
@@ -692,7 +689,7 @@ pub fn is_start_of_expression_statement<'a>(node: impl Into<Node<'a>>) -> bool {
     let start = node.span().start;
     node.ancestors()
         .take_while(|ancestor| !matches!(ancestor, Node::File(_)) && ancestor.span().start == start)
-        .any(|it| matches!(it, Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Expr(_))))
+        .any(|it| matches!(it, Node::Stmt(statement) if is_expression_statement(statement)))
 }
 
 /// ESLint's `getDirectivePrologue`, for a `File` or a function: the expression statements at the
@@ -782,8 +779,21 @@ pub fn get_static_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
         ExprKind::True => Cow::Borrowed(b"true"),
         ExprKind::False => Cow::Borrowed(b"false"),
         ExprKind::Null => Cow::Borrowed(b"null"),
-        ExprKind::Regex(_) => Cow::Borrowed(e.text()),
-        ExprKind::BigInt(_) => get_bigint_text(e),
+        ExprKind::Regex(regex) => {
+            // `String(regex)` has the flags in the order of `RegExp.prototype.flags`.
+            let flags = regex.flags();
+            match flags.is_sorted() {
+                true => Cow::Borrowed(e.text()),
+                false => {
+                    let mut text = e.text().to_vec();
+                    let at = text.len() - flags.len();
+                    text[at..].sort_unstable();
+                    Cow::Owned(text)
+                }
+            }
+        }
+        // In decimal notation.
+        ExprKind::BigInt(value) => Cow::Borrowed(value.bytes()),
         ExprKind::Template(template) => Cow::Borrowed(template.as_static()?.bytes()),
         _ => return None,
     })
@@ -1014,24 +1024,30 @@ pub fn starts_with_upper_case(name: &[u8]) -> bool {
 
 // ───────────────────────────── precedence and parentheses ─────────────────────────────
 
+/// ESLint's `getPrecedence({ type: "BinaryExpression", operator })`, or with `"LogicalExpression"`
+/// or `"SequenceExpression"`: that of an `ExprKind::Binary` with the operator `op`.
+pub fn get_binary_operator_precedence(op: BinOp) -> i32 {
+    match op {
+        BinOp::Comma => 0,
+        BinOp::Or | BinOp::Nullish => 4,
+        BinOp::And => 5,
+        BinOp::BitOr => 6,
+        BinOp::BitXor => 7,
+        BinOp::BitAnd => 8,
+        BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => 9,
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => 10,
+        BinOp::Shl | BinOp::Shr | BinOp::UShr => 11,
+        BinOp::Add | BinOp::Sub => 12,
+        BinOp::Mul | BinOp::Div | BinOp::Rem => 13,
+        BinOp::Pow => 15,
+    }
+}
+
 /// ESLint's `getPrecedence`. The root of an optional chain is a `ChainExpression`, 18. It is -1 for
 /// the expressions of TypeScript, which ESLint does not know.
 pub fn get_precedence(e: Expr<'_>) -> i32 {
     match e.kind() {
-        ExprKind::Binary { op, .. } => match op {
-            BinOp::Comma => 0,
-            BinOp::Or | BinOp::Nullish => 4,
-            BinOp::And => 5,
-            BinOp::BitOr => 6,
-            BinOp::BitXor => 7,
-            BinOp::BitAnd => 8,
-            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => 9,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => 10,
-            BinOp::Shl | BinOp::Shr | BinOp::UShr => 11,
-            BinOp::Add | BinOp::Sub => 12,
-            BinOp::Mul | BinOp::Div | BinOp::Rem => 13,
-            BinOp::Pow => 15,
-        },
+        ExprKind::Binary { op, .. } => get_binary_operator_precedence(op),
         ExprKind::Assign { op: None, .. } if is_assignment_target(e) => 20,
         ExprKind::Assign { .. } | ExprKind::Yield { .. } => 1,
         ExprKind::Fn(func) if func.is_arrow() => 1,
@@ -1042,7 +1058,7 @@ pub fn get_precedence(e: Expr<'_>) -> i32 {
         } => 17,
         ExprKind::Unary { .. } | ExprKind::Await(_) => 16,
         ExprKind::Call(_) | ExprKind::ImportCall { .. } => 18,
-        ExprKind::Dot { .. } | ExprKind::Index { .. } if is_chain_root(e) => 18,
+        ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_) if is_chain_root(e) => 18,
         ExprKind::New(_) => 19,
         ExprKind::As { .. }
         | ExprKind::AsConst(_)
@@ -1102,8 +1118,14 @@ pub fn is_configured_global(file: &File<'_>, name: &[u8]) -> bool {
 /// ESLint's `sourceCode.isGlobalReference`: `e` is an identifier that refers to a global variable
 /// which the configuration defines and the file does not declare.
 pub fn is_global_reference(e: Expr<'_>) -> bool {
-    e.as_ident()
-        .is_some_and(|name| e.symbol().is_none() && is_configured_global(e.file(), name.bytes()))
+    // What only an assignment in JavaScript declares, such as `module.exports = ..`, is not declared
+    // as far as ESLint is concerned.
+    let is_declared = |symbol: Symbol<'_>| {
+        symbol.declarations().any(|it| !matches!(it, Declaration::Other))
+    };
+    e.as_ident().is_some_and(|name| {
+        !e.symbol().is_some_and(is_declared) && is_configured_global(e.file(), name.bytes())
+    })
 }
 
 /// ESLint's `isReferenceToGlobalVariable`. The same as [`is_global_reference`].
@@ -1267,6 +1289,11 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
     match e.kind() {
         // A hole in an array.
         ExprKind::Missing => true,
+        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Assign { op: None, .. } | ExprKind::Spread(_)
+            if is_assignment_target(e) =>
+        {
+            false
+        }
         ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Object(_) => true,
         ExprKind::Template(template) => {
             let has_text = || {
@@ -1307,7 +1334,8 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
         },
         ExprKind::Spread(operand) => is_constant(operand, in_boolean_position),
         ExprKind::Call(call) => {
-            call.callee().is_ident("Boolean")
+            call.chain() == Chain::No
+                && call.callee().is_ident("Boolean")
                 && call.args().first().is_none_or(|it| is_constant(it, true))
                 && is_global_reference(call.callee())
         }
@@ -1319,6 +1347,8 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
 /// ESLint's `couldBeError`: the value of `e` can be an `Error` object, as far as the syntax tells.
 pub fn could_be_error(e: Expr<'_>) -> bool {
     match e.kind() {
+        ExprKind::Assign { op: None, .. } if is_assignment_target(e) => false,
+        ExprKind::NonNull(_) => is_chain_root(e),
         ExprKind::Ident(_)
         | ExprKind::Call(_)
         | ExprKind::New(_)
@@ -1351,63 +1381,87 @@ pub fn is_es5_constructor(func: Func<'_>) -> bool {
 }
 
 /// What ESLint finds as the `parent` of a function.
+#[derive(Copy, Clone)]
 enum FunctionParent<'a> {
     /// `MethodDefinition`
     Method(Member<'a>),
     /// `PropertyDefinition`, whose value the function is.
     Field(Member<'a>),
-    /// `Property`
+    /// `Property` of an object literal.
     Prop(Prop<'a>),
+    /// `Property` of an object pattern, in whose computed key the function is.
+    PatProp(PatProp<'a>),
     /// The function is itself a `TSMethodSignature`.
     Signature(Member<'a>),
     Other,
 }
 
-fn function_parent(func: Func<'_>) -> FunctionParent<'_> {
-    match estree_parent(Node::Func(func)) {
-        Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => FunctionParent::Other,
-        Node::Member(member) => {
-            let in_class = matches!(member.parent(), Node::Class(_));
-            match member.kind() {
-                MemberKind::Method
-                | MemberKind::Getter
-                | MemberKind::Setter
-                | MemberKind::Constructor => match in_class {
-                    true => FunctionParent::Method(member),
-                    false => FunctionParent::Signature(member),
-                },
-                MemberKind::Property if in_class && !member.flags().contains(Flags::ACCESSOR) => {
-                    FunctionParent::Field(member)
+impl<'a> FunctionParent<'a> {
+    fn of(func: Func<'a>) -> Self {
+        match estree_parent(Node::Func(func)) {
+            Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => FunctionParent::Other,
+            Node::Member(member) => {
+                let in_class = matches!(member.parent(), Node::Class(_));
+                match member.kind() {
+                    MemberKind::Method
+                    | MemberKind::Getter
+                    | MemberKind::Setter
+                    | MemberKind::Constructor => match in_class {
+                        true => FunctionParent::Method(member),
+                        false => FunctionParent::Signature(member),
+                    },
+                    MemberKind::Property if in_class && !member.flags().contains(Flags::ACCESSOR) => {
+                        FunctionParent::Field(member)
+                    }
+                    _ => FunctionParent::Other,
                 }
-                _ => FunctionParent::Other,
             }
+            Node::Prop(prop) if !prop.is_jsx_attribute() && prop.kind() != PropKind::Spread => {
+                FunctionParent::Prop(prop)
+            }
+            // The default value is in an `AssignmentPattern`.
+            Node::PatProp(prop) if prop.default().and_then(Expr::as_fn) != Some(func) => {
+                FunctionParent::PatProp(prop)
+            }
+            _ => FunctionParent::Other,
         }
-        Node::Prop(prop) if !prop.is_jsx_attribute() && prop.kind() != PropKind::Spread => {
-            FunctionParent::Prop(prop)
+    }
+
+    fn node(self) -> Option<Node<'a>> {
+        match self {
+            FunctionParent::Method(member)
+            | FunctionParent::Field(member)
+            | FunctionParent::Signature(member) => Some(Node::Member(member)),
+            FunctionParent::Prop(prop) => Some(Node::Prop(prop)),
+            FunctionParent::PatProp(prop) => Some(Node::PatProp(prop)),
+            FunctionParent::Other => None,
         }
-        _ => FunctionParent::Other,
+    }
+
+    /// The `#name` of a class member.
+    fn private_name(self) -> Option<Name<'a>> {
+        match self {
+            FunctionParent::Method(member) | FunctionParent::Field(member) => {
+                match member.key()?.kind() {
+                    KeyKind::Private(name) => Some(name),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 }
 
 /// ESLint's `getFunctionNameWithKind`: `"function 'foo'"`, `"arrow function"`,
 /// `"static async method 'foo'"`, `"private getter #foo"`, `"constructor"`.
 pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
-    let parent = function_parent(func);
-    let key = match parent {
-        FunctionParent::Method(member)
-        | FunctionParent::Field(member)
-        | FunctionParent::Signature(member) => member.key(),
-        FunctionParent::Prop(prop) => prop.key(),
-        FunctionParent::Other => None,
-    };
-    let private_name = match (&parent, key.map(Key::kind)) {
-        (FunctionParent::Signature(_), _) => None,
-        (_, Some(KeyKind::Private(name))) => Some(name),
-        _ => None,
-    };
+    let parent = FunctionParent::of(func);
+    let private_name = parent.private_name();
     let mut tokens: SmallVec<[&[u8]; 6]> = SmallVec::new();
+    let mut is_static = false;
     if let FunctionParent::Method(member) | FunctionParent::Field(member) = parent {
-        if member.is_static() {
+        is_static = member.is_static();
+        if is_static {
             tokens.push(b"static");
         }
         if private_name.is_some() {
@@ -1421,15 +1475,20 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
         tokens.push(b"generator");
     }
     match parent {
-        FunctionParent::Method(_) | FunctionParent::Prop(_) | FunctionParent::Signature(_) => {
-            tokens.push(match func.kind() {
-                FnKind::Constructor => return b"constructor".to_vec(),
-                FnKind::Getter => b"getter",
-                FnKind::Setter => b"setter",
+        FunctionParent::Method(member) | FunctionParent::Signature(member) => {
+            tokens.push(match member.kind() {
+                MemberKind::Constructor if !is_static => return b"constructor".to_vec(),
+                MemberKind::Getter => b"getter",
+                MemberKind::Setter => b"setter",
                 _ => b"method",
             });
         }
-        FunctionParent::Field(_) => tokens.push(b"method"),
+        FunctionParent::Prop(prop) => tokens.push(match prop.kind() {
+            PropKind::Getter => b"getter",
+            PropKind::Setter => b"setter",
+            _ => b"method",
+        }),
+        FunctionParent::PatProp(_) | FunctionParent::Field(_) => tokens.push(b"method"),
         FunctionParent::Other => {
             if func.is_arrow() {
                 tokens.push(b"arrow");
@@ -1438,41 +1497,51 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
         }
     }
     let mut out = tokens.join(&b' ');
-    let mut quoted = |name: &[u8]| {
-        out.extend_from_slice(b" '");
-        out.extend_from_slice(name);
-        out.push(b'\'');
-    };
-    let static_name = key.and_then(get_static_key_name);
-    match (parent, private_name, static_name, func.name()) {
-        (_, Some(name), ..) => {
+    let name = match (private_name, parent.node().and_then(get_static_property_name)) {
+        (Some(name), _) => {
             out.push(b' ');
             out.extend_from_slice(name.bytes());
+            return out;
         }
-        (FunctionParent::Signature(_), _, name, _) => quoted(name.as_deref().unwrap_or(b"null")),
-        (FunctionParent::Other, _, _, Some(name)) | (_, _, None, Some(name)) => quoted(name.bytes()),
-        (FunctionParent::Other, ..) | (_, _, None, None) => {}
-        (_, _, Some(name), _) => quoted(&name),
+        (None, Some(name)) => Some(name),
+        (None, None) if matches!(parent, FunctionParent::Signature(_)) => Some(Cow::Borrowed(&b"null"[..])),
+        (None, None) => func.name().map(|name| Cow::Borrowed(name.bytes())),
+    };
+    if let Some(name) = name {
+        out.extend_from_slice(b" '");
+        out.extend_from_slice(&name);
+        out.push(b'\'');
     }
     out
 }
 
 /// ESLint's `getOpeningParenOfParams`: the `(` of the parameters. For an arrow function with one
 /// parameter and no parentheses, the first token of the parameter.
+///
+/// As upstream, it is the first `(` after the name, which is a wrong one if the type parameters
+/// have one.
 pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
-    if let Some(at) = func.open_paren() {
-        return Some(Span::new(at, at + 1));
-    }
     let (file, text) = (func.file(), func.file().text());
-    if let Some(first) = func.params().first() {
-        let start = first.span().start;
+    let params = func.params();
+    if func.is_arrow()
+        && params.len() == 1
+        && let Some(only) = params.first()
+    {
+        let start = only.span().start;
         let before = skip_trivia_back(text, start);
         return Some(match before.checked_sub(1).map(|at| (at, text.get(at as usize))) {
             Some((at, Some(b'('))) => Span::new(at, before),
             _ => Span::new(start, start + token_len(text.get(start as usize..)?) as u32),
         });
     }
-    file.tokens_in(func.span()).find(is_opening_paren_token).map(Token::span)
+    if func.type_params().is_empty()
+        && let Some(at) = func.open_paren()
+    {
+        return Some(Span::new(at, at + 1));
+    }
+    let whole = estree_span(Node::Func(func));
+    let from = func.name().map_or(whole.start, |name| name.span().end);
+    file.tokens_in(Span::new(from, whole.end)).find(is_opening_paren_token).map(Token::span)
 }
 
 /// ESLint's `getFunctionHeadLoc`: what to report for a function, so that not all of it is
@@ -1482,12 +1551,9 @@ pub fn get_function_head_loc(func: Func<'_>) -> Span {
     let to_paren = |start: u32| {
         Span::new(start, get_opening_paren_of_params(func).map_or(start, |paren| paren.start))
     };
-    match function_parent(func) {
-        FunctionParent::Method(member)
-        | FunctionParent::Field(member)
-        | FunctionParent::Signature(member) => to_paren(member.span().start),
-        FunctionParent::Prop(prop) => to_paren(prop.span().start),
-        FunctionParent::Other => match (func.arrow_span(), func.kind(), func.return_type()) {
+    match FunctionParent::of(func).node() {
+        Some(parent) => to_paren(parent.span().start),
+        None => match (func.arrow_span(), func.kind(), func.return_type()) {
             (Some(arrow), ..) => arrow,
             (None, FnKind::FunctionType, Some(ty)) => {
                 let start = type_annotation_span(ty).start;
@@ -1602,7 +1668,10 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
             && func.name().is_none()
             && name.is_some_and(|it| starts_with_upper_case(it.bytes()))
     };
-    if func.kind() == FnKind::StaticBlock || func.this_param().is_some() {
+    if func.kind() == FnKind::StaticBlock
+        || func.this_param().is_some()
+        || func.params().iter().any(|param| param.pat().as_ident().is_some_and(|name| name.is("this")))
+    {
         return false;
     }
     let mut current = match func.owner() {
@@ -1611,7 +1680,10 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
         Node::Member(_) => return false,
         _ => return !((cap_is_constructor && is_es5_constructor(func)) || has_jsdoc_this_tag(func)),
     };
-    if matches!(current.parent(), Node::Member(member) if member.init() == Some(current)) {
+    let is_value_of = |member: Member<'_>, value: Expr<'_>| {
+        member.init().is_some_and(|init| init.id() == value.id()) && !member.flags().contains(Flags::ACCESSOR)
+    };
+    if matches!(current.parent(), Node::Member(member) if is_value_of(member, current)) {
         return false;
     }
     if (cap_is_constructor && is_es5_constructor(func)) || has_jsdoc_this_tag(func) {
@@ -1678,7 +1750,7 @@ pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool
                 }
             }
             Node::Prop(prop) => return prop.is_jsx_attribute() || prop.value() != Some(current),
-            Node::Member(member) => return member.init() != Some(current),
+            Node::Member(member) => return !is_value_of(member, current),
             Node::VarDecl(declaration) => {
                 return !(declaration.init() == Some(current)
                     && is_capitalized(declaration.pat().as_ident()));

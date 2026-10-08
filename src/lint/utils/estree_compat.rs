@@ -7,6 +7,7 @@
 //! | `node.parent`, for a walk that compares `type`s | [`estree_parent`], [`normalize`] |
 //! | `ChainExpression` | [`is_chain_root`], [`chain_root`], [`is_in_optional_chain`] |
 //! | `SequenceExpression.expressions` | [`sequence_expressions`], [`is_sequence_root`], [`sequence_root`] |
+//! | `ExpressionStatement`, as opposed to the `init` of a `for` | [`is_expression_statement`], [`is_for_init`] |
 //! | a pattern in an assignment | [`is_assignment_target`] |
 //! | any pattern, in a declaration or in an assignment | [`Target`] |
 //! | `TSTypeAnnotation.range` | [`type_annotation_span`] |
@@ -15,7 +16,7 @@
 
 use crate::ast::{
     BinOp, Chain, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name,
-    Node, Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp,
+    Node, Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
 };
 use crate::span::{Span, Spanned};
 use crate::tokens::{skip_trivia, skip_trivia_back};
@@ -36,21 +37,14 @@ fn continues_chain<'a>(parent: Expr<'a>, e: Expr<'a>) -> bool {
     }
 }
 
-/// The next link of the optional chain that `e` is part of: the member access or the call whose
-/// object or callee it is. The `!` of `a?.b!.c` is a link.
+/// The next link of the optional chain that `e` is a link of: the member access or the call whose
+/// object or callee it is, or the `!` after it.
 fn next_in_chain(e: Expr<'_>) -> Option<Expr<'_>> {
     let parent = e.parent().as_expr()?;
-    if continues_chain(parent, e) {
-        return Some(parent);
+    match parent.kind() {
+        ExprKind::NonNull(_) => (!e.is_parenthesized()).then_some(parent),
+        _ => continues_chain(parent, e).then_some(parent),
     }
-    if matches!(parent.kind(), ExprKind::NonNull(_))
-        && !e.is_parenthesized()
-        && let Some(after) = parent.parent().as_expr()
-        && continues_chain(after, parent)
-    {
-        return Some(parent);
-    }
-    None
 }
 
 /// Whether `e` is a member access, a call or a `!` in an optional chain, after its first `?.`.
@@ -62,9 +56,9 @@ fn is_chain_link(e: Expr<'_>) -> bool {
 }
 
 /// Whether ESTree has a `ChainExpression` around `e`: it is the whole of `a?.b.c()`, not a part of
-/// it.
+/// it. In `a?.b!`, that is the `ExprKind::NonNull`.
 pub fn is_chain_root(e: Expr<'_>) -> bool {
-    e.chain() != Chain::No && next_in_chain(e).is_none()
+    is_chain_link(e) && next_in_chain(e).is_none()
 }
 
 /// The whole optional chain that `e` is a link of: what ESTree has a `ChainExpression` around.
@@ -152,6 +146,25 @@ pub fn last_sequence_expression(e: Expr<'_>) -> Expr<'_> {
     }
 }
 
+// ───────────────────────────── the head of a `for` ─────────────────────────────
+
+/// Whether `statement` is the `init` of a `for` or the `left` of a `for`-`in` or a `for`-`of`. If it
+/// is a `StmtKind::Expr`, ESTree has the expression there and no `ExpressionStatement`.
+pub fn is_for_init(statement: Stmt<'_>) -> bool {
+    match statement.parent().as_stmt().map(Stmt::kind) {
+        Some(StmtKind::For { init, .. }) => init == Some(statement),
+        Some(StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) => left == statement,
+        _ => false,
+    }
+}
+
+/// Whether `statement` is an `ExpressionStatement` of ESTree: a `StmtKind::Expr` that is not in the
+/// head of a `for`.
+#[inline]
+pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
+    matches!(statement.kind(), StmtKind::Expr(_)) && !is_for_init(statement)
+}
+
 // ───────────────────────────── patterns ─────────────────────────────
 
 /// Whether `e` is written where ESTree has a pattern: it is what an assignment or a `for`-`in` or
@@ -173,9 +186,14 @@ pub fn is_assignment_target(mut e: Expr<'_>) -> bool {
                 _ => return false,
             },
             Node::Stmt(statement) => {
+                let head = match statement.kind() {
+                    StmtKind::Expr(_) => statement.parent().as_stmt().filter(|_| is_for_init(statement)),
+                    _ => Some(statement),
+                };
                 return matches!(
-                    statement.parent().as_stmt().map(Stmt::kind),
-                    Some(StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }) if left == statement
+                    head.map(Stmt::kind),
+                    Some(StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. })
+                        if matches!(left.kind(), StmtKind::Expr(target) if target == e)
                 );
             }
             _ => return false,
@@ -500,6 +518,7 @@ fn type_name_of_stmt(statement: Stmt<'_>) -> &'static str {
     match statement.kind() {
         StmtKind::Empty => "EmptyStatement",
         StmtKind::Debugger => "DebuggerStatement",
+        StmtKind::Expr(e) if is_for_init(statement) => type_name_of_expr(e),
         StmtKind::Expr(_) => "ExpressionStatement",
         StmtKind::Var(_) => "VariableDeclaration",
         StmtKind::Fn(func) => type_name_of_func(func),
@@ -603,7 +622,9 @@ fn type_name_of_param(param: Param<'_>) -> &'static str {
 /// Where one node here stands for several of ESTree, it is the outermost that is not a mere
 /// wrapper: a `Param` with a default is an `AssignmentPattern`, an exported declaration is the
 /// declaration and not the `ExportNamedDeclaration`, the root of an optional chain is the member
-/// access or the call and not the `ChainExpression`.
+/// access or the call and not the `ChainExpression`. Where a node here has none in ESTree, it is
+/// what it holds: the `StmtKind::Expr` in the head of a `for` is the expression, the `VarDecl` of
+/// `catch (e)` the pattern.
 pub fn estree_type_name(node: Node<'_>) -> &'static str {
     match node {
         Node::File(_) => "Program",
@@ -660,6 +681,9 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
             _ if prop.is_jsx_attribute() => "JSXAttribute",
             _ => "Property",
         },
+        Node::VarDecl(declaration) if is_catch_param(declaration) => {
+            type_name_of_pat(declaration.pat())
+        }
         Node::VarDecl(_) => "VariableDeclarator",
         Node::Case(_) => "SwitchCase",
         Node::EnumMember(_) => "TSEnumMember",
@@ -676,20 +700,29 @@ pub fn estree_type_name(node: Node<'_>) -> &'static str {
 
 // ───────────────────────────── node.range ─────────────────────────────
 
+/// Whether `declaration` is the `e` of `catch (e)`, which in ESTree is the pattern alone.
+fn is_catch_param(declaration: VarDecl<'_>) -> bool {
+    matches!(declaration.parent(), Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Try { .. }))
+}
+
 /// The range of a pattern as typescript-estree has it: with the `?` and the type annotation that
 /// follow it.
-fn span_of_pat(pat: Pat<'_>) -> Span {
+fn span_with_annotation(pat: Pat<'_>, ty: Option<TypeNode<'_>>, is_optional: bool) -> Span {
     let span = pat.span();
-    let text = pat.file().text();
-    let (ty, is_optional) = match pat.parent() {
-        Node::Param(param) => (param.ty(), param.is_optional()),
-        Node::VarDecl(declaration) => (declaration.ty(), false),
-        _ => return span,
-    };
     match ty {
         Some(ty) => Span::new(span.start, type_annotation_span(ty).end),
-        None if is_optional => Span::new(span.start, skip_trivia(text, span.end) + 1),
+        None if is_optional => Span::new(span.start, skip_trivia(pat.file().text(), span.end) + 1),
         None => span,
+    }
+}
+
+fn span_of_pat(pat: Pat<'_>) -> Span {
+    match pat.parent() {
+        // The annotation belongs to the `RestElement`.
+        Node::Param(param) if param.is_rest() => pat.span(),
+        Node::Param(param) => span_with_annotation(pat, param.ty(), param.is_optional()),
+        Node::VarDecl(declaration) => span_with_annotation(pat, declaration.ty(), false),
+        _ => pat.span(),
     }
 }
 
@@ -700,10 +733,16 @@ fn span_of_pat(pat: Pat<'_>) -> Span {
 /// - the function of a method or an accessor: from its type parameters or its `(`,
 /// - a pattern with a type annotation, in a declarator or a parameter: with the `?` and the
 ///   annotation,
-/// - a parameter with a default value: without decorators.
+/// - a parameter with a default value: without decorators,
+/// - the expression in the head of a `for`, and the parameter of a `catch`: see
+///   [`estree_type_name`].
 pub fn estree_span(node: Node<'_>) -> Span {
     match node {
-        Node::Stmt(statement) => statement.span_without_export(),
+        Node::Stmt(statement) => match statement.kind() {
+            StmtKind::Expr(e) if is_for_init(statement) => e.span(),
+            _ => statement.span_without_export(),
+        },
+        Node::VarDecl(declaration) if is_catch_param(declaration) => span_of_pat(declaration.pat()),
         Node::Func(func) => match (func.kind(), func.owner()) {
             (_, Node::Stmt(statement)) => statement.span_without_export(),
             (FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor, owner) => {
@@ -725,7 +764,7 @@ pub fn estree_span(node: Node<'_>) -> Span {
         Node::Param(param) => match param.default() {
             _ if param.is_parameter_property() || param.is_rest() => param.span(),
             Some(default) => Span::new(param.pat().span().start, default.outer_span().end),
-            None => span_of_pat(param.pat()),
+            None => span_with_annotation(param.pat(), param.ty(), param.is_optional()),
         },
         _ => node.span(),
     }
@@ -793,7 +832,7 @@ pub fn normalize(node: Node<'_>) -> Node<'_> {
 ///
 /// - The parent of a `Func` or a `Class` is that of the expression or the statement it is. That of
 ///   the function of a method is the `Member` or the `Prop`.
-/// - The `a, b` inside `a, b, c` is skipped.
+/// - The `a, b` inside `a, b, c` is skipped, and the `StmtKind::Expr` in the head of a `for`.
 /// - The nodes of ESTree that do not exist here are not in the walk: the `BlockStatement` that is
 ///   the body of a function (the parent of a statement in it is the `Func`), `ClassBody`,
 ///   `ChainExpression`, `ExportNamedDeclaration` and `ExportDefaultDeclaration` around a
@@ -810,6 +849,9 @@ pub fn estree_parent(node: Node<'_>) -> Node<'_> {
     };
     match parent {
         Node::Expr(e) if is_inner_comma(e) => Node::Expr(sequence_root(e)),
+        Node::Stmt(statement) if matches!(node, Node::Expr(_)) && is_for_init(statement) => {
+            statement.parent()
+        }
         _ => normalize(parent),
     }
 }

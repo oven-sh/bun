@@ -771,6 +771,11 @@ fn conformance(args: &[String]) {
     );
 }
 
+/// `languageOptions` of a file that is linted with types.
+fn with_the_parser_of_typescript_eslint() -> Json {
+    Json::Object(vec![(b"parser".to_vec(), Json::String(b"typescript".to_vec()))])
+}
+
 fn run_one(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let plain: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
@@ -792,7 +797,7 @@ fn run_one(args: &[String]) {
         overlay: Vec::new(),
         threads: 1,
     };
-    let config = config_of(entry, options, &Json::Null, &Json::Null);
+    let config = config_of(entry, options, &with_the_parser_of_typescript_eslint(), &Json::Null);
     let outcomes = lint_project(project, &config.language, &|file| lint_file(entry, file, &code, &config));
     for (_, outcome) in outcomes {
         if outcome.has_parse_errors {
@@ -861,7 +866,10 @@ fn bench(args: &[String]) {
     }
     if let Some(rules) = flag("--rules=") {
         let rules = rules.split(',').map(|name| (RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(), Json::Number(2.0)));
-        let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(rules.collect()))]);
+        let config = Json::Object(vec![
+            (b"languageOptions".to_vec(), with_the_parser_of_typescript_eslint()),
+            (b"rules".to_vec(), Json::Object(rules.collect())),
+        ]);
         let config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
         time("the rules", &|file| linter().lint(file, &config, &LintOptions::default()).messages.len());
     }
@@ -905,7 +913,10 @@ fn time(args: &[String]) {
     let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().into_owned();
     let rules = flag("--rules=").unwrap_or("no-floating-promises,no-unsafe-member-access,no-unnecessary-condition");
     let rules = rules.split(',').map(|name| (RuleId::Known(find_rule(name).expect("the rule").meta).to_vec(), Json::Number(2.0)));
-    let config = Json::Object(vec![(b"rules".to_vec(), Json::Object(rules.collect()))]);
+    let config = Json::Object(vec![
+        (b"languageOptions".to_vec(), with_the_parser_of_typescript_eslint()),
+        (b"rules".to_vec(), Json::Object(rules.collect())),
+    ]);
     let config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
     let project = Project {
         cwd: &cwd,
@@ -915,7 +926,7 @@ fn time(args: &[String]) {
         threads: flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(0),
     };
     let started = std::time::Instant::now();
-    let results = lint_project(project, &LanguageOptions::default(), &|file| linter().lint(file, &config, &LintOptions::default()).messages.len());
+    let results = lint_project(project, &config.language, &|file| linter().lint(file, &config, &LintOptions::default()).messages.len());
     let messages: usize = results.iter().map(|it| it.1).sum();
     println!("{:.3} s: {} of {} files linted, {messages} messages", started.elapsed().as_secs_f64(), results.len(), files.len());
     if args.iter().any(|a| a == "--not-linted") {

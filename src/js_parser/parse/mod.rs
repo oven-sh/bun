@@ -2766,7 +2766,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Any expression is accepted and never checked. `checkExternalImportOrExportDeclaration` reports 1141 unless it
             // is missing. `checkGrammarModuleElementContext` returns first.
             let value = p.parse_expr(Level::Lowest)?;
-            if !value.is_missing() && p.is_in_appropriate_context() {
+            if !value.is_missing() && p.is_babel() {
+                let range = p.lexer.range_from(path.loc);
+                p.lexer.ts_error(range, 1141);
+            } else if !value.is_missing() && p.is_in_appropriate_context() {
                 p.ts_checker_error(p.lexer.range_from(path.loc), 1141);
             }
             p.keep_module_specifier(None, Some(value), path.loc);

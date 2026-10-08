@@ -236,7 +236,8 @@ impl Parser<'_> {
                 token => !matches!(token, T::Comma | T::Equals),
             };
             if is_deferred {
-                if token != T::Defer && self.token() == T::Asterisk {
+                // Only `import source x from "a"`.
+                if token != T::Defer && !self.is_identifier() {
                     self.report();
                 }
                 identifier = None;

@@ -2272,6 +2272,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     && (default_name_raw == b"defer" || default_name_raw == b"source" && p.is_babel())
                     && Self::defer_is_modifier(p)
                 {
+                    // Only `import source x from "a"`.
+                    if default_name_raw == b"source" && p.lexer.token != T::TIdentifier {
+                        let range = p.lexer.range();
+                        p.lexer.ts_error(range, 1003);
+                    }
                     return Self::import_after_defer(p, loc);
                 }
 

@@ -156,9 +156,10 @@ impl<'a> Format<'a> for FormatArgumentsOnOneLine<'a> {
     }
 }
 
-/// Prettier's `isTemplateOnItsOwnLine` of the only argument.
+/// Prettier's `isTemplateOnItsOwnLine` of the only argument, which is not written as the language in it.
 fn is_template_on_its_own_line_only_argument<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
-    args.len() == 1 && args.first().is_some_and(|first| is_multiline_template_starting_on_same_line(first, f.source_text()))
+    let is_one = |only| is_multiline_template_starting_on_same_line(only, f.source_text()) && !arguments::has_embed_label(only, f);
+    args.len() == 1 && args.first().is_some_and(is_one)
 }
 
 /// Whether the only argument of `e` is a string, and there are no comments around it.

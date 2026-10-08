@@ -267,19 +267,19 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
     (!matches!(argument.kind(), ExprKind::Spread(_))).then_some(argument)
 }
 
+/// Whether `e` is a template that is written as the language in it.
+pub(super) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    crate::css::embed::has_embed_label(e, f)
+        || crate::graphql::embed::has_embed_label(e, f)
+        || crate::markdown::embed::has_embed_label(e, f)
+}
+
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.
 fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
-    // The only argument is a template that is written as the language in it.
-    let has_embed_label =
-        |only| {
-        crate::css::embed::has_embed_label(only, f)
-            || crate::graphql::embed::has_embed_label(only, f)
-            || crate::markdown::embed::has_embed_label(only, f)
-    };
-    if args.len() == 1 && args.first().is_some_and(has_embed_label) {
+    if args.len() == 1 && args.first().is_some_and(|only| has_embed_label(only, f)) {
         return Some(GroupedCallArgumentLayout::GroupedLastArgument);
     }
     if args.len() == 2 {

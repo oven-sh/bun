@@ -1,11 +1,6 @@
-FAIL CR js/multiparser-markdown/0-indent.js proseWrap=always
-FAIL CR js/multiparser-markdown/codeblock.js proseWrap=always
-FAIL CR js/multiparser-markdown/escape.js proseWrap=always
-FAIL CR js/multiparser-markdown/issue-5021.js proseWrap=always
-FAIL CR js/multiparser-markdown/markdown.js proseWrap=always
 css: format 162/162 (0 syntax errors), rejected 2/2, second format 136/136, CRLF 162/162, CR 162/162, BOM 161/161
 graphql: format 104/104 (0 syntax errors), rejected 2/2, second format 87/87, CRLF 104/104, CR 104/104, BOM 104/104
-js: format 1342/1342 (0 syntax errors), rejected 165/165, second format 1050/1050, CRLF 1332/1332, CR 1327/1332, BOM 1338/1338
+js: format 1342/1342 (0 syntax errors), rejected 165/165, second format 1050/1050, CRLF 1332/1332, CR 1332/1332, BOM 1338/1338
 json: format 785/785 (0 syntax errors), rejected 191/191, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
 jsx: format 186/186 (0 syntax errors), rejected 20/20, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
@@ -15,7 +10,7 @@ scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRL
 typescript: format 746/746 (0 syntax errors), rejected 355/355, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
 yaml: format 1623/1623 (0 syntax errors), rejected 3/3, second format 1118/1118, CRLF 1616/1616, CR 1616/1616, BOM 1622/1622
 format: 7222/7222 (100.00%)
-all checks: 34372/34377 (99.99%)
+all checks: 34377/34377 (100.00%)
 not run: 17: Flow's type syntax
 not run: 2: `babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted
 not run: 50: a language that is not there: HTML, Vue, Angular, Handlebars, MDX

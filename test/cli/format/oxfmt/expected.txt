@@ -125,10 +125,8 @@ FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 100 }
-FAIL prettier edge-cases/gql-in-js/sole-argument-layout.js { printWidth: 80 }
 FAIL prettier edge-cases/md-in-js/nested-md-codeblock.js { printWidth: 80 }
 FAIL prettier edge-cases/md-in-js/nested-md-codeblock.js { printWidth: 100 }
-FAIL prettier edge-cases/md-in-js/sole-argument-layout.js { printWidth: 100 }
 FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 80 }
 FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 100 }
 FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 80 }
@@ -183,8 +181,6 @@ FAIL oxfmt js/comments/try-catch-finally-head.js { printWidth: 80 }
 FAIL oxfmt js/comments/try-catch-finally-head.js { printWidth: 100 }
 FAIL oxfmt js/comments/type-cast-comment-inside-added-parens.js { printWidth: 80 }
 FAIL oxfmt js/comments/type-cast-comment-inside-added-parens.js { printWidth: 100 }
-FAIL prettier js/comments/type-cast-with-regex-parens.js { printWidth: 80 }
-FAIL prettier js/comments/type-cast-with-regex-parens.js { printWidth: 100 }
 FAIL oxfmt js/comments/type-cast-with-regex-parens.js { printWidth: 80 }
 FAIL oxfmt js/comments/type-cast-with-regex-parens.js { printWidth: 100 }
 FAIL oxfmt js/comments/unary-argument-parens.js { printWidth: 80 }
@@ -197,14 +193,6 @@ FAIL oxfmt js/ignore/issue-18595.js { printWidth: 80 }
 FAIL oxfmt js/ignore/issue-18595.js { printWidth: 100 }
 FAIL prettier js/ignore/oxfmt.js { printWidth: 80 }
 FAIL prettier js/ignore/oxfmt.js { printWidth: 100 }
-FAIL prettier js/ignore/suppressed-argument-cast-parens.js { printWidth: 80 }
-FAIL prettier js/ignore/suppressed-argument-cast-parens.js { printWidth: 100 }
-FAIL oxfmt js/ignore/suppressed-argument-cast-parens.js { printWidth: 80 }
-FAIL oxfmt js/ignore/suppressed-argument-cast-parens.js { printWidth: 100 }
-FAIL prettier js/ignore/type-cast-after-ignored-cast.js { printWidth: 80 }
-FAIL prettier js/ignore/type-cast-after-ignored-cast.js { printWidth: 100 }
-FAIL oxfmt js/ignore/type-cast-after-ignored-cast.js { printWidth: 80 }
-FAIL oxfmt js/ignore/type-cast-after-ignored-cast.js { printWidth: 100 }
 FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 80 }
 FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 100 }
 FAIL oxfmt js/operator-position/comments.js { experimentalOperatorPosition: "start", printWidth: 80 }
@@ -239,12 +227,8 @@ FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { p
 FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { printWidth: 100 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 80 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 100 }
-FAIL prettier js/typecast/cast-target-opaque-layout.js { printWidth: 80 }
 FAIL prettier js/typecast/cast-target-opaque-layout.js { printWidth: 100 }
-FAIL oxfmt js/typecast/cast-target-opaque-layout.js { printWidth: 80 }
 FAIL oxfmt js/typecast/cast-target-opaque-layout.js { printWidth: 100 }
-FAIL prettier js/typecast/comments-inside-cast-parens.js { printWidth: 80 }
-FAIL prettier js/typecast/comments-inside-cast-parens.js { printWidth: 100 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 80 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 100 }
 FAIL oxfmt json/json/comments/oxfmt_ignore_array.json { printWidth: 80 }
@@ -480,5 +464,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1498/1570
-as oxfmt prints them, in its flavor: 1088/1498
+as Prettier prints them: 1509/1570
+as oxfmt prints them, in its flavor: 1093/1498

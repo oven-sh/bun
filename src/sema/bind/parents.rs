@@ -48,7 +48,7 @@ struct Lists<'l> {
 const REACHED: ScopeId = ScopeId(0);
 
 /// What comes from JSDoc comments is bound where the comment is.
-fn is_for_the_binder(f: &File) -> bool {
+fn is_for_the_binder<S: Storage>(f: &FileIn<S>) -> bool {
     f.is_js && !f.jsdoc_comments.is_empty()
 }
 
@@ -140,8 +140,18 @@ pub fn bind_for_format_in<'r>(
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
+    match try_bind_for_format_in(f, recycled).is_some() {
+        true => &recycled.room().b,
+        false => bind_for_lint_in(f, options, atoms, recycled),
+    }
+}
+
+/// [`bind_for_format_in`] for a file whose lists are stored anywhere, like those that the parser
+/// still has. It reads nothing that `File::finish_nodes` computes. `None`: the file takes the binder,
+/// which takes a [`File`].
+pub fn try_bind_for_format_in<'r, S: Storage>(f: &FileIn<S>, recycled: &'r mut Recycled) -> Option<&'r BoundBuilder> {
     if is_for_the_binder(f) {
-        return bind_for_lint_in(f, options, atoms, recycled);
+        return None;
     }
     let b = &mut recycled.room().b;
     b.clear();
@@ -179,14 +189,11 @@ pub fn bind_for_format_in<'r>(
             type_param_scope: &mut b.type_param_scope,
         },
     );
-    match is_done {
-        true => &recycled.room().b,
-        false => bind_for_lint_in(f, options, atoms, recycled),
-    }
+    is_done.then_some(&*b)
 }
 
 /// `false`: it takes the binder.
-fn fill(f: &File, lists: Lists) -> bool {
+fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
     let Lists {
         expr_parent,
         stmt_parent,
@@ -274,8 +281,7 @@ fn fill(f: &File, lists: Lists) -> bool {
                     set!(prop_owner[p] = id);
                     set!(expr_parent[prop.value] = Parent::Prop(p));
                     if let PropKey::Computed(key) = prop.key {
-                        let names_a_function = !matches!(prop.kind, PropKind::Init | PropKind::Spread | PropKind::Shorthand)
-                            || f.function_of(f.node(p)).is_some();
+                        let names_a_function = !matches!(prop.kind, PropKind::Init | PropKind::Spread | PropKind::Shorthand);
                         set!(expr_parent[key] = match names_a_function {
                             true => Parent::MethodKey(p),
                             false => Parent::PropKey(id, p),

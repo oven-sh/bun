@@ -3,36 +3,21 @@ use crate::js::utils::expression::ExpressionLeftSide;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-pub(crate) fn write_return_statement<'a>(statement: Stmt<'a>, argument: Option<Expr<'a>>, f: &mut Formatter<'a>) {
-    write_return_or_throw("return", statement, argument, f);
+pub(crate) fn write_return_statement<'a>(_statement: Stmt<'a>, argument: Option<Expr<'a>>, f: &mut Formatter<'a>) {
+    write_return_or_throw("return", argument, f);
 }
 
-pub(crate) fn write_throw_statement<'a>(statement: Stmt<'a>, argument: Expr<'a>, f: &mut Formatter<'a>) {
-    write_return_or_throw("throw", statement, Some(argument), f);
+pub(crate) fn write_throw_statement<'a>(_statement: Stmt<'a>, argument: Expr<'a>, f: &mut Formatter<'a>) {
+    write_return_or_throw("throw", Some(argument), f);
 }
 
-fn write_return_or_throw<'a>(
-    keyword: &'static str,
-    statement: Stmt<'a>,
-    argument: Option<Expr<'a>>,
-    f: &mut Formatter<'a>,
-) {
+fn write_return_or_throw<'a>(keyword: &'static str, argument: Option<Expr<'a>>, f: &mut Formatter<'a>) {
     write!(f, keyword);
     if let Some(argument) = argument {
         write!(f, [space(), FormatAdjacentArgument(argument)]);
     }
 
-    let dangling_comments = f.comments().comments_before(statement.span().end);
-    let is_last_comment_line = dangling_comments.last().is_some_and(|comment| comment.is_line());
-    if is_last_comment_line {
-        write!(f, OptionalSemicolon);
-    }
-    if !dangling_comments.is_empty() {
-        write!(f, [space(), format_dangling_comments(statement.span())]);
-    }
-    if !is_last_comment_line {
-        write!(f, OptionalSemicolon);
-    }
+    write!(f, OptionalSemicolon);
 }
 
 /// What has to start on the line of the keyword before it: the argument of `return`, `throw` or

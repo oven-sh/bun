@@ -116,8 +116,9 @@ impl TextWidth {
         self.0 & Self::MULTILINE != 0
     }
 
-    /// `text` can have tabs, `\n` and anything else.
-    pub(crate) fn from_text(text: &[u8], indent_width: u8) -> TextWidth {
+    /// `text` can have tabs, `\n` and anything else. A tab counts as nothing, like any control
+    /// character: that is what Prettier's `getStringWidth` does.
+    pub(crate) fn from_text(text: &[u8], _indent_width: u8) -> TextWidth {
         let mut width = 0;
         let mut rest = text;
         loop {
@@ -128,7 +129,6 @@ impl TextWidth {
             if rest[at] == b'\n' {
                 return Self::multiline(width);
             }
-            width += u32::from(indent_width);
             rest = &rest[at + 1..];
         }
     }

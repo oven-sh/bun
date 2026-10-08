@@ -29,7 +29,7 @@ pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
 
 /// Without semicolons, whether the statement has to start with one so that it is not read as the
 /// continuation of the line before: it starts with `(`, `[`, `` ` ``, `+`, `-`, `/` or `<`.
-fn expression_statement_needs_semicolon<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn expression_statement_needs_semicolon<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     if matches!(
         statement.ast_parent(),
         AstNodes::IfStatement(_)

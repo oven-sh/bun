@@ -45,14 +45,6 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
-    fn is_inside_jsx_spread(&self) -> bool {
-        matches!(
-            self,
-            Self::ObjectExpression(e, _)
-                if matches!(e.ast_parent(), AstNodes::JSXSpreadAttribute(_) | AstNodes::JSXSpreadChild(_))
-        )
-    }
-
     fn write_members(&self, f: &mut Formatter<'a>) {
         match *self {
             Self::ObjectExpression(_, props) => {
@@ -77,11 +69,8 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                 true => write!(f, inner),
                 false => write!(f, group(&inner).should_expand(should_expand)),
             }
-        } else if self.is_inside_jsx_spread() {
-            // `<div {...{/* comment */}} />` can stay on one line.
-            write!(f, format_dangling_comments(self.span()).with_soft_block_indent());
         } else {
-            write!(f, format_dangling_comments(self.span()).with_block_indent());
+            write!(f, format_dangling_comments(self.span()).with_soft_block_indent());
         }
         write!(f, "}");
     }

@@ -91,47 +91,33 @@ pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item
     None
 }
 
-/// Whether `e` is a function of a test framework that takes a name and a callback:
+/// Prettier's `testCallCalleePatterns`: whether `e` is a function of a test framework that takes a
+/// name and a callback.
 ///
 /// ```text
-/// ├─ it[.only|skip|skipIf|runIf|concurrent|sequential|todo|fails]
-/// ├─ describe[.only|skip|skipIf|runIf|concurrent|sequential|shuffle|todo]
+/// ├─ it[.only|skip]
+/// ├─ describe[.only|skip]
 /// ├─ test
-/// │  ├─ [.only|skip|skipIf|runIf|concurrent|sequential|todo|fails|extend|step|fixme]
+/// │  ├─ [.only|skip|fixme|step]
 /// │  └─ .describe
 /// │     ├─ [.only|skip|fixme]
 /// │     ├─ .parallel[.only]
 /// │     └─ .serial[.only]
-/// ├─ bench[.only|skip|todo]
-/// ├─ skip|xit|xdescribe|xtest|fit|fdescribe|ftest
-/// └─ Deno.test
+/// └─ skip|xit|xdescribe|xtest|fit|fdescribe|ftest
 /// ```
 pub(crate) fn contains_a_test_pattern(e: Expr<'_>) -> bool {
     let Some(mut names) = callee_name_iterator(e) else {
         return false;
     };
     match names.next() {
-        Some(b"it") => match names.next() {
+        Some(b"it" | b"describe") => match names.next() {
             None => true,
-            Some(b"only" | b"skip" | b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails") => {
-                names.next().is_none()
-            }
+            Some(b"only" | b"skip") => names.next().is_none(),
             _ => false,
         },
-        Some(b"describe") => match names.next() {
-            None => true,
-            Some(b"only" | b"skip" | b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"shuffle" | b"todo") => {
-                names.next().is_none()
-            }
-            _ => false,
-        },
-        Some(b"Deno") => matches!(names.next(), Some(b"test")) && names.next().is_none(),
         Some(b"test") => match names.next() {
             None => true,
-            Some(
-                b"only" | b"skip" | b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails"
-                | b"extend" | b"step" | b"fixme",
-            ) => names.next().is_none(),
+            Some(b"only" | b"skip" | b"fixme" | b"step") => names.next().is_none(),
             Some(b"describe") => match names.next() {
                 None => true,
                 Some(b"only" | b"skip" | b"fixme") => names.next().is_none(),
@@ -144,12 +130,7 @@ pub(crate) fn contains_a_test_pattern(e: Expr<'_>) -> bool {
             },
             _ => false,
         },
-        Some(b"bench") => match names.next() {
-            None => true,
-            Some(b"only" | b"skip" | b"todo") => names.next().is_none(),
-            _ => false,
-        },
-        Some(b"skip" | b"xit" | b"xdescribe" | b"xtest" | b"fit" | b"fdescribe" | b"ftest") => true,
+        Some(b"skip" | b"xit" | b"xdescribe" | b"xtest" | b"fit" | b"fdescribe" | b"ftest") => names.next().is_none(),
         _ => false,
     }
 }

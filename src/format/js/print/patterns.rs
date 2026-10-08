@@ -19,7 +19,7 @@ pub(crate) fn write_binding_pattern<'a>(pat: Pat<'a>, f: &mut Formatter<'a>) {
 fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mut Formatter<'a>) {
     write!(f, "[");
     if elements.is_empty() {
-        write!(f, format_dangling_comments(pat.span()).with_block_indent());
+        write!(f, format_dangling_comments(pat.span()).with_soft_block_indent());
     } else {
         let rest = elements.last().filter(|it| it.is_rest());
         let count = elements.len() - usize::from(rest.is_some());

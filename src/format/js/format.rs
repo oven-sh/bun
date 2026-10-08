@@ -52,13 +52,44 @@ impl<'a> Formatter<'a> {
     }
 }
 
+/// The span of `node`. For a statement that ends with a `;`, without it: see
+/// [`Comments::without_semicolon`].
+fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
+    let span = node.span();
+    match node {
+        AstNodes::ExpressionStatement(_)
+        | AstNodes::Directive(_)
+        | AstNodes::ImportDeclaration(_)
+        | AstNodes::ExportDefaultDeclaration(_)
+        | AstNodes::ExportNamedDeclaration(_)
+        | AstNodes::ExportAllDeclaration(_)
+        | AstNodes::ReturnStatement(_)
+        | AstNodes::ThrowStatement(_)
+        | AstNodes::DoWhileStatement(_)
+        | AstNodes::BreakStatement(_)
+        | AstNodes::ContinueStatement(_)
+        | AstNodes::DebuggerStatement(_)
+        | AstNodes::VariableDeclaration(_)
+        | AstNodes::IfStatement(_)
+        | AstNodes::ForStatement(_)
+        | AstNodes::ForInStatement(_)
+        | AstNodes::ForOfStatement(_)
+        | AstNodes::WhileStatement(_)
+        | AstNodes::WithStatement(_)
+        | AstNodes::LabeledStatement(_)
+        | AstNodes::PropertyDefinition(_)
+        | AstNodes::AccessorProperty(_) => f.comments().without_semicolon(span),
+        _ => span,
+    }
+}
+
 /// The comments after the child of `parent` at `span`.
 fn write_trailing_comments_in<'a>(span: Span, parent: impl FnOnce() -> AstNodes<'a>, f: &mut Formatter<'a>) {
     if f.comments().next_start() == u32::MAX {
         return;
     }
     let parent = parent();
-    let enclosing = parent.span();
+    let enclosing = span_for_comments(parent, f);
     if f.comments().next_start() < enclosing.end {
         let following = following_span_start_in(span, parent);
         format_trailing_comments(enclosing, span, following).fmt(f);
@@ -67,7 +98,9 @@ fn write_trailing_comments_in<'a>(span: Span, parent: impl FnOnce() -> AstNodes<
 
 /// The comments after `node`.
 pub(crate) fn write_trailing_comments_of<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) {
-    write_trailing_comments_in(node.span(), || node.parent(), f);
+    if f.comments().next_start() != u32::MAX {
+        write_trailing_comments_in(span_for_comments(node, f), || node.parent(), f);
+    }
 }
 
 /// Writes a node that never needs parentheses, with the comments around it.
@@ -388,10 +421,10 @@ impl<'a> Format<'a> for Stmt<'a> {
 #[cold]
 fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let node = statement.as_ast_nodes();
-    let span = node.span();
-    if f.comments().has_trailing_suppression_comment(span.end) {
+    let span = span_for_comments(node, f);
+    if f.comments().has_trailing_suppression_comment(node.span().end) {
         format_leading_comments(span).fmt(f);
-        FormatSuppressedNode(span).fmt(f);
+        write_ignored_statement(statement, span, f);
         return write_trailing_comments_of(node, f);
     }
     match node {
@@ -405,12 +438,38 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>
 
 /// `statement` without its `export`, with the comments around it.
 fn format_declaration_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    let span = statement.span_without_export();
-    let parent = || match statement.is_exported() {
+    let is_exported = statement.is_exported();
+    let span = match is_exported {
+        true => statement.span_without_export(),
+        false => span_for_comments(statement.as_ast_nodes(), f),
+    };
+    let parent = || match is_exported {
         true => statement.as_ast_nodes(),
         false => statement.ast_parent(),
     };
+    if f.comments().is_suppressed(span.start) {
+        format_leading_comments(span).fmt(f);
+        write_ignored_statement(statement, span, f);
+        return write_trailing_comments_in(span, parent, f);
+    }
     format_node(span, parent, f, |f| write_declaration(statement, f));
+}
+
+/// Prettier's `printIgnored` for a statement. `span`: of the statement, without its `;`, which is
+/// written as the options say.
+fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
+    let has_semicolon = match statement.kind() {
+        StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger | StmtKind::Var(_) => true,
+        _ => span.end < statement.span().end,
+    };
+    if f.options().semicolons.is_always() {
+        return write!(f, [FormatSuppressedNode(span), has_semicolon.then_some(";")]);
+    }
+    let needs_leading_semicolon = matches!(
+        statement.kind(),
+        StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
+    );
+    write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(span)]);
 }
 
 /// `ExportNamedDeclaration.declaration`, `ExportDefaultDeclaration.declaration`: the statement

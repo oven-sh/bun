@@ -6,7 +6,8 @@ use super::function_type::{
 use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::type_arguments;
-use crate::js::format::{FormatTypeAnnotation, identifier};
+use crate::js::format::{FormatTypeAnnotation, identifier, write_trailing_comments_of};
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
@@ -137,8 +138,16 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
             }
         }
 
-        write!(f, signature);
+        // The separator is not part of the member. The comments after the member are behind it.
+        write!(f, FormatNodeWithoutTrailingComments(&signature));
+        self.write_separator(f);
+        write_trailing_comments_of(signature.as_ast_nodes(), f);
+    }
+}
 
+impl<'a> FormatTSSignature<'a> {
+    fn write_separator(&self, f: &mut Formatter<'a>) {
+        let signature = self.signature;
         match f.options().semicolons {
             Semicolons::Always => match self.next_signature {
                 Some(_) => write!(f, ";"),

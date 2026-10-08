@@ -6,7 +6,7 @@ use crate::write;
 pub(crate) fn write_array_expression<'a>(e: Expr<'a>, elements: List<'a, Expr<'a>>, f: &mut Formatter<'a>) {
     write!(f, "[");
     if elements.is_empty() {
-        write!(f, format_dangling_comments(e.span()).with_block_indent());
+        write!(f, format_dangling_comments(e.span()).with_soft_block_indent());
     } else {
         let group_id = f.group_id("array");
         write!(

@@ -121,7 +121,7 @@ impl<'a> Format<'a> for ObjectPatternLike<'a> {
 
         write!(f, "{");
         match self.layout() {
-            ObjectPatternLayout::Empty => write!(f, format_dangling_comments(self.span()).with_block_indent()),
+            ObjectPatternLayout::Empty => write!(f, format_dangling_comments(self.span()).with_soft_block_indent()),
             ObjectPatternLayout::Inline => write!(f, format_properties),
             ObjectPatternLayout::Group { expand } => write!(f, group(&format_properties).should_expand(expand)),
         }

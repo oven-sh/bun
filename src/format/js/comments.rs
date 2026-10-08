@@ -183,6 +183,26 @@ impl<'a> Comments<'a> {
         self.unprinted_comments().first().map_or(u32::MAX, |c| c.span.start)
     }
 
+    /// Prettier's `__contentEnd`: `span`, which is that of a statement, without the `;` at its end
+    /// and the comments before that. They are not in the statement but behind it:
+    /// `a() /* comment */;` is `a(); /* comment */`.
+    pub(crate) fn without_semicolon(&self, span: Span) -> Span {
+        if span.is_empty() || self.source_text.byte_at(span.end - 1) != Some(b';') {
+            return span;
+        }
+        let mut end = span.end - 1;
+        loop {
+            while end > span.start && self.source_text.byte_at(end - 1).is_some_and(|b| b.is_ascii_whitespace()) {
+                end -= 1;
+            }
+            let at = self.inner.partition_point(|comment| comment.span.end < end);
+            match self.inner.get(at) {
+                Some(comment) if comment.span.end == end && comment.span.start >= span.start => end = comment.span.start,
+                _ => return Span::new(span.start, end),
+            }
+        }
+    }
+
     /// Whether any comment of the file is a type cast.
     #[inline]
     pub(crate) fn has_type_cast_comments(&self) -> bool {

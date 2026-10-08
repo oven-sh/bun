@@ -24,17 +24,26 @@ pub(crate) struct FormatLiteralStringToken<'a> {
     parent_kind: StringLiteralParentKind,
 }
 
-/// ES5's `IdentifierName`, for ASCII. Prettier only removes the quotes of a name that is an
-/// identifier in ES5. Names that are not ASCII keep their quotes if they have any, which differs
-/// from Prettier for the letters that ES5 knows.
+/// ES5's `IdentifierName`. Prettier only removes the quotes of a name that is an identifier in ES5:
+/// no characters outside the BMP, and none that are letters only by `Other_ID_Start` or
+/// `Other_ID_Continue`.
 pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
-    match name.split_first() {
-        Some((first, rest)) => {
-            (first.is_ascii_alphabetic() || matches!(first, b'$' | b'_'))
-                && rest.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_'))
-        }
-        None => false,
+    use bun_lint::utils::text::{code_points, is_identifier_name};
+    if name.is_ascii() {
+        return match name.split_first() {
+            Some((first, rest)) => {
+                (first.is_ascii_alphabetic() || matches!(first, b'$' | b'_'))
+                    && rest.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_'))
+            }
+            None => false,
+        };
     }
+    is_identifier_name(name)
+        && code_points(name).all(|(at, c)| match c {
+            0x1885 | 0x1886 => at != 0,
+            0x2118 | 0x212E | 0x309B | 0x309C | 0xB7 | 0x387 | 0x1369..=0x1371 | 0x19DA => false,
+            _ => c <= 0xFFFF,
+        })
 }
 
 /// Prettier's `isSimpleNumber`: `123` and `2.5`, but not `1_000`, `1e+100` or `0b10`.

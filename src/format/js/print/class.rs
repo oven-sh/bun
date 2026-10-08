@@ -441,11 +441,28 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
             && !f.comments().is_suppressed(self.element.span().start);
 
         if needs_semi {
-            write!(f, [FormatNodeWithoutTrailingComments(&self.element), ";"]);
+            // The comments before the `;` are written behind it.
+            let element = FormatPropertyWithoutSemicolon(self.element, f.comments().without_semicolon(self.element.span()));
+            write!(f, [FormatNodeWithoutTrailingComments(&element), ";"]);
             write_trailing_comments_of(node, f);
         } else {
             write!(f, self.element);
         }
+    }
+}
+
+/// A property, and its span without the `;`.
+struct FormatPropertyWithoutSemicolon<'a>(Member<'a>, Span);
+
+impl Spanned for FormatPropertyWithoutSemicolon<'_> {
+    fn span(&self) -> Span {
+        self.1
+    }
+}
+
+impl<'a> Format<'a> for FormatPropertyWithoutSemicolon<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        self.0.fmt(f);
     }
 }
 

@@ -865,20 +865,6 @@ fn is_literal(e: Expr<'_>) -> bool {
     )
 }
 
-/// The index of the element of `list` that `offset` is in, or of the first one after it.
-fn index_at<'a, T: Handle<'a> + Spanned>(list: List<'a, T>, offset: u32) -> usize {
-    let (mut low, mut high) = (0, list.len());
-    while low < high {
-        let middle = low + (high - low) / 2;
-        if list.get(middle).is_some_and(|it| it.span().end <= offset) {
-            low = middle + 1;
-        } else {
-            high = middle;
-        }
-    }
-    low
-}
-
 /// The statements that `node` has as a list.
 fn statement_list<'a>(node: Node<'a>) -> Option<List<'a, Stmt<'a>>> {
     match node {
@@ -974,16 +960,11 @@ impl<'a> Uses<'a> {
         let Some(next) = self.within(first.span().to(last.span())).first() else {
             return Flow::Through;
         };
-        let mut at = index_at(declarators, next.start);
-        while let Some(declarator) = declarators.get(at) {
-            at += 1;
-            match self.optional_expression(declarator.init()) {
-                Flow::Through if self.within(declarator.span()).is_empty() => {}
-                Flow::Read => return Flow::Read,
-                _ => return Flow::Unknown,
-            }
+        // Those before it have nothing to do with the variable.
+        match declarators.around(next.start).map(|it| self.optional_expression(it.init())) {
+            Some(Flow::Read) => Flow::Read,
+            _ => Flow::Unknown,
         }
-        Flow::Through
     }
 
     /// What is in the head of a `for`.
@@ -1005,19 +986,18 @@ impl<'a> Uses<'a> {
         loop {
             // Whether there is a way from `offset` to the start of `list[at]`. That the end of the one
             // before it can be reached tells the same of those before that.
-            let is_reached = |at: usize| {
-                let previous = at.checked_sub(1).and_then(|it| list.get(it));
+            let is_reached = |statement: Stmt<'a>| {
+                let previous = list.before(statement.span().start);
                 previous.is_none_or(|it| it.span().start < offset || it.is_known_to_complete())
             };
             let Some(next) = self.within(Span::new(offset, last.span().end)).first().copied() else {
                 return match last.tag() {
                     _ if last.is_known_to_complete() => Flow::Through,
-                    StmtTag::Break | StmtTag::Continue if is_reached(list.len() - 1) => Flow::Leaves(last),
+                    StmtTag::Break | StmtTag::Continue if is_reached(last) => Flow::Leaves(last),
                     _ => Flow::Unknown,
                 };
             };
-            let at = index_at(list, next.start);
-            let Some(statement) = list.get(at).filter(|_| is_reached(at)) else {
+            let Some(statement) = list.around(next.start).filter(|&it| is_reached(it)) else {
                 return Flow::Unknown;
             };
             match self.statement(statement) {
@@ -1094,21 +1074,20 @@ impl<'a> Uses<'a> {
             }
             StmtKind::Switch { expr, cases } => {
                 through!(self.expression(expr));
-                let Some(budget) = self.budget.checked_sub(cases.len() as u32) else {
-                    return Flow::Unknown;
-                };
-                self.budget = budget;
-                if cases.iter().any(|case| self.optional_expression(case.test()) != Flow::Through) {
-                    return Flow::Unknown;
+                for case in cases {
+                    let Some(budget) = self.budget.checked_sub(1) else {
+                        return Flow::Unknown;
+                    };
+                    self.budget = budget;
+                    if self.optional_expression(case.test()) != Flow::Through {
+                        return Flow::Unknown;
+                    }
                 }
                 let has_default = cases.iter().any(Case::is_default);
                 let mut all = if has_default { Flow::Unknown } else { Flow::Through };
                 // From the start of the following case on.
                 let mut next = Flow::Through;
-                for at in (0..cases.len()).rev() {
-                    let Some(case) = cases.get(at) else {
-                        continue;
-                    };
+                for case in cases.iter().rev() {
                     next = match self.statements(case.body(), 0) {
                         Flow::Through => next,
                         Flow::Leaves(jump) if matches!(jump.kind(), StmtKind::Break(None)) => Flow::Through,
@@ -1134,7 +1113,7 @@ impl<'a> Uses<'a> {
             StmtKind::ExportDefault(e) => self.expression(e),
             // What a function reads can be read at any time.
             StmtKind::Fn(_) if self.within(statement.span()).iter().any(|it| it.is_read) => Flow::Read,
-            StmtKind::ExportNamed(_) if self.is_in_module_scope => Flow::Read,
+            StmtKind::ExportNamed(_) | StmtKind::ImportEquals(_) => Flow::Read,
             // The same, or it is read where the class is defined.
             StmtKind::Class(_) if self.within(statement.span()).iter().all(|it| !it.is_write) => Flow::Read,
             _ => Flow::Unknown,
@@ -1288,11 +1267,11 @@ impl<'a> Uses<'a> {
                     && let StmtKind::Switch { cases, .. } = switch.kind()
                 {
                     // It falls through to the following cases.
-                    let mut following = index_at(cases, case.span().start) + 1;
+                    let mut following = cases.after(case.span().start);
                     while flow == Flow::Through
-                        && let Some(next) = cases.get(following)
+                        && let Some(next) = following
                     {
-                        following += 1;
+                        following = cases.after(next.span().start);
                         let Some(budget) = self.budget.checked_sub(1) else {
                             return false;
                         };
@@ -1433,7 +1412,8 @@ impl NoUselessAssignment {
     }
 
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let enter = NodeTags::from(StmtTag::Try) | ExprTag::Ident.into();
+        let statements = NodeTags::from(StmtTag::Try) | StmtTag::ImportEquals.into();
+        let enter = statements | NodeTags::EXPORT_SPEC | ExprTag::Ident.into();
         let exit = NodeTags::VAR_DECL | ExprTag::Assign.into() | ExprTag::Unary.into();
         for step in steps_of_code_path(root, enter, exit) {
             match step {
@@ -1442,8 +1422,9 @@ impl NoUselessAssignment {
                 Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
                 Step::Event(Event::SegmentEnd(segment, node)) => self.on_segment_end(segment, node, cx),
                 Step::Event(_) => {}
-                Step::Enter(node @ Node::Stmt(_)) => self.on_try_statement(node, cx),
-                Step::Enter(node) => self.on_identifier(node, cx),
+                Step::Enter(Node::Stmt(statement)) => self.on_statement(statement, cx),
+                Step::Enter(Node::ExportSpec(specifier)) => self.on_identifier(specifier.local().span(), cx),
+                Step::Enter(node) => self.on_identifier(node.span(), cx),
                 Step::Exit(node) => self.on_assignment_exit(node, cx),
             }
         }
@@ -1563,17 +1544,26 @@ impl NoUselessAssignment {
         cx.state.current_segments.segment_end(segment);
     }
 
-    fn on_try_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if let Node::Stmt(statement) = node
-            && let StmtKind::Try { block, .. } = statement.kind()
-            && let Some(top) = cx.state.stack.last_mut()
-        {
-            top.try_statement_blocks.push(block.span());
+    /// At a `try` statement, or at an `import a = b.c`, whose `b` is a reference.
+    fn on_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.kind() {
+            StmtKind::Try { block, .. } => {
+                if let Some(top) = cx.state.stack.last_mut() {
+                    top.try_statement_blocks.push(block.span());
+                }
+            }
+            StmtKind::ImportEquals(import) => {
+                if let ImportEqualsTarget::Entity(name) = import.target()
+                    && let Some(first) = name.first()
+                {
+                    self.on_identifier(first.span(), cx);
+                }
+            }
+            _ => {}
         }
     }
 
-    fn on_identifier<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let identifier = node.span();
+    fn on_identifier<'a>(&self, identifier: Span, cx: &mut Cx<'a, Self>) {
         let state = &mut cx.state;
         for segment in state.current_segments.iter() {
             if let Some(range) = state.identifier_ranges.get_mut(segment.id() as usize) {

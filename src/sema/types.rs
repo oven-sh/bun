@@ -9,12 +9,12 @@ use crate::local::{Found, LOCAL, MaybeLocal};
 use crate::program::{FileId, Sym};
 use crate::session::{Arena, ArenaVec, Session};
 use crate::table::{ById, Frozen};
+use crate::util::memory::{Length, Stable};
 use crate::util::{
     AppendVec, FxHashMap, GrowingPlaces, InParallel, LocalVec, SHARDS, for_each_mut, shard_of,
     spread_hash,
 };
 use bun_alloc::{ArenaBox, vec_from_iter_in};
-use bun_collections::MultiArrayList;
 use std::alloc::Allocator;
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
@@ -1342,59 +1342,49 @@ struct TypeSummary {
     class: InstantiationClass,
 }
 
-/// `TypeRecord::summary` of the types of a store, by index: a column for each field. Added to through
-/// a shared reference, by the thread that adds the records. A column moves when the list grows, so
-/// a read copies one value, and nothing borrows from the list across a `push`.
-struct Summaries<A: Allocator>(std::cell::UnsafeCell<MultiArrayList<TypeSummary, A>>);
+/// `TypeRecord::summary` of the types of a store, by index: a column for each field, so that what is
+/// read fills the cache lines.
+struct Summaries<L: Length, A: Allocator + Clone> {
+    flags: Stable<u32, L, A>,
+    object_flags: Stable<ObjectFlags, L, A>,
+    class: Stable<InstantiationClass, L, A>,
+}
 
-// SAFETY: those of the published types are added to between steps, on one thread, while no other
-// thread reads them, like `TypeStore::types`.
-unsafe impl<A: Allocator + Sync> Sync for Summaries<A> {}
-
-impl<A: Allocator> Summaries<A> {
+impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
     fn new_in(alloc: A) -> Self {
-        Summaries(std::cell::UnsafeCell::new(MultiArrayList::new_in(alloc)))
-    }
-
-    #[inline(always)]
-    fn list(&self) -> &MultiArrayList<TypeSummary, A> {
-        // SAFETY: `push` is the only writer, and no caller keeps the reference: see the type.
-        unsafe { &*self.0.get() }
+        Summaries {
+            flags: Stable::new_in(alloc.clone()),
+            object_flags: Stable::new_in(alloc.clone()),
+            class: Stable::new_in(alloc),
+        }
     }
 
     #[inline]
     fn len(&self) -> u32 {
-        self.list().len() as u32
+        self.class.len()
     }
 
     #[inline(always)]
     fn flags(&self, index: u32) -> u32 {
-        self.list().items::<"flags", u32>()[index as usize]
+        *self.flags.get(index)
     }
 
     #[inline(always)]
     fn object_flags(&self, index: u32) -> ObjectFlags {
-        self.list().items::<"object_flags", ObjectFlags>()[index as usize]
+        *self.object_flags.get(index)
     }
 
     #[inline(always)]
     fn class(&self, index: u32) -> InstantiationClass {
-        self.list().items::<"class", InstantiationClass>()[index as usize]
+        *self.class.get(index)
     }
 
-    /// Returns the index.
+    /// Returns the index. One thread at a time: the columns are added to one after the other.
     #[inline]
     fn push(&self, summary: TypeSummary) -> u32 {
-        // SAFETY: see `list`.
-        let list = unsafe { &mut *self.0.get() };
-        let index = list.len() as u32;
-        bun_core::handle_oom(list.append(summary));
-        debug_assert!(
-            self.flags(index) == summary.flags
-                && self.object_flags(index) == summary.object_flags
-                && self.class(index) == summary.class
-        );
-        index
+        self.flags.push(summary.flags);
+        self.object_flags.push(summary.object_flags);
+        self.class.push(summary.class)
     }
 }
 
@@ -1538,11 +1528,10 @@ struct Own<V> {
 const RECENT: usize = 2048;
 
 impl<V> Own<V> {
-    /// `expected`: see `Found::expecting`.
-    fn expecting(expected: u32) -> Self {
+    fn new() -> Self {
         Own {
             records: LocalVec::new(),
-            found: Found::expecting(expected as usize),
+            found: Found::default(),
             bound: LocalVec::new(),
             recent: std::cell::OnceCell::new(),
         }
@@ -1601,26 +1590,19 @@ pub struct OwnStore<'s> {
     has_ordered_by_own_id: Cell<bool>,
     /// See `Types::is_unresolved_name`.
     has_unresolved_names: Cell<bool>,
-    summaries: Summaries<std::alloc::Global>,
-}
-
-thread_local! {
-    /// `expected_after` the number of entries in `Own::found` of the last task of this thread, by
-    /// `Kind`. Only a size to begin with: no result depends on it.
-    static EXPECTED: Cell<[u32; 5]> = const { Cell::new([0; 5]) };
+    summaries: Summaries<Cell<u32>, std::alloc::Global>,
 }
 
 impl<'s> OwnStore<'s> {
     /// `arena`: of the thread that runs the task.
     pub fn new_in(arena: &'s Arena) -> Self {
-        let expected = EXPECTED.get();
         OwnStore {
             arena,
-            atoms: Own::expecting(expected[Kind::Atom as usize]),
-            components: Own::expecting(expected[Kind::Components as usize]),
-            mappers: Own::expecting(expected[Kind::Mapper as usize]),
-            sigs: Own::expecting(expected[Kind::Sig as usize]),
-            types: Own::expecting(expected[Kind::Type as usize]),
+            atoms: Own::new(),
+            components: Own::new(),
+            mappers: Own::new(),
+            sigs: Own::new(),
+            types: Own::new(),
             summaries: Summaries::new_in(std::alloc::Global),
             log: LocalVec::new(),
             is_read_later: true,
@@ -1834,7 +1816,7 @@ fn is_in_order(pairs: &[(TypeId, TypeId)]) -> bool {
 pub struct TypeStore<'s> {
     session: &'s Session,
     types: Interned<'s, TypeRecord<'s>>,
-    summaries: Summaries<&'s Session>,
+    summaries: Summaries<std::sync::atomic::AtomicU32, &'s Session>,
     sigs: Interned<'s, SigData<'s>>,
     mappers: Interned<'s, MapperRecord<'s>>,
     components: Interned<'s, List<'s, IndexComponent>>,
@@ -3980,14 +3962,6 @@ impl<'s> OwnStore<'s> {
     /// test.
     pub fn finish(&mut self, mut marks: Marks) -> OwnRecords<'s> {
         let stores = self;
-        let expected = |found: &Found| crate::local::expected_after(found.len()) as u32;
-        EXPECTED.set([
-            expected(&stores.atoms.found),
-            expected(&stores.components.found),
-            expected(&stores.mappers.found),
-            expected(&stores.sigs.found),
-            expected(&stores.types.found),
-        ]);
         let entry = |at: u32| {
             let entry = *stores.log.get(at);
             let index = entry & ((1 << KIND_SHIFT) - 1);

@@ -255,7 +255,7 @@ impl<P: Placement, A: Allocator + Clone> Places<P, A> {
     /// The slots, of which `more` can be filled with a load factor of at most three quarters.
     /// `len`: the number of entries. One thread at a time, here and in `add`.
     #[inline]
-    pub(crate) fn reserve(&self, len: usize, more: usize) -> &[AtomicU64] {
+    fn reserve(&self, len: usize, more: usize) -> &[AtomicU64] {
         let old = self.slots.get(Ordering::Relaxed);
         if (len + more) * 4 <= old.len() * 3 {
             return old;

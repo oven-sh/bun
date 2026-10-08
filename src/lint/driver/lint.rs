@@ -59,7 +59,7 @@ impl Context<'_, '_> {
                 false => None,
             },
             js_plugins: Some(self.js_plugins),
-            again: None,
+            ..LintOptions::default()
         }
     }
 

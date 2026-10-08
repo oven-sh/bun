@@ -176,22 +176,22 @@ A `Worker` inherits `process.execArgv`, so the same check works inside one. When
 
 ## A build of Bun that always has `=strict`
 
-When you build Bun from source, the `disallowCodeGenerationFromStrings` build option makes `=strict` a compile-time constant:
+When you build Bun from source, turning the `codeGenerationFromStrings` build option off makes `=strict` a compile-time constant:
 
 ```bash icon="terminal" terminal
-bun scripts/build.ts --profile=release --disallowCodeGenerationFromStrings=on
+bun scripts/build.ts --profile=release --codeGenerationFromStrings=off
 ```
 
-That binary behaves as if every command line had `--disallow-code-generation-from-strings=strict`:
+That binary refuses what `--disallow-code-generation-from-strings=strict` refuses, with no flag:
 
 - It reads no flag or environment variable to get the level, so `BUN_BE_BUN=1` and a missing `--compile-exec-argv` do not change it.
-- `process.execArgv` contains `--disallow-code-generation-from-strings=strict`, so the check above works.
 - The flag itself is still accepted, with or without `=strict`, and changes nothing.
+- `process.execArgv` lists only the flags you gave, as in any build. To check for this build, see that `new vm.Script("")` throws an `EvalError` when you gave no flag.
 - Bun's own code that compiles a string, such as `node:vm`'s and `module._compile()`'s, sits after a refusal that always happens, so an optimized build can leave it out.
 
 JavaScriptCore's own `eval()` and `Function` code is still in the binary. It is switched off for every global object, and Bun has no code left that switches it on.
 
-The option is off in the builds of Bun that we publish.
+The option is on in the builds of Bun that we publish.
 
 ## What the flag does not cover
 

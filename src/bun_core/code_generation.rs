@@ -3,7 +3,7 @@
 //! lowered afterwards, so every thread and every global object made later
 //! reads the same answer.
 //!
-//! A build configured with `disallowCodeGenerationFromStrings`
+//! A build configured with `codeGenerationFromStrings` off
 //! (scripts/build/config.ts) has no level to set: it is the constant
 //! [`CodeGenerationFromStrings::Disallowed`].
 

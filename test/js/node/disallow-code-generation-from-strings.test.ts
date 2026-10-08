@@ -6,10 +6,17 @@ import { bunEnv, bunExe, isDebug, nodeExe, tempDir } from "harness";
 const refused = "EvalError: Code generation from strings disallowed for this context";
 const flag = "--disallow-code-generation-from-strings";
 const strict = flag + "=strict";
-// A build of Bun configured with disallowCodeGenerationFromStrings (scripts/build/config.ts) has
-// =strict as a constant, and reports it in process.execArgv with no flag given.
+// A build of Bun configured with codeGenerationFromStrings off (scripts/build/config.ts) has
+// =strict as a constant: with no flag, new vm.Script() throws.
 const builtStrict =
-  Bun.spawnSync({ cmd: [bunExe(), "-p", `process.execArgv.includes("${strict}")`], env: bunEnv })
+  Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try { new (require("node:vm").Script)("1"); console.log(false); } catch { console.log(true); }`,
+    ],
+    env: bunEnv,
+  })
     .stdout.toString()
     .trim() === "true";
 
@@ -143,6 +150,7 @@ const files = {
       workerOwnExecArgv: () => message(() => new NodeWorker(here("./worker.mjs"), { execArgv: ["--no-addons"] })),
       webWorker: () => message(() => new Worker(here("./worker.mjs").href)),
       webWorkerEmptyExecArgv: () => message(() => new Worker(here("./worker.mjs").href, { execArgv: [] })),
+      workerProcessExecArgv: () => message(() => new NodeWorker(here("./worker.mjs"), { execArgv: process.execArgv })),
     };
     // A graph shares the global object and its intrinsics with the host, so it shares the switch:
     // inside graph.run(), called by the host directly, and after dispose().
@@ -244,6 +252,11 @@ const workers = (evaluated: unknown, inherited: string[], own: (given: string[])
   workerOwnExecArgv: { evaluated, execArgv: own(["--no-addons"]) },
   webWorker: { evaluated, execArgv: inherited },
   webWorkerEmptyExecArgv: { evaluated, execArgv: own([]) },
+  // A Worker cannot be given the flag, so a process that was given it cannot hand on its own list.
+  workerProcessExecArgv:
+    inherited.length > 0
+      ? `Error: Initiated Worker with invalid execArgv flags: ${inherited[0]}`
+      : { evaluated, execArgv: own([]) },
 });
 const graph = (viaEval: unknown, viaFunction: unknown) => ({
   inRun: [viaEval, viaFunction],
@@ -512,18 +525,19 @@ describe.concurrent.skipIf(builtStrict)("--disallow-code-generation-from-strings
 });
 
 describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", () => {
+  // process.execArgv is what was given, so with no flag a Worker can be handed it.
   test.each([
-    ["no flag", [], [strict]],
-    ["the flag, which does not lower it", [flag], [flag, strict]],
-    ["=strict", [strict], [strict]],
-  ] as const)("refuses every way a string becomes script, with %s", async (_, args, execArgv) => {
+    ["no flag", []],
+    ["the flag, which does not lower it", [flag]],
+    ["=strict", [strict]],
+  ] as const)("refuses every way a string becomes script, with %s", async (_, args) => {
     const { stdout, exitCode } = await run([...args]);
     expect(JSON.parse(stdout)).toEqual({
-      execArgv,
+      execArgv: args,
       evalAndFunction: all(Object.keys(evalAndFunction), refused),
       everythingElse: all(Object.keys(everythingElse), refused),
       notScriptFromAString,
-      workers: workers("EvalError", [...execArgv], given => [...given, strict]),
+      workers: workers("EvalError", [...args], given => given),
       graph: graph("EvalError", "EvalError"),
     });
     expect(exitCode).toBe(0);

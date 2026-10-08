@@ -221,23 +221,6 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
-    const DISALLOW_CODE_GENERATION_FROM_STRINGS_STRICT: &str =
-        "--disallow-code-generation-from-strings=strict";
-
-    /// A build that has `=strict` as a constant reports the flag it stands for, so the check for
-    /// the flag (`process.execArgv.includes(...)`) finds either.
-    fn push_code_generation_level_of_build(args: &mut Vec<BunString>) {
-        if bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
-            && !args
-                .iter()
-                .any(|arg| arg.eq_ascii(DISALLOW_CODE_GENERATION_FROM_STRINGS_STRICT.as_bytes()))
-        {
-            args.push(BunString::static_(
-                DISALLOW_CODE_GENERATION_FROM_STRINGS_STRICT,
-            ));
-        }
-    }
-
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
@@ -252,13 +235,16 @@ mod _impl {
                 // `=strict` is the process's and no Worker runs without it, so a Worker reads it
                 // here whatever `execArgv` it was given (which cannot contain it: the Worker
                 // constructor throws). Node.js's flag is not added: in Node.js a Worker's
-                // `process.execArgv` is what it was given.
-                if bun_core::code_generation_from_strings()
-                    == bun_core::CodeGenerationFromStrings::Disallowed
+                // `process.execArgv` is what it was given. Nor is it added in a build that has
+                // the level as a constant: there nobody gave the flag, and a list that names it
+                // cannot be handed on to another Worker.
+                if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
+                    && bun_core::code_generation_from_strings()
+                        == bun_core::CodeGenerationFromStrings::Disallowed
                 {
                     array.push(
                         global_object,
-                        BunString::static_(DISALLOW_CODE_GENERATION_FROM_STRINGS_STRICT)
+                        BunString::static_("--disallow-code-generation-from-strings=strict")
                             .into_js(global_object)?,
                     )?;
                 }
@@ -293,12 +279,9 @@ mod _impl {
                     }
                 }
 
-                push_code_generation_level_of_build(&mut args);
                 return bun_string_jsc::to_js_array(global_object, &args);
             }
-            let mut args = Vec::<BunString>::new();
-            push_code_generation_level_of_build(&mut args);
-            return bun_string_jsc::to_js_array(global_object, &args);
+            return JSValue::create_empty_array(global_object, 0);
         }
 
         let argv = bun_core::argv();
@@ -372,7 +355,6 @@ mod _impl {
             break;
         }
 
-        push_code_generation_level_of_build(&mut args);
         bun_string_jsc::to_js_array(global_object, &args)
     }
 

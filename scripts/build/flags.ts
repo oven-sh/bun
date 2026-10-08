@@ -818,7 +818,7 @@ export const defines: Flag[] = [
   },
   {
     flag: "BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1",
-    when: c => c.disallowCodeGenerationFromStrings,
+    when: c => !c.codeGenerationFromStrings,
     desc: "--disallow-code-generation-from-strings=strict as a compile-time constant",
   },
   {

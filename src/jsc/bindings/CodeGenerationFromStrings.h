@@ -25,7 +25,7 @@ enum class CodeGenerationFromStrings : uint8_t {
     Disallowed = 2,
 };
 
-// A build configured with disallowCodeGenerationFromStrings (scripts/build/config.ts) has the
+// A build configured with codeGenerationFromStrings off (scripts/build/config.ts) has the
 // level as a constant, as bun_core::code_generation_from_strings() is in it: no flag is read, and
 // the compiler drops what the level guards.
 #if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)

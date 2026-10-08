@@ -420,7 +420,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // constant `Disallowed` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
   // does not import the Rust symbol).
   rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
-  if (cfg.disallowCodeGenerationFromStrings) {
+  if (!cfg.codeGenerationFromStrings) {
     rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
   }
   // Drop `#[track_caller]` source-location capture in release. Every

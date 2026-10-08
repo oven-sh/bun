@@ -87,7 +87,7 @@ class UDP {
     }
   }
 
-  close(cb) {
+  close(cb?) {
     if (this.#fd >= 0) {
       closeFd(this.#fd);
       this.#fd = -1;

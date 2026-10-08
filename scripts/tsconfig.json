@@ -1,0 +1,14 @@
+{
+  // The CI scripts: pipeline generation, the agent service, the test runner
+  // and what they share. They run under plain `node` (type stripping), so only
+  // erasable syntax.
+  "extends": "./build/tsconfig.json",
+  "compilerOptions": {
+    "erasableSyntaxOnly": true,
+    // runner.node.ts imports test/docker/prestart-map.mjs.
+    "allowJs": true,
+    // `extends` does not rebase this path.
+    "types": ["../packages/bun-types"]
+  },
+  "include": ["agent.ts", "buildkite.ts", "runner.node.ts", "ci-image.ts", "../.buildkite/ci.ts"]
+}

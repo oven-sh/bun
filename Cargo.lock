@@ -575,6 +575,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_lint",
+ "bun_md",
  "bun_sema",
  "rustc-hash",
  "smallvec",

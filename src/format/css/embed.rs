@@ -440,16 +440,16 @@ pub(crate) fn is_angular_component_property(property: AstNodes<'_>, name: &[u8])
     let AstNodes::ObjectProperty(prop) = property else {
         return false;
     };
-    if !has_name(prop, name) || prop.kind() != PropKind::Init {
-        return false;
-    }
     let AstNodes::ObjectExpression(object) = property.parent() else {
         return false;
     };
     let call = property.parent().parent();
+    // The name last: nearly every property has been told apart by then.
     matches!(call, AstNodes::CallExpression(call)
         if call.callee().is_some_and(|callee| callee != object && is_identifier(callee, b"Component")))
         && matches!(call.parent(), AstNodes::Decorator(_))
+        && prop.kind() == PropKind::Init
+        && has_name(prop, name)
 }
 
 /// Prettier's `isEmbedCss`. `e`: a template.

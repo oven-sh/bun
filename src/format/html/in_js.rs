@@ -20,14 +20,14 @@ use smallvec::SmallVec;
 const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
 const PLACEHOLDER_END: &[u8] = b"_IN_JS";
 
-/// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `e`: a template.
-fn is_angular_component_template(e: Expr<'_>) -> bool {
-    crate::css::embed::is_angular_component_property(e.ast_parent(), b"template")
+/// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `parent`: of the template.
+fn is_angular_component_template(parent: AstNodes<'_>) -> bool {
+    crate::css::embed::is_angular_component_property(parent, b"template")
 }
 
-/// `` html`..` ``. `e`: a template.
-fn has_html_tag(e: Expr<'_>) -> bool {
-    matches!(e.ast_parent(), AstNodes::TaggedTemplateExpression(tagged)
+/// `` html`..` ``. `e`: a template, `parent`: of it.
+fn has_html_tag<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
+    matches!(parent, AstNodes::TaggedTemplateExpression(tagged)
         if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
             if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"))
 }
@@ -44,7 +44,10 @@ pub(crate) fn can_be_html(e: Expr<'_>) -> bool {
     while let Some(outside) = before.strip_suffix(b"(") {
         before = outside.trim_ascii_end();
     }
-    has_html_tag(e) || is_angular_component_template(e) || before.ends_with(b"/* HTML */")
+    let parent = e.ast_parent();
+    has_html_tag(e, parent)
+        || is_angular_component_template(parent)
+        || before.ends_with(b"/* HTML */")
 }
 
 /// The parser for the text of the template `e`, if `embed` takes it for HTML.
@@ -57,11 +60,12 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
     {
         return None;
     }
-    let parser = if has_html_tag(e)
-        || crate::graphql::embed::has_language_comment(e, e.ast_parent(), b" HTML ", f)
+    let parent = e.ast_parent();
+    let parser = if has_html_tag(e, parent)
+        || crate::graphql::embed::has_language_comment(e, parent, b" HTML ", f)
     {
         Parser::Html
-    } else if is_angular_component_template(e) {
+    } else if is_angular_component_template(parent) {
         Parser::Angular
     } else {
         return None;

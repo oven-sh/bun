@@ -87,17 +87,32 @@ pub(crate) fn has_language_comment<'a>(
     language: &[u8],
     f: &Formatter<'a>,
 ) -> bool {
-    is_led_by_language_comment(e, parent, language, f)
-        || match parent {
-            AstNodes::ExpressionStatement(_) => {
-                follows_language_comment(parent.span().start, true, language, f)
-            }
-            AstNodes::TSAsExpression(cast) => {
-                matches!(cast.kind(), ExprKind::AsConst(_))
-                    && is_led_by_language_comment(cast, parent.parent(), language, f)
-            }
-            _ => false,
-        }
+    // A comment that counts is before `e`, with nothing but white space, `(`, `;` and comments between.
+    let start = e.span().start;
+    let comments = f.comments();
+    let nearest = comments
+        .comments_before(start)
+        .last()
+        .or_else(|| comments.printed_comments().last());
+    let is_near = nearest.is_some_and(|comment| {
+        comment.span.end > start
+            || f.source_text()
+                .text_for(&Span::after(comment.span, start))
+                .iter()
+                .all(|byte| matches!(byte, b'(' | b';' | 0x80..) || byte.is_ascii_whitespace())
+    });
+    is_near
+        && (is_led_by_language_comment(e, parent, language, f)
+            || match parent {
+                AstNodes::ExpressionStatement(_) => {
+                    follows_language_comment(parent.span().start, true, language, f)
+                }
+                AstNodes::TSAsExpression(cast) => {
+                    matches!(cast.kind(), ExprKind::AsConst(_))
+                        && is_led_by_language_comment(cast, parent.parent(), language, f)
+                }
+                _ => false,
+            })
 }
 
 /// Prettier's `isEmbedGraphQL`. `e`: a template.
@@ -154,6 +169,10 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     } else {
         template.cooked(index)?.bytes()
     };
+    // Half of a surrogate pair, which an escape can stand for, is no character of GraphQL.
+    if !is_as_written && std::str::from_utf8(text).is_err() {
+        return None;
+    }
     let is_last = index + 1 == template.quasi_count();
 
     let all = lines(text);

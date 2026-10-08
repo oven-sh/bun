@@ -482,9 +482,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread only. Whether a dependency without `Behavior::OPTIONAL` of a package in the
-    /// store resolves to the package of `entry_id`. The store's own edges do not tell: a deduped
-    /// node keeps the dependency that reached it first, which can be the optional one.
+    /// Main thread only. Reads the lockfile edges: a deduped store node keeps its first dependency only.
     fn entry_is_required(&mut self, entry_id: StoreEntryId) -> bool {
         let lockfile = self.lockfile();
         let node_pkg_ids = self.store.nodes.items_pkg_id();

@@ -53,7 +53,9 @@ fn as_lookaround(node: regex::Node<'_>) -> Option<Lookaround> {
 
 /// Why `group` has not captured anything whenever `bref`, which refers to it, is matched.
 fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Message> {
-    let is_around_bref = |node: regex::Node<'r>| bref.ancestors().any(|ancestor| ancestor == node);
+    // Only its ancestors reach from where it starts to where it ends.
+    let is_around_bref =
+        |node: regex::Node<'r>| node.start() <= bref.start() && bref.end() <= node.end() && node != bref;
     if is_around_bref(group) {
         return Some(NESTED);
     }

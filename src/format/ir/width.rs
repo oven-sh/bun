@@ -87,23 +87,36 @@ fn width_of_non_ascii(text: &[u8]) -> u32 {
     width
 }
 
-/// Whether every byte for which `is_plain` is false is absent. It looks at whole blocks, which
-/// the compiler turns into vector instructions.
+/// Whether `is_plain` is true for every byte. It looks at whole blocks without a branch, which the
+/// compiler turns into vector instructions, so `is_plain` has to be free of branches too.
 #[inline]
 fn all_bytes(text: &[u8], is_plain: impl Fn(u8) -> bool + Copy) -> bool {
     let (blocks, rest) = text.as_chunks::<64>();
-    blocks.iter().all(|block| block.iter().fold(true, |all, &byte| all & is_plain(byte))) && rest.iter().all(|&byte| is_plain(byte))
+    let is_block_plain = |block: &[u8]| block.iter().fold(0, |odd, &byte| odd | u8::from(!is_plain(byte))) == 0;
+    blocks.iter().all(|block| is_block_plain(block)) && is_block_plain(rest)
+}
+
+/// 0x20 to 0x7E
+#[inline]
+fn is_printable(byte: u8) -> bool {
+    byte.wrapping_sub(0x20) < 0x5F
+}
+
+/// Whether `text` is one line of ASCII, as wide as it is long.
+#[inline]
+pub(crate) fn is_all_printable(text: &[u8]) -> bool {
+    all_bytes(text, is_printable)
 }
 
 /// Whether the width of every part of `source` that has no tab and no line break is its length.
 pub(crate) fn is_width_len(source: &[u8]) -> bool {
-    all_bytes(source, |byte| matches!(byte, 0x20..=0x7E | b'\t' | b'\n' | b'\r'))
+    all_bytes(source, |byte| is_printable(byte) | (byte == b'\t') | (byte == b'\n') | (byte == b'\r'))
 }
 
 /// `text` has no line breaks. Control characters count as nothing.
 #[inline]
 pub(crate) fn string_width(text: &[u8]) -> u32 {
-    match all_bytes(text, |byte| matches!(byte, 0x20..=0x7F)) {
+    match all_bytes(text, |byte| is_printable(byte) | (byte == 0x7F)) {
         true => text.len() as u32,
         false => width_of_non_ascii(text),
     }

@@ -206,6 +206,9 @@ impl TextWidth {
     /// `text` can have tabs, `\n` and anything else. A tab counts as nothing, like any control
     /// character: that is what Prettier's `getStringWidth` does.
     pub(crate) fn from_text(text: &[u8], _indent_width: u8) -> TextWidth {
+        if super::width::is_all_printable(text) {
+            return Self::single(text.len() as u32);
+        }
         let mut width = 0;
         let mut rest = text;
         loop {

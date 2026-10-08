@@ -1,6 +1,6 @@
 //! `getBaseTypesOfClassMember.ts`
 
-use crate::ast::Member;
+use crate::ast::{Member, Node};
 use crate::types::{SyntaxKind, Type};
 use smallvec::SmallVec;
 
@@ -21,6 +21,12 @@ pub fn get_base_types_of_class_member(
     member_node: Member<'_>,
 ) -> SmallVec<[BaseTypeOfClassMember<'_>; 2]> {
     let mut found = SmallVec::new();
+    if let Node::Class(class) = member_node.parent()
+        && class.extends().is_none()
+        && class.implements().is_empty()
+    {
+        return found;
+    }
     let member_ts_node = member_node.ts_node();
     let Some(member_symbol) = member_ts_node
         .name()

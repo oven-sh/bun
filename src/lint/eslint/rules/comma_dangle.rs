@@ -55,6 +55,19 @@ struct LastItem {
     is_rest: bool,
 }
 
+/// The offset of ESLint's `getNextLocation` of what is at `at`: one UTF-16 code unit further, or where the next line starts.
+/// `at` at the end of the file.
+fn next_location(source: &[u8], at: u32) -> u32 {
+    match source.get(at as usize..).unwrap_or_default() {
+        [] => at,
+        [b'\r', b'\n', ..] => at + 2,
+        [0xE0..=0xEF, ..] => at + 3,
+        // Two bytes, or the first half of a surrogate pair.
+        [0xC0..=0xDF | 0xF0..=0xFF, ..] => at + 2,
+        _ => at + 1,
+    }
+}
+
 fn check(mode: Mode, last: LastItem, cx: &Cx<'_, CommaDangle>) {
     let (file, source) = (cx.file(), cx.text());
     let after = skip_trivia(source, last.end);
@@ -83,9 +96,7 @@ fn check(mode: Mode, last: LastItem, cx: &Cx<'_, CommaDangle>) {
             });
         }
     } else if !has_comma {
-        let next = ast_utils::get_next_location(file, file.position(last.end));
-        let end = next.map_or(last.end, |next| file.offset(next));
-        cx.report(Span::new(last.end, end), MISSING).fix(|fixer| {
+        cx.report(Span::new(last.end, next_location(source, last.end)), MISSING).fix(|fixer| {
             let at = Span::empty(last.end);
             let (trailing, next) = (file.token_before(at)?, file.token_after(at)?);
             Some([

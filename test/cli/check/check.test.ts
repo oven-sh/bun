@@ -2941,6 +2941,50 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // The way Kobalte types a component that renders as any element. Where `Elements[keyof Elements]` is a
+    // parameter its members meet in one intersection. Whether that is `never` is decided name by name, and
+    // comparing every pair of members for every name took minutes here.
+    test("a polymorphic component over 2,000 element types", async () => {
+      const kinds = ["string", "number", "boolean | undefined", "(event: { target: T }) => void", "T | undefined"];
+      const lines = (count: number, line: (i: number) => string) => Array.from({ length: count }, (_, i) => line(i));
+      const source = [
+        "interface Attributes<T> {",
+        ...lines(100, i => `  p${i}?: ${kinds[i % kinds.length]};`),
+        "}",
+        ...lines(2_000, i => `interface E${i} { kind: "e${i}" }`),
+        "interface Elements {",
+        ...lines(2_000, i => `  e${i}: Attributes<E${i}>;`),
+        "}",
+        `type Component<P> = (props: P) => unknown;
+type ValidComponent = keyof Elements | Component<any> | (string & {});
+type ComponentProps<T extends ValidComponent> = T extends Component<infer P>
+  ? P
+  : T extends keyof Elements
+    ? Elements[T]
+    : Record<string, unknown>;
+type OverrideProps<T, P> = Omit<T, keyof P> & P;
+type ElementOf<T> = T extends keyof Elements ? Elements[T] : any;
+interface PolymorphicAttributes<T extends ValidComponent> { as?: T | keyof Elements }
+type PolymorphicProps<T extends ValidComponent, Props extends {} = {}> = OverrideProps<
+  ComponentProps<T>,
+  Props & PolymorphicAttributes<T>
+>;
+interface TriggerOptions { p1?: string; onOpen?: () => void }
+interface TriggerCommonProps<T = unknown> { ref: T | ((el: T) => void); p3: (event: { target: T }) => void }
+type TriggerProps<T extends ValidComponent | unknown = unknown> = TriggerOptions &
+  Partial<TriggerCommonProps<ElementOf<T>>>;
+declare function Trigger<T extends ValidComponent = "e0">(props: PolymorphicProps<T, TriggerProps<T>>): unknown;
+export const First = <T extends ValidComponent = "e1">(props: PolymorphicProps<T, TriggerProps<T>>) => Trigger(props);
+export const wrong: number = "";`,
+      ].join("\n");
+      using dir = project({ "a.ts": source });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        `a.ts(${source.split("\n").length},14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
 
     test("isolatedDeclarations: every property of `export default {} satisfies T` is reported", async () => {

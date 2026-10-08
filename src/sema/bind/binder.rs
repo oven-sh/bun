@@ -2226,10 +2226,11 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             }
             if symbol.is_none() {
                 self.b.free_idents.push((expr, scope));
-            } else if !self.b.symbols[symbol.idx()]
-                .flags
-                .intersects(SymFlags::VALUE)
+            } else if self.b.symbols[symbol.idx()].flags & (SymFlags::VALUE | SymFlags::ALIAS)
+                == SymFlags::ALIAS
             {
+                // Not the `ExportSymbol` of a local that a conflicting declaration has replaced with
+                // its own symbol, which need not be a value either.
                 self.b.alias_idents.push((expr, scope));
             }
         }

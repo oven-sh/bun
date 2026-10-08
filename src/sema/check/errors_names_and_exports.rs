@@ -277,9 +277,6 @@ impl Checker<'_, '_> {
                 continue;
             }
             let symbol = &bound.symbols[local.idx()];
-            if !symbol.flags.contains(SymFlags::ALIAS) || symbol.flags.intersects(SymFlags::VALUE) {
-                continue;
-            }
             if inspected.is_empty() {
                 inspected.resize(bound.symbols.len(), 0);
             }

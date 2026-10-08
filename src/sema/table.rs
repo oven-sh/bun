@@ -188,6 +188,21 @@ impl Packed for (Option<crate::types::TypeId>, bool) {
     }
 }
 
+impl Packed for (Option<crate::types::SigId>, bool) {
+    type Cell = AtomicU32;
+    #[inline]
+    fn pack(self) -> u32 {
+        self.0.pack() << 1 | u32::from(self.1)
+    }
+    #[inline]
+    fn unpack(raw: u32) -> Self {
+        (
+            <Option<crate::types::SigId>>::unpack(raw >> 1),
+            raw & 1 != 0,
+        )
+    }
+}
+
 /// A dense id: an index counted from zero without significant gaps.
 pub trait Id: Copy {
     fn number(self) -> u32;

@@ -4806,7 +4806,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `getTypeOfInstantiatedSymbol`: for an inherited member, the mapper of the base type
             // that `resolveObjectTypeMembers` has instantiated.
             let mapper = self.compose(own_mapper, outer);
-            self.instantiate(base, mapper)
+            self.type_of_instantiated_symbol(base, mapper)
         } else {
             base
         };
@@ -6220,11 +6220,6 @@ impl<'p, 's> Checker<'p, 's> {
                 let base_object = self.next_base_constraint(obj);
                 let base_index = self.next_base_constraint(index);
                 let (base_object, base_index) = (base_object?, base_index?);
-                if let Some(simplified) =
-                    self.simplified_access_to_intersection(base_object, base_index)
-                {
-                    return self.next_base_constraint(simplified);
-                }
                 // `t.accessFlags`: read under noUncheckedIndexedAccess, a value from an index
                 // signature may be missing.
                 let found =

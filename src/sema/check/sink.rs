@@ -649,6 +649,17 @@ impl Checker<'_, '_> {
         self.log_diagnostic(owner, diagnostic);
     }
 
+    /// Whether the diagnostic that was logged last belongs to the task and is `Reported::bare(at, code)`.
+    /// It is still there, so whatever has reported it was not discarded.
+    pub(super) fn is_last_diagnostic_of_task(&self, at: (FileId, u32, u32), code: u32) -> bool {
+        (self.task.diagnostics.last()).is_some_and(|(owner, last)| {
+            owner.is_none()
+                && last.code == code
+                && (last.file, last.start, last.end) == at
+                && last.by_emit == self.is_emitting
+        })
+    }
+
     /// The diagnostics reported from index `from` on belong to the task.
     pub(super) fn log_reported_from(&mut self, from: usize) {
         for diagnostic in self.reported.split_off(from) {

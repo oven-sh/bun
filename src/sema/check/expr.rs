@@ -3826,7 +3826,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let is_inferential = check_mode.contains(CheckMode::INFERENTIAL);
         let is_context_sensitive = self.is_context_sensitive(file, e);
-        let mut assigned = None;
+        let mut assigned: AssignedSignature = (None, false);
         if let Some(contextual) = contextual_signature {
             let level = self.get_inference_context(file, e);
             if is_context_sensitive {
@@ -3844,7 +3844,10 @@ impl<'p, 's> Checker<'p, 's> {
                         )
                     })
                 });
-                assigned = Some(instantiated.unwrap_or(contextual));
+                assigned = (
+                    Some(instantiated.unwrap_or(contextual)),
+                    instantiated.is_some(),
+                );
             } else if is_inferential
                 && f.type_params.is_empty()
                 // `len(node.Parameters())` counts a declared `this` parameter.
@@ -3976,7 +3979,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The entry of `context_checked_under` for `func`.
-    fn context_checked_under_taint(&mut self, file: FileId, func: FnId) -> Option<Option<SigId>> {
+    fn context_checked_under_taint(
+        &mut self,
+        file: FileId,
+        func: FnId,
+    ) -> Option<AssignedSignature> {
         if self.context_checked_under.is_empty() {
             return None;
         }
@@ -4005,6 +4012,27 @@ impl<'p, 's> Checker<'p, 's> {
     /// `NodeCheckFlagsContextChecked`, with the signature passed to
     /// `assignContextualParameterTypes`.
     pub(super) fn context_checked(&mut self, file: FileId, func: FnId) -> Option<Option<SigId>> {
+        self.assigned_signature(file, func).map(|it| it.0)
+    }
+
+    /// The function whose type parameters `sig` has, if they are those of a contextual signature
+    /// that `instantiateSignature(contextualSignature, inferenceContext.mapper)` cloned for it: no
+    /// other signature has that list (`core.Same`). A clone is identified by its declaration and
+    /// the mapper here, so the list equals that of the parameter type instantiated likewise.
+    pub(super) fn function_with_type_parameters_cloned_for_it(
+        &mut self,
+        sig: SigId,
+    ) -> Option<(FileId, FnId)> {
+        let declared = self.declared_sig(sig);
+        let (file, func, _) = self.sig_decl(declared)?;
+        if !self.hir(file)[func].type_params.is_empty() {
+            return None;
+        }
+        self.takes_context(file, func)?;
+        (self.assigned_signature(file, func)?.1).then_some((file, func))
+    }
+
+    fn assigned_signature(&mut self, file: FileId, func: FnId) -> Option<AssignedSignature> {
         match self
             .context_checking
             .iter()

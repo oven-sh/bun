@@ -6859,7 +6859,11 @@ impl<'p, 's> Checker<'p, 's> {
             (target != as_passed.1).then_some(Some(as_passed.1)),
         );
         let source_type_params = self.sig_type_params(source);
-        if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
+        if !source_type_params.is_empty()
+            && (source_type_params != self.sig_type_params(target)
+                || self.function_with_type_parameters_cloned_for_it(source)
+                    != self.function_with_type_parameters_cloned_for_it(target))
+        {
             let canonical = self.canonical_sig(target);
             if canonical != target {
                 signature_targets.1 = Some(Some(target));

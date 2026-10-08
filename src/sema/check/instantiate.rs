@@ -374,6 +374,27 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiate_cached(ty, mapper, serial)
     }
 
+    /// `getTypeOfInstantiatedSymbol`: `links.resolvedType` keeps the result, so only the first request
+    /// for the type of a symbol gets to `instantiateType`, adds to `instantiationCount` and can fail
+    /// at a limit. There is no symbol here: a result that is known stands for one that has its type.
+    pub(super) fn type_of_instantiated_symbol(
+        &mut self,
+        declared: TypeId,
+        mapper: MapperId,
+    ) -> TypeId {
+        if self.index_infos_in_instantiation.is_empty()
+            && let Some((known, _)) = self.recent_instantiations.get_tagged(declared.0, mapper.0)
+        {
+            return TypeId(known);
+        }
+        let (count, computed) = (self.instantiation_count, self.instantiations_computed);
+        let ty = self.instantiate(declared, mapper);
+        if self.instantiations_computed == computed && self.instantiation_count < 5_000_000 {
+            self.instantiation_count = count;
+        }
+        ty
+    }
+
     /// `getTypeAliasInstantiation` without an alias. `declared`: the declared type of the symbol.
     /// `links.instantiations` is read whatever is in progress.
     pub(super) fn type_alias_instantiation(
@@ -434,6 +455,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.hands_out_symbol_ids() {
             self.get_symbol_id_of_object_type_alias(ty);
         }
+        self.instantiations_computed += 1;
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         if serial == 0 {

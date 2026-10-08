@@ -123,46 +123,11 @@ fn trailing_count(comments: &[Comment], mut start: u32, operator: u8, source_tex
 }
 
 /// An operand and the comments after it.
-struct FormatOperand<'a> {
-    operand: Operand<'a>,
-    trailing_comments: &'a [Comment],
-    /// See [`write_ternary_with_last_group`].
-    last_group_id: Option<GroupId>,
-}
-
-impl<'a> FormatOperand<'a> {
-    fn new(operand: Operand<'a>, trailing_comments: &'a [Comment]) -> Self {
-        FormatOperand {
-            operand,
-            trailing_comments,
-            last_group_id: None,
-        }
-    }
-}
+struct FormatOperand<'a>(Operand<'a>, &'a [Comment]);
 
 impl<'a> Format<'a> for FormatOperand<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let span = self.operand.span();
-        match (self.last_group_id, self.operand) {
-            // Nothing but comments can be around a conditional after a `?` or a `:`.
-            (Some(_), Operand::Expr(e))
-                if matches!(e.kind(), ExprKind::Cond { .. })
-                    && (f.is_quiet()
-                        || (!f.comments().is_suppressed(span.start)
-                            && f.comments().get_type_cast_comment_index(span).is_none())) =>
-            {
-                write!(f, format_leading_comments(span));
-                write_ternary_with_last_group(ConditionalLike::ConditionalExpression(e), self.last_group_id, f);
-            }
-            _ => {
-                write!(f, FormatNodeWithoutTrailingComments(&self.operand));
-                // Whoever asks about the group has to find one.
-                if self.operand.is_conditional() && self.last_group_id.is_some() {
-                    write!(f, group(&format_with(|_| {})).with_group_id(self.last_group_id));
-                }
-            }
-        }
-        write!(f, FormatTrailingComments::Comments(self.trailing_comments));
+        write!(f, [FormatNodeWithoutTrailingComments(&self.0), FormatTrailingComments::Comments(self.1)]);
     }
 }
 
@@ -199,16 +164,6 @@ pub(crate) fn should_break<'a>(conditional: Expr<'a>, f: &Formatter<'a>) -> bool
 }
 
 pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Formatter<'a>) {
-    write_ternary_with_last_group(conditional, None, f);
-}
-
-/// `last_group_id`: for the group that it ends with, so that what encloses it can tell whether that
-/// breaks.
-fn write_ternary_with_last_group<'a>(
-    conditional: ConditionalLike<'a>,
-    last_group_id: Option<GroupId>,
-    f: &mut Formatter<'a>,
-) {
     // The last of what is before the `?`, what is after it, and what is after the `:`.
     let (test, consequent, alternate, parent) = match conditional {
         ConditionalLike::ConditionalExpression(e) => match e.kind() {
@@ -247,15 +202,13 @@ fn write_ternary_with_last_group<'a>(
     let is_on_same_line_as_return = matches!(parent, AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_))
         && !is_consequent_ternary
         && !is_alternate_ternary;
-    let is_in_jsx_container = matches!(
-        conditional,
-        ConditionalLike::ConditionalExpression(e)
-            if matches!(first_non_conditional_parent(e), AstNodes::JSXExpressionContainer(_))
-    );
-    let is_in_jsx = is_in_jsx_container && !matches!(parent.parent(), AstNodes::JSXAttribute(_));
-    // In JSX a conditional ends with a soft line break. Prettier writes that and the line break
-    // before the `:` of the enclosing conditional, which makes an empty line.
-    let consequent_last_group_id = (is_consequent_ternary && is_in_jsx_container).then(|| f.group_id("consequent-end"));
+    let is_in_jsx = match conditional {
+        ConditionalLike::ConditionalExpression(e) => {
+            matches!(first_non_conditional_parent(e), AstNodes::JSXExpressionContainer(_))
+                && !matches!(parent.parent(), AstNodes::JSXAttribute(_))
+        }
+        ConditionalLike::TSConditionalType(_) => false,
+    };
     let should_extra_indent = match conditional {
         ConditionalLike::ConditionalExpression(e) => should_extra_indent(e),
         ConditionalLike::TSConditionalType(_) => false,
@@ -302,7 +255,7 @@ fn write_ternary_with_last_group<'a>(
         let format_test = format_with(|f| match conditional {
             ConditionalLike::ConditionalExpression(_) => {
                 let is_conditional = test.is_conditional();
-                let test = FormatOperand::new(test, comments.after_test);
+                let test = FormatOperand(test, comments.after_test);
                 write!(f, [WrapInParens(&test), is_conditional.then_some(expand_parent())]);
             }
             ConditionalLike::TSConditionalType(ty) => {
@@ -310,7 +263,7 @@ fn write_ternary_with_last_group<'a>(
                     return;
                 };
                 write!(f, [check, space(), "extends", space()]);
-                let format_extends = FormatOperand::new(test, comments.after_test);
+                let format_extends = FormatOperand(test, comments.after_test);
                 match extends.kind() {
                     TypeKind::Cond { .. } | TypeKind::Mapped(_) => write!(f, format_extends),
                     _ => write!(f, group(&WrapInParens(&format_extends))),
@@ -327,12 +280,7 @@ fn write_ternary_with_last_group<'a>(
                     || is_in_chain
                     || matches!(consequent, Operand::Expr(consequent) if matches!(consequent.kind(), ExprKind::Jsx(_)))));
         let line = if is_on_its_own_line { hard_line_break() } else { soft_line_break_or_space() };
-        let consequent = FormatOperand {
-            operand: consequent,
-            trailing_comments: comments.after_consequent,
-            last_group_id: consequent_last_group_id,
-        };
-        write!(f, indent(&format_args!(line, consequent)));
+        write!(f, indent(&format_args!(line, FormatOperand(consequent, comments.after_consequent))));
     });
 
     let format_test_and_consequent = format_with(|f| {
@@ -358,11 +306,7 @@ fn write_ternary_with_last_group<'a>(
     });
 
     let format_alternate = format_with(|f| {
-        let alternate = FormatOperand {
-            operand: alternate,
-            trailing_comments: &[],
-            last_group_id,
-        };
+        let alternate = FormatNodeWithoutTrailingComments(&alternate);
         if !try_to_parenthesize_alternate {
             return write!(f, alternate);
         }
@@ -385,25 +329,14 @@ fn write_ternary_with_last_group<'a>(
     let format_parts = format_with(|f| {
         write!(f, format_test_and_consequent);
 
-        // The conditional breaks if there is a conditional after the `?`.
-        let hard_line = format_with(|f| match consequent_last_group_id {
-            Some(_) => write!(
-                f,
-                [
-                    if_group_breaks(&empty_line()).with_group_id(consequent_last_group_id),
-                    if_group_fits_on_line(&hard_line_break()).with_group_id(consequent_last_group_id)
-                ]
-            ),
-            None => write!(f, hard_line_break()),
-        });
         if !comments.before_colon.is_empty() {
             let comments = FormatDanglingComments::Comments {
                 comments: comments.before_colon,
                 indent: DanglingIndentMode::None,
             };
-            write!(f, [indent(&format_args!(hard_line, comments)), hard_line_break()]);
-        } else if is_alternate_ternary || is_consequent_ternary {
-            write!(f, hard_line);
+            write!(f, [indent(&format_args!(hard_line_break(), comments)), hard_line_break()]);
+        } else if is_alternate_ternary {
+            write!(f, hard_line_break());
         } else if try_to_parenthesize_alternate {
             write!(
                 f,
@@ -439,8 +372,12 @@ fn write_ternary_with_last_group<'a>(
         if is_alternate_ternary {
             write!(f, format_alternate);
         } else {
-            let line = (is_in_jsx && !try_to_parenthesize_alternate).then_some(soft_line_break());
-            write!(f, group(&format_args!(indent(&format_alternate), line)).with_group_id(last_group_id));
+            let line = (is_in_jsx && !try_to_parenthesize_alternate).then(|| match conditional {
+                // Prettier writes both line breaks, which makes an empty line.
+                ConditionalLike::ConditionalExpression(e) if is_followed_by_line_break(e) => soft_empty_line(),
+                _ => soft_line_break(),
+            });
+            write!(f, group(&format_args!(indent(&format_alternate), line)));
         }
 
         write!(
@@ -481,6 +418,21 @@ fn first_non_conditional_parent(e: Expr<'_>) -> AstNodes<'_> {
         current = current.parent();
     }
     current
+}
+
+/// Whether a line break is written right after `e`, which is in JSX: it is the end of what is after
+/// the `?` of a conditional, or of the value of an attribute.
+fn is_followed_by_line_break(e: Expr<'_>) -> bool {
+    let mut last = e;
+    let mut parent = e.ast_parent();
+    while let AstNodes::ConditionalExpression(conditional) = parent {
+        if conditional.alternate() != Some(last) {
+            return conditional.test() != Some(last);
+        }
+        last = conditional;
+        parent = parent.parent();
+    }
+    matches!(parent, AstNodes::JSXExpressionContainer(_)) && matches!(parent.parent(), AstNodes::JSXAttribute(_))
 }
 
 /// Prettier's `shouldExtraIndentForConditionalExpression`: whether `conditional` is what a chain of

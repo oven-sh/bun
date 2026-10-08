@@ -91,7 +91,8 @@ fn width_of_non_ascii(text: &[u8]) -> u32 {
 /// the compiler turns into vector instructions.
 #[inline]
 fn all_bytes(text: &[u8], is_plain: impl Fn(u8) -> bool + Copy) -> bool {
-    text.chunks(64).all(|block| block.iter().fold(true, |all, &byte| all & is_plain(byte)))
+    let (blocks, rest) = text.as_chunks::<64>();
+    blocks.iter().all(|block| block.iter().fold(true, |all, &byte| all & is_plain(byte))) && rest.iter().all(|&byte| is_plain(byte))
 }
 
 /// Whether the width of every part of `source` that has no tab and no line break is its length.

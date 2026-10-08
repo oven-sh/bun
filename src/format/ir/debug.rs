@@ -33,6 +33,7 @@ fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usiz
             FormatElement::Line(LineMode::Hard) => writeln!(out, "hardline"),
             FormatElement::Line(LineMode::Empty) => writeln!(out, "emptyline"),
             FormatElement::Line(LineMode::SoftOrSpaceEmpty) => writeln!(out, "line softline"),
+            FormatElement::Line(LineMode::SoftEmpty) => writeln!(out, "softline softline"),
             FormatElement::ExpandParent => writeln!(out, "breakParent"),
             FormatElement::LineSuffixBoundary => writeln!(out, "lineSuffixBoundary"),
             FormatElement::Token(token) => writeln!(out, "{}", text(token.as_bytes())),

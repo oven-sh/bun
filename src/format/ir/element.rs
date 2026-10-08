@@ -268,6 +268,8 @@ pub(crate) enum LineMode {
     Empty,
     /// A space if the enclosing group fits on a line, otherwise a line break and an empty line.
     SoftOrSpaceEmpty,
+    /// Nothing if the enclosing group fits on a line, otherwise a line break and an empty line.
+    SoftEmpty,
 }
 
 impl LineMode {

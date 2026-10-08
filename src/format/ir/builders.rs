@@ -40,6 +40,13 @@ pub(crate) const fn soft_line_break() -> Line {
     Line(LineMode::Soft)
 }
 
+/// Nothing if the enclosing group fits on a line, otherwise a line break and an empty line: what
+/// Prettier prints for a `softline` right behind a line break of another group.
+#[inline]
+pub(crate) const fn soft_empty_line() -> Line {
+    Line(LineMode::SoftEmpty)
+}
+
 /// A line break, which also makes the enclosing groups break.
 #[inline]
 pub(crate) const fn hard_line_break() -> Line {

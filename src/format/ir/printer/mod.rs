@@ -325,7 +325,7 @@ impl<'d> Printer<'d> {
                 FormatElement::Line(line_mode) => {
                     if self.mode.is_flat() {
                         match line_mode {
-                            LineMode::Soft => continue,
+                            LineMode::Soft | LineMode::SoftEmpty => continue,
                             LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => {
                                 if self.line_width > 0 {
                                     self.pending_space = true;
@@ -352,7 +352,8 @@ impl<'d> Printer<'d> {
                         self.print_line_break();
                         self.has_empty_line = false;
                     }
-                    if matches!(line_mode, LineMode::Empty | LineMode::SoftOrSpaceEmpty) && !self.has_empty_line {
+                    let is_empty_line = matches!(line_mode, LineMode::Empty | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty);
+                    if is_empty_line && !self.has_empty_line {
                         self.print_line_break();
                         self.has_empty_line = true;
                     }
@@ -528,7 +529,7 @@ impl<'d> Printer<'d> {
                     }
                     FormatElement::Cursor(mark) => self.note_mark(*mark),
                     FormatElement::Nop
-                    | FormatElement::Line(LineMode::Soft)
+                    | FormatElement::Line(LineMode::Soft | LineMode::SoftEmpty)
                     | FormatElement::ExpandParent
                     | FormatElement::LineSuffixBoundary
                     | FormatElement::Tag(_) => {}

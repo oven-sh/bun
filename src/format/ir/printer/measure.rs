@@ -269,7 +269,7 @@ impl<'d> Printer<'d> {
                 if mode.is_flat() {
                     match line_mode {
                         LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty => measure.pending_space = true,
-                        LineMode::Soft => {}
+                        LineMode::Soft | LineMode::SoftEmpty => {}
                         // The break is there in any mode, and everything up to it fits. In a
                         // fill, an item that has a comment on a line of its own before it does
                         // not have to be alone on its line because of that. If the content is

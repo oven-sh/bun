@@ -575,7 +575,7 @@ impl<'a> Formatter<'a> {
                     continue;
                 }
                 _ if conditions.last() == Some(&PrintMode::Expanded) => continue,
-                FormatElement::Line(LineMode::Soft) => continue,
+                FormatElement::Line(LineMode::Soft | LineMode::SoftEmpty) => continue,
                 FormatElement::Line(LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty) => FormatElement::Space,
                 FormatElement::Interned(interned) => {
                     FormatElement::Interned(self.clean_interned(interned, conditions))
@@ -599,7 +599,9 @@ impl<'a> Formatter<'a> {
         let needs_cleaning = self.storage.interned(interned).iter().any(|element| {
             matches!(
                 element,
-                FormatElement::Line(LineMode::Soft | LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty)
+                FormatElement::Line(
+                    LineMode::Soft | LineMode::SoftOrSpace | LineMode::SoftOrSpaceEmpty | LineMode::SoftEmpty
+                )
                     | FormatElement::Tag(
                         Tag::StartConditionalContent(_) | Tag::EndConditionalContent
                     )

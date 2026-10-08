@@ -29,18 +29,7 @@ struct Access<'a> {
 /// Whether ESTree has a `MemberExpression` for `e`, a `Dot`. In the name of a JSX element it is a
 /// `JSXMemberExpression`, in the operand of a `typeof` type a `TSQualifiedName`.
 fn is_member_expression(e: Expr) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } if obj == at => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() != Some(at) && jsx.close_tag() != Some(at),
-                _ => return true,
-            },
-            Node::Type(ty) => return !matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return true,
-        }
-    }
+    !e.is_jsx_tag_name() && !e.is_in_type_query()
 }
 
 impl NoWhitespaceBeforeProperty {

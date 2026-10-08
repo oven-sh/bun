@@ -4,7 +4,7 @@ use super::Parser as Syntax;
 use super::doc::{Doc, dedent, docs, fill, group, group_with, hardline, if_break, indent, join, line_suffix};
 use super::misc::is_next_line_empty;
 use super::postcss::Kind;
-use super::printer::{Printer, is_list_with_comma_group};
+use super::printer::{Printer, is_at_word_placeholder, is_list_with_comma_group};
 use super::text;
 use super::value_parser::{ValueKind, ValueNode};
 
@@ -70,11 +70,6 @@ fn is_inline_comment(node: &ValueNode<'_>) -> bool {
 
 fn has_empty_raw_before(node: &ValueNode<'_>) -> bool {
     node.before.as_ref().is_some_and(|before| before.is_empty())
-}
-
-/// `isAtWordPlaceholderNode`
-fn is_at_word_placeholder(node: &ValueNode<'_>) -> bool {
-    matches!(&node.kind, ValueKind::AtWord(value) if value.starts_with(b"prettier-placeholder-"))
 }
 
 /// `isParenGroupNode`: the `(`, if it is one.

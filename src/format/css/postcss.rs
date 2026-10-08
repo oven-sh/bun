@@ -935,7 +935,7 @@ impl<'a> Parser<'a> {
             value = self.texts.join(first_spaces_range, value);
             clean_value = clean(self.css, &[&first_spaces[..], &tokens[..]].concat(), custom_property);
         }
-        let extend = self.syntax == Syntax::Less && has_extend(clean_value.as_deref().unwrap_or(self.texts.of(value)), b"extend(");
+        let extend = self.syntax == Syntax::Less && has_extend(clean_value.as_deref().unwrap_or_else(|| self.texts.of(value)), b"extend(");
         let node = self.node(id);
         node.prop = prop;
         node.between = between;
@@ -981,7 +981,7 @@ impl<'a> Parser<'a> {
             let text = self.text_of(token);
             if with_colon {
                 if token.kind != TokenKind::Comment && !token.is(b'{') {
-                    first_byte = first_byte.or(text.first().copied());
+                    first_byte = first_byte.or_else(|| text.first().copied());
                     is_blank = is_blank && text::trim(text).is_empty();
                 }
             } else if token.kind == TokenKind::Space && bun_core::strings::contains_char(text, b'\n') {
@@ -1096,7 +1096,7 @@ impl<'a> Parser<'a> {
         node.after_name = self.texts.join(last_colon, node.after_name);
         node.variable = true;
         // `/^:(\s+)?/`
-        let params = node.clean_params.as_deref().unwrap_or(self.texts.of(node.params));
+        let params = node.clean_params.as_deref().unwrap_or_else(|| self.texts.of(node.params));
         if let Some(rest) = params.strip_prefix(b":") {
             node.value_skips = 1 + text::leading_white_space_len(rest) as u32;
             let skipped = Range::new(node.params.start, node.params.start + node.value_skips);
@@ -1211,7 +1211,7 @@ impl<'a> Parser<'a> {
         }
         self.base_rule(tokens)?;
         let node = &mut self.nodes[self.last_node as usize];
-        node.extend = has_extend(node.clean_selector.as_deref().unwrap_or(self.texts.of(node.selector)), b":extend(");
+        node.extend = has_extend(node.clean_selector.as_deref().unwrap_or_else(|| self.texts.of(node.selector)), b":extend(");
         Ok(())
     }
 

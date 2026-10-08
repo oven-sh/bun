@@ -208,6 +208,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             true => Doc::from(&*node.prop),
             false => owned(maybe_to_lower_case(&node.prop), &node.prop),
         };
+        // `a:${b} { .. }` in a template of JavaScript.
+        let is_placeholder_right_behind_colon = node.is_nested
+            && !(is_colon && node.between.ends_with(b" "))
+            && matches!(&node.value, Value::Parsed(value) if top_level_group(value).is_some_and(|group| {
+                is_at_word_placeholder(group) || group.groups().and_then(<[_]>::first).is_some_and(is_at_word_placeholder)
+            }));
         let extend = match &node.selector {
             Some(selector) if self.syntax == Syntax::Less && node.extend => {
                 let printed = self.print_selector(selector, None, None, true);
@@ -228,7 +234,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             prop,
             if trimmed_between.starts_with(b"//") { " " } else { "" },
             trimmed_between,
-            if node.extend || is_value_all_space { "" } else { " " },
+            if node.extend || is_value_all_space || is_placeholder_right_behind_colon { "" } else { " " },
             extend,
             value,
             bang(node.raw_important, node.important, "important", true),
@@ -236,6 +242,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             bang(node.raw_scss_global, node.scss_global, "global", false),
             match &node.nodes {
                 Some(_) => docs![" ", self.print_block(node, || Doc::SOFTLINE)],
+                // `isTemplatePropNode`
+                None if node.prop.starts_with(b"@prettier-placeholder") && self.has_no_semicolon(node) => Doc::EMPTY,
                 None => Doc::from(";"),
             },
         ]
@@ -255,7 +263,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         is_list_with_comma_group(group) && !node.prop.starts_with(b"--")
     }
 
+    /// Whether there is no semicolon behind `node`, which is being printed.
+    fn has_no_semicolon(&self, node: &CssNode<'a>) -> bool {
+        matches!(self.css_stack[..], [.., parent, _] if !parent.semicolon)
+            && node.end.checked_sub(1).and_then(|at| self.text.get(at)) != Some(&b';')
+    }
+
     fn print_at_rule(&mut self, node: &'t CssNode<'a>) -> Doc<'t> {
+        // `isTemplatePlaceholderNode`: an expression in a template of JavaScript.
+        let is_placeholder = node.name.starts_with(b"prettier-placeholder");
+        let semicolon = if is_placeholder && self.has_no_semicolon(node) { "" } else { ";" };
         // `/^\(\s*\)$/`
         let is_detached_ruleset_call = node
             .raw_params
@@ -268,14 +285,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     Some(selector) => self.print_selector(selector, None, None, true),
                     None => Doc::EMPTY,
                 };
-                return docs![selector, if node.important { " !important" } else { "" }, ";"];
+                return docs![selector, if node.important { " !important" } else { "" }, semicolon];
             }
             if node.function {
                 let params = match &node.params {
                     Params::Text(params) => &**params,
                     _ => b"",
                 };
-                return docs![node.name, params, ";"];
+                return docs![node.name, params, semicolon];
             }
             if node.variable {
                 let between = text::trim(&node.between);
@@ -292,12 +309,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         Some(_) => self.print_block(node, || Doc::SOFTLINE),
                         None => Doc::EMPTY,
                     },
-                    ";",
+                    semicolon,
                 ];
             }
         }
         let is_control_directive = self.is_scss_control_directive(node);
-        let name = match is_detached_ruleset_call || node.name.ends_with(b":") {
+        let name = match is_detached_ruleset_call || node.name.ends_with(b":") || is_placeholder {
             true => Doc::from(node.name),
             false => owned(maybe_to_lower_case(node.name), node.name),
         };
@@ -309,7 +326,20 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Params::Value(value) => Some(self.print_value(value, None)),
         };
         let params = match params {
-            Some(params) => docs![if is_detached_ruleset_call { "" } else { " " }, params],
+            Some(params) => {
+                // How many line breaks there are before the first other character of `raws.afterName`.
+                let spaces = &node.after_name[..text::leading_white_space_len(node.after_name)];
+                let separator = match bun_core::strings::count_char(spaces, b'\n') {
+                    _ if is_detached_ruleset_call => Doc::EMPTY,
+                    _ if !is_placeholder => Doc::from(" "),
+                    _ if node.after_name.is_empty() => Doc::EMPTY,
+                    _ if node.name.ends_with(b":") => Doc::from(" "),
+                    0 => Doc::from(" "),
+                    1 => hardline(),
+                    _ => docs![hardline(), hardline()],
+                };
+                docs![separator, params]
+            }
             None => Doc::EMPTY,
         };
         let selector = match &node.selector {
@@ -354,7 +384,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 ]
             }
             None if is_import_that_ends_with_semicolon => Doc::EMPTY,
-            None => Doc::from(";"),
+            None => Doc::from(semicolon),
         };
         docs!["@", name, params, selector, value, rest]
     }
@@ -673,6 +703,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.value_stack.pop();
         doc
     }
+}
+
+/// `isAtWordPlaceholderNode`
+pub(crate) fn is_at_word_placeholder(node: &ValueNode<'_>) -> bool {
+    matches!(&node.kind, ValueKind::AtWord(value) if value.starts_with(b"prettier-placeholder-"))
 }
 
 /// `node.value.group.group`

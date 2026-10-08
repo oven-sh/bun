@@ -4,6 +4,7 @@
 //! a line break in the source.
 
 use super::type_parameters::type_arguments;
+use crate::css::embed;
 use crate::ir::width::string_width;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -12,8 +13,25 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// `` `a${b}c` ``
-pub(crate) fn write_template_literal<'a>(_e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) {
-    TemplateLike::TemplateLiteral(template).fmt(f);
+pub(crate) fn write_template_literal<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Formatter<'a>) {
+    if !embed::write_template(e, template, f) {
+        TemplateLike::TemplateLiteral(template).fmt(f);
+    }
+}
+
+/// `${e}` at `i` in a template that is written as the language in it. Prettier's
+/// `printEmbeddedTemplateExpressions`.
+pub(crate) fn write_embedded_template_expression<'a>(template: Template<'a>, i: usize, f: &mut Formatter<'a>) {
+    let template = TemplateLike::TemplateLiteral(template);
+    if let Some(expression) = template.expression(i) {
+        let expression = FormatTemplateExpression {
+            expression,
+            interpolation: template.interpolation_span(i),
+            indention: None,
+            after_new_line: false,
+        };
+        expression.fmt(f);
+    }
 }
 
 /// `` tag`a${b}c` ``
@@ -25,7 +43,7 @@ pub(crate) fn write_tagged_template_expression<'a>(e: Expr<'a>, call: Call<'a>, 
 
     let comments = f.comments().comments_before(quasi.span().start);
     if let Some(first) = comments.first() {
-        let tag_end = call.type_args().angle_brackets_span().map_or(call.callee().span().end, |it| it.end);
+        let tag_end = call.type_args().angle_brackets_span().map_or_else(|| call.callee().span().end, |it| it.end);
         match f.source_text().contains_newline_between(tag_end, first.span.start) {
             true => write!(f, soft_line_break()),
             false => write!(f, space()),
@@ -38,7 +56,7 @@ pub(crate) fn write_tagged_template_expression<'a>(e: Expr<'a>, call: Call<'a>, 
     };
     match is_test_each_pattern(call.callee()) {
         true => EachTemplateTable::from_template(template, f).fmt(f),
-        false => TemplateLike::TemplateLiteral(template).fmt(f),
+        false => write_template_literal(quasi, template, f),
     }
 }
 
@@ -142,7 +160,7 @@ impl<'a> TemplateLike<'a> {
             Some(FormatTemplateExpression {
                 expression: self.expression(i)?,
                 interpolation: self.interpolation_span(i),
-                indention,
+                indention: Some(indention),
                 after_new_line: indention.0 == 0 && matches!(quasi_text.last(), Some(b'\n' | b'\r')),
             })
         })
@@ -185,7 +203,8 @@ struct FormatTemplateExpression<'a> {
     expression: TemplateExpression<'a>,
     /// What is between the `${` and the `}`.
     interpolation: Span,
-    indention: TemplateElementIndention,
+    /// `None`: there is no telling how the text before it is written.
+    indention: Option<TemplateElementIndention>,
     /// The `${` is the first thing on its line.
     after_new_line: bool,
 }
@@ -254,9 +273,10 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             }
         });
 
-        let format_indented = format_with(|f| match self.after_new_line {
-            true => write!(f, dedent_to_root(&format_inner)),
-            false => write_with_indention(&format_inner, self.indention, f.options().indent_width, f),
+        let format_indented = format_with(|f| match self.indention {
+            None => write!(f, format_inner),
+            Some(_) if self.after_new_line => write!(f, dedent_to_root(&format_inner)),
+            Some(indention) => write_with_indention(&format_inner, indention, f.options().indent_width, f),
         });
 
         write!(f, group(&format_args!("${", format_indented, line_suffix_boundary(), "}")));

@@ -209,8 +209,8 @@ pub(crate) fn parse(string: &[u8]) -> Result<MediaNode<'_>, ParseError> {
         interim_index = i;
     }
 
-    for i in interim_index..string.len() {
-        match string[i] {
+    for (i, &character) in string.iter().enumerate().skip(interim_index) {
+        match character {
             b'(' => level += 1,
             b')' => level -= 1,
             b',' if level == 0 => {

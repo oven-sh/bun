@@ -6,6 +6,7 @@
 //! apart, mistakes included. So this has the same four parsers.
 
 mod doc;
+pub(crate) mod embed;
 mod media_query;
 mod misc;
 mod parse;
@@ -147,51 +148,30 @@ fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
     comments
 }
 
-/// Appends the formatted `text` to `out`.
-pub fn format(
+/// `normalizeEndOfLine`
+fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
+    if !bun_core::strings::contains_char(text, b'\r') {
+        return Cow::Borrowed(text);
+    }
+    let mut normalized = Vec::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
+        normalized.extend_from_slice(&rest[..at]);
+        normalized.push(b'\n');
+        rest = &rest[at + 1..];
+        rest = rest.strip_prefix(b"\n").unwrap_or(rest);
+    }
+    normalized.extend_from_slice(rest);
+    Cow::Owned(normalized)
+}
+
+/// Parses `text`, whose line breaks are `\n`, and calls `with_document` with the document for it.
+fn parse_and_print<R>(
     text: &[u8],
     parser: Parser,
     options: &FormatOptions,
-    _scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-) -> Result<(), FormatError> {
-    const BOM: &[u8] = "\u{FEFF}".as_bytes();
-    let original = text;
-    let (has_bom, text) = match text.strip_prefix(BOM) {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    };
-    // `normalizeEndOfLine`
-    let text: Cow<'_, [u8]> = match bun_core::strings::contains_char(text, b'\r') {
-        false => Cow::Borrowed(text),
-        true => {
-            let mut normalized = Vec::with_capacity(text.len());
-            let mut rest = text;
-            while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\r') {
-                normalized.extend_from_slice(&rest[..at]);
-                normalized.push(b'\n');
-                rest = &rest[at + 1..];
-                rest = rest.strip_prefix(b"\n").unwrap_or(rest);
-            }
-            normalized.extend_from_slice(rest);
-            Cow::Owned(normalized)
-        }
-    };
-    let text = match crate::pragma::before_parsing_css(&text, front_matter_len(&text).unwrap_or(0), options) {
-        BeforeParsing::LeaveAsItIs => {
-            out.extend_from_slice(original);
-            return Ok(());
-        }
-        BeforeParsing::Format(text) => text,
-    };
-    let text = &text[..];
-    if text::trim(text).is_empty() {
-        if has_bom {
-            out.extend_from_slice(BOM);
-        }
-        return Ok(());
-    }
-
+    with_document: impl FnOnce(Doc<'_>) -> R,
+) -> Result<R, FormatError> {
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
     let front_matter = front_matter_len(text).map(|len| &text[..len]);
     let mut blanked: Cow<'_, [u8]> = match front_matter {
@@ -227,16 +207,6 @@ pub fn format(
         css_stack: Vec::new(),
         value_stack: Vec::new(),
     };
-    // Nothing in a style sheet is something that Prettier formats on its own.
-    let is_range = options.range_start.is_some_and(|start| start > 0)
-        || options.range_end.is_some_and(|end| (end as usize) < text.len());
-    if is_range {
-        if has_bom {
-            out.extend_from_slice(BOM);
-        }
-        doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)), options, original, out);
-        return Ok(());
-    }
     let mut document = printer.print_root(&root);
     if let Some(front_matter) = front_matter {
         let has_nodes = root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty());
@@ -244,10 +214,7 @@ pub fn format(
         let first_line_end = text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
         let last_line_start = bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
         let language = text::trim(&front_matter[3..first_line_end]);
-        let is_embedded = match front_matter.starts_with(b"---") {
-            true => matches!(language, b"" | b"yaml" | b"toml"),
-            false => matches!(language, b"" | b"toml" | b"yaml"),
-        };
+        let is_embedded = matches!(language, b"" | b"yaml" | b"toml");
         let is_empty = text::trim(front_matter.get(first_line_end..last_line_start).unwrap_or_default()).is_empty();
         let front_matter = match is_embedded && is_empty {
             true => Doc::Array(vec![
@@ -265,9 +232,49 @@ pub fn format(
             document,
         ]);
     }
-    if has_bom {
-        out.extend_from_slice(BOM);
+    Ok(with_document(document))
+}
+
+/// Appends the formatted `text` to `out`.
+pub fn format(
+    text: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+    _scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
+    const BOM: &[u8] = "\u{FEFF}".as_bytes();
+    let original = text;
+    let (has_bom, text) = match text.strip_prefix(BOM) {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let text = normalize_end_of_line(text);
+    let text = match crate::pragma::before_parsing_css(&text, front_matter_len(&text).unwrap_or(0), options) {
+        BeforeParsing::LeaveAsItIs => {
+            out.extend_from_slice(original);
+            return Ok(());
+        }
+        BeforeParsing::Format(text) => text,
+    };
+    let text = &text[..];
+    if text::trim(text).is_empty() {
+        if has_bom {
+            out.extend_from_slice(BOM);
+        }
+        return Ok(());
     }
-    doc::print(document, options, original, out);
-    Ok(())
+    // Nothing in a style sheet is something that Prettier formats on its own.
+    let is_range = options.range_start.is_some_and(|start| start > 0)
+        || options.range_end.is_some_and(|end| (end as usize) < text.len());
+    parse_and_print(text, parser, options, |document| {
+        if has_bom {
+            out.extend_from_slice(BOM);
+        }
+        let document = match is_range {
+            true => doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)),
+            false => document,
+        };
+        doc::print(document, options, original, out);
+    })
 }

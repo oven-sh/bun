@@ -14,7 +14,7 @@ use std::borrow::Cow;
 pub(crate) enum Value<'a> {
     None,
     Text(Cow<'a, [u8]>),
-    Parsed(ValueNode<'a>),
+    Parsed(Box<ValueNode<'a>>),
     /// `--a: { .. }`: `{ type: "css-rule", nodes }`
     Rule(Vec<CssNode<'a>>),
 }
@@ -25,7 +25,7 @@ pub(crate) enum Params<'a> {
     None,
     Text(Cow<'a, [u8]>),
     Media(MediaNode<'a>),
-    Value(ValueNode<'a>),
+    Value(Box<ValueNode<'a>>),
     /// `media-unknown` and `selector-unknown`, which are printed the same way here.
     Unknown(Cow<'a, [u8]>),
 }
@@ -42,6 +42,8 @@ pub(crate) struct CssNode<'a> {
     pub(crate) between: Cow<'a, [u8]>,
     pub(crate) after: &'a [u8],
     pub(crate) after_name: &'a [u8],
+    /// `raws.semicolon`
+    pub(crate) semicolon: bool,
     /// Of a comment.
     pub(crate) text: &'a [u8],
     /// `inline || raws.inline`
@@ -50,6 +52,8 @@ pub(crate) struct CssNode<'a> {
     /// `raws.selector`
     pub(crate) raw_selector: Cow<'a, [u8]>,
     pub(crate) is_scss_nested_property: bool,
+    /// `isNested`: a declaration of SCSS with a block.
+    pub(crate) is_nested: bool,
     pub(crate) prop: Cow<'a, [u8]>,
     pub(crate) value: Value<'a>,
     pub(crate) important: bool,
@@ -229,7 +233,7 @@ impl<'a> Context<'a> {
     /// What `parseNestedCSS` does with an at-rule of Less only. Returns whether that is all.
     fn convert_less_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<bool, SyntaxError> {
         let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>| {
-            parse_value(text, self.syntax, value_root_offset(node)).map(Value::Parsed).map_err(|_| SyntaxError)
+            parse_value(text, self.syntax, value_root_offset(node)).map(|it| Value::Parsed(Box::new(it))).map_err(|_| SyntaxError)
         };
         // `node.params`
         let clean_params: Cow<'a, [u8]> = match &raw.clean_params {
@@ -319,11 +323,13 @@ impl<'a> Context<'a> {
             between: Cow::Borrowed(self.of(raw.between)),
             after: self.of(raw.after),
             after_name: self.of(raw.after_name),
+            semicolon: raw.semicolon,
             text: self.of(raw.text),
             inline: raw.inline || raw.raw_inline,
             selector: None,
             raw_selector: Cow::Borrowed(b""),
             is_scss_nested_property: false,
+            is_nested: raw.is_nested,
             prop: Cow::Borrowed(self.of(raw.prop)),
             value: Value::None,
             important: raw.important,
@@ -350,7 +356,7 @@ impl<'a> Context<'a> {
                     false => self.concat(&[raw.selector, raw.between]),
                 };
                 if !text::trim(&node.raw_selector).is_empty() {
-                    let clean = raw.clean_selector.as_deref().unwrap_or(self.of(raw.selector));
+                    let clean = raw.clean_selector.as_deref().unwrap_or_else(|| self.of(raw.selector));
                     node.is_scss_nested_property = self.syntax == Syntax::Scss && is_scss_nested_property(clean);
                     node.selector = Some(parse_selector(node.raw_selector.clone()));
                 }
@@ -405,7 +411,7 @@ impl<'a> Context<'a> {
                 Some(rules) => Value::Rule(rules),
                 // Prettier reads `raws.value.raw`, which is only there if the value has comments.
                 None if raw.clean_value.is_none() => return Err(SyntaxError),
-                None => Value::Parsed(super::value_parser::unknown(Cow::Borrowed(value), root_offset)),
+                None => Value::Parsed(Box::new(super::value_parser::unknown(Cow::Borrowed(value), root_offset))),
             };
             return Ok(());
         }
@@ -436,7 +442,7 @@ impl<'a> Context<'a> {
                 return Ok(());
             }
             let parsed = parse_value(Cow::Borrowed(value), self.syntax, root_offset).map_err(|_| SyntaxError)?;
-            node.value = Value::Parsed(parsed);
+            node.value = Value::Parsed(Box::new(parsed));
         }
 
         if self.syntax == Syntax::Less {
@@ -468,13 +474,13 @@ impl<'a> Context<'a> {
             raw.params,
             if has_text(raw.between) { raw.between } else { Range::default() },
         ]));
-        node.raw_params = params.clone();
+        node.raw_params.clone_from(&params);
         if self.syntax == Syntax::Less && self.convert_less_at_rule(raw, node)? {
             return Ok(());
         }
         let name = node.name;
         let root_offset = value_root_offset(node);
-        let value = |text: Cow<'a, [u8]>| parse_value(text, self.syntax, root_offset).map_err(|_| SyntaxError);
+        let value = |text: Cow<'a, [u8]>| parse_value(text, self.syntax, root_offset).map(Box::new).map_err(|_| SyntaxError);
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
             // `node.params.match(/:--\S+\s+/)[0].trim()`

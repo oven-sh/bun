@@ -163,6 +163,116 @@ pub(crate) fn remove_lines<'a>(doc: Doc<'a>) -> Doc<'a> {
     }
 }
 
+/// Prettier's `cleanDoc`: no arrays in arrays, no empty strings, strings that follow each other are
+/// one.
+pub(crate) fn clean<'a>(doc: Doc<'a>) -> Doc<'a> {
+    let wrap = |contents: Box<Doc<'a>>, wrapper: fn(Box<Doc<'a>>) -> Doc<'a>| match clean(*contents) {
+        contents if contents.is_empty_text() => Doc::EMPTY,
+        contents => wrapper(Box::new(contents)),
+    };
+    match doc {
+        Doc::Fill(parts) => {
+            let mut parts: Vec<Doc<'a>> = parts.into_iter().map(clean).collect();
+            match parts.len() {
+                _ if parts.iter().all(Doc::is_empty_text) => Doc::EMPTY,
+                1 => parts.swap_remove(0),
+                _ => Doc::Fill(parts),
+            }
+        }
+        Doc::Group {
+            contents,
+            should_break,
+        } => match clean(*contents) {
+            contents if contents.is_empty_text() && !should_break => Doc::EMPTY,
+            contents @ Doc::Group { should_break: inner, .. } if inner == should_break => contents,
+            contents => Doc::Group {
+                contents: Box::new(contents),
+                should_break,
+            },
+        },
+        Doc::Indent(contents) => wrap(contents, Doc::Indent),
+        Doc::Dedent(contents) => wrap(contents, Doc::Dedent),
+        Doc::LineSuffix(contents) => wrap(contents, Doc::LineSuffix),
+        Doc::IfBreak {
+            break_contents,
+            flat_contents,
+        } => match (clean(*break_contents), clean(*flat_contents)) {
+            (break_contents, flat_contents) if break_contents.is_empty_text() && flat_contents.is_empty_text() => Doc::EMPTY,
+            (break_contents, flat_contents) => Doc::IfBreak {
+                break_contents: Box::new(break_contents),
+                flat_contents: Box::new(flat_contents),
+            },
+        },
+        Doc::Array(parts) => {
+            let mut cleaned: Vec<Doc<'a>> = Vec::with_capacity(parts.len());
+            let mut push = |part: Doc<'a>| match (cleaned.last_mut(), part) {
+                (Some(Doc::Text(last)), Doc::Text(text)) => last.to_mut().extend_from_slice(&text),
+                (_, part) => cleaned.push(part),
+            };
+            for part in parts {
+                match clean(part) {
+                    part if part.is_empty_text() => {}
+                    Doc::Array(parts) => parts.into_iter().for_each(&mut push),
+                    part => push(part),
+                }
+            }
+            match cleaned.len() {
+                0 => Doc::EMPTY,
+                1 => cleaned.swap_remove(0),
+                _ => Doc::Array(cleaned),
+            }
+        }
+        doc @ (Doc::Text(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => doc,
+    }
+}
+
+/// Prettier's `stripTrailingHardlineFromDoc`. `doc` is clean.
+pub(crate) fn strip_trailing_hardline(doc: Doc<'_>) -> Doc<'_> {
+    fn strip_parts(parts: &mut Vec<Doc<'_>>) {
+        while matches!(parts[..], [.., Doc::Line(_), Doc::BreakParent]) {
+            parts.truncate(parts.len() - 2);
+        }
+        if let Some(last) = parts.pop() {
+            parts.push(strip_trailing_hardline(last));
+        }
+    }
+    match doc {
+        Doc::Indent(contents) => Doc::Indent(Box::new(strip_trailing_hardline(*contents))),
+        Doc::LineSuffix(contents) => Doc::LineSuffix(Box::new(strip_trailing_hardline(*contents))),
+        Doc::Group {
+            contents,
+            should_break,
+        } => Doc::Group {
+            contents: Box::new(strip_trailing_hardline(*contents)),
+            should_break,
+        },
+        Doc::IfBreak {
+            break_contents,
+            flat_contents,
+        } => Doc::IfBreak {
+            break_contents: Box::new(strip_trailing_hardline(*break_contents)),
+            flat_contents: Box::new(strip_trailing_hardline(*flat_contents)),
+        },
+        Doc::Fill(mut parts) => {
+            strip_parts(&mut parts);
+            Doc::Fill(parts)
+        }
+        Doc::Array(mut parts) => {
+            strip_parts(&mut parts);
+            Doc::Array(parts)
+        }
+        Doc::Text(mut text) => {
+            let len = text.iter().rposition(|b| !matches!(b, b'\n' | b'\r')).map_or(0, |at| at + 1);
+            match &mut text {
+                Cow::Borrowed(text) => *text = &text[..len],
+                Cow::Owned(text) => text.truncate(len),
+            }
+            Doc::Text(text)
+        }
+        doc @ (Doc::Dedent(_) | Doc::Line(_) | Doc::LineSuffixBoundary | Doc::BreakParent) => doc,
+    }
+}
+
 /// Prettier's `replaceEndOfLine(text, literallineWithoutBreakParent)`.
 pub(crate) fn replace_end_of_line_with_literal_lines(text: Cow<'_, [u8]>) -> Doc<'_> {
     if !bun_core::strings::contains_char(&text, b'\n') {
@@ -184,7 +294,11 @@ fn propagate_breaks(doc: &mut Doc<'_>) -> bool {
             *should_break
         }
         Doc::Array(parts) | Doc::Fill(parts) => {
-            parts.iter_mut().fold(false, |breaks, part| propagate_breaks(part) || breaks)
+            let mut breaks = false;
+            for part in parts {
+                breaks |= propagate_breaks(part);
+            }
+            breaks
         }
         Doc::IfBreak {
             break_contents,

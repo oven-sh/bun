@@ -310,7 +310,10 @@ fn may_break_after_short_prefix<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
     match body.kind() {
         ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Jsx(_) => true,
         ExprKind::Fn(func) => func.is_arrow(),
-        _ => is_multiline_template_starting_on_same_line(body, f.source_text()),
+        ExprKind::Template(_) | ExprKind::TaggedTemplate(_) => {
+            is_multiline_and_starts_on_same_line(body, f.source_text()) || crate::css::embed::has_embed_label(body, f)
+        }
+        _ => false,
     }
 }
 

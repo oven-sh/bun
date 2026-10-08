@@ -29,7 +29,8 @@ pub(crate) enum Code {
     TypeScript {
         /// `(`, the expression, a line break and `)`.
         code: Vec<u8>,
-        /// The same with every name as it is written, if that is not the same. It is as long.
+        /// The same, as long, for whoever writes a part of the text or looks at it, if that is not the same: with every
+        /// name as it is written, and blanks for the parentheses that are not written.
         shown: Option<Vec<u8>>,
     },
 }
@@ -69,9 +70,11 @@ pub(super) struct Operand {
 
 #[derive(Debug, Copy, Clone)]
 enum Change {
-    /// `)` before the byte.
+    /// `)` before the byte, which ends the arguments of a pipe.
+    EndArguments,
+    /// `)` before the byte, which is shown as a blank: what asks what follows an expression finds what is in the text.
     Close,
-    /// `(` before the byte.
+    /// `(` before the byte, which is shown as a blank.
     Open,
     /// Another byte in its place.
     Put(u8),
@@ -474,7 +477,7 @@ impl<'i> Parser<'i> {
         }
         self.edits.sort_unstable_by_key(|edit| {
             let rank = match edit.change {
-                Change::Close => 0,
+                Change::EndArguments | Change::Close => 0,
                 Change::Open => 1,
                 Change::Put(_) | Change::Hide(_) => 2,
             };
@@ -490,8 +493,15 @@ impl<'i> Parser<'i> {
             code.extend_from_slice(self.input.get(from..at).unwrap_or_default());
             from = at;
             match edit.change {
-                Change::Close => code.push(b')'),
-                Change::Open => code.push(b'('),
+                Change::EndArguments => code.push(b')'),
+                Change::Close => {
+                    hidden.push((code.len(), b' '));
+                    code.push(b')');
+                }
+                Change::Open => {
+                    hidden.push((code.len(), b' '));
+                    code.push(b'(');
+                }
                 Change::Put(byte) => {
                     code.push(byte);
                     from = at + 1;
@@ -587,7 +597,7 @@ impl<'i> Parser<'i> {
                 self.parse_conditional()?;
             }
             if has_arguments {
-                self.edit(self.current_end_index(), Change::Close);
+                self.edit(self.current_end_index(), Change::EndArguments);
             }
             result = self.operand(start, Shape::Pipe);
         }
@@ -833,6 +843,16 @@ impl<'i> Parser<'i> {
                         self.expect_character(b':')?;
                         self.parse_pipe()?;
                     }
+                    // To Angular it is a string like another.
+                    Kind::TemplateEnd => {
+                        if strings::index_of_any(self.text_of(key), b"'\"\\\n").is_some() {
+                            return Err(Failed);
+                        }
+                        self.edit(key.start, Change::Put(b'\''));
+                        self.edit(key.end - 1, Change::Put(b'\''));
+                        self.expect_character(b':')?;
+                        self.parse_pipe()?;
+                    }
                     Kind::Identifier | Kind::Keyword => match self.consume_optional_character(b':')
                     {
                         true => {
@@ -928,6 +948,12 @@ impl<'i> Parser<'i> {
     }
 
     fn parse_regular_expression_literal(&mut self) -> Parsed<()> {
+        // `//`, which Angular takes, starts a comment in TypeScript. A name is written as it is in the text too.
+        let body = self.next();
+        if body.end - body.start == 2 {
+            self.edit(body.start, Change::Hide(b'_'));
+            self.edit(body.start + 1, Change::Hide(b'_'));
+        }
         self.advance();
         let flags = self.next();
         if flags.kind != Kind::RegExpFlags {

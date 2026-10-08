@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
 
 /// Disallow duplicate module imports.
 pub struct NoDuplicateImports {
@@ -87,7 +88,7 @@ impl NoDuplicateImports {
 
     /// ESLint's `shouldReportImportExport`, with those of `previous` that are exports or that are
     /// imports.
-    fn should_report(&self, entry: &Entry, previous: &[Entry], exports: bool) -> bool {
+    fn should_report(&self, entry: &Entry, previous: &[&Entry], exports: bool) -> bool {
         previous.iter().any(|it| {
             it.is_export == exports
                 && (!self.allow_separate_type_imports || it.is_type_only == entry.is_type_only)
@@ -101,16 +102,23 @@ impl NoDuplicateImports {
             (a.module.cmp(b.module)).then_with(|| a.statement.span().start.cmp(&b.statement.span().start))
         });
         for of_module in entries.chunk_by(|a, b| a.module == b.module) {
-            for (i, entry) in of_module.iter().enumerate().skip(1) {
-                let previous = &of_module[..i];
+            // Of those before `entry`, one of each sort, of which there are 20.
+            let mut previous: SmallVec<[&Entry; 4]> = SmallVec::new();
+            for entry in of_module {
                 let messages = match entry.is_export {
                     true => [(EXPORT, true), (EXPORT_AS, false)],
                     false => [(IMPORT, false), (IMPORT_AS, true)],
                 };
                 for (message, exports) in messages {
-                    if self.should_report(entry, previous, exports) {
+                    if self.should_report(entry, &previous, exports) {
                         cx.report(entry.statement, message).data("module", entry.module);
                     }
+                }
+                let is_same_sort = |it: &&Entry| {
+                    it.ty == entry.ty && it.is_type_only == entry.is_type_only && it.is_export == entry.is_export
+                };
+                if !previous.iter().any(is_same_sort) {
+                    previous.push(entry);
                 }
             }
         }

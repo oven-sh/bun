@@ -517,12 +517,17 @@ impl<'a> Comments<'a> {
     /// The same after the left side of an assignment or the key of a property, which ends at `pos`:
     /// an operator and `(` can be in between. `a ||= ( // comment`
     pub(crate) fn end_of_line_comments_after_left_side(&self, pos: u32) -> &'a [Comment] {
-        self.end_of_line_comments_after_bytes(pos, |b| {
+        let comments = self.end_of_line_comments_after_bytes(pos, |b| {
             matches!(
                 b,
                 b'\t' | b' ' | b'=' | b':' | b'(' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'<' | b'>' | b'?'
             )
-        })
+        });
+        // `a = /** @type {T} */ ( // comment`: what is behind the `(` of a type cast is in it.
+        let is_type_cast = |comment: &Comment| {
+            self.is_type_cast_comment(comment) && self.source_text.next_non_whitespace_byte_is(comment.end(), b'(')
+        };
+        if comments.iter().any(is_type_cast) { &[] } else { comments }
     }
 
     fn end_of_line_comments_after_bytes(&self, mut pos: u32, can_be_between: impl Fn(u8) -> bool) -> &'a [Comment] {

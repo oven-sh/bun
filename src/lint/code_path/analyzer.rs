@@ -1112,27 +1112,23 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
     }
 }
 
-/// Analyzes `func` alone, without the functions in it. Returns whether its end can be reached.
-pub(super) fn is_end_reachable(func: Func) -> bool {
-    let (file, store) = (func.file(), &Store::default());
+/// Analyzes the code path of `node` alone, which is a function or the file, without the functions
+/// in it. Returns whether its end can be reached.
+pub(super) fn is_end_reachable(node: Node) -> bool {
+    let (file, store) = (node.file(), &Store::default());
     let mut recorder = Recorder {
         builder: Builder::new(file, store),
         steps: Vec::new(),
         enter: NodeTags::EMPTY,
         exit: NodeTags::EMPTY,
     };
-    let node = Node::Func(func);
-    recorder.builder.start_code_path(
-        Origin::Function,
-        &mut Cx::new(file, store, node, &mut |_| {}),
-    );
+    let tell_nobody = &mut |_| {};
+    let cx = &mut Cx::new(file, store, node, tell_nobody);
+    recorder.builder.start_code_path(Origin::Function, cx);
     let mut children = node.children();
     children.reverse();
-    recorder.walk(
-        children,
-        file.lazy.code_paths.what_matters_to_nobody(file),
-        true,
-    );
+    let matters = file.lazy.code_paths.what_matters_to_nobody(file);
+    recorder.walk(children, matters, true);
     matches!(recorder.builder.states.last(), Some(state) if state.is_reachable(store))
 }
 

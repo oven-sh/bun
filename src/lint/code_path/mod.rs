@@ -22,7 +22,7 @@
 //! | `codePath.traverseSegments(options, callback)` | [`CodePath::traverse_segments`], [`CodePath::traverse_segments_between`] |
 //! | a `Set` of the current segments, kept by four listeners and a stack | [`CodePath::current_segments`], or [`CurrentSegments`] |
 //! | `isAnySegmentReachable(currentSegments)` | [`CodePath::is_current_reachable`] |
-//! | the same when a function is left, if that is all the rule asks | [`Func::is_end_reachable`], without any listener |
+//! | the same when a function is left, if that is all the rule asks | [`Func::is_end_reachable`], [`File::is_end_reachable`], without any listener |
 //! | `segment.reachable` | [`Segment::is_reachable`] |
 //!
 //! # What it costs
@@ -149,7 +149,14 @@ impl Func<'_> {
     /// it. A rule that asks nothing else of a few functions needs no listener for code paths,
     /// which make the linter analyze the whole file.
     pub fn is_end_reachable(self) -> bool {
-        analyzer::is_end_reachable(self)
+        analyzer::is_end_reachable(Node::Func(self))
+    }
+}
+
+impl<'a> File<'a> {
+    /// [`Func::is_end_reachable`] for the code path of the file.
+    pub fn is_end_reachable(&'a self) -> bool {
+        analyzer::is_end_reachable(Node::File(self))
     }
 }
 

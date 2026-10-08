@@ -473,6 +473,12 @@ impl<'a> Log<'a> {
     }
 
     fn node(&mut self, prefix: &str, node: Node) {
+        if let (Node::File(file), "<", Some(path)) = (node, prefix, self.paths.last())
+            && file.is_end_reachable() != path.is_current_reachable()
+        {
+            self.lines
+                .push("is_end_reachable is wrong for the file".to_owned());
+        }
         // What analyzing the function alone says has to agree.
         if let (Node::Func(func), "<", Some(path)) = (node, prefix, self.paths.last())
             && func.has_body()

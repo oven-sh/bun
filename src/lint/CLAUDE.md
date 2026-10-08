@@ -10,7 +10,8 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 | `src/lint/eslint/rules/*.rs` | `bun_lint_eslint` | One file per ESLint core rule |
 | `src/lint/typescript/rules/*.rs` | `bun_lint_typescript` | One file per typescript-eslint rule |
 | `src/lint/standalone/` | `bun_lint_standalone` | `bun-lint`, the test harness. Links without the rest of Bun |
-| `test/cli/lint/conformance/fixtures/` | | Upstream test cases as JSON, with what real ESLint reports for each |
+| `src/lint/conformance/` | `bun_lint_conformance` | Runs the test cases below, in `bun-lint` and in `bun lint --run-eslint-tests` (debug and canary builds) |
+| `test/cli/lint/conformance/bundle.zst` | | Upstream test cases as JSON, with what real ESLint reports for each. See the README there |
 
 ## Writing a rule
 
@@ -177,12 +178,15 @@ If the API lacks something you need (a position, a flag, a helper several rules 
 ## Testing
 
 ```sh
-/root/lint-refs/build.sh                       # dev build of bun-lint (release, lints as warnings)
-B=/root/lint-target/release/bun-lint
-$B conformance test/cli/lint/conformance/fixtures --rule=eqeqeq --verbose
-$B conformance test/cli/lint/conformance/fixtures --report=/tmp/report
+bun bd --configure-only                                              # once: the generated files that the crates include
+cargo build --release -p bun_lint_standalone -p bun_sema_standalone  # bun-lint and bun-sema. A minute
+B=target/release/bun-lint
+bun test/cli/lint/conformance/sync.ts --extract "" /tmp/fixtures     # the test cases, out of bundle.zst
+$B conformance /tmp/fixtures --rule=eqeqeq --verbose
+$B conformance /tmp/fixtures --report=/tmp/report
 $B run eqeqeq file.js '["smart"]'
-/root/lint-target/release/bun-sema hir file.ts --print   # the HIR of a file
+target/release/bun-sema hir file.ts --print                          # the HIR of a file
+bun bd test test/cli/lint/conformance.test.ts                        # the test cases on `bun lint` itself, those with types too
 ```
 
-Each fixture `fixtures/<plugin>/<rule>.json` has upstream's `meta` (messages, schema, default options) and, per case, `code`, `options`, `languageOptions`, and the `messages` and `output` that real ESLint produces.
+Each fixture `<plugin>/<rule>.json` has upstream's `meta` (messages, schema, default options) and, per case, `code`, `options`, `languageOptions`, and the `messages` and `output` that real ESLint produces.

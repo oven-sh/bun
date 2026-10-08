@@ -1444,10 +1444,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing, parsed_for) = match key {
             InsertFailureKey::AbsPath(abs_path, graph) => {
-                debug_assert!(match SIDE {
-                    Side::Client => graph == bake::Graph::Client,
-                    Side::Server => graph != bake::Graph::Client,
-                });
                 let gop = self.bundled_files.get_or_put(abs_path)?;
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(abs_path);

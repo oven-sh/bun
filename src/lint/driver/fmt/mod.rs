@@ -517,7 +517,7 @@ pub enum Refusal {
 
 /// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
 /// the cursor ends up. `verifies`: with the checks that `bun format` makes on what it has printed.
-/// For the tests of the formatter, and the fuzzers in test/cli/format/oracle/fuzz/coverage.
+/// For the tests of the formatter, and the fuzzers in test/cli/format/oracle/fuzz/libfuzzer.
 pub fn format_for_tests(
     path: &[u8],
     text: &[u8],

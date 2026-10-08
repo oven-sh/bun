@@ -25,3 +25,4 @@ Each makes small programs, formats them with the npm package of Prettier and wit
 | `two-binaries.ts` | not a fuzzer: the files that two builds format differently, for a change that must not change any output |
 | `css-memo-orders.py`, `css-memo-surroundings.py` | not against Prettier: what `css/memo.rs` keeps of declarations must not show. All style sheets on one thread in shuffled orders, and the same declarations in many surroundings, against a build without the memo |
 | `each-line.ts` | not a fuzzer: every line of a file on its own, for lists of small programs |
+| `libfuzzer/` | not against Prettier: bytes, not texts. Coverage-guided fuzzers (libFuzzer) for every language of the formatter, for the linter and for the parser, compiled with overflow checks, debug assertions and AddressSanitizer. A crate of its own, with its own README |

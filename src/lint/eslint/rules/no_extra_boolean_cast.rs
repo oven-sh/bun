@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow unnecessary boolean casts.
 pub struct NoExtraBooleanCast {
@@ -87,28 +88,27 @@ fn prefix<'a>(replaced: Expr<'a>, replacement: ast_utils::TokenOrText<'a>) -> &'
 
 impl NoExtraBooleanCast {
     /// ESLint's `isInFlaggedContext`.
-    fn is_in_flagged_context(&self, mut e: Expr) -> bool {
+    fn is_in_flagged_context<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) -> bool {
         let inner = self.enforce_for_inner_expressions;
         let logical = inner || self.enforce_for_logical_operands;
-        loop {
-            let parent = utils::estree_parent(Node::Expr(e));
-            let is_passed_on = match parent {
-                Node::Expr(parent) => match parent.kind() {
-                    ExprKind::Binary { op: BinOp::Or | BinOp::And, .. } => logical,
-                    // Of a sequence it is the last expression.
-                    ExprKind::Binary { op: BinOp::Nullish | BinOp::Comma, right, .. } => {
-                        inner && right == e
+        let is_flagged = cx.state.find(Node::Expr(e), |child, parent| {
+            let e = child.as_expr()?;
+            let is_passed_on = match parent.as_expr().map(Expr::kind) {
+                Some(ExprKind::Binary { op: BinOp::Or | BinOp::And, .. }) => logical,
+                Some(ExprKind::Binary { op: BinOp::Nullish, right, .. }) => inner && right == e,
+                // Of a sequence it is the last expression.
+                Some(ExprKind::Binary { op: BinOp::Comma, right, .. }) => {
+                    if !(inner && right == e && parent.as_expr().is_some_and(utils::is_sequence_root)) {
+                        return Some(false);
                     }
-                    ExprKind::Cond { yes, no, .. } => inner && (yes == e || no == e),
-                    _ => false,
-                },
+                    true
+                }
+                Some(ExprKind::Cond { yes, no, .. }) => inner && (yes == e || no == e),
                 _ => false,
             };
-            match parent {
-                Node::Expr(parent) if is_passed_on => e = parent,
-                _ => return is_in_boolean_context(e, parent),
-            }
-        }
+            (!is_passed_on).then(|| is_in_boolean_context(e, utils::estree_parent(child)))
+        });
+        is_flagged == Some(true)
     }
 
     /// `e`: `!!argument`
@@ -119,7 +119,7 @@ impl NoExtraBooleanCast {
         let ExprKind::Unary { op: UnOp::Not, operand: argument } = operand.kind() else {
             return;
         };
-        if !self.is_in_flagged_context(e) {
+        if !self.is_in_flagged_context(e, cx) {
             return;
         }
         cx.report(e, UNEXPECTED_NEGATION).fix(|fixer| {
@@ -139,7 +139,7 @@ impl NoExtraBooleanCast {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
-        if !call.callee().is_ident("Boolean") || !self.is_in_flagged_context(e) || !calls_boolean(call) {
+        if !call.callee().is_ident("Boolean") || !self.is_in_flagged_context(e, cx) || !calls_boolean(call) {
             return;
         }
         cx.report(e, UNEXPECTED_CALL).fix(|fixer| {
@@ -178,7 +178,8 @@ impl Rule for NoExtraBooleanCast {
     const META: Meta = Meta::eslint("no-extra-boolean-cast", Kind::Suggestion)
         .fixable(Fixable::Code)
         .recommended();
-    type State<'a> = ();
+    /// Whether an expression is in a flagged context.
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -188,10 +189,11 @@ impl Rule for NoExtraBooleanCast {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         on.unaries([UnOp::Not], Self::check_negation);
         if file.mentions("Boolean") {
             on.exprs([ExprTag::Call], Self::check_call);
         }
+        AncestorMemo::default()
     }
 }

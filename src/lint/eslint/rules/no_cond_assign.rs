@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow assignment operators in conditional expressions.
 pub struct NoCondAssign {
@@ -32,21 +33,18 @@ fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
 impl NoCondAssign {
     /// `"always"`: an assignment anywhere in a test.
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let mut inner = Node::Expr(e);
-        for ancestor in inner.ancestors() {
+        let kind = cx.state.find(Node::Expr(e), |inner, ancestor| {
             if ast_utils::is_function(ancestor) {
-                return;
+                return Some(None);
             }
-            if let Some((test, kind)) = test_of(ancestor)
-                && Node::Expr(test) == inner
-            {
-                // The default value of a part of a destructuring assignment is not an assignment.
-                if !utils::is_assignment_target(e) {
-                    cx.report(e, UNEXPECTED).data("type", kind);
-                }
-                return;
-            }
-            inner = ancestor;
+            let (test, kind) = test_of(ancestor)?;
+            (Node::Expr(test) == inner).then_some(Some(kind))
+        });
+        // The default value of a part of a destructuring assignment is not an assignment.
+        if let Some(Some(kind)) = kind
+            && !utils::is_assignment_target(e)
+        {
+            cx.report(e, UNEXPECTED).data("type", kind);
         }
     }
 
@@ -69,7 +67,8 @@ impl NoCondAssign {
 
 impl Rule for NoCondAssign {
     const META: Meta = Meta::eslint("no-cond-assign", Kind::Problem).recommended();
-    type State<'a> = ();
+    /// How the message describes what a node is in the test of, within its function.
+    type State<'a> = AncestorMemo<'a, Option<&'static str>>;
 
     fn new(options: &Options) -> Self {
         NoCondAssign {
@@ -77,7 +76,7 @@ impl Rule for NoCondAssign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         if self.is_always {
             on.exprs([ExprTag::Assign], Self::check_assignment);
         } else {
@@ -87,5 +86,6 @@ impl Rule for NoCondAssign {
             );
             on.exprs([ExprTag::Cond], |rule, e, cx| rule.check_test(e.into(), cx));
         }
+        AncestorMemo::default()
     }
 }

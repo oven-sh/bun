@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow the use of `eval()`.
 pub struct NoEval {
@@ -87,28 +88,25 @@ impl NoEval {
         if !is_member(member, "eval") {
             return;
         }
-        let mut child = Node::Expr(e);
-        for ancestor in child.ancestors() {
-            match ancestor {
-                Node::Func(func) if !func.is_arrow() => {
-                    if !func.scope().is_none_or(Scope::is_strict)
-                        && ast_utils::is_default_this_binding(func, true)
-                    {
-                        Self::report_member(member, cx);
-                    }
-                    return;
-                }
-                // In the initializer of a field it is the instance or the class.
-                Node::Member(field)
-                    if field.kind() == MemberKind::Property
-                        && !field.flags().contains(Flags::ACCESSOR)
-                        && field.init().map(Node::Expr) == Some(child) =>
-                {
-                    return;
-                }
-                _ => {}
+        let is_global_object = cx.state.find(Node::Expr(e), |child, ancestor| match ancestor {
+            Node::Func(func) if !func.is_arrow() => Some(
+                !func.scope().is_none_or(Scope::is_strict) && ast_utils::is_default_this_binding(func, true),
+            ),
+            // In the initializer of a field it is the instance or the class.
+            Node::Member(field)
+                if field.kind() == MemberKind::Property
+                    && !field.flags().contains(Flags::ACCESSOR)
+                    && field.init().map(Node::Expr) == Some(child) =>
+            {
+                Some(false)
             }
-            child = ancestor;
+            _ => None,
+        });
+        if let Some(is_global_object) = is_global_object {
+            if is_global_object {
+                Self::report_member(member, cx);
+            }
+            return;
         }
 
         let (file, language) = (cx.file(), cx.language());
@@ -124,7 +122,8 @@ impl NoEval {
 
 impl Rule for NoEval {
     const META: Meta = Meta::eslint("no-eval", Kind::Suggestion);
-    type State<'a> = ();
+    /// Whether a `this` at a node, in a function or in a field of a class, is the global object.
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         NoEval {
@@ -132,14 +131,15 @@ impl Rule for NoEval {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         if !file.mentions("eval") {
-            return;
+            return AncestorMemo::default();
         }
         on.exprs([ExprTag::Call], Self::check_call);
         if !self.allows_indirect {
             on.exprs([ExprTag::Ident], Self::check_identifier);
             on.exprs([ExprTag::This], Self::check_this);
         }
+        AncestorMemo::default()
     }
 }

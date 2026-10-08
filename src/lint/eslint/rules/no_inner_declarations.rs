@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow variable or `function` declarations in nested blocks.
 pub struct NoInnerDeclarations {
@@ -15,8 +16,9 @@ fn is_at_root(statement: Stmt) -> bool {
 }
 
 /// ESLint's `getAllowedBodyDescription`.
-fn get_allowed_body_description(statement: Stmt) -> &'static str {
-    match Node::Stmt(statement).enclosing_function().map(Func::kind) {
+fn get_allowed_body_description<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoInnerDeclarations>) -> &'static str {
+    let enclosing_function = cx.state.find(Node::Stmt(statement), |_, parent| parent.as_func().map(Func::kind));
+    match enclosing_function {
         Some(FnKind::StaticBlock) => "class static block body",
         Some(_) => "function body",
         None => "program",
@@ -25,7 +27,8 @@ fn get_allowed_body_description(statement: Stmt) -> &'static str {
 
 impl Rule for NoInnerDeclarations {
     const META: Meta = Meta::eslint("no-inner-declarations", Kind::Problem);
-    type State<'a> = ();
+    /// The kind of the innermost function around a node.
+    type State<'a> = AncestorMemo<'a, FnKind>;
 
     fn new(options: &Options) -> Self {
         NoInnerDeclarations {
@@ -34,7 +37,7 @@ impl Rule for NoInnerDeclarations {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.stmts([StmtTag::Fn], |rule, statement, cx| {
             let StmtKind::Fn(func) = statement.kind() else {
                 return;
@@ -48,9 +51,8 @@ impl Rule for NoInnerDeclarations {
             {
                 return;
             }
-            cx.report(statement, MOVE_DECL_TO_ROOT)
-                .data("type", "function")
-                .data("body", get_allowed_body_description(statement));
+            let body = get_allowed_body_description(statement, cx);
+            cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "function").data("body", body);
         });
         if self.is_both {
             on.stmts([StmtTag::Var], |_, statement, cx| {
@@ -58,11 +60,11 @@ impl Rule for NoInnerDeclarations {
                     return;
                 };
                 if declarations.first().is_some_and(|it| it.var_kind() == VarKind::Var) && !is_at_root(statement) {
-                    cx.report(statement, MOVE_DECL_TO_ROOT)
-                        .data("type", "variable")
-                        .data("body", get_allowed_body_description(statement));
+                    let body = get_allowed_body_description(statement, cx);
+                    cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "variable").data("body", body);
                 }
             });
         }
+        AncestorMemo::default()
     }
 }

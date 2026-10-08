@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow `await` inside of loops.
 pub struct NoAwaitInLoop;
@@ -46,29 +47,26 @@ fn is_looped<'a>(node: Node<'a>, parent: Node<'a>) -> bool {
 
 impl NoAwaitInLoop {
     fn validate<'a>(&self, await_node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let mut node = await_node;
-        for parent in await_node.ancestors() {
-            if is_boundary(parent) {
-                return;
-            }
-            if is_looped(node, parent) {
-                cx.report(await_node, UNEXPECTED_AWAIT);
-                return;
-            }
-            node = parent;
+        let is_in_loop = cx.state.find(await_node, |node, parent| match is_boundary(parent) {
+            true => Some(false),
+            false => is_looped(node, parent).then_some(true),
+        });
+        if is_in_loop == Some(true) {
+            cx.report(await_node, UNEXPECTED_AWAIT);
         }
     }
 }
 
 impl Rule for NoAwaitInLoop {
     const META: Meta = Meta::eslint("no-await-in-loop", Kind::Problem);
-    type State<'a> = ();
+    /// Whether a node is in a loop.
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(_: &Options) -> Self {
         NoAwaitInLoop
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.exprs([ExprTag::Await], |rule, e, cx| rule.validate(e.into(), cx));
         on.stmts([StmtTag::ForOf], |rule, stmt, cx| {
             if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
@@ -80,5 +78,6 @@ impl Rule for NoAwaitInLoop {
                 rule.validate(stmt.into(), cx);
             }
         });
+        AncestorMemo::default()
     }
 }

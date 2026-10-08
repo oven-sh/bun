@@ -7980,7 +7980,7 @@
     "windows": 90,
     "windows-aarch64": 110
   },
-  "js/node/net/socketaddress.spec.ts": {
+  "js/node/net/socketaddress.test.ts": {
     "default": 110,
     "asan": 940,
     "musl": 100,

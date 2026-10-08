@@ -41,7 +41,7 @@ What a caller does with a file, in this order, is `format_text` in `src/lint/sta
 | `markdown/` | Markdown: a parser whose tree is that of micromark and remark, and `language-markdown`. Prints with `css/doc.rs`. Code blocks go to the other formatters. For JavaScript the caller sets `FormatOptions::format_javascript`, since this crate does not parse it | |
 | `conformance/` | the crate `bun_format_conformance`: runs the tests of Prettier and of oxfmt | |
 | `pragma.rs`, `range.rs`, `cursor.rs` | `insertPragma`/`requirePragma`/`checkIgnorePragma`, `rangeStart`/`rangeEnd`, `cursorOffset`: Prettier's `src/main/core.js` | |
-| `verify.rs` | a check that formatting did not change the tokens | `detect_code_removal` (different) |
+| `verify.rs`, `verify/` | a check that formatting did not change the program: the trees and the comments before and after | `detect_code_removal` (different) |
 
 ## oxc file → our file
 
@@ -196,7 +196,7 @@ $B format conformance $P/tests/format --languages=css --table
 $B format conformance $P/tests/format --filter=js/arrow --report=report
 diff -u report/<case>.expected report/<case>.actual
 $B format check-idempotent <files or directories>
-$B format verify <files or directories>                # same tokens before and after
+$B format verify <files or directories>                # the same program before and after
 $B format bench <files or directories>
 bun test/cli/format/oracle/compare.ts --bin=$B --prettier=<dir with node_modules/prettier> --options='{"semi":false}' <dirs>
 $B format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst)   # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt

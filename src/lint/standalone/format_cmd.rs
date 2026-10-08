@@ -8,7 +8,9 @@
 //!   Prettier's own tests. With `--report`, the expected and the actual output of each failure are
 //!   written there. `oxfmt-fixtures <fixtures>`: those of oxfmt.
 //! - `check-idempotent <paths..>`: formatting what has been formatted changes nothing.
-//! - `verify <paths..>`: what has been formatted has the same tokens. See `bun_format::verify`.
+//! - `verify <paths..>`: what has been formatted is the same program. See `bun_format::verify`.
+//! - `verify-pairs`: answers whether the second of two texts is the same program as the first.
+//!   test/cli/format/oracle/verify-mutants.ts talks to it.
 //! - `bench <paths..> [--iterations=n] [--threads=n] [--check] [--only=parse]`: MB/s, with and without parsing.
 //! - `serve`: formats the file at each path that is read from stdin, one per line, and answers
 //!   `ok <length>\n<bytes>` or `error <message>\n`. test/cli/format/oracle/compare.ts talks to it.
@@ -17,6 +19,7 @@ mod bench;
 mod conformance;
 mod cursor;
 mod sort_imports;
+mod verify;
 
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
@@ -321,36 +324,6 @@ fn check_idempotent(args: &Args) {
     println!("idempotent: {passed}, not: {failed}, not formatted: {errors}");
 }
 
-fn verify(args: &Args) {
-    std::panic::set_hook(Box::new(|_| {}));
-    let (mut passed, mut failed, mut errors) = (0, 0, 0);
-    for path in collect_files(&args.positional).iter().filter(|it| !is_other_language(it)) {
-        let name = path.to_string_lossy();
-        let Ok(code) = std::fs::read(path) else {
-            continue;
-        };
-        let Ok(formatted) = format_text_or_panic(&name, &code, &args.options) else {
-            errors += 1;
-            continue;
-        };
-        let compare_as = |is_script: bool| {
-            with_file_as(is_script, &name, &code, |before| {
-                let compare = || with_file_as(is_script, &name, &formatted, |after| bun_format::verify::compare(before, after));
-                (!before.has_parse_errors()).then(compare)
-            })
-        };
-        match compare_as(false).or_else(|| compare_as(true)) {
-            Some(Ok(())) => passed += 1,
-            Some(Err(difference)) => {
-                failed += 1;
-                println!("{name}: {difference}");
-            }
-            None => errors += 1,
-        }
-    }
-    println!("the same tokens: {passed}, not: {failed}, not formatted: {errors}");
-}
-
 fn serve(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let mut stdout = std::io::stdout().lock();
@@ -394,7 +367,8 @@ pub(crate) fn run(args: &[String]) {
         Some("conformance") => conformance::run(&args, raw, bun_format_conformance::run_prettier_tests),
         Some("oxfmt-fixtures") => conformance::run(&args, raw, bun_format_conformance::run_oxfmt_tests),
         Some("check-idempotent") => check_idempotent(&args),
-        Some("verify") => verify(&args),
+        Some("verify") => verify::verify(&args),
+        Some("verify-pairs") => verify::verify_pairs(&args),
         Some("bench") => bench::bench(&args),
         Some("serve") => serve(&args),
         Some("cursor") => cursor::run(&args),

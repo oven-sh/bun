@@ -1,46 +1,72 @@
-//! A check that formatting has not changed the program: the file before and the file after have
-//! the same tokens and the same comments, but for what the formatter is meant to change.
+//! A check that formatting has not changed the program. `bun format` makes it before it writes a file.
 //!
-//! - Parentheses and semicolons are added and removed. They are not compared.
-//! - So are the comma after the last element of a list, the separators of the members of
-//!   interfaces and type literals, and the `|` or `&` before the first type of a union or an
-//!   intersection.
-//! - The quotes of strings, and the escapes of quotes in them. A property name can get or lose its
-//!   quotes.
-//! - How numbers are written: `0XAB`, `1.0`, `.5`, `1E5`.
+//! What has been written is parsed, and its syntax tree is compared with that of the file ([`tree`]). So are
+//! the comments ([`comments`]). All that is not in the tree is free to change: white space, semicolons,
+//! parentheses that mean nothing, the comma after the last element of a list, the separators of the members
+//! of interfaces and type literals. Parentheses that mean something make another tree.
+//!
+//! What the formatter changes in the tree is allowed:
+//!
+//! - The quotes of strings, and the escapes of quotes in them: the value is compared. A property name can
+//!   get or lose its quotes.
+//! - How numbers are written: `0XAB`, `1.0`, `.5`, `1E5`. The value is compared.
 //! - The order of the flags of a regular expression.
 //! - The order of modifiers: `readonly abstract` is `abstract readonly`.
-//! - The white space in JSX text, and `{" "}`.
+//! - `a && (b && c)` is `a && b && c`, and the same for `||` and `??`.
+//! - Empty statements in a list of statements are left out.
+//! - `new A` is `new A()`.
+//! - The `|` or `&` before a type that is alone.
+//! - The white space in JSX text, `{" "}`, and the quotes of the values of attributes.
 //! - The empty braces of `import a, {} from "a"`.
 //! - Escapes in names: `\u0061b` is `ab`.
 //! - The text of a template that is in another language, like `` css`a{}` ``, and the white space in
 //!   the table of a `` describe.each`..` ``.
-//! - The indentation of the lines of block comments.
+//! - The line breaks in templates: `\r\n` is `\n`.
+//! - The indentation of the lines of block comments, and the order of the comments.
+//! - With the options for it, the order of imports and of the names in them, and all that is in JSDoc comments.
 //!
-//! It is a debugging aid, not a proof: a formatter that drops a pair of parentheses that matters
-//! goes unnoticed.
+//! test/cli/format/oracle/verify-mutants.ts damages formatted code and counts what the check notices.
 
-use crate::js::utils::number::format_trimmed_number;
-use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind, StmtTag, TypeKind};
-use bun_lint::span::Span;
-use bun_lint::tokens::{Token, TokenKind};
-use std::borrow::Cow;
+mod comments;
+mod tree;
 
-/// Where the tokens differ.
+pub use tree::{Program, Scratch, compare};
+
+use bun_lint::ast::{Expr, ExprKind, Node};
+
+/// Where the programs differ.
 #[derive(Debug)]
 pub struct Difference {
-    /// The offset in the file before, and the token there.
+    pub what: &'static str,
+    /// The offset in the file before, and the text there.
     pub before: (u32, Vec<u8>),
     /// The same for the file after.
     pub after: (u32, Vec<u8>),
+}
+
+impl Difference {
+    /// `before`, `after`: the text of the program, and where in it the difference is.
+    fn new(what: &'static str, before: (&[u8], u32), after: (&[u8], u32)) -> Difference {
+        // The rest of the line, if that is not long.
+        let excerpt = |(text, at): (&[u8], u32)| {
+            let rest = text.get(at as usize..).unwrap_or_default();
+            let line = rest.get(..bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())).unwrap_or(rest);
+            (at.min(text.len() as u32), line.get(..40).unwrap_or(line).to_vec())
+        };
+        Difference {
+            what,
+            before: excerpt(before),
+            after: excerpt(after),
+        }
+    }
 }
 
 impl std::fmt::Display for Difference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "`{}` at {} is `{}` at {}",
+            "{}: `{}` at {} is `{}` at {}",
+            self.what,
             bstr::BStr::new(&self.before.1),
             self.before.0,
             bstr::BStr::new(&self.after.1),
@@ -49,60 +75,27 @@ impl std::fmt::Display for Difference {
     }
 }
 
-/// Whether the text of the template `e` may be formatted as a style sheet or as GraphQL.
+/// Whether the text of the template `e` may be formatted as a style sheet, as GraphQL or as Markdown.
 fn is_in_another_language(e: Expr<'_>) -> bool {
-    let is_graphql = match e.parent() {
+    let has_tag = match e.parent() {
         Node::Expr(parent) => match parent.kind() {
-            ExprKind::TaggedTemplate(call) => matches!(call.callee().text(), b"gql" | b"graphql" | b"graphql.experimental"),
+            ExprKind::TaggedTemplate(call) => {
+                matches!(call.callee().text(), b"gql" | b"graphql" | b"graphql.experimental" | b"md" | b"markdown")
+            }
             ExprKind::Call(call) => call.callee().text() == b"graphql",
             _ => false,
         },
         _ => false,
     };
     let before = e.file().text().get(..e.span().start as usize).unwrap_or_default();
-    is_graphql || before.trim_ascii_end().ends_with(b"/* GraphQL */") || crate::css::embed::is_embed_css(e)
+    has_tag || before.trim_ascii_end().ends_with(b"/* GraphQL */") || crate::css::embed::is_embed_css(e)
 }
 
-/// What the tokens do not tell.
-#[derive(Default)]
-struct Places {
-    /// The `{` of the interfaces and type literals of a file.
-    type_bodies: Vec<u32>,
-    /// The templates whose text is in another language, which is formatted too.
-    embedded: Vec<Span>,
-    /// The tables of `` describe.each`..` ``, whose columns are lined up.
-    tables: Vec<Span>,
+/// Whether the template `e` is the table of a `` describe.each`..` ``.
+fn is_table(e: Expr<'_>) -> bool {
+    matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
+        if call.template() == Some(e) && call.callee().text().ends_with(b".each")))
 }
-
-impl<'a> Visitor<'a> for Places {
-    fn enter(&mut self, node: Node<'a>) {
-        match node {
-            Node::Type(ty) if matches!(ty.kind(), TypeKind::Object(_)) => self.type_bodies.push(ty.span().start),
-            Node::Stmt(statement) => {
-                if let StmtKind::Interface(interface) = statement.kind() {
-                    self.type_bodies.push(interface.body_span().start);
-                }
-            }
-            Node::Expr(e) if matches!(e.kind(), ExprKind::Template(_)) && is_in_another_language(e) => {
-                self.embedded.push(e.span());
-            }
-            Node::Expr(e) => {
-                if let ExprKind::TaggedTemplate(call) = e.kind()
-                    && call.callee().text().ends_with(b".each")
-                    && let Some(template) = call.template()
-                {
-                    self.tables.push(template.span());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn exit(&mut self, _: Node<'a>) {}
-}
-
-/// A token in the form that is compared, and where it is.
-type Item<'a> = (Cow<'a, [u8]>, u32);
 
 /// `name` with the characters that `\u0061` and `\u{61}` in it stand for.
 pub(crate) fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
@@ -126,226 +119,4 @@ pub(crate) fn without_unicode_escapes(name: &[u8]) -> Vec<u8> {
         rest = after;
     }
     out
-}
-
-fn without_quote_escapes(content: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(content.len());
-    let mut bytes = content.iter().copied().peekable();
-    while let Some(byte) = bytes.next() {
-        match (byte, bytes.peek()) {
-            (b'\\', Some(b'"' | b'\'')) => {}
-            (b'\\', Some(&next)) => {
-                out.extend([byte, next]);
-                bytes.next();
-            }
-            _ => out.push(byte),
-        }
-    }
-    out
-}
-
-fn is_closer(token: Token<'_>) -> bool {
-    token.kind() == TokenKind::Punctuator && matches!(token.text(), b")" | b"]" | b"}" | b">")
-}
-
-fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
-    let mut places = Places::default();
-    walk(file, &mut places);
-    places.type_bodies.sort_unstable();
-    places.embedded.sort_unstable_by_key(|it| it.start);
-    // One can be in an expression of another.
-    let is_in = |spans: &[Span], at: u32| spans.iter().take_while(|it| it.start <= at).any(|it| at < it.end);
-
-    let mut out: Vec<Item<'a>> = Vec::new();
-    // For each `{`, `[` and `(` that is open, whether it is that of an interface or a type literal.
-    let mut open: Vec<bool> = Vec::new();
-    let mut previous: Option<Token<'a>> = None;
-    let mut tokens = file.tokens().peekable();
-
-    while let Some(token) = tokens.next() {
-        let (text, start) = (token.text(), token.start());
-        let before = previous.replace(token);
-        match token.kind() {
-            TokenKind::Punctuator => match text {
-                b"(" | b")" | b";" => {
-                    match text {
-                        b"(" => open.push(false),
-                        b")" => drop(open.pop()),
-                        _ => {}
-                    }
-                    continue;
-                }
-                b"{" | b"[" => open.push(places.type_bodies.binary_search(&start).is_ok()),
-                b"}" | b"]" => drop(open.pop()),
-                b"," if open.last() == Some(&true) || tokens.peek().is_none_or(|next| is_closer(*next)) => continue,
-                // In front of the first type.
-                b"|" | b"&"
-                    if before.is_some_and(|it| {
-                        (it.kind() == TokenKind::Punctuator && !is_closer(it))
-                            || matches!(it.text(), b"extends" | b"as" | b"satisfies" | b"is" | b"keyof" | b"readonly" | b"in")
-                    }) =>
-                {
-                    continue;
-                }
-                _ => {}
-            },
-            TokenKind::String => {
-                let content = text.get(1..text.len().saturating_sub(1)).unwrap_or_default();
-                // `{" "}`
-                if content == b" "
-                    && before.is_some_and(|it| it.is_punctuator("{"))
-                    && tokens.peek().is_some_and(|it| it.is_punctuator("}"))
-                    && out.last().is_some_and(|it| &*it.0 == b"{")
-                {
-                    out.pop();
-                    open.pop();
-                    previous = tokens.next();
-                    continue;
-                }
-                out.push((Cow::Owned(without_quote_escapes(content)), start));
-                continue;
-            }
-            TokenKind::Numeric => {
-                let number = match text.ends_with(b"n") {
-                    true => Cow::Owned(text.to_ascii_lowercase()),
-                    false => format_trimmed_number(text),
-                };
-                out.push((number, start));
-                continue;
-            }
-            // Only where its expressions are.
-            TokenKind::Template if is_in(&places.embedded, start) => {
-                out.push((Cow::Borrowed(b"`"), start));
-                continue;
-            }
-            TokenKind::Template if is_in(&places.tables, start) => {
-                out.push((Cow::Owned(text.iter().copied().filter(|it| !it.is_ascii_whitespace()).collect()), start));
-                continue;
-            }
-            TokenKind::RegularExpression => {
-                let mut regex = text.to_vec();
-                let flags = bun_core::strings::last_index_of_char(text, b'/').map_or(text.len(), |it| it + 1);
-                if let Some(flags) = regex.get_mut(flags..) {
-                    flags.sort_unstable();
-                }
-                out.push((Cow::Owned(regex), start));
-                continue;
-            }
-            // The value of an attribute. Nothing is an escape in it but the entities.
-            TokenKind::JsxText
-                if before.is_some_and(|it| it.is_punctuator("=")) && matches!(text.first(), Some(b'"' | b'\'')) =>
-            {
-                let content = text.get(1..text.len().saturating_sub(1)).unwrap_or_default();
-                let content = bun_core::strings::replace_owned(content, b"&apos;", b"'");
-                out.push((Cow::Owned(bun_core::strings::replace_owned(&content, b"&quot;", b"\"")), start));
-                continue;
-            }
-            TokenKind::JsxText => {
-                out.extend(
-                    text.split(|byte| byte.is_ascii_whitespace())
-                        .filter(|word| !word.is_empty())
-                        .map(|word| (Cow::Borrowed(word), start)),
-                );
-                continue;
-            }
-            // `\u0061b` is printed as `ab`.
-            TokenKind::Identifier | TokenKind::Keyword | TokenKind::PrivateIdentifier
-                if bun_core::strings::contains_char(text, b'\\') =>
-            {
-                out.push((Cow::Owned(without_unicode_escapes(text)), start));
-                continue;
-            }
-            _ => {}
-        }
-        // `import a, {} from "a"`
-        if text == b"from" && matches!(out.as_slice(), [.., a, b, c] if *a.0 == *b"," && *b.0 == *b"{" && *c.0 == *b"}") {
-            out.truncate(out.len() - 3);
-        }
-        out.push((Cow::Borrowed(text), start));
-        // Modifiers are put in order.
-        let mut at = out.len() - 1;
-        while is_modifier(text) && at > 0 && is_modifier(&out[at - 1].0) && out[at - 1].0 > out[at].0 {
-            out.swap(at - 1, at);
-            at -= 1;
-        }
-    }
-    out
-}
-
-fn is_modifier(text: &[u8]) -> bool {
-    matches!(
-        text,
-        b"declare"
-            | b"public"
-            | b"protected"
-            | b"private"
-            | b"static"
-            | b"abstract"
-            | b"override"
-            | b"readonly"
-            | b"const"
-            | b"in"
-            | b"out"
-    )
-}
-
-/// The comments, each without the white space at the start and at the end of its lines.
-fn comments<'a>(file: &'a File<'a>) -> Vec<(Vec<u8>, u32)> {
-    let mut all: Vec<_> = file
-        .comments()
-        .map(|comment| {
-            let mut text = Vec::new();
-            for line in bun_core::strings::split(comment.text(), b"\n") {
-                text.extend_from_slice(line.trim_ascii());
-                text.push(b'\n');
-            }
-            (text, comment.start())
-        })
-        .collect();
-    all.sort();
-    all
-}
-
-/// Puts the tokens of the imports of the file, wherever they are, in an order that does not depend
-/// on where they are written, in front of the others. The commas between them are left out.
-fn with_imports_in_order<'a>(file: &'a File<'a>, items: Vec<Item<'a>>) -> Vec<Item<'a>> {
-    let mut imports: Vec<Span> = file.stmts_of_kind(StmtTag::Import).map(|it| it.span()).collect();
-    imports.sort_unstable_by_key(|it| it.start);
-    let is_in_import = |item: &Item<'a>| {
-        let after = imports.partition_point(|it| it.start <= item.1);
-        after > 0 && item.1 < imports[after - 1].end
-    };
-    let (mut of_imports, others): (Vec<_>, Vec<_>) = items.into_iter().partition(is_in_import);
-    of_imports.retain(|it| *it.0 != *b",");
-    of_imports.sort();
-    of_imports.extend(others);
-    of_imports
-}
-
-/// Whether `after` is the same program as `before`, as far as the tokens tell.
-pub fn compare<'a, 'b>(before: &'a File<'a>, after: &'b File<'b>) -> Result<(), Difference> {
-    compare_tokens(&items(before), &items(after))?;
-    compare_tokens(&comments(before), &comments(after))
-}
-
-/// The same for a formatter that sorts imports: they, and the names in them, can be in any order.
-pub fn compare_with_sorted_imports<'a, 'b>(before: &'a File<'a>, after: &'b File<'b>) -> Result<(), Difference> {
-    compare_tokens(&with_imports_in_order(before, items(before)), &with_imports_in_order(after, items(after)))?;
-    compare_tokens(&comments(before), &comments(after))
-}
-
-fn compare_tokens<T: AsRef<[u8]>, U: AsRef<[u8]>>(before: &[(T, u32)], after: &[(U, u32)]) -> Result<(), Difference> {
-    let end = (&b"the end"[..], 0);
-    let count = before.len().max(after.len());
-    for i in 0..count {
-        let a = before.get(i).map_or(end, |it| (it.0.as_ref(), it.1));
-        let b = after.get(i).map_or(end, |it| (it.0.as_ref(), it.1));
-        if a.0 != b.0 || before.get(i).is_some() != after.get(i).is_some() {
-            return Err(Difference {
-                before: (a.1, a.0.to_vec()),
-                after: (b.1, b.0.to_vec()),
-            });
-        }
-    }
-    Ok(())
 }

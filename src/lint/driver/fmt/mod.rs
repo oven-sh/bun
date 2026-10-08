@@ -13,6 +13,7 @@ use crate::{fs, paths};
 use bstr::BStr;
 use bun_core::strings;
 use bun_format::pragma::BeforeParsing;
+use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
@@ -70,8 +71,8 @@ struct How<'h> {
     memory: &'h Session,
 }
 
-/// Parses `text` and calls `then` with the file, and with the first error in it.
-fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, Option<&'a Diagnostic>) -> R) -> R {
+/// Parses `text` and calls `then` with the tree, and with what the names in it are of.
+fn with_tree<'h, R>(how: &How<'h>, text: &[u8], then: impl FnOnce(Summary<'_, 'h>, &dyn Intern, &LanguageOptions) -> R) -> R {
     let path = how.path;
     let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"].iter().any(|it| path.ends_with(it));
     let language = LanguageOptions {
@@ -92,33 +93,40 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
         options.experimental_decorators,
         options.every_file_is_a_module,
         // The names are the file's own.
-        |mut summary, atoms| {
-            // To tell which imports are used takes symbols.
-            let needs_symbols = how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols());
-            let mut recycled = Recycled::of_this_thread();
-            // Where the parser has left it, if that will do.
-            if !needs_symbols
-                && let Summary::InPlace(hir) = &mut summary
-                && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
-            {
-                let file = File::new(path, &**hir, bound, atoms, &language, None).with_text(text);
-                return then(&file, hir.diagnostics.first());
-            }
-            let mut hir = summary.into_arena((arena, session));
-            hir.text = Cow::Borrowed(text);
-            let bind_options = BindOptions {
-                emit_standard_class_fields: true,
-                before_es2020: false,
-                before_es2017: false,
-            };
-            if needs_symbols {
-                let bound = bind(&hir, bind_options, atoms, arena);
-                return then(&File::new(path, &hir, &bound, atoms, &language, None), hir.diagnostics.first());
-            }
-            let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
-            then(&File::new(path, &hir, bound, atoms, &language, None), hir.diagnostics.first())
-        },
+        |summary, atoms| then(summary, atoms, &language),
     )
+}
+
+/// Parses `text` and calls `then` with the file, with its tree, and with the first error in it.
+fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Option<&'a Diagnostic>) -> R) -> R {
+    let (path, session) = (how.path, how.memory);
+    let arena = session.arena();
+    with_tree(how, text, |mut summary, atoms, language| {
+        // To tell which imports are used takes symbols.
+        let needs_symbols = how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols());
+        let mut recycled = Recycled::of_this_thread();
+        // Where the parser has left it, if that will do.
+        if !needs_symbols
+            && let Summary::InPlace(hir) = &mut summary
+            && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
+        {
+            let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
+            return then(&file, &Program::new(&**hir, text, atoms), hir.diagnostics.first());
+        }
+        let mut hir = summary.into_arena((arena, session));
+        hir.text = Cow::Borrowed(text);
+        let bind_options = BindOptions {
+            emit_standard_class_fields: true,
+            before_es2020: false,
+            before_es2017: false,
+        };
+        if needs_symbols {
+            let bound = bind(&hir, bind_options, atoms, arena);
+            return then(&File::new(path, &hir, &bound, atoms, language, None), &Program::new(&hir, text, atoms), hir.diagnostics.first());
+        }
+        let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
+        then(&File::new(path, &hir, bound, atoms, language, None), &Program::new(&hir, text, atoms), hir.diagnostics.first())
+    })
 }
 
 /// `SyntaxError: ';' expected. (1:7)`
@@ -142,6 +150,7 @@ struct Scratches {
     graphql: bun_format::graphql::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
+    verify: bun_format::verify::Scratch,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -225,7 +234,7 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
             atoms,
             memory,
         };
-        match format_as(&how, &text, &mut scratch.js) {
+        match format_as(&how, &text, scratch) {
             Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
             done => return done,
         }
@@ -233,7 +242,12 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
     Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
 }
 
-fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Formatted, Failure> {
+fn print<'a>(
+    (file, program): (&'a File<'a>, &Program<'a>),
+    first_error: Option<&Diagnostic>,
+    how: &How,
+    scratch: &mut Scratches,
+) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
     let takes_types = matches!(options.parser.as_deref(), Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts"));
@@ -250,8 +264,8 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
         return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(message), error.line, error.column).into_bytes()));
     }
     let mut out = Vec::new();
-    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _| then(file));
-    let cursor = match bun_format::range::format_with_cursor(file, options, scratch, &mut out, parse) {
+    let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _, _| then(file));
+    let cursor = match bun_format::range::format_with_cursor(file, options, &mut scratch.js, &mut out, parse) {
         Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
         Err(FormatError::NestedTooDeeply) => return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
@@ -260,14 +274,14 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     if how.resolved.omits_final_newline {
         without_final_newline(&mut out);
     }
-    // Imports that the formatter itself moves are not where they were.
-    let compare = match options.sort_imports.as_deref().is_some_and(|it| it.is_applied_by_format()) {
-        true => bun_format::verify::compare_with_sorted_imports,
-        false => bun_format::verify::compare,
-    };
-    // With `jsdoc`, comments are written anew, which nothing here can compare yet.
-    if how.verifies && options.jsdoc.is_none() && out != file.text() {
-        let is_same = with_file(how, &out, |after, _| !after.has_parse_errors() && compare(file, after).is_ok());
+    if how.verifies && out != file.text() {
+        let is_same = with_tree(how, &out, |after, atoms, _| {
+            let after = match &after {
+                Summary::InPlace(hir) => Program::new(&**hir, &out, atoms),
+                Summary::InArena(hir) => Program::new(hir, &out, atoms),
+            };
+            bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
+        });
         if !is_same {
             return Err(Failure::Bug("formatting would change what the code means"));
         }
@@ -275,13 +289,13 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     Ok((out, cursor))
 }
 
-fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Formatted, Failure> {
-    with_file(how, text, |file, first_error| {
+fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatted, Failure> {
+    with_file(how, text, |file, program, first_error| {
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-            Some(sorted) => with_file(how, &sorted, |file, first_error| print(file, first_error, how, scratch)),
-            None => print(file, first_error, how, scratch),
+            Some(sorted) => with_file(how, &sorted, |file, program, first_error| print((file, program), first_error, how, scratch)),
+            None => print((file, program), first_error, how, scratch),
         }
     })
 }

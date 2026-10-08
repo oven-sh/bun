@@ -187,9 +187,9 @@ test.skipIf(isWindows)("fs.watch works without any module-graph watcher state", 
         w.close();
       });
       // Poke the file until the watcher fires. Bounded retry loop; bails out as
-      // soon as the callback flips 'done'. 25ms between attempts so macOS (where
-      // file watches now go through FSEvents — async-scheduled stream + ~50ms
-      // coalescing latency) can't exhaust the budget before the first callback.
+      // soon as the callback flips 'done'. A file watch reports each write on
+      // every backend (inotify, and kqueue on macOS), so the first poke is
+      // normally enough.
       let i = 0;
       const tick = () => {
         if (done) return;

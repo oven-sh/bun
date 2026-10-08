@@ -62,7 +62,8 @@ pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Form
 }
 
 pub(crate) fn write_import_expression<'a>(e: Expr<'a>, args: List<'a, Expr<'a>>, f: &mut Formatter<'a>) {
-    let head = format_args!("import", e.is_deferred_import_call().then_some(".defer"));
+    let phase = e.import_call_phase();
+    let head = format_args!("import", phase.map(|_| "."), phase);
     if is_template_on_its_own_line_only_argument(args, f) || is_lone_string_without_comments(e, args, f) {
         return write!(f, [head, FormatArgumentsOnOneLine(args)]);
     }

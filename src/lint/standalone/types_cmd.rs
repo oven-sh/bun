@@ -26,15 +26,15 @@
 //! typescript-eslint, which is what `fixtures/typescript-eslint-project` is a copy of, where the few
 //! cases that import a package find it.
 
-use crate::{Outcome, Reported, Tally, expected_messages, str_of, text};
+use crate::{str_of, text};
 use bun_lint::ast::{File, Node};
-use bun_lint::context::Severity;
 use bun_lint::language::LanguageOptions;
 use bun_lint::linter::{LintOptions, Linter, Registry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
 use bun_lint::types::{ObjectFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags, tsutils, utils};
+use bun_lint_conformance::{Outcome, Tally, config_of, expected_messages, problem_of};
 use bun_sema::program::FileId;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -77,39 +77,9 @@ fn rule_of_fixture(name: &str) -> Option<&'static RuleEntry> {
 
 /// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
 /// error.
-fn config_of(entry: &'static RuleEntry, options: &[Json], language_options: &Json, settings: &Json) -> ResolvedConfig {
-    let mut rule = vec![Json::Number(2.0)];
-    rule.extend_from_slice(options);
-    let config = Json::Object(vec![
-        (b"languageOptions".to_vec(), language_options.clone()),
-        (b"settings".to_vec(), settings.clone()),
-        (b"rules".to_vec(), Json::Object(vec![(RuleId::Known(entry.meta).to_vec(), Json::Array(rule))])),
-    ]);
-    let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
-    // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
-    config.linter.report_unused_disable_directives = match entry.meta.plugin {
-        Plugin::TypeScript => Severity::Warn,
-        _ => Severity::Off,
-    };
-    config
-}
-
 /// What the rule `entry`, which is the one that `config` enables, reports for `file`.
 fn lint_file<'a>(entry: &'static RuleEntry, file: &'a File<'a>, code: &[u8], config: &ResolvedConfig) -> Outcome {
-    let messages = linter().lint(file, config, &LintOptions::default()).messages;
-    let mut fixes: Vec<_> = messages.iter().filter_map(|it| it.fix.as_ref()).collect();
-    Outcome {
-        output: bun_lint::fix::apply_fixes(code, &mut fixes),
-        has_parse_errors: messages.iter().any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
-        messages: messages.iter().map(|it| crate::reported(entry, code, it)).collect(),
-    }
-}
-
-fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
-    messages.sort_by(|a, b| {
-        (a.line, a.column, a.end, &a.message_id, &a.message).cmp(&(b.line, b.column, b.end, &b.message_id, &b.message))
-    });
-    messages
+    Outcome::new(entry, code, &linter().lint(file, config, &LintOptions::default()).messages)
 }
 
 fn lib_directory() -> String {
@@ -648,9 +618,7 @@ fn dump_fixtures(args: &[String]) {
 /// What is wrong with what the rule reports for `case`.
 fn problem_of_case(entry: &'static RuleEntry, project_root: &str, case: &Json) -> Option<String> {
     let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-    let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
-    let language_options = case.get(b"languageOptions").unwrap_or(&Json::Null);
-    let config = config_of(entry, options, language_options, case.get(b"settings").unwrap_or(&Json::Null));
+    let config = config_of(linter(), entry, case);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_case(project_root, case, &config.language, &|file| lint_file(entry, file, code, &config))
     }));
@@ -669,27 +637,9 @@ fn problem_of_case_without_types(entry: &'static RuleEntry, case: &Json) -> Opti
 }
 
 fn problem_of_outcome(outcome: std::thread::Result<Option<Outcome>>, case: &Json) -> Option<String> {
-    let outcome = outcome.map(|outcome| {
-        outcome.map(|mut outcome| {
-            outcome.messages = in_order(std::mem::take(&mut outcome.messages));
-            outcome
-        })
-    });
-    let expected = in_order(expected_messages(case));
-    let expected_output = case.get(b"output").and_then(Json::as_str);
-    match &outcome {
+    match outcome {
         Err(_) => Some("panicked".to_owned()),
-        Ok(None) => Some("the file is not part of the program".to_owned()),
-        Ok(Some(Outcome { has_parse_errors: true, .. })) => Some("the parser rejects the code".to_owned()),
-        Ok(Some(outcome)) if outcome.messages != expected => {
-            Some(format!("messages differ\n  expected: {expected:#?}\n  actual: {:#?}", outcome.messages))
-        }
-        Ok(Some(outcome)) if outcome.output.as_deref() != expected_output => Some(format!(
-            "output differs\n  expected: {:?}\n  actual: {:?}",
-            expected_output.map(text),
-            outcome.output.as_deref().map(text)
-        )),
-        Ok(Some(_)) => None,
+        Ok(outcome) => problem_of(outcome, case).map(|it| format!("{}\n{}", it.summary, it.details).trim_end().to_owned()),
     }
 }
 
@@ -797,7 +747,11 @@ fn run_one(args: &[String]) {
         overlay: Vec::new(),
         threads: 1,
     };
-    let config = config_of(entry, options, &with_the_parser_of_typescript_eslint(), &Json::Null);
+    let case = Json::Object(vec![
+        (b"options".to_vec(), Json::Array(options.to_vec())),
+        (b"languageOptions".to_vec(), with_the_parser_of_typescript_eslint()),
+    ]);
+    let config = config_of(linter(), entry, &case);
     let outcomes = lint_project(project, &config.language, &|file| lint_file(entry, file, &code, &config));
     for (_, outcome) in outcomes {
         if outcome.has_parse_errors {

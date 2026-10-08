@@ -30,7 +30,6 @@ use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::runner::{Enabled, RuleEntry};
 
-pub(crate) use bun_lint_conformance::{Outcome, Reported, Tally, expected_messages};
 pub(crate) use conformance_cmd::lint;
 
 fn text(bytes: &[u8]) -> String {
@@ -42,11 +41,6 @@ fn all_rules() -> impl Iterator<Item = &'static RuleEntry> {
 }
 
 pub(crate) use linter_cmd::with_file;
-
-/// What is compared of a message about `code` in a test of the rule `entry`.
-pub(crate) fn reported(entry: &'static RuleEntry, code: &[u8], message: &bun_lint::linter::LintMessage) -> Reported {
-    Reported::new(entry, code, message)
-}
 
 fn str_of<'j>(json: &'j Json, key: &str) -> Option<&'j str> {
     std::str::from_utf8(json.get(key.as_bytes())?.as_str()?).ok()

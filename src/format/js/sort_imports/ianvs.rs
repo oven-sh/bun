@@ -5,7 +5,7 @@ use super::babel::{
 };
 use super::builtins::is_builtin_module;
 use super::compare::{collate_base_numeric, natural_sort_case_sensitive};
-use super::generator::{Piece, PieceKind, Printer, whitespace_len};
+use super::generator::{Piece, PieceKind, Printer, Prologue, whitespace_len};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
 use bun_lint::regex::Regex;
@@ -718,7 +718,7 @@ pub(super) fn preprocess(
     removed.extend(model.interpreter.iter().map(|it| it.0));
     removed.sort_unstable_by_key(|span| span.start);
 
-    let printer = Printer::new(model, b"with", end_of_line).generate(true, true, &nodes);
+    let printer = Printer::new(model, b"with", end_of_line).generate(Prologue::Included, &nodes);
     if printer.has_failed {
         return None;
     }

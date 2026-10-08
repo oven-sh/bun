@@ -132,6 +132,18 @@ pub(super) struct Comment {
     pub(super) following: Owner,
 }
 
+/// What the elements of an array are, as far as they have been read.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ElementKinds {
+    /// There is no element.
+    Unknown,
+    /// Numbers, with or without a sign.
+    Numbers,
+    /// All are objects or all are arrays, and each has more than one entry.
+    Containers,
+    Mixed,
+}
+
 /// A container whose end has not been seen.
 struct Open {
     node: u32,
@@ -145,10 +157,8 @@ struct Open {
     /// The name of the property that is being read.
     name: u32,
     is_last_hole: bool,
-    /// An array: all elements are numbers, with or without a sign.
-    is_concise: bool,
-    /// An array: all elements are objects or all are arrays, and each has more than one entry.
-    is_matrix: bool,
+    /// Of an array.
+    elements: ElementKinds,
     has_blank: bool,
     /// An object: a name is a string that cannot do without its quotes.
     requires_quotes: bool,
@@ -350,8 +360,7 @@ impl Reader<'_, '_> {
             last_child: Owner::NONE,
             name: 0,
             is_last_hole: false,
-            is_concise: true,
-            is_matrix: true,
+            elements: ElementKinds::Unknown,
             has_blank: false,
             requires_quotes: false,
         });
@@ -504,8 +513,7 @@ impl Reader<'_, '_> {
                 open.count += 1;
                 open.last_value = None;
                 open.is_last_hole = true;
-                open.is_concise = false;
-                open.is_matrix = false;
+                open.elements = ElementKinds::Mixed;
                 let (array, preceding) = (Owner::node(open.node), open.last_child);
                 self.skip_trivia(array, preceding)?;
                 Ok(State::ElementOrEnd)
@@ -521,9 +529,9 @@ impl Reader<'_, '_> {
         let container = self.tree.nodes[open.node as usize].kind;
         if container == Kind::Array {
             let previous = open.last_value.map(|it| self.tree.nodes[it as usize].kind);
-            open.is_matrix &=
+            let is_like_previous =
                 node.is_container() && node.count > 1 && previous.is_none_or(|it| it == node.kind);
-            open.is_concise &= match node.kind {
+            let is_number = match node.kind {
                 Kind::Number => true,
                 Kind::Unary => self
                     .tree
@@ -531,6 +539,13 @@ impl Reader<'_, '_> {
                     .get(value as usize + 1)
                     .is_some_and(|it| it.kind == Kind::Number),
                 _ => false,
+            };
+            open.elements = match open.elements {
+                ElementKinds::Unknown | ElementKinds::Numbers if is_number => ElementKinds::Numbers,
+                ElementKinds::Unknown | ElementKinds::Containers if is_like_previous => {
+                    ElementKinds::Containers
+                }
+                _ => ElementKinds::Mixed,
             };
         }
         open.count += 1;
@@ -608,13 +623,14 @@ impl Reader<'_, '_> {
             _ if config.is_stringify() => true,
             Kind::Object => open.has_blank || (config.preserves_wrap && node.has(BREAK_AFTER_OPEN)),
             _ => {
-                if open.is_concise {
+                let is_concise = open.elements == ElementKinds::Numbers;
+                if is_concise {
                     node.flags |= CONCISE;
                 }
-                if open.is_matrix && open.count > 1 {
+                if open.elements == ElementKinds::Containers && open.count > 1 {
                     node.flags |= MATRIX;
                 }
-                node.has(MATRIX) || (open.is_concise && open.has_blank)
+                node.has(MATRIX) || (is_concise && open.has_blank)
             }
         };
         let is_object = node.kind == Kind::Object;

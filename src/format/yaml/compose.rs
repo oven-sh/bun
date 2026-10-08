@@ -341,6 +341,12 @@ fn is_block(token: Option<&Token>) -> bool {
 
 /// `foldLines`
 fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
+    #[derive(Copy, Clone)]
+    #[repr(u8)]
+    enum Separator {
+        Space = b' ',
+        LineBreak = b'\n',
+    }
     let Some(first_newline) = strings::index_of_char_usize(source, b'\n') else {
         return Cow::Borrowed(source);
     };
@@ -355,7 +361,7 @@ fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
             .unwrap_or(line.len())
     };
     let mut result = source[..trim_end(&source[..first_newline])].to_vec();
-    let mut sep: &[u8] = b" ";
+    let mut sep = Separator::Space;
     let mut rest = &source[first_newline + 1..];
     while let Some(newline) = strings::index_of_char_usize(rest, b'\n') {
         let line = &rest[..newline];
@@ -363,17 +369,17 @@ fn fold_lines(source: &[u8]) -> Cow<'_, [u8]> {
         let line = &line[..trim_end(line)];
         if line.is_empty() {
             match sep {
-                b"\n" => result.push(b'\n'),
-                _ => sep = b"\n",
+                Separator::LineBreak => result.push(b'\n'),
+                Separator::Space => sep = Separator::LineBreak,
             }
         } else {
-            result.extend_from_slice(sep);
+            result.push(sep as u8);
             result.extend_from_slice(line);
-            sep = b" ";
+            sep = Separator::Space;
         }
         rest = &rest[newline + 1..];
     }
-    result.extend_from_slice(sep);
+    result.push(sep as u8);
     result.extend_from_slice(&rest[trim_start(rest)..]);
     Cow::Owned(result)
 }
@@ -833,7 +839,6 @@ impl<'a> Context<'a> {
             Cow::Borrowed(b""),
             [offset; 3],
             false,
-            true,
             props.tag,
         )?;
         node.anchor = self.anchor_of(props.anchor)?;
@@ -851,7 +856,6 @@ impl<'a> Context<'a> {
         value: Cow<'a, [u8]>,
         range: [u32; 3],
         has_comment: bool,
-        is_plain_token: bool,
         tag_token: Option<SourceToken>,
     ) -> Result<Node<'t, 'a>> {
         let tag_name = match tag_token {
@@ -868,8 +872,8 @@ impl<'a> Context<'a> {
             Some(b"binary") if !is_base64(&value) => return Err(SyntaxError),
             _ => {}
         }
-        let scalar_value = match (tag_token, is_plain_token) {
-            (None, true) => value_by_test(&value),
+        let scalar_value = match (tag_token, kind) {
+            (None, ScalarType::Plain) => value_by_test(&value),
             _ => ScalarValue::String,
         };
         Ok(Node {
@@ -908,14 +912,7 @@ impl<'a> Context<'a> {
                 };
                 let (has_comment, offset) = resolve_end(end.as_deref(), source_token.end, true)?;
                 let range = [source_token.offset, source_token.end, offset];
-                self.finish_scalar(
-                    kind,
-                    value,
-                    range,
-                    has_comment,
-                    source_token.kind == TokenType::Scalar,
-                    tag_token,
-                )
+                self.finish_scalar(kind, value, range, has_comment, tag_token)
             }
             Token::BlockScalar {
                 offset,
@@ -930,14 +927,7 @@ impl<'a> Context<'a> {
                     .text
                     .get(source.0 as usize..source.1 as usize)
                     .unwrap_or_default();
-                self.finish_scalar(
-                    kind,
-                    Cow::Borrowed(value),
-                    range,
-                    has_comment,
-                    false,
-                    tag_token,
-                )
+                self.finish_scalar(kind, Cow::Borrowed(value), range, has_comment, tag_token)
             }
             _ => Err(SyntaxError),
         }

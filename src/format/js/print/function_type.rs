@@ -43,6 +43,15 @@ pub(crate) fn write_ts_construct_signature_declaration<'a>(func: Func<'a>, f: &m
     write!(f, group(&format_args!("new", space(), signature)));
 }
 
+/// `get `, `set `
+pub(crate) fn write_accessor_keyword(kind: MemberKind, f: &mut Formatter<'_>) {
+    match kind {
+        MemberKind::Getter => write!(f, ["get", space()]),
+        MemberKind::Setter => write!(f, ["set", space()]),
+        _ => {}
+    }
+}
+
 /// `a(b: B): R`, `get a(): R`, `set a(b: B)`
 pub(crate) fn write_ts_method_signature<'a>(
     member: Member<'a>,
@@ -50,11 +59,7 @@ pub(crate) fn write_ts_method_signature<'a>(
     f: &mut Formatter<'a>,
 ) {
     let format_inner = format_with(|f| {
-        match member.kind() {
-            MemberKind::Getter => write!(f, ["get", space()]),
-            MemberKind::Setter => write!(f, ["set", space()]),
-            _ => {}
-        }
+        write_accessor_keyword(member.kind(), f);
         if let Some(key) = member.key() {
             format_computed_or_property_key(key, AstNodes::TSMethodSignature(member), f);
         }

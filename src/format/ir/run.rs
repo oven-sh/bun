@@ -131,6 +131,11 @@ pub(crate) fn write_with<'a>(
     let buffers = std::mem::take(&mut scratch.formatter);
     let mut formatter = Formatter::new(context, source, buffers);
     write(&mut formatter);
+    finish(formatter, scratch)
+}
+
+/// Gives the vectors of `formatter` back to `scratch`. Returns where the document is.
+fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
     let (root, buffers) = formatter.finish();
     scratch.formatter = buffers;

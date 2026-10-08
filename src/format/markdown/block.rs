@@ -973,13 +973,17 @@ fn is_complete_tag(rest: &[u8], is_closing: bool) -> bool {
     }
 }
 
+/// What a block ends by starting.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Interrupted {
+    Nothing,
+    Paragraph,
+    /// A paragraph that would go on with the line, which has not all the markers of its containers.
+    LazyParagraph,
+}
+
 /// The kind of HTML that `rest` starts, which starts with `<`, and where to go on looking for its end.
-fn html_start(
-    rest: &[u8],
-    interrupts: bool,
-    is_lazy: bool,
-    is_mdx: bool,
-) -> Option<(u8, usize, bool)> {
+fn html_start(rest: &[u8], interrupted: Interrupted, is_mdx: bool) -> Option<(u8, usize, bool)> {
     match *rest.get(1)? {
         b'!' => match *rest.get(2)? {
             b'-' => (rest.get(3) == Some(&b'-')).then_some((2, 4, true)),
@@ -1036,7 +1040,7 @@ fn html_start(
                 return (!is_slash || rest.get(after + 1) == Some(&b'>'))
                     .then_some((6, after, false));
             }
-            if interrupts && !is_lazy {
+            if interrupted == Interrupted::Paragraph {
                 return None;
             }
             is_complete_tag(&rest[after..], is_closing).then_some((7, after, false))
@@ -1121,12 +1125,7 @@ impl<'t> Parser<'t> {
     // ───────────────────────────── leaf blocks ─────────────────────────────
 
     /// The leaf block that starts at `cursor`, which is behind less than four columns of indentation.
-    fn find_leaf_start(
-        &self,
-        cursor: Cursor,
-        interrupts: bool,
-        is_lazy: bool,
-    ) -> Option<LeafStart> {
+    fn find_leaf_start(&self, cursor: Cursor, interrupted: Interrupted) -> Option<LeafStart> {
         if cursor.virtual_spaces > 0 {
             return None;
         }
@@ -1138,7 +1137,7 @@ impl<'t> Parser<'t> {
                     .then_some(LeafStart::Heading)
             }
             marker @ (b'-' | b'=')
-                if interrupts && !is_lazy && {
+                if interrupted == Interrupted::Paragraph && {
                     let size = rest.iter().take_while(|&&byte| byte == marker).count();
                     is_blank(&rest[size..])
                 } =>
@@ -1149,8 +1148,9 @@ impl<'t> Parser<'t> {
                 .line
                 .is_thematic_break(cursor)
                 .then_some(LeafStart::ThematicBreak),
-            b'<' => html_start(rest, interrupts, is_lazy, self.is_mdx)
-                .map(|(kind, ..)| LeafStart::Html(kind)),
+            b'<' => {
+                html_start(rest, interrupted, self.is_mdx).map(|(kind, ..)| LeafStart::Html(kind))
+            }
             marker @ (b'`' | b'~') => {
                 let size = rest.iter().take_while(|&&byte| byte == marker).count();
                 let is_fence = size >= 3
@@ -1165,7 +1165,9 @@ impl<'t> Parser<'t> {
             b'{' if !self.is_plain && !self.is_mdx => {
                 self.find_liquid_end(cursor).map(LeafStart::Liquid)
             }
-            b'i' | b'e' if self.is_mdx && !interrupts => self.find_es_syntax(cursor),
+            b'i' | b'e' if self.is_mdx && interrupted == Interrupted::Nothing => {
+                self.find_es_syntax(cursor)
+            }
             _ => None,
         }
     }
@@ -1361,7 +1363,7 @@ impl<'t> Parser<'t> {
                 let start = if indent >= 4 {
                     None
                 } else {
-                    self.find_leaf_start(content, true, true)
+                    self.find_leaf_start(content, Interrupted::LazyParagraph)
                 };
                 match start {
                     None => {
@@ -1445,7 +1447,7 @@ impl<'t> Parser<'t> {
                 let start = if indent >= 4 {
                     None
                 } else {
-                    self.find_leaf_start(content, true, false)
+                    self.find_leaf_start(content, Interrupted::Paragraph)
                 };
                 match start {
                     Some(LeafStart::SetextUnderline) => {
@@ -1476,7 +1478,11 @@ impl<'t> Parser<'t> {
             Leaf::Table { node } => {
                 let mut content = cursor;
                 let indent = self.line.pass_spaces(&mut content, 4);
-                if indent < 4 && self.find_leaf_start(content, false, false).is_none() {
+                if indent < 4
+                    && self
+                        .find_leaf_start(content, Interrupted::Nothing)
+                        .is_none()
+                {
                     self.add_row(node, content.offset, end);
                     self.set_end(node, end);
                     return self.extend_containers(end);
@@ -1508,7 +1514,7 @@ impl<'t> Parser<'t> {
             }
             return;
         }
-        match self.find_leaf_start(content, false, false) {
+        match self.find_leaf_start(content, Interrupted::Nothing) {
             Some(start) => self.start_leaf(start, cursor, content),
             None => {
                 self.leaf = Leaf::Paragraph {
@@ -1583,15 +1589,17 @@ impl<'t> Parser<'t> {
         }
     }
 
-    /// `prefix_start`: where the indentation of the line starts. `cursor`: where the block does.
-    fn start_leaf(&mut self, start: LeafStart, prefix_start: Cursor, cursor: Cursor) {
+    /// `prefix_start`: where the indentation of the line starts. `content`: where the block does.
+    fn start_leaf(&mut self, start: LeafStart, prefix_start: Cursor, content: Cursor) {
         let end = self.line.end;
-        let rest = self.line.rest(cursor);
+        let rest = self.line.rest(content);
         match start {
             LeafStart::SetextUnderline => {}
-            LeafStart::ThematicBreak => _ = self.add_block(Kind::ThematicBreak, cursor.offset, end),
+            LeafStart::ThematicBreak => {
+                _ = self.add_block(Kind::ThematicBreak, content.offset, end)
+            }
             LeafStart::Heading => {
-                let node = self.add_block(Kind::Heading, cursor.offset, end);
+                let node = self.add_block(Kind::Heading, content.offset, end);
                 let depth = rest.iter().take_while(|&&byte| byte == b'#').count();
                 let after = &rest[depth..];
                 let mut text = after.trim_ascii();
@@ -1605,7 +1613,7 @@ impl<'t> Parser<'t> {
                 }
                 if !text.is_empty() {
                     let blanks = after.len() - after.trim_ascii_start().len();
-                    let text_start = cursor.offset + depth + blanks;
+                    let text_start = content.offset + depth + blanks;
                     self.add_pending(node, text_start, text_start + text.len());
                 }
             }
@@ -1615,7 +1623,7 @@ impl<'t> Parser<'t> {
                 } else {
                     Kind::Code
                 };
-                let node = self.add_block(kind, cursor.offset, end);
+                let node = self.add_block(kind, content.offset, end);
                 let info = &rest[size..];
                 let info = &info[info.len() - info.trim_ascii_start().len()..];
                 let lang_len = match kind {
@@ -1632,7 +1640,7 @@ impl<'t> Parser<'t> {
                     node,
                     marker,
                     size,
-                    indent: cursor.column - prefix_start.column,
+                    indent: content.column - prefix_start.column,
                     first_segment: self.segments.len(),
                 };
             }
@@ -1645,7 +1653,8 @@ impl<'t> Parser<'t> {
                     kind,
                     first_segment,
                 };
-                if let Some((_, from, in_declaration)) = html_start(rest, false, true, self.is_mdx)
+                if let Some((_, from, in_declaration)) =
+                    html_start(rest, Interrupted::Nothing, self.is_mdx)
                     && kind <= 5
                     && html_ends(kind, &rest[from..], in_declaration)
                 {
@@ -1653,16 +1662,16 @@ impl<'t> Parser<'t> {
                 }
             }
             LeafStart::EsSyntax(kind, es_end) => {
-                let node = self.add_block(kind, cursor.offset, es_end);
+                let node = self.add_block(kind, content.offset, es_end);
                 if let Some(node) = self.tree.get_mut(node) {
-                    node.value = Str::source(cursor.offset as u32, es_end as u32);
+                    node.value = Str::source(content.offset as u32, es_end as u32);
                 }
                 self.skip_to = es_end;
             }
             LeafStart::Liquid(liquid_end) => {
-                let node = self.add_block(Kind::LiquidNode, cursor.offset, liquid_end);
+                let node = self.add_block(Kind::LiquidNode, content.offset, liquid_end);
                 if let Some(node) = self.tree.get_mut(node) {
-                    node.value = Str::source(cursor.offset as u32, liquid_end as u32);
+                    node.value = Str::source(content.offset as u32, liquid_end as u32);
                 }
                 self.skip_to = liquid_end;
             }

@@ -7,7 +7,7 @@
 //! content on one line, `Sink::end_unit` says so. Then what has been written of the unit is taken back and it is
 //! written again, this time to a document, which is printed in its place.
 
-use super::doc::{self, Doc, Elements, IndentCommand, Line};
+use super::doc::{self, Doc, Elements, Group, IndentCommand, Line};
 
 /// What is between two items of a `fill`.
 #[derive(Copy, Clone)]
@@ -37,8 +37,6 @@ pub(crate) struct Sink<'o> {
     /// Whether what is written goes to `elements`, not straight to the output.
     is_document: bool,
     elements: Elements,
-    /// Of each `fill` of `elements` that is open, whether it is one, not an array.
-    fills: Vec<bool>,
     /// Where what `removeLines` is applied to starts.
     without_lines: Vec<usize>,
 
@@ -66,7 +64,6 @@ impl<'o> Sink<'o> {
             printer: Some(printer),
             is_document: false,
             elements: Elements::default(),
-            fills: Vec::new(),
             without_lines: Vec::new(),
             indent: 0,
             outer_indents: Vec::new(),
@@ -83,7 +80,6 @@ impl<'o> Sink<'o> {
             printer: None,
             is_document: true,
             elements: Elements::default(),
-            fills: Vec::new(),
             without_lines: Vec::new(),
             indent: 0,
             outer_indents: Vec::new(),
@@ -319,7 +315,10 @@ impl<'o> Sink<'o> {
 
     pub(crate) fn start_group(&mut self, should_break: bool) {
         if self.is_document {
-            self.elements.start_group(should_break, 0, false);
+            self.elements.start_group(Group {
+                should_break,
+                ..Group::default()
+            });
         } else if self.flat_groups > 0 {
             self.has_failed |= should_break;
             self.flat_groups += 1;
@@ -367,10 +366,9 @@ impl<'o> Sink<'o> {
         }
     }
 
-    /// Starts a `fill` and its first item, or an array of the same shape.
-    pub(crate) fn start_fill(&mut self, is_fill: bool) {
+    /// Starts a `fill` and its first item.
+    pub(crate) fn start_fill(&mut self) {
         if self.is_document {
-            self.fills.push(is_fill);
             self.elements.start_fill();
             self.elements.start_item();
         } else if self.flat_groups == 0 {
@@ -427,10 +425,15 @@ impl<'o> Sink<'o> {
     pub(crate) fn end_fill(&mut self) {
         if self.is_document {
             self.elements.end_item();
-            match self.fills.pop() {
-                Some(false) => self.elements.end_fill_as_array(),
-                _ => self.elements.end_fill(),
-            }
+            self.elements.end_fill();
+        }
+    }
+
+    /// Ends a `fill` that is to be an array of its items after all.
+    pub(crate) fn end_fill_as_array(&mut self) {
+        if self.is_document {
+            self.elements.end_item();
+            self.elements.end_fill_as_array();
         }
     }
 

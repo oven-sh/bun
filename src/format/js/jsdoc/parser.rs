@@ -2,6 +2,7 @@
 
 use super::text::{first_char, lines, trim, trim_end_matches, trim_start, trim_start_matches};
 use bun_core::strings;
+use std::ops::Range;
 
 /// A description, as it is written: with the `*` at the start of each line.
 #[derive(Copy, Clone)]
@@ -118,7 +119,7 @@ impl<'a> Tag<'a> {
     /// `@kind {type} comment`
     pub(super) fn type_comment(&self) -> (Option<TypePart<'a>>, CommentPart<'a>) {
         match find_type_range(self.body) {
-            Some((start, end)) => (
+            Some(Range { start, end }) => (
                 Some(TypePart(&self.body[start..end])),
                 CommentPart(&self.body[end..]),
             ),
@@ -131,11 +132,13 @@ impl<'a> Tag<'a> {
         &self,
     ) -> (Option<TypePart<'a>>, Option<NamePart<'a>>, CommentPart<'a>) {
         let (type_part, rest) = match find_type_range(self.body) {
-            Some((start, end)) => (Some(TypePart(&self.body[start..end])), &self.body[end..]),
+            Some(Range { start, end }) => {
+                (Some(TypePart(&self.body[start..end])), &self.body[end..])
+            }
             None => (None, self.body),
         };
         match find_type_name_range(rest) {
-            Some((start, end)) => (
+            Some(Range { start, end }) => (
                 type_part,
                 Some(NamePart(&rest[start..end])),
                 CommentPart(&rest[end..]),
@@ -146,7 +149,7 @@ impl<'a> Tag<'a> {
 }
 
 /// Where the `{...}` is that `text` starts with, after white space.
-fn find_type_range(text: &[u8]) -> Option<(usize, usize)> {
+fn find_type_range(text: &[u8]) -> Option<Range<usize>> {
     let trimmed = trim_start(text);
     if !trimmed.starts_with(b"{") {
         return None;
@@ -159,7 +162,7 @@ fn find_type_range(text: &[u8]) -> Option<(usize, usize)> {
             b'}' => {
                 brace_count -= 1;
                 if brace_count == 0 {
-                    return Some((offset, offset + index + 1));
+                    return Some(offset..offset + index + 1);
                 }
             }
             _ => {}
@@ -169,7 +172,7 @@ fn find_type_range(text: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// Like a token, but there can be white space in `[name = default]`.
-fn find_type_name_range(text: &[u8]) -> Option<(usize, usize)> {
+fn find_type_name_range(text: &[u8]) -> Option<Range<usize>> {
     if !trim_start(text).starts_with(b"[") {
         return find_token_range(text);
     }
@@ -181,7 +184,7 @@ fn find_type_name_range(text: &[u8]) -> Option<(usize, usize)> {
             if bracket == 0
                 && let Some(start) = start
             {
-                return Some((start, index));
+                return Some(start..index);
             }
         } else {
             bracket += i32::from(char == '[') - i32::from(char == ']');
@@ -191,29 +194,29 @@ fn find_type_name_range(text: &[u8]) -> Option<(usize, usize)> {
     }
     start
         .filter(|_| bracket == 0)
-        .map(|start| (start, text.len()))
+        .map(|start| start..text.len())
 }
 
 /// Where the first word of `text` is. A `{` ends it as well: `@kind{type}`.
-fn find_token_range(text: &[u8]) -> Option<(usize, usize)> {
+fn find_token_range(text: &[u8]) -> Option<Range<usize>> {
     let mut start = None;
     let mut index = 0;
     while let Some((char, len)) = first_char(&text[index..]) {
         if char.is_whitespace() || char == '{' {
             if let Some(start) = start {
-                return Some((start, index));
+                return Some(start..index);
             }
         } else {
             start.get_or_insert(index);
         }
         index += len;
     }
-    start.map(|start| (start, text.len()))
+    start.map(|start| start..text.len())
 }
 
 /// `content` starts with `@`.
 fn parse_tag(content: &[u8]) -> Tag<'_> {
-    let (start, end) = find_token_range(content).unwrap_or((0, content.len()));
+    let Range { start, end } = find_token_range(content).unwrap_or(0..content.len());
     Tag {
         kind: content.get(start + 1..end).unwrap_or_default(),
         body: &content[end..],

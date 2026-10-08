@@ -369,7 +369,7 @@ fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
             .is_some_and(|comment| {
                 !comment.preceded_by_newline()
                     && f.source_text()
-                        .all_bytes_match(end, comment.span.start, |b| {
+                        .all_bytes(Span::before(end, comment.span), |b| {
                             b.is_ascii_whitespace() || b == b')'
                         })
             }),

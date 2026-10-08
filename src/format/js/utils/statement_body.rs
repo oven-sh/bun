@@ -131,7 +131,7 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
                 !comment.is_multiline_block()
                     && !f
                         .source_text()
-                        .contains_newline_between(end, comment.span.start)
+                        .contains_newline(Span::before(end, comment.span))
             })
             .count();
         write!(
@@ -152,7 +152,9 @@ pub(crate) fn comments_before_else<'a>(
     let count = comments
         .iter()
         .take_while(|comment| {
-            let gap = f.source_text().slice_range(position, comment.span.start);
+            let gap = f
+                .source_text()
+                .text_for(&Span::before(position, comment.span));
             position = comment.span.end;
             !bun_core::strings::contains(gap, b"else")
         })

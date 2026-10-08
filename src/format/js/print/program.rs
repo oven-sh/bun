@@ -159,7 +159,7 @@ fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool 
     }
     // `a // comment\n\n;`
     matches!(
-        source.slice_range(span.start, span.end),
+        source.text_for(&span),
         [.., b'\n' | b'\r' | b' ' | b'\t' | b'/' | 0xA8 | 0xA9, b';']
     ) && ends_before_semicolon(statement)
         && is_next_line_empty(source, f.comments().without_semicolon(span).end)

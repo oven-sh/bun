@@ -1,7 +1,7 @@
 //! Prettier's `language-yaml`: `printer-yaml.js`, `print/*.js` and `utilities.js`.
 
 use super::ast::{Chomping, Id, Kind, List, Node, Tree};
-use crate::css::doc::{Alignment, Elements, IndentCommand, Line};
+use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
 use crate::css::text;
 use crate::options::ProseWrap;
 use bun_core::strings;
@@ -321,7 +321,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.text(line);
             }
         } else {
-            self.out.start_group(false, 0, false);
+            self.out.start_group(Group::default());
             self.print_node(node, is_last_descendant);
             self.out.end_group();
         }
@@ -1056,7 +1056,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         };
 
         // `conditionalGroup`
-        self.out.start_group(false, 0, true);
+        self.out.start_group(Group {
+            is_conditional: true,
+            ..Group::default()
+        });
         // A key that is on one line for sure is implicit, however long it is.
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
             self.print(key_id, is_last_descendant);
@@ -1070,12 +1073,15 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         // Explicit if the key breaks, implicit otherwise.
         self.last_group_id += 1;
         let group_id = self.last_group_id;
-        self.out.start_group(false, 0, false);
+        self.out.start_group(Group::default());
         self.out.start_if_break(0);
         self.out.text(b"? ");
         self.out.otherwise();
         self.out.end_if_break();
-        self.out.start_group(false, group_id, false);
+        self.out.start_group(Group {
+            id: group_id,
+            ..Group::default()
+        });
         self.start_align(2);
         self.print(key_id, is_last_descendant);
         self.out.end_indent();

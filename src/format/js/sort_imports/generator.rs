@@ -37,6 +37,21 @@ enum SkipNewLines {
     Trailing,
 }
 
+/// Whether the interpreter line and the directives of the file are part of the program.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum Prologue {
+    Included,
+    Omitted,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Join {
+    /// `printSequence`: statements.
+    Sequence,
+    /// `printList`: commas are between them.
+    List,
+}
+
 pub(super) struct Printer<'m, 'a> {
     model: &'m Model<'a>,
     /// `importAttributesKeyword`
@@ -96,20 +111,14 @@ impl<'m, 'a> Printer<'m, 'a> {
 
     /// `generate(file(program(body, directives, "module", interpreter))).code`, with the statements
     /// that stand for empty lines replaced.
-    pub(super) fn generate(
-        mut self,
-        has_interpreter: bool,
-        has_directives: bool,
-        body: &[Node],
-    ) -> Self {
-        if has_interpreter && self.model.interpreter.is_some() {
+    pub(super) fn generate(mut self, prologue: Prologue, body: &[Node]) -> Self {
+        if prologue == Prologue::Included && self.model.interpreter.is_some() {
             self.print(Node::Interpreter, false, 0);
         }
         // `Program`
-        let directives = if has_directives {
-            self.model.directives.len() as u32
-        } else {
-            0
+        let directives = match prologue {
+            Prologue::Included => self.model.directives.len() as u32,
+            Prologue::Omitted => 0,
         };
         if directives > 0 {
             let newline = if body.is_empty() { 1 } else { 2 };
@@ -328,23 +337,17 @@ impl<'m, 'a> Printer<'m, 'a> {
         self.inner_comments_state = 0;
     }
 
-    fn print_join(
-        &mut self,
-        nodes: &[Node],
-        is_statement: bool,
-        has_commas: bool,
-        trailing_comments_line_offset: i32,
-    ) {
+    fn print_join(&mut self, nodes: &[Node], join: Join, trailing_comments_line_offset: i32) {
         for (index, &node) in nodes.iter().enumerate() {
-            if is_statement && index == 0 && self.has_content() {
+            if join == Join::Sequence && index == 0 && self.has_content() {
                 self.newline(1);
             }
             self.print(node, false, trailing_comments_line_offset);
-            if has_commas && index + 1 < nodes.len() {
-                self.token_char(b',');
-                self.space();
-            }
-            if !is_statement {
+            if join == Join::List {
+                if index + 1 < nodes.len() {
+                    self.token_char(b',');
+                    self.space();
+                }
                 continue;
             }
             let next_line = nodes
@@ -362,11 +365,11 @@ impl<'m, 'a> Printer<'m, 'a> {
     }
 
     fn print_sequence(&mut self, nodes: &[Node], trailing_comments_line_offset: i32) {
-        self.print_join(nodes, true, false, trailing_comments_line_offset);
+        self.print_join(nodes, Join::Sequence, trailing_comments_line_offset);
     }
 
     fn print_list(&mut self, nodes: &[Node]) {
-        self.print_join(nodes, false, true, 0);
+        self.print_join(nodes, Join::List, 0);
     }
 
     fn print_trailing_comments(&mut self, node: Node, line_offset: i32) {

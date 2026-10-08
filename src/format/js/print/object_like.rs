@@ -67,7 +67,7 @@ impl<'a> Format<'a> for ObjectLike<'a> {
             // An object that has a line break after its `{` in the source stays broken.
             let should_expand = f.options().expand == Expand::Auto
                 && f.source_text()
-                    .contains_newline_between(self.span().start, first_member_start);
+                    .contains_newline(Span::new(self.span().start, first_member_start));
             let members = format_with(|f| self.write_members(f));
             let inner =
                 soft_block_indent_with_maybe_space(&members, f.options().bracket_spacing.value());

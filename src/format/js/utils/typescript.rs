@@ -67,7 +67,9 @@ pub(crate) fn union_leading_comments<'a>(
             && !comment.is_multiline_block()
             && !f.comments().is_suppression_comment(comment)
             && f.source_text()
-                .all_bytes_match(comment.span.end, end, |b| matches!(b, b' ' | b'\t'));
+                .all_bytes(Span::after(comment.span, end), |b| {
+                    matches!(b, b' ' | b'\t')
+                });
         if !is_adjacent {
             break;
         }

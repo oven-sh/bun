@@ -167,6 +167,11 @@ impl Builder<'_> {
     fn built(&mut self, write: impl FnOnce(&mut Vec<u8>)) {
         let start = self.storage.text.len();
         write(&mut self.storage.text);
+        self.built_from(start);
+    }
+
+    /// What is in `storage.text` from `start` on, which is on one line.
+    fn built_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();
         let (len, width) = (text.len() as u32, TextWidth::single(string_width(text)));
         self.push(FormatElement::OwnedText(Text {

@@ -3,7 +3,7 @@
 use super::babel::{Attached, Declaration, Model, Node, SpecifierKind, utf16_len};
 use super::builtins::is_builtin_module;
 use super::compare::{locale_compare, natural_sort};
-use super::generator::{Piece, PieceKind, Printer};
+use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
 use bun_lint::linter::Glob;
@@ -299,8 +299,8 @@ pub(super) fn preprocess(
 
     let nodes = sorted_nodes(model, options);
     let model = &*model;
-    let printer =
-        Printer::new(model, options.attributes_keyword, end_of_line).generate(false, false, &nodes);
+    let printer = Printer::new(model, options.attributes_keyword, end_of_line)
+        .generate(Prologue::Omitted, &nodes);
     if printer.has_failed {
         return None;
     }

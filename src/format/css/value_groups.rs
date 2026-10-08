@@ -228,7 +228,7 @@ impl<'a> Printer<'a, '_> {
         if shape != Shape::GroupFill {
             self.sink.start_indent();
         }
-        self.sink.start_fill(shape != Shape::GroupIndent);
+        self.sink.start_fill();
         let mut inside_scss_interpolation_in_string = false;
         let mut did_break = false;
 
@@ -580,7 +580,10 @@ impl<'a> Printer<'a, '_> {
         if did_break {
             self.sink.start_fill_with_hard_line();
         }
-        self.sink.end_fill();
+        match shape {
+            Shape::GroupIndent => self.sink.end_fill_as_array(),
+            Shape::GroupFill | Shape::GroupIndentFill => self.sink.end_fill(),
+        }
         if shape != Shape::GroupFill {
             self.sink.end_indent();
         }
@@ -702,7 +705,7 @@ impl<'a> Printer<'a, '_> {
                     if is_preceded_by_softline {
                         self.sink.soft_line();
                     }
-                    self.sink.start_fill(true);
+                    self.sink.start_fill();
                 }
             }
             for (index, child) in node.groups().enumerate() {

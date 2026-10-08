@@ -15,6 +15,17 @@ enum TokenKind {
     Comment,
 }
 
+impl TokenKind {
+    /// By how much it changes the number of open parentheses.
+    fn nesting(self) -> i32 {
+        match self {
+            TokenKind::Control(b'(') => 1,
+            TokenKind::Control(b')') => -1,
+            _ => 0,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 struct Token {
     kind: TokenKind,
@@ -433,11 +444,7 @@ impl<'t> Parser<'t> {
             while let Some(token) = self.token(self.position)
                 && balanced != 0
             {
-                match token.kind {
-                    TokenKind::Control(b'(') => balanced += 1,
-                    TokenKind::Control(b')') => balanced -= 1,
-                    _ => {}
-                }
+                balanced += token.kind.nesting();
                 match balanced {
                     0 => self.position += 1,
                     _ => self.parse(false)?,
@@ -455,11 +462,7 @@ impl<'t> Parser<'t> {
             while let Some(token) = self.token(self.position)
                 && balanced != 0
             {
-                match token.kind {
-                    TokenKind::Control(b'(') => balanced += 1,
-                    TokenKind::Control(b')') => balanced -= 1,
-                    _ => {}
-                }
+                balanced += token.kind.nesting();
                 self.position += 1;
                 // Everything up to here is added to the value. It follows what is there, unless
                 // that is nothing.

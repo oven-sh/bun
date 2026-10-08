@@ -179,8 +179,8 @@ enum Which {
     EndComments,
 }
 
-/// Adds `id` to a list of `owner`, which is its parent from now on.
-fn append(nodes: &mut [Node<'_>], owner: Id, which: Which, id: Id) {
+/// Adds `item` to a list of `owner`, which is its parent from now on.
+fn append(nodes: &mut [Node<'_>], owner: Id, which: Which, item: Id) {
     let node = &mut nodes[owner as usize];
     let list = match which {
         Which::Children => &mut node.children,
@@ -189,11 +189,11 @@ fn append(nodes: &mut [Node<'_>], owner: Id, which: Which, id: Id) {
         Which::EndComments => &mut node.end_comments,
     };
     list.len += 1;
-    match list.last.replace(id) {
-        None => list.first = Some(id),
-        Some(last) => nodes[last as usize].next = Some(id),
+    match list.last.replace(item) {
+        None => list.first = Some(item),
+        Some(last) => nodes[last as usize].next = Some(item),
     }
-    nodes[id as usize].parent = Some(owner);
+    nodes[item as usize].parent = Some(owner);
 }
 
 impl Tree<'_> {

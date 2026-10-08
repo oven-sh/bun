@@ -33,7 +33,7 @@ fn follows_language_comment(
         if comment.span.end > position {
             return false;
         }
-        let between = source.bytes_range(comment.span.end, position);
+        let between = source.text_for(&Span::after(comment.span, position));
         if !is_blank(between) {
             if !is_statement || !bun_core::strings::split(between, b";").all(is_blank) {
                 return false;
@@ -51,7 +51,7 @@ fn follows_language_comment(
         let mut first = comment;
         for previous in comments {
             if first.preceded_by_newline()
-                || !is_blank(source.bytes_range(previous.span.end, first.span.start))
+                || !is_blank(source.text_for(&previous.span.between(first.span)))
             {
                 break;
             }
@@ -59,7 +59,7 @@ fn follows_language_comment(
         }
         return first.preceded_by_newline()
             || matches!(
-                trim(source.bytes_range(0, first.span.start)),
+                trim(source.text_for(&Span::before(0, first.span))),
                 [] | [.., b'{']
             );
     }

@@ -487,9 +487,21 @@ impl<'a> Formatter<'a> {
         write: impl FnOnce(&mut Formatter<'b>) -> R,
     ) -> R {
         let first = self.storage.pool.len();
+        let mut inner = self.start_embedded(context, source);
+        let result = write(&mut inner);
+        self.end_embedded(inner, first);
+        result
+    }
+
+    /// A formatter for `source` that has what this one has written.
+    fn start_embedded<'b>(
+        &mut self,
+        context: JsFormatContext<'b>,
+        source: &'b [u8],
+    ) -> Formatter<'b> {
         let mut odd_blocks = OddBlocks::default();
         odd_blocks.mark(source);
-        let mut inner = Formatter {
+        Formatter {
             storage: std::mem::take(&mut self.storage),
             tracker: std::mem::take(&mut self.tracker),
             spare: std::mem::take(&mut self.spare),
@@ -498,8 +510,12 @@ impl<'a> Formatter<'a> {
             source,
             odd_blocks,
             context,
-        };
-        let result = write(&mut inner);
+        }
+    }
+
+    /// Takes everything back from `inner`, which has written the elements from `first` on.
+    fn end_embedded(&mut self, inner: Formatter<'_>, first: usize) {
+        let source = inner.source;
         self.context.ran_out_of_stack |= inner.context.ran_out_of_stack;
         self.next_group_id.set(inner.next_group_id.get());
         (self.storage, self.tracker, self.spare, self.cleaned) =
@@ -527,7 +543,6 @@ impl<'a> Formatter<'a> {
                 }
             }
         }
-        result
     }
 
     // ───────────────────────────── the context ─────────────────────────────
@@ -685,6 +700,11 @@ impl<'a> Formatter<'a> {
     pub(crate) fn write_built_text(&mut self, build: impl FnOnce(&mut Vec<u8>)) {
         let start = self.storage.text.len();
         build(&mut self.storage.text);
+        self.write_owned_text_from(start);
+    }
+
+    /// Writes what is in `storage.text` from `start` on, as one text.
+    fn write_owned_text_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();
         let width = TextWidth::from_text_as(text, self.options().flavor);
         let len = text.len() as u32;
@@ -765,6 +785,11 @@ impl<'a> Formatter<'a> {
     pub(crate) fn intern(&mut self, content: &(impl Format<'a> + ?Sized)) -> Option<FormatElement> {
         let slot = self.start_capture();
         content.fmt(self);
+        self.end_intern(slot)
+    }
+
+    /// The element that stands for what has been written since `start_capture` returned `slot`.
+    fn end_intern(&mut self, slot: usize) -> Option<FormatElement> {
         if self.storage.pool.len() == slot + 2 {
             let only = self.storage.pool.pop();
             self.storage.pool.truncate(slot);

@@ -381,6 +381,16 @@ enum Element {
     },
 }
 
+/// What a group is started with.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Group {
+    pub(crate) should_break: bool,
+    /// Not 0: what an `ifBreak` can ask about it by.
+    pub(crate) id: u32,
+    /// `conditionalGroup([contents])`
+    pub(crate) is_conditional: bool,
+}
+
 /// A document: its parts, one after the other. It is written from the first to the last.
 pub(crate) struct Elements {
     /// The first is a `hardlineWithoutBreakParent`, for the printer.
@@ -505,7 +515,12 @@ impl Elements {
         self.list.push(last);
     }
 
-    pub(crate) fn start_group(&mut self, should_break: bool, id: u32, is_conditional: bool) {
+    pub(crate) fn start_group(&mut self, group: Group) {
+        let Group {
+            should_break,
+            id,
+            is_conditional,
+        } = group;
         if should_break {
             self.break_groups();
         }
@@ -731,7 +746,11 @@ impl Elements {
                 id,
                 is_conditional,
             } => {
-                self.start_group(*should_break, *id, *is_conditional);
+                self.start_group(Group {
+                    should_break: *should_break,
+                    id: *id,
+                    is_conditional: *is_conditional,
+                });
                 self.document(contents);
                 self.end_group();
             }

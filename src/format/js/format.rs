@@ -37,7 +37,7 @@ impl<'a> Formatter<'a> {
             return false;
         }
         next == u32::MAX || {
-            let rest = self.source_text().slice_range(span.end, next);
+            let rest = self.source_text().text_for(&Span::after(span, next));
             matches!(rest.first(), Some(b'\n' | b'\r'))
                 || bun_core::strings::index_of_any(rest, b"\n\r").is_some()
         }
@@ -1194,7 +1194,8 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
             let end = leading
                 .get(index + 1)
                 .map_or(span.start, |next| next.span.start);
-            f.source_text().bytes_contain(comment.span.end, end, b'(')
+            f.source_text()
+                .contains_byte(Span::after(comment.span, end), b'(')
         };
         let mut count = leading
             .iter()

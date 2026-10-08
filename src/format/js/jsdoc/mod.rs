@@ -40,7 +40,7 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
     if inner.iter().all(|&byte| byte == b'*') {
         return false;
     }
-    let before = f.source_text().slice_range(0, comment.span.start);
+    let before = f.source_text().text_for(&Span::before(0, comment.span));
     let tab_width = f.options().indent_width.value() as usize;
     let indent: usize = before
         .iter()

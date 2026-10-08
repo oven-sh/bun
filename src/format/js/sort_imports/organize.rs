@@ -311,6 +311,23 @@ struct Element {
     place: (u32, usize),
 }
 
+/// Where `skipTrivia` stops: `stopAfterLineBreak`, `stopAtComments`.
+#[derive(Copy, Clone)]
+enum Stops {
+    AtToken,
+    AfterLineBreak,
+    AtComment,
+    AfterLineBreakOrAtComment,
+}
+
+/// How the elements of named imports or exports are written.
+#[derive(Copy, Clone)]
+struct ListFormat {
+    /// `ListFormat.PreferNewLine`
+    prefers_new_lines: bool,
+    has_trailing_comma: bool,
+}
+
 struct Organizer<'a, 'o> {
     file: &'a File<'a>,
     text: &'a [u8],
@@ -361,12 +378,13 @@ impl<'a> Organizer<'a, '_> {
     }
 
     /// `skipTrivia`
-    fn skip_trivia(
-        &self,
-        mut at: u32,
-        stops_after_line_break: bool,
-        stops_at_comments: bool,
-    ) -> u32 {
+    fn skip_trivia(&self, mut at: u32, stops: Stops) -> u32 {
+        let stops_after_line_break = matches!(
+            stops,
+            Stops::AfterLineBreak | Stops::AfterLineBreakOrAtComment
+        );
+        let stops_at_comments =
+            matches!(stops, Stops::AtComment | Stops::AfterLineBreakOrAtComment);
         loop {
             if let Some(end) = self.line_break_end(at) {
                 at = end;
@@ -446,13 +464,13 @@ impl<'a> Organizer<'a, '_> {
             .iter()
             .take_while(|comment| comment.1)
             .find(|comment| has_line_break(comment.0))?;
-        Some(self.skip_trivia(multiline.0.end, true, true))
+        Some(self.skip_trivia(multiline.0.end, Stops::AfterLineBreakOrAtComment))
     }
 
     /// `getAdjustedEndPosition` with `TrailingTriviaOption.Include`
     fn adjusted_end(&self, end: u32) -> u32 {
         self.end_of_multiline_trailing_comment(end)
-            .unwrap_or_else(|| self.skip_trivia(end, true, false))
+            .unwrap_or_else(|| self.skip_trivia(end, Stops::AfterLineBreak))
     }
 
     /// `getAdjustedStartPosition` without a `leadingTriviaOption`
@@ -466,14 +484,14 @@ impl<'a> Organizer<'a, '_> {
             && let Some(comment) = (self.leading_comments(full_start).first().copied())
                 .or_else(|| self.trailing_comments(full_start).first().copied())
         {
-            return self.skip_trivia(comment.0.end, true, true);
+            return self.skip_trivia(comment.0.end, Stops::AfterLineBreakOrAtComment);
         }
         let line = if full_start > 0 {
             self.next_line_start(full_start_line)
         } else {
             full_start_line
         };
-        self.line_start(self.skip_trivia(line, false, true))
+        self.line_start(self.skip_trivia(line, Stops::AtComment))
     }
 
     // ───────────────────────────── organizeImports.ts ─────────────────────────────
@@ -527,7 +545,11 @@ impl<'a> Organizer<'a, '_> {
             .any(|comment| {
                 let text = self.file.slice(comment.0);
                 // One that follows something on its line documents nothing, unless that is a parameter.
-                let before = self.text[..comment.0.start as usize].trim_ascii_end();
+                let before = self
+                    .text
+                    .get(..comment.0.start as usize)
+                    .unwrap_or_default()
+                    .trim_ascii_end();
                 let starts_line = before.is_empty()
                     || self.has_line_break_in(before.len() as u32, comment.0.start);
                 if !text.starts_with(b"/**")
@@ -879,15 +901,17 @@ impl<'a> Organizer<'a, '_> {
 
     /// `emitNodeListItems` for the elements of named imports or exports, with the comments that
     /// the printer writes with them. `list`: the list that the braces are those of.
-    /// `prefers_new_lines`: `ListFormat.PreferNewLine`.
     fn write_elements(
         &self,
         elements: &[Element],
         list: u32,
-        prefers_new_lines: bool,
-        has_trailing_comma: bool,
+        format: ListFormat,
         out: &mut Vec<u8>,
     ) {
+        let ListFormat {
+            prefers_new_lines,
+            has_trailing_comma,
+        } = format;
         if elements.is_empty() {
             return out.extend_from_slice(b"{ }");
         }
@@ -952,7 +976,7 @@ impl<'a> Organizer<'a, '_> {
                 self.write_leading_comments(last.end, out);
                 out.push(b',');
                 self.write_trailing_comments(
-                    Some(self.skip_trivia(last.end, false, false) + 1),
+                    Some(self.skip_trivia(last.end, Stops::AtToken) + 1),
                     out,
                 );
             }
@@ -1086,14 +1110,16 @@ impl<'a> Organizer<'a, '_> {
                 let after_last =
                     it.0.named()
                         .last()
-                        .map(|last| self.skip_trivia(last.span().end, false, false));
+                        .map(|last| self.skip_trivia(last.span().end, Stops::AtToken));
                 it.1 && after_last.is_some_and(|at| self.text.get(at as usize) == Some(&b','))
             });
             self.write_elements(
                 &elements,
                 braces.map_or(0, |it| it.0.stmt().span().start),
-                is_multi_line,
-                has_trailing_comma,
+                ListFormat {
+                    prefers_new_lines: is_multi_line,
+                    has_trailing_comma,
+                },
                 &mut out,
             );
         }
@@ -1267,7 +1293,11 @@ impl<'a> Organizer<'a, '_> {
                 ),
             })
             .collect();
-        self.write_elements(&elements, base.span().start, false, false, &mut out);
+        let format = ListFormat {
+            prefers_new_lines: false,
+            has_trailing_comma: false,
+        };
+        self.write_elements(&elements, base.span().start, format, &mut out);
         if export.has_from() {
             out.extend_from_slice(b" from ");
             self.write_source(base.statement, &mut out);

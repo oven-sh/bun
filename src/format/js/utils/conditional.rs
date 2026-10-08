@@ -138,17 +138,13 @@ impl ConditionalLayout {
     }
 }
 
-/// Writes the comments after an operand that ends at `start`, up to `operator` or to the end of the
-/// line. `end`: where the next operand starts.
-fn format_operand_trailing_comments<'a>(
-    mut start: u32,
-    end: u32,
-    operator: u8,
-    f: &mut Formatter<'a>,
-) {
+/// Writes the comments after an operand, up to `operator` or to the end of the line. `gap`: what is
+/// between the operand and the next one.
+fn format_operand_trailing_comments<'a>(gap: Span, operator: u8, f: &mut Formatter<'a>) {
     if f.is_quiet() {
         return;
     }
+    let Span { mut start, end } = gap;
     let comments = f.comments().unprinted_comments();
     let source_text = f.source_text();
     let mut index_before_operator = None;
@@ -158,7 +154,7 @@ fn format_operand_trailing_comments<'a>(
             count = Some(index_before_operator.unwrap_or(index));
             break;
         }
-        if source_text.contains_newline_between(start, comment.span.start) {
+        if source_text.contains_newline(Span::before(start, comment.span)) {
             // It is on a new line.
             count = Some(index);
             break;
@@ -166,7 +162,7 @@ fn format_operand_trailing_comments<'a>(
             // Prettier's `handleClosureTypeCastComments`: `a ? /** @type {T} */ ⏎ b : c`
             count = Some(index + usize::from(!f.comments().looks_like_type_cast_comment(comment)));
             break;
-        } else if source_text.bytes_contain(start, comment.span.start, operator) {
+        } else if source_text.contains_byte(Span::before(start, comment.span), operator) {
             index_before_operator = Some(index);
         }
         start = comment.span.end;
@@ -304,13 +300,13 @@ impl<'a> FormatConditionalLike<'a> {
 
     fn format_test(&self, f: &mut Formatter<'a>, layout: ConditionalLayout) {
         let format_inner = format_with(|f| {
-            let (start, end) = match self.conditional {
+            let gap = match self.conditional {
                 ConditionalLike::ConditionalExpression(conditional) => {
                     let ExprKind::Cond { test, yes, .. } = conditional.kind() else {
                         return;
                     };
                     write!(f, FormatNodeWithoutTrailingComments(&test));
-                    (test.span().end, yes.span().start)
+                    test.span().between(yes.span())
                 }
                 ConditionalLike::TSConditionalType(conditional) => {
                     let TypeKind::Cond {
@@ -328,10 +324,10 @@ impl<'a> FormatConditionalLike<'a> {
                         TypeKind::Union(types) if types.len() > 1 => write!(f, extends),
                         _ => write!(f, FormatNodeWithoutTrailingComments(&extends)),
                     }
-                    (extends.span().end, yes.span().start)
+                    extends.span().between(yes.span())
                 }
             };
-            format_operand_trailing_comments(start, end, b'?', f);
+            format_operand_trailing_comments(gap, b'?', f);
         });
 
         if layout.is_nested_alternate() {
@@ -358,12 +354,7 @@ impl<'a> FormatConditionalLike<'a> {
 
         let format_consequent_with_trailing_comments = format_with(|f| {
             write!(f, FormatNodeWithoutTrailingComments(&consequent));
-            format_operand_trailing_comments(
-                consequent.span().end,
-                alternate.span().start,
-                b':',
-                f,
-            );
+            format_operand_trailing_comments(consequent.span().between(alternate.span()), b':', f);
         });
         let format_consequent = format_with(|f| match is_space {
             true => write!(f, align(2, &format_consequent_with_trailing_comments)),
@@ -525,8 +516,7 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
                 Some(following) => {
                     write!(f, FormatNodeWithoutTrailingComments(&expression));
                     format_operand_trailing_comments(
-                        expression.span().end,
-                        following.span().start,
+                        expression.span().between(following.span()),
                         b':',
                         f,
                     );

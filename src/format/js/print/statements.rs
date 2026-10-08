@@ -108,7 +108,9 @@ pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> boo
                 comments.is_type_cast_comment(comment)
                     && comment.span.end <= position
                     && f.source_text()
-                        .all_bytes_match(comment.span.end, position, |b| b.is_ascii_whitespace())
+                        .all_bytes(Span::after(comment.span, position), |b| {
+                            b.is_ascii_whitespace()
+                        })
             })
 }
 
@@ -263,7 +265,9 @@ impl<'a> Head<'a> {
             Head::Before(body) => {
                 let mut end = body.span().start;
                 for comment in f.comments().comments_before(end).iter().rev() {
-                    if f.source_text().bytes_contain(comment.span.end, end, b')') {
+                    if f.source_text()
+                        .contains_byte(Span::after(comment.span, end), b')')
+                    {
                         break;
                     }
                     end = comment.span.start;
@@ -470,8 +474,7 @@ pub(crate) fn comment_placements(
     f: &Formatter<'_>,
 ) -> SmallVec<[CommentPlacement; 8]> {
     let source = f.source_text();
-    let is_blank =
-        |start: u32, end: u32| source.all_bytes_match(start, end, |b| matches!(b, b' ' | b'\t'));
+    let is_blank = |span: Span| source.all_bytes(span, |b| matches!(b, b' ' | b'\t'));
     let mut placements: SmallVec<[CommentPlacement; 8]> = SmallVec::new();
 
     // A comment behind one that starts the line counts as starting it.
@@ -479,7 +482,7 @@ pub(crate) fn comment_placements(
     for comment in comments {
         let starts_line = comment.preceded_by_newline()
             || previous.is_some_and(|(previous, starts_line)| {
-                starts_line && is_blank(previous.span.end, comment.span.start)
+                starts_line && is_blank(previous.span.between(comment.span))
             });
         placements.push(match starts_line {
             true => CommentPlacement::OwnLine,
@@ -492,8 +495,8 @@ pub(crate) fn comment_placements(
     let (mut ends_line, mut next_start) = (false, following_start);
     let mut gap_end = Some(following_start);
     for (comment, placement) in comments.iter().zip(&mut placements).rev() {
-        ends_line =
-            comment.followed_by_newline() || (ends_line && is_blank(comment.span.end, next_start));
+        ends_line = comment.followed_by_newline()
+            || (ends_line && is_blank(Span::after(comment.span, next_start)));
         next_start = comment.span.start;
         if *placement == CommentPlacement::OwnLine {
             continue;
@@ -508,7 +511,7 @@ pub(crate) fn comment_placements(
         }
         gap_end = gap_end
             .filter(|&end| {
-                source.all_bytes_match(comment.span.end, end, |b| {
+                source.all_bytes(Span::after(comment.span, end), |b| {
                     b.is_ascii_whitespace() || b == b'('
                 })
             })

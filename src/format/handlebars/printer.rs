@@ -84,7 +84,7 @@ impl<'a> Printer<'a> {
     }
 
     fn start_group(&mut self) {
-        self.out.start_group(false, 0, false);
+        self.out.start_group(doc::Group::default());
     }
 
     fn start_indent(&mut self) {

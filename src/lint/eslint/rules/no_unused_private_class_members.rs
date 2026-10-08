@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashMap;
 
 /// Disallow unused private class members.
@@ -150,13 +151,16 @@ impl NoUnusedPrivateClassMembers {
         if members.is_empty() {
             return;
         }
+        // The class whose body a node is in.
+        let mut classes: AncestorMemo<'a, Class<'a>> = AncestorMemo::default();
         for (usage, name) in usages {
+            let mut inner = usage;
             // The heritage and the decorators of a class are not in its body.
-            let mut child = usage;
-            for ancestor in usage.ancestors() {
-                if let (Node::Class(class), Node::Member(_)) = (ancestor, child)
-                    && let Some(member) = members.get_mut(&(class, name))
-                {
+            while let Some(class) = classes.find(inner, |child, parent| match (parent, child) {
+                (Node::Class(class), Node::Member(_)) => Some(class),
+                _ => None,
+            }) {
+                if let Some(member) = members.get_mut(&(class, name)) {
                     if !member.is_used {
                         member.has_reference = true;
                         member.is_used = member.is_accessor
@@ -164,7 +168,7 @@ impl NoUnusedPrivateClassMembers {
                     }
                     break;
                 }
-                child = ancestor;
+                inner = Node::Class(class);
             }
         }
         for ((_, name), member) in &members {

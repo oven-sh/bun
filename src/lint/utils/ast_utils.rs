@@ -207,9 +207,22 @@ pub fn is_keyword_token(token: &Token<'_>) -> bool {
 pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Spanned) -> bool {
     let (end, start) = (left.span().end, right.span().start);
     match end <= start {
-        true => !text::has_line_break(file.slice(Span::new(end, start))),
+        true => is_on_one_line(file, Span::new(end, start)),
         false => file.line_of(end) == file.line_of(start),
     }
+}
+
+/// Whether there is no line break in `span`. The start of it is looked at, where most that have one have the first. What is
+/// left of a long one, such as many comments between two tokens, is asked of the lines of the file, which does not take time in
+/// proportion to its length.
+#[inline]
+pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
+    const LOOKED_AT: u32 = 512;
+    if span.len() <= LOOKED_AT {
+        return !text::has_line_break(file.slice(span));
+    }
+    let middle = span.start + LOOKED_AT;
+    !text::has_line_break(file.slice(Span::new(span.start, middle))) && file.is_on_same_line(middle, span.end)
 }
 
 /// What `equal_tokens` is for the texts `left` and `right`, if that shows without splitting them into tokens: they are compared
@@ -2081,7 +2094,8 @@ pub fn get_switch_case_colon_token(case: Case<'_>) -> Option<Token<'_>> {
 /// ESLint's `getNextLocation`: the position after `position`, which is the start of the next line
 /// if it is at the end of one. `None` at the end of the file.
 pub fn get_next_location(file: &File<'_>, position: Position) -> Option<Position> {
-    if position.column < text::utf16_len(file.line_text(position.line)) {
+    // Not by the length of the line in UTF-16 code units, which takes time in proportion to it.
+    if file.offset(position) < file.line_span(position.line).end {
         return Some(Position {
             line: position.line,
             column: position.column + 1,

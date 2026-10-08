@@ -671,17 +671,24 @@ impl<'a> Expr<'a> {
     }
 
     /// `import.defer(..)`, as opposed to `import(..)`.
+    #[inline]
     pub fn is_deferred_import_call(self) -> bool {
+        self.import_call_phase() == Some("defer")
+    }
+
+    /// The `defer` of `import.defer(..)`, the `source` of `import.source(..)`.
+    pub fn import_call_phase(self) -> Option<&'static str> {
         let deferred = self.file.hir.deferred_import_calls;
         if deferred.is_empty() {
-            return false;
+            return None;
         }
-        match self.kind() {
-            ExprKind::ImportCall { args } => {
-                args.first().is_some_and(|first| deferred.iter().any(|it| it.0 == first.id))
-            }
-            _ => false,
-        }
+        let ExprKind::ImportCall { args } = self.kind() else {
+            return None;
+        };
+        let first = args.first()?;
+        let text = self.file.text();
+        let dot = skip_trivia(text, self.span().start + "import".len() as u32);
+        (deferred.iter().any(|it| it.0 == first.id)).then(|| self.file.phase_at(skip_trivia(text, dot + 1)))
     }
 
     /// The operands of the comma operators: `a`, `b` and `c` of `a, b, c`, which ESLint has as
@@ -707,6 +714,15 @@ impl<'a> Expr<'a> {
 }
 
 impl File<'_> {
+    /// The HIR has one flag for the phases of an import. The word at `pos` tells which it is.
+    pub(super) fn phase_at(&self, pos: u32) -> &'static str {
+        let rest = self.hir.text.get(pos as usize..).unwrap_or_default();
+        match rest.get(..crate::tokens::token_len(rest)) {
+            Some(b"source") => "source",
+            _ => "defer",
+        }
+    }
+
     /// The kind of the expression `id`, which is `raw`.
     #[inline]
     pub(super) fn expr_tag(&self, id: hir::ExprId, raw: &hir::Expr) -> ExprTag {

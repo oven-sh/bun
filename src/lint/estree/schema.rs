@@ -617,7 +617,7 @@ estree_schema! {
     ImportExpression [ExprTag::ImportCall] (v) {
         node Source = of!(expr v, ExprKind::ImportCall { args } => args).get(0).and_then(VNode::of_expr);
         node Options = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::of_expr);
-        ts_data Phase = v.expr()?.is_deferred_import_call().then_some("defer");
+        ts_data Phase = v.expr()?.import_call_phase();
         ts_hidden Attributes = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::of_expr);
     }
     MetaProperty [ExprTag::ImportMeta, ExprTag::NewTarget] (v) {
@@ -707,7 +707,7 @@ estree_schema! {
         part Source = source(v);
         part Attributes = attributes(v)?;
         ts_data ImportKind = if of!(stmt v, StmtKind::Import(import) => import).is_type_only() { "type" } else { "value" };
-        ts_data Phase = of!(stmt v, StmtKind::Import(import) => import).is_deferred().then_some("defer");
+        ts_data Phase = of!(stmt v, StmtKind::Import(import) => import).phase();
         ts_hidden Assertions = attributes(v)?;
     }
     ImportDefaultSpecifier [StmtTag::Import] (v) {

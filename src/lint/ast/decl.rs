@@ -1398,7 +1398,13 @@ impl<'a> Import<'a> {
     /// `import defer ..`
     #[inline]
     pub fn is_deferred(self) -> bool {
-        self.raw().is_deferred
+        self.phase() == Some("defer")
+    }
+
+    /// The `defer` of `import defer ..`, the `source` of `import source ..`.
+    pub fn phase(self) -> Option<&'static str> {
+        let raw = self.raw();
+        raw.is_deferred.then(|| self.file.phase_at(raw.clause_start))
     }
 
     /// `import "spec"`

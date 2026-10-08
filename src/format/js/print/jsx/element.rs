@@ -182,8 +182,9 @@ fn should_expand(parent: AstNodes<'_>) -> bool {
     // The `FunctionBody`, and then the arrow function.
     let arrow = parent.parent().parent();
     match arrow.parent() {
-        call @ AstNodes::CallExpression(_) => {
-            matches!(call.parent().without_chain_expression(), AstNodes::JSXExpressionContainer(_))
+        call @ AstNodes::CallExpression(e) => {
+            e.callee().is_none_or(|callee| callee.span() != arrow.span())
+                && matches!(call.parent().without_chain_expression(), AstNodes::JSXExpressionContainer(_))
         }
         _ => false,
     }

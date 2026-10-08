@@ -23,10 +23,14 @@ pub(crate) fn write_tagged_template_expression<'a>(e: Expr<'a>, call: Call<'a>, 
     };
 
     let comments = f.comments().comments_before(quasi.span().start);
-    if !comments.is_empty() {
-        write!(f, group(&format_args!(soft_line_break_or_space(), FormatLeadingComments::Comments(comments))));
+    if let Some(first) = comments.first() {
+        let tag_end = call.type_args().angle_brackets_span().map_or(call.callee().span().end, |it| it.end);
+        match f.source_text().contains_newline_between(tag_end, first.span.start) {
+            true => write!(f, soft_line_break()),
+            false => write!(f, space()),
+        }
     }
-    write!(f, line_suffix_boundary());
+    write!(f, [line_suffix_boundary(), FormatLeadingComments::Comments(comments)]);
 
     let ExprKind::Template(template) = quasi.kind() else {
         return;

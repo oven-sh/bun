@@ -478,6 +478,10 @@ pub(super) struct FormatMultilineChildren {
 
 impl<'a> Format<'a> for FormatMultilineChildren {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if self.elements.is_none() {
+            // The line break after the opening tag and the one before the closing tag.
+            return write!(f, [hard_line_break(), empty_line()]);
+        }
         let format_inner = format_with(|f| {
             let (start, end) = match self.is_fill {
                 true => (Tag::StartFill, Tag::EndFill),

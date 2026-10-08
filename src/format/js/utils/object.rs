@@ -139,14 +139,15 @@ fn requires_quotes<'a>(key: Key<'a>, parent: Option<AstNodes<'a>>, f: &Formatter
 
 /// Prettier's `hasSiblingsRequireQuoted`. `parent`: what has the name.
 ///
-/// Objects, classes and interfaces, which can be large, have put the answer in the context. For the
-/// rest, this looks at all the names.
+/// Objects, classes, interfaces and enums, which can be large, have put the answer in the context.
+/// For patterns, this looks at all the names.
 fn siblings_require_quotes<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     match parent {
         AstNodes::ObjectProperty(_)
         | AstNodes::MethodDefinition(_)
         | AstNodes::PropertyDefinition(_)
-        | AstNodes::AccessorProperty(_) => f.context().is_quote_needed(),
+        | AstNodes::AccessorProperty(_)
+        | AstNodes::TSEnumMember(_) => f.context().is_quote_needed(),
         AstNodes::TSPropertySignature(member) | AstNodes::TSMethodSignature(member) => {
             f.context().is_quote_needed() || {
                 let members = match member.parent() {
@@ -178,12 +179,6 @@ fn siblings_require_quotes<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool 
             Node::Expr(object) => matches!(object.kind(), ExprKind::Object(properties) if properties.iter().any(|it| {
                 it.key().is_some_and(|key| key_requires_quotes(key, parent, f))
             })),
-            _ => false,
-        },
-        AstNodes::TSEnumMember(member) => match member.parent() {
-            Node::Stmt(statement) => matches!(statement.kind(), StmtKind::Enum(declaration) if {
-                declaration.members().iter().any(|it| it.key().is_some_and(|key| key_requires_quotes(key, parent, f)))
-            }),
             _ => false,
         },
         _ => false,

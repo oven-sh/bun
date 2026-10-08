@@ -187,7 +187,7 @@ fn schema() {
             node_type.name(),
             names(&|it| it.is_child && !it.is_espree_only),
             names(&|it| it.is_child && !it.is_typescript_only),
-            names(&|it| !it.is_espree_only),
+            names(&|it| !it.is_espree_only && !it.is_hidden),
             names(&|it| !it.is_typescript_only),
         ));
     }

@@ -298,7 +298,7 @@ impl<'a> VNode<'a> {
                 },
                 Heritage => VNode::new(ty.parent(), Main),
                 TypeArgs if VNode::is_heritage(ty) => self.with(Heritage),
-                TypeArgs | Source | Options => import_type(ty),
+                TypeArgs | Source | Options | Argument => import_type(ty),
                 Quasi(_) if ty.as_template().is_none() => self.with(Literal),
                 LiteralArgument => self.with(Literal),
                 OptionsProperty => self.with(Options),

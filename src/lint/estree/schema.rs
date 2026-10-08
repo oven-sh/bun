@@ -9,6 +9,8 @@
 //! - `data`: any other field.
 //! - `ts_node`, `ts_part`, `ts_data`: the same for a field that only typescript-estree has.
 //! - `es_data`: a field that only espree has.
+//! - `ts_hidden`: a deprecated property of typescript-estree. It is not enumerable: a selector finds
+//!   it, [`VNode::fields`] does not have it.
 //!
 //! The value is an expression of a type that converts to a [`Value`]. `None` converts to `null`.
 //! Where `?` meets a `None`, the field is `undefined`.
@@ -38,6 +40,8 @@ pub struct FieldEntry {
     pub is_typescript_only: bool,
     /// Only espree has it.
     pub is_espree_only: bool,
+    /// It is not enumerable.
+    pub is_hidden: bool,
     /// Its value in a node of that type.
     pub get: for<'a> fn(VNode<'a>) -> Value<'a>,
 }
@@ -71,6 +75,7 @@ macro_rules! estree_schema {
                             is_part: estree_schema!(@is_part $row),
                             is_typescript_only: estree_schema!(@is_typescript_only $row),
                             is_espree_only: estree_schema!(@is_espree_only $row),
+                            is_hidden: estree_schema!(@is_hidden $row),
                             get: {
                                 fn get<'a>($v: VNode<'a>) -> Value<'a> {
                                     let _ = $v;
@@ -102,6 +107,10 @@ macro_rules! estree_schema {
     (@is_child data) => { false };
     (@is_child ts_data) => { false };
     (@is_child es_data) => { false };
+    (@is_child ts_hidden) => { false };
+    (@is_hidden ts_hidden) => { true };
+    (@is_hidden $row:ident) => { false };
+    (@is_typescript_only ts_hidden) => { true };
     (@is_espree_only es_data) => { true };
     (@is_espree_only $row:ident) => { false };
     (@is_typescript_only es_data) => { false };
@@ -609,6 +618,7 @@ estree_schema! {
         node Source = of!(expr v, ExprKind::ImportCall { args } => args).get(0).and_then(VNode::of_expr);
         node Options = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::of_expr);
         ts_data Phase = v.expr()?.is_deferred_import_call().then_some("defer");
+        ts_hidden Attributes = of!(expr v, ExprKind::ImportCall { args } => args).get(1).and_then(VNode::of_expr);
     }
     MetaProperty [ExprTag::ImportMeta, ExprTag::NewTarget] (v) {
         part Meta = v.with(Part::Meta);
@@ -698,6 +708,7 @@ estree_schema! {
         part Attributes = attributes(v)?;
         ts_data ImportKind = if of!(stmt v, StmtKind::Import(import) => import).is_type_only() { "type" } else { "value" };
         ts_data Phase = of!(stmt v, StmtKind::Import(import) => import).is_deferred().then_some("defer");
+        ts_hidden Assertions = attributes(v)?;
     }
     ImportDefaultSpecifier [StmtTag::Import] (v) {
         part Local = v.with(Part::DefaultLocal);
@@ -748,6 +759,10 @@ estree_schema! {
             (_, StmtKind::ExportNamed(export)) if export.is_type_only() => "type",
             _ => "value",
         };
+        ts_hidden Assertions = match v.part {
+            Part::Export => Nodes::EMPTY,
+            _ => attributes(v)?,
+        };
     }
     ExportDefaultDeclaration [exportable(), StmtTag::ExportDefault] (v) {
         part Declaration = match v.part {
@@ -761,6 +776,7 @@ estree_schema! {
         part Source = source(v);
         part Attributes = attributes(v)?;
         ts_data ExportKind = if of!(stmt v, StmtKind::ExportStar { type_only, .. } => type_only) { "type" } else { "value" };
+        ts_hidden Assertions = attributes(v)?;
     }
     ExportSpecifier [NodeTags::EXPORT_SPEC] (v) {
         part Local = v.with(Part::Local);
@@ -826,6 +842,7 @@ estree_schema! {
         part Body = v.with(Part::Body);
         data Const = of!(stmt v, StmtKind::Enum(it) => it).flags().contains(Flags::CONST);
         data Declare = is_declared(v.stmt()?);
+        ts_hidden Members = Nodes::enum_members(of!(stmt v, StmtKind::Enum(it) => it).members());
     }
     TSEnumBody [StmtTag::Enum] (v) {
         node Members = Nodes::enum_members(of!(stmt v, StmtKind::Enum(it) => it).members());
@@ -837,6 +854,10 @@ estree_schema! {
         };
         node Initializer = match v.base {
             Node::EnumMember(member) => VNode::of_expr(member.init()?)?,
+            _ => return None,
+        };
+        ts_hidden Computed = match v.base {
+            Node::EnumMember(member) => is_computed(member.key()),
             _ => return None,
         };
     }
@@ -964,8 +985,11 @@ estree_schema! {
             _ => v.with(Part::Property),
         };
     }
-    TSLiteralType [TypeTag::StringLit, TypeTag::NumberLit, TypeTag::BigIntLit, TypeTag::BoolLit] (v) {
-        part Literal = v.with(Part::Literal);
+    TSLiteralType [TypeTag::StringLit, TypeTag::NumberLit, TypeTag::BigIntLit, TypeTag::BoolLit, TypeTag::Import] (v) {
+        part Literal = match v.part {
+            Part::Argument => source(v),
+            _ => Some(v.with(Part::Literal)),
+        };
     }
     TSTemplateLiteralType [TypeTag::Template] (v) {
         part Quasis = Nodes::quasis(v.base, v.ty()?.as_template()?.quasi_count());
@@ -1034,6 +1058,7 @@ estree_schema! {
             it if it.is_readonly_with_plus() => Value::Str(b"+"),
             _ => Value::Bool(true),
         };
+        ts_hidden TypeParameter = VNode::new(of!(ty v, TypeKind::Mapped(mapped) => mapped).param(), Part::Main);
     }
     TSIndexedAccessType [TypeTag::IndexedAccess] (v) {
         node ObjectType = VNode::of_type(of!(ty v, TypeKind::IndexedAccess { obj, .. } => obj));
@@ -1065,6 +1090,7 @@ estree_schema! {
         part Options = v.ty()?.import_attributes().map(|_| v.with(Part::Options));
         part Qualifier = VNode::of_entity_name(v.base, v.entity_name()?.len(), false);
         part TypeArguments = type_arguments(v);
+        ts_hidden Argument = source(v).map(|_| v.with(Part::Argument));
     }
     TSTypePredicate [TypeTag::Predicate] (v) {
         part ParameterName = v.with(Part::Name);

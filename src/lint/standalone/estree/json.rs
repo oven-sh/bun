@@ -90,7 +90,7 @@ impl<'a> Writer<'a, '_> {
                     };
                     *next += 1;
                     let value = (entry.get)(node);
-                    if matches!(value, Value::Undefined) || !entry.is_in(node.dialect()) {
+                    if matches!(value, Value::Undefined) || entry.is_hidden || !entry.is_in(node.dialect()) {
                         continue;
                     }
                     let _ = write!(self.out, ",\"{}\":", entry.field.name());

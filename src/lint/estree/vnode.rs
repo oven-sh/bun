@@ -86,6 +86,9 @@ pub(super) enum Part {
     Operand,
     /// `TypeNode`: the `TSImportType` in the `TSTypeQuery` of `typeof import("m")`.
     ImportType,
+    /// `TypeNode`: the `TSLiteralType` around the module specifier of an import type, which is the
+    /// deprecated `argument`.
+    Argument,
     /// `TypeNode`: the `{ with: { .. } }` of an import type, its one property, the `with` and the
     /// inner braces.
     Options,
@@ -867,6 +870,7 @@ fn type_type(ty: TypeNode, part: Part) -> NodeType {
         Part::Literal => return UnaryExpression,
         Part::Operand => return TSSymbolKeyword,
         Part::ImportType => return TSImportType,
+        Part::Argument => return TSLiteralType,
         Part::Options | Part::OptionsValue => return ObjectExpression,
         Part::OptionsProperty => return Property,
         _ => {}
@@ -955,7 +959,8 @@ impl<'a> VNode<'a> {
         match (self.base, self.part) {
             (Node::File(file), _) => Some(match Dialect::of(file) {
                 Dialect::TypeScript => file.program_span(),
-                Dialect::Espree => file.span(),
+                // ESLint takes a byte order mark off the text.
+                Dialect::Espree => Span::new(if file.has_bom() { 3 } else { 0 }, file.span().end),
             }),
             (_, Part::Decorator(_)) => Some(self.modifier()?.span()),
             (_, Part::Attribute(_)) => Some(self.attribute()?.span()),
@@ -1050,6 +1055,7 @@ impl<'a> VNode<'a> {
                 Part::Name => Some(ty.predicate_param()?.span()),
                 Part::Operand => ty.unique_symbol_keyword_span(),
                 Part::ImportType => ty.import_span(),
+                Part::Argument => ty.import_source_span(),
                 Part::Options => Some(ty.import_attributes()?.options_span()),
                 Part::OptionsValue => Some(ty.import_attributes()?.braces_span()),
                 Part::OptionsProperty => {

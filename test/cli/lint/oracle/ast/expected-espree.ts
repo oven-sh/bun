@@ -10,15 +10,16 @@ import { resolve } from "node:path";
 const [espreePath, inputs, output] = process.argv.slice(2);
 const espree = require(resolve(espreePath));
 
-function normalize(value: any): any {
-  if (Array.isArray(value)) return value.map(normalize);
+// `shift`: what to add to every offset.
+function normalize(value: any, shift: number, key = ""): any {
+  if (Array.isArray(value)) return value.map(it => (key === "range" ? it + shift : normalize(it, shift)));
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "bigint" || value instanceof RegExp) return null;
   if (value === null || typeof value !== "object") return value;
   const result: any = {};
   for (const key of Object.keys(value)) {
     if (key === "loc" || key === "start" || key === "end" || key === "tokens" || key === "comments") continue;
-    if (value[key] !== undefined) result[key] = normalize(value[key]);
+    if (value[key] !== undefined) result[key] = normalize(value[key], shift, key);
   }
   return result;
 }
@@ -34,8 +35,10 @@ for (const line of lines) {
     result = { id, error: "skipped" };
   } else {
     try {
-      const ast = espree.parse(code, { range: true, ecmaVersion: "latest", sourceType, ecmaFeatures: { jsx: true } });
-      result = { id, ast: normalize(ast) };
+      // ESLint takes a byte order mark off the text before it parses.
+      const bom = code.startsWith("\uFEFF") ? 1 : 0;
+      const ast = espree.parse(code.slice(bom), { range: true, ecmaVersion: "latest", sourceType, ecmaFeatures: { jsx: true } });
+      result = { id, ast: normalize(ast, bom) };
     } catch (error: any) {
       rejected++;
       result = { id, error: String(error?.message ?? error) };

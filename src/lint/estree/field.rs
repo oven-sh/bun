@@ -30,6 +30,7 @@ fields! {
     Alternate "alternate",
     Argument "argument",
     Arguments "arguments",
+    Assertions "assertions",
     Asserts "asserts",
     Async "async",
     Attributes "attributes",

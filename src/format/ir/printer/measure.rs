@@ -414,7 +414,7 @@ impl<'d> Printer<'d> {
         measure.line_width += measure.pending_indent + usize::from(measure.pending_space) + width.value() as usize;
         measure.pending_indent = 0;
         // The line break is there in any mode. What counts is what is before it.
-        if width.is_multiline() {
+        if width.is_multiline() && !(width.is_one_string() && measure.must_be_flat) {
             return if measure.line_width > print_width { Fits::No } else { Fits::Yes };
         }
         if measure.line_width > print_width {

@@ -193,20 +193,38 @@ pub(crate) struct TextWidth(u32);
 
 impl TextWidth {
     const MULTILINE: u32 = 1 << 31;
+    const ONE_STRING: u32 = 1 << 30;
+    const FLAGS: u32 = Self::MULTILINE | Self::ONE_STRING;
 
     #[inline]
     pub(crate) const fn single(width: u32) -> Self {
-        Self(width & !Self::MULTILINE)
+        Self(width & !Self::FLAGS)
     }
 
+    /// `width`: up to the first line break. To Prettier the lines are strings with a `literalline`
+    /// between them.
     #[inline]
     pub(crate) const fn multiline(width: u32) -> Self {
-        Self(width | Self::MULTILINE)
+        Self(width & !Self::FLAGS | Self::MULTILINE)
+    }
+
+    /// `width`: of all the lines together. To Prettier it is one string, in which a line break is a
+    /// character without width like another: whether it fits is asked of all of it and of what
+    /// follows it.
+    #[inline]
+    pub(crate) const fn multiline_string(width: u32) -> Self {
+        Self(width & !Self::FLAGS | Self::FLAGS)
     }
 
     #[inline]
     pub(crate) const fn value(self) -> u32 {
-        self.0 & !Self::MULTILINE
+        self.0 & !Self::FLAGS
+    }
+
+    /// See [`TextWidth::multiline_string`].
+    #[inline]
+    pub(crate) const fn is_one_string(self) -> bool {
+        self.0 & Self::ONE_STRING != 0
     }
 
     #[inline]

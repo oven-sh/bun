@@ -1555,8 +1555,8 @@ fn registry_for(
             .get(scope)
             .map(|u| &**u)
             // yarn's builtin default for the `@jsr` scope
-            .or((scope == b"jsr").then_some(b"https://npm.jsr.io".as_slice()))
-            .or(yarnrc.registry.as_deref())
+            .or_else(|| (scope == b"jsr").then_some(b"https://npm.jsr.io".as_slice()))
+            .or_else(|| yarnrc.registry.as_deref())
     } else {
         yarnrc.registry.as_deref()
     };

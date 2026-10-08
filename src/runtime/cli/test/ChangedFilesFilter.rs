@@ -2,9 +2,10 @@
 //!
 //! 1. Ask git for the set of changed files relative to HEAD (uncommitted,
 //!    staged, and untracked) or relative to a user-supplied ref.
-//! 2. Run the bundler over every discovered test file with packages marked
-//!    external so node_modules are not entered. This produces the full parse
-//!    graph (transitive imports) without linking or emitting code.
+//! 2. Run the bundler over every discovered test file. The scan resolves an
+//!    import as the test run does, and does not enter a package that is
+//!    installed under node_modules. This produces the full parse graph
+//!    (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
 //!
@@ -28,6 +29,7 @@ use bun_jsc as jsc;
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_options_types::schema::api;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::{self, platform, resolve_path};
@@ -52,7 +54,7 @@ pub(crate) struct Result<'a> {
     pub(crate) total_tests: usize,
     /// Absolute paths of every local source file that participates in the
     /// module graph (test entry points and everything they transitively
-    /// import, excluding node_modules). Used by `--changed --watch` to watch
+    /// import, excluding installed packages). Used by `--changed --watch` to watch
     /// files that would not otherwise be loaded when a subset of tests runs.
     /// Owned by the caller; each element is individually allocated.
     pub(crate) module_graph_files: Vec<Box<[u8]>>,
@@ -136,8 +138,13 @@ pub(crate) fn filter<'a>(
     // for it. What the scan caches is forgotten before the run starts.
     let directory_cache_mark = vm.transpiler.resolver.directory_cache_mark();
 
+    // The scan must resolve an import to the file that the run loads, so it
+    // takes the run's target and the run's resolver settings. It does not take
+    // `preserve_symlinks`: git names a file by its real path.
+    let mut args = ctx.args.clone();
+    args.target = Some(api::Target::Bun);
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, args, Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -148,10 +155,10 @@ pub(crate) fn filter<'a>(
             }
         },
     );
-    scan_transpiler.options.target = bun_ast::Target::Bun;
-    // Do not follow bare specifiers into node_modules; changes there are not
-    // considered local edits.
-    scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
+    scan_transpiler.options.rewrite_jest_for_tests = vm.transpiler.options.rewrite_jest_for_tests;
+    // The run reads `process.env` when the code runs. A scan that inlines it
+    // drops a `require()` in a branch that is dead now and live in a test.
+    scan_transpiler.options.env.behavior = vm.transpiler.options.env.behavior;
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
     scan_transpiler.options.ignore_module_resolution_errors = true;
@@ -161,9 +168,11 @@ pub(crate) fn filter<'a>(
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.
-    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
-    scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
+    scan_transpiler.resolver.prefer_module_field = vm.transpiler.resolver.prefer_module_field;
+    // A change to an installed package is not a local edit, so the scan does
+    // not enter one. Every other bare specifier names a local file.
+    scan_transpiler.resolver.installed_packages_are_external = true;
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at

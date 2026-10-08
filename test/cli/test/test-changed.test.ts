@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { appendFileSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
 // headroom on slow ASAN/CI machines.
@@ -49,9 +49,10 @@ function initRepo(cwd: string) {
 async function runTestChanged(
   cwd: string,
   extra: string[] = [],
+  flag = "--changed",
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--changed", ...extra],
+    cmd: [bunExe(), "test", flag, ...extra],
     cwd,
     env: gitEnv,
     stdout: "pipe",
@@ -60,6 +61,14 @@ async function runTestChanged(
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+/** A link at `link` to the directory `target`: what `bun install` creates for a
+ *  workspace dependency and for a package of an isolated install. A junction
+ *  on Windows, which needs no privilege. */
+function linkDirectory(target: string, link: string) {
+  mkdirSync(dirname(link), { recursive: true });
+  symlinkSync(target, link, "junction");
 }
 
 /** Which of the given test-file basenames were executed (appear as a file
@@ -394,8 +403,199 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A bare specifier can name a local file. Only a package that is installed
+  // under node_modules is not followed.
   const importsOne = (specifier: string) =>
     `import { test, expect } from "bun:test";\nimport { one } from "${specifier}";\ntest("a", () => expect(one).toBe(1));\n`;
+  const unrelated = `import { test, expect } from "bun:test";\ntest("other", () => expect(1).toBe(1));\n`;
+  test.each([
+    [
+      "package.json imports",
+      {
+        "package.json": JSON.stringify({ name: "p", type: "module", imports: { "#util": "./src/util.ts" } }),
+        "src/util.ts": `export const one = 1;\n`,
+        "a.test.ts": importsOne("#util"),
+      },
+      ["src", "util.ts"],
+      undefined,
+    ],
+    [
+      "the package's own name",
+      {
+        "package.json": JSON.stringify({ name: "self", type: "module", exports: { ".": "./src/util.ts" } }),
+        "src/util.ts": `export const one = 1;\n`,
+        "a.test.ts": importsOne("self"),
+      },
+      ["src", "util.ts"],
+      undefined,
+    ],
+    [
+      "tsconfig baseUrl",
+      {
+        "package.json": JSON.stringify({ name: "p", type: "module" }),
+        "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "." } }),
+        "src/util.ts": `export const one = 1;\n`,
+        "a.test.ts": importsOne("src/util"),
+      },
+      ["src", "util.ts"],
+      undefined,
+    ],
+    [
+      "a workspace package",
+      {
+        "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+        "packages/lib/package.json": JSON.stringify({ name: "lib", type: "module", main: "index.ts" }),
+        "packages/lib/index.ts": `export const one = 1;\n`,
+        "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { lib: "workspace:*" } }),
+        "packages/app/a.test.ts": importsOne("lib"),
+      },
+      ["packages", "lib", "index.ts"],
+      [["packages", "lib"], ["node_modules", "lib"]],
+    ],
+    [
+      // git names the file under the real directory.
+      "a tsconfig paths alias through a linked directory",
+      {
+        "package.json": JSON.stringify({ name: "p", type: "module" }),
+        "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@shared/*": ["./linked/*"] } } }),
+        "shared/util.ts": `export const one = 1;\n`,
+        "a.test.ts": importsOne("@shared/util"),
+      },
+      ["shared", "util.ts"],
+      [["shared"], ["linked"]],
+    ],
+  ] as const)("a change behind a bare specifier selects the importing test (%s)", async (_label, files, edited, link) => {
+    using dir = tempDir("test-changed-bare", {
+      ...files,
+      "other.test.ts": unrelated,
+      ".gitignore": "node_modules\nlinked\n",
+    });
+    if (link) linkDirectory(join(String(dir), ...link[0]), join(String(dir), ...link[1]));
+    initRepo(String(dir));
+    writeFileSync(join(String(dir), ...edited), `export const one = 2;\n`);
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["a.test.ts", "other.test.ts"])).toEqual(["a.test.ts"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/44162
+  test("package.json imports and a workspace package's exports are followed from a package directory", async () => {
+    const testFile = (name: string, specifier: string, fn: string, value: number) =>
+      `import { expect, test } from "bun:test";\nimport { ${fn} } from "${specifier}";\ntest("${name}", () => expect(${fn}()).toBe(${value}));\n`;
+    using dir = tempDir("test-changed-44162", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      ".gitignore": "node_modules\n",
+      "packages/lib/package.json": JSON.stringify({
+        name: "@repro/lib",
+        type: "module",
+        exports: { "./*": "./src/*.ts" },
+      }),
+      "packages/lib/src/lib.ts": `export const lib = () => 1;\n`,
+      "packages/app/package.json": JSON.stringify({
+        name: "@repro/app",
+        type: "module",
+        imports: { "#src/*": "./src/*" },
+        dependencies: { "@repro/lib": "workspace:*" },
+      }),
+      "packages/app/src/own.ts": `export const own = () => 2;\n`,
+      "packages/app/src/relative.test.ts": testFile("relative import", "./own.ts", "own", 2),
+      "packages/app/src/subpath.test.ts": testFile("package.json imports", "#src/own.ts", "own", 2),
+      "packages/app/src/workspace.test.ts": testFile("workspace package", "@repro/lib/lib", "lib", 1),
+    });
+    const app = join(String(dir), "packages", "app");
+    // The isolated linker puts the link in the dependent package.
+    linkDirectory(join(String(dir), "packages", "lib"), join(app, "node_modules", "@repro", "lib"));
+    initRepo(String(dir));
+    const testNames = ["relative.test.ts", "subpath.test.ts", "workspace.test.ts"];
+
+    appendFileSync(join(app, "src", "own.ts"), "// change\n");
+    {
+      const { stderr, exitCode } = await runTestChanged(app);
+      expect(ranFiles(stderr, testNames)).toEqual(["relative.test.ts", "subpath.test.ts"]);
+      expect(exitCode).toBe(0);
+    }
+
+    git(String(dir), "checkout", "-q", "--", "packages/app/src/own.ts");
+    appendFileSync(join(String(dir), "packages", "lib", "src", "lib.ts"), "// change\n");
+    {
+      const { stderr, exitCode } = await runTestChanged(app);
+      expect(ranFiles(stderr, testNames)).toEqual(["workspace.test.ts"]);
+      expect(exitCode).toBe(0);
+    }
+
+    git(String(dir), "commit", "-q", "-a", "-m", "change lib");
+    {
+      const { stderr, exitCode } = await runTestChanged(app, [], "--changed=HEAD~1");
+      expect(ranFiles(stderr, testNames)).toEqual(["workspace.test.ts"]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // The scan must follow an import to the file that the run loads.
+  test("an import resolves to the file that the test run loads", async () => {
+    using dir = tempDir("test-changed-like-the-run", {
+      "package.json": JSON.stringify({ name: "root", private: true, type: "module", workspaces: ["packages/*"] }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { vitest: ["./vitest-shim.ts"] } } }),
+      ".gitignore": "node_modules\n",
+      // The "bun" condition, not "browser" and not "default".
+      "packages/lib/package.json": JSON.stringify({
+        name: "lib",
+        type: "module",
+        exports: { ".": { bun: "./bun.ts", browser: "./browser.ts", default: "./default.ts" } },
+      }),
+      "packages/lib/bun.ts": `export const one = 1;\n`,
+      "packages/lib/browser.ts": `export const one = 2;\n`,
+      "packages/lib/default.ts": `export const one = 3;\n`,
+      // "main", not "browser".
+      "shim/package.json": JSON.stringify({ name: "shim", type: "module", main: "./main.js", browser: "./browser.js" }),
+      "shim/main.js": `export const one = 1;\n`,
+      "shim/browser.js": `export const one = 2;\n`,
+      // "main", not "module".
+      "dual/package.json": JSON.stringify({ name: "dual", type: "module", main: "./main.js", module: "./module.js" }),
+      "dual/main.js": `export const one = 1;\n`,
+      "dual/module.js": `export const one = 2;\n`,
+      // `bun test` turns "vitest" into "bun:test" before it looks at an alias.
+      "vitest-shim.ts": `throw new Error("the test run does not load this file");\n`,
+      // `process.env` is read when the code runs, so this branch is live in the test.
+      "env.cjs": `module.exports.load = () => {\n  if (process.env.NODE_ENV === "production") return require("./production.cjs").one;\n  return 0;\n};\n`,
+      "production.cjs": `module.exports.one = 1;\n`,
+      "exports.test.ts": importsOne("lib"),
+      "browser.test.ts": importsOne("./shim"),
+      "module.test.ts": importsOne("./dual"),
+      "vitest.test.ts": `import { test, expect } from "vitest";\ntest("a", () => expect(1).toBe(1));\n`,
+      "env.test.ts": `import { test, expect } from "bun:test";\nimport { load } from "./env.cjs";\ntest("a", () => {\n  process.env.NODE_ENV = "production";\n  expect(load()).toBe(1);\n});\n`,
+    });
+    linkDirectory(join(String(dir), "packages", "lib"), join(String(dir), "node_modules", "lib"));
+    initRepo(String(dir));
+    const testNames = ["browser.test.ts", "env.test.ts", "exports.test.ts", "module.test.ts", "vitest.test.ts"];
+    const touch = (...files: string[]) => {
+      for (const file of files) appendFileSync(join(String(dir), file), "// touched\n");
+    };
+
+    touch("packages/lib/browser.ts", "packages/lib/default.ts", "shim/browser.js", "dual/module.js", "vitest-shim.ts");
+    {
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, testNames)).toEqual([]);
+      expect(stderr).toContain("5 changed files, but no test files are affected");
+      expect(exitCode).toBe(0);
+    }
+
+    git(String(dir), "checkout", "-q", "--", ".");
+    touch("packages/lib/bun.ts", "shim/main.js", "dual/main.js", "production.cjs");
+    {
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      // Each test passes only with the value of the file that was edited.
+      expect(ranFiles(stderr, testNames)).toEqual([
+        "browser.test.ts",
+        "env.test.ts",
+        "exports.test.ts",
+        "module.test.ts",
+      ]);
+      expect(stderr).toContain(" 4 pass");
+      expect(exitCode).toBe(0);
+    }
+  });
 
   // The scan looks for a file before a preload creates it. The run must not
   // inherit that answer.
@@ -415,6 +615,93 @@ describe.concurrent("bun test --changed", () => {
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(ranFiles(stderr, testNames)).toEqual(testNames);
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an installed package is not followed, however it is imported", async () => {
+    const installed = (directory: string, name: string) => ({
+      [`${directory}/package.json`]: JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
+      [`${directory}/index.js`]: `module.exports = { one: 1 };\n`,
+    });
+    const store = "node_modules/.bun/linked@1.0.0/node_modules/linked";
+    // node_modules is committed here, so git reports a change in it.
+    using dir = tempDir("test-changed-installed", {
+      "package.json": JSON.stringify({
+        name: "p",
+        type: "module",
+        imports: { "#util": "./src/util.ts", "#dep": "dep" },
+      }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "." } }),
+      "src/util.ts": `export const one = 1;\n`,
+      // A hoisted install is a directory.
+      ...installed("node_modules/dep", "dep"),
+      // An isolated install is a link into a store that is under node_modules too.
+      ...installed(store, "linked"),
+      // A file in node_modules itself.
+      "node_modules/single.js": `module.exports = { one: 1 };\n`,
+      "local.test.ts": importsOne("#util"),
+      "plain.test.ts": importsOne("dep"),
+      "alias.test.ts": importsOne("#dep"),
+      "linked.test.ts": importsOne("linked"),
+      "single.test.ts": importsOne("single"),
+      // The script of a page resolves for the browser, in a transpiler of its own.
+      "page.html": `<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n`,
+      "client.ts": `import { one } from "dep";\nconsole.log(one);\n`,
+      "page.test.ts": `import { test, expect } from "bun:test";\nimport page from "./page.html";\ntest("a", () => expect(page).toBeDefined());\n`,
+    });
+    linkDirectory(join(String(dir), store), join(String(dir), "node_modules", "linked"));
+    initRepo(String(dir));
+    const testNames = [
+      "alias.test.ts",
+      "linked.test.ts",
+      "local.test.ts",
+      "page.test.ts",
+      "plain.test.ts",
+      "single.test.ts",
+    ];
+
+    writeFileSync(join(String(dir), "src", "util.ts"), `export const one = 2;\n`);
+    {
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, testNames)).toEqual(["local.test.ts"]);
+      expect(exitCode).toBe(1);
+    }
+
+    git(String(dir), "checkout", "-q", "--", ".");
+    appendFileSync(join(String(dir), "node_modules", "dep", "index.js"), "// touched\n");
+    appendFileSync(join(String(dir), store, "index.js"), "// touched\n");
+    appendFileSync(join(String(dir), "node_modules", "single.js"), "// touched\n");
+    {
+      const { stderr, exitCode } = await runTestChanged(String(dir));
+      expect(ranFiles(stderr, testNames)).toEqual([]);
+      expect(stderr).toContain("3 changed files, but no test files are affected");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // git names a file by its real path, so the scan resolves to the real path
+  // also when the run keeps the path of the link.
+  test("--preserve-symlinks: a change behind a link selects the importing test", async () => {
+    using dir = tempDir("test-changed-preserve-symlinks", {
+      "package.json": JSON.stringify({ name: "root", private: true, type: "module", workspaces: ["packages/*"] }),
+      ".gitignore": "node_modules\nlinked\n",
+      "shared/x.ts": `export const one = 1;\n`,
+      "packages/lib/package.json": JSON.stringify({ name: "lib", type: "module", main: "index.ts" }),
+      "packages/lib/index.ts": `export const one = 1;\n`,
+      "directory.test.ts": importsOne("./linked/x"),
+      "package.test.ts": importsOne("lib"),
+      "other.test.ts": unrelated,
+    });
+    linkDirectory(join(String(dir), "shared"), join(String(dir), "linked"));
+    linkDirectory(join(String(dir), "packages", "lib"), join(String(dir), "node_modules", "lib"));
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared", "x.ts"), "// touched\n");
+    appendFileSync(join(String(dir), "packages", "lib", "index.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), ["--preserve-symlinks"]);
+    const testNames = ["directory.test.ts", "other.test.ts", "package.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["directory.test.ts", "package.test.ts"]);
     expect(stderr).toContain(" 2 pass");
     expect(exitCode).toBe(0);
   });
@@ -485,6 +772,54 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     proc.kill();
     reader.releaseLock();
   }, 60_000);
+
+  // A file behind a bare specifier is part of the module graph, so the
+  // watcher is seeded with it.
+  test("editing a workspace package file reruns only the test that imports it", async () => {
+    using dir = tempDir("test-changed-watch-workspace", {
+      "package.json": JSON.stringify({ name: "root", private: true, type: "module", workspaces: ["packages/*"] }),
+      ".gitignore": "node_modules\n",
+      "packages/lib/package.json": JSON.stringify({ name: "lib", type: "module", main: "index.ts" }),
+      "packages/lib/index.ts": `export const A = 1;\n`,
+      "dep-b.ts": `export const B = 2;\n`,
+      "wa.test.ts": `import { test, expect } from "bun:test";\nimport { A } from "lib";\ntest("wa", () => expect(A).toBe(1));\n`,
+      "wb.test.ts": `import { test, expect } from "bun:test";\nimport { B } from "./dep-b";\ntest("wb", () => expect(B).toBe(2));\n`,
+    });
+    linkDirectory(join(String(dir), "packages", "lib"), join(String(dir), "node_modules", "lib"));
+    initRepo(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    await waitFor("no changed files");
+    await waitFor("Ran 0 tests");
+
+    const before = buf.length;
+    appendFileSync(join(String(dir), "packages", "lib", "index.ts"), "// touched\n");
+    await waitFor("Ran 1 test across 1 file", before);
+    expect(ranFiles(buf.slice(before), ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
+
+    proc.kill();
+    reader.releaseLock();
+  });
 
   // Regression for: with two uncommitted test files, editing one of them
   // during --changed --watch should only re-run that one, not both.

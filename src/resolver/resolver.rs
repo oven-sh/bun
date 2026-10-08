@@ -573,6 +573,11 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+    /// `bun test --changed`: a bare specifier that names a package installed
+    /// under `node_modules` is external, and the package is not read. A link
+    /// whose real path is outside `node_modules` (a workspace package) is not
+    /// an installed package.
+    pub installed_packages_are_external: bool,
 }
 
 /// [`Resolver::directory_cache_mark`].
@@ -657,6 +662,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            installed_packages_are_external: from.installed_packages_are_external,
         }
     }
 
@@ -943,6 +949,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            installed_packages_are_external: false,
         }
     }
 
@@ -996,6 +1003,49 @@ impl<'a> Resolver<'a> {
             return MatchStatus::NotFound;
         }
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
+    }
+
+    /// `out` for a package path that stays as it is written. The path is
+    /// empty: the caller of `load_node_modules` names it (`name_external`).
+    fn external_match(out: &mut MatchResult) -> MatchStatus {
+        *out = MatchResult {
+            is_external: true,
+            ..Default::default()
+        };
+        MatchStatus::Success
+    }
+
+    /// An external match that `load_node_modules` left without a path is the
+    /// specifier as the caller holds it.
+    fn name_external(out: &mut MatchResult, import_path: &'static [u8]) {
+        if out.is_external && out.path_pair.primary.text.is_empty() {
+            out.path_pair.primary = Fs::Path::init(import_path);
+        }
+    }
+
+    /// `installed_packages_are_external`: the `<dir>/node_modules/<package_name>`
+    /// entry, read from the listing of the directory that holds it, so the
+    /// package is not opened. `None`: there is no such entry. `Some(false)`: a
+    /// link whose real path is outside `node_modules`.
+    #[cold]
+    #[inline(never)]
+    fn is_node_modules_entry_installed(&mut self, dir: &[u8], package_name: &[u8]) -> Option<bool> {
+        // `@scope/name` is the entry `name` of `node_modules/@scope`.
+        let (scope, base) = match strings::last_index_of_char(package_name, b'/') {
+            Some(slash) => (&package_name[..slash], &package_name[slash + 1..]),
+            None => (&b""[..], package_name),
+        };
+        let parts: [&[u8]; 3] = [dir, b"node_modules", scope];
+        let listing_path = self.fs_ref().abs_buf_checked(
+            &parts[..if scope.is_empty() { 2 } else { 3 }],
+            bufs!(node_modules_check),
+        )?;
+        let listing = self.dir_info_cached(listing_path).ok().flatten()?;
+        let lookup = listing.get_entry(self.generation, base)?;
+        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
+        let real_path = unsafe { lookup.entry().symlink(self.rfs_ptr(), self.store_fd) };
+        Some(real_path.is_empty() || strings::contains(real_path, bun_paths::NODE_MODULES_NEEDLE))
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
@@ -2266,6 +2316,7 @@ impl<'a> Resolver<'a> {
                                 )
                                 .is_success()
                             {
+                                Self::name_external(&mut node_module, import_path);
                                 let mut pair = node_module.path_pair;
                                 pair.primary.is_disabled = true;
                                 if let Some(sec) = pair.secondary.as_mut() {
@@ -2629,6 +2680,24 @@ impl<'a> Resolver<'a> {
                         break 'node_modules;
                     }
                     any_node_modules_folder = true;
+
+                    let skips_installed_packages = self.installed_packages_are_external
+                        && !is_self_reference
+                        && !kind.is_entry_point();
+                    let package_name: &[u8] = match esm_.as_ref() {
+                        Some(esm) => esm.name,
+                        None => import_path,
+                    };
+                    if skips_installed_packages
+                        && self.is_node_modules_entry_installed(dir_info.abs_path, package_name)
+                            == Some(true)
+                    {
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return Self::external_match(out);
+                    }
+
                     let abs_path: &[u8] = if is_self_reference {
                         dir_info.abs_path
                     } else {
@@ -2825,6 +2894,15 @@ impl<'a> Resolver<'a> {
                         self.extension_order = prev_extension_order;
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
+                        }
+                        // No `node_modules/<name>` entry: the probe found a file that
+                        // lives in `node_modules` itself.
+                        if skips_installed_packages
+                            && self
+                                .is_node_modules_entry_installed(dir_info.abs_path, package_name)
+                                .is_none()
+                        {
+                            return Self::external_match(out);
                         }
                         return MatchStatus::Success;
                     }
@@ -4001,13 +4079,24 @@ impl<'a> Resolver<'a> {
         // NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
         source_dir_info: DirInfoRef,
-        import_path: &[u8],
+        import_path: &'static [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
         out: &mut MatchResult,
     ) -> MatchStatus {
         if is_package_path(import_path) {
-            self.load_node_modules(import_path, kind, source_dir_info, global_cache, false, out)
+            let status = self.load_node_modules(
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                false,
+                out,
+            );
+            if self.installed_packages_are_external && status.is_success() {
+                Self::name_external(out, import_path);
+            }
+            status
         } else {
             let Some(resolved) = self.fs_ref().abs_buf_checked(
                 &[source_dir_info.abs_path, import_path],
@@ -5069,7 +5158,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            return self.load_node_modules(
+            let status = self.load_node_modules(
                 &esm_resolution.path,
                 kind,
                 dir_info,
@@ -5077,6 +5166,17 @@ impl<'a> Resolver<'a> {
                 true,
                 out,
             );
+            if status.is_success() && out.is_external && out.path_pair.primary.text.is_empty() {
+                let Ok(package_path) = self
+                    .fs_ref()
+                    .dirname_store
+                    .append_slice(&esm_resolution.path)
+                else {
+                    return MatchStatus::NotFound;
+                };
+                out.path_pair.primary = Fs::Path::init(package_path);
+            }
+            return status;
         }
 
         self.handle_esm_resolution(

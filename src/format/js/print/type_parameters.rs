@@ -1,7 +1,7 @@
 //! `<T, U>`: type parameters and type arguments.
 
 use crate::js::format::{format_node, identifier};
-use crate::js::utils::call_expression::is_test_call_expression;
+use crate::js::utils::call_expression::is_test_call_expression_in_flavor;
 use crate::js::utils::typescript::{is_object_like_type, is_simple_type, should_hug_type};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -97,7 +97,7 @@ impl<'a> FormatTSTypeParameters<'a> {
             group(&format_args!(
                 "<",
                 format_with(|f| {
-                    if matches!(node.parent().parent(), AstNodes::CallExpression(call) if is_test_call_expression(call)) {
+                    if matches!(node.parent().parent(), AstNodes::CallExpression(call) if is_test_call_expression_in_flavor(call, f)) {
                         f.join_nodes_with_space().entries_with_trailing_separator(
                             params.iter(),
                             ",",

@@ -11,6 +11,7 @@
 //! typescript-estree's for TypeScript. [`Walk`] says what their nodes are in terms of the handles:
 //! only where they start and end, what is in them, and in which order Prettier visits that.
 
+use crate::js::print::binary_like_expression::should_flatten;
 use crate::js::utils::typescript::without_lone_operator;
 use crate::ir::element::{CursorMark, FormatElement};
 use crate::ir::formatter::Formatter;
@@ -52,6 +53,8 @@ enum Kind<'a> {
     UnmarkedLeaf,
     /// Text in the JSX element that starts there.
     JsxText(u32),
+    /// The name of a property or a member, which is a leaf.
+    Name,
     /// Its only child is a leaf.
     LeafIn(Span),
     /// Its children are two leaves.
@@ -64,6 +67,9 @@ enum Kind<'a> {
     Parenthesized(Expr<'a>, usize),
     /// The `LogicalExpression` of the left side and so many of the operands in the right side.
     Logical(Expr<'a>, usize),
+    /// The left side of a binary expression that is written as one list of operands with it.
+    /// Prettier does not print it as a node of its own, so that it does not learn where it ends up.
+    FlattenedOperand(Expr<'a>),
     /// `x!!`: the `TSNonNullExpression` that has so many others in it.
     NonNull(Expr<'a>, usize),
     /// With its `export`.
@@ -285,7 +291,7 @@ impl<'a> Walk<'a> {
     /// What is in the `LogicalExpression` of the left side of `e` and the first `count` of
     /// `operands`.
     fn logical_parts(&self, e: Expr<'a>, operands: &[Expr<'a>], count: usize, out: &mut Vec<Item<'a>>) {
-        let (ExprKind::Binary { left, .. }, Some(&last)) = (e.kind(), operands.get(count.wrapping_sub(1))) else {
+        let (ExprKind::Binary { op, left, .. }, Some(&last)) = (e.kind(), operands.get(count.wrapping_sub(1))) else {
             return;
         };
         out.push(match operands.get(count.wrapping_sub(2)) {
@@ -293,9 +299,23 @@ impl<'a> Walk<'a> {
                 span: Span::new(left.span().start, before_last.span().end),
                 kind: Kind::Logical(e, count - 1),
             },
-            None => self.expr(left),
+            None => self.left_operand(op, left),
         });
         out.push(self.expr(last));
+    }
+
+    /// `left`, which is the left side of a binary expression with the operator `op`.
+    fn left_operand(&self, op: BinOp, left: Expr<'a>) -> Item<'a> {
+        let item = self.expr(left);
+        match (item.kind, left.kind()) {
+            (Kind::Expr(_), ExprKind::Binary { op: left_op, .. }) if left_op != BinOp::Comma && should_flatten(op, left_op) => {
+                Item {
+                    span: item.span,
+                    kind: Kind::FlattenedOperand(left),
+                }
+            }
+            _ => item,
+        }
     }
 
     fn ty(&self, ty: TypeNode<'a>) -> Item<'a> {
@@ -365,7 +385,10 @@ impl<'a> Walk<'a> {
             KeyKind::Computed(e) => self.expr(e),
             KeyKind::Private(_) => self.private_name(span),
             _ if key.is_jsx() => self.jsx_name(span),
-            _ => leaf(span),
+            _ => Item {
+                span,
+                kind: Kind::Name,
+            },
         }
     }
 
@@ -668,7 +691,7 @@ impl<'a> Walk<'a> {
                 }
                 let operands = e.sequence();
                 match (operands.len(), e.kind()) {
-                    (1, ExprKind::Binary { left, right, .. }) => out.extend([self.expr(left), self.expr(right)]),
+                    (1, ExprKind::Binary { op, left, right }) => out.extend([self.left_operand(op, left), self.expr(right)]),
                     _ => out.extend(operands.iter().map(|&it| self.expr(it))),
                 }
             }
@@ -968,7 +991,7 @@ impl<'a> Walk<'a> {
     /// Appends the children of `item` to `out`, in the order of Prettier's visitor keys.
     fn children(&self, item: Item<'a>, out: &mut Vec<Item<'a>>) {
         match item.kind {
-            Kind::Leaf | Kind::UnmarkedLeaf | Kind::JsxText(_) => {}
+            Kind::Leaf | Kind::UnmarkedLeaf | Kind::JsxText(_) | Kind::Name => {}
             Kind::LeafIn(span) => out.push(leaf(span)),
             // Of a name that stands for two, the first is printed.
             Kind::Leaves(first, second) if first == second => out.extend([leaf(first), unmarked_leaf(second)]),
@@ -978,7 +1001,7 @@ impl<'a> Walk<'a> {
                 span: item.span,
                 kind: Kind::ChainElement(e),
             }),
-            Kind::Expr(e) | Kind::ChainElement(e) => self.expression_parts(e, out),
+            Kind::Expr(e) | Kind::ChainElement(e) | Kind::FlattenedOperand(e) => self.expression_parts(e, out),
             Kind::Parenthesized(e, depth) => out.push(match self.kept_parentheses(e).get(depth) {
                 Some(&span) => Item {
                     span,
@@ -1270,7 +1293,8 @@ impl CursorRegion {
         let marked = |item: Option<Item<'a>>| match item {
             None
             | Some(Item {
-                kind: Kind::UnmarkedLeaf | Kind::JsxText(_),
+                // The left side of a rebalanced expression has its operator.
+                kind: Kind::UnmarkedLeaf | Kind::JsxText(_) | Kind::FlattenedOperand(_) | Kind::Logical(..),
                 ..
             }) => Extent::NOWHERE,
             Some(Item { span, kind }) => Extent {
@@ -1580,8 +1604,16 @@ struct Offset {
 /// The end of Prettier's `coreFormat`: where the cursor is in `formatted`, in UTF-16 code units.
 ///
 /// `offset`: where it is in `source`. `marks`: where the start and the end of `region` are in
-/// `formatted`, if the printer came by both.
-fn resolve(source: &[u8], offset: Offset, region: Region, formatted: &[u8], marks: Option<(u32, u32)>) -> usize {
+/// `formatted`, if the printer came by both. `names`: whether the node that `region` starts with, and
+/// the one that it ends with, is the name of a property.
+fn resolve(
+    source: &[u8],
+    offset: Offset,
+    region: Region,
+    names: (bool, bool),
+    formatted: &[u8],
+    marks: Option<(u32, u32)>,
+) -> usize {
     let whole = (Span::new(0, source.len() as u32), Span::new(0, formatted.len() as u32));
     let (old_span, new_span) = match marks {
         // An empty text counts as none.
@@ -1596,6 +1628,18 @@ fn resolve(source: &[u8], offset: Offset, region: Region, formatted: &[u8], mark
         }
         _ => whole,
     };
+    // Prettier does not print the name of a property as a node if it adds or removes its quotes, so
+    // that it does not learn where it ends up.
+    let is_quote = |text: &[u8], at: Option<u32>| matches!(at.and_then(|at| text.get(at as usize)), Some(b'"' | b'\''));
+    let has_other_quotes = |old: Option<u32>, new: Option<u32>| is_quote(source, old) != is_quote(formatted, new);
+    let is_name_with_other_quotes = match region {
+        Region::Node(_) => names.0 && has_other_quotes(Some(old_span.start), Some(new_span.start)),
+        Region::Between { .. } => {
+            (names.0 && has_other_quotes(old_span.start.checked_sub(1), new_span.start.checked_sub(1)))
+                || (names.1 && has_other_quotes(Some(old_span.end), Some(new_span.end)))
+        }
+    };
+    let (old_span, new_span) = if is_name_with_other_quotes { whole } else { (old_span, new_span) };
     let old_text = source.get(old_span.start as usize..old_span.end as usize).unwrap_or_default();
     let new_text = formatted.get(new_span.start as usize..new_span.end as usize).unwrap_or_default();
     let new_start = count_units(formatted.get(..new_span.start as usize).unwrap_or_default());
@@ -1703,7 +1747,9 @@ pub(crate) fn format_with<'a>(
         return Ok(None);
     };
     let formatted = out.get(start..).unwrap_or_default();
-    Ok(Some(resolve(source, offset, locate(file, offset.bytes), formatted, first.zip(second)) as u32))
+    let is_name = |item: Option<Item<'a>>| matches!(item, Some(Item { kind: Kind::Name, .. }));
+    let names = items.map_or((false, false), |(first, second, _)| (is_name(first), is_name(second)));
+    Ok(Some(resolve(source, offset, locate(file, offset.bytes), names, formatted, first.zip(second)) as u32))
 }
 
 /// Where the cursor, which is at `options.cursor_offset` in `source`, is in `formatted`, which is what
@@ -1715,5 +1761,5 @@ pub fn cursor_in_formatted_text(source: &[u8], options: &FormatOptions, formatte
         before: None,
         after: None,
     };
-    Some(resolve(source, offset, everything, formatted, None) as u32)
+    Some(resolve(source, offset, everything, (false, false), formatted, None) as u32)
 }

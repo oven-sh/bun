@@ -112,7 +112,7 @@ impl AsymmetricMatcherConstructorType {
 }
 
 /// note: keep this struct in sync with C++ implementation (at bindings.cpp)
-// Bit layout: promise (bits 0..2), not (bit 2), asymmetric_matcher_constructor_type (bits 3..8).
+// Bit layout: promise (bits 0..2), not (bit 2), asymmetric_matcher_constructor_type (bits 3..7), soft (bit 7).
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Flags(pub(crate) u8);
@@ -123,7 +123,9 @@ const _: () = assert!(core::mem::size_of::<Flags>() == core::mem::size_of::<Flag
 impl Flags {
     const PROMISE_MASK: u8 = 0b0000_0011;
     const NOT_MASK: u8 = 0b0000_0100;
+    const AMCT_MASK: u8 = 0b0111_1000;
     const AMCT_SHIFT: u8 = 3;
+    const SOFT_MASK: u8 = 0b1000_0000;
 
     #[inline]
     pub(crate) fn promise(self) -> Promise {
@@ -151,10 +153,10 @@ impl Flags {
     }
     #[inline]
     pub(crate) fn asymmetric_matcher_constructor_type(self) -> AsymmetricMatcherConstructorType {
-        // Values 10..=31 are representable in the packed bits but are not
+        // Values 10..=15 are representable in the packed bits but are not
         // valid discriminants, and `Flags` arrives from C++ via `from_bitset`, so
         // a checked match is required (transmute would be UB).
-        match self.0 >> Self::AMCT_SHIFT {
+        match (self.0 & Self::AMCT_MASK) >> Self::AMCT_SHIFT {
             0 => AsymmetricMatcherConstructorType::None,
             1 => AsymmetricMatcherConstructorType::Symbol,
             2 => AsymmetricMatcherConstructorType::String,
@@ -170,7 +172,17 @@ impl Flags {
     }
     #[inline]
     pub(crate) fn set_asymmetric_matcher_constructor_type(&mut self, t: AsymmetricMatcherConstructorType) {
-        self.0 = (self.0 & 0b0000_0111) | ((t as u8) << Self::AMCT_SHIFT);
+        self.0 = (self.0 & !Self::AMCT_MASK) | ((t as u8) << Self::AMCT_SHIFT);
+    }
+    /// `expect.soft()`
+    #[inline]
+    pub(crate) fn soft(self) -> bool {
+        (self.0 & Self::SOFT_MASK) != 0
+    }
+    /// Whether a matcher only has to be called: at most `.not` modifies it.
+    #[inline]
+    pub(crate) fn is_plain(self) -> bool {
+        (self.0 & (Self::PROMISE_MASK | Self::SOFT_MASK)) == 0
     }
 
     #[inline]
@@ -721,6 +733,21 @@ impl Expect {
             // SAFETY: `expect_ptr` is the live `m_ctx` payload of the just-created
             // wrapper, kept alive by `expect_js_value.ensure_still_alive()` above.
             unsafe { (*expect_ptr).post_match(global_this) };
+        }
+        Ok(expect_js_value)
+    }
+
+    /// `expect.soft()`, of whichever `expect` it is called on.
+    pub(crate) fn soft(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let expect_fn = callframe.this();
+        let expect_js_value = if expect_fn.is_callable() {
+            expect_fn.call(global_this, JSValue::UNDEFINED, callframe.arguments())?
+        } else {
+            Self::call(global_this, callframe)?
+        };
+        if let Some(expect_ptr) = Self::from_js(expect_js_value) {
+            // SAFETY: `expect_js_value` is on the stack and owns the payload.
+            unsafe { &*expect_ptr }.update_flags(|f| f.0 |= Flags::SOFT_MASK);
         }
         Ok(expect_js_value)
     }

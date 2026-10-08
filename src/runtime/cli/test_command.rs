@@ -2855,7 +2855,7 @@ impl TestCommand {
         let rejected = jsc::JSPromise::rejected_promise(
             global,
             global.create_error_instance(format_args!(
-                "{what} of {} never settled\nnote: {}",
+                "{what} never settled in {}\nnote: {}",
                 bun_fmt::quote(file_path),
                 TopLevelWaitError::NothingLeft,
             )),
@@ -3064,6 +3064,7 @@ impl TestCommand {
                     }
 
                     crate::test_runner::vi_utils::on_test_file_end(vm.global());
+                    crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
                     environment.teardown(vm);
                     return Ok(());
                 }
@@ -3153,6 +3154,7 @@ impl TestCommand {
                 vm.auto_killer.clear();
                 vm.auto_killer.disable();
                 crate::test_runner::vi_utils::on_test_file_end(vm.global());
+                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
 
             repeat_index += 1;

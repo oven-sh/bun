@@ -292,6 +292,10 @@ export default [
         fn: "doUnreachable",
         length: 1,
       },
+      soft: {
+        fn: "soft",
+        length: 1,
+      },
     },
     proto: {
       pass: {

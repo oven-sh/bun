@@ -1174,6 +1174,22 @@ describe.concurrent("hooks", () => {
 });
 
 describe.concurrent("behaviour follows the function", () => {
+  test(`no context is made for the tests of "bun:test", and no signal for a test of "vitest" that does not read it`, async () => {
+    const file = (module: string) => `
+      import { test, beforeEach, afterEach } from "${module}";
+      import { heapStats } from "bun:jsc";
+      beforeEach(() => {});
+      afterEach(() => {});
+      for (let i = 0; i < 10; i++) test("test " + i, () => {});
+      test("count", () => {
+        const { TestContext = 0, AbortSignal = 0 } = heapStats().objectTypeCounts;
+        console.log("${module}", TestContext > 0, AbortSignal);
+      });
+    `;
+    const { log, exitCode } = await runTests({ "a.test.js": file("bun:test"), "b.test.js": file("vitest") });
+    expect({ log, exitCode }).toEqual({ log: ["bun:test false 0", "vitest true 0"], exitCode: 0 });
+  });
+
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `

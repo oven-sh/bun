@@ -185,7 +185,7 @@ impl TestFixtures {
     }
 
     /// `test.extend(fixtures)`, `test.extend(name, value)`, `test.extend(name, options, value)`: a new set.
-    /// `test.override(...)`, with `override_in`: changes `parent` for that scope, or for good at the top level.
+    /// `test.override(...)`: changes `parent` for `active_scope`, or for the whole file at the top level.
     pub(crate) fn define(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -202,7 +202,7 @@ impl TestFixtures {
         }
         let mut definitions = parent_fixtures.map_or_else(Vec::new, |parent| parent.definitions.get().clone());
         let mut registrations = match parent_fixtures {
-            Some(parent) if is_override => parent.registrations_in(Some(active_scope.cast_mut())),
+            Some(parent) if is_override => parent.registrations_in(Some(active_scope.cast_mut()).filter(|scope| !scope.is_null())),
             Some(parent) => parent.registrations.get().clone(),
             None => Vec::new(),
         };

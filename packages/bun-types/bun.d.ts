@@ -6281,6 +6281,7 @@ declare module "bun" {
     | "tsx"
     | "json"
     | "jsonc"
+    | "json5"
     | "toml"
     | "yaml"
     | "xml"
@@ -6288,6 +6289,7 @@ declare module "bun" {
     | "napi"
     | "wasm"
     | "text"
+    | "md"
     | "css"
     | "html";
 

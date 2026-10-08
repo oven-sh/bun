@@ -229,6 +229,8 @@ The callback receives the matching module's _path_, its _namespace_, the default
 
 The callback can return a new `contents` string for the module as well as a new `loader`.
 
+At runtime, `contents` (a string, or bytes of UTF-8) is loaded like a file of that type: CommonJS stays CommonJS, and `"json"` gives `import` and `require()` what a `.json` file gives them. `loader` can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`, `"xml"`, `"text"`, `"md"` or `"css"`. Without one, the `type` the module is imported with decides, then its file extension.
+
 To decline a module, return `undefined` (or a promise of it). The next matching `onLoad()` callback runs, and when they all decline Bun loads the module as if no plugin had matched it.
 
 For example:

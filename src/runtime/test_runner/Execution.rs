@@ -203,9 +203,9 @@ impl ExecutionSequence {
         }
     }
 
-    /// Whether the active entry, whose callback is done, has to wait for matchers. They cannot save a test that has failed.
+    /// Whether the active entry, whose callback is done, has to wait for matchers. One that an error has ended does not.
     fn waits_for_matchers(&mut self) -> bool {
-        self.callback_done = self.pending_matchers > 0 && !self.result.is_fail();
+        self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
         self.callback_done
     }
 

@@ -455,7 +455,8 @@ test("responds", async ({ url }) => {
 });
 ```
 
-- A fixture is only set up for the tests and `beforeEach` / `afterEach` hooks that destructure it, so the first parameter has to be an object destructuring pattern. A fixture names the fixtures it depends on in the same way.
+- A fixture is only set up for the tests that destructure it, so the first parameter has to be an object destructuring pattern. A fixture names the fixtures it depends on in the same way.
+- `test.beforeEach()` and `test.afterEach()` of the extended `test` receive fixtures like a test does. `beforeEach` and `afterEach` imported from `"bun:test"` do not: their parameter is a `done` callback.
 - Fixtures are torn down in reverse order, after the `afterEach` hooks.
 - A value that is not a function is passed as it is.
 - `test.extend()` can be called on an extended `test`. A fixture that replaces one of the same name can destructure the one it replaces.
@@ -498,6 +499,36 @@ Under `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest
 | `beforeAll` in a scope with only skipped tests            | runs                                   | does not run                                                       |
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed` and `assertType`. A file that imports from `"vitest"`, or uses the `vi` global, gets the other globals (`test`, `describe`, `beforeEach`, ...) from `"vitest"` too.
+
+## Promises
+
+`.resolves` and `.rejects` apply the matcher to what a promise settles with. They also accept a thenable, or a function that returns a promise. The matcher returns a promise, so `await` it:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("promises", async () => {
+  await expect(Promise.resolve(42)).resolves.toBe(42);
+  await expect(fetchUser("invalid-id")).rejects.toThrow("User not found");
+  await expect(() => fetchUser("invalid-id")).rejects.toThrow("User not found");
+});
+```
+
+A test does not end before the matchers it did not `await` have run, and their failures fail that test. The rest of the test does not wait for them, though: `await` the matcher when the code after it closes something the promise needs.
+
+`toThrow()` on a function that returns a pending promise, a custom matcher that returns a promise, and a matcher that compares a pending promise with `expect.resolvesTo` or `expect.rejectsTo` return a promise in the same way.
+
+## Soft Assertions
+
+A matcher of `expect.soft()` that fails does not throw. Bun reports the failure, the test goes on, and it fails when it ends:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("response", async () => {
+  const response = await fetch(url);
+  expect.soft(response.status).toBe(200);
+  expect.soft(response.headers.get("content-type")).toBe("text/html"); // checked even if the status is wrong
+});
+```
+
+`expect.soft()` works with `.not`, `.resolves`, `.rejects`, and custom matchers. Outside of a test, and in a concurrent test after its first `await`, the failure is thrown like any other.
 
 ## Assertion Counting
 

@@ -102,7 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, 
 
     target->methodTable()->defineOwnProperty(target, globalObject, name, PropertyDescriptor(value, 0), true);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callFrame->thisValue());
+    return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViUnstubAllGlobals, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -110,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViUnstubAllGlobals, (JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(getVM(lexicalGlobalObject));
     unstubAllGlobals(defaultGlobalObject(lexicalGlobalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callFrame->thisValue());
+    return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
 
 // What `process.env` is now: tests replace it with a copy.
@@ -199,7 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubEnv, (JSGlobalObject * lexicalGlobalObject, Cal
 
     setEnv(globalObject, env, nameString, value);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callFrame->thisValue());
+    return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsViUnstubAllEnvs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -207,7 +207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViUnstubAllEnvs, (JSGlobalObject * lexicalGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(getVM(lexicalGlobalObject));
     unstubAllEnvs(defaultGlobalObject(lexicalGlobalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callFrame->thisValue());
+    return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
 
 // Forgets the imports that have settled, and returns one that has not.

@@ -45,30 +45,33 @@ fn is_node_modules(name: &[u8]) -> bool {
 
 /// `path` relative to `dir`, when it is `dir` or inside of it.
 fn path_below<'p>(dir: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
-    match path.strip_prefix(dir)? {
-        [separator, below @ ..] if bun_paths::is_sep_native(*separator) => Some(below),
-        below
-            if below.is_empty()
-                || dir
-                    .last()
-                    .is_none_or(|&last| bun_paths::is_sep_native(last)) =>
-        {
-            Some(below)
-        }
-        _ => None,
+    let below = path.strip_prefix(dir)?;
+    if below.is_empty()
+        || dir
+            .last()
+            .is_none_or(|&last| bun_paths::is_sep_native(last))
+    {
+        return Some(below);
     }
+    let (&separator, below) = below.split_first()?;
+    bun_paths::is_sep_native(separator).then_some(below)
 }
 
-/// The serialization of `URLSearchParams`.
-fn append_form_urlencoded(out: &mut Vec<u8>, text: &[u8]) {
+/// What Vite leaves as it is in the keys and values of `query`, except that `=` is for values only.
+const QUERY_PUNCTUATION: &[u8] = b";,?:@$-_.!~*'()|`^";
+
+fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
     for &byte in text {
-        match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => out.push(byte),
-            b' ' => out.push(b'+'),
-            _ => {
-                let hex = bun_core::fmt::hex2_upper(byte);
-                out.extend_from_slice(&[b'%', hex[0], hex[1]]);
-            }
+        if byte.is_ascii_alphanumeric()
+            || strings::contains_char(QUERY_PUNCTUATION, byte)
+            || (byte == b'=' && !is_key)
+        {
+            out.push(byte);
+        } else if byte == b' ' {
+            out.push(b'+');
+        } else {
+            let hex = bun_core::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', hex[0], hex[1]]);
         }
     }
 }
@@ -135,8 +138,6 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                     && dot.name == b"glob"
                     && matches!(dot.target.data, ExprData::EImportMeta(_))
             )
-            // `Bun.Transpiler` gives its input a name, which is nowhere.
-            && (!self.source.path.is_file() || bun_paths::is_absolute(self.source.path.text))
     }
 
     /// `Object.keys(import.meta.glob(...))` imports nothing.
@@ -186,6 +187,10 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         )
     }
 
+    fn import_meta_glob_error(&self, loc: Loc, message: core::fmt::Arguments<'_>) {
+        self.log().add_error_fmt(self.source, loc, message);
+    }
+
     /// Logs an error and leaves `properties` empty when the call is not valid.
     fn expand_import_meta_glob(
         &mut self,
@@ -196,8 +201,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
     ) {
         let args = call.args.slice();
         if args.is_empty() || args.len() > 2 {
-            self.log().add_error_fmt(
-                self.source,
+            self.import_meta_glob_error(
                 loc,
                 format_args!(
                     "\"import.meta.glob\" expects 1 or 2 arguments, but got {}",
@@ -217,8 +221,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                 ExprData::EMissing(_) => {}
                 ExprData::EString(mut glob) => globs.push((glob.slice(self.arena), item.loc)),
                 _ => {
-                    self.log().add_error_fmt(
-                        self.source,
+                    self.import_meta_glob_error(
                         item.loc,
                         format_args!(
                             "Expected a glob pattern to be a string literal, but got {}",
@@ -243,13 +246,13 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
 
         let root = fs::FileSystem::instance().top_level_dir();
         let source = self.source;
-        let importer_dir = source.path.is_file().then(|| source.path.name().dir);
+        let importer_dir = (source.path.is_file() && bun_paths::is_absolute(source.path.text))
+            .then(|| source.path.name().dir);
         let is_relative = globs
             .iter()
             .all(|(glob, _)| matches!(glob.first(), Some(b'.' | b'!')));
         if importer_dir.is_none() && options.base.is_empty() && is_relative {
-            self.log().add_error_fmt(
-                self.source,
+            self.import_meta_glob_error(
                 path_loc,
                 format_args!(
                     "Expected a glob pattern in a module that is not a file to start with \"/\", but got \"{}\"",
@@ -291,8 +294,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             {
                 Pattern::new(negated, &dir, &glob)
             } else {
-                self.log().add_error_fmt(
-                    self.source,
+                self.import_meta_glob_error(
                     glob_loc,
                     format_args!(
                         "Expected a glob pattern to start with \"/\", \"./\", \"../\", \"**\" or a path alias, but got \"{}\"",
@@ -388,10 +390,40 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         }
     }
 
+    /// The name, key and value of `name: value` in the options.
+    fn import_meta_glob_option(
+        &mut self,
+        property: &G::Property,
+        object_loc: Loc,
+    ) -> Option<(&'a [u8], Expr, Expr)> {
+        let (G::PropertyKind::Normal, Some(key), Some(value)) =
+            (property.kind, property.key, property.value)
+        else {
+            self.import_meta_glob_error(
+                property
+                    .key
+                    .or(property.value)
+                    .map_or(object_loc, |e| e.loc),
+                format_args!("Expected the options of \"import.meta.glob\" to be plain properties"),
+            );
+            return None;
+        };
+        let ExprData::EString(mut name) = key.data else {
+            self.import_meta_glob_error(
+                key.loc,
+                format_args!(
+                    "Expected the name of an \"import.meta.glob\" option to be a literal, but got {}",
+                    key.data.tag_name()
+                ),
+            );
+            return None;
+        };
+        Some((name.slice(self.arena), key, value))
+    }
+
     fn import_meta_glob_options(&mut self, arg: Expr) -> Option<Options<'a>> {
         let ExprData::EObject(object) = arg.data else {
-            self.log().add_error_fmt(
-                self.source,
+            self.import_meta_glob_error(
                 arg.loc,
                 format_args!(
                     "Expected the options of \"import.meta.glob\" to be an object literal, but got {}",
@@ -404,31 +436,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         let mut options = Options::default();
         let mut r#as: &'a [u8] = b"";
         for property in object.properties.slice() {
-            let (G::PropertyKind::Normal, Some(key), Some(value)) =
-                (property.kind, property.key, property.value)
-            else {
-                self.log().add_error_fmt(
-                    self.source,
-                    property.key.or(property.value).map_or(arg.loc, |e| e.loc),
-                    format_args!(
-                        "Expected the options of \"import.meta.glob\" to be plain properties"
-                    ),
-                );
-                return None;
-            };
-            let ExprData::EString(mut name) = key.data else {
-                self.log().add_error_fmt(
-                    self.source,
-                    key.loc,
-                    format_args!(
-                        "Expected the name of an \"import.meta.glob\" option to be a literal, but got {}",
-                        key.data.tag_name()
-                    ),
-                );
-                return None;
-            };
-            let name = name.slice(self.arena);
-
+            let (name, key, value) = self.import_meta_glob_option(property, arg.loc)?;
             let expected = match (name, value.data) {
                 (b"eager", ExprData::EBoolean(eager)) => {
                     options.eager = eager.value;
@@ -440,8 +448,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                 }
                 (b"caseSensitive", ExprData::EBoolean(E::Boolean { value: true })) => continue,
                 (b"caseSensitive", ExprData::EBoolean(_)) => {
-                    self.log().add_error_fmt(
-                        self.source,
+                    self.import_meta_glob_error(
                         value.loc,
                         format_args!(
                             "The \"import.meta.glob\" option \"caseSensitive: false\" is not supported"
@@ -460,8 +467,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                         && !options.base.starts_with(b"./")
                         && !options.base.starts_with(b"../")
                     {
-                        self.log().add_error_fmt(
-                            self.source,
+                        self.import_meta_glob_error(
                             value.loc,
                             format_args!(
                                 "Expected the \"import.meta.glob\" option \"base\" to start with \"/\", \"./\" or \"../\", but got \"{}\"",
@@ -481,15 +487,14 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                     continue;
                 }
                 (b"query", ExprData::EObject(query)) => {
-                    options.query = self.import_meta_glob_query(&query)?;
+                    options.query = self.import_meta_glob_query(&query, value.loc)?;
                     continue;
                 }
                 (b"eager" | b"exhaustive" | b"caseSensitive", _) => "a boolean",
                 (b"import" | b"base" | b"as", _) => "a string",
                 (b"query", _) => "a string or an object",
                 _ => {
-                    self.log().add_error_fmt(
-                        self.source,
+                    self.import_meta_glob_error(
                         key.loc,
                         format_args!(
                             "Unknown \"import.meta.glob\" option \"{}\"",
@@ -499,8 +504,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                     return None;
                 }
             };
-            self.log().add_error_fmt(
-                self.source,
+            self.import_meta_glob_error(
                 value.loc,
                 format_args!(
                     "Expected the \"import.meta.glob\" option \"{}\" to be {} literal, but got {}",
@@ -514,8 +518,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
 
         if !r#as.is_empty() {
             if !options.query.is_empty() {
-                self.log().add_error_fmt(
-                    self.source,
+                self.import_meta_glob_error(
                     arg.loc,
                     format_args!(
                         "The \"import.meta.glob\" options \"as\" and \"query\" cannot be used together"
@@ -525,8 +528,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             }
             if matches!(r#as, b"raw" | b"url") {
                 if !matches!(options.import, b"" | b"default" | b"*") {
-                    self.log().add_error_fmt(
-                        self.source,
+                    self.import_meta_glob_error(
                         arg.loc,
                         format_args!(
                             "Expected the \"import.meta.glob\" option \"import\" to be \"default\" or \"*\" when \"as\" is \"{}\", but got \"{}\"",
@@ -551,14 +553,10 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         Some(options)
     }
 
-    fn import_meta_glob_query(&mut self, query: &E::Object) -> Option<&'a [u8]> {
+    fn import_meta_glob_query(&mut self, query: &E::Object, loc: Loc) -> Option<&'a [u8]> {
         let mut out = Vec::new();
         for property in query.properties.slice() {
-            let (G::PropertyKind::Normal, Some(key), Some(value)) =
-                (property.kind, property.key, property.value)
-            else {
-                continue;
-            };
+            let (name, _, value) = self.import_meta_glob_option(property, loc)?;
             let text = match value.data {
                 ExprData::ENumber(_) | ExprData::EBoolean(_) => {
                     let empty = self.new_expr(E::String::init(b""), value.loc);
@@ -567,10 +565,8 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                 }
                 _ => value,
             };
-            let (ExprData::EString(mut name), ExprData::EString(mut text)) = (key.data, text.data)
-            else {
-                self.log().add_error_fmt(
-                    self.source,
+            let ExprData::EString(mut text) = text.data else {
+                self.import_meta_glob_error(
                     value.loc,
                     format_args!(
                         "Expected a value of the \"import.meta.glob\" option \"query\" to be a string, number or boolean literal, but got {}",
@@ -582,9 +578,12 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             if !out.is_empty() {
                 out.push(b'&');
             }
-            append_form_urlencoded(&mut out, name.slice(self.arena));
-            out.push(b'=');
-            append_form_urlencoded(&mut out, text.slice(self.arena));
+            append_query_component(&mut out, name, true);
+            let text = text.slice(self.arena);
+            if !text.is_empty() {
+                out.push(b'=');
+                append_query_component(&mut out, text, false);
+            }
         }
         Some(self.arena.alloc_slice_copy(&out))
     }
@@ -627,16 +626,14 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                 Ok(Err(err))
                     if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {}
                 Ok(Err(err)) => {
-                    self.log().add_error_fmt(
-                        self.source,
+                    self.import_meta_glob_error(
                         loc,
                         format_args!("\"import.meta.glob\" could not read a directory: {err}"),
                     );
                     return None;
                 }
                 Err(err) => {
-                    self.log().add_error_fmt(
-                        self.source,
+                    self.import_meta_glob_error(
                         loc,
                         format_args!("\"import.meta.glob\" failed: {}", err.name()),
                     );
@@ -713,6 +710,16 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         name: &'a [u8],
         loc: Loc,
     ) -> Expr {
+        // The bundler drops the exports that no use of the `import()` observes.
+        if let ExprData::EImport(import) = import.data
+            && let Some(observed) = self
+                .import_items_for_namespace
+                .get_mut(&import.namespace_ref)
+        {
+            let ref_ = js_ast::Ref::NONE;
+            bun_core::handle_oom(observed.put(name, js_ast::LocRef { loc, ref_ }));
+            self.note_tracked_namespace_use(import.namespace_ref);
+        }
         self.record_usage(parameter);
         let namespace = self.new_expr(E::Identifier::init(parameter), loc);
         let export = self.new_expr(

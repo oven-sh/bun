@@ -650,6 +650,9 @@ describe.concurrent("matchers that meet a pending promise", () => {
         await expect(later(3)).resolves.toBeLater(3);
         await expect(laterReject(4)).rejects.not.toBeLater(5);
         console.log(toBeLater.mock.calls.length);
+        const fn = jest.fn(() => Promise.resolve(6));
+        await expect(fn).resolves.toBeLater(6);
+        expect(fn).toHaveBeenCalledTimes(1);
       });
       test("inside another value, each use is called once", async () => {
         toBeLater.mockClear();
@@ -743,5 +746,183 @@ describe.concurrent("matchers that meet a pending promise", () => {
       'expect(later("one")).toEqual(expect.rejectsTo.anything());',
     ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+});
+
+describe.concurrent("expect.soft()", () => {
+  test("a failure fails the test, which goes on", async () => {
+    const source = `
+      expect.extend({
+        toBeFoo(received) {
+          return { pass: received === "foo", message: () => \`expected \${received} to be foo\` };
+        },
+      });
+      test("several", () => {
+        console.log(expect.soft(1).toBe("first"));
+        expect.soft(1, "my label").toBe("second");
+        expect.soft(1).not.toBe(1);
+        expect.soft("bar").toBeFoo();
+        expect.soft(1).toThrow();
+        expect.soft({ a: 1 }).toMatchInlineSnapshot(\`"other"\`);
+        console.log("several: end");
+      });
+      test("passes", () => {
+        console.log(expect.soft(1).toBe(1));
+        expect.soft("foo").toBeFoo();
+      });
+      test("then one that is not soft", () => {
+        expect.soft(1).toBe("soft");
+        expect(1).toBe("not soft");
+        console.log("not reached");
+      });
+      const { soft } = expect;
+      test("on its own", () => {
+        soft(1).toBe("on its own");
+        console.log("on its own: end");
+      });
+    `;
+    const { stdout, stderr, report, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["undefined", "several: end", "undefined", "on its own: end"]);
+    expect(report).toEqual([
+      "error: expect(received).toBe(expected)",
+      "error: my label",
+      "error: expect(received).not.toBe(expected)",
+      "error: expect(received).toBeFoo()",
+      "error: Expected value must be a function",
+      "error: expect(received).toMatchInlineSnapshot(expected)",
+      "(fail) several",
+      "(pass) passes",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+      "(fail) then one that is not soft",
+      "error: expect(received).toBe(expected)",
+      "(fail) on its own",
+    ]);
+    expect(failingLines(stderr, source)).toEqual([
+      'console.log(expect.soft(1).toBe("first"));',
+      'expect.soft(1, "my label").toBe("second");',
+      "expect.soft(1).not.toBe(1);",
+      'expect.soft("bar").toBeFoo();',
+      "expect.soft(1).toThrow();",
+      'expect.soft({ a: 1 }).toMatchInlineSnapshot(`"other"`);',
+      'expect.soft(1).toBe("soft");',
+      'expect(1).toBe("not soft");',
+      'soft(1).toBe("on its own");',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("with .resolves and .rejects, the promise of the matcher fulfills", async () => {
+    const source = `
+      test("awaited", async () => {
+        console.log(await expect.soft(later(1)).resolves.toBe("pending"));
+        console.log(await expect.soft(Promise.resolve(1)).resolves.toBe("settled"));
+        console.log(await expect.soft(laterReject(1)).resolves.toBe("direction"));
+        console.log(await expect.soft(async () => { await later(); }).toThrow());
+      });
+      test("not awaited", () => {
+        expect.soft(later(1)).resolves.toBe("first");
+        expect.soft(later(1, 5)).resolves.toBe("second");
+      });
+    `;
+    const { stdout, stderr, results, exitCode } = await runTests(source);
+    expect(stdout).toEqual(["undefined", "undefined", "undefined", "undefined"]);
+    expect(failingLines(stderr, source)).toEqual([
+      'console.log(await expect.soft(later(1)).resolves.toBe("pending"));',
+      'console.log(await expect.soft(Promise.resolve(1)).resolves.toBe("settled"));',
+      'console.log(await expect.soft(laterReject(1)).resolves.toBe("direction"));',
+      "console.log(await expect.soft(async () => { await later(); }).toThrow());",
+      'expect.soft(later(1)).resolves.toBe("first");',
+      'expect.soft(later(1, 5)).resolves.toBe("second");',
+    ]);
+    expect(results).toEqual(["(fail) awaited", "(fail) not awaited"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("counts like any other failure", async () => {
+    const { stdout, results, stderr, exitCode, written } = await run(
+      ["test", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      {
+        "a.test.js":
+          prelude +
+          `
+          test.failing("failing", () => {
+            expect.soft(1).toBe(2);
+          });
+          test("assertions", () => {
+            expect.assertions(2);
+            expect.soft(1).toBe("assertions");
+            expect.soft(1).toBe(1);
+          });
+          let attempts = 0;
+          test("retry", () => {
+            expect.soft(++attempts).toBe(2);
+          }, { retry: 1 });
+          describe("hooks", () => {
+            beforeEach(() => {
+              expect.soft(1).toBe("beforeEach");
+            });
+            afterEach(() => {
+              expect.soft(1).toBe("afterEach");
+            });
+            test("test", () => console.log("the test runs"));
+          });
+          describe("beforeAll", () => {
+            beforeAll(() => {
+              expect.soft(1).toBe("beforeAll");
+              console.log("beforeAll goes on");
+            });
+            test("skipped", () => console.log("not reached"));
+          });
+          describe("concurrent", () => {
+            test.concurrent("before the first await", async () => {
+              expect.soft(1).toBe("before the first await");
+              console.log("concurrent: goes on");
+              await later();
+            });
+            test.concurrent("after it, the failure is thrown", async () => {
+              await later();
+              expect.soft(1).toBe("after the first await");
+              console.log("not reached");
+            });
+          });
+        `.replace("afterEach,", "afterEach, beforeEach,"),
+      },
+      ["junit.xml"],
+    );
+    expect(stdout).toEqual(["the test runs", "beforeAll goes on", "concurrent: goes on"]);
+    expect(results).toEqual([
+      "(pass) failing",
+      "(fail) assertions",
+      "(pass) retry (attempt 2)",
+      "(fail) hooks > test",
+      "(fail) beforeAll > (unnamed)",
+      "(fail) concurrent > before the first await",
+      "(fail) concurrent > after it, the failure is thrown",
+    ]);
+    expect(stderr).not.toContain("Unhandled error");
+    const hooks = written[0].slice(written[0].indexOf('<testcase name="test"'));
+    expect(hooks.slice(0, hooks.indexOf("</testcase>")).match(/Expected: &quot;\w+&quot;/g)).toEqual([
+      "Expected: &quot;beforeEach&quot;",
+      "Expected: &quot;beforeEach&quot;",
+      "Expected: &quot;afterEach&quot;",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("outside of a test, the failure is thrown", async () => {
+    const { stdout, exitCode } = await run(["a.js"], {
+      "a.js": `
+        import { expect } from "bun:test";
+        expect.soft(1).toBe(1);
+        try {
+          expect.soft(1).toBe(2);
+        } catch (error) {
+          console.log(Bun.stripANSI(error.message).split("\\n")[0]);
+        }
+      `,
+    });
+    expect(stdout).toEqual(["expect(received).toBe(expected)"]);
+    expect(exitCode).toBe(0);
   });
 });

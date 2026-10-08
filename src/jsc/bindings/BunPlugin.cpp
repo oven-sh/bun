@@ -1762,7 +1762,7 @@ static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject
         }
     }
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionViResetModules, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

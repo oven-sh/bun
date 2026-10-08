@@ -1788,6 +1788,11 @@ impl VirtualMachine {
     /// Whether anything is left that could run script again. [`is_event_loop_alive`](Self::is_event_loop_alive) asks
     /// what keeps the process alive; a handle or a timer that does not (unref'd) can still settle what a wait is for.
     pub fn has_work_left(&self) -> bool {
+        // Before the queues: that thread posts a child's exit, then forgets the child.
+        #[cfg(unix)]
+        if bun_spawn::process::WaiterThread::is_watching() {
+            return true;
+        }
         if self.has_queued_work_excluding_immediates() || self.has_immediates() {
             return true;
         }

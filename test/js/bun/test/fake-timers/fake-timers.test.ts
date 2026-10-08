@@ -2524,9 +2524,9 @@ describe("the system time", () => {
   });
 
   describe.each([
-    ["vi.setSystemTime", (now: string) => void vi.setSystemTime(now)],
-    ["jest.setSystemTime", (now: string) => void jest.setSystemTime(now)],
-    ["setSystemTime", (now: string) => void setSystemTime(now)],
+    ["vi.setSystemTime", (now: string | number) => void vi.setSystemTime(now)],
+    ["jest.setSystemTime", (now: string | number) => void jest.setSystemTime(now)],
+    ["setSystemTime", (now: string | number) => void setSystemTime(now)],
   ])("%s(string)", (_, set) => {
     test.each([false, true])("parses it as new Date(string) does (fake timers: %p)", fake => {
       if (fake) vi.useFakeTimers();

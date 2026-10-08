@@ -2126,11 +2126,15 @@ describe.concurrent("test file discovery (scanner)", () => {
   });
 });
 
-async function runFiles(files: Record<string, string>, ...args: string[]) {
+function runFiles(files: Record<string, string>, ...args: string[]) {
+  return runFilesWithEnv({}, files, ...args);
+}
+
+async function runFilesWithEnv(env: Record<string, string>, files: Record<string, string>, ...args: string[]) {
   using dir = tempDir("bun-test-waits", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -2366,7 +2370,7 @@ describe.concurrent("a test file that can never finish loading", () => {
       "./b.test.ts",
     );
     expect({ errors, counts, exitCode }).toEqual({
-      errors: ['error: A mock.module() factory of "a.test.ts" never settled', nothingLeft],
+      errors: ['error: A mock.module() factory never settled in "a.test.ts"', nothingLeft],
       counts: [" 1 pass", " 1 fail"],
       exitCode: 1,
     });
@@ -2524,6 +2528,34 @@ describe.concurrent("a test file that can never finish loading", () => {
     expect({ errors, counts, exitCode }).toEqual({ errors: [], counts: [" 1 pass", " 0 fail"], exitCode: 0 });
   });
 
+  // Where there is no pidfd_open(), a thread waits for the children instead of the event loop.
+  test.skipIf(!isLinux)("counts an unref'd subprocess that a thread waits for, until it has exited", async () => {
+    const { errors, counts, exitCode } = await runFilesWithEnv(
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
+          child.unref();
+          const exitCode = await child.exited;
+          test("exited", () => expect(exitCode).toBe(0));
+        `,
+        "b.test.ts": neverLoads,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "b.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "b.test.ts"',
+      ],
+      counts: [" 1 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
   test("is not one that comes after an unhandled error", async () => {
     const { errors, counts, exitCode } = await runFiles(
       {
@@ -2607,7 +2639,7 @@ describe.concurrent("a test file that can never finish running", () => {
     );
     expect({ stdout, errors, counts, exitCode }).toEqual({
       stdout: expect.stringMatching(/^(bun test .*\n)?ran\n$/),
-      errors: ['error: A describe() callback of "a.test.ts" never settled', nothingLeft],
+      errors: ['error: A describe() callback never settled in "a.test.ts"', nothingLeft],
       counts: [" 2 pass", " 0 fail"],
       exitCode: 1,
     });
@@ -2622,7 +2654,7 @@ describe.concurrent("a test file that can never finish running", () => {
         test("third", () => {});
       `,
     });
-    const neverSettled = ['error: A test or a hook without a timeout of "a.test.ts" never settled', nothingLeft];
+    const neverSettled = ['error: A test or a hook without a timeout never settled in "a.test.ts"', nothingLeft];
     expect({ results: stderr.match(/^\((pass|fail)\) \w+/gm), errors, counts, exitCode }).toEqual({
       results: ["(fail) first", "(fail) second", "(pass) third"],
       errors: [...neverSettled, ...neverSettled],
@@ -2656,7 +2688,7 @@ describe.concurrent("a test file that can never finish running", () => {
       "./b.test.ts",
     );
     expect({ errors, counts, exitCode }).toEqual({
-      errors: ['error: A test or a hook without a timeout of "a.test.ts" never settled', nothingLeft],
+      errors: ['error: A test or a hook without a timeout never settled in "a.test.ts"', nothingLeft],
       counts: [" 1 pass", " 0 fail"],
       exitCode: 1,
     });

@@ -561,3 +561,21 @@ test.describe("test.describe", () => {
   test.beforeEach(() => {});
   test.afterAll(done => done());
 });
+
+// .resolves and .rejects
+expectType(expect(Promise.resolve(1)).resolves.toBe(1)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).not.resolves.toBe(2)).is<Promise<void>>();
+expectType(expect(Promise.reject(new Error())).rejects.toThrow()).is<Promise<void>>();
+expectType(expect(async () => 1).resolves.toBe(1)).is<Promise<void>>();
+expectType(expect(1).toBe(1)).is<void>();
+expectType(expect(1).not.toBe(2)).is<void>();
+// @ts-expect-error
+expect(Promise.resolve(1)).resolves.toBe("1");
+// @ts-expect-error
+expect(async () => 1).resolves.toBe("1");
+
+expectType(expect.soft(1, "message").toBe(1)).is<void>();
+expectType(expect.soft(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
+// @ts-expect-error
+expect.soft(1).toBe("1");

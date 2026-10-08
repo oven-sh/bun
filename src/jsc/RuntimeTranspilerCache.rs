@@ -66,7 +66,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: `bun test` hoists `vi.mock` / `jest.mock` / `vi.hoisted` above imports (#10428),
 /// and `inject_jest_globals` participates in the features hash.
-const EXPECTED_VERSION: u32 = 35;
+/// Version 36: `import.meta.glob()` is expanded (#6060). Older entries still have the call.
+const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

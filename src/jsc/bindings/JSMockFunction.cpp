@@ -1698,7 +1698,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetSettledResults, (JSC::JSGlo
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callframe->thisValue();
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisValue.isObject()) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -2232,6 +2232,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
+// A call of a bare identifier gives a host function the scope the identifier was found in as `this`. Script must never get hold of it.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMock__strictThis(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue)
+{
+    return JSValue::encode(JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()));
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
@@ -2270,7 +2276,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     // from this value instead of the activation-time clock.
     Bun__FakeTimers__setSystemTime(globalObject, ms);
 
-    return JSValue::encode(callframe->thisValue());
+    return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -2278,7 +2284,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     restoreAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callframe->thisValue());
+    return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsClearAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -2286,7 +2292,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsClearAllMocks, (JSC::JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSMock__clearAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callframe->thisValue());
+    return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -2294,7 +2300,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSMock__resetAllMocks(uncheckedDowncast<Zig::GlobalObject>(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(callframe->thisValue());
+    return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
 static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function)

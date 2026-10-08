@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
-use crate::test_runner::bun_test::{self, BunTestPtrWeak};
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
@@ -302,6 +301,15 @@ struct Replaced {
     fake: Strong,
 }
 
+/// Where the originals go back.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Restore {
+    /// Also over what script has assigned since, as in @sinonjs/fake-timers.
+    Always,
+    /// `vi.unstubAllGlobals()` ran first: where it took a fake away, `original` is what `vi.stubGlobal()` had put there.
+    WhereStillInstalled,
+}
+
 /// A call of the faked `process.nextTick()` or `queueMicrotask()`.
 struct Tick {
     callback: Strong,
@@ -375,6 +383,8 @@ pub(crate) struct FakeTimers {
     active: bool,
     /// Empty while not `active`.
     faked: ApiSet,
+    /// A preload mocked what is mocked now: it is for every test file.
+    from_preload: bool,
     /// Counts `activate` and `deactivate`. What is on the stack when it changes belongs to a clock that is gone.
     installs: u32,
     /// How many [`Firing`] are alive: sinon's `duringTick` of the functions that run timers before they return.
@@ -394,8 +404,6 @@ pub(crate) struct FakeTimers {
     drives: Vec<AsyncDrive>,
     last_drive_id: u32,
     tick_mode: TickMode,
-    /// The test file that chose `tick_mode`, which ends with it.
-    tick_mode_file: Option<BunTestPtrWeak>,
     /// In the real heap while `tick_mode` is `Interval`.
     tick_timer: EventLoopTimer,
     /// `TickMode::NextAsync`'s task is in the event loop's queue.
@@ -407,6 +415,7 @@ impl Default for FakeTimers {
         Self {
             active: false,
             faked: ApiSet::default(),
+            from_preload: false,
             installs: 0,
             firing: 0,
             timers: TimerHeap::default(),
@@ -418,7 +427,6 @@ impl Default for FakeTimers {
             drives: Vec::new(),
             last_drive_id: AUTO_STEP,
             tick_mode: TickMode::Manual,
-            tick_mode_file: None,
             tick_timer: EventLoopTimer::init_paused(EventLoopTimerTag::FakeTimersTick),
             auto_step_posted: false,
         }
@@ -440,10 +448,11 @@ const AUTO_STEP: u32 = 0;
 extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     // SAFETY: per-thread `timer::All`; nothing below re-enters it.
     let this = unsafe { &mut (*timer_all()).fake_timers };
+    let vm = global.bun_vm().as_mut();
     if !this.active {
+        this.from_preload = vm.is_in_preload;
         return;
     }
-    let vm = global.bun_vm().as_mut();
     if ms.is_nan() {
         bun_core::mock_time::clear_wall();
         vm.overridden_time_origin = None;
@@ -597,6 +606,7 @@ impl FakeTimers {
     fn activate(&mut self, global: &JSGlobalObject, options: &Options, date_now: f64) {
         self.active = true;
         self.faked = options.faked;
+        self.from_preload = global.bun_vm().is_in_preload;
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
@@ -619,9 +629,9 @@ impl FakeTimers {
         Self::hide_clock(global);
         self.active = false;
         self.faked = ApiSet::default();
+        self.from_preload = false;
         self.installs = self.installs.wrapping_add(1);
         self.tick_mode = TickMode::Manual;
-        self.tick_mode_file = None;
         if self.tick_timer.state == EventLoopTimerState::ACTIVE {
             let timer: *mut EventLoopTimer = &raw mut self.tick_timer;
             // SAFETY: single JS thread; what `All::remove` touches of `fake_timers` is only this node.
@@ -707,13 +717,20 @@ impl FakeTimers {
     }
 
     /// Without fake timers it still ends `setSystemTime()`'s override.
-    fn uninstall(global: &JSGlobalObject) -> JsResult<()> {
+    fn uninstall(global: &JSGlobalObject, restore: Restore) -> JsResult<()> {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let deactivated = unsafe { (*timer_all()).fake_timers.deactivate(global) };
         deactivated.cleared.release(global.bun_vm_ptr());
-        for Replaced { api, original, .. } in deactivated.replaced {
-            api.owner(global)
-                .put(global, api.name().as_bytes(), original.get());
+        for Replaced {
+            api,
+            original,
+            fake,
+        } in deactivated.replaced
+        {
+            let owner = api.owner(global);
+            if restore == Restore::Always || owner.get(global, api.name())? == Some(fake.get()) {
+                owner.put(global, api.name().as_bytes(), original.get());
+            }
         }
         for drive in deactivated.drives {
             drive.settle(global)?;
@@ -735,7 +752,7 @@ impl FakeTimers {
             }
             if let Err(err) = Self::replace(global, api) {
                 // Nothing is scheduled or pending yet, so this only puts the functions back: it cannot throw over `err`.
-                let _ = Self::uninstall(global);
+                let _ = Self::uninstall(global, Restore::Always);
                 return Err(err);
             }
         }
@@ -1132,19 +1149,6 @@ impl FakeTimers {
         Ok(())
     }
 
-    /// `tick_mode`, which goes back to `Manual` when the test file that chose it is over.
-    fn current_tick_mode(&mut self) -> TickMode {
-        if self
-            .tick_mode_file
-            .as_ref()
-            .is_some_and(|file| file.strong_count() == 0)
-        {
-            self.tick_mode = TickMode::Manual;
-            self.tick_mode_file = None;
-        }
-        self.tick_mode
-    }
-
     fn set_tick_mode(mode: TickMode) {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; nothing in this block re-enters it.
@@ -1154,8 +1158,6 @@ impl FakeTimers {
                 return;
             }
             this.tick_mode = mode;
-            this.tick_mode_file =
-                bun_test::clone_active_strong().map(|file| std::rc::Rc::downgrade(&file));
         }
         // SAFETY: per-thread `timer::All`; `tick_timer` is at a stable address in it.
         unsafe {
@@ -1190,7 +1192,7 @@ impl FakeTimers {
         let mode = unsafe {
             let this = &mut (*timer_all()).fake_timers;
             this.tick_timer.state = EventLoopTimerState::FIRED;
-            this.current_tick_mode()
+            this.tick_mode
         };
         let TickMode::Interval(delta) = mode else {
             return Ok(());
@@ -1222,7 +1224,7 @@ impl FakeTimers {
         let runs = unsafe {
             let this = &mut (*timer_all()).fake_timers;
             this.auto_step_posted = false;
-            this.current_tick_mode() == TickMode::NextAsync && this.drives.is_empty()
+            this.tick_mode == TickMode::NextAsync && this.drives.is_empty()
         };
         if !runs {
             return Ok(());
@@ -1288,9 +1290,14 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     )))
 }
 
+/// `vi` or `jest`, for calls to chain. `frame.this()` itself is a scope object when the function is called by a bare name.
+fn chainable_this(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
+    bun_jsc::cpp::JSMock__strictThis(global, frame.this())
+}
+
 fn rethrow(global: &JSGlobalObject, frame: &CallFrame, thrown: JSValue) -> JsResult<JSValue> {
     if thrown.is_empty() {
-        return Ok(frame.this());
+        return Ok(chainable_this(global, frame));
     }
     Err(global.throw_value(thrown))
 }
@@ -1306,15 +1313,15 @@ fn use_fake_timers(
         Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),
         Flavor::Jest => JSMock__getCurrentUnixTimeMs(),
     });
-    FakeTimers::uninstall(global)?;
+    FakeTimers::uninstall(global, Restore::Always)?;
     FakeTimers::install(global, &options, date_now)?;
-    Ok(frame.this())
+    Ok(chainable_this(global, frame))
 }
 
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    FakeTimers::uninstall(global)?;
-    Ok(frame.this())
+    FakeTimers::uninstall(global, Restore::Always)?;
+    Ok(chainable_this(global, frame))
 }
 
 fn steps_argument(global: &JSGlobalObject, frame: &CallFrame, function: &str) -> JsResult<u32> {
@@ -1381,6 +1388,19 @@ fn advance(global: &JSGlobalObject, ms: f64) -> JsResult<JSValue> {
     FakeTimers::run_until(global, now.add_ms_float(ms))
 }
 
+/// The next test file shares `global`. No script is on the stack.
+pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
+    // SAFETY: per-thread `timer::All`; field read only.
+    if unsafe { (*timer_all()).fake_timers.from_preload } {
+        return;
+    }
+    // What waits for an `…Async` call goes on while this is still the file it belongs to.
+    // SAFETY: the live event loop of the per-thread VM.
+    let _entered =
+        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+    crate::dispatch::fold(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
+}
+
 pub(crate) fn is_active() -> bool {
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     unsafe { (*timer_all()).fake_timers.is_active() }
@@ -1443,7 +1463,7 @@ fn drive_async(
             global,
             drive,
             match flavor {
-                Flavor::Vi => frame.this(),
+                Flavor::Vi => chainable_this(global, frame),
                 Flavor::Jest => JSValue::UNDEFINED,
             },
         )),
@@ -1544,7 +1564,7 @@ fn set_timer_tick_mode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     };
     error_unless_fake_timers(global)?;
     FakeTimers::set_tick_mode(mode);
-    Ok(frame.this())
+    Ok(chainable_this(global, frame))
 }
 
 #[bun_jsc::host_fn]
@@ -1565,7 +1585,7 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     let cleared = unsafe { (*timer_all()).fake_timers.clear() };
     cleared.release(global.bun_vm_ptr());
 
-    Ok(frame.this())
+    Ok(chainable_this(global, frame))
 }
 
 #[bun_jsc::host_fn]

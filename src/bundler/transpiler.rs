@@ -1590,7 +1590,8 @@ impl<'a> Transpiler<'a> {
                         .as_mut()
                         .map(|m| &mut *core::ptr::from_mut(m));
                 }
-                if !self.options.transform_only {
+                // Only the runtime's module loader allows CommonJS. The rest only transform text.
+                if this_parse.allow_commonjs {
                     // SAFETY: the resolver outlives the parse, which only calls it from this thread.
                     opts.import_meta_glob = Some(unsafe {
                         js_ast::ImportMetaGlobResolver::new(

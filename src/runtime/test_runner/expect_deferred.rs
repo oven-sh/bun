@@ -1,5 +1,4 @@
-//! A matcher never waits for a promise. One that needs a promise which has not settled returns a promise of its
-//! own, and is called again, with the same arguments, once the promise it needs has settled.
+//! A matcher that needs a pending promise returns a promise of its own, and is called again once the former has settled.
 
 use core::cell::Cell;
 use core::ffi::c_uint;
@@ -51,8 +50,8 @@ struct Held {
 }
 
 impl Held {
-    /// `None`: no test is known to have called the matcher.
-    fn new(expect: &Expect) -> Option<Held> {
+    /// The running entry that `expect` belongs to. `None`: no test is known to have called it.
+    fn entry_of(expect: &Expect) -> Option<(BunTestPtr, RefDataValue, NonNull<ExecutionSequence>)> {
         let parent = expect.parent.as_ref()?;
         let buntest = parent.bun_test()?;
         let execution = &buntest.get().execution;
@@ -62,26 +61,33 @@ impl Held {
             }
             phase => phase,
         };
-        let mut held = Held { buntest: parent.buntest_weak.clone(), entry, remaining_retry_count: 0 };
-        let sequence = held.any_attempt(&buntest)?;
-        // SAFETY: points into `buntest.execution.sequences`; nothing else borrows it here.
-        let sequence = unsafe { &mut *sequence.as_ptr() };
-        held.remaining_retry_count = sequence.remaining_retry_count;
-        sequence.pending_matchers += 1;
-        Some(held)
+        let sequence = Self::sequence_running(&buntest, &entry)?;
+        Some((buntest, entry, sequence))
     }
 
-    fn any_attempt(&self, buntest: &BunTestPtr) -> Option<NonNull<ExecutionSequence>> {
+    fn new(expect: &Expect) -> Option<Held> {
+        let (buntest, entry, sequence) = Self::entry_of(expect)?;
+        // SAFETY: points into `buntest.execution.sequences`; nothing else borrows it here.
+        let sequence = unsafe { &mut *sequence.as_ptr() };
+        sequence.pending_matchers += 1;
+        Some(Held {
+            buntest: std::rc::Rc::downgrade(&buntest),
+            entry,
+            remaining_retry_count: sequence.remaining_retry_count,
+        })
+    }
+
+    fn sequence_running(buntest: &BunTestPtr, entry: &RefDataValue) -> Option<NonNull<ExecutionSequence>> {
         let buntest = buntest.get();
         if buntest.phase != Phase::Execution {
             return None;
         }
-        Some(buntest.execution.get_current_and_valid_execution_sequence(&self.entry)?.0)
+        Some(buntest.execution.get_current_and_valid_execution_sequence(entry)?.0)
     }
 
     /// `None` once the entry has ended.
     fn sequence(&self, buntest: &BunTestPtr) -> Option<NonNull<ExecutionSequence>> {
-        let sequence = self.any_attempt(buntest)?;
+        let sequence = Self::sequence_running(buntest, &self.entry)?;
         // SAFETY: as in `new`.
         let remaining_retry_count = unsafe { sequence.as_ref() }.remaining_retry_count;
         (remaining_retry_count == self.remaining_retry_count).then_some(sequence)
@@ -104,7 +110,7 @@ impl Held {
         // SAFETY: as in `new`.
         let sequence = unsafe { &mut *sequence.as_ptr() };
         sequence.pending_matchers -= 1;
-        if sequence.callback_done && (sequence.pending_matchers == 0 || sequence.result.is_fail()) {
+        if sequence.callback_done && (sequence.pending_matchers == 0 || sequence.maybe_skip) {
             buntest.get().add_result(self.entry);
             BunTest::run_next_tick(&self.buntest, global, self.entry);
         }
@@ -348,8 +354,8 @@ impl Expect {
         frame: &CallFrame,
         matcher: Matcher,
     ) -> JsResult<JSValue> {
-        if self.flags.get().promise() != Promise::None {
-            return self.call_matcher_on_promise(global, frame, matcher);
+        if !self.flags.get().is_plain() {
+            return self.call_modified_matcher(global, frame, matcher);
         }
         match matcher(self, global, frame) {
             Err(JsError::Thrown) => self.matcher_threw(global, frame),
@@ -357,8 +363,52 @@ impl Expect {
         }
     }
 
-    /// `.resolves` / `.rejects`: the matcher is called once the promise has settled, and returns a promise.
     #[cold]
+    fn call_modified_matcher(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        matcher: Matcher,
+    ) -> JsResult<JSValue> {
+        let flags = self.flags.get();
+        let result = match flags.promise() {
+            Promise::None => match matcher(self, global, frame) {
+                Err(JsError::Thrown) => self.matcher_threw(global, frame),
+                result => result,
+            },
+            _ => self.call_matcher_on_promise(global, frame, matcher),
+        };
+        match result {
+            Err(JsError::Thrown) if flags.soft() => self.fail_softly(global, frame),
+            result => result,
+        }
+    }
+
+    /// `expect.soft()`: what the matcher threw fails the test, which goes on. It stays thrown when no test is known to have called the matcher.
+    fn fail_softly(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let Some((buntest, entry, sequence)) = Held::entry_of(self) else { return Err(JsError::Thrown) };
+        if global.has_pending_termination_exception() {
+            return Err(JsError::Thrown);
+        }
+        let exception = global.take_exception(JsError::Thrown);
+        let error = exception.to_error().unwrap_or(exception);
+        if let Some(call_site) =
+            ExpectDeferred::running_again(global, frame.this()).and_then(js::call_site_get_cached)
+        {
+            ExpectDeferred__continueStackAt(global, error, call_site);
+        }
+        // SAFETY: points into `buntest.execution.sequences`; read and written between the calls that may borrow it.
+        let maybe_skip = unsafe { sequence.as_ref() }.maybe_skip;
+        buntest.get().on_uncaught_exception(global, Some(error), false, &entry);
+        // SAFETY: as above.
+        unsafe { (*sequence.as_ptr()).maybe_skip = maybe_skip };
+        Ok(match self.flags.get().promise() {
+            Promise::None => JSValue::UNDEFINED,
+            _ => JSPromise::resolved_promise_value(global, JSValue::UNDEFINED),
+        })
+    }
+
+    /// `.resolves` / `.rejects`: the matcher is called once the promise has settled, and returns a promise.
     fn call_matcher_on_promise(
         &self,
         global: &JSGlobalObject,
@@ -382,15 +432,15 @@ impl Expect {
                 return deferred;
             }
         }
-        let result = matcher(self, global, frame);
-        if first_call {
-            expect_js::result_value_set_cached(this_value, global, JSValue::ZERO);
-        }
-        match result {
+        let result = match matcher(self, global, frame) {
             Ok(_) => Ok(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)),
             Err(JsError::Thrown) => self.matcher_threw(global, frame),
             Err(err) => Err(err),
+        };
+        if first_call {
+            expect_js::result_value_set_cached(this_value, global, JSValue::ZERO);
         }
+        result
     }
 
     #[cold]

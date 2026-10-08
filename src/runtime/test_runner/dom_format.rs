@@ -3,10 +3,10 @@
 use core::cmp::Ordering;
 use core::ffi::c_void;
 
-use bun_core::{strings, StackCheck, String};
+use bun_core::{StackCheck, String, strings};
 use bun_jsc::{
-    console_object, JSGlobalObject, JSPropertyIterator, JSType, JSValue, JsError, JsResult,
-    PropertyIteratorOptions, StringJsc as _, VM,
+    JSGlobalObject, JSPropertyIterator, JSType, JSValue, JsError, JsResult,
+    PropertyIteratorOptions, StringJsc as _, VM, console_object,
 };
 
 use super::pretty_format;
@@ -33,7 +33,11 @@ pub(crate) fn print_in_message(
             max_depth,
             max_width,
             // A UTF-16 code unit is at most 3 bytes of UTF-8.
-            give_up_at: if max_depth > 1 || max_width > 1 { MAX_LENGTH * 3 } else { usize::MAX },
+            give_up_at: if max_depth > 1 || max_width > 1 {
+                MAX_LENGTH * 3
+            } else {
+                usize::MAX
+            },
         };
         if !printer.print_dom(value, 0, depth)? {
             return Ok(false);
@@ -141,7 +145,10 @@ fn is_dom(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
 }
 
 fn classify(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Dom>> {
-    if !matches!(value.js_type(), JSType::FinalObject | JSType::ProxyObject | JSType::Array) {
+    if !matches!(
+        value.js_type(),
+        JSType::FinalObject | JSType::ProxyObject | JSType::Array
+    ) {
         return Ok(None);
     }
     // `get` does not look at `Object.prototype`, so a plain object has none. An array has a native one.
@@ -187,7 +194,11 @@ fn classify(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Dom>> {
     Ok(is_list.then_some(Dom::List { name }))
 }
 
-fn string_property(global: &JSGlobalObject, object: JSValue, name: &str) -> JsResult<Option<String>> {
+fn string_property(
+    global: &JSGlobalObject,
+    object: JSValue,
+    name: &str,
+) -> JsResult<Option<String>> {
     match object.get(global, name)? {
         Some(value) if value.is_string() => Ok(Some(value.to_bun_string(global)?)),
         _ => Ok(None),
@@ -204,7 +215,9 @@ fn has_is_attribute(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
 }
 
 fn is_word(bytes: &[u8]) -> bool {
-    bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    bytes
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
 }
 
 /// `/^((HTML|SVG)\w*)?Element$/`
@@ -262,7 +275,10 @@ fn for_each_item(
         return Ok(());
     }
     if list.is_iterable(global)? {
-        let mut iteration = Iteration { each, result: Ok(()) };
+        let mut iteration = Iteration {
+            each,
+            result: Ok(()),
+        };
         list.for_each(global, (&raw mut iteration).cast::<c_void>(), next)?;
         return iteration.result;
     }
@@ -319,11 +335,15 @@ impl Printer<'_> {
                 if strings::is_all_ascii(&tag) {
                     tag.make_ascii_lowercase();
                 } else {
-                    tag = std::string::String::from_utf8_lossy(&tag).to_lowercase().into_bytes();
+                    tag = std::string::String::from_utf8_lossy(&tag)
+                        .to_lowercase()
+                        .into_bytes();
                 }
                 self.print_element(value, &tag, true, indent, depth)?;
             }
-            Dom::Fragment => self.print_element(value, b"DocumentFragment", false, indent, depth)?,
+            Dom::Fragment => {
+                self.print_element(value, b"DocumentFragment", false, indent, depth)?
+            }
             Dom::List { name } => {
                 if self.open_collection(&name, b'[', depth) {
                     self.print_items(value, indent, depth + 1)?;
@@ -373,7 +393,11 @@ impl Printer<'_> {
         }
         let depth = depth + 1;
 
-        let attributes = match if has_attributes { node.get(self.global, "attributes")? } else { None } {
+        let attributes = match if has_attributes {
+            node.get(self.global, "attributes")?
+        } else {
+            None
+        } {
             Some(attributes) => self.read_attributes(attributes, indent + 2, depth)?,
             None => Entries::new(),
         };
@@ -405,9 +429,13 @@ impl Printer<'_> {
 
         let end_of_open_tag = self.out.len();
         self.out.push(b'>');
-        let mut children = node.get(self.global, "childNodes")?.filter(|list| list.is_object());
+        let mut children = node
+            .get(self.global, "childNodes")?
+            .filter(|list| list.is_object());
         if children.is_none() {
-            children = node.get(self.global, "children")?.filter(|list| list.is_object());
+            children = node
+                .get(self.global, "children")?
+                .filter(|list| list.is_object());
         }
         if let Some(children) = children {
             for i in 0..length_of(self.global, children)? {
@@ -492,14 +520,21 @@ impl Printer<'_> {
     }
 
     /// The `name` and `value` of each `Attr`, sorted by name.
-    fn read_attributes(&mut self, attributes: JSValue, indent: u32, depth: u32) -> JsResult<Entries> {
+    fn read_attributes(
+        &mut self,
+        attributes: JSValue,
+        indent: u32,
+        depth: u32,
+    ) -> JsResult<Entries> {
         let mut entries = Entries::new();
         let global = self.global;
         for_each_item(global, attributes, &mut |attribute| {
             if attribute.is_object() {
                 let name = attribute.get(global, "name")?.unwrap_or(JSValue::UNDEFINED);
                 let name = name.to_bun_string(global)?;
-                let value = attribute.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
+                let value = attribute
+                    .get(global, "value")?
+                    .unwrap_or(JSValue::UNDEFINED);
                 entries.push((name, self.capture(value, indent, depth)?));
             }
             Ok(())
@@ -517,7 +552,10 @@ impl Printer<'_> {
         let properties = JSPropertyIterator::init(
             self.global,
             cell,
-            PropertyIteratorOptions { skip_empty_name: false, include_value: true },
+            PropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+            },
         )?;
         while let Some((key, value)) = properties.next()? {
             entries.push((String::clone(&key), self.capture(value, indent, depth)?));
@@ -590,7 +628,14 @@ impl Printer<'_> {
                 b'"' => (b"\\\"", 1),
                 b'\\' => (b"\\\\", 1),
                 // jest-snapshot `normalizeNewlines`
-                _ => (b"\n", if rest.get(i + 1) == Some(&b'\n') { 2 } else { 1 }),
+                _ => (
+                    b"\n",
+                    if rest.get(i + 1) == Some(&b'\n') {
+                        2
+                    } else {
+                        1
+                    },
+                ),
             };
             self.out.extend_from_slice(replacement);
             rest = &rest[i + replaced..];

@@ -2699,8 +2699,8 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
       "toml",
       "toml",
       `\na = = 1`,
-      "BuildMessage: Expected a value but found '=' at 2:5",
-      "BuildMessage: Expected a value but found '=' at 2:5",
+      "BuildMessage: Expected a value but found '=' at TOML-that-is-not-valid.toml:2:5",
+      "BuildMessage: Expected a value but found '=' at TOML-that-is-not-valid.toml:2:5",
     ],
     "YAML": ["yaml", "yaml", `a: 1\nb:\n  c: 2\n`, { ...object, default: object }, object],
     "a YAML sequence": ["yaml", "yaml", `- 1\n- 2\n`, { __esModule: true, default: [1, 2] }, [1, 2]],
@@ -2735,7 +2735,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
       return JSON.parse(JSON.stringify(value, (_, value) => (typeof value === "function" ? "function " + value.name : value)) ?? "null");
     }
     function failed(error) {
-      return error.name + ": " + error.message + (error.position ? " at " + error.position.line + ":" + error.position.column : "");
+      return error.name + ": " + error.message + (error.position ? " at " + error.position.file.replace(/^.*[\\\\/][a-z]+_/, "") + ":" + error.position.line + ":" + error.position.column : "");
     }
     async function load(way, name, suffix) {
       const specifier = "./" + way + "_" + name + "." + cases[name][1] + suffix;

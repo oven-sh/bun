@@ -132,8 +132,10 @@ describe("the global of a node:vm context compares by its properties", () => {
       }).toEqual({ loose, strict, nodeStrict });
       (loose ? expect(a) : expect(a).not).toEqual(b);
       (strict ? expect(a) : expect(a).not).toStrictEqual(b);
-      (loose ? assert.deepEqual : assert.notDeepEqual)(a, b);
-      (nodeStrict ? assert.deepStrictEqual : assert.notDeepStrictEqual)(a, b);
+      if (loose) assert.deepEqual(a, b);
+      else assert.notDeepEqual(a, b);
+      if (nodeStrict) assert.deepStrictEqual(a, b);
+      else assert.notDeepStrictEqual(a, b);
     }
   });
 

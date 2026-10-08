@@ -184,6 +184,7 @@ bun_lint::rules! {
     no_restricted_imports::NoRestrictedImports,
     no_restricted_modules::NoRestrictedModules,
     no_restricted_properties::NoRestrictedProperties,
+    no_restricted_syntax::NoRestrictedSyntax,
     no_return_assign::NoReturnAssign,
     no_return_await::NoReturnAwait,
     no_script_url::NoScriptUrl,

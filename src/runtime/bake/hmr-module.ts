@@ -580,6 +580,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   };
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
+  // Each accept callback once per update for each module it accepts, however many changed modules reach it.
+  const accepting = new Map<HotAccept, Set<Id>>();
   let failures: Set<Id> | null = null;
   const toDispose: HMRModule[] = [];
 
@@ -602,10 +604,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     const visited = new Set<HMRModule>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
-    // The importer each module was reached from, back towards `existing`: the
-    // modules between the changed one and an accepting importer are loaded again
-    // too, or that importer would be handed a module still importing the old one.
-    const reachedFrom = new Map<HMRModule, HMRModule>();
+    // The importers each module was reached from, back towards `existing` (every
+    // one, for a module reached by several paths): the modules between the changed
+    // one and an accepting importer are loaded again too, or that importer would be
+    // handed a module still importing the old one.
+    const reachedFrom = new Map<HMRModule, Set<HMRModule>>();
+    // The modules an importer accepts, reached from `existing`: their paths back are
+    // known once the whole graph above it has been walked.
+    const accepted = new Set<HMRModule>();
     while (true) {
       const mod = queue.shift();
       if (!mod) break;
@@ -643,19 +649,34 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         // one only when that is a direct dependency.
         const cb = importer.depAccepts?.[mod.id];
         if (cb) {
-          toAccept.push({ cb, key: mod.id });
-          // From the changed module outward, so each is loaded again after what it imports.
-          const between: HMRModule[] = [];
-          for (let m: HMRModule | undefined = mod; m && m !== existing; m = reachedFrom.get(m)) between.push(m);
-          for (let i = between.length - 1; i >= 0; i--) toReload.add(between[i]);
+          const keys = accepting.get(cb) ?? new Set<Id>();
+          accepting.set(cb, keys);
+          if (!keys.has(mod.id)) {
+            keys.add(mod.id);
+            toAccept.push({ cb, key: mod.id });
+          }
+          accepted.add(mod);
         } else if (hadSelfAccept) {
+          let from = reachedFrom.get(importer);
+          if (!from) reachedFrom.set(importer, (from = new Set()));
+          from.add(mod);
           if (visited.has(importer)) continue;
           visited.add(importer);
-          reachedFrom.set(importer, mod);
           queue.push(importer);
         }
       }
     }
+
+    // Every module on a path from the changed one to an accepted one, from the
+    // changed module outward, so each is loaded again after what it imports.
+    const seen = new Set<HMRModule>([existing]);
+    const reload = (m: HMRModule) => {
+      if (seen.has(m)) return;
+      seen.add(m);
+      for (const before of reachedFrom.get(m) ?? []) reload(before);
+      toReload.add(m);
+    };
+    for (const m of accepted) reload(m);
   }
 
   // If roots were hit, print a nice message before reloading.

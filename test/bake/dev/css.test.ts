@@ -13,6 +13,7 @@ devTest("css module imported by its names, and a name added", {
       import * as all from "./a.module.css";
       const name = (c: string) => c.replace(/_[\\w-]+/g, "");
       console.log([Object.keys(styles).join(","), name(big), name(all.default.mark)].join(" "));
+      (globalThis as any).mark = styles.mark;
       import.meta.hot.accept();
     `,
     "a.module.css": `
@@ -23,7 +24,10 @@ devTest("css module imported by its names, and a name added", {
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("mark,big mark big mark");
-    expect(await c.js<string>`document.styleSheets[0].cssRules[0].selectorText`).toMatch(/^\.mark_/);
+    // The class the stylesheet has is the one the module gives.
+    const selector = await c.js<string>`document.styleSheets[0].cssRules[0].selectorText`;
+    expect(selector).toMatch(/^\.mark_/);
+    expect(selector).toBe("." + (await c.js<string>`globalThis.mark`));
     await dev.patch("a.module.css", { find: ".big", replace: ".extra { color: blue; }\n.big" });
     await c.expectMessage("mark,extra,big mark big mark");
   },

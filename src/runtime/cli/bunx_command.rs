@@ -794,10 +794,12 @@ impl BunxCommand {
         // Cloned to drop the borrow on `env_loader.map` before mutating it.
 
         if !ignore_cwd.is_empty() {
-            // Only the lifecycle scripts of `bun install` have this variable, for the
-            // node-gyp shim that runs `bun x`: the `INIT_CWD` of the install stays.
             env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
-        } else {
+        }
+        // `bun install` gives its lifecycle scripts `BUN_WHICH_IGNORE_CWD` for the node-gyp
+        // shim, which runs `bun x node-gyp`. The user did not type that command: node-gyp
+        // keeps the `INIT_CWD` of the install.
+        if ignore_cwd.is_empty() || update_request.name != b"node-gyp" {
             env_loader.set_init_cwd()?;
         }
 

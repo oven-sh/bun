@@ -882,6 +882,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             if spawns_scripts {
+                // A start directory that was removed has no name to record: `INIT_CWD`
+                // is then the `--cwd` directory, the one `process.cwd()` reports.
                 if let Ok(launch_dir) = bun_core::getcwd(&mut outbuf) {
                     bun_core::set_launch_dir(crate::cli::cli_dupe(launch_dir.as_bytes()));
                 }

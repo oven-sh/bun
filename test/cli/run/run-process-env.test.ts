@@ -68,10 +68,18 @@ describe("INIT_CWD", () => {
       "sub/deep/file.js": "console.log('file=' + process.env.INIT_CWD);",
       "other/.keep": "",
       ...(isWindows
-        ? { "node_modules/.bin/show-init-cwd.cmd": "@echo bin=%INIT_CWD%\r\n" }
-        : { "node_modules/.bin/show-init-cwd": "#!/bin/sh\necho bin=$INIT_CWD\n" }),
+        ? {
+            "node_modules/.bin/show-init-cwd.cmd": "@echo bin=%INIT_CWD%\r\n",
+            "node_modules/.bin/node-gyp.cmd": "@echo gyp=%INIT_CWD%\r\n",
+          }
+        : {
+            "node_modules/.bin/show-init-cwd": "#!/bin/sh\necho bin=$INIT_CWD\n",
+            "node_modules/.bin/node-gyp": "#!/bin/sh\necho gyp=$INIT_CWD\n",
+          }),
     });
-    if (!isWindows) chmodSync(join(String(dir), "node_modules", ".bin", "show-init-cwd"), 0o755);
+    if (!isWindows) {
+      for (const bin of ["show-init-cwd", "node-gyp"]) chmodSync(join(String(dir), "node_modules", ".bin", bin), 0o755);
+    }
     const root = String(dir);
     return Object.assign(dir, {
       root,
@@ -184,12 +192,17 @@ describe("INIT_CWD", () => {
     });
   });
 
-  // `bun install` gives its lifecycle scripts BUN_WHICH_IGNORE_CWD, for its node-gyp shim, which runs `bun x`.
-  test("bunx: under a lifecycle script of bun install, a bin keeps the value of the install", async () => {
+  // `bun install` gives its lifecycle scripts BUN_WHICH_IGNORE_CWD, for its node-gyp shim, which runs
+  // `bun x node-gyp`. Only that command keeps the INIT_CWD of the install.
+  test.each([
+    ["node-gyp in a lifecycle script keeps the value of the install", "node-gyp", true, () => "gyp=inherited"],
+    ["another bin in a lifecycle script gets its own", "show-init-cwd", true, (deep: string) => `bin=${deep}`],
+    ["node-gyp that the user runs gets its own", "node-gyp", false, (deep: string) => `gyp=${deep}`],
+  ])("bunx: %s", async (_, bin, inLifecycleScript, expected) => {
     using dir = project();
-    const env = { INIT_CWD: "inherited", BUN_WHICH_IGNORE_CWD: dir.other };
-    expect(await run(["x", "--no-install", "show-init-cwd"], dir.deep, env)).toEqual({
-      stdout: ["bin=inherited"],
+    const env = { INIT_CWD: "inherited", BUN_WHICH_IGNORE_CWD: inLifecycleScript ? dir.other : undefined };
+    expect(await run(["x", "--no-install", bin], dir.deep, env)).toEqual({
+      stdout: [expected(dir.deep)],
       stderr: "",
       exitCode: 0,
     });

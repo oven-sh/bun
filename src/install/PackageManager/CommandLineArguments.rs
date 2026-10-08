@@ -1609,7 +1609,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let mut buf2 = bun_paths::path_buffer_pool::get();
 
             // The pack, version and publish hooks get the directory bun was started
-            // in as `INIT_CWD`, not the one `--cwd` names.
+            // in as `INIT_CWD`, not the one `--cwd` names. A start directory that was
+            // removed has no name to record: they then get the `--cwd` directory.
             if matches!(subcommand, Subcommand::Pm | Subcommand::Publish) {
                 if let Ok(len) = bun_sys::getcwd(&mut buf[..]) {
                     bun_core::set_launch_dir(

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashMap;
 
 /// Disallow unused labels.
 pub struct NoUnusedLabels;
@@ -9,8 +10,8 @@ const UNUSED: Message = Message::new("unused", "'{{name}}:' is defined but never
 #[derive(Default)]
 pub struct Labels<'a> {
     all: Vec<Stmt<'a>>,
-    /// Where the labeled statements start that something jumps to.
-    used: Vec<u32>,
+    /// Where the `break` and `continue` statements with a label start, each with its label.
+    jumps: Vec<(u32, Name<'a>)>,
 }
 
 /// Whether the label of `statement` can be removed: no comment is lost, `body` does not become a
@@ -61,21 +62,51 @@ impl Rule for NoUnusedLabels {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Labels<'a> {
         on.stmts([StmtTag::Labeled], |_, statement, cx| cx.state.all.push(statement));
         on.stmts([StmtTag::Break, StmtTag::Continue], |_, jump, cx| {
-            let (StmtKind::Break(Some(name)) | StmtKind::Continue(Some(name))) = jump.kind() else {
-                return;
-            };
-            let target = Node::Stmt(jump).ancestors().filter_map(Node::as_stmt).find(
-                |it| matches!(it.kind(), StmtKind::Labeled { label, .. } if label == name),
-            );
-            if let Some(target) = target {
-                cx.state.used.push(target.span().start);
+            if let StmtKind::Break(Some(name)) | StmtKind::Continue(Some(name)) = jump.kind() {
+                cx.state.jumps.push((jump.span().start, name));
             }
         });
         on.finish(|_, cx| {
-            cx.state.used.sort_unstable();
+            let Labels { mut all, mut jumps } = std::mem::take(&mut cx.state);
+            all.sort_unstable_by_key(|it| it.span().start);
+            jumps.sort_unstable_by_key(|it| it.0);
+            let label_of = |statement: Stmt<'a>| match statement.kind() {
+                StmtKind::Labeled { label, .. } => Some(label),
+                _ => None,
+            };
+            // One pass through the labeled statements and the jumps, in the order of the source.
+            let mut is_used = vec![false; all.len()];
+            // The indexes of the labeled statements around the place, the outermost first, and of
+            // those of them with each label.
+            let mut around: Vec<usize> = Vec::new();
+            let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::default();
+            let mut rest = all.iter().copied().enumerate().peekable();
+            for (jump, name) in jumps {
+                loop {
+                    let next = rest.next_if(|it| it.1.span().start <= jump);
+                    let place = next.map_or(jump, |it| it.1.span().start);
+                    while let Some(ended) = around.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= place) {
+                        around.pop();
+                        if let Some(same) = label_of(*ended).and_then(|it| with_label.get_mut(&it)) {
+                            same.pop();
+                        }
+                    }
+                    let Some((index, statement)) = next else {
+                        break;
+                    };
+                    around.push(index);
+                    if let Some(label) = label_of(statement) {
+                        with_label.entry(label).or_default().push(index);
+                    }
+                }
+                let target = with_label.get(&name).and_then(|it| it.last());
+                if let Some(is_used) = target.and_then(|&it| is_used.get_mut(it)) {
+                    *is_used = true;
+                }
+            }
             let mut known = AncestorMemo::default();
-            for &statement in &cx.state.all {
-                if cx.state.used.binary_search(&statement.span().start).is_ok() {
+            for (&statement, is_used) in all.iter().zip(is_used) {
+                if is_used {
                     continue;
                 }
                 let (StmtKind::Labeled { body, .. }, Some(label)) = (statement.kind(), statement.label()) else {

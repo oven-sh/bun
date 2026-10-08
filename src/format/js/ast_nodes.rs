@@ -242,6 +242,11 @@ pub(crate) fn is_assignment_target(mut e: Expr<'_>) -> bool {
         )
     }
     loop {
+        // An error. What is in the parentheses is an expression for typescript-estree, and Babel
+        // rejects it: `({ a }) = b`, `[(a = 1)] = b`.
+        if e.is_parenthesized() {
+            return false;
+        }
         match e.parent() {
             Node::Expr(parent) => match parent.tag() {
                 ExprTag::Assign => return parent.left() == Some(e),
@@ -381,10 +386,12 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
     }
 }
 
-/// Whether `e`, an `=` assignment, is the `a = 1` of `[a = 1] = b` or `({ a = 1 } = b)`.
+/// Whether `e`, an `=` assignment, is the `a = 1` of `[a = 1] = b` or `({ a = 1 } = b)`. Also of
+/// `b = { a = 1 }`, which is an error.
 fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
     let is_element = match e.parent() {
         Node::Expr(parent) => parent.tag() == ExprTag::Array,
+        Node::Prop(prop) if prop.kind() == PropKind::Shorthand => return prop.value() == Some(e),
         Node::Prop(prop) => prop.value() == Some(e) && !prop.is_jsx_attribute(),
         _ => false,
     };

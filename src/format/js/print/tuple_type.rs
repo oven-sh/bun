@@ -9,7 +9,10 @@ pub(crate) fn write_ts_tuple_type<'a>(ty: TypeNode<'a>, elements: List<'a, Tuple
         write!(f, format_dangling_comments(ty.span()).with_soft_block_indent());
     } else {
         let element_types = format_with(|f| {
-            let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
+            let trailing_separator = match f.file().is_flow() && super::flow::is_inexact_tuple(elements) {
+                true => TrailingSeparator::Disallowed,
+                false => FormatTrailingCommas::ES5.trailing_separator(f.options()),
+            };
             f.join_nodes_with_soft_line().entries_with_trailing_separator(
                 elements.iter().map(FormatTupleElement),
                 ",",
@@ -42,6 +45,9 @@ impl<'a> Format<'a> for FormatTupleElement<'a> {
 
 /// `a: T`, `a?: T`, `T?`, `...T`, `...a: T`
 pub(crate) fn write_ts_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() {
+        return super::flow::write_tuple_element(element, f);
+    }
     write!(f, element.is_rest().then_some("..."));
     match element.name() {
         Some(label) => write!(

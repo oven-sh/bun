@@ -23,6 +23,7 @@ use bun_lint::ast::{
     Func, ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp,
     Prop, PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
+use super::print::flow::is_declared_class;
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::skip_trivia_back;
 use bun_sema::hir::ExprTag;
@@ -97,6 +98,8 @@ ast_nodes! {
         UpdateExpression BinaryExpression LogicalExpression PrivateInExpression
         AssignmentExpression ConditionalExpression AwaitExpression YieldExpression TSAsExpression
         TSSatisfiesExpression TSTypeAssertion TSNonNullExpression TSInstantiationExpression
+        // Flow's `(e: T)`
+        TypeCastExpression
         JSXElement JSXFragment JSXText JSXEmptyExpression Elision PrivateIdentifier
         // All of `a, b, c`.
         SequenceExpression
@@ -374,7 +377,10 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
         ExprTag::Spread => N::SpreadElement(Node::Expr(e)),
         ExprTag::Await => N::AwaitExpression(e),
         ExprTag::Yield => N::YieldExpression(e),
-        ExprTag::As | ExprTag::AsConst if e.is_angle_bracket_assertion() => N::TSTypeAssertion(e),
+        ExprTag::As | ExprTag::AsConst if e.is_angle_bracket_assertion() => match e.file().is_flow() {
+            true => N::TypeCastExpression(e),
+            false => N::TSTypeAssertion(e),
+        },
         ExprTag::As | ExprTag::AsConst => N::TSAsExpression(e),
         ExprTag::Satisfies => N::TSSatisfiesExpression(e),
         ExprTag::NonNull => N::TSNonNullExpression(e),
@@ -467,7 +473,7 @@ impl<'a> AsAstNodes<'a> for Func<'a> {
             (FnKind::Arrow, _) => N::ArrowFunctionExpression(self),
             (_, Node::Type(ty)) => ty.as_ast_nodes(),
             (FnKind::StaticBlock, Node::Member(member)) => N::StaticBlock(member),
-            (_, Node::Member(member)) if !matches!(member.parent(), Node::Class(_)) => {
+            (_, Node::Member(member)) if !matches!(member.parent(), Node::Class(class) if !is_declared_class(class)) => {
                 member.as_ast_nodes()
             }
             (FnKind::IndexSignature, Node::Member(member)) => N::TSIndexSignature(member),
@@ -496,7 +502,7 @@ impl<'a> AsAstNodes<'a> for Param<'a> {
 impl<'a> AsAstNodes<'a> for Member<'a> {
     fn as_ast_nodes(self) -> AstNodes<'a> {
         use AstNodes as N;
-        let is_in_class = matches!(self.parent(), Node::Class(_));
+        let is_in_class = matches!(self.parent(), Node::Class(class) if !is_declared_class(class));
         match self.kind() {
             MemberKind::IndexSignature => N::TSIndexSignature(self),
             MemberKind::StaticBlock => N::StaticBlock(self),
@@ -860,7 +866,8 @@ impl<'a> AstNodes<'a> {
             | N::JSXSpreadChild(e)
             | N::ArrayAssignmentTarget(e)
             | N::ObjectAssignmentTarget(e)
-            | N::AssignmentTargetWithDefault(e) => parent_of_expr(e, Level::Itself),
+            | N::AssignmentTargetWithDefault(e)
+            | N::TypeCastExpression(e) => parent_of_expr(e, Level::Itself),
 
             N::SpreadElement(Node::Expr(e)) => parent_of_expr(e, Level::Itself),
             N::SpreadElement(node) => node_as_ast_nodes(node.parent()),
@@ -1097,7 +1104,8 @@ impl<'a> AstNodes<'a> {
             | N::ChainExpression(e)
             | N::ArrayAssignmentTarget(e)
             | N::ObjectAssignmentTarget(e)
-            | N::AssignmentTargetWithDefault(e) => e.span(),
+            | N::AssignmentTargetWithDefault(e)
+            | N::TypeCastExpression(e) => e.span(),
             N::AssignmentPattern(Node::PatProp(prop)) => match prop.default() {
                 Some(default) => prop.value().span().to(default.span()),
                 None => prop.span(),

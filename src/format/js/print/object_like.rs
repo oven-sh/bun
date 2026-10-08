@@ -20,7 +20,7 @@ impl<'a> ObjectLike<'a> {
 
     /// It is the type of the only parameter of a function:
     /// `const fn = ({ foo }: { foo: string }) => {}`.
-    fn should_hug(&self, f: &Formatter<'a>) -> bool {
+    pub(crate) fn should_hug(&self, f: &Formatter<'a>) -> bool {
         let Self::TSTypeLiteral(ty, _) = *self else {
             return false;
         };

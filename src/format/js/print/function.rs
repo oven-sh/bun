@@ -20,6 +20,13 @@ pub(crate) struct FormatFunctionOptions {
 /// A function declaration or expression. Not a method: see `class.rs`.
 pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions, f: &mut Formatter<'a>) {
     let node = AstNodes::Function(func);
+    let keyword = match f.file().is_flow() {
+        true => match super::flow::write_component_or_keyword(func, f) {
+            Some(keyword) => keyword,
+            None => return,
+        },
+        false => "function",
+    };
     let is_declared =
         matches!(func.owner(), Node::Stmt(statement) if statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT));
     let head = format_with(|f| {
@@ -28,7 +35,7 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
             [
                 is_declared.then_some("declare "),
                 func.is_async().then_some("async "),
-                "function",
+                keyword,
                 func.is_generator().then_some("*"),
                 space(),
                 func.name().map(|name| identifier(name, node)),

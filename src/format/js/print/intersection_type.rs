@@ -3,7 +3,10 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// `A & B`
-pub(crate) fn write_ts_intersection_type<'a>(_ty: TypeNode<'a>, types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_intersection_type<'a>(ty: TypeNode<'a>, types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() && super::flow::is_interface_type(ty) {
+        return super::flow::write_interface_type(types, f);
+    }
     match types.len() {
         1 => write!(f, types.first()),
         _ => write!(f, group(&format_with(|f| format_intersection_types(types, f)))),

@@ -64,6 +64,10 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
         // Errors, where the `export` is not in typescript-estree's tree: `export import a from "b"`,
         // `export export = a`, `declare export const a`.
         StmtTag::Import | StmtTag::ExportAssign => "",
+        _ if f.file().is_flow() && super::flow::is_declare_export(statement, f) => match statement.is_default_export() {
+            true => "declare export default",
+            false => "declare export",
+        },
         _ if first_modifier.is_some_and(|it| it.flag() != Flags::EXPORT) => "",
         _ if statement.is_default_export() => "export default",
         _ => "export",
@@ -94,7 +98,7 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
     else {
         return;
     };
-    write!(f, ["export", space(), type_only.then_some("type ")]);
+    write!(f, [(!statement.modifiers().is_empty()).then_some("declare "), "export", space(), type_only.then_some("type ")]);
     let Some(name) = alias else {
         write!(f, ["*", space(), "from", space()]);
         format_import_and_export_source_with_clause(statement, f);
@@ -129,7 +133,7 @@ pub(crate) fn write_export_named_declaration<'a>(statement: Stmt<'a>, export: Ex
     let export_kind = export.is_type_only().then_some("type ");
 
     format_leading_comments(span).fmt(f);
-    write!(f, ["export", space()]);
+    write!(f, [(!statement.modifiers().is_empty()).then_some("declare "), "export", space()]);
 
     let needs_space = f.options().bracket_spacing.value();
     let Some(first) = specifiers.first() else {

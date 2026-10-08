@@ -34,17 +34,17 @@ use std::path::{Path, PathBuf};
 
 /// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with
 /// the file.
-fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
-    with_bound_file_as(false, is_script, path, code, then)
+fn with_file_as<R>(dialect: Dialect, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+    with_bound_file_as(false, dialect, path, code, then)
 }
 
 /// `needs_symbols`: with the symbols and scopes of the file, which formatting does not take.
-fn with_bound_file_as<R>(needs_symbols: bool, is_script: bool, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+fn with_bound_file_as<R>(needs_symbols: bool, dialect: Dialect, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
     // What typescript-estree refuses while it converts the tree, Prettier refuses too.
     let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
     let language = LanguageOptions {
         parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
-        source_type: if is_script { SourceType::Script } else { SourceType::Module },
+        source_type: if dialect.script { SourceType::Script } else { SourceType::Module },
         ..LanguageOptions::default()
     };
     let session = Session::new();
@@ -52,7 +52,7 @@ fn with_bound_file_as<R>(needs_symbols: bool, is_script: bool, path: &str, code:
     let arena = session.arena();
     let how = language.parse_options(path.as_bytes());
     let mut hir = bun_js_parser::sema::summarize_as(
-        Dialect::babel(is_script),
+        dialect,
         arena,
         path.as_bytes(),
         how.script_kind,
@@ -118,7 +118,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
             &with_format_javascript
         }
     };
-    fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<WithCursor, FormatError> {
+    fn format<'a>(file: &'a File<'a>, dialect: Dialect, options: &FormatOptions) -> Result<WithCursor, FormatError> {
         // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
         let types = match options.parser.as_deref() {
             Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts") => bun_lint::linter::TypesInJavaScript::Tolerated,
@@ -129,7 +129,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
         let path = crate::text(file.path());
-        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(is_script, &path, slice, |file| then(file));
+        let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(dialect, &path, slice, |file| then(file));
         let cursor = bun_format::range::format_with_cursor(file, options, &mut scratch, &mut out, parse)?;
         Ok((out, cursor))
     }
@@ -209,13 +209,23 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok((code.to_vec(), options.cursor_offset)),
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
+    // `babel` hands a file of Flow to `babel-flow`.
+    let is_flow = match options.parser.as_deref() {
+        Some(b"flow" | b"babel-flow") => true,
+        Some(b"babel") | None => bun_lint::linter::goes_to_flow(&code, name),
+        Some(_) => false,
+    };
     let format_as = |is_script: bool| {
+        let dialect = match is_flow {
+            true => Dialect::flow(is_script),
+            false => Dialect::babel(is_script),
+        };
         let how = options.sort_imports.as_deref();
-        with_bound_file_as(how.is_some_and(|it| it.needs_symbols()), is_script, path, &code, |file| {
+        with_bound_file_as(how.is_some_and(|it| it.needs_symbols()), dialect, path, &code, |file| {
             // A file whose imports move is parsed again.
             match how.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-                Some(sorted) => with_file_as(is_script, path, &sorted, |file| format(file, is_script, options)),
-                None => format(file, is_script, options),
+                Some(sorted) => with_file_as(dialect, path, &sorted, |file| format(file, dialect, options)),
+                None => format(file, dialect, options),
             }
         })
     };

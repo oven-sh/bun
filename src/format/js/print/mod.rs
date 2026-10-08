@@ -11,6 +11,7 @@ pub(crate) mod class;
 pub(crate) mod decorators;
 pub(crate) mod export_declarations;
 pub(crate) mod expressions;
+pub(crate) mod flow;
 pub(crate) mod function;
 pub(crate) mod function_type;
 pub(crate) mod import_declaration;

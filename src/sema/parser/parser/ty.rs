@@ -9,7 +9,7 @@ use bun_sema::hir::*;
 
 impl Parser<'_> {
     #[inline(always)]
-    fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
+    pub(crate) fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
         let id = TypeNodeId(self.f.types.len() as u32);
         self.f.types.push(TypeNode { kind, pos, end });
         id
@@ -17,14 +17,14 @@ impl Parser<'_> {
 
     /// A type that ends with the previous token.
     #[inline(always)]
-    fn finish_type(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
+    pub(crate) fn finish_type(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
         let end = self.prev_end();
         self.add_type(kind, pos, end)
     }
 
     /// A type that is the token, which is consumed.
     #[inline(always)]
-    fn token_type(&mut self, kind: TypeNodeKind) -> TypeNodeId {
+    pub(crate) fn token_type(&mut self, kind: TypeNodeKind) -> TypeNodeId {
         let id = self.add_type(kind, self.lx.start, self.lx.end);
         self.next();
         id
@@ -37,10 +37,20 @@ impl Parser<'_> {
             return TypeNodeId::NONE;
         }
         self.next();
-        let ty = self.ty();
         if self.options.is_javascript {
-            self.js_error_at_type(ty, 8010);
+            return self.type_annotation_in_javascript();
         }
+        self.ty()
+    }
+
+    /// `parseTypeAnnotation`, after the `:`.
+    #[cold]
+    fn type_annotation_in_javascript(&mut self) -> TypeNodeId {
+        if self.is_flow {
+            return self.flow_type();
+        }
+        let ty = self.ty();
+        self.js_error_at_type(ty, 8010);
         ty
     }
 
@@ -168,6 +178,9 @@ impl Parser<'_> {
 
     /// `parseTypeOrTypePredicate`
     pub(crate) fn type_or_type_predicate(&mut self) -> TypeNodeId {
+        if self.is_flow {
+            return self.flow_return_type_of_function();
+        }
         if self.is_identifier() {
             // `parseTypePredicatePrefix`
             let is_predicate = self.look_ahead(|p| {
@@ -636,6 +649,9 @@ impl Parser<'_> {
     /// `parseTypeArguments`, at the `<`: the list, and what `checkGrammarTypeArguments` reports
     /// about it where it is called.
     pub(crate) fn type_arguments_unchecked(&mut self) -> (IdList<TypeNodeId>, Option<GrammarError>) {
+        if self.is_flow {
+            return (self.flow_type_arguments(), None);
+        }
         let less_than = self.pos();
         self.next();
         let base = self.s.ids.len();
@@ -735,7 +751,7 @@ impl Parser<'_> {
     }
 
     /// `parseTypeQuery`
-    fn type_query(&mut self) -> TypeNodeId {
+    pub(crate) fn type_query(&mut self) -> TypeNodeId {
         let start = self.pos();
         self.next();
         let base = self.s.names.len();

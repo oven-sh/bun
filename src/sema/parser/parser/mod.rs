@@ -3,6 +3,7 @@
 
 mod class;
 mod expr;
+mod flow;
 mod func;
 mod js_syntax;
 mod jsx;
@@ -35,6 +36,8 @@ pub(crate) mod ctx {
     pub(crate) const TOP_LEVEL: u32 = 1 << 6;
     /// The node is in a type, in an interface or in a type alias.
     pub(crate) const TYPE: u32 = 1 << 7;
+    /// In Flow: `A => B` is no type. The `=>` is that of the arrow function whose return type is `A`.
+    pub(crate) const NO_ANONYMOUS_FUNCTION_TYPE: u32 = 1 << 8;
 }
 
 macro_rules! stacks {
@@ -153,6 +156,10 @@ pub(crate) struct Parser<'a> {
     pub(crate) options: Options,
     /// `Dialect::ecmascript`, in a JavaScript file.
     pub(crate) is_ecmascript: bool,
+    /// `Dialect::flow`, in a JavaScript file.
+    pub(crate) is_flow: bool,
+    /// A `<` after an expression can start type arguments: not in JavaScript, but in Flow.
+    pub(crate) has_type_arguments_in_expressions: bool,
     pub(crate) has_top_level_await: bool,
     /// `notParenthesizedArrow`: the positions at which a speculative parse has found that no arrow
     /// function starts.
@@ -198,6 +205,7 @@ impl<'a> Parser<'a> {
         lx.is_ecmascript = is_ecmascript;
         lx.is_typescript_5 = options.dialect.typescript_5;
         lx.is_script = is_ecmascript && options.dialect.script;
+        let is_flow = options.dialect.flow && options.is_javascript;
         let mut context = ctx::TOP_LEVEL;
         if options.is_declaration_file {
             context |= ctx::AMBIENT;
@@ -212,6 +220,8 @@ impl<'a> Parser<'a> {
             classes_around: 0,
             options,
             is_ecmascript,
+            is_flow,
+            has_type_arguments_in_expressions: is_flow || !options.is_javascript,
             has_top_level_await: false,
             not_arrows: Vec::new(),
             unclaimed_nullable_types: 0,
@@ -275,6 +285,7 @@ impl<'a> Parser<'a> {
             FileKind::Ts
         };
         self.f.is_js = self.options.is_javascript;
+        self.f.is_flow = self.is_flow;
         self.next();
         let base = self.s.ids.len();
         while self.token() != T::Eof {

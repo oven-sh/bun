@@ -270,6 +270,9 @@ impl Parser<'_> {
         }
         flags |= self.ambient();
         let is_generator = kind == MemberKind::Property && self.eat(T::Asterisk);
+        if matches!(self.token(), T::Plus | T::Minus) && self.is_flow {
+            self.flow_variance();
+        }
         let name_token = self.token();
         let (mut key, name_kind, name_pos) = self.property_name();
         if name_token == T::BigInt {

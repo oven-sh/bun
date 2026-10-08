@@ -160,6 +160,9 @@ impl Parser<'_> {
         if self.token() != T::LessThan {
             return Span::EMPTY;
         }
+        if self.is_flow {
+            return self.flow_type_parameters();
+        }
         self.next();
         let base = self.s.type_params.len();
         while self.is_in_list(T::GreaterThan) {
@@ -465,6 +468,8 @@ impl Parser<'_> {
             }
             self.next();
             match self.token() {
+                // `(a: T)` can be a cast.
+                T::Colon if self.is_flow => Tristate::Unknown,
                 // "If we have something like '(a:', then we must have a type-annotated parameter"
                 T::Colon => Tristate::True,
                 T::Question => {
@@ -486,7 +491,7 @@ impl Parser<'_> {
             if !self.is_identifier() && self.token() != T::Const {
                 return Tristate::False;
             }
-            if !self.options.is_jsx {
+            if !self.options.is_jsx || self.is_flow {
                 return Tristate::Unknown;
             }
             // "JSX overrides"
@@ -521,6 +526,10 @@ impl Parser<'_> {
         let (this_param, params) = self.parameters(signature_context(flags));
         let has_return_colon = self.token() == T::Colon;
         let ret = match has_return_colon {
+            true if self.is_flow => {
+                self.next();
+                self.flow_return_type_of_arrow_function()
+            }
             true => {
                 self.next();
                 self.type_or_type_predicate()

@@ -227,7 +227,7 @@ pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> 
         return typescript_estree::first_error(file, true).map(of_check);
     }
     let of_babel = || espree::refusal_of_babel(file).map(of_check);
-    if goes_to_flow(file.text(), file.path()) {
+    if file.is_flow() || goes_to_flow(file.text(), file.path()) {
         return of_babel();
     }
     // Refused even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides of

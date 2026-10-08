@@ -50,7 +50,7 @@ impl Parser<'_> {
             name.0 = self.pos();
             jsx.tag = self.jsx_element_name();
             name.1 = self.prev_end();
-            if self.token() == T::LessThan && !self.options.is_javascript {
+            if self.token() == T::LessThan && self.has_type_arguments_in_expressions {
                 jsx.type_args = self.type_arguments();
             }
             jsx.attrs = self.jsx_attributes();

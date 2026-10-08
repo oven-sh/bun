@@ -9,7 +9,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     pub(crate) fn js_error(&mut self, at: (u32, u32), code: u32, what: &[u8]) {
-        if self.options.is_javascript && !self.has_context(ctx::TYPE) {
+        if self.options.is_javascript && !self.has_context(ctx::TYPE) && !self.is_flow {
             let args: &[&[u8]] = if what.is_empty() { &[] } else { &[what] };
             self.flag(DiagnosticKind::Js, code, at, args);
         }

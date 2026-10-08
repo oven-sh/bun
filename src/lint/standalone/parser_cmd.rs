@@ -15,6 +15,7 @@ pub(crate) fn run(args: &[String]) {
     let dialect = |script: bool| match () {
         () if has("--typescript") => Dialect::typescript_estree(script),
         () if has("--babel") => Dialect::babel(script),
+        () if has("--flow") => Dialect::flow(script),
         () if has("--tsc") => Dialect::default(),
         () => Dialect::espree(script),
     };

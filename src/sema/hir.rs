@@ -1832,6 +1832,10 @@ pub struct FileIn<S: Storage> {
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted, and
     /// reported as an error afterwards.
     pub is_js: bool,
+    /// The file is parsed as Flow (`Dialect::flow`). What Flow has and TypeScript has not is written
+    /// with the nodes of TypeScript: `bun_sema_parser`'s `flow.rs` says how. Only a formatter gets
+    /// such a file.
+    pub is_flow: bool,
     /// `// @ts-check` (true) or `// @ts-nocheck` among the leading comments. The last one wins.
     pub check_directive: Option<bool>,
     /// A module even without module syntax: by its extension, or because the options force every
@@ -2402,6 +2406,7 @@ macro_rules! file_in_arena {
         File {
                 kind: $this.kind,
                 is_js: $this.is_js,
+                is_flow: $this.is_flow,
                 check_directive: $this.check_directive,
                 is_module_by_decree: $this.is_module_by_decree,
                 has_module_syntax: $this.has_module_syntax,
@@ -2707,27 +2712,35 @@ pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
 }
 
 /// `isNarrowableReference`
-pub fn is_narrowable_reference(hir: &File, e: ExprId) -> bool {
+pub fn is_narrowable_reference(hir: &File, mut e: ExprId) -> bool {
+    loop {
+        match narrowable_reference_step(hir, e) {
+            Ok(answer) => return answer,
+            Err(same) => e = same,
+        }
+    }
+}
+
+/// `isNarrowableReference` of `e`, or the expression for which the answer is the same.
+pub(crate) fn narrowable_reference_step(hir: &File, e: ExprId) -> Result<bool, ExprId> {
     match hir[e].kind {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
         | ExprKind::NewTarget(_)
-        | ExprKind::ImportMeta => true,
-        ExprKind::Dot { obj, .. } => is_narrowable_reference(hir, obj),
-        ExprKind::NonNull(x) => is_narrowable_reference(hir, x),
+        | ExprKind::ImportMeta => Ok(true),
+        ExprKind::Dot { obj, .. } => Err(obj),
+        ExprKind::NonNull(x) => Err(x),
         // With a literal key the object is not checked.
-        ExprKind::Index { obj, index, .. } => {
-            is_string_or_numeric_literal_like(hir, index)
-                || is_entity_name_expression(hir, index) && is_narrowable_reference(hir, obj)
-        }
+        ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => Ok(true),
+        ExprKind::Index { obj, index, .. } if is_entity_name_expression(hir, index) => Err(obj),
         ExprKind::Binary {
             op: BinOp::Comma,
             right,
             ..
-        } => is_narrowable_reference(hir, right),
-        ExprKind::Assign { target, .. } => is_left_hand_side_expression(hir, target),
-        _ => false,
+        } => Err(right),
+        ExprKind::Assign { target, .. } => Ok(is_left_hand_side_expression(hir, target)),
+        _ => Ok(false),
     }
 }
 

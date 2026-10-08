@@ -611,9 +611,9 @@ fn parse_directly(
     };
     let parsed = (|| {
         if is_json {
-            return Err(bun_sema_parser::Refusal::Json);
+            return Err((bun_sema_parser::Refusal::Json, 0));
         }
-        let first = parse(options, scratch).map_err(|it| it.why)?;
+        let first = parse(options, scratch).map_err(|it| (it.why, it.at))?;
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
         // context at its top level.
         let parse_again = first.has_top_level_await
@@ -631,13 +631,28 @@ fn parse_directly(
         scratch.recycle(first.file);
         options.await_is_a_name = true;
         let second = parse(options, scratch);
-        second.map(|it| it.file).map_err(|it| it.why)
+        second.map(|it| it.file).map_err(|it| (it.why, it.at))
     })();
     let mut file = match parsed {
         Ok(file) => file,
-        Err(why) => {
+        Err((why, at)) => {
             DIRECT_PARSER_COUNTS.refused[why as usize].fetch_add(1, Relaxed);
-            return None;
+            // No other parser reads Flow: what is refused is an error.
+            if !(dialect.flow && is_js) {
+                return None;
+            }
+            use bun_sema::hir::{Diagnostic, DiagnosticKind};
+            return Some(bun_sema::hir::FileBuilder {
+                kind: bun_sema::hir::FileKind::Tsx,
+                is_js,
+                is_flow: true,
+                has_errors: true,
+                has_parse_diagnostics: true,
+                error_pos: at,
+                source_len: text.len() as u32,
+                diagnostics: vec![Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[])],
+                ..Default::default()
+            });
         }
     };
     DIRECT_PARSER_COUNTS.parsed.fetch_add(1, Relaxed);

@@ -194,6 +194,9 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
                 write!(f, keyword);
             }
         }
+        if written.intersects(Flags::IN | Flags::OUT) {
+            crate::js::print::flow::write_variance_sign(modifiers, f);
+        }
     }
     match member.key() {
         Some(key) if key.is_computed() => format_computed_or_property_key(key, member.as_ast_nodes(), f),

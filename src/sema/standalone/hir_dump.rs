@@ -66,6 +66,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         kind,
         has_module_syntax,
         is_js,
+        is_flow: _,
         check_directive,
         is_module_by_decree,
         has_errors,

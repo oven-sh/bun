@@ -156,6 +156,9 @@ fn write_static_block<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
 
 /// `[key: string]: T`
 fn write_ts_index_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() {
+        return super::flow::write_object_type_member(member, f);
+    }
     let Some(signature) = member.func() else {
         return;
     };
@@ -263,6 +266,9 @@ struct FormatClass<'a>(Class<'a>);
 impl<'a> Format<'a> for FormatClass<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let class = self.0;
+        if super::flow::is_declared_class(class) {
+            return super::flow::write_declared_class(class, f);
+        }
         let node = AstNodes::Class(class);
         let parent = node.parent();
         let is_expression = matches!(class.owner(), Node::Expr(_));

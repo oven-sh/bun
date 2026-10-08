@@ -239,6 +239,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             | N::AwaitExpression(_)
             | N::JSXSpreadAttribute(_)
             | N::TSTypeAssertion(_)
+            | N::TypeCastExpression(_)
             | N::TSAsExpression(_)
             | N::TSSatisfiesExpression(_)
             | N::TSNonNullExpression(_) => true,
@@ -491,6 +492,10 @@ fn binary_or_cast_needs_parentheses<'a>(
 ) -> bool {
     let is_type_assertion = operator.is_none() && e.is_angle_bracket_assertion();
     let is_binary_cast = operator.is_none() && !is_type_assertion;
+    // Flow's `(e: T)` has its own.
+    if is_type_assertion && f.file().is_flow() {
+        return false;
+    }
     let parent_binary = match parent {
         // `a as unknown as T`
         N::TSAsExpression(_) | N::TSSatisfiesExpression(_) => return !is_binary_cast,
@@ -610,6 +615,7 @@ fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
         | N::ThrowStatement(_)
         | N::VariableDeclarator(_)
         | N::YieldExpression(_)
+        | N::TypeCastExpression(_)
         | N::ExportDefaultDeclaration(_) => false,
         _ => true,
     }

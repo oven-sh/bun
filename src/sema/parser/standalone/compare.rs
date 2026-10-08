@@ -116,7 +116,7 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
     pub(crate) fn run(&mut self) {
         let (a, b) = (self.a, self.b);
         same!(
-            self, a, b, kind, is_js, check_directive, has_module_syntax, has_errors,
+            self, a, b, kind, is_js, is_flow, check_directive, has_module_syntax, has_errors,
             ran_out_of_stack, has_parse_diagnostics, syntax_errors, source_len, jsx_pragmas
         );
         // The reference lists what the lowering reports before what the parser reports.

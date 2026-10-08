@@ -23,6 +23,9 @@ fn is_declared(statement: Stmt<'_>) -> bool {
 
 /// `interface A<T> extends B { .. }`
 pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface: Interface<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() && super::flow::is_opaque_type(statement, f) {
+        return super::flow::write_opaque_type(statement, interface, f);
+    }
     let node = AstNodes::TSInterfaceDeclaration(statement);
     let id = identifier(interface.name(), node);
     let type_params = interface.type_params();
@@ -122,6 +125,9 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
 /// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
 /// is a type.
 pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Alias<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() && super::flow::write_what_is_no_type_alias(statement, alias, f) {
+        return;
+    }
     let node = AstNodes::TSTypeAliasDeclaration(statement);
     let ty = without_lone_operator(alias.ty());
 
@@ -307,6 +313,9 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
             format_leading_comments(declaration.body_span())
         ]
     );
+    if f.file().is_flow() {
+        super::flow::write_explicit_type_of_enum(declaration, f);
+    }
     around_node(declaration.body_span(), f, |f| write_ts_enum_body(declaration, f));
 }
 
@@ -327,7 +336,10 @@ fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
         write!(
             f,
             block_indent(&format_with(|f| {
-                let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
+                let trailing_separator = match members.last().is_some_and(super::flow::is_unknown_members_mark) {
+                    true => TrailingSeparator::Disallowed,
+                    false => FormatTrailingCommas::ES5.trailing_separator(f.options()),
+                };
                 f.join_nodes_with_soft_line().entries_with_trailing_separator(members.iter(), ",", trailing_separator);
             }))
         );
@@ -340,6 +352,9 @@ fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
 
 /// `A`, `A = 1`, `"a" = 1`
 pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter<'a>) {
+    if super::flow::is_unknown_members_mark(member) {
+        return write!(f, "...");
+    }
     if let Some(key) = member.key() {
         // `["a"]` is `"a"`. Only a template keeps its brackets.
         let is_computed = key.is_computed() && f.source_text().text_for(&key.inner_span(f.file())).starts_with(b"`");

@@ -49,6 +49,9 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
 
 /// `span`: of the parentheses. It is only looked at if there are no parameters.
 fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Formatter<'a>) {
+    if f.file().is_flow() && super::flow::is_shorthand_function_type(func) {
+        return super::flow::write_shorthand_parameter(func, f);
+    }
     let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
     let has_any_decorated_parameter = func.params().iter().any(|param| param.decorators().next().is_some());
     let can_hug = should_hug_function_parameters(func, parentheses_not_needed, f) && !has_any_decorated_parameter;
@@ -166,6 +169,9 @@ const MODIFIERS: [(Flags, &str); 6] = [
 
 /// `private a?: T = 1`, `...a: T`, `this: T`
 pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() && super::flow::write_parameter_start(param, f) {
+        return;
+    }
     if matches!(param.as_ast_nodes(), AstNodes::TSThisParameter(_)) {
         return write!(f, ["this", param.ty().map(FormatTypeAnnotation)]);
     }

@@ -164,6 +164,9 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
 
 /// `{ a: A }`
 pub(crate) fn write_ts_type_literal<'a>(ty: TypeNode<'a>, members: List<'a, Member<'a>>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() {
+        return super::flow::write_object_type(ty, members, f);
+    }
     ObjectLike::TSTypeLiteral(ty, members).fmt(f);
 }
 
@@ -263,6 +266,7 @@ impl<'a> FormatTSSignature<'a> {
         if f.file().is_javascript() {
             return match (self.is_interface, self.next_signature) {
                 (true, _) => write!(f, ";"),
+                (false, None) if super::flow::is_inexact_mark(self.signature) => {}
                 (false, Some(_)) => write!(f, ","),
                 (false, None) => write!(f, FormatTrailingCommas::ES5),
             };
@@ -293,6 +297,9 @@ impl<'a> FormatTSSignature<'a> {
 
 /// A member of an interface or a type literal that is not an index signature.
 pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() {
+        return super::flow::write_object_type_member(member, f);
+    }
     let node = member.as_ast_nodes();
     match (node, member.func()) {
         (AstNodes::TSCallSignatureDeclaration(_), Some(func)) => write_ts_call_signature_declaration(func, f),
@@ -345,6 +352,9 @@ pub(crate) fn write_ts_type_query<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
+    if f.file().is_flow() && super::flow::write_declared_predicate(ty, expr, args, f) {
+        return;
+    }
     // The name is ESTree's `TSQualifiedName`, which does not break like a member expression.
     let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
     let mut leftmost = expr;
@@ -534,8 +544,11 @@ pub(crate) fn write_ts_type_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a
     else {
         return;
     };
+    if f.file().is_flow() && super::flow::write_checks_predicate(ty, f) {
+        return;
+    }
     let parameter = ty.predicate_param().map(|it| identifier(it, AstNodes::TSTypePredicate(ty)));
-    write!(f, asserts.then_some("asserts "));
+    write!(f, asserts.then(|| super::flow::predicate_prefix(ty)));
     let Some(type_annotation) = type_annotation else {
         return write!(f, parameter);
     };

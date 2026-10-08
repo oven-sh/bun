@@ -20,7 +20,10 @@ pub(crate) fn effective_parent(mut parent: AstNodes<'_>) -> AstNodes<'_> {
     parent
 }
 
-pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, _f: &Formatter<'a>) -> bool {
+pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    if f.file().is_flow() {
+        return crate::js::print::flow::needs_parentheses(ty);
+    }
     match ty.kind() {
         TypeKind::Fn(func) => {
             let parent = effective_parent(ty.ast_parent());

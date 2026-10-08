@@ -151,7 +151,7 @@ impl Parser<'_> {
         let start = self.pos();
         let (mut is_type_only, mut property_name, mut can_parse_as) = (false, None, true);
         let mut name = self.module_export_name();
-        if name.token == T::Type {
+        if name.token == T::Type || name.token == T::TypeOf && self.is_flow {
             // "If the first token of an import specifier is 'type', there are a lot of
             // possibilities"
             if self.token() == T::As {
@@ -209,12 +209,12 @@ impl Parser<'_> {
         self.next();
         let clause_start = self.pos();
         let mut identifier = None;
-        if self.is_identifier() {
+        if self.is_identifier() || self.token() == T::TypeOf && self.is_flow {
             identifier = Some((self.lx.atom, self.pos(), self.token()));
             self.next();
         }
         let (mut type_only, mut is_deferred) = (false, false);
-        if let Some((_, _, T::Type)) = identifier {
+        if let Some((_, _, T::Type | T::TypeOf)) = identifier {
             let is_modifier = (self.token() != T::From
                 || self.is_identifier()
                     && matches!(self.peek(), T::From | T::Equals))
@@ -420,9 +420,11 @@ impl Parser<'_> {
 
     /// `parseExportDeclaration`, after `export`.
     pub(crate) fn export_declaration(&mut self, start: Start, base: usize) -> StmtId {
-        if self.s.modifiers.len() > base {
+        if self.s.modifiers.len() > base && !self.is_flow {
             self.refuse(Refusal::Reported);
         }
+        // In Flow: `declare`
+        let modifiers = self.take_modifiers(base);
         let type_only = self.eat(T::Type);
         if self.token() == T::Asterisk {
             let star_pos = self.pos();
@@ -446,7 +448,7 @@ impl Parser<'_> {
                 star_pos,
                 alias_pos,
             };
-            return self.add_stmt(kind, start, Span::EMPTY);
+            return self.add_stmt(kind, start, modifiers);
         }
         let declaration = ExportId(self.f.exports.len() as u32);
         let specs = self.s.export_specs.len();
@@ -496,7 +498,7 @@ impl Parser<'_> {
             mode,
             stmt: StmtId::NONE,
         });
-        let statement = self.add_stmt(StmtKind::ExportNamed(declaration), start, Span::EMPTY);
+        let statement = self.add_stmt(StmtKind::ExportNamed(declaration), start, modifiers);
         self.f[declaration].stmt = statement;
         statement
     }

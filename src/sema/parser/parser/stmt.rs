@@ -234,6 +234,10 @@ impl Parser<'_> {
                         // "If we see 'declare type', then commit to parsing a type alias."
                         return true;
                     }
+                    // `declare module.exports: T`
+                    if previous == T::Declare && self.token() == T::Module && self.is_flow {
+                        return true;
+                    }
                 }
                 T::Global => {
                     self.next();
@@ -259,7 +263,7 @@ impl Parser<'_> {
                     }
                 }
                 T::Static => self.next(),
-                _ => return false,
+                _ => return self.is_flow && self.flow_is_at_declaration_word(),
             }
         }
     }
@@ -279,6 +283,7 @@ impl Parser<'_> {
             self.token(),
             T::OpenBracket | T::OpenBrace | T::Asterisk | T::DotDotDot
         ) || self.is_literal_property_name()
+            || matches!(self.token(), T::Plus | T::Minus) && self.is_flow
     }
 
     /// `canFollowExportModifier`
@@ -301,7 +306,8 @@ impl Parser<'_> {
                 p.next();
                 p.token() == T::Function && !p.newline_before()
             }),
-            _ => false,
+            T::Enum => self.is_flow,
+            _ => self.is_flow && self.flow_is_at_declaration_word(),
         }
     }
 
@@ -433,7 +439,10 @@ impl Parser<'_> {
                 || flags.contains(Flags::ASYNC) && self.token() != T::Function
                 || self.has_modifier_twice(base, flags))
         {
-            self.report();
+            match self.is_flow {
+                true => self.flow_declare_before_export(base, flags),
+                false => self.report(),
+            }
         }
         if flags.intersects(Flags::IN | Flags::OUT) {
             self.report();
@@ -464,11 +473,23 @@ impl Parser<'_> {
             T::Var | T::Let | T::Const | T::Using | T::Await => {
                 self.variable_statement(start, base, flags)
             }
+            T::Function if flags.contains(Flags::AMBIENT) && self.is_flow => {
+                self.flow_declare_function(start, base, flags)
+            }
             T::Function => self.function_declaration(start, base, flags),
+            T::Class if flags.contains(Flags::AMBIENT) && self.is_flow => {
+                self.flow_declare_class(start, base, flags)
+            }
             T::Class => self.class_declaration(start, base, flags),
+            T::Interface if self.is_flow => self.flow_interface(start, base, flags),
             T::Interface => self.interface_declaration(start, base, flags),
+            T::Type if self.is_flow => self.flow_type_alias(start, base, flags),
             T::Type => self.type_alias_declaration(start, base, flags),
+            T::Enum if self.is_flow => self.flow_enum(start, base, flags),
             T::Enum => self.enum_declaration(start, base, flags),
+            T::Module if self.is_flow && self.peek() == T::Dot => {
+                self.flow_declare_module_exports(start, base)
+            }
             T::Global if self.is_ecmascript => {
                 self.fail();
                 StmtId::NONE
@@ -476,13 +497,18 @@ impl Parser<'_> {
             T::Global | T::Module | T::Namespace => self.module_declaration(start, base, flags),
             T::Import => self.import_declaration_or_import_equals(start, base, flags),
             T::Export => {
+                let export = self.pos();
                 self.next();
                 match self.token() {
+                    T::Default if flags.contains(Flags::AMBIENT) && self.is_flow => {
+                        self.flow_declare_export_default_type(start, base, export)
+                    }
                     T::Default | T::Equals => self.export_assignment(start, base),
                     T::As => self.namespace_export_declaration(start, base),
                     _ => self.export_declaration(start, base),
                 }
             }
+            _ if self.is_flow => self.flow_declaration_at_word(start, base, flags),
             _ => {
                 self.fail();
                 StmtId::NONE
@@ -1064,7 +1090,22 @@ impl Parser<'_> {
             let body = self.embedded_statement();
             return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
         }
-        self.semicolon();
+        // `parseSemicolon`
+        if self.token() == T::Semicolon {
+            self.next();
+        } else if !self.can_parse_semicolon() {
+            return self.statement_without_semicolon(start, expression);
+        }
         self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)
+    }
+
+    /// The token cannot follow the expression statement `expression`.
+    #[cold]
+    fn statement_without_semicolon(&mut self, start: Start, expression: ExprId) -> StmtId {
+        if self.is_flow {
+            return self.flow_declaration_after_expression(start, expression);
+        }
+        self.fail();
+        StmtId::NONE
     }
 }

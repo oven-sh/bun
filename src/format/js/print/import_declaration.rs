@@ -79,7 +79,7 @@ pub(crate) fn write_import_declaration<'a>(statement: Stmt<'a>, import: Import<'
     if let Some(phase) = import.phase() {
         write!(f, [phase, space()]);
     } else if import.is_type_only() {
-        write!(f, "type ");
+        write!(f, super::flow::import_kind(import.clause_span().start, f));
     }
     if !import.is_side_effect() {
         write_import_specifiers(statement, import, f);
@@ -247,7 +247,8 @@ impl<'a> Format<'a> for FormatCommentsInSpecifier {
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_import_specifier<'a>(specifier: ImportSpec<'a>, f: &mut Formatter<'a>) {
     let node = AstNodes::ImportSpecifier(specifier);
-    write!(f, [FormatCommentsInSpecifier(specifier.span()), specifier.is_type_only().then_some("type ")]);
+    let kind = specifier.is_type_only().then(|| super::flow::import_kind(specifier.span().start, f));
+    write!(f, [FormatCommentsInSpecifier(specifier.span()), kind]);
     let local = identifier(specifier.local(), node);
     match specifier.is_renamed() {
         true => write!(f, [module_export_name(specifier.imported(), node), space(), "as", space(), local]),

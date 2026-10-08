@@ -35,6 +35,7 @@
 mod decl;
 mod entities;
 mod expr;
+mod flow;
 mod list;
 mod name;
 mod node;
@@ -221,6 +222,7 @@ pub struct File<'a> {
     path: &'a [u8],
     kind: FileKind,
     is_js: bool,
+    is_flow: bool,
     /// Whether there can be casts that are synthesized from JSDoc comments.
     hides_casts: bool,
     has_module_syntax: bool,
@@ -243,6 +245,7 @@ impl<'a> File<'a> {
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
+            is_flow: hir.is_flow,
             hides_casts: hir.is_js && !hir.jsdoc_comments.is_empty(),
             has_module_syntax: hir.has_module_syntax
                 || hir.is_module_by_decree

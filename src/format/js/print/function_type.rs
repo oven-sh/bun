@@ -11,7 +11,10 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// `(a: A) => R`, `new (a: A) => R`, `abstract new (a: A) => R`
-pub(crate) fn write_ts_function_type<'a>(_ty: TypeNode<'a>, func: Func<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_ts_function_type<'a>(ty: TypeNode<'a>, func: Func<'a>, f: &mut Formatter<'a>) {
+    if f.file().is_flow() && super::flow::write_function_type_keyword(ty, func, f) {
+        return;
+    }
     let signature = format_with(|f| format_grouped_parameters_with_return_type(func, true, f));
     match func.kind() {
         FnKind::ConstructorType => write!(

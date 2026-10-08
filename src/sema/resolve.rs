@@ -388,6 +388,8 @@ pub struct Dialect {
     /// The file is a script. With `ecmascript`, in JavaScript: whatever is in it. Otherwise: unless
     /// it has module syntax, whatever its extension.
     pub script: bool,
+    /// JavaScript has the types and the declarations of Flow, as `flow-parser` reads them.
+    pub flow: bool,
 }
 
 impl Dialect {
@@ -398,6 +400,7 @@ impl Dialect {
             ecmascript: false,
             babel: false,
             script,
+            flow: false,
         }
     }
 
@@ -414,6 +417,14 @@ impl Dialect {
         Dialect {
             babel: true,
             ..Dialect::espree(script)
+        }
+    }
+
+    /// Prettier's `flow` and `babel-flow`.
+    pub const fn flow(script: bool) -> Dialect {
+        Dialect {
+            flow: true,
+            ..Dialect::babel(script)
         }
     }
 }

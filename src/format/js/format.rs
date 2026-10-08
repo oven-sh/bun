@@ -644,9 +644,10 @@ fn write_less_common_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         ExprKind::Spread(argument) => write!(f, ["...", argument]),
         ExprKind::Await(argument) => expressions::write_await_expression(e, argument, f),
         ExprKind::Yield { value, star } => expressions::write_yield_expression(value, star, f),
-        ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => {
-            expressions::write_ts_type_assertion(e, f);
-        }
+        ExprKind::As { .. } | ExprKind::AsConst(_) if e.is_angle_bracket_assertion() => match f.file().is_flow() {
+            true => print::flow::write_type_cast_expression(e, f),
+            false => expressions::write_ts_type_assertion(e, f),
+        },
         ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => {
             print::as_or_satisfies_expression::write_as_or_satisfies_expression(e, f);
         }
@@ -943,6 +944,7 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     use print::ts_types;
     match ty.kind() {
+        TypeKind::Error if f.file().is_flow() && print::flow::write_nullable_type_or_type_operator(ty, f) => {}
         TypeKind::Error => write!(f, FormatSuppressedNode(ty.span())),
         TypeKind::Heritage { expr, args } => {
             write!(f, [expr, print::type_parameters::type_arguments(args, Node::Type(ty))]);
@@ -953,6 +955,7 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
             ts_types::write_ts_literal_type(ty, f);
         }
         TypeKind::Template(_) => print::template::write_ts_template_literal_type(ty, f),
+        TypeKind::Array(element) if f.file().is_flow() => print::flow::write_array_type(ty, element, f),
         TypeKind::Array(element) => write!(f, [element, "[]"]),
         TypeKind::Tuple(elements) => print::tuple_type::write_ts_tuple_type(ty, elements, f),
         TypeKind::Union(types) => print::union_type::write_ts_union_type(ty, types, f),
@@ -962,6 +965,9 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
         TypeKind::Cond { .. } => ts_types::write_ts_conditional_type(ty, f),
         TypeKind::Infer(param) => write!(f, ["infer", space(), param]),
         TypeKind::Mapped(mapped) => print::mapped_type::write_ts_mapped_type(ty, mapped, f),
+        TypeKind::IndexedAccess { obj, index } if f.file().is_flow() => {
+            print::flow::write_indexed_access_type(ty, obj, index, f);
+        }
         TypeKind::IndexedAccess { obj, index } => write!(f, [obj, "[", index, "]"]),
         TypeKind::Keyof(operand) => write!(f, ["keyof", space(), operand]),
         TypeKind::Readonly(operand) => write!(f, ["readonly", space(), operand]),

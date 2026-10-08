@@ -426,7 +426,10 @@ impl Parser<'_> {
                         self.const_assertion_type();
                         ExprKind::AsConst(left)
                     } else {
-                        let ty = self.ty();
+                        let ty = match self.is_flow {
+                            true => self.flow_type(),
+                            false => self.ty(),
+                        };
                         if self.options.is_javascript {
                             self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
                         }
@@ -857,9 +860,9 @@ impl Parser<'_> {
                         }
                         T::LessThan | T::LessThanLessThan => {
                             // `parseTypeArgumentsInExpression` finds none in JavaScript.
-                            let type_args = match self.options.is_javascript {
-                                true => None,
-                                false => self.try_type_arguments_in_expression(),
+                            let type_args = match self.has_type_arguments_in_expressions {
+                                true => self.try_type_arguments_in_expression(true),
+                                false => None,
                             };
                             let Some(type_args) = type_args else {
                                 self.fail();
@@ -895,8 +898,8 @@ impl Parser<'_> {
                     expression =
                         self.tagged_template(start, expression, IdList::EMPTY, is_in_chain);
                 }
-                T::LessThan | T::LessThanLessThan if !self.options.is_javascript => {
-                    let Some(type_args) = self.try_type_arguments_in_expression() else {
+                T::LessThan | T::LessThanLessThan if self.has_type_arguments_in_expressions => {
+                    let Some(type_args) = self.try_type_arguments_in_expression(allows_calls) else {
                         return expression;
                     };
                     expression = match self.token() {
@@ -1008,8 +1011,11 @@ impl Parser<'_> {
         self.finish_expr(ExprKind::Call(call), start)
     }
 
-    /// `parseTypeArgumentsInExpression`, in a `tryParse`.
-    fn try_type_arguments_in_expression(&mut self) -> Option<IdList<TypeNodeId>> {
+    /// `parseTypeArgumentsInExpression`, in a `tryParse`. `allows_calls`: not in the callee of `new`.
+    fn try_type_arguments_in_expression(&mut self, allows_calls: bool) -> Option<IdList<TypeNodeId>> {
+        if self.is_flow {
+            return self.flow_type_arguments_in_expression(!allows_calls);
+        }
         let less_than = self.pos() as usize;
         let type_arguments = self.try_parse(|p| {
             // `ReScanLessThanToken`
@@ -1137,9 +1143,22 @@ impl Parser<'_> {
         let open = self.pos();
         self.next();
         let expression = self.expression_allowing_in();
-        self.expect(T::CloseParen);
+        if self.token() != T::CloseParen {
+            return self.unclosed_parenthesized_expression(open, expression);
+        }
+        self.next();
         let end = self.prev_end();
         self.f.parens.push((expression, open, end));
+        expression
+    }
+
+    /// No `)` follows the `expression` after the `(` at `open`.
+    #[cold]
+    fn unclosed_parenthesized_expression(&mut self, open: u32, expression: ExprId) -> ExprId {
+        if self.token() == T::Colon && self.is_flow {
+            return self.flow_type_cast(open, expression);
+        }
+        self.fail();
         expression
     }
 

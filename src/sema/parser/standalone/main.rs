@@ -60,6 +60,7 @@ fn dialect_of(name: &str, script: bool) -> Option<Dialect> {
         "estree" | "typescript" => Dialect::typescript_estree(script),
         "espree" => Dialect::espree(script),
         "babel" => Dialect::babel(script),
+        "flow" => Dialect::flow(script),
         _ => return None,
     })
 }

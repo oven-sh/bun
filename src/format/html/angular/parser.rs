@@ -957,6 +957,12 @@ impl<'i> Parser<'i> {
             self.edit(body.start, Change::Hide(b'_'));
             self.edit(body.start + 1, Change::Hide(b'_'));
         }
+        // So does `/*`, and a line break ends a regular expression there.
+        for (at, &byte) in (body.start..).zip(self.text_of(body)) {
+            if byte == b'\n' || (byte == b'*' && at == body.start + 1) {
+                self.edit(at, Change::Hide(b'_'));
+            }
+        }
         self.advance();
         let flags = self.next();
         if flags.kind != Kind::RegExpFlags {

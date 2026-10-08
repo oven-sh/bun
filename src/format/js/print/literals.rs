@@ -53,7 +53,7 @@ fn write_reg_exp_literal_with_unknown_flags<'a>(
 
 /// The flags are sorted.
 pub(crate) fn write_reg_exp_literal<'a>(e: Expr<'a>, regex: Regex<'a>, f: &mut Formatter<'a>) {
-    let (raw, flags) = (e.text(), regex.flags());
+    let (raw, flags) = (f.source_text().text_for(&e), regex.flags());
     if flags.is_sorted() {
         return write!(f, text(raw));
     }

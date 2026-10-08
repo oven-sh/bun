@@ -73,6 +73,8 @@ fn parse_options(parser: Parser) -> ParseOptions {
             lexer: lexer::Options::default(),
             ..other
         },
+        // It is not parsed as HTML.
+        Parser::AngularExpression(_) => other,
     }
 }
 

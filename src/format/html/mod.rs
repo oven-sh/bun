@@ -33,7 +33,7 @@ use crate::css::{normalize_end_of_line, text};
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
-use crate::options::JavaScriptParser;
+use crate::options::{HtmlRoot, InHtml, JavaScriptParser};
 use crate::range::{Offsets, normalized_len, trim_end, write_with_line_ending};
 use crate::{FormatError, FormatOptions};
 use bun_core::strings;
@@ -48,6 +48,9 @@ pub enum Parser {
     Vue,
     Lwc,
     Mjml,
+    /// `__ng_action`, `__ng_binding`, `__ng_directive`, `__ng_interpolation`: the text is an expression of Angular, with no
+    /// HTML around it.
+    AngularExpression(HtmlRoot),
 }
 
 impl Parser {
@@ -58,6 +61,10 @@ impl Parser {
             b"vue" => Parser::Vue,
             b"lwc" => Parser::Lwc,
             b"mjml" => Parser::Mjml,
+            b"__ng_action" => Parser::AngularExpression(HtmlRoot::NgAction),
+            b"__ng_binding" => Parser::AngularExpression(HtmlRoot::NgBinding),
+            b"__ng_directive" => Parser::AngularExpression(HtmlRoot::NgDirective),
+            b"__ng_interpolation" => Parser::AngularExpression(HtmlRoot::NgInterpolation),
             _ => return None,
         })
     }
@@ -180,6 +187,9 @@ pub fn has_same_content(
     parser: Parser,
     options: &FormatOptions,
 ) -> bool {
+    if matches!(parser, Parser::AngularExpression(_)) {
+        return true;
+    }
     let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
     prepared_text(before, options).is_none_or(|(before, _)| {
         text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser)
@@ -283,6 +293,68 @@ fn write_document_with_cursor(
     }
 }
 
+/// Appends `text`, which is an expression of Angular, as it is formatted to `out`. No line break ends it.
+///
+/// The parsers of Prettier for that know of no pragma: it is as if the one that is asked for were there.
+fn format_angular_expression(
+    text: &[u8],
+    root: HtmlRoot,
+    options: &FormatOptions,
+    parse_javascript: Option<JavaScriptParser<'_>>,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
+    let start = out.len();
+    let options = FormatOptions {
+        line_ending: options.line_ending.resolve(text),
+        ..options.clone()
+    };
+    let text = match text.strip_prefix(BOM) {
+        Some(rest) => {
+            out.extend_from_slice(BOM);
+            rest
+        }
+        None => text,
+    };
+    let text = normalize_end_of_line(text);
+    if text::trim(&text).is_empty() {
+        return Ok(());
+    }
+    let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    context.parse_javascript = parse_javascript;
+    let mut is_written = false;
+    let document = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
+        let mut printer = printer::Printer {
+            tree: &ast::Tree::default(),
+            options: &Options {
+                parser: Parser::Angular,
+                original_text: &text,
+                format: &options,
+                filepath: None,
+                has_parent_parser: false,
+            },
+            out: writer::Writer::new(f, Some(0), true),
+            ancestors: 0,
+            stack_check: bun_core::StackCheck::init(),
+            is_nested_too_deeply: false,
+            has_typescript_script: None,
+            cursor: Cursor::Nowhere,
+        };
+        let in_html = InHtml {
+            root,
+            ..InHtml::default()
+        };
+        is_written = printer.write_angular_expression(&text, in_html, js::Hug::Bare);
+        printer.out.finish();
+    });
+    document
+        .and_then(|document| match is_written {
+            true => crate::ir::run::print(document, &text, &options, &mut scratch.document, out),
+            false => Err(FormatError::SyntaxError),
+        })
+        .inspect_err(|_| out.truncate(start))
+}
+
 /// Appends the formatted `text` to `out`. `path`: the name of the file.
 pub fn format(
     path: &[u8],
@@ -318,6 +390,10 @@ pub fn format_with(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<Option<u32>, FormatError> {
+    if let Parser::AngularExpression(root) = parser {
+        return format_angular_expression(text, root, options, parse_javascript, scratch, out)
+            .map(|()| None);
+    }
     let original = text;
     let has_bom = text.starts_with(BOM);
     let Some((text, is_range)) = prepared_text(text, options) else {

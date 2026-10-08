@@ -3,7 +3,8 @@
 use crate::prelude::*;
 
 /// What `e` starts with, if that is an expression: the `a` of `a.b`, `a()`, `a + b`, `a = b`,
-/// `a ? b : c`, `a, b`, `a as T`, `a!`, `a++`, `` a`b` ``, `new a()`.
+/// `a ? b : c`, `a, b`, `a as T`, `a!`, `a++`, `` a`b` ``. Prettier's `hasNakedLeftSide` and
+/// `getLeftSide`.
 ///
 /// In ESTree the left side of an assignment and the operand of `++` are not expressions. Use
 /// [`ExpressionLeftSide::is_assignment_target`] to tell.
@@ -64,7 +65,7 @@ impl<'a> ExpressionLeftSide<'a> {
             } if matches!(left.kind(), ExprKind::PrivateIdentifier(_)) => None,
             ExprKind::Binary { left, .. } => expression(left),
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => expression(obj),
-            ExprKind::TaggedTemplate(call) | ExprKind::New(call) | ExprKind::Call(call) => expression(call.callee()),
+            ExprKind::TaggedTemplate(call) | ExprKind::Call(call) => expression(call.callee()),
             ExprKind::Cond { test, .. } => expression(test),
             ExprKind::As { .. } | ExprKind::AsConst(_) if self.expr.is_angle_bracket_assertion() => None,
             ExprKind::As { expr, .. }

@@ -79,12 +79,7 @@ impl<'a> BinaryLikeExpression<'a> {
         while let Some(right) = last.right_with_same_operator() {
             last = right;
         }
-        match last.right.kind() {
-            ExprKind::Object(props) => !props.is_empty(),
-            ExprKind::Array(elements) => !elements.is_empty(),
-            ExprKind::Jsx(_) => true,
-            _ => false,
-        }
+        is_inlined_operand(last.right)
     }
 
     /// Whether `parent` indents it already.
@@ -250,7 +245,11 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             && let Some(right_logical) = binary_like_expression.right_with_same_operator()
         {
             write_trailing_comments_of_nested(binary_like_expression.left, f);
-            write!(f, [space(), operator.as_str(), soft_line_break_or_space()]);
+            write!(f, [space(), operator.as_str()]);
+            match is_inlined_operand(right_logical.left) {
+                true => write!(f, space()),
+                false => write!(f, soft_line_break_or_space()),
+            }
             match BinaryLikeExpression::new(right_logical.left).filter(|left| left.operator == operator) {
                 Some(left_logical_child) => format_flattened_logical_expression(left_logical_child, inside_parenthesis, f),
                 None => right_logical.left.fmt(f),
@@ -311,6 +310,16 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                 .take_while(|comment| left.span().end < comment.span.start && right.span().start > comment.span.end)
                 .any(|comment| comment.is_line());
         write!(f, group(&operator_and_right_expression).should_expand(should_break));
+    }
+}
+
+/// Whether `right`, the right side of a logical expression, stays on the line of the operator.
+fn is_inlined_operand(right: Expr<'_>) -> bool {
+    match right.kind() {
+        ExprKind::Object(props) => !props.is_empty(),
+        ExprKind::Array(elements) => !elements.is_empty(),
+        ExprKind::Jsx(_) => true,
+        _ => false,
     }
 }
 

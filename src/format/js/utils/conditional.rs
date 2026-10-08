@@ -217,28 +217,32 @@ impl<'a> FormatConditionalLike<'a> {
         let mut expression = conditional;
         let mut parent = conditional.ast_parent();
         loop {
+            let is = |head: Option<Expr<'a>>| head == Some(expression);
             match parent {
-                AstNodes::ChainExpression(_) => parent = parent.parent(),
+                AstNodes::ChainExpression(_) => {}
                 AstNodes::StaticMemberExpression(e)
+                | AstNodes::PrivateFieldExpression(e)
                 | AstNodes::ComputedMemberExpression(e)
-                | AstNodes::CallExpression(e)
-                | AstNodes::TSNonNullExpression(e) => {
-                    let head = e.object().or_else(|| e.callee()).or_else(|| e.expression());
-                    if head != Some(expression) {
-                        break;
-                    }
+                    if is(e.object()) =>
+                {
+                    expression = e;
+                }
+                AstNodes::CallExpression(e) if is(e.callee()) => expression = e,
+                AstNodes::TSNonNullExpression(e) => expression = e,
+                // The chain ends here.
+                AstNodes::NewExpression(e) if is(e.callee()) => {
                     expression = e;
                     parent = parent.parent();
+                    break;
                 }
-                AstNodes::NewExpression(e) | AstNodes::TSAsExpression(e) | AstNodes::TSSatisfiesExpression(e) => {
+                AstNodes::TSAsExpression(e) | AstNodes::TSSatisfiesExpression(e) => {
+                    expression = e;
                     parent = parent.parent();
-                    if e.callee().or_else(|| e.expression()) == Some(expression) {
-                        expression = e;
-                    }
                     break;
                 }
                 _ => break,
             }
+            parent = parent.parent();
         }
         if expression == conditional {
             return false;

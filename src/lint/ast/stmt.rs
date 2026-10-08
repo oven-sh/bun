@@ -394,16 +394,48 @@ impl<'a> Stmt<'a> {
     /// The module specifier with its quotes: of an `Import`, of an `ExportNamed` or an
     /// `ExportStar` after `from`, of an `ImportEquals` in `require(..)`.
     pub fn module_specifier_span(self) -> Option<Span> {
-        if !matches!(
-            self.tag(),
-            StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar | StmtTag::ImportEquals
-        ) {
-            return None;
-        }
-        let (uses, whole) = (self.file.hir.specifier_uses, self.span());
-        let found = uses.get(uses.partition_point(|it| it.pos < whole.start))?;
-        let rest = self.file.text().get(found.pos as usize..whole.end as usize)?;
-        Some(Span::new(found.pos, found.pos + crate::tokens::token_len(rest) as u32))
+        let text = self.file.text();
+        let is_at = |at: u32, token: &[u8]| text.get(at as usize..).is_some_and(|it| it.starts_with(token));
+        // Past `token`, if it is at `at`.
+        let past = |at: u32, token: &[u8]| is_at(at, token).then(|| skip_trivia(text, at + token.len() as u32));
+        let start = match self.try_raw()?.kind {
+            hir::StmtKind::Import(import) => {
+                let import = self.file.hir.imports.get(import.idx())?;
+                match is_at(import.clause_start, b"\"") || is_at(import.clause_start, b"'") {
+                    true => import.clause_start,
+                    false => past(skip_trivia(text, import.clause_end), b"from")?,
+                }
+            }
+            hir::StmtKind::ExportStar { alias, star_pos, alias_pos, .. } => {
+                let before = match alias.is_some() {
+                    true => self.file.ident(alias, alias_pos).span().end,
+                    false => star_pos + 1,
+                };
+                past(skip_trivia(text, before), b"from")?
+            }
+            hir::StmtKind::ExportNamed(export) => {
+                let export = Export::new(self.file, export);
+                let close = match export.items().last() {
+                    Some(last) => {
+                        let after = skip_trivia(text, last.span().end);
+                        past(after, b",").unwrap_or(after)
+                    }
+                    None => {
+                        let after = past(self.span().start, b"export")?;
+                        past(past(after, b"type").unwrap_or(after), b"{")?
+                    }
+                };
+                past(past(close, b"}")?, b"from")?
+            }
+            hir::StmtKind::ImportEquals(import) => {
+                let name = ImportEquals::new(self.file, import).name();
+                let equals = skip_trivia(text, name.span().end);
+                past(past(past(equals, b"=")?, b"require")?, b"(")?
+            }
+            _ => return None,
+        };
+        let rest = text.get(start as usize..)?;
+        matches!(rest.first(), Some(b'"' | b'\'')).then(|| Span::new(start, start + crate::tokens::token_len(rest) as u32))
     }
 
     /// `with { type: "json" }` of an `Import`, an `ExportNamed` or an `ExportStar`.

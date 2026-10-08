@@ -492,6 +492,10 @@ impl<'a> Key<'a> {
             hir::PropKey::Name(name) => {
                 let name = file.name(name);
                 match name_kind {
+                    // The HIR does not tell for the keys of `with { "type": "json" }`.
+                    NameKind::Identifier if matches!(file.text().get(start as usize), Some(b'"' | b'\'')) => {
+                        KeyKind::String(name)
+                    }
                     NameKind::Identifier | NameKind::Jsx => KeyKind::Ident(name),
                     NameKind::StringLiteral => KeyKind::String(name),
                     NameKind::NumericLiteral => KeyKind::Number(name),

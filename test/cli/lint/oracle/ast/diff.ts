@@ -5,21 +5,32 @@
 // Prints the classes of mismatches, by node type and field, the most frequent first.
 // --show: every mismatch of the classes that contain this text, with the code.
 // --rejected: lists the inputs that only one side rejects.
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 
 const [inputsPath, expectedPath, actualPath, ...flags] = process.argv.slice(2);
 const flag = (name: string) => (flags.includes(name) ? (flags[flags.indexOf(name) + 1] ?? "") : undefined);
 const show = flag("--show");
 const examples = Number(flag("--examples") ?? 3);
 
-const read = (path: string) => readFileSync(path, "utf8").split("\n").filter(Boolean);
-const code = new Map<string, string>();
-for (const line of read(inputsPath)) {
-  const it = JSON.parse(line);
-  code.set(it.id, it.code);
+// The lines of a file, which can be larger than a string can be.
+function* read(path: string) {
+  const file = openSync(path, "r");
+  const chunk = Buffer.alloc(1 << 24);
+  let rest: Buffer = Buffer.alloc(0);
+  for (let length; (length = readSync(file, chunk, 0, chunk.length, null)) > 0; ) {
+    let data = rest.length ? Buffer.concat([rest, chunk.subarray(0, length)]) : chunk.subarray(0, length);
+    for (let end; (end = data.indexOf(10)) >= 0; data = data.subarray(end + 1)) {
+      if (end > 0) yield data.toString("utf8", 0, end);
+    }
+    rest = Buffer.from(data);
+  }
+  if (rest.length) yield rest.toString("utf8");
+  closeSync(file);
 }
-const actual = new Map<string, string>();
-for (const line of read(actualPath)) actual.set(line.slice(7, line.indexOf('"', 7)), line);
+// The three files have a line for each input, in the same order.
+const inputs = read(inputsPath);
+const actualLines = read(actualPath);
+const code = new Map<string, string>();
 
 type Mismatch = { kind: string; path: string; expected: unknown; actual: unknown; range?: [number, number] };
 
@@ -69,11 +80,14 @@ let same = 0, different = 0, bothReject = 0;
 const onlyWeReject: string[] = [], onlyTheyReject: string[] = [], failures: string[] = [];
 for (const line of read(expectedPath)) {
   const expected = JSON.parse(line);
-  const ours = JSON.parse(actual.get(expected.id) ?? `{"error":"no output"}`);
+  const input = JSON.parse(inputs.next().value || "{}");
+  const ours = JSON.parse(actualLines.next().value || `{"error":"no output"}`);
+  if (input.id !== expected.id || (ours.id ?? expected.id) !== expected.id) throw new Error(`the files are not in step at ${expected.id}`);
+  const remember = () => code.set(expected.id, input.code.length > 100_000 ? input.code.slice(0, 100_000) : input.code);
   if (ours.error && ours.error !== "parse") failures.push(`${expected.id}: ${ours.error}`);
   if (expected.error || ours.error) {
     if (expected.error && ours.error) bothReject++;
-    else if (ours.error) onlyWeReject.push(expected.id);
+    else if (ours.error) (remember(), onlyWeReject.push(expected.id));
     else onlyTheyReject.push(`${expected.id}: ${expected.error}`);
     continue;
   }
@@ -89,7 +103,7 @@ for (const line of read(expectedPath)) {
     entry.inputs.add(expected.id);
     const isShown = show !== undefined && it.kind.includes(show);
     if (isShown || (isNew && entry.examples.length < examples)) {
-      const source = code.get(expected.id) ?? "";
+      const source: string = input.code;
       const at = it.range ? JSON.stringify(source.slice(it.range[0], Math.min(it.range[1], it.range[0] + 120))) : "";
       entry.examples.push(`${expected.id} ${it.path}\n        expected ${it.expected} actual ${it.actual}\n        ${at}`);
     }

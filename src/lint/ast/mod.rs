@@ -106,7 +106,6 @@ slices! {
         import_call_type_args: (hir::ExprId, hir::IdList<hir::TypeNodeId>),
         specifier_expressions: hir::ExprId,
         exports_from_expressions: (hir::StmtId, hir::ExprId),
-        specifier_uses: hir::SpecifierUse,
         jsdoc_comments: (u32, u32),
         diagnostics: hir::Diagnostic,
     }
@@ -297,6 +296,26 @@ impl<'a> File<'a> {
     #[inline]
     pub fn span(&self) -> Span {
         Span::new(0, self.hir.text.len() as u32)
+    }
+
+    /// ESLint's `sourceCode.hasBOM`. The text starts with a byte order mark, which is part of
+    /// [`File::text`] and takes three bytes there. ESLint leaves it out of its text.
+    #[inline]
+    pub fn has_bom(&self) -> bool {
+        self.hir.text.starts_with(b"\xEF\xBB\xBF")
+    }
+
+    /// Every expression that is in parentheses, once each, in no particular order.
+    pub fn parenthesized(&'a self) -> impl Iterator<Item = Expr<'a>> + 'a {
+        let parens = self.hir.parens;
+        let has_parens = move |id: hir::ExprId| parens.binary_search_by_key(&id.0, |p| p.0.0).is_ok();
+        parens.iter().enumerate().filter_map(move |(i, p)| {
+            let is_repeated = i > 0 && parens[i - 1].0 == p.0;
+            // The parentheses after a JSDoc cast belong to its operand, which may have its own.
+            let is_listed_already = self.jsdoc_cast_operand(p.0).is_some_and(has_parens);
+            let e = Expr::new(self, p.0);
+            (!is_repeated && !is_listed_already && self.expr_in_tree(e.id().idx()).is_some()).then_some(e)
+        })
     }
 
     /// The range of ESLint's `Program`: from the first token, after a `#!` line and comments, to

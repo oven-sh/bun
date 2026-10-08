@@ -223,10 +223,17 @@ impl<'a, S: Sink> Converter<'a, '_, S> {
                     None => self.member_key(member),
                 }
                 self.decorators((!is_constructor).then(|| member.modifiers()));
+                let is_named_constructor = |key: crate::ast::Key<'a>| {
+                    matches!(key.kind(), crate::ast::KeyKind::String(name) if name.is("constructor"))
+                };
                 let kind: &[u8] = match member.kind() {
                     MemberKind::Getter => b"get",
                     MemberKind::Setter => b"set",
                     MemberKind::Constructor if !is_static => b"constructor",
+                    // `"constructor"<T>() {}`
+                    MemberKind::Method if !is_static && member.key().is_some_and(is_named_constructor) => {
+                        b"constructor"
+                    }
                     _ => b"method",
                 };
                 self.text("kind", kind);

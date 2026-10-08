@@ -131,12 +131,13 @@ function createHeldReader() {
       return cancelled;
     }
 
-    // Cancels in the next turn of the event loop: an owner that hears the same signal goes first.
+    // Cancels in the next turn: an owner that hears the same signal goes first. False once the source has ended.
     stop() {
-      if (this.#stream === null) return;
+      if (this.#stream === null) return false;
       this.#stopped = true;
       runInFrame ??= require("internal/async_context_frame").run;
       runInFrame(this.#frame, setImmediate, undefined, () => this.cancel());
+      return true;
     }
 
     // A stopped source is cancelled here if the pump failed before it got to that.
@@ -192,6 +193,7 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
     });
 
   let onfinished = resume;
+  let onclose;
   if (source !== null) {
     iterable = source;
     destroys.push(err => {
@@ -207,10 +209,15 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
       if (err) source.stop();
       if (onreported !== null) onreported();
     };
+    // As pipe() reports it for a node source: an error, unless the source has ended.
+    onclose = () => {
+      if (!error && torn === undefined) resume(source.stop() ? $ERR_STREAM_PREMATURE_CLOSE() : undefined);
+    };
   }
 
   writable.on("drain", resume);
   const cleanup = eos(writable, { readable: false }, onfinished);
+  if (onclose !== undefined) writable.on("close", onclose);
 
   try {
     if (writable.writableNeedDrain) {
@@ -250,6 +257,7 @@ async function pumpToNode(iterable, writable, finish, { end }, destroys?) {
     source?.release();
     cleanup();
     writable.off("drain", resume);
+    if (onclose !== undefined) writable.off("close", onclose);
   }
 }
 

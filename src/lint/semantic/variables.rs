@@ -3,7 +3,7 @@
 //! The symbols and their declarations are the binder's. What is derived here is which scope of
 //! [`ScopeTree`] each is declared in, and which symbols ESLint takes for one variable.
 
-use super::ScopeKind;
+use super::{DeclarationKind, ScopeKind};
 use super::scopes::{self, Block, NONE, ScopeTree};
 use crate::ast::File;
 use bun_sema::atom::{Atom, known};
@@ -30,10 +30,12 @@ pub(crate) struct Variable {
     /// Its first declaration.
     first: Decl,
     /// How many declarations it has. None: it is the implicit `arguments`.
-    count: u32,
+    pub(crate) count: u32,
     /// If it has several, where they start in `Variables::declarations`.
     start: u32,
     pub(crate) flags: u8,
+    /// A bit for each `DeclarationKind` that one of its declarations has.
+    pub(crate) kinds: u16,
 }
 
 /// Where a variable can be referred to.
@@ -89,6 +91,27 @@ struct Entry {
     binder_flags: SymFlags,
     decl: Decl,
     flags: u8,
+    kinds: u16,
+}
+
+/// The bit of `Variable::kinds` for a declaration. `is_catch_parameter`: of a `Decl::Var`.
+pub(crate) fn kind_bit(decl: Decl, is_catch_parameter: bool) -> u16 {
+    let kind = match decl {
+        Decl::Var(_) | Decl::Require(_) if is_catch_parameter => DeclarationKind::CatchClause,
+        Decl::Var(_) | Decl::Require(_) => DeclarationKind::Variable,
+        Decl::Param(_) => DeclarationKind::Parameter,
+        Decl::Fn(_) => DeclarationKind::FunctionName,
+        Decl::Class(_) => DeclarationKind::ClassName,
+        Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) => DeclarationKind::Type,
+        Decl::Enum(_) => DeclarationKind::TsEnumName,
+        Decl::EnumMember(_) => DeclarationKind::TsEnumMember,
+        Decl::Module(_) => DeclarationKind::TsModuleName,
+        Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_) => {
+            DeclarationKind::ImportBinding
+        }
+        _ => return 0,
+    };
+    1 << kind as u16
 }
 
 #[derive(Copy, Clone)]
@@ -227,6 +250,7 @@ fn entries_in_order(file: &File) -> (Vec<Entry>, Vec<u64>) {
                 binder_flags,
                 decl,
                 flags: 0,
+                kinds: 0,
             });
         }
     }
@@ -254,13 +278,14 @@ fn assign_scopes(
     for &key in in_order {
         let it = &mut entries[key as u32 as usize];
         let (here, name) = (cursor.seek(it.pos), it.name);
+        let mut is_catch = false;
         (it.scope, it.flags) = match it.decl {
             Decl::Var(p) | Decl::Require(p) => {
                 let PatParent::Var(d) = root_of_pattern(file, p) else {
                     continue;
                 };
-                let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var)
-                    && !is_catch_parameter(file, d);
+                is_catch = is_catch_parameter(file, d);
+                let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var) && !is_catch;
                 let scope = match is_hoisted {
                     true => tree.scopes[here as usize].variable_scope,
                     false => here,
@@ -307,6 +332,7 @@ fn assign_scopes(
             }
             _ => (here, VALUE | TYPE),
         };
+        it.kinds = kind_bit(it.decl, is_catch);
         if let Some(count) = entry_starts.get_mut(it.scope as usize + 1) {
             *count += 1;
         }
@@ -355,6 +381,7 @@ impl Made {
             }
             variable.count += 1;
             variable.flags |= it.flags;
+            variable.kinds |= it.kinds;
             // Until all are added: where the last declaration is.
             variable.start = it.pos;
             return;
@@ -373,6 +400,7 @@ impl Made {
             count,
             start: it.pos,
             flags: it.flags,
+            kinds: it.kinds,
         });
     }
 }
@@ -427,6 +455,7 @@ impl Variables {
                     binder_flags: SymFlags::FUNCTION_SCOPED_VARIABLE,
                     decl: Decl::File,
                     flags: VALUE | TYPE,
+                    kinds: 0,
                 };
                 made.declare(&implicit, 0);
             }

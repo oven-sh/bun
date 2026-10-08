@@ -70,6 +70,7 @@ use crate::ast::{
     Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals, ImportSpec, Interface,
     Module, Name, Node, Pat, Stmt, StmtKind, TypeKind, TypeNode, TypeParam,
 };
+use crate::linter::globals::GlobalVariable;
 use crate::span::{Span, Spanned};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{self, Decl, ScopeId, SymbolId};
@@ -200,6 +201,9 @@ pub(crate) struct ReferenceIndex {
     /// `MARKED_USED`, `MARKED_EXPORTED`, by index in `Variables::list`. Empty until something is
     /// marked.
     marks: RefCell<Vec<u8>>,
+    /// What `File::global` has said of late, each name at the place that its number tells. Not
+    /// what a comment of the file names. Empty until something is asked.
+    globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
 }
 
 const MARKED_USED: u8 = 1 << 0;
@@ -484,6 +488,24 @@ impl<'a> Symbol<'a> {
         self.has_reference_mark(references::HAS_MODIFYING_WRITE)
     }
 
+    /// How many [`declarations`](Symbol::declarations) it has. This is one load.
+    #[inline]
+    pub fn declaration_count(self) -> usize {
+        match self.variable() {
+            Some(it) => it.count as usize,
+            None => self.file.binding.declarations(self.id).len(),
+        }
+    }
+
+    /// The kinds of its declarations. This is one load.
+    #[inline]
+    pub fn declaration_kinds(self) -> DeclarationKinds {
+        match self.variable() {
+            Some(it) => DeclarationKinds::from_bits_retain(it.kinds),
+            None => self.declarations().filter_map(Declaration::kind).map(DeclarationKinds::from).collect(),
+        }
+    }
+
     /// The scope it is declared in.
     #[inline]
     pub fn scope(self) -> Scope<'a> {
@@ -586,6 +608,30 @@ pub enum DeclarationKind {
     TsModuleName,
     /// An interface, a type alias, a type parameter.
     Type,
+}
+
+bitflags::bitflags! {
+    /// A set of [`DeclarationKind`]s.
+    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+    pub struct DeclarationKinds: u16 {
+        const VARIABLE = 1 << DeclarationKind::Variable as u16;
+        const PARAMETER = 1 << DeclarationKind::Parameter as u16;
+        const FUNCTION_NAME = 1 << DeclarationKind::FunctionName as u16;
+        const CLASS_NAME = 1 << DeclarationKind::ClassName as u16;
+        const CATCH_CLAUSE = 1 << DeclarationKind::CatchClause as u16;
+        const IMPORT_BINDING = 1 << DeclarationKind::ImportBinding as u16;
+        const TS_ENUM_NAME = 1 << DeclarationKind::TsEnumName as u16;
+        const TS_ENUM_MEMBER = 1 << DeclarationKind::TsEnumMember as u16;
+        const TS_MODULE_NAME = 1 << DeclarationKind::TsModuleName as u16;
+        const TYPE = 1 << DeclarationKind::Type as u16;
+    }
+}
+
+impl From<DeclarationKind> for DeclarationKinds {
+    #[inline]
+    fn from(kind: DeclarationKind) -> DeclarationKinds {
+        DeclarationKinds::from_bits_retain(1 << kind as u16)
+    }
 }
 
 impl<'a> Declaration<'a> {
@@ -810,11 +856,11 @@ impl<'a> Reference<'a> {
     /// ECMAScript, a `/* global */` comment or a library of TypeScript defines under its name.
     /// `None` if the file declares what it refers to, or if nothing defines it: then it is what
     /// `no-undef` reports.
-    pub fn global(self) -> Option<crate::linter::globals::GlobalVariable<'a>> {
+    pub fn global(self) -> Option<GlobalVariable<'a>> {
         if self.raw().variable != scopes::NONE {
             return None;
         }
-        let global = self.file.global(self.name().bytes())?;
+        let global = self.file.global_named(self.name())?;
         ((self.is_value() && global.accepts(false)) || (self.is_type() && global.accepts(true))).then_some(global)
     }
 
@@ -1248,6 +1294,36 @@ impl<'a> File<'a> {
             file: self,
             id: it.symbol,
         })
+    }
+
+    /// Those of [`File::symbols`] that have a declaration of one of `kinds`. It looks at a number
+    /// for each symbol of the file.
+    pub fn symbols_declared_as(&'a self, kinds: DeclarationKinds) -> impl Iterator<Item = Symbol<'a>> + 'a {
+        let declared = self.variables().list.iter();
+        let declared = declared.filter(move |it| it.kinds & kinds.bits() != 0);
+        declared.map(move |it| Symbol {
+            file: self,
+            id: it.symbol,
+        })
+    }
+
+    /// [`File::global`] for a name of the file. It remembers what it has said of late.
+    pub fn global_named(&'a self, name: Name<'a>) -> Option<GlobalVariable<'a>> {
+        const REMEMBERED: usize = 64;
+        let atom = name.atom();
+        let mut remembered = self.semantic().globals.borrow_mut();
+        if remembered.is_empty() {
+            remembered.resize(REMEMBERED, (Atom::NONE, None));
+        }
+        let slot = &mut remembered[atom.0 as usize % REMEMBERED];
+        if slot.0 == atom {
+            return slot.1;
+        }
+        let global = self.global(name.bytes());
+        if global.is_none_or(|it| it.comments.is_empty()) {
+            *slot = (atom, global.map(|it| GlobalVariable { comments: &[], ..it }));
+        }
+        global
     }
 
     /// More than every [`Symbol::key`] of the file.

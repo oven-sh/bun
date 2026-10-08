@@ -11,7 +11,7 @@
 use bun_lint::ast::{File, Node, StmtKind, TypeKind};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
-use bun_lint::semantic::{Declaration, DeclarationKind, Reference, Scope, ScopeKind, Symbol};
+use bun_lint::semantic::{Declaration, DeclarationKind, DeclarationKinds, Reference, Scope, ScopeKind, Symbol};
 
 fn string(text: impl AsRef<[u8]>) -> Json {
     Json::String(text.as_ref().to_vec())
@@ -116,6 +116,18 @@ fn dump_reference(it: Reference, offsets: &Offsets) -> Json {
     ])
 }
 
+/// Whether what is answered with one load is what the declarations and the references say.
+fn summaries_hold(symbol: Symbol) -> bool {
+    let kinds: DeclarationKinds = symbol.declarations().filter_map(|it| it.kind()).map(DeclarationKinds::from).collect();
+    let is_listed = symbol.file().symbols_declared_as(kinds).any(|it| it == symbol);
+    symbol.declaration_count() == symbol.declarations().len()
+        && symbol.declaration_kinds() == kinds
+        && (kinds.is_empty() || is_listed)
+        && symbol.has_reads() == symbol.references().any(|it| it.is_read())
+        && symbol.has_writes() == symbol.references().any(|it| it.is_write())
+        && symbol.has_modifying_references() == symbol.references().any(|it| it.is_write() && !it.is_init())
+}
+
 fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
     let offsets = &Offsets::new(file.text());
     let (mut scopes, mut variables) = (Vec::new(), Vec::new());
@@ -134,6 +146,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             },
         ]));
         for symbol in scope.symbols() {
+            assert!(summaries_hold(symbol), "what is kept for a symbol is not what its lists say");
             let names = symbol.declarations().filter_map(|it| it.name_span());
             variables.push(Json::Array(vec![
                 string(symbol.name().bytes()),

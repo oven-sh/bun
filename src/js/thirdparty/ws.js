@@ -949,8 +949,7 @@ function abortHandshake(socket, code, message, headers) {
 
   const gone = socket.writableEnded || socket.destroyed;
 
-  // handleUpgrade() from a 'request' listener answers through that request's ServerResponse, while
-  // that response can still send a status.
+  // handleUpgrade() from a 'request' listener answers through that request's ServerResponse.
   const response = socket._httpMessage;
   if (response && !response.headersSent && !gone) {
     response.writeHead(code, headers);
@@ -1590,9 +1589,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
     } else if (socket._httpMessage?.headersSent) {
-      // The native upgrade was refused under a response that is already on the wire. A raw 500 has
-      // no framing of its own there, and the half-close it ends with leaves that response unable to
-      // end, which turns the usual `if (!res.writableEnded) res.end()` into a throw.
+      // A 500 has no framing of its own behind a response that is already on the wire.
       socket.destroy();
     } else {
       abortHandshake(socket, 500);

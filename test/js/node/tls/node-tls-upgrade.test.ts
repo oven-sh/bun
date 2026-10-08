@@ -162,6 +162,7 @@ test.each([
     raw.end();
     await once(raw, "finish");
 
+    using _raw = { [Symbol.dispose]: () => raw.destroy() };
     const events: string[] = [];
     const tlsSocket = tls.connect({ socket: raw, host: "127.0.0.1" });
     tlsSocket.on("error", error => events.push("error: " + error.message));
@@ -176,7 +177,6 @@ test.each([
     await new Promise<void>(resolve => setImmediate(resolve));
 
     expect({ events, destroyed: tlsSocket.destroyed }).toEqual({ events: [...expected], destroyed: true });
-    raw.destroy();
   } finally {
     server.close();
   }

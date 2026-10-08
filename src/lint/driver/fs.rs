@@ -1,0 +1,105 @@
+//! The file system.
+
+use bun_paths::path_buffer_pool;
+use bun_paths::resolve_path::z;
+use bun_sys::{EntryKind, Fd, File, O};
+
+/// `ENOENT: No such file or directory`
+pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
+    [error.name(), b": ", error.msg().unwrap_or(b"unknown error")].concat()
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Kind {
+    File,
+    Directory,
+}
+
+/// What is at `path`, following links. `None`: nothing, or neither a file nor a directory.
+pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
+    let found = bun_sys::stat(z(path, &mut path_buffer_pool::get())).ok()?;
+    match bun_sys::kind_from_mode(found.st_mode as _) {
+        EntryKind::File => Some(Kind::File),
+        EntryKind::Directory => Some(Kind::Directory),
+        _ => None,
+    }
+}
+
+pub(crate) fn is_file(path: &[u8]) -> bool {
+    kind(path) == Some(Kind::File)
+}
+
+pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
+    File::read_from(Fd::cwd(), path)
+}
+
+pub(crate) fn read_stdin() -> bun_sys::Result<Vec<u8>> {
+    let mut all = Vec::new();
+    let mut buffer = vec![0; 64 * 1024];
+    loop {
+        match bun_sys::read(Fd::stdin(), &mut buffer)? {
+            0 => return Ok(all),
+            count => all.extend_from_slice(&buffer[..count]),
+        }
+    }
+}
+
+pub(crate) struct Entry {
+    pub(crate) name: Vec<u8>,
+    /// Not a link to one: like `fs.Dirent.isDirectory()`.
+    pub(crate) is_directory: bool,
+}
+
+/// The entries of the directory at `path`, in no particular order. `None` if it cannot be listed.
+pub(crate) fn list(path: &[u8]) -> Option<Vec<Entry>> {
+    let directory = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(path).ok()?);
+    let mut found = Vec::new();
+    let mut entries = bun_sys::iterate_dir(directory.fd());
+    while let Ok(Some(entry)) = entries.next() {
+        let name = entry.name.slice_u8();
+        let is_directory = match entry.kind {
+            EntryKind::Directory => true,
+            // The file system does not tell with the name.
+            EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::Directory,
+                Err(_) => continue,
+            },
+            _ => false,
+        };
+        found.push(Entry {
+            name: name.to_vec(),
+            is_directory,
+        });
+    }
+    Some(found)
+}
+
+/// Replaces the file at `path`, which exists, so that nobody ever reads a part of `text`: writes
+/// another file next to it, which then takes its name. What links to the file still does.
+pub(crate) fn write_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
+    let mut buffer = path_buffer_pool::get();
+    let real = bun_sys::realpath(z(path, &mut path_buffer_pool::get()), &mut buffer)?.to_vec();
+    let mode = bun_sys::stat(z(&real, &mut path_buffer_pool::get()))?.st_mode as bun_sys::Mode & 0o7777;
+    let mut temporary = real.clone();
+    {
+        use std::io::Write;
+        let _ = write!(temporary, ".{:016x}.tmp", bun_core::fast_random());
+    }
+    let written = File::openat(Fd::cwd(), &temporary, O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC, mode)
+        .and_then(|file| file.write_all(text))
+        .and_then(|()| {
+            bun_sys::rename(
+                z(&temporary, &mut path_buffer_pool::get()),
+                z(&real, &mut path_buffer_pool::get()),
+            )
+        });
+    if written.is_err() {
+        let _ = bun_sys::unlink(z(&temporary, &mut path_buffer_pool::get()));
+    }
+    written
+}
+
+/// Writes a file that need not exist, and makes the directories that it is in.
+pub(crate) fn write_new(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
+    File::make_open(path, O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC, 0o666)?.write_all(text)
+}

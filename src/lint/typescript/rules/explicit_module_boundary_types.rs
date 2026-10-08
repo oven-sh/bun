@@ -69,6 +69,7 @@ impl ExplicitModuleBoundaryTypes {
             rule: self,
             cx,
             visited: FxHashSet::default(),
+            followed: FxHashSet::default(),
             checked: Vec::new(),
             returns_known_until: 0,
         };
@@ -86,6 +87,8 @@ struct Checker<'a, 'c> {
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
     /// Upstream's `alreadyVisited`.
     visited: FxHashSet<Node<'a>>,
+    /// The variables whose declarations and values have been checked, which are all in `visited`.
+    followed: FxHashSet<Symbol<'a>>,
     /// Upstream's `checkedFunctions`.
     checked: Vec<Func<'a>>,
     /// Upstream collects the `return` statements while it walks the file, and checks what is
@@ -139,7 +142,7 @@ impl<'a> Checker<'a, '_> {
 
     /// `at`: the identifier `name`.
     fn follow_reference(&mut self, at: Node<'a>, name: Name<'a>) {
-        let Some(variable) = at.scope().get_name(name) else {
+        let Some(variable) = at.scope().get_name(name).filter(|it| self.followed.insert(*it)) else {
             return;
         };
         for declaration in variable.declarations() {

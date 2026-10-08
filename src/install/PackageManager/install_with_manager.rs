@@ -355,10 +355,13 @@ pub fn install_with_manager(
                     // `ArrayHashMap::clone()` is an inherent fallible method,
                     // not the `Clone` trait, so
                     // `Option::clone` won't see it — map by hand.
-                    *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
-                        Some(td) => Some(td.clone()?),
-                        None => None,
-                    };
+                    match &lockfile.trusted_dependencies {
+                        Some(td) => *lf.trusted_dependencies = Some(td.clone()?),
+                        // The manifests on disk declare no list, but a workspace is missing
+                        // and can be the one that did. Keep the list that bun.lock records.
+                        None if !summary.pruned_workspaces.is_empty() => {}
+                        None => *lf.trusted_dependencies = None,
+                    }
 
                     lf.dependencies.reserve(len as usize);
                     lf.resolutions.reserve(len as usize);

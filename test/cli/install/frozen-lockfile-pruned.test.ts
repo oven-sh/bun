@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists, lstat } from "fs/promises";
+import { exists, lstat, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
 
@@ -718,6 +718,38 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await exists(installedPath(packageDir, linker, "left-pad", "1.0.0"))).toBeFalse();
     expect(await exists(installedPath(packageDir, linker, "a-dep", "1.0.1"))).toBeTrue();
   });
+
+  // electron is on the default trusted list and its preinstall writes preinstall.txt. The only
+  // package.json that turns the default list off is the one missing from the pruned checkout.
+  test.concurrent.each(["absent", "intact"] as const)(
+    "a missing workspace that declared an empty trustedDependencies list keeps the default list off (node_modules %s)",
+    async nodeModules => {
+      const tree: Tree = {
+        root: { name: "mono", workspaces: ["packages/*"] },
+        packages: {
+          "packages/declares": { name: "declares", trustedDependencies: [] },
+          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0" } },
+        },
+      };
+      const { fullDir, full } = await fullInstall(linker, tree);
+      const electron = dirname(installedPath(fullDir, linker, "electron", "1.0.0"));
+      expect(full).toContain('"trustedDependencies": [],');
+      expect(await exists(join(electron, "preinstall.txt"))).toBeFalse();
+
+      await rm(join(fullDir, "packages", "declares"), { recursive: true, force: true });
+      if (nodeModules === "absent") {
+        await rm(join(fullDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(fullDir, "packages", "uses", "node_modules"), { recursive: true, force: true });
+      }
+
+      const { stderr } = await frozen(fullDir, linker, 0);
+
+      expect(stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "declares"');
+      expect(await exists(join(electron, "package.json"))).toBeTrue();
+      expect(await exists(join(electron, "preinstall.txt"))).toBeFalse();
+      expect(await lockText(fullDir)).toBe(full);
+    },
+  );
 });
 
 describe("hoisted", () => {

@@ -1606,6 +1606,12 @@ impl Diff {
             // the old list are added, but not to the lockfile: the default list is never written
             // there. Old entries outside the default list are removed.
             (Some(from_trusted_dependencies), None) => {
+                // A workspace that is missing on disk can be the one that declared the list.
+                // Its manifest was not parsed, so "no list" proves nothing here.
+                if !summary.pruned_workspaces.is_empty() {
+                    return Ok(());
+                }
+
                 summary.trusted_dependencies_list_toggled = true;
 
                 for entry in default_trusted_dependencies::entries() {

@@ -32,6 +32,11 @@ pub(super) enum Kind {
     Hole,
 }
 
+/// How deep containers can be nested. Each level is two lines that are indented by the level, so
+/// the output grows with the square of the depth: 80 GB for 200,000 levels, which are 1 MB of
+/// input. Prettier runs out of stack between 400 and 500 levels.
+const MAX_DEPTH: usize = 512;
+
 /// The width of what cannot be on one line.
 pub(super) const MUST_BREAK: u32 = u32::MAX;
 
@@ -307,7 +312,10 @@ impl Reader<'_, '_> {
         index
     }
 
-    fn open(&mut self, kind: Kind) -> Owner {
+    fn open(&mut self, kind: Kind) -> Result<Owner> {
+        if self.tree.open.len() >= MAX_DEPTH {
+            return Err(SyntaxError);
+        }
         let start = self.at;
         self.at += 1;
         let node = self.push(kind, start, 0, 0);
@@ -324,20 +332,20 @@ impl Reader<'_, '_> {
             has_blank: false,
             requires_quotes: false,
         });
-        Owner::node(node)
+        Ok(Owner::node(node))
     }
 
     fn value(&mut self) -> Result<State> {
         self.resolve_following(Owner::node(self.tree.nodes.len() as u32));
         match self.peek().ok_or(SyntaxError)? {
             b'{' => {
-                let object = self.open(Kind::Object);
+                let object = self.open(Kind::Object)?;
                 self.line_breaks = 0;
                 self.skip_trivia(object, Owner::NONE)?;
                 Ok(State::NameOrEnd)
             }
             b'[' => {
-                let array = self.open(Kind::Array);
+                let array = self.open(Kind::Array)?;
                 self.skip_trivia(array, Owner::NONE)?;
                 Ok(State::ElementOrEnd)
             }

@@ -19,14 +19,28 @@ fn comment_end_line<'a>(file: &'a File<'a>, line: u32) -> Option<u32> {
         .map(|comment| file.line_of(comment.end()))
 }
 
-/// ESLint's `getLastCommentLineOfBlock`: the last line of the comments that start on
-/// `comment_start_line` and on the lines that follow one another from there.
-fn get_last_comment_line_of_block<'a>(file: &'a File<'a>, comment_start_line: u32) -> Option<u32> {
-    let mut end = comment_end_line(file, comment_start_line)?;
-    while let Some(next) = comment_end_line(file, end + 1) {
-        end = next;
+/// Each line on which a comment starts, with ESLint's `getLastCommentLineOfBlock`: the last line of the comments that start on it
+/// and on the lines that follow one another from there.
+fn last_comment_lines_of_blocks<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
+    let mut lines: Vec<(u32, u32)> = Vec::new();
+    for comment in file.comments() {
+        let (start, end) = (file.line_of(comment.start()), file.line_of(comment.end()));
+        match lines.last_mut() {
+            Some(last) if last.0 == start => last.1 = end,
+            _ => lines.push((start, end)),
+        }
     }
-    Some(end)
+    // A block ends where the one ends that starts on the line after its first comments.
+    for i in (0..lines.len()).rev() {
+        let (before, after) = lines.split_at_mut(i + 1);
+        if let Some(line) = before.last_mut()
+            && let Ok(next) = after.binary_search_by_key(&(line.1 + 1), |it| it.0)
+            && let Some(next) = after.get(next)
+        {
+            line.1 = next.1;
+        }
+    }
+    lines
 }
 
 /// Whether the token at `at` is the keyword `var`, `let` or `const`.
@@ -93,7 +107,9 @@ impl NewlineAfterVar {
             if !has_comments {
                 return;
             }
-            last_line = get_last_comment_line_of_block(file, file.line_of(last_end) + 1);
+            let blocks = cx.state.get_or_insert_with(|| last_comment_lines_of_blocks(file));
+            let block = blocks.binary_search_by_key(&(file.line_of(last_end) + 1), |it| it.0);
+            last_line = block.ok().and_then(|it| blocks.get(it)).map(|it| it.1);
             if last_line.is_none_or(|line| file.line_of(next_start) > line + 1) {
                 return;
             }
@@ -110,7 +126,8 @@ impl NewlineAfterVar {
 
 impl Rule for NewlineAfterVar {
     const META: Meta = Meta::eslint("newline-after-var", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
-    type State<'a> = ();
+    /// [`last_comment_lines_of_blocks`], once it is asked for.
+    type State<'a> = Option<Vec<(u32, u32)>>;
 
     fn new(options: &Options) -> Self {
         NewlineAfterVar {
@@ -118,7 +135,8 @@ impl Rule for NewlineAfterVar {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.stmts([StmtTag::Var], Self::check_for_blank_line);
+        None
     }
 }

@@ -116,6 +116,16 @@ impl std::hash::Hash for EsNode<'_> {
 }
 
 impl<'a> EsNode<'a> {
+    /// `node_type`: that of `node`.
+    #[inline]
+    pub(crate) fn of(node: VNode<'a>, node_type: NodeType) -> EsNode<'a> {
+        EsNode {
+            node,
+            node_type,
+            dialect: node.dialect(),
+        }
+    }
+
     /// ESTree's `type`.
     #[inline]
     pub fn type_name(self) -> &'static str {
@@ -226,6 +236,18 @@ impl Selector {
     #[inline]
     pub fn listens_to(&self) -> NodeTags {
         self.tags
+    }
+
+    /// ESLint's `attributeCount`.
+    #[inline]
+    pub(crate) fn attribute_count(&self) -> u32 {
+        self.attribute_count
+    }
+
+    /// ESLint's `identifierCount`.
+    #[inline]
+    pub(crate) fn identifier_count(&self) -> u32 {
+        self.identifier_count
     }
 
     /// ESLint's `compare`: `Less` if the listener of this selector is called before that of `other` for the same node. The less

@@ -830,7 +830,7 @@ fn push_escaped(out: &mut Vec<u8>, c: u32) {
         0x1_0000.. => {
             // The lead surrogate, in WTF-8.
             let lead = 0xD800 + ((c - 0x1_0000) >> 10);
-            out.extend_from_slice(&[0xED, 0x80 | (lead >> 6 & 0x3F) as u8, 0x80 | (lead & 0x3F) as u8]);
+            out.extend_from_slice(&[0xED, 0x80 | ((lead >> 6) & 0x3F) as u8, 0x80 | (lead & 0x3F) as u8]);
         }
         _ => {
             let c = char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER);

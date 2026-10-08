@@ -64,8 +64,8 @@ impl Short {
             0..0x80 => Short::new(&[unit as u8]),
             0x80..0x800 => Short::new(&[0xC0 | (unit >> 6) as u8, 0x80 | (unit & 0x3F) as u8]),
             _ => Short::new(&[
-                0xE0 | (unit >> 12 & 0x0F) as u8,
-                0x80 | (unit >> 6 & 0x3F) as u8,
+                0xE0 | ((unit >> 12) & 0x0F) as u8,
+                0x80 | ((unit >> 6) & 0x3F) as u8,
                 0x80 | (unit & 0x3F) as u8,
             ]),
         }

@@ -56,7 +56,7 @@ impl TripleSlashReference {
         let (b'"' | b'|' | b'\'', rest) = rest.split_first()? else {
             return None;
         };
-        Some((policy, &rest[..strings::last_index_of_any(rest, b"\"|'")?]))
+        Some((policy, rest.get(..strings::last_index_of_any(rest, b"\"|'")?)?))
     }
 
     fn check_import<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

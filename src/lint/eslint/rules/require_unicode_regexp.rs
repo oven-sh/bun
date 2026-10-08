@@ -57,7 +57,7 @@ impl RequireUnicodeRegexp {
         if self.require_flag == Some(UnicodeFlag::U) { b'v' } else { b'u' }
     }
 
-    fn is_valid_with_flag(&self, file: &File, pattern: &[u8]) -> bool {
+    fn is_valid_with_flag(&self, file: &File<'_>, pattern: &[u8]) -> bool {
         let flag = self.require_flag.unwrap_or(UnicodeFlag::U);
         is_valid_with_unicode_flag(file.language().ecma_version, pattern, flag)
     }
@@ -91,7 +91,7 @@ impl RequireUnicodeRegexp {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
             };
-            let (pattern_node, flags_node) = (call.args().get(0), call.args().get(1));
+            let (pattern_node, flags_node) = (call.args().first(), call.args().get(1));
             if pattern_node.is_some_and(|it| it.tag() == ExprTag::Spread) {
                 continue;
             }

@@ -13,24 +13,6 @@ fn is_member(e: Expr<'_>, name: &str) -> bool {
     ast_utils::is_specific_member_access(e, None, Some(name))
 }
 
-/// Whether ESLint has a `MemberExpression` for the member access: not in the name of a JSX
-/// element, and not in the operand of a `typeof` type.
-// TODO(api): replace by utils::ast_utils::is_member_expression
-fn is_member_expression(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } if obj == at => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() != Some(at) && jsx.close_tag() != Some(at),
-                _ => return true,
-            },
-            Node::Type(ty) => return !matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return true,
-        }
-    }
-}
-
 /// The identifier refers to the variable of its name in the global scope, which the configuration
 /// defines or a script declares.
 fn refers_to_global_variable(e: Expr<'_>) -> bool {
@@ -46,7 +28,7 @@ fn refers_to_global_variable(e: Expr<'_>) -> bool {
 impl NoEval {
     /// Reports the `eval` of `object.eval` or `object["eval"]`.
     fn report_member<'a>(member: Expr<'a>, cx: &Cx<'a, Self>) {
-        if !is_member_expression(member) {
+        if !ast_utils::is_member_expression(member) {
             return;
         }
         match member.kind() {

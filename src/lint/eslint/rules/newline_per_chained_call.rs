@@ -39,9 +39,9 @@ impl NewlinePerChainedCall {
         }
 
         let after_object = skip_trivia(cx.text(), object.outer_span().end);
-        let text = cx.slice(property);
-        let first_line = text::find_line_break(text).map(|it| &text[..it.0]);
-        let mut name = Vec::with_capacity(text.len() + 4);
+        let written = cx.slice(property);
+        let first_line = text::find_line_break(written).map(|it| &written[..it.0]);
+        let mut name = Vec::with_capacity(written.len() + 4);
         if callee.is_optional() {
             name.extend_from_slice(b"?.");
         } else if !is_computed {
@@ -50,7 +50,7 @@ impl NewlinePerChainedCall {
         if is_computed {
             name.push(b'[');
         }
-        name.extend_from_slice(first_line.unwrap_or(text));
+        name.extend_from_slice(first_line.unwrap_or(written));
         if is_computed && first_line.is_none() {
             name.push(b']');
         }

@@ -10,24 +10,6 @@ const EXPECTED_DOT_AFTER_OBJECT: Message =
 const EXPECTED_DOT_BEFORE_PROPERTY: Message =
     Message::new("expectedDotBeforeProperty", "Expected dot to be on same line as property.");
 
-/// Whether ESLint has a `MemberExpression` for the `Dot`: not in the name of a JSX element, and not
-/// in the operand of a `typeof` type.
-// TODO(api): replace by utils::ast_utils::is_member_expression
-fn is_member_expression(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } if obj == at => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() != Some(at) && jsx.close_tag() != Some(at),
-                _ => return true,
-            },
-            Node::Type(ty) => return !matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return true,
-        }
-    }
-}
-
 /// What is around a dot.
 #[derive(Copy, Clone)]
 struct Access {
@@ -81,7 +63,7 @@ impl Rule for DotLocation {
                 return;
             };
             let (object_end, property) = (obj.outer_span().end, name.start());
-            if text::has_line_break(cx.slice(Span::new(object_end, property))) && is_member_expression(e) {
+            if text::has_line_break(cx.slice(Span::new(object_end, property))) && ast_utils::is_member_expression(e) {
                 let access = Access {
                     object_end,
                     property,

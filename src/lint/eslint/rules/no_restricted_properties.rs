@@ -33,24 +33,6 @@ const RESTRICTED_PROPERTY: Message = Message::new(
     "'{{propertyName}}' is restricted from being used.{{allowedObjectsMessage}}{{message}}",
 );
 
-/// Whether ESLint has a `MemberExpression` for the `Dot` or the `Index`: not in the name of a JSX
-/// element, and not in the operand of a `typeof` type.
-// TODO(api): replace by utils::ast_utils::is_member_expression
-fn is_member_expression(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Dot { obj, .. } if obj == at => at = parent,
-                ExprKind::Jsx(jsx) => return jsx.tag() != Some(at) && jsx.close_tag() != Some(at),
-                _ => return true,
-            },
-            Node::Type(ty) => return !matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return true,
-        }
-    }
-}
-
 impl Restriction {
     /// ESLint's `isAllowed`.
     fn allows(&self, name: &[u8]) -> bool {
@@ -153,7 +135,7 @@ impl NoRestrictedProperties {
         }
         if let Some(property_name) = ast_utils::get_static_property_name(e)
             && let Some(found) = self.find(object_name.map(Name::bytes), &property_name)
-            && is_member_expression(e)
+            && ast_utils::is_member_expression(e)
         {
             self.report(e.span(), found, object_name, property_name, cx);
         }

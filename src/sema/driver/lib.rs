@@ -193,7 +193,9 @@ pub struct PlanOptions {
     pub projects_at_once: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
     /// declaration files and the JSON files that are not. Then nothing reads what the last step
-    /// publishes, so it publishes nothing.
+    /// publishes, so it publishes nothing. The declaration files of the project itself, which are
+    /// not in the default library or in `node_modules`, count as checked even with `skipLibCheck`,
+    /// which still means that nothing is reported for them.
     pub after_file_is_for_checked_files: bool,
 }
 
@@ -2715,6 +2717,10 @@ fn check_named_files(
                 // `SkipTypeChecking`, and nothing is emitted for a declaration file.
                 FileKind::Declaration => {
                     !skip_lib_check && !(skip_default_lib_check && module.is_lib)
+                        || request.after_file.is_some()
+                            && request.plan_options.after_file_is_for_checked_files
+                            && !module.is_lib
+                            && !module.is_from_external_library
                 }
                 FileKind::Ts | FileKind::Tsx => true,
             }

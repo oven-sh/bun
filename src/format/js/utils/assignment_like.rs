@@ -566,7 +566,7 @@ impl<'a> AssignmentLike<'a> {
                 _ => false,
             },
             AssignmentLike::AssignmentExpression(assignment) => match (assignment.left())
-                .filter(|left| left.tag() == ExprTag::Object)
+                .filter(|left| left.tag() == ExprTag::Object && is_assignment_target(*left))
                 .map(Expr::kind)
             {
                 Some(ExprKind::Object(props)) => {

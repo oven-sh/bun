@@ -28,6 +28,7 @@ members = [
   "src/lint/eslint",
   "src/lint/typescript",
   "src/lint/standalone",
+  "src/lint/driver",
   "src/format",
   "src/semver",
   "src/sourcemap",
@@ -381,6 +382,7 @@ bun_lint = { path = "src/lint" }
 bun_lint_eslint = { path = "src/lint/eslint" }
 bun_lint_typescript = { path = "src/lint/typescript" }
 bun_format = { path = "src/format" }
+bun_lint_driver = { path = "src/lint/driver" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }

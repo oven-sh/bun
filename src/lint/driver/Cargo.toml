@@ -1,24 +1,23 @@
 [package]
-name = "bun_lint_standalone"
+name = "bun_lint_driver"
 version.workspace = true
 edition.workspace = true
 
-[[bin]]
-name = "bun-lint"
-path = "main.rs"
+[lib]
+path = "lib.rs"
 
 [dependencies]
 bun_lint.workspace = true
 bun_lint_eslint.workspace = true
 bun_lint_typescript.workspace = true
 bun_format.workspace = true
-bun_lint_driver.workspace = true
-bun_sema_driver.workspace = true
-bun_threading.workspace = true
 bun_sema.workspace = true
-bun_sema_standalone = { path = "../../sema/standalone" }
+bun_sema_driver.workspace = true
 bun_js_parser.workspace = true
 bun_core.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
 bstr.workspace = true
 
 [lints]

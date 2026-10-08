@@ -7,6 +7,7 @@
 
 mod ast_cmd;
 mod code_path_cmd;
+mod driver_cmd;
 mod format_cmd;
 mod linter_cmd;
 mod regex_cmd;
@@ -371,6 +372,7 @@ fn main() {
         Some("types") => types_cmd::run(&args[1..]),
         Some("linter") => linter_cmd::run(&args[1..]),
         Some("format") => format_cmd::run(&args[1..]),
+        Some("cli") => driver_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
         Some("utils-tsscope") => utils_tsscope_cmd::run(&args[1..]),
         Some("utils-ts") => utils_ts_cmd::run(&args[1..]),

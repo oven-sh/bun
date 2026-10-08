@@ -219,6 +219,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
+        // For acorn and Babel it is the left side of `in` or nothing.
+        if p.is_ecmascript() && (!p.allow_in || level.gte(Level::Compare)) {
+            let name = p.lexer.range();
+            p.lexer.ts_error(name, 1109);
+        }
 
         let name = p.lexer.identifier;
         p.lexer.next()?;
@@ -226,6 +231,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // Check for "#foo in bar"
         if p.lexer.token != T::TIn && !p.is_tolerant() {
             p.lexer.expected(T::TIn)?;
+        }
+        if p.lexer.token != T::TIn && p.is_ecmascript() {
+            p.lexer.expect(T::TIn)?;
         }
 
         let ref_ = p.store_name_in_ref(name);

@@ -408,8 +408,23 @@ impl Parser<'_> {
     #[inline]
     fn binary_expression(&mut self, precedence: u8) -> ExprId {
         let start = self.pos();
+        if self.token() == T::PrivateIdentifier && self.is_ecmascript {
+            self.private_name_before_in(precedence);
+        }
         let left = self.unary_expression();
         self.binary_expression_rest(precedence, left, start)
+    }
+
+    /// At a `#a` that is the first token of an operand, for acorn and Babel: it is the left side of
+    /// `in` or nothing.
+    #[cold]
+    fn private_name_before_in(&mut self, precedence: u8) {
+        if precedence < T::In.binary_precedence()
+            && !self.has_context(ctx::DISALLOW_IN)
+            && self.peek() == T::In
+        {
+            self.private_name_before_in = self.pos();
+        }
     }
 
     /// `parseBinaryExpressionRest`
@@ -1188,7 +1203,12 @@ impl Parser<'_> {
                 self.token_expr(ExprKind::Regex)
             }
             T::BigInt => self.token_expr(ExprKind::BigInt(self.lx.atom)),
-            T::PrivateIdentifier => self.token_expr(ExprKind::PrivateIdentifier(self.lx.atom)),
+            T::PrivateIdentifier => {
+                if self.is_ecmascript && self.private_name_before_in != self.pos() {
+                    self.fail();
+                }
+                self.token_expr(ExprKind::PrivateIdentifier(self.lx.atom))
+            }
             T::Super => self.token_expr(ExprKind::Super),
             T::LessThan if self.is_ecmascript => self.jsx_element_or_fragment(),
             T::Import if self.is_ecmascript => self.import_expression(),

@@ -229,7 +229,10 @@ function eslintRecorder(): Recorder {
       if (item.filename || named) {
         const parser = named ?? (/\.[cm]?tsx?$/.test(item.filename!) ? "typescript" : "espree");
         const filename = item.filename ?? `file.${parser === "typescript" ? "ts" : "js"}${wantsJsx ? "x" : ""}`;
-        return attempt(ruleName, item, parser, filename, parser === "espree" && filename.endsWith(".jsx")).recorded;
+        const only = attempt(ruleName, item, parser, filename, parser === "espree" && filename.endsWith(".jsx"));
+        if (!only.fatal || item.filename || parser === "espree" || wantsJsx) return only.recorded;
+        const second = attempt(ruleName, item, parser, "file.tsx", true);
+        return second.fatal ? only.recorded : second.recorded;
       }
       const first = attempt(ruleName, item, "espree", wantsJsx ? "file.jsx" : "file.js", false);
       if (!first.fatal) return first.recorded;
@@ -313,7 +316,9 @@ function typescriptRecorder(): Recorder {
     }
 
     let filename: string = item.filename ?? (parserOptions.ecmaFeatures?.jsx ? "react.tsx" : "file.ts");
-    if (parserOptions.project) filename = join(parserOptions.tsconfigRootDir ?? process.cwd(), filename);
+    // As in the fixtures, the name of a type-aware case is relative to the project.
+    if (typeAware && item.filename) filename = resolve(projectDir, filename);
+    else if (parserOptions.project) filename = join(parserOptions.tsconfigRootDir ?? process.cwd(), filename);
 
     const config: Config = {
       files: ["**"],

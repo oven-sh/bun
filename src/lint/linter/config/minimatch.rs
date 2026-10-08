@@ -604,9 +604,9 @@ impl Ast {
         }
     }
 
-    fn clone_node(&mut self, node: usize, parent: usize) -> usize {
-        let clone = self.create(self.nodes[node].kind, Some(parent));
-        for piece in self.nodes[node].pieces.clone() {
+    fn clone_node(&mut self, original: usize, parent: usize) -> usize {
+        let clone = self.create(self.nodes[original].kind, Some(parent));
+        for piece in self.nodes[original].pieces.clone() {
             self.copy_in(clone, &piece);
         }
         clone
@@ -993,6 +993,15 @@ fn split_path(path: &[u8]) -> PathParts<'_> {
     parts
 }
 
+/// How a path is matched.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct How {
+    /// The option `flipNegate`, with which a `!` at the start of the pattern is ignored.
+    pub(crate) flip_negate: bool,
+    /// The argument `partial` of `match`.
+    pub(crate) partial: bool,
+}
+
 /// `new Minimatch(pattern, { dot: true })`
 pub(crate) struct Minimatch {
     /// It matches nothing.
@@ -1277,16 +1286,26 @@ impl Minimatch {
     /// `match(path)`. `flip_negate`: the option `flipNegate`, with which a `!` at the start of the
     /// pattern is ignored.
     pub(crate) fn matches(&self, path: &SplitPath, flip_negate: bool) -> bool {
-        self.matches_with(path, flip_negate, false)
+        self.matches_with(
+            path,
+            How {
+                flip_negate,
+                partial: false,
+            },
+        )
     }
 
     /// `match(path, partial)`
-    pub(crate) fn matches_path(&self, path: &[u8], flip_negate: bool, partial: bool) -> bool {
-        let is_root = partial && path == b"/" && !self.is_comment && !self.is_empty;
-        is_root || self.matches_with(&SplitPath::new(path), flip_negate, partial)
+    pub(crate) fn matches_path(&self, path: &[u8], how: How) -> bool {
+        let is_root = how.partial && path == b"/" && !self.is_comment && !self.is_empty;
+        is_root || self.matches_with(&SplitPath::new(path), how)
     }
 
-    fn matches_with(&self, path: &SplitPath, flip_negate: bool, partial: bool) -> bool {
+    fn matches_with(&self, path: &SplitPath, how: How) -> bool {
+        let How {
+            flip_negate,
+            partial,
+        } = how;
         if self.is_comment {
             return false;
         }

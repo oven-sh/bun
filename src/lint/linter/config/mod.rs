@@ -64,7 +64,7 @@ use crate::runner::RuleEntry;
 use cache::Cache;
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
-use minimatch::{Minimatch, SplitPath};
+use minimatch::{How, Minimatch, SplitPath};
 pub(crate) use rc::is_rule_of_oxlint;
 pub use rc::{LoadPlugin, RcFlavor, oxlint_category};
 use rustc_hash::FxHashMap;
@@ -73,11 +73,17 @@ use std::sync::Arc;
 
 #[doc(hidden)]
 pub mod testing {
-    use super::minimatch::Minimatch;
+    use super::minimatch::{How, Minimatch};
 
     /// `new Minimatch(pattern, { dot: true, flipNegate }).match(path, partial)`
     pub fn minimatch(pattern: &[u8], path: &[u8], flip_negate: bool, partial: bool) -> bool {
-        Minimatch::new(pattern).matches_path(path, flip_negate, partial)
+        Minimatch::new(pattern).matches_path(
+            path,
+            How {
+                flip_negate,
+                partial,
+            },
+        )
     }
 }
 
@@ -92,12 +98,18 @@ impl Glob {
 
     /// `match(path)`. `path` is separated by `/`.
     pub fn matches(&self, path: &[u8]) -> bool {
-        self.0.matches_path(path, false, false)
+        self.0.matches_path(path, How::default())
     }
 
     /// `match(path, true)`: whether something in the directory `path` can match.
     pub fn matches_partially(&self, path: &[u8]) -> bool {
-        self.0.matches_path(path, false, true)
+        self.0.matches_path(
+            path,
+            How {
+                partial: true,
+                ..How::default()
+            },
+        )
     }
 }
 
@@ -267,9 +279,9 @@ impl Heads {
         !self.objects[object].1 || has_bit(&found.objects, object)
     }
 
-    /// The same for the element at `index` of it.
-    fn allows(&self, found: &Listed, object: usize, index: usize) -> bool {
-        let element = self.objects[object].0 as usize + index;
+    /// The same for its `nth` element.
+    fn allows(&self, found: &Listed, object: usize, nth: usize) -> bool {
+        let element = self.objects[object].0 as usize + nth;
         !self.is_listed[element] || has_bit(&found.elements, element)
     }
 }

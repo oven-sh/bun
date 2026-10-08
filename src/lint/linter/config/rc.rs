@@ -4,7 +4,7 @@
 #[path = "oxlint_categories.rs"]
 mod categories;
 
-use super::flat::{ConfigError, Reader};
+use super::flat::{ConfigError, Reader, Semantics};
 use super::merge::RuleSetting;
 use super::{Config, ConfigObject, Pattern, path, presets};
 use crate::context::Severity;
@@ -612,6 +612,9 @@ impl Config {
             let mut by_kind_of_file = rc.rules_by_kind_of_file();
             rc.reader.objects.append(&mut by_kind_of_file);
         }
-        Ok(rc.reader.finish(flavor == RcFlavor::Eslint, true))
+        Ok(rc.reader.finish(Semantics {
+            keeps_options: flavor == RcFlavor::Eslint,
+            accepts_all_plugins: true,
+        }))
     }
 }

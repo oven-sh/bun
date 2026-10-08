@@ -29,6 +29,13 @@ impl ConfigError {
 pub type LoadLocatedPlugin<'l> =
     dyn FnMut(&Json, &[u8]) -> Result<Arc<js_plugin::Plugin>, Vec<u8>> + 'l;
 
+/// What depends on the kind of the configuration file: the fields of these names of [`Config`].
+#[derive(Copy, Clone)]
+pub(super) struct Semantics {
+    pub(super) keeps_options: bool,
+    pub(super) accepts_all_plugins: bool,
+}
+
 /// What is collected while the objects are read.
 pub(super) struct Reader<'r> {
     pub(super) registry: &'r Registry,
@@ -561,7 +568,10 @@ impl Config {
         if let Some(load) = load_plugin {
             reader.load_js_plugins(load)?;
         }
-        Ok(reader.finish(true, false))
+        Ok(reader.finish(Semantics {
+            keeps_options: true,
+            accepts_all_plugins: false,
+        }))
     }
 }
 
@@ -584,13 +594,13 @@ impl Reader<'_> {
         Ok(())
     }
 
-    pub(super) fn finish(self, keeps_options: bool, accepts_all_plugins: bool) -> Config {
+    pub(super) fn finish(self, semantics: Semantics) -> Config {
         Config {
             base_path: self.base_path,
             heads: super::Heads::new(&self.objects),
             objects: self.objects,
-            keeps_options,
-            accepts_all_plugins,
+            keeps_options: semantics.keeps_options,
+            accepts_all_plugins: semantics.accepts_all_plugins,
             prefers_typescript_rules: self.prefers_typescript_rules,
             notes: self.notes,
             unknown_rules: self.unknown_rules,

@@ -1083,8 +1083,7 @@ fn configure_env_for_scripts_run(
     // `Ok` — same contract as the runtime impl (run_command.rs:628).
     let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
-    // The project root, not the directory `bun install` ran from: dependency
-    // postinstalls such as msw's read `$INIT_CWD/package.json`.
+    // The project root on purpose: postinstalls such as msw's read `$INIT_CWD/package.json`.
     this.env_mut()
         .set_init_cwd_to(FileSystem::instance().top_level_dir())?;
 
@@ -1497,8 +1496,7 @@ pub fn init(
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
     if matches!(subcommand, Subcommand::Pm | Subcommand::Publish) {
-        // For the `INIT_CWD` of the pack, version and publish hooks: the walk
-        // to the project root below changes the top-level directory.
+        // The walk to the project root below changes the top-level directory.
         bun_core::set_launch_dir(fs.top_level_dir());
     }
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());

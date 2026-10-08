@@ -41,17 +41,15 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
-static LAUNCH_DIR: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
+static LAUNCH_DIR: crate::Once<&'static [u8]> = crate::Once::new();
 
-/// Records the working directory from before a `chdir` (`--cwd`, or the
-/// package manager going to the project root). The first call wins.
+/// Records the working directory before bun leaves it. The first call wins.
 #[inline]
 pub fn set_launch_dir(dir: &'static [u8]) {
     let _ = LAUNCH_DIR.set(dir);
 }
 
-/// The directory the process was started in, when a `chdir` left it.
-/// `None`: the process is still where it started.
+/// The directory bun was started in, or `None` while bun is still there.
 #[inline]
 pub fn launch_dir() -> Option<&'static [u8]> {
     LAUNCH_DIR.get().copied()

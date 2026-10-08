@@ -470,18 +470,14 @@ impl Loader {
         Ok(true)
     }
 
-    /// Sets `INIT_CWD` to the directory bun was started in, replacing an
-    /// inherited value. Called before a package script or a bin is spawned,
-    /// never on a path that runs a file in this process: that file keeps the
-    /// value bun inherited.
+    /// `INIT_CWD` for a script or bin that bun spawns: the directory bun was started in.
     pub fn set_init_cwd(&mut self) -> Result<(), AllocError> {
         let launch_dir = bun_core::launch_dir()
             .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
         self.set_init_cwd_to(launch_dir)
     }
 
-    /// [`Self::set_init_cwd`] with the directory given: `bun install` gives
-    /// its lifecycle scripts the project root.
+    /// `bun install` gives its lifecycle scripts the project root.
     #[inline(never)]
     pub fn set_init_cwd_to(&mut self, dir: &[u8]) -> Result<(), AllocError> {
         let dir = bun_paths::string_paths::without_trailing_slash_windows_path(dir);
@@ -491,8 +487,7 @@ impl Loader {
         self.map.put(b"INIT_CWD", dir)
     }
 
-    /// [`Self::set_init_cwd`] for as long as `with` takes. For a loader that
-    /// also makes the environment of a process that is no script.
+    /// [`Self::set_init_cwd`] while `with` runs, for a loader that also serves a file run.
     pub fn with_init_cwd<R>(
         &mut self,
         with: impl FnOnce(&mut Self) -> Result<R, AllocError>,

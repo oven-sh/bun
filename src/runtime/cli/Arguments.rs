@@ -875,15 +875,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = bun_paths::path_buffer_pool::get();
-        // A script or a bin gets the directory bun was started in as `INIT_CWD`,
-        // not the one `--cwd` names.
+        // A script or a bin gets the start directory as `INIT_CWD`, not the `--cwd` one.
         let spawns_scripts = matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand);
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             if spawns_scripts {
-                // A start directory that was removed has no name to record: `INIT_CWD`
-                // is then the `--cwd` directory, the one `process.cwd()` reports.
+                // A removed start directory has no name: `INIT_CWD` is then the `--cwd` one.
                 if let Ok(launch_dir) = bun_core::getcwd(&mut outbuf) {
                     bun_core::set_launch_dir(crate::cli::cli_dupe(launch_dir.as_bytes()));
                 }

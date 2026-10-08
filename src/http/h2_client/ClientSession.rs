@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::time::Instant;
 
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
@@ -26,6 +27,7 @@ use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol
 pub type Socket = HTTPSocket<true>;
 
 const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
+const EXPECT_CONTINUE_TIMEOUT: core::time::Duration = super::EXPECT_CONTINUE_TIMEOUT;
 
 // 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
@@ -109,6 +111,8 @@ pub struct ClientSession {
     /// `onData` only re-arms the idle timer when this is true so a server
     /// can't keep a stalled upload alive forever with bare PINGs.
     pub(crate) stream_progressed: bool,
+    /// The armed socket timer is for a held body, not the idle timeout. Only `rearm_timeout` sets it.
+    continue_timer_armed: bool,
     pub(crate) goaway_last_stream_id: u31,
     pub(crate) fatal_error: Option<Error>,
     /// HEADERS/CONTINUATION fragments for a stream we no longer track (e.g.
@@ -237,18 +241,19 @@ impl ClientSession {
     /// may have given up (`socket_ref_owed`) released, followed by the guard's
     /// own ref, both through `this`. When the body tore the session down that
     /// second release frees it, with no reference to it live anywhere.
-    fn enter(this: SessionPtr, body: impl FnOnce(&mut ClientSession)) {
+    fn enter<R>(this: SessionPtr, body: impl FnOnce(&mut ClientSession) -> R) -> R {
         let _guard = RefPtr::from_this(this);
         // SAFETY: `this` is live (see `this_ptr`; the guard above holds it for
         // the rest of this call) and HTTP-thread-only, so this is the only
         // borrow of the session for the duration of `body`.
-        body(unsafe { &mut *this.as_ptr() });
+        let result = body(unsafe { &mut *this.as_ptr() });
         if this.socket_ref_owed.take() {
             // SAFETY: the body gave up the socket ext's ref; `_guard`
             // still holds one, so the session is live and this release is not
             // the last. No borrow of the session is live: the body's ended.
             unsafe { ClientSession::deref(this.as_ptr()) };
         }
+        result
     }
 
     /// Socket onData entry point; see [`Self::handle_data`].
@@ -266,6 +271,11 @@ impl ClientSession {
     /// caller holds its own guard, the session is freed before this returns.
     pub(crate) fn on_close(this: SessionPtr, err: Error) {
         Self::enter(this, |s| s.fail_streams(err));
+    }
+
+    /// Socket timeout entry point. False: the idle timeout fired, and the caller fails the session.
+    pub(crate) fn on_timeout(this: SessionPtr) -> bool {
+        Self::enter(this, |s| s.release_held_bodies())
     }
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
@@ -367,6 +377,7 @@ impl ClientSession {
             encoder_poisoned: false,
             delivering: false,
             stream_progressed: false,
+            continue_timer_armed: false,
             goaway_last_stream_id: 0,
             fatal_error: None,
             orphan_header_block: Vec::new(),
@@ -600,6 +611,9 @@ impl ClientSession {
             HTTPStage::Body
         };
         client.state.response_stage = HTTPStage::Headers;
+        if stream_ref.awaiting_continue.is_some() {
+            self.rearm_timeout();
+        }
 
         if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
@@ -656,17 +670,26 @@ impl ClientSession {
         // effective deadline is "none", or no clients are attached).
         let mut want: core::ffi::c_uint = 0;
         let mut any_unbounded = false;
+        let mut holds_body = false;
         let mut fold = |eff: core::ffi::c_uint| {
             any_unbounded |= eff == 0;
             want = want.max(eff);
         };
         for &s in self.streams.values() {
-            if let Some(c) = stream_ref(s).client_ref() {
+            let s = stream_ref(s);
+            holds_body |= s.awaiting_continue.is_some();
+            if let Some(c) = s.client_ref() {
                 fold(c.effective_idle_timeout_seconds());
             }
         }
         for &c in &self.pending_attach {
             fold(pending_client_mut(c).effective_idle_timeout_seconds());
+        }
+        // A held body takes the next tick. Re-arming never moves a tick, so siblings cannot postpone it.
+        self.continue_timer_armed = holds_body;
+        if holds_body {
+            self.socket.set_timeout(1);
+            return;
         }
         // A client whose effective deadline is 0 ("no timeout": explicit
         // `{timeout:false}`, or no override under global=0) contributes 0 to
@@ -917,6 +940,27 @@ impl ClientSession {
         self.reap_aborted();
         self.rearm_timeout();
         self.maybe_release();
+    }
+
+    /// False if the idle timeout fired. Else sends bodies held for `EXPECT_CONTINUE_TIMEOUT`, restarts idle.
+    fn release_held_bodies(&mut self) -> bool {
+        if !self.continue_timer_armed {
+            return false;
+        }
+        let now = Instant::now();
+        for &s in self.streams.values() {
+            let s = stream_mut(s);
+            if s.awaiting_continue.is_some_and(|since| {
+                now.saturating_duration_since(since) >= EXPECT_CONTINUE_TIMEOUT
+            }) {
+                s.awaiting_continue = None;
+            }
+        }
+        self.rearm_timeout();
+        if let Err(err) = self.pump_send_bodies() {
+            self.fail_all(err);
+        }
+        true
     }
 
     /// Called while the socket is parked in the pool with no clients; answers

@@ -87,8 +87,11 @@ type RawState = {
   allClosed: () => Promise<void>;
 };
 
-async function withRawH2Server(
-  onStream: (conn: RawConn, streamId: number, connIndex: number) => void,
+type RawFrame = { type: number; flags: number; id: number; payload: Buffer };
+
+/** Hands every client frame to `onFrame`. The preface and the SETTINGS ack are already done. */
+async function withRawH2Frames(
+  onFrame: (conn: RawConn, frame: RawFrame, connIndex: number) => void,
   fn: (url: string, state: RawState) => Promise<void>,
 ) {
   const closed: Promise<unknown>[] = [];
@@ -133,8 +136,8 @@ async function withRawH2Server(
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
-        if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
+        onFrame(conn, { type, flags, id, payload }, connIndex);
       }
     });
     socket.on("error", () => {});
@@ -147,6 +150,15 @@ async function withRawH2Server(
   } finally {
     server.close();
   }
+}
+
+function withRawH2Server(
+  onStream: (conn: RawConn, streamId: number, connIndex: number) => void,
+  fn: (url: string, state: RawState) => Promise<void>,
+) {
+  return withRawH2Frames((conn, { type, id }, connIndex) => {
+    if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
+  }, fn);
 }
 
 // Each test spawns a fresh subprocess so the BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT
@@ -1261,66 +1273,41 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     });
 
     test("Expect: 100-continue withholds the body until 100 arrives", async () => {
-      const seen: { id: number; type: number; len: number }[] = [];
-      const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
-        let buf = Buffer.alloc(0);
-        let prefaceSeen = false;
-        let sent100 = false;
-        socket.on("data", chunk => {
-          buf = Buffer.concat([buf, chunk]);
-          if (!prefaceSeen) {
-            if (buf.length < 24) return;
-            buf = buf.subarray(24);
-            prefaceSeen = true;
-            socket.write(frame(4, 0, 0));
+      // The client's HEADERS and DATA frames, and the server's 100, in order.
+      const seen: string[] = [];
+      await withRawH2Frames(
+        (conn, { type, flags, id, payload }) => {
+          if (type === 1) {
+            seen.push("HEADERS");
+            // Answer after a delay, so a body that is not held arrives before the 100.
+            setTimeout(() => {
+              seen.push("100");
+              conn.headers(id, hpackStatus(100));
+            }, 20);
           }
-          while (buf.length >= 9) {
-            const len = buf.readUIntBE(0, 3);
-            if (buf.length < 9 + len) return;
-            const type = buf[3],
-              flags = buf[4],
-              id = buf.readUInt32BE(5) & 0x7fffffff;
-            buf = buf.subarray(9 + len);
-            if (id !== 0) seen.push({ id, type, len });
-            if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
-            if (type === 1 && !sent100) {
-              sent100 = true;
-              // Prove no DATA preceded the 100 by responding only after a tick.
-              setTimeout(() => socket.write(frame(1, 4, id, hpackStatus(100))), 20);
-            }
-            if (type === 0 && flags & 1) {
-              socket.write(frame(1, 4, id, hpackStatus(200)));
-              socket.write(frame(0, 1, id, Buffer.from("got-body")));
-            }
+          if (type === 0) seen.push(`DATA ${payload.length}`);
+          if (type === 0 && flags & 1) {
+            conn.headers(id, hpackStatus(200));
+            conn.data(id, "got-body", true);
           }
-        });
-        socket.on("error", () => {});
-      });
-      server.listen(0);
-      await once(server, "listening");
-      const { port } = server.address() as import("node:net").AddressInfo;
-      try {
-        await using proc = await spawnFetch(`
-          const r = await fetch("https://localhost:${port}", {
-            method: "POST",
-            headers: { Expect: "100-continue" },
-            body: "twenty-chars-body!!!",
-            tls: { rejectUnauthorized: false },
-          });
-          console.log(r.status, await r.text());
-        `);
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(stdout.trim()).toBe("200 got-body");
-        expect(exitCode).toBe(0);
-        // First per-stream frame must be HEADERS; no DATA until after the 100.
-        expect(seen[0].type).toBe(1);
-        const firstData = seen.findIndex(f => f.type === 0);
-        expect(firstData).toBeGreaterThan(0);
-        expect(seen[firstData].len).toBe(20);
-      } finally {
-        server.close();
-      }
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const r = await fetch("${url}", {
+              method: "POST",
+              headers: { Expect: "100-continue" },
+              body: "twenty-chars-body!!!",
+              tls: { rejectUnauthorized: false },
+            });
+            console.log(r.status, await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 got-body");
+          expect(exitCode).toBe(0);
+          expect(seen).toEqual(["HEADERS", "100", "DATA 20"]);
+        },
+      );
     });
 
     test("Expect: 100-continue with final status before 100 skips body upload", async () => {
@@ -1358,6 +1345,105 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         },
       );
     });
+
+    // RFC 9110 §10.1.1: an origin does not have to answer the expectation, so
+    // a client SHOULD NOT wait for an indefinite period before it sends the
+    // body. The wait ends on a 4 s socket timer tick, hence the long timeout.
+    test("Expect: 100-continue sends the body when no 100 arrives", async () => {
+      // Never sends an interim response. Answers a stream once its body ends.
+      const received = new Map<string, number>();
+      await withRawH2Frames(
+        (conn, { type, flags, id, payload }, connIndex) => {
+          if (type !== 0) return;
+          const stream = `${connIndex}:${id}`;
+          received.set(stream, (received.get(stream) ?? 0) + payload.length);
+          if (flags & 1) {
+            conn.headers(id, hpackStatus(200));
+            conn.data(id, `got ${received.get(stream)} bytes`, true);
+          }
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const post = (host, init) =>
+              fetch("https://" + host + ":${new URL(url).port}", {
+                method: "POST",
+                headers: { Expect: "100-continue" },
+                tls: { rejectUnauthorized: false },
+                ...init,
+              }).then(async r => r.status + " " + (await r.text()), e => "rejected " + (e?.code ?? e));
+            const streamed = new ReadableStream({
+              start(ctrl) {
+                ctrl.enqueue(new TextEncoder().encode("streamed-"));
+                ctrl.enqueue(new TextEncoder().encode("body"));
+                ctrl.close();
+              },
+            });
+            console.log(JSON.stringify(await Promise.all([
+              post("localhost", { body: "twenty-chars-body!!!" }),
+              post("localhost", { body: streamed, duplex: "half" }),
+              // Another host name is another connection, so no sibling request
+              // arms this socket's idle timer.
+              post("127.0.0.1", { body: "no idle timer", timeout: false }),
+            ])));
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual(["200 got 20 bytes", "200 got 13 bytes", "200 got 13 bytes"]);
+          expect(exitCode).toBe(0);
+        },
+      );
+    }, 30_000);
+
+    // A held body arms the session's socket timer for its next tick. A reset
+    // of that stream leaves the timer armed, and the tick must not be taken
+    // for the idle timeout of the other streams on the connection.
+    test("Expect: 100-continue: a reset of the held stream does not time out its sibling", async () => {
+      let sibling: { conn: RawConn; id: number } | undefined;
+      let posts = 0;
+      await withRawH2Frames(
+        (conn, { type, flags, id }) => {
+          if (type === 1 && flags & 1) {
+            // The GET. Answered last.
+            sibling = { conn, id };
+          } else if (type === 1 && ++posts === 1) {
+            // The first POST, on the GET's connection: reset it while its body is held.
+            conn.rst(id, http2.constants.NGHTTP2_INTERNAL_ERROR);
+          } else if (type === 0 && flags & 1) {
+            // The body of the second POST. Only a timer tick sends it, so the
+            // tick that the first POST armed has fired, or fires in this sweep.
+            conn.headers(id, hpackStatus(200));
+            conn.data(id, "sent", true);
+            sibling!.conn.headers(sibling!.id, hpackStatus(200));
+            sibling!.conn.data(sibling!.id, "still open", true);
+          }
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const text = p => p.then(r => r.text(), e => "rejected " + (e?.code ?? e));
+            const post = host =>
+              text(fetch("https://" + host + ":${new URL(url).port}", {
+                method: "POST",
+                headers: { Expect: "100-continue" },
+                body: "x",
+                tls: { rejectUnauthorized: false },
+              }));
+            const sibling = text(fetch("${url}", { tls: { rejectUnauthorized: false } }));
+            const reset = await post("localhost");
+            // Another host name is another connection.
+            const sent = await post("127.0.0.1");
+            console.log(JSON.stringify({ reset, sent, sibling: await sibling }));
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toEqual({
+            reset: "rejected HTTP2StreamReset",
+            sent: "sent",
+            sibling: "still open",
+          });
+          expect(exitCode).toBe(0);
+        },
+      );
+    }, 30_000);
 
     test("Content-Length / DATA mismatch rejects", async () => {
       await withRawH2Server(

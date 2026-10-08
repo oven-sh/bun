@@ -1027,11 +1027,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut buf = self
             .send_buffer
             .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-        // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-        let wrote: Result<usize, bool> = {
+        let wrote: Result<usize, bool> = loop {
             let out_buf = buf.readable_slice(0);
             debug_assert!(!out_buf.is_empty());
-            if let Some(tunnel) = self.tunnel() {
+            let slice_len = out_buf.len();
+            // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            let wrote: Result<usize, bool> = if let Some(tunnel) = self.tunnel() {
                 // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
                 match WebSocketProxyTunnel::write(tunnel, out_buf) {
@@ -1047,6 +1048,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                 } else {
                     Ok(usize::try_from(w).expect("int cast"))
                 }
+            };
+            // A wrapped queue continues at offset 0. A writable handler gets no second event.
+            match wrote {
+                Ok(wrote) if wrote == slice_len && wrote < buf.readable_length() => {
+                    buf.discard(wrote);
+                }
+                _ => break wrote,
             }
         };
         match wrote {

@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::text::{first_code_point, is_js_whitespace, trim, trim_start};
+use bun_lint::utils::text::{code_point_at, first_code_point, is_js_whitespace, trim, trim_start};
 
 /// Disallow `// tslint:<rule-flag>` comments.
 pub struct BanTslintComment;
@@ -66,8 +66,10 @@ impl Rule for BanTslintComment {
                         line: start.line,
                         column: start.column.saturating_sub(1),
                     });
-                    // One more than the end, also at the end of the text.
-                    fixer.remove(Span::new(range_start, file.offset(end) + 1))
+                    // With the character after it. One more than the end, also at the end of the text.
+                    let range_end = file.offset(end);
+                    let after = code_point_at(file.text(), range_end as usize).1.max(1);
+                    fixer.remove(Span::new(range_start, range_end + after as u32))
                 });
             }
         });

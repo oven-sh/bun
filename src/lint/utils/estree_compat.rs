@@ -585,7 +585,7 @@ fn type_name_of_type(ty: TypeNode<'_>) -> &'static str {
         TypeKind::Infer(_) => "TSInferType",
         TypeKind::Mapped(_) => "TSMappedType",
         TypeKind::IndexedAccess { .. } => "TSIndexedAccessType",
-        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol => "TSTypeOperator",
+        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => "TSTypeOperator",
         TypeKind::Typeof { .. }
         | TypeKind::Import {
             is_typeof: true, ..

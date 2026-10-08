@@ -19,7 +19,7 @@
 //   `.ts`, `.tsx`, `.mts` or `.cts`; JSX when it ends in `.jsx`.
 // - typescript-eslint: its parser. A rule that requires types gets the `parserOptions` that most of its upstream cases
 //   have, and the code is `file.ts` (`react.tsx` with `ecmaFeatures.jsx`) of the fixture project. `typeAware: false`
-//   turns that off.
+//   turns that off. Unlike in the RuleTester, all the rules of the plugin are defined, and only the one is enabled.
 // - A case that names neither a file nor a parser and that does not parse is tried again with JSX, then as `file.ts`,
 //   then as `file.tsx`. What is recorded says which it was.
 //
@@ -328,7 +328,8 @@ function typescriptRecorder(): Recorder {
 
     const config: Config = {
       files: ["**"],
-      plugins: { "@typescript-eslint": { rules: { [ruleName]: rules[ruleName] } } },
+      // All the rules, as in a project: a comment that disables another rule of the plugin is about a rule that is defined.
+      plugins: { "@typescript-eslint": { rules } },
       languageOptions: {
         ...languageOptions,
         parser: typescriptParser,

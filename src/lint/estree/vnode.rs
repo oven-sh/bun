@@ -910,7 +910,7 @@ fn type_type(ty: TypeNode, part: Part) -> NodeType {
         TypeKind::Infer(_) => TSInferType,
         TypeKind::Mapped(_) => TSMappedType,
         TypeKind::IndexedAccess { .. } => TSIndexedAccessType,
-        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol => TSTypeOperator,
+        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => TSTypeOperator,
         TypeKind::Typeof { .. } | TypeKind::Import { is_typeof: true, .. } => TSTypeQuery,
         TypeKind::Import { .. } => TSImportType,
         TypeKind::Predicate { .. } => TSTypePredicate,

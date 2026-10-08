@@ -110,6 +110,11 @@ fn parent_in_function(func: Func<'_>, offset: u32) -> Option<Parent> {
     if let Some(body) = body.filter(|it| it.contains_offset(offset)) {
         return Parent::new(BLOCK_STATEMENT, body);
     }
+    // The `TSTypeParameterDeclaration` and the `TSTypeAnnotation`.
+    let parts = [func.type_params().angle_brackets_span(), func.return_type().map(TypeNode::annotation_span)];
+    if parts.into_iter().flatten().any(|it| it.contains_offset(offset)) {
+        return None;
+    }
     let types = match func.body() {
         FnBody::Block(_) => BLOCK_STATEMENT,
         FnBody::Expr(e) => type_of_expression(e),
@@ -126,6 +131,12 @@ fn parent_of_comment<'a>(file: &'a File<'a>, offset: u32) -> Option<Parent> {
             parent_in_function(member.func()?, offset)
         }
         Node::Class(class) => {
+            let brackets = [class.type_params().angle_brackets_span(), class.extends_args().angle_brackets_span()];
+            if brackets.into_iter().flatten().any(|it| it.contains_offset(offset))
+                || class.modifiers().iter().any(|it| it.decorator().is_some() && it.span().contains_offset(offset))
+            {
+                return None;
+            }
             let spans = [class.body_span(), class.estree_span()];
             Parent::new(CLASS_BODY, spans.into_iter().find(|it| it.contains_offset(offset))?)
         }

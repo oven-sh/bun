@@ -472,10 +472,7 @@ impl Parents {
         let mut at = id;
         while let Some(&Packed { tag: Tag::Type, id }) = self.types.get(at.idx()) {
             at = hir::TypeNodeId(id);
-            if matches!(
-                hir.types.get(at.idx()).map(|it| it.kind),
-                Some(hir::TypeNodeKind::JSDoc { .. } | hir::TypeNodeKind::Unique(_))
-            ) {
+            if matches!(hir.types.get(at.idx()).map(|it| it.kind), Some(hir::TypeNodeKind::JSDoc { .. })) {
                 return true;
             }
         }
@@ -707,11 +704,10 @@ impl File<'_> {
         self.lazy.parents.get_or_init(|| Parents::new(self))
     }
 
-    /// Whether the type `id` is in a type that is an error and whose operand is not a node: `T?`,
-    /// `unique T`.
+    /// Whether the type `id` is in a type that is an error and whose operand is not a node: `T?`.
     #[inline]
     pub(super) fn is_in_type_that_is_an_error(&self, id: hir::TypeNodeId) -> bool {
-        let is_error = |it: &hir::TypeNode| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. } | hir::TypeNodeKind::Unique(_));
+        let is_error = |it: &hir::TypeNode| matches!(it.kind, hir::TypeNodeKind::JSDoc { .. });
         *self.lazy.has_types_that_are_errors.get_or_init(|| self.hir.types.iter().any(is_error))
             && self.parents().is_in_error(&self.hir, id)
     }

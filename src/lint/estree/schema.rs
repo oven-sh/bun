@@ -957,7 +957,7 @@ estree_schema! {
         data In = type_param(v)?.flags().contains(Flags::IN);
         data Out = type_param(v)?.flags().contains(Flags::OUT);
     }
-    TSAnyKeyword [TypeTag::Keyword, TypeTag::Error, TypeTag::Unique, TypeTag::JSDoc, TypeTag::Heritage] (v) {}
+    TSAnyKeyword [TypeTag::Keyword, TypeTag::Error, TypeTag::JSDoc, TypeTag::Heritage] (v) {}
     TSUnknownKeyword [TypeTag::Keyword] (v) {}
     TSNeverKeyword [TypeTag::Keyword] (v) {}
     TSVoidKeyword [TypeTag::Keyword] (v) {}
@@ -1070,9 +1070,9 @@ estree_schema! {
         node ObjectType = VNode::of_type(of!(ty v, TypeKind::IndexedAccess { obj, .. } => obj));
         node IndexType = VNode::of_type(of!(ty v, TypeKind::IndexedAccess { index, .. } => index));
     }
-    TSTypeOperator [TypeTag::Keyof, TypeTag::Readonly, TypeTag::UniqueSymbol] (v) {
+    TSTypeOperator [TypeTag::Keyof, TypeTag::Readonly, TypeTag::UniqueSymbol, TypeTag::Unique] (v) {
         part TypeAnnotation = match v.ty()?.kind() {
-            TypeKind::Keyof(operand) | TypeKind::Readonly(operand) => VNode::of_type(operand),
+            TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => VNode::of_type(operand),
             _ => v.with(Part::Operand),
         };
         data Operator = match v.ty()?.kind() {

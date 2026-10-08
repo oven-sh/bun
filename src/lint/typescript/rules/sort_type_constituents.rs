@@ -90,6 +90,7 @@ impl Group {
             TypeKind::Keyof(_)
             | TypeKind::Readonly(_)
             | TypeKind::UniqueSymbol
+            | TypeKind::Unique(_)
             | TypeKind::Typeof { .. }
             | TypeKind::Import { is_typeof: true, .. } => Group::Operator,
             TypeKind::Tuple(_) => Group::Tuple,

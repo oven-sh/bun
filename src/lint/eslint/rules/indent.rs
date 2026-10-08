@@ -2847,7 +2847,9 @@ impl<'a> Offsets<'a, '_> {
                 it.stack.extend(types.into_iter().flatten().map(Step::Type));
             }),
             TypeKind::IndexedAccess { obj, index } => self.of_types("TSIndexedAccessType", span, [obj, index]),
-            TypeKind::Keyof(operand) | TypeKind::Readonly(operand) => self.of_types("TSTypeOperator", span, [operand]),
+            TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => {
+                self.of_types("TSTypeOperator", span, [operand])
+            }
             TypeKind::UniqueSymbol => self.unknown("TSTypeOperator", span, |it| {
                 if let Some(symbol) = ty.unique_symbol_keyword_span() {
                     it.unknown("TSSymbolKeyword", symbol, |_| {});

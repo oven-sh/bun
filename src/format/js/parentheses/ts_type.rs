@@ -59,7 +59,7 @@ pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool
             AstNodes::TSUnionType(parent) | AstNodes::TSIntersectionType(parent) => member_count(parent) > 1,
             parent => operator_type_or_higher_needs_parens(ty, parent),
         },
-        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol => {
+        TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => {
             operator_type_or_higher_needs_parens(ty, effective_parent(ty.ast_parent()))
         }
         TypeKind::Typeof { .. } | TypeKind::Import { is_typeof: true, .. } => {

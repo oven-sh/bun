@@ -326,7 +326,10 @@ impl<'a> Node<'a> {
                 TypeKind::Template(types) | TypeKind::Union(types) | TypeKind::Intersection(types) => {
                     list!(types)
                 }
-                TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) => {
+                TypeKind::Array(operand)
+                | TypeKind::Keyof(operand)
+                | TypeKind::Readonly(operand)
+                | TypeKind::Unique(operand) => {
                     one!(operand)
                 }
                 TypeKind::Tuple(elements) => list!(elements),

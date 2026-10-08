@@ -25,8 +25,8 @@ impl Rule for NoNonNullAssertedOptionalChain {
             let ExprKind::NonNull(operand) = e.kind() else {
                 return;
             };
-            let remove_assertion = |at: Expr<'a>, assertion: Expr<'a>| {
-                let end = assertion.span().end;
+            let remove_assertion = |at: Expr<'a>, assertion: Span| {
+                let end = assertion.end;
                 cx.report(at, NO_NON_NULL_OPTIONAL_CHAIN)
                     .suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(Span::new(end.saturating_sub(1), end)));
             };
@@ -35,12 +35,13 @@ impl Rule for NoNonNullAssertedOptionalChain {
             let is_operand_of_assertion =
                 |it: Expr<'a>| matches!(it.parent(), Node::Expr(parent) if parent.tag() == ExprTag::NonNull);
             if operand.is_chain_root() {
-                remove_assertion(operand, e);
+                // Of `(x?.y)!!`, the first `!`.
+                remove_assertion(operand, e.inner_non_null_spans().next().unwrap_or_else(|| e.span()));
                 if operand.tag() == ExprTag::NonNull {
-                    remove_assertion(operand, operand);
+                    remove_assertion(operand, operand.span());
                 }
             } else if e.is_chain_root() && !is_operand_of_assertion(e) {
-                remove_assertion(e, e);
+                remove_assertion(e, e.span());
             }
         });
     }

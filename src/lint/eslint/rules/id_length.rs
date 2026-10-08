@@ -225,6 +225,22 @@ impl IdLength {
         });
     }
 
+    /// The keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which ESLint has
+    /// as an object literal.
+    fn check_import_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(attributes) = ty.import_attributes() else {
+            return;
+        };
+        let (file, keyword) = (cx.file(), attributes.keyword_span());
+        let is_assert = file.slice(keyword) == b"assert";
+        self.check(cx, file.name_of(if is_assert { "assert" } else { "with" }), || Some(keyword));
+        for key in attributes.entries().iter().filter_map(Prop::key) {
+            if let KeyKind::Ident(name) = key.kind() {
+                self.check(cx, name, || Some(key.span(file)));
+            }
+        }
+    }
+
     fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(key) = member.key() {
             if let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind() {
@@ -290,6 +306,7 @@ impl Rule for IdLength {
         });
         if self.properties {
             on.props(Self::check_property);
+            on.types([TypeTag::Import], Self::check_import_type);
             on.exprs([ExprTag::Dot], |rule, e, cx| {
                 if let ExprKind::Dot { name, .. } = e.kind() {
                     rule.check(cx, name.name(), || is_assigned_member(e).then(|| name.span()));

@@ -951,7 +951,7 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     if matches!(tag, TypeTag::Keyword | TypeTag::BoolLit) {
         return write!(f, source_text(ty.span()));
     }
-    // No other kind of type ever needs parentheses.
+    // No other kind of type ever needs parentheses. Flow's `renders T` writes its own.
     let needs_parentheses = matches!(
         tag,
         TypeTag::Fn
@@ -962,9 +962,11 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
             | TypeTag::Keyof
             | TypeTag::Readonly
             | TypeTag::UniqueSymbol
+            | TypeTag::Unique
             | TypeTag::Typeof
             | TypeTag::Import
-    ) && parentheses::ts_type::needs_parentheses(ty, f);
+    ) && !(tag == TypeTag::Unique && f.file().is_flow())
+        && parentheses::ts_type::needs_parentheses(ty, f);
     if needs_parentheses {
         "(".fmt(f);
     }
@@ -1004,7 +1006,8 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     use print::ts_types;
     match ty.kind() {
-        TypeKind::Error if f.file().is_flow() && print::flow::write_nullable_type_or_type_operator(ty, f) => {}
+        TypeKind::Error | TypeKind::Unique(_)
+            if f.file().is_flow() && print::flow::write_nullable_type_or_type_operator(ty, f) => {}
         TypeKind::Error => write!(f, FormatSuppressedNode(ty.span())),
         TypeKind::Heritage { expr, args } => {
             write!(f, [expr, print::type_parameters::type_arguments(args, Node::Type(ty))]);
@@ -1032,6 +1035,7 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
         TypeKind::Keyof(operand) => write!(f, ["keyof", space(), operand]),
         TypeKind::Readonly(operand) => write!(f, ["readonly", space(), operand]),
         TypeKind::UniqueSymbol => write!(f, ["unique", space(), "symbol"]),
+        TypeKind::Unique(operand) => write!(f, ["unique", space(), operand]),
         TypeKind::Typeof { expr, args } => ts_types::write_ts_type_query(ty, expr, args, f),
         TypeKind::Import { .. } => ts_types::write_ts_import_type(ty, f),
         TypeKind::Predicate { .. } => ts_types::write_ts_type_predicate(ty, f),

@@ -280,7 +280,7 @@ fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: &OuterTypeParam
     loop {
         ty = match ty.kind() {
             TypeKind::Ref { name, .. } => return name.as_ident().is_some_and(|name| outer.has(name.name())),
-            TypeKind::Array(inner) | TypeKind::Keyof(inner) | TypeKind::Readonly(inner) => inner,
+            TypeKind::Array(inner) | TypeKind::Keyof(inner) | TypeKind::Readonly(inner) | TypeKind::Unique(inner) => inner,
             TypeKind::Mapped(mapped) => match mapped.ty() {
                 Some(inner) => inner,
                 None => return false,

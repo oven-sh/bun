@@ -585,11 +585,12 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
     }
     let listed = file.hir.comments;
     let mut comments = Vec::with_capacity(listed.len() + 1);
-    if text.starts_with(b"#!") {
-        let end = line_end(text, 2);
-        if end > 2 || Dialect::of(file) != Dialect::TypeScript {
+    let start = start_of_code(file);
+    if text[start..].starts_with(b"#!") {
+        let end = line_end(text, start + 2);
+        if end > start + 2 || Dialect::of(file) != Dialect::TypeScript {
             comments.push(RawToken {
-                start: 0,
+                start: start as u32,
                 end: end as u32,
                 kind: TokenKind::Shebang,
             });
@@ -604,6 +605,11 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
         },
     }));
     Some(comments)
+}
+
+/// After the byte order mark, which ESLint takes off before it looks for a `#!`.
+fn start_of_code(file: &File) -> usize {
+    if file.has_bom() { 3 } else { 0 }
 }
 
 /// Where the line ends that `from` is in.
@@ -655,9 +661,11 @@ impl<'a> Scanner<'a> {
             angles: 0,
             elements: 0,
         };
-        if text.starts_with(b"#!") {
+        let start = start_of_code(file);
+        if text[start..].starts_with(b"#!") {
+            scanner.at = start;
             scanner.line_comment(TokenKind::Shebang);
-            if scanner.at == 2 && dialect == Dialect::TypeScript {
+            if scanner.at == start + 2 && dialect == Dialect::TypeScript {
                 scanner.comments.clear();
             }
         }

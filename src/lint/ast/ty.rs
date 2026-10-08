@@ -64,6 +64,8 @@ pub enum TypeKind<'a> {
     Keyof(TypeNode<'a>),
     Readonly(TypeNode<'a>),
     UniqueSymbol,
+    /// `unique T`, where `T` is not the keyword `symbol`, which is an error.
+    Unique(TypeNode<'a>),
     /// `typeof a.b.c<Args>`. `expr` is the name as an expression.
     Typeof {
         expr: Expr<'a>,
@@ -148,9 +150,7 @@ impl<'a> TypeNode<'a> {
             false => Expr { file, id },
         };
         match raw.kind {
-            hir::TypeNodeKind::Error
-            | hir::TypeNodeKind::Unique(_)
-            | hir::TypeNodeKind::JSDoc { .. } => TypeKind::Error,
+            hir::TypeNodeKind::Error | hir::TypeNodeKind::JSDoc { .. } => TypeKind::Error,
             hir::TypeNodeKind::Heritage { expr, args } => TypeKind::Heritage {
                 expr: e(expr),
                 args: List::ids(file, args),
@@ -198,6 +198,7 @@ impl<'a> TypeNode<'a> {
             hir::TypeNodeKind::Keyof(operand) => TypeKind::Keyof(t(operand)),
             hir::TypeNodeKind::Readonly(operand) => TypeKind::Readonly(t(operand)),
             hir::TypeNodeKind::UniqueSymbol => TypeKind::UniqueSymbol,
+            hir::TypeNodeKind::Unique(operand) => TypeKind::Unique(t(operand)),
             hir::TypeNodeKind::Typeof { args, expr, .. } => TypeKind::Typeof {
                 expr: e(expr),
                 args: List::ids(file, args),

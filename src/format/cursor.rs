@@ -935,7 +935,9 @@ impl<'a> Walk<'a> {
                 out.extend(types.iter().map(|it| self.ty(it)));
             }
             TypeKind::Union(types) | TypeKind::Intersection(types) => out.extend(types.iter().map(|it| self.ty(it))),
-            TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) => out.push(self.ty(operand)),
+            TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) | TypeKind::Unique(operand) => {
+                out.push(self.ty(operand));
+            }
             TypeKind::UniqueSymbol => out.extend(ty.unique_symbol_keyword_span().map(leaf)),
             TypeKind::Tuple(elements) => out.extend(elements.iter().map(|it| self.tuple_element(it))),
             TypeKind::Fn(func) => self.function_parts(func, false, out),

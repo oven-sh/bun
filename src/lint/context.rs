@@ -304,7 +304,7 @@ fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) ->
         match value {
             Some(value) => {
                 out.extend_from_slice(&bytes[at..open]);
-                out.extend_from_slice(value);
+                push_well_formed(&mut out, value);
                 at = name_end + 2;
             }
             // The second brace can be the first of the next pair.
@@ -316,6 +316,26 @@ fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) ->
     }
     out.extend_from_slice(&bytes[at..]);
     out
+}
+
+/// Appends `value`. Half of a surrogate pair, which the value of a string literal such as `"\uD800"` has as three bytes, becomes
+/// U+FFFD, which is what ESLint prints for it: a message is valid UTF-8.
+fn push_well_formed(out: &mut Vec<u8>, mut value: &[u8]) {
+    while let Some(at) = bun_core::strings::index_of_char_usize(value, 0xED) {
+        let (before, rest) = value.split_at(at);
+        out.extend_from_slice(before);
+        match rest {
+            [0xED, 0xA0..=0xBF, 0x80..=0xBF, after @ ..] => {
+                out.extend_from_slice("\u{FFFD}".as_bytes());
+                value = after;
+            }
+            _ => {
+                out.push(0xED);
+                value = &rest[1..];
+            }
+        }
+    }
+    out.extend_from_slice(value);
 }
 
 /// What can be put into a message or a fix.

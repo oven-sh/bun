@@ -254,7 +254,7 @@ impl IdMatch {
         let is_private = name.bytes().starts_with(b"#");
         if !is_private
             && !self.checks_properties
-            && (self.only_declarations || e.file().is_javascript())
+            && (self.only_declarations || e.file().is_javascript() && !e.is_in_type_query())
         {
             return;
         }
@@ -394,7 +394,14 @@ impl IdMatch {
             StmtKind::TypeAlias(it) => self.check_name(it.name(), cx),
             StmtKind::Enum(it) => self.check_name(it.name(), cx),
             StmtKind::Module(it) => match it.name() {
-                ModuleName::Ident(name) => self.check_name(name, cx),
+                ModuleName::Ident(_) => {
+                    let names = std::iter::successors(Some(it), |it| it.nested());
+                    for name in names.map(Module::name) {
+                        if let ModuleName::Ident(name) = name {
+                            self.check_name(name, cx);
+                        }
+                    }
+                }
                 ModuleName::String(_) => {}
                 ModuleName::Global => {
                     if self.fails(b"global") {
@@ -427,6 +434,19 @@ impl IdMatch {
         }
     }
 
+    /// The keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which ESLint has
+    /// as an object literal.
+    fn check_options_of_import_type<'a>(&self, attributes: ImportAttributes<'a>, cx: &mut Cx<'a, Self>) {
+        let keyword = attributes.keyword_span();
+        let name = cx.file().slice(keyword);
+        if self.fails(name) {
+            self.report(keyword, name, cx);
+        }
+        for key in attributes.entries().iter().filter_map(Prop::key) {
+            self.check_key(key, cx);
+        }
+    }
+
     fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.kind() {
             // The `a.b` of `extends a.b` and `implements a.b` is a `MemberExpression`.
@@ -443,13 +463,20 @@ impl IdMatch {
                     }
                 }
             }
-            _ if self.only_declarations => {}
-            TypeKind::Ref { name, .. } => self.check_entity_name(name, cx),
             TypeKind::Import { name, .. } => {
-                for part in name.parts() {
-                    self.check_name(part, cx);
+                if self.checks_properties
+                    && let Some(attributes) = ty.import_attributes()
+                {
+                    self.check_options_of_import_type(attributes, cx);
+                }
+                if !self.only_declarations {
+                    for part in name.parts() {
+                        self.check_name(part, cx);
+                    }
                 }
             }
+            _ if self.only_declarations => {}
+            TypeKind::Ref { name, .. } => self.check_entity_name(name, cx),
             TypeKind::Predicate { .. } => {
                 if let Some(param) = ty.predicate_param()
                     && !param.name().is("this")
@@ -484,7 +511,7 @@ impl Rule for IdMatch {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         if self.regex.is_none() {
             return State::default();
         }
@@ -526,8 +553,7 @@ impl Rule for IdMatch {
                 rule.check_name(imported, cx);
             }
         });
-        let is_typescript = !file.is_javascript();
-        if is_typescript && (self.checks_properties || !self.only_declarations) {
+        if self.checks_properties || !self.only_declarations {
             on.types(
                 [TypeTag::Ref, TypeTag::Import, TypeTag::Predicate, TypeTag::Tuple],
                 Self::check_type,
@@ -554,25 +580,23 @@ impl Rule for IdMatch {
                 rule.check_name(specifier.exported(), cx);
             }
         });
-        if is_typescript {
-            on.stmts(
-                [
-                    StmtTag::Interface,
-                    StmtTag::TypeAlias,
-                    StmtTag::Enum,
-                    StmtTag::Module,
-                    StmtTag::ImportEquals,
-                    StmtTag::ExportAsNamespace,
-                ],
-                Self::check_statement,
-            );
-            on.type_params(|rule, param, cx| rule.check_name(param.name(), cx));
-            on.enum_members(|rule, member, cx| {
-                if let Some(key) = member.key() {
-                    rule.check_key(key, cx);
-                }
-            });
-        }
+        on.stmts(
+            [
+                StmtTag::Interface,
+                StmtTag::TypeAlias,
+                StmtTag::Enum,
+                StmtTag::Module,
+                StmtTag::ImportEquals,
+                StmtTag::ExportAsNamespace,
+            ],
+            Self::check_statement,
+        );
+        on.type_params(|rule, param, cx| rule.check_name(param.name(), cx));
+        on.enum_members(|rule, member, cx| {
+            if let Some(key) = member.key() {
+                rule.check_key(key, cx);
+            }
+        });
         State::default()
     }
 }

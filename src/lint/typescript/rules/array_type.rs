@@ -79,6 +79,7 @@ fn type_needs_parentheses(ty: TypeNode) -> bool {
         | TypeKind::Keyof(_)
         | TypeKind::Readonly(_)
         | TypeKind::UniqueSymbol
+        | TypeKind::Unique(_)
         | TypeKind::Infer(_)
         | TypeKind::Cond { .. } => true,
         _ => false,

@@ -171,7 +171,17 @@ impl IdDenylist {
                     name.len() > 1 && utils::estree_type_name(ty.into()) == "TSTypeReference";
                 self.check_entity_name(name, is_qualified_name, cx);
             }
-            TypeKind::Import { name, .. } => name.parts().for_each(|part| self.check_name(part, cx)),
+            TypeKind::Import { name, .. } => {
+                name.parts().for_each(|part| self.check_name(part, cx));
+                // ESLint has `{ with: { key: "" } }` as an object literal.
+                if let Some(attributes) = ty.import_attributes() {
+                    let keyword = attributes.keyword_span();
+                    if self.names.contains(cx.slice(keyword)) {
+                        report(keyword, cx.slice(keyword), cx);
+                    }
+                    attributes.entries().iter().filter_map(Prop::key).for_each(|key| self.check_key(key, cx));
+                }
+            }
             TypeKind::Predicate { .. } => {
                 if let Some(param) = ty.predicate_param()
                     && !param.name().is("this")
@@ -212,7 +222,7 @@ impl Rule for IdDenylist {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
         if self.names.is_empty() {
             return;
         }
@@ -264,9 +274,6 @@ impl Rule for IdDenylist {
         // The name in the other module is not the user's, unless it is also the local one.
         on.import_specs(|rule, specifier, cx| rule.check_name(specifier.local(), cx));
         on.export_specs(Self::check_export_specifier);
-        if file.is_javascript() {
-            return;
-        }
         on.stmts(
             [
                 StmtTag::Interface,

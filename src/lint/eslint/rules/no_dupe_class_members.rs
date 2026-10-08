@@ -51,6 +51,7 @@ pub fn check<'a, R: Rule>(
         }
         let name = match member.kind() {
             MemberKind::Constructor if member.is_static() => Cow::Borrowed(&b"constructor"[..]),
+            MemberKind::Method if member.is_constructor() => continue,
             MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
                 let Some(key) = member.key() else {
                     continue;

@@ -502,6 +502,16 @@ impl<'a> KeyKind<'a> {
         (rest.first()?.is_ascii_digit() && literal.ends_with(b"n"))
             .then(|| KeyKind::Number(file.name(file.atoms.intern(&decimal_digits(literal)))))
     }
+
+    /// The HIR has no name either for a `#name` that is not in a class, which declares nothing.
+    #[inline(never)]
+    fn of_unnamed(file: &'a File<'a>, start: u32) -> Option<KeyKind<'a>> {
+        let rest = file.text().get(start as usize..)?;
+        match rest.first()? {
+            b'#' => Some(KeyKind::Private(file.intern(rest.get(..crate::tokens::token_len(rest))?))),
+            _ => KeyKind::of_bigint(file, start),
+        }
+    }
 }
 
 impl<'a> Key<'a> {
@@ -513,7 +523,7 @@ impl<'a> Key<'a> {
     ) -> Option<Key<'a>> {
         let bigint = || KeyKind::of_bigint(file, start);
         let kind = match key {
-            hir::PropKey::None => bigint()?,
+            hir::PropKey::None => KeyKind::of_unnamed(file, start)?,
             hir::PropKey::Private(name) => KeyKind::Private(file.private_name(name)),
             hir::PropKey::Computed(e) => KeyKind::Computed(Expr::new(file, e)),
             hir::PropKey::Name(name) => {

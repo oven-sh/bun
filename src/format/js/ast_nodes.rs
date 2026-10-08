@@ -685,7 +685,7 @@ impl<'a> AsAstNodes<'a> for TypeNode<'a> {
             TypeKind::Infer(_) => N::TSInferType(self),
             TypeKind::Mapped(_) => N::TSMappedType(self),
             TypeKind::IndexedAccess { .. } => N::TSIndexedAccessType(self),
-            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol => N::TSTypeOperator(self),
+            TypeKind::Keyof(_) | TypeKind::Readonly(_) | TypeKind::UniqueSymbol | TypeKind::Unique(_) => N::TSTypeOperator(self),
             TypeKind::Typeof { .. } => N::TSTypeQuery(self),
             TypeKind::Import { is_typeof: true, .. } => N::TSTypeQuery(self),
             TypeKind::Import { .. } => N::TSImportType(self),

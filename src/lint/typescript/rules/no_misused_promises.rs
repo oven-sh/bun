@@ -11,6 +11,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_utils::get_function_head_loc;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
+use std::cell::Cell;
 
 /// Disallow Promises in places not designed to handle them.
 pub struct NoMisusedPromises {
@@ -118,21 +119,38 @@ fn can_be_thenable(node: Expr) -> bool {
     }
 }
 
-/// Whether the type of `node` can have call signatures. The syntax tells that of a literal.
-fn can_be_function(node: Expr) -> bool {
-    !matches!(
-        node.kind(),
-        ExprKind::Missing
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Null
-            | ExprKind::Number(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::String(_)
-            | ExprKind::Template(_)
-            | ExprKind::Array(_)
-            | ExprKind::Object(_)
-    )
+/// Whether the literals of each sort have call signatures: those of `Boolean`, `Number`, `BigInt`,
+/// `String` and `Array`, which a program can add to. `None`: not asked yet.
+#[derive(Default)]
+struct CallableLiterals([Cell<Option<bool>>; 5]);
+
+/// Whether the type of `node` can have call signatures. All literals of a sort have the same.
+fn can_be_function(node: Expr, known: &CallableLiterals) -> bool {
+    let sort = match node.kind() {
+        ExprKind::Missing | ExprKind::Null | ExprKind::Object(_) => return false,
+        ExprKind::True | ExprKind::False => 0,
+        ExprKind::Number(_) => 1,
+        ExprKind::BigInt(_) => 2,
+        ExprKind::String(_) | ExprKind::Template(_) => 3,
+        ExprKind::Array(_) => 4,
+        _ => return true,
+    };
+    let Some(known) = known.0.get(sort) else {
+        return true;
+    };
+    known.get().unwrap_or_else(|| {
+        let ty = node.ts_node().get_type_at_location().get_apparent_type();
+        let is_callable = !ty.get_call_signatures().is_empty();
+        known.set(Some(is_callable));
+        is_callable
+    })
+}
+
+#[derive(Default)]
+pub struct State<'a> {
+    /// Whether what has been passed on the way up from an operand is in a test.
+    tests: AncestorMemo<'a, bool>,
+    callable_literals: CallableLiterals,
 }
 
 /// Whether an annotated type is maybe a function type, as far as the syntax tells.
@@ -427,7 +445,7 @@ impl NoMisusedPromises {
         };
         if matches!(left.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op))
             || !can_be_thenable(left)
-            || is_in_test(node, &mut cx.state)
+            || is_in_test(node, &mut cx.state.tests)
         {
             return;
         }
@@ -438,7 +456,8 @@ impl NoMisusedPromises {
         let ExprKind::Call(call) = node.kind() else {
             return;
         };
-        let Some(callback) = call.args().first().filter(|&callback| can_be_function(callback)) else {
+        let known = &cx.state.callable_literals;
+        let Some(callback) = call.args().first().filter(|&callback| can_be_function(callback, known)) else {
             return;
         };
         if !is_array_method_call_with_predicate(node) || !returns_thenable(callback.ts_node()) {
@@ -463,7 +482,9 @@ impl NoMisusedPromises {
             .args()
             .iter()
             .enumerate()
-            .filter(|(_, argument)| can_be_function(*argument) && returns_thenable(argument.ts_node()))
+            .filter(|(_, argument)| {
+                can_be_function(*argument, &cx.state.callable_literals) && returns_thenable(argument.ts_node())
+            })
             .map(|(index, node)| Argument {
                 index,
                 node,
@@ -487,7 +508,7 @@ impl NoMisusedPromises {
             return;
         };
         // A default in a destructuring assignment is an `AssignmentPattern`.
-        if !can_be_function(value) || node.is_assignment_target() {
+        if !can_be_function(value, &cx.state.callable_literals) || node.is_assignment_target() {
             return;
         }
         let left = target.ts_node();
@@ -531,7 +552,7 @@ impl NoMisusedPromises {
             cx.report(init, VOID_RETURN_VARIABLE);
         }
         if is_possibly_function_type(annotation)
-            && can_be_function(init)
+            && can_be_function(init, &cx.state.callable_literals)
             && is_void_returning_function_type(initializer, variable_type)
             && returns_thenable(initializer)
         {
@@ -549,7 +570,7 @@ impl NoMisusedPromises {
 
     /// `key: value` and `key`
     fn check_property_value<'a>(&self, value: Expr<'a>, cx: &Cx<'a, Self>) {
-        if !can_be_function(value) {
+        if !can_be_function(value, &cx.state.callable_literals) {
             return;
         }
         let initializer = value.ts_node();
@@ -590,7 +611,8 @@ impl NoMisusedPromises {
     }
 
     fn check_jsx_attribute<'a>(&self, node: Prop<'a>, cx: &Cx<'a, Self>) {
-        let Some(value) = node.value().filter(|&value| can_be_function(value)) else {
+        let known = &cx.state.callable_literals;
+        let Some(value) = node.value().filter(|&value| can_be_function(value, known)) else {
             return;
         };
         let Some(expression_container) = value.jsx_container_span() else {
@@ -610,7 +632,7 @@ impl NoMisusedPromises {
         let StmtKind::Return(Some(argument)) = node.kind() else {
             return;
         };
-        if !can_be_function(argument) {
+        if !can_be_function(argument, &cx.state.callable_literals) {
             return;
         }
         // A `return` outside of a function is legal in a CommonJS module.
@@ -732,7 +754,7 @@ impl Rule for NoMisusedPromises {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
     /// [`is_in_test`]
-    type State<'a> = AncestorMemo<'a, bool>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -762,7 +784,7 @@ impl Rule for NoMisusedPromises {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorMemo<'a, bool> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         let checks = &self.checks_void_return;
         if self.checks_conditionals.is_some() {
             on.stmts(
@@ -793,6 +815,6 @@ impl Rule for NoMisusedPromises {
         if self.checks_spreads || checks.attributes || checks.properties {
             on.props(Self::check_prop);
         }
-        AncestorMemo::default()
+        State::default()
     }
 }

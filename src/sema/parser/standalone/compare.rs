@@ -120,6 +120,11 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
         if a.references[..] != b.references[..] {
             self.differ("references", &&a.references[..], &&b.references[..]);
         }
+        if a.comments[..] != b.comments[..] {
+            let at = (a.comments.iter().zip(&b.comments[..])).position(|(x, y)| x != y);
+            let at = at.unwrap_or(a.comments.len().min(b.comments.len()));
+            self.differ("comments", &a.comments.get(at), &b.comments.get(at));
+        }
         if a.comment_directives[..] != b.comment_directives[..] {
             let (x, y) = (&a.comment_directives[..], &b.comment_directives[..]);
             self.differ("comment_directives", &x, &y);

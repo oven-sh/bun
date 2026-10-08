@@ -44,6 +44,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) comment_directives: Vec<CommentDirective>,
     /// The comments before the first token.
     pub(crate) leading_comments: Vec<(u32, u32)>,
+    /// `hir::File::comments`
+    pub(crate) comments: Vec<(u32, u32)>,
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
 }
@@ -127,6 +129,7 @@ impl<'a> Lexer<'a> {
             names,
             comment_directives: Vec::new(),
             leading_comments: Vec::new(),
+            comments: Vec::new(),
             buffer: Vec::new(),
         }
     }
@@ -155,6 +158,17 @@ impl<'a> Lexer<'a> {
         self.full_start = mark.full_start;
         self.atom = mark.atom;
         self.number = mark.number;
+        if self.comments.last().is_some_and(|last| last.0 >= mark.end) {
+            self.forget_comments_from(mark.end);
+        }
+    }
+
+    /// What follows `pos` is scanned again, maybe as something else.
+    #[cold]
+    #[inline(never)]
+    fn forget_comments_from(&mut self, pos: u32) {
+        let kept = self.comments.partition_point(|comment| comment.0 < pos);
+        self.comments.truncate(kept);
     }
 
     /// Gives up on the file, or on the speculative parse that is going on.
@@ -619,6 +633,7 @@ impl<'a> Lexer<'a> {
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
+        self.comments.push((start as u32, end as u32));
         // `processCommentDirective`: "Skip opening //", "Skip another / if present"
         let src = self.src;
         let mut pos = start + 2;
@@ -670,6 +685,7 @@ impl<'a> Lexer<'a> {
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
+        self.comments.push((start as u32, end as u32));
         // `processCommentDirective`: "Skip whitespace", "Skip combinations of / and *"
         let mut pos = last_line;
         while pos < end && matches!(src[pos], b' ' | b'\t') {
@@ -753,14 +769,14 @@ impl<'a> Lexer<'a> {
         if len >= 16 {
             return match len {
                 16..=32 => self.names.long(text, self.atoms),
-                _ => self.atoms.intern(text),
+                _ => self.names.uncached(text, self.atoms),
             };
         }
         let Some(chunk) = self.src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
             return self.names.atom(text, self.atoms);
         };
         if len == 0 {
-            return bun_sema::atom::known::empty;
+            return self.names.atom(text, self.atoms);
         }
         let words = crate::names::short_words(chunk, len as u32);
         match self.names.find_short(words) {

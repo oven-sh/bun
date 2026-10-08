@@ -1806,6 +1806,11 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
+    /// The start and the end of every `//` and `/* */` comment, in order. Not a `#!` line, nor a
+    /// comment of HTML.
+    pub comments: S::List<(u32, u32)>,
+    /// See `may_mention`. `MENTIONED_BITS` bits, or empty if the parser does not record them.
+    pub mentioned: S::List<u64>,
     /// The span of the statement of each `with (e) statement`, from right after the `)` to its end.
     pub with_bodies: S::Few<(u32, u32)>,
     /// The position of the `{` of each function whose body is a block, except for a static block,
@@ -2001,7 +2006,18 @@ arenas! {
     names: Name => NameId, add_name, add_names;
 }
 
+/// The number of bits of `FileIn::mentioned`.
+pub const MENTIONED_BITS: usize = 1 << 14;
+
 impl<S: Storage> FileIn<S> {
+    /// False only if `atom` is the text of no name, keyword, private name or bigint, and the value
+    /// of no string, piece of a template or JSX text in the file. A filter: true says nothing.
+    #[inline]
+    pub fn may_mention(&self, atom: Atom) -> bool {
+        let bit = atom.0 as usize % MENTIONED_BITS;
+        (self.mentioned.get(bit / 64)).is_none_or(|word| word >> (bit % 64) & 1 != 0)
+    }
+
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.
     #[inline]
     pub fn param_modifiers(&self, p: ParamId) -> Span<ModifierId> {
@@ -2324,6 +2340,8 @@ impl FileBuilder {
             body: self.body,
             references: few_to_arena(self.references, arena),
             comment_directives: few_to_arena(self.comment_directives, arena),
+            comments: copy_to_arena(&mut self.comments, arena),
+            mentioned: copy_to_arena(&mut self.mentioned, arena),
             with_bodies: few_to_arena(self.with_bodies, arena),
             body_starts: copy_to_arena(&mut self.body_starts, arena),
             after_skipped: few_to_arena(self.after_skipped, arena),

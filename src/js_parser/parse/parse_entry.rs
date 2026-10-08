@@ -585,6 +585,9 @@ impl<'a> Parser<'a> {
         let awaited = p.top_level_await_keyword.len > 0;
         // Taken before `jsdoc::read_comments` makes the lexer rescan the comments.
         let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
+        let comments: Vec<(u32, u32)> = (p.lexer.all_comments.iter())
+            .map(|range| (range.loc.start as u32, range.end().start as u32))
+            .collect();
         // Recoverable errors are converted to TypeScript's diagnostics. The checker reports them.
         let mut logged = Vec::new();
         let mut has_errors = stmts.is_err();
@@ -614,6 +617,7 @@ impl<'a> Parser<'a> {
                 let mut file =
                     crate::sema::lower::Lower::run(p, syntax, stmts, is_declaration_file);
                 file.comment_directives = comment_directives;
+                file.comments = comments;
                 crate::sema::comments::process_pragmas_into_fields(
                     &p.lexer,
                     leading_comments,

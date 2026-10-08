@@ -121,7 +121,8 @@ file_lists! {
     cases, jsx, imports, import_specs, import_equals, exports, export_specs, tuple_elems, mapped,
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
-    deferred_import_calls, import_call_type_args, keyword_identifier_positions,
+    deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
+    mentioned,
 }
 
 /// Where a speculative parse returns to.
@@ -173,11 +174,12 @@ impl<'a> Parser<'a> {
             return Err(Refused::new(Refusal::TooLarge));
         }
         scratch.names.belong_to(atoms);
-        let file = recycled_file(std::mem::take(&mut scratch.recycled));
+        let mut file = recycled_file(std::mem::take(&mut scratch.recycled));
         let mut stacks = std::mem::take(&mut scratch.stacks);
         stacks.clear();
         let mut lx = Lexer::new(text, atoms, &mut scratch.names);
         lx.is_jsx = options.is_jsx;
+        lx.comments = std::mem::take(&mut file.comments);
         let is_ecmascript = options.dialect.ecmascript && options.is_javascript;
         lx.is_ecmascript = is_ecmascript;
         lx.is_script = is_ecmascript && options.dialect.script;
@@ -208,6 +210,7 @@ impl<'a> Parser<'a> {
         let refused_at = this.lx.refused_at;
         let comment_directives = std::mem::take(&mut this.lx.comment_directives);
         let leading_comments = std::mem::take(&mut this.lx.leading_comments);
+        let comments = std::mem::take(&mut this.lx.comments);
         let Parser {
             mut f,
             s,
@@ -215,6 +218,7 @@ impl<'a> Parser<'a> {
             ..
         } = this;
         scratch.stacks = s;
+        f.comments = comments;
         if let Some(why) = refusal {
             scratch.recycled = f;
             return Err(Refused {
@@ -224,6 +228,7 @@ impl<'a> Parser<'a> {
             });
         }
         f.comment_directives = comment_directives;
+        f.mentioned.extend_from_slice(scratch.names.mentioned());
         if !crate::pragmas::process_pragmas_into_fields(text, &leading_comments, atoms, &mut f) {
             scratch.recycled = f;
             return Err(Refused::new(Refusal::Reported));

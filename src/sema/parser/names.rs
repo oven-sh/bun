@@ -25,6 +25,7 @@ struct Long {
     atom: u32,
 }
 
+const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
 const LONG_BITS: u32 = 12;
 
@@ -34,6 +35,8 @@ pub(crate) struct Names {
     long: Box<[Long; 1 << LONG_BITS]>,
     /// `Intern::number` of the interner that the atoms are of. 0: none.
     of: u64,
+    /// `hir::FileIn::mentioned` of the file that is being parsed.
+    mentioned: [u64; MENTIONED_WORDS],
 }
 
 const NO_SHORT: Short = Short {
@@ -60,6 +63,7 @@ impl Default for Names {
             short: boxed(NO_SHORT),
             long: boxed(NO_LONG),
             of: 0,
+            mentioned: [0; MENTIONED_WORDS],
         }
     }
 }
@@ -128,13 +132,34 @@ impl Names {
             }
             self.of = atoms.number();
         }
+        self.mentioned = [0; MENTIONED_WORDS];
+    }
+
+    /// Every atom that was handed out since `belong_to`, as `hir::FileIn::mentioned` has them.
+    pub(crate) fn mentioned(&self) -> &[u64] {
+        &self.mentioned
+    }
+
+    #[inline(always)]
+    fn mention(&mut self, atom: Atom) -> Atom {
+        self.mentioned[(atom.0 as usize / 64) % MENTIONED_WORDS] |= 1 << (atom.0 % 64);
+        atom
+    }
+
+    /// The atom of a text that no cache is for.
+    pub(crate) fn uncached(&mut self, text: &[u8], atoms: &dyn Intern) -> Atom {
+        self.mention(atoms.intern(text))
     }
 
     /// The atom and the token kind of the name with the padded bytes `words`, if it is in the cache.
     #[inline(always)]
-    pub(crate) fn find_short(&self, words: [u64; 2]) -> Option<(Atom, T)> {
+    pub(crate) fn find_short(&mut self, words: [u64; 2]) -> Option<(Atom, T)> {
         let entry = &self.short[short_place(words)];
-        (entry.words == words).then_some((Atom(entry.atom), entry.kind))
+        if entry.words != words {
+            return None;
+        }
+        let (atom, kind) = (Atom(entry.atom), entry.kind);
+        Some((self.mention(atom), kind))
     }
 
     /// Puts the name `text`, whose padded bytes are `words`, into the cache.
@@ -144,7 +169,7 @@ impl Names {
         text: &[u8],
         atoms: &dyn Intern,
     ) -> (Atom, T) {
-        let (atom, kind) = (atoms.intern(text), keyword(text));
+        let (atom, kind) = (self.uncached(text, atoms), keyword(text));
         self.short[short_place(words)] = Short {
             words,
             atom: atom.0,
@@ -165,12 +190,12 @@ impl Names {
     #[inline]
     pub(crate) fn atom(&mut self, text: &[u8], atoms: &dyn Intern) -> Atom {
         match text.len() {
-            0 => bun_sema::atom::known::empty,
+            0 => self.mention(bun_sema::atom::known::empty),
             // Its last byte tells a text from a shorter one that is padded.
-            _ if text.last() == Some(&0) => atoms.intern(text),
+            _ if text.last() == Some(&0) => self.uncached(text, atoms),
             1..=15 => self.short_words(padded::<2>(text), text, atoms).0,
             16..=32 => self.long(text, atoms),
-            _ => atoms.intern(text),
+            _ => self.uncached(text, atoms),
         }
     }
 
@@ -178,7 +203,7 @@ impl Names {
     pub(crate) fn long(&mut self, text: &[u8], atoms: &dyn Intern) -> Atom {
         // The first and the last 16 bytes, which may overlap, and the length determine it.
         let (Some(first), Some(last)) = (text.first_chunk::<16>(), text.last_chunk::<16>()) else {
-            return atoms.intern(text);
+            return self.uncached(text, atoms);
         };
         let word = |bytes: &[u8]| u64::from_le_bytes(bytes.try_into().unwrap_or_default());
         let words = [
@@ -190,12 +215,14 @@ impl Names {
         let mixed = (words[0] ^ words[1].rotate_left(29)).wrapping_mul(MULTIPLIER)
             ^ (words[2] ^ words[3].rotate_left(29));
         let hash = mixed.wrapping_mul(MULTIPLIER);
-        let entry = &mut self.long[(hash >> (64 - LONG_BITS)) as usize];
+        let place = (hash >> (64 - LONG_BITS)) as usize;
+        let entry = &self.long[place];
         if entry.words == words && entry.len == text.len() as u32 {
-            return Atom(entry.atom);
+            let atom = Atom(entry.atom);
+            return self.mention(atom);
         }
-        let atom = atoms.intern(text);
-        *entry = Long {
+        let atom = self.uncached(text, atoms);
+        self.long[place] = Long {
             words,
             len: text.len() as u32,
             atom: atom.0,

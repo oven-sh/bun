@@ -83,6 +83,8 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         body,
         references,
         comment_directives,
+        comments: _,
+        mentioned: _,
         with_bodies,
         body_starts: _,
         after_skipped,

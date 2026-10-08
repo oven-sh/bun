@@ -67,6 +67,9 @@ pub struct Options {
 
     pub(crate) ca: Box<[Box<[u8]>]>,
     pub(crate) ca_file_name: &'static [u8],
+    /// `ca` / `ca_file_name` as the TLS config of each registry request. Only the runtime's
+    /// auto-install sets it: `bun install` puts them on the HTTP thread, which is its own.
+    pub(crate) tls_props: Option<bun_http::ssl_config::SharedPtr>,
 
     // if set to `false` in bunfig, save a binary lockfile
     pub(crate) save_text_lockfile: Option<bool>,
@@ -162,6 +165,7 @@ impl Default for Options {
             publish_config: PublishConfig::default(),
             ca: Box::default(),
             ca_file_name: b"",
+            tls_props: None,
             save_text_lockfile: None,
             lockfile_only: false,
             runtime_auto_install: false,

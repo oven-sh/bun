@@ -896,6 +896,47 @@ impl PackageManager {
         self.env().get_tls_reject_unauthorized()
     }
 
+    pub(crate) fn tls_props(&self) -> Option<http::ssl_config::SharedPtr> {
+        self.options.tls_props.clone()
+    }
+
+    /// Whether a request failed because `[install] ca` / `cafile` does not load. The HTTP client
+    /// reports that as a socket it could not open, so the CA is loaded again here to tell. Prints
+    /// which one, once.
+    pub(crate) fn failed_to_load_ca(&self, response: &http::HTTPClientResult<'_>) -> bool {
+        if response.fail != Some(http::Error::FailedToOpenSocket) || response.connect_errno != 0 {
+            return false;
+        }
+        let Some(tls) = &self.options.tls_props else {
+            return false;
+        };
+        let mut err = bun_uws::create_bun_socket_error_t::none;
+        if tls
+            .as_usockets_for_client_verification()
+            .create_ssl_context(&mut err)
+            .is_some()
+        {
+            return false;
+        }
+        let err = http::InitError::from(err);
+        if !matches!(
+            err,
+            http::InitError::LoadCAFile
+                | http::InitError::InvalidCAFile
+                | http::InitError::InvalidCA
+        ) {
+            return false;
+        }
+        static REPORTED: AtomicBool = AtomicBool::new(false);
+        if !REPORTED.swap(true, Ordering::Relaxed) {
+            // SAFETY: null, or a NUL-terminated copy that the config owns (`tls_props_from_options`).
+            let ca_file_name = unsafe { ZStr::from_c_ptr(tls.ca_file_name) };
+            print_http_init_error(err, ca_file_name);
+            Output::flush();
+        }
+        true
+    }
+
     pub(crate) fn fail_root_resolution(
         &mut self,
         dependency: &Dependency,
@@ -1284,6 +1325,11 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     } else {
         ZStr::from_slice_with_nul(opts.abs_ca_file_name)
     };
+    print_http_init_error(err, abs_ca_z);
+    Global::crash();
+}
+
+fn print_http_init_error(err: http::InitError, abs_ca_z: &ZStr) {
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
@@ -1319,7 +1365,54 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
             Output::err_generic("failed to start HTTP client thread", ());
         }
     }
-    Global::crash();
+}
+
+/// A `cafile` of the install options as an absolute path: a relative one is relative to
+/// `base_dir`. No length limit, so a path the OS cannot open is reported as a CA file that does
+/// not exist.
+fn absolute_ca_file_name(ca_file_name: &[u8], base_dir: &[u8]) -> ZBox {
+    if bun_paths::is_absolute(ca_file_name) {
+        return ZBox::from_bytes(ca_file_name);
+    }
+    let mut spill = Vec::new();
+    ZBox::from_bytes(resolve_path::join_abs_string_spill::<platform::Auto>(
+        base_dir,
+        &mut spill,
+        &[ca_file_name],
+    ))
+}
+
+/// `ca` / `cafile` of the install options as the TLS config of a single request, for a process
+/// whose HTTP thread serves other requests too. With both set, the TLS layer uses the file.
+fn tls_props_from_options(options: &Options) -> http::ssl_config::SharedPtr {
+    let mut config = http::SSLConfig::zero();
+    if !options.ca_file_name.is_empty() {
+        // Absolute already when the options came through `runtime_install_options`.
+        let base_dir = FileSystem::instance().top_level_dir();
+        config.ca_file_name =
+            bun_core::dupe_z(absolute_ca_file_name(options.ca_file_name, base_dir).as_bytes());
+    }
+    if !options.ca.is_empty() {
+        config.ca = Some(options.ca.iter().map(|pem| bun_core::dupe_z(pem)).collect());
+    }
+    config.requires_custom_request_ctx = true;
+    http::ssl_config::global_registry::intern(config)
+}
+
+/// The `[install]` options for the runtime's resolver, which auto-install reads on first use.
+/// A relative `cafile` becomes absolute here: it is relative to the directory the process started
+/// in, and a script can call `process.chdir()` before that first use.
+pub fn runtime_install_options(
+    install: Option<&mut Api::BunInstall>,
+) -> Option<NonNull<Api::BunInstall>> {
+    let install = install?;
+    if let Some(cafile) = install.cafile.as_deref() {
+        if !cafile.is_empty() && !bun_paths::is_absolute(cafile) {
+            let cwd = FileSystem::instance().top_level_dir();
+            install.cafile = Some(absolute_ca_file_name(cafile, cwd).as_bytes().into());
+        }
+    }
+    Some(NonNull::from(&*install))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2292,18 +2385,7 @@ pub fn init(
     {
         let options = &mgr_ref.options;
         if !options.ca_file_name.is_empty() {
-            // resolve with original cwd
-            if bun_paths::is_absolute(options.ca_file_name) {
-                abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
-            } else {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                abs_ca_file_name =
-                    ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
-                        &original_cwd_clone,
-                        &mut path_buf,
-                        &[options.ca_file_name],
-                    ));
-            }
+            abs_ca_file_name = absolute_ca_file_name(options.ca_file_name, &original_cwd_clone);
         }
     }
 
@@ -2655,6 +2737,10 @@ fn init_with_runtime_once(
             let _ = e;
             bun_core::out_of_memory();
         }
+    }
+
+    if !manager.options.ca.is_empty() || !manager.options.ca_file_name.is_empty() {
+        manager.options.tls_props = Some(tls_props_from_options(&manager.options));
     }
 
     manager.timestamp_for_manifest_cache_control =

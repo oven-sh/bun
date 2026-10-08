@@ -475,7 +475,7 @@ fn run_tasks_erased(
                 let DownloadOutcome {
                     failed: download_failed,
                     retry,
-                } = DownloadOutcome::of(&task.response);
+                } = DownloadOutcome::of(manager, &task.response);
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
@@ -718,7 +718,7 @@ fn run_tasks_erased(
                 let DownloadOutcome {
                     failed: download_failed,
                     retry,
-                } = DownloadOutcome::of(&task.response);
+                } = DownloadOutcome::of(manager, &task.response);
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
@@ -1666,14 +1666,14 @@ fn run_tasks_erased(
 /// `failed`: the connection died, before a response or under a 2xx/3xx one
 /// (an error status keeps its own handling). `retry`: that, or a 5xx from the
 /// registry or from a proxy answering CONNECT. A proxy's 4xx (407, 403) would
-/// be the answer to the retry too.
+/// be the answer to the retry too, and so would a CA that does not load.
 struct DownloadOutcome {
     failed: bool,
     retry: bool,
 }
 
 impl DownloadOutcome {
-    fn of(response: &http::HTTPClientResult<'static>) -> Self {
+    fn of(manager: &PackageManager, response: &http::HTTPClientResult<'static>) -> Self {
         let proxy_status = response
             .proxy_connect_response
             .as_ref()
@@ -1689,7 +1689,8 @@ impl DownloadOutcome {
             .or(proxy_status);
         Self {
             failed,
-            retry: failed || status.is_some_and(|status| status > 499),
+            retry: (failed && !manager.failed_to_load_ca(response))
+                || status.is_some_and(|status| status > 499),
         }
     }
 }

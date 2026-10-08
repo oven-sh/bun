@@ -545,19 +545,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let mut err = uws::create_bun_socket_error_t::none;
         self.secure = match opts.create_ssl_context(&mut err) {
             Some(ctx) => Some(ctx),
-            None => {
-                return Err(match err {
-                    uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
-                    uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
-                    uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
-                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
-                    uws::create_bun_socket_error_t::none
-                    | uws::create_bun_socket_error_t::invalid_ciphers
-                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
-                        InitError::FailedToOpenSocket
-                    }
-                });
-            }
+            None => return Err(err.into()),
         };
         // SAFETY: secure was just set to Some.
         unsafe { ssl_ctx_setup(self.ssl_ctx()) };

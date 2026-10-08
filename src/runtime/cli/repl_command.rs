@@ -100,9 +100,8 @@ impl ReplCommand {
         // ReplRunner construction to avoid a move-after-borrow.
 
         // Configure bundler options
-        // `BundleOptions.install` is `Option<NonNull<_>>` so no
-        // lifetime-extension cast is needed.
-        let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
+        let install_ptr =
+            bun_install::package_manager::runtime_install_options(ctx.install.as_deref_mut());
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;

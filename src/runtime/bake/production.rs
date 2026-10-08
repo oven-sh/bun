@@ -137,9 +137,8 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators
-        // `BundleOptions.install` is `Option<NonNull<_>>`, so no
-        // lifetime-extension cast is needed.
-        let install_ptr = ctx.install.as_deref().map(NonNull::from);
+        let install_ptr =
+            bun_install::package_manager::runtime_install_options(ctx.install.as_deref_mut());
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;

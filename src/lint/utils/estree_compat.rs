@@ -21,6 +21,8 @@ use crate::ast::{
     Param, Pat, PatKind, PropKind, Stmt, StmtKind, TypeKind, TypeNode, UnOp, VarDecl,
 };
 use crate::span::{Span, Spanned};
+use bun_sema::hir;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 // ───────────────────────────── optional chains ─────────────────────────────
@@ -85,6 +87,33 @@ pub fn is_sequence_root(e: Expr<'_>) -> bool {
 
 /// The `SequenceExpression` of ESTree that `e`, a comma expression, is or is the start of.
 pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
+    /// So far up it is looked for. The way is as long as the sequence.
+    const NEAR: usize = 8;
+    for _ in 0..NEAR {
+        match e.parent().as_expr() {
+            Some(parent) if is_inner_comma(e) => e = parent,
+            _ => return e,
+        }
+    }
+    let file = e.file();
+    let roots = file.lazy.sequence_roots.get_or_init(|| {
+        let mut roots = FxHashMap::default();
+        for id in (0..file.hir.exprs.len() as u32).map(hir::ExprId) {
+            let root = Expr::new(file, id);
+            if !is_sequence_root(root) {
+                continue;
+            }
+            let inner = std::iter::successors(Some(root), |it| match it.kind() {
+                ExprKind::Binary { op: BinOp::Comma, left, .. } if is_comma(left) && !left.is_parenthesized() => Some(left),
+                _ => None,
+            });
+            roots.extend(inner.skip(NEAR).map(|it| (it.id(), id)));
+        }
+        roots
+    });
+    if let Some(&root) = roots.get(&e.id()) {
+        return Expr::new(file, root);
+    }
     while is_inner_comma(e)
         && let Some(parent) = e.parent().as_expr()
     {

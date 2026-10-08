@@ -562,16 +562,19 @@ impl<'a> Stmt<'a> {
             },
             _ => return None,
         };
-        for sibling in siblings {
-            if sibling == self {
-                return Some(self.file.slice(expr.span().shrink(1, 1)));
+        // Where the statements start, and where the strings that they start with end. The next question is about the same ones
+        // if there are many strings.
+        let start = siblings.first()?.span().start;
+        let end = match self.file.lazy.directives.get() {
+            Some((known, end)) if known == start => end,
+            _ => {
+                let is_string = |it: &Stmt| matches!(it.kind(), StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized());
+                let end = siblings.iter().take_while(is_string).last().map_or(start, |it| it.span().end);
+                self.file.lazy.directives.set(Some((start, end)));
+                end
             }
-            match sibling.kind() {
-                StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized() => {}
-                _ => return None,
-            }
-        }
-        None
+        };
+        (self.span().start < end).then(|| self.file.slice(expr.span().shrink(1, 1)))
     }
 }
 

@@ -145,6 +145,19 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         (offset < it.span().end && !it.is_synthetic()).then_some(it)
     }
 
+    /// The index of the element that starts at `start`. It counts the elements before it in a file that has nodes which are
+    /// synthesized from JSDoc comments.
+    pub fn index_of_start(self, start: u32) -> Option<usize> {
+        let at = self.count_until(start).checked_sub(1)?;
+        let it = self.at(at);
+        if it.span().start != start || it.is_synthetic() {
+            return None;
+        }
+        let mut before = self.iter();
+        before.back = at;
+        Some(if before.hides { before.count() } else { at as usize })
+    }
+
     /// The element before the one that starts at `start`.
     pub fn before(self, start: u32) -> Option<T> {
         let mut rest = self.iter();

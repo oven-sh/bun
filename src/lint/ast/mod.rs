@@ -193,6 +193,10 @@ pub(crate) struct Lazy {
     unicode_escape_range: UnicodeEscapeRange,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
+    /// [`Stmt::directive`]
+    pub(crate) directives: Cell<Option<(u32, u32)>>,
+    /// For each `a, b` that is the start of a long `a, b, c, ..`: all of that.
+    pub(crate) sequence_roots: OnceCell<rustc_hash::FxHashMap<hir::ExprId, hir::ExprId>>,
     /// Where the `a.b` of each `<a.b>` and `</a.b>` starts and ends, in order.
     jsx_tags_with_dots: OnceCell<Box<[(u32, u32)]>>,
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,

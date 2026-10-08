@@ -366,6 +366,7 @@ impl LanguageOptions {
             dialect: Dialect {
                 ecmascript: self.parser == Parser::Espree,
                 script: self.scope_source_type() != SourceType::Module,
+                ..Dialect::default()
             },
             script_kind,
             experimental_decorators: self.experimental_decorators,

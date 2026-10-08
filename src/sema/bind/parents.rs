@@ -117,7 +117,15 @@ pub fn bind_for_format<'s>(
             expr_kind_counts: &mut [],
             returns: &mut Vec::new(),
         },
+    ) && is_all_part_of_something(
+        &expr_parent,
+        &stmt_parent,
+        &fns,
+        &class_owner,
+        &type_scope,
+        &type_param_scope,
     );
+    in_order(&mut type_query_operands);
     if !is_done {
         return bind(f, options, atoms, arena);
     }
@@ -195,32 +203,50 @@ pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut Bound
     refilled(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
     refilled(&mut b.type_scope, f.types.len(), ScopeId::NONE);
     refilled(&mut b.type_param_scope, f.type_params.len(), ScopeId::NONE);
-    fill::<S, LINT>(
-        f,
-        Lists {
-            expr_parent: &mut b.expr_parent,
-            stmt_parent: &mut b.stmt_parent,
-            pat_parent: &mut b.pat_parent,
-            prop_owner: &mut b.prop_owner,
-            member_owner: &mut b.member_owner,
-            param_fn: &mut b.param_fn,
-            var_stmt: &mut b.var_stmt,
-            case_stmt: &mut b.case_stmt,
-            class_owner: &mut b.class_owner,
-            enum_member_owner: &mut b.enum_member_owner,
-            fns: &mut b.fns,
-            type_query_operands: &mut b.type_query_operands,
-            class_scope: &mut b.class_scope,
-            type_scope: &mut b.type_scope,
-            type_param_scope: &mut b.type_param_scope,
-            expr_kinds: &mut b.expr_kinds,
-            expr_kind_counts: &mut b.expr_kind_counts,
-            returns: &mut b.ids,
-        },
+    fill::<S, LINT>(f, lists_of(b)) && is_done(b)
+}
+
+fn lists_of(b: &mut BoundBuilder) -> Lists<'_> {
+    Lists {
+        expr_parent: &mut b.expr_parent,
+        stmt_parent: &mut b.stmt_parent,
+        pat_parent: &mut b.pat_parent,
+        prop_owner: &mut b.prop_owner,
+        member_owner: &mut b.member_owner,
+        param_fn: &mut b.param_fn,
+        var_stmt: &mut b.var_stmt,
+        case_stmt: &mut b.case_stmt,
+        class_owner: &mut b.class_owner,
+        enum_member_owner: &mut b.enum_member_owner,
+        fns: &mut b.fns,
+        type_query_operands: &mut b.type_query_operands,
+        class_scope: &mut b.class_scope,
+        type_scope: &mut b.type_scope,
+        type_param_scope: &mut b.type_param_scope,
+        expr_kinds: &mut b.expr_kinds,
+        expr_kind_counts: &mut b.expr_kind_counts,
+        returns: &mut b.ids,
+    }
+}
+
+fn is_done(b: &mut BoundBuilder) -> bool {
+    in_order(&mut b.type_query_operands);
+    is_all_part_of_something(
+        &b.expr_parent,
+        &b.stmt_parent,
+        &b.fns,
+        &b.class_owner,
+        &b.type_scope,
+        &b.type_param_scope,
     )
 }
 
-/// `false`: it takes the binder.
+fn in_order(type_query_operands: &mut Vec<ExprId>) {
+    type_query_operands.sort_unstable();
+    type_query_operands.dedup();
+}
+
+/// `false`: it takes the binder. It also does if not [`is_all_part_of_something`].
 fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     let Lists {
         expr_parent,
@@ -743,16 +769,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     for &specifier in f.specifier_expressions.iter() {
         set!(expr_parent[specifier] = Parent::File);
     }
-    type_query_operands.sort_unstable();
-    type_query_operands.dedup();
-    is_all_part_of_something(
-        expr_parent,
-        stmt_parent,
-        fns,
-        class_owner,
-        type_scope,
-        type_param_scope,
-    )
+    true
 }
 
 /// What nothing says to be a part of anything is what the parser has left behind, and what is in it

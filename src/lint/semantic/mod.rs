@@ -21,7 +21,7 @@
 //! | `variable.scope` | [`Symbol::scope`] |
 //! | `variable.isValueVariable`, `variable.isTypeVariable` | [`Symbol::is_value_variable`], [`Symbol::is_type_variable`] |
 //! | `variable.eslintUsed`, `variable.eslintExported` | [`Symbol::is_marked_used`], [`Symbol::is_marked_exported`] |
-//! | `sourceCode.markVariableAsUsed(name, node)` | [`Node::mark_variable_as_used`] |
+//! | `sourceCode.markVariableAsUsed(name, node)` | [`Scope::resolve`], [`Symbol::mark_used`] |
 //! | `Reference` | [`Reference`] |
 //! | `reference.identifier` | [`Reference::ident`], [`Reference::expr`], [`Reference::node`] |
 //! | `reference.resolved` | [`Reference::symbol`], [`Expr::symbol`]. If it has no `defs`: [`Reference::global`] |
@@ -305,20 +305,6 @@ impl<'a> Symbol<'a> {
         Scope::new(self.file, ScopeId(self.variable().map_or(0, |it| it.scope)))
     }
 
-    /// It is exported from the file or from a namespace: by a modifier, by `export { it }`, by
-    /// `export default it` or by `export = it`.
-    pub fn is_exported(self) -> bool {
-        self.declarations().any(Declaration::has_export_modifier)
-            || self.references().any(|reference| match reference.raw().site {
-                ReferenceSite::ExportSpec(_) => true,
-                ReferenceSite::Expr(e) => matches!(
-                    Expr::new(self.file, e).parent(),
-                    Node::Stmt(s) if matches!(s.kind(), StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_))
-                ),
-                _ => false,
-            })
-    }
-
     fn mark(self, mark: u8) {
         let mut marks = self.file.semantic().marks.borrow_mut();
         if marks.is_empty() {
@@ -480,8 +466,7 @@ impl<'a> Declaration<'a> {
         }
     }
 
-    /// Where the name is written: ESLint's `def.name` without a type annotation. See
-    /// [`Declaration::identifier_span`].
+    /// Where the name is written: ESLint's `def.name` without a type annotation.
     pub fn name_span(self) -> Option<Span> {
         Some(match self {
             Declaration::Var(pat) | Declaration::Param(pat) => pat.span(),
@@ -504,17 +489,6 @@ impl<'a> Declaration<'a> {
             Declaration::ImportEquals(it) => it.name().span(),
             Declaration::Other => return None,
         })
-    }
-
-    /// The range of ESLint's `def.name`, which for a variable or a parameter with a type
-    /// annotation includes the `?` and the annotation: `a?: T`.
-    pub fn identifier_span(self) -> Option<Span> {
-        match self {
-            Declaration::Var(pat) | Declaration::Param(pat) => {
-                Some(crate::utils::estree_span(Node::Pat(pat)))
-            }
-            _ => self.name_span(),
-        }
     }
 
     /// The node that declares it: ESLint's `def.node`. For a `Var` the `VarDecl`, also for the
@@ -559,22 +533,6 @@ impl<'a> Declaration<'a> {
             Declaration::ImportSpec(it) => Some(Node::Stmt(it.import().stmt())),
             Declaration::ImportEquals(it) => Some(Node::Stmt(it.stmt())),
             _ => None,
-        }
-    }
-
-    /// It starts with `export`.
-    fn has_export_modifier(self) -> bool {
-        use crate::ast::Flags;
-        match self {
-            Declaration::Var(_) => matches!(self.parent(), Some(Node::Stmt(s)) if s.is_exported()),
-            Declaration::Fn(it) => it.flags().contains(Flags::EXPORT),
-            Declaration::Class(it) => it.flags().contains(Flags::EXPORT),
-            Declaration::Interface(it) => it.flags().contains(Flags::EXPORT),
-            Declaration::TypeAlias(it) => it.flags().contains(Flags::EXPORT),
-            Declaration::Enum(it) => it.flags().contains(Flags::EXPORT),
-            Declaration::Module(it) => it.flags().contains(Flags::EXPORT),
-            Declaration::ImportEquals(it) => it.flags().contains(Flags::EXPORT),
-            _ => false,
         }
     }
 }
@@ -696,12 +654,6 @@ impl<'a> Reference<'a> {
     #[inline]
     pub fn is_write_only(self) -> bool {
         self.is_write() && !self.is_read()
-    }
-
-    /// `a += 1`, `a++`
-    #[inline]
-    pub fn is_read_write(self) -> bool {
-        self.is_read() && self.is_write()
     }
 
     /// typescript-eslint's `isTypeReference`. See [`ReferenceFlags::TYPE`].
@@ -1340,18 +1292,6 @@ impl<'a> Node<'a> {
             Some(ScopeKind::FunctionExpressionName) => Scope::new(file, ScopeId(scope + 1)),
             _ => Scope::new(file, ScopeId(scope)),
         }
-    }
-
-    /// ESLint's `sourceCode.markVariableAsUsed(name, node)`: marks what `name` means at this node
-    /// as used, for `no-unused-vars`. Whether there is such a variable.
-    pub fn mark_variable_as_used(self, name: &str) -> bool {
-        let scope = match self {
-            // "Special Node.js scope means we need to start one level deeper"
-            Node::File(file) => file.top_level_scope(),
-            _ => self.scope(),
-        };
-        let found = scope.resolve(name);
-        found.inspect(|it| it.mark_used()).is_some()
     }
 
     /// ESLint's `sourceCode.getDeclaredVariables(node)`:

@@ -1349,6 +1349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             | StmtData::SDoWhile(_) => {
                 p.cur_scope().label_stmt_is_loop = true;
             }
+            StmtData::SFunction(_) => p.mark_sloppy_only_syntax(),
             _ => {}
         }
 

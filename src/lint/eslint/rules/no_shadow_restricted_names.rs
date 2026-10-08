@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// Disallow identifiers from shadowing restricted names.
@@ -33,7 +34,10 @@ pub struct State<'a> {
     /// Those of the restricted names that the file mentions.
     restricted: SmallVec<[Name<'a>; 6]>,
     /// Where the names that have been reported start.
-    reported: Vec<u32>,
+    reported: FxHashSet<u32>,
+    /// `safely_shadows_undefined`, for the variables with several declarations that have been looked
+    /// at.
+    seen: FxHashMap<Symbol<'a>, bool>,
 }
 
 impl NoShadowRestrictedNames {
@@ -43,8 +47,7 @@ impl NoShadowRestrictedNames {
     }
 
     fn report_once<'a>(at: Span, name: Name<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.reported.contains(&at.start) {
-            cx.state.reported.push(at.start);
+        if cx.state.reported.insert(at.start) {
             cx.report(at, SHADOWING_RESTRICTED_NAME).data("name", name);
         }
     }
@@ -52,10 +55,20 @@ impl NoShadowRestrictedNames {
     /// `at`: where a restricted `name` is declared. All the declarations of the variable are
     /// reported with it.
     fn report<'a>(at: Span, name: Name<'a>, symbol: Option<Symbol<'a>>, cx: &mut Cx<'a, Self>) {
-        if symbol.is_some_and(safely_shadows_undefined) {
+        let with_others = symbol.filter(|it| it.declaration_count() > 1);
+        let seen = with_others.and_then(|it| cx.state.seen.get(&it).copied());
+        let is_safe = seen.unwrap_or_else(|| symbol.is_some_and(safely_shadows_undefined));
+        if seen.is_none() {
+            cx.state.seen.extend(with_others.map(|it| (it, is_safe)));
+        }
+        if is_safe {
             return;
         }
         Self::report_once(at, name, cx);
+        // The other declarations have been reported with the first.
+        if seen.is_some() {
+            return;
+        }
         for declaration in symbol.into_iter().flat_map(Symbol::declarations) {
             if let Some(other) = name_span(declaration) {
                 Self::report_once(other, name, cx);
@@ -93,7 +106,8 @@ impl Rule for NoShadowRestrictedNames {
         let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
         let state = State {
             restricted: names.into_iter().filter(|name| file.mentions(name)).map(|name| file.name_of(name)).collect(),
-            reported: Vec::new(),
+            reported: FxHashSet::default(),
+            seen: FxHashMap::default(),
         };
         if state.restricted.is_empty() {
             return state;

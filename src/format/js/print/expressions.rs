@@ -9,7 +9,7 @@ use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
-use crate::js::utils::object::{FormatKey, format_computed_or_property_key, should_preserve_quote};
+use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
@@ -43,23 +43,7 @@ pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
         AstNodes::SpreadElement(_) | AstNodes::AssignmentTargetRest(_) => write!(f, ["...", property.value()]),
         // `{ a }`, `{ a = 1 }`
         AstNodes::AssignmentTargetPropertyIdentifier(_) => write!(f, property.value()),
-        AstNodes::AssignmentTargetPropertyProperty(_) => {
-            let Some(key) = property.key() else {
-                return;
-            };
-            let is_computed = key.is_computed();
-            write!(
-                f,
-                [
-                    is_computed.then_some("["),
-                    FormatKey::new(key, node),
-                    is_computed.then_some("]"),
-                    ":",
-                    space(),
-                    property.value()
-                ]
-            );
-        }
+        AstNodes::AssignmentTargetPropertyProperty(_) => write!(f, AssignmentLike::ObjectProperty(property)),
         _ => write_object_property(property, f),
     }
 }
@@ -74,10 +58,15 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
         if !f.is_quiet()
             && property.kind() != PropKind::Shorthand
             && let (Some(key), Some(value)) = (property.key(), property.value())
-            && (f.comments().comments_in_range(key.span(f.file()).end, value.span().start).iter())
-                .any(|comment| comment.followed_by_newline() && f.comments().is_suppression_comment(comment))
+            && !f.comments().has_comment_in_span(key.span(f.file()))
         {
-            return write!(f, FormatSuppressedNode(property.span()));
+            let comments = Some(f.comments().end_of_line_comments_after_left_side(key.span(f.file()).end))
+                .filter(|comments| comments.last().is_none_or(|last| last.span.end <= value.span().start))
+                .unwrap_or_default();
+            if comments.iter().any(|comment| f.comments().is_suppression_comment(comment)) {
+                return write!(f, FormatSuppressedNode(property.span()));
+            }
+            write!(f, FormatLeadingComments::Comments(comments));
         }
         return write!(f, AssignmentLike::ObjectProperty(property));
     };

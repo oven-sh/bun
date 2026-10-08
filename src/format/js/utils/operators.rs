@@ -39,10 +39,6 @@ pub(crate) trait BinOpExt: Copy {
     fn as_str(self) -> &'static str;
     /// `&&`, `||`, `??`: ESTree's `LogicalExpression`.
     fn is_logical(self) -> bool;
-    fn is_coalesce(self) -> bool;
-    /// `in`, `instanceof`
-    fn is_relational(self) -> bool;
-    fn is_in(self) -> bool;
     fn is_remainder(self) -> bool;
 }
 
@@ -76,25 +72,9 @@ impl BinOpExt for BinOp {
     }
 
     #[inline]
-    fn is_coalesce(self) -> bool {
-        self == BinOp::Nullish
-    }
-
-    #[inline]
-    fn is_relational(self) -> bool {
-        matches!(self, BinOp::In | BinOp::Instanceof)
-    }
-
-    #[inline]
-    fn is_in(self) -> bool {
-        self == BinOp::In
-    }
-
-    #[inline]
     fn is_remainder(self) -> bool {
         self == BinOp::Rem
     }
-
 }
 
 pub(crate) trait UnOpExt: Copy {

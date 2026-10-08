@@ -1,22 +1,18 @@
-//! Everything that has a left side, an operator and a right side: `a = b`, `const a = b`, `a: b`,
-//! `type A = B`. Prettier's `printAssignmentLike`.
+//! Everything that has a left side, an operator and a right side: `a = b`, `const a = b`, `a: b`.
+//! Prettier's `printAssignment`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::member_chain::is_member_call_chain;
 use super::object::{FormatKey, format_computed_or_property_key, write_member_name};
 use super::operators::assign_op_text;
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
-use super::typescript::should_hug_type;
-use crate::js::format::{
-    ExprOptions, FormatExpr, FormatTypeAnnotation, identifier, write_trailing_comments_of,
-};
+use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
 use crate::js::print::decorators::FormatDecorators;
 use crate::js::print::patterns::FormatBindingPropertyValue;
 use crate::js::print::sequence_expression::write_comments_before_closing_parenthesis;
-use crate::js::print::type_parameters::{type_arguments, type_parameters};
-use crate::js::print::union_type::write_ts_union_type_in;
+use crate::js::print::type_parameters::type_arguments;
 use crate::prelude::*;
 use crate::write;
 use smallvec::SmallVec;
@@ -29,7 +25,6 @@ pub(crate) enum AssignmentLike<'a> {
     BindingProperty(PatProp<'a>),
     PropertyDefinition(Member<'a>),
     AccessorProperty(Member<'a>),
-    TSTypeAliasDeclaration(Stmt<'a>, Alias<'a>),
 }
 
 /// Where an assignment breaks if it does not fit on the line.
@@ -51,17 +46,20 @@ pub(crate) enum AssignmentLikeLayout {
     ChainTailArrowFunction,
 }
 
-/// Prettier's `handleAssignmentPatternComments` and `handleVariableDeclaratorComments`: which of
-/// the comments after the left side, which ends at `start`, trail it.
-fn format_left_trailing_comments<'a>(start: u32, should_print_as_leading: bool, f: &mut Formatter<'a>) {
+/// Prettier's `handleAssignmentLikeComments`: which of the comments between the left side, which
+/// ends at `start`, and `right` trail the left side.
+fn format_left_trailing_comments<'a>(start: u32, right: Expr<'a>, f: &mut Formatter<'a>) {
     if f.is_quiet() {
         return;
     }
-    let end_of_line_comments = f.comments().end_of_line_comments_after(start);
+    // A `(` after the operator can be the first token of the right side.
+    let end_of_line_comments = Some(f.comments().end_of_line_comments_after_left_side(start))
+        .filter(|comments| comments.last().is_none_or(|last| last.span.end <= right.span().start))
+        .unwrap_or_default();
     let comments = if end_of_line_comments.is_empty() {
         let comments = f.comments().comments_before_character(start, b'=');
         if comments.iter().any(|c| c.preceded_by_newline()) { &[] } else { comments }
-    } else if should_print_as_leading || end_of_line_comments.last().is_some_and(|c| c.is_block()) {
+    } else if should_print_as_leading(right) || end_of_line_comments.last().is_some_and(|c| c.is_block()) {
         &[]
     } else {
         end_of_line_comments
@@ -124,7 +122,7 @@ impl<'a> AssignmentLike<'a> {
                 let definite = declarator.is_definite().then_some("!");
                 if let Some(init) = declarator.init() {
                     write!(f, [FormatNodeWithoutTrailingComments(&id), definite, type_annotation]);
-                    format_left_trailing_comments(id.span().end, should_print_as_leading(init), f);
+                    format_left_trailing_comments(id.span().end, init, f);
                 } else {
                     write!(f, [id, definite, type_annotation]);
                 }
@@ -135,7 +133,7 @@ impl<'a> AssignmentLike<'a> {
                     return false;
                 };
                 write!(f, FormatNodeWithoutTrailingComments(&target));
-                format_left_trailing_comments(target.span().end, should_print_as_leading(value), f);
+                format_left_trailing_comments(target.span().end, value, f);
                 false
             }
             AssignmentLike::ObjectProperty(property) => {
@@ -172,37 +170,6 @@ impl<'a> AssignmentLike<'a> {
                 write_property_definition_left(property, f);
                 false
             }
-            AssignmentLike::TSTypeAliasDeclaration(statement, declaration) => {
-                let node = AstNodes::TSTypeAliasDeclaration(statement);
-                let is_declared = statement.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT);
-                write!(f, [is_declared.then_some("declare "), "type "]);
-
-                let id = identifier(declaration.name(), node);
-                let start = if let Some(span) = declaration.type_params().angle_brackets_span() {
-                    let type_parameters = type_parameters(declaration.type_params(), Node::Stmt(statement));
-                    write!(f, [id, FormatNodeWithoutTrailingComments(&WithSpan(type_parameters, span))]);
-                    span.end
-                } else {
-                    write!(f, FormatNodeWithoutTrailingComments(&id));
-                    id.span().end
-                };
-                let ty = declaration.ty();
-                format_left_trailing_comments(start, matches!(ty.kind(), TypeKind::Object(_)), f);
-
-                // `type A = /* 1 */ | C` is `type A /* 1 */ = C`.
-                if let TypeKind::Union(types) | TypeKind::Intersection(types) = ty.kind()
-                    && types.len() == 1
-                    && !types.first().is_some_and(|only| only.tag() == ty.tag() || only.is_parenthesized())
-                {
-                    let comments = f.comments().comments_before(ty.span().start);
-                    if let [comment] = comments
-                        && !comment.preceded_by_newline()
-                    {
-                        write!(f, FormatTrailingComments::Comments(comments));
-                    }
-                }
-                false
-            }
         }
     }
 
@@ -215,26 +182,15 @@ impl<'a> AssignmentLike<'a> {
                 write!(f, [space(), assign_op_text(op)]);
             }
             Self::ObjectProperty(_) | Self::BindingProperty(_) => write!(f, ":"),
-            Self::VariableDeclarator(_)
-            | Self::PropertyDefinition(_)
-            | Self::AccessorProperty(_)
-            | Self::TSTypeAliasDeclaration(..) => write!(f, [space(), "="]),
+            Self::VariableDeclarator(_) | Self::PropertyDefinition(_) | Self::AccessorProperty(_) => {
+                write!(f, [space(), "="]);
+            }
         }
     }
 
     fn write_right(&self, f: &mut Formatter<'a>, layout: AssignmentLikeLayout) {
         match *self {
             Self::BindingProperty(property) => write!(f, FormatBindingPropertyValue(property)),
-            Self::TSTypeAliasDeclaration(_, declaration) => {
-                let ty = declaration.ty();
-                // The comments before a union are written with it.
-                if let TypeKind::Union(types) = ty.kind() {
-                    write_ts_union_type_in(ty, types, layout == AssignmentLikeLayout::BreakAfterOperator, f);
-                    write_trailing_comments_of(ty.as_ast_nodes(), f);
-                } else {
-                    write!(f, ty);
-                }
-            }
             _ => {
                 if let Some(right) = self.get_right_expression() {
                     write!(f, with_assignment_layout(right, Some(layout)));
@@ -255,7 +211,9 @@ impl<'a> AssignmentLike<'a> {
                 return layout;
             }
             // `a = b = c = d`
-            if matches!(e.kind(), ExprKind::Assign { value, .. } if matches!(value.kind(), ExprKind::Assign { .. })) {
+            if matches!(e.as_ast_nodes(), AstNodes::AssignmentExpression(_))
+                && e.right().is_some_and(|value| matches!(value.kind(), ExprKind::Assign { .. }))
+            {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
             match leading_comments_of_right_side(e, f) {
@@ -273,11 +231,8 @@ impl<'a> AssignmentLike<'a> {
         if self.should_break_left_hand_side(left_may_break) {
             return AssignmentLikeLayout::BreakLeftHandSide;
         }
-        if !is_type_cast && self.should_break_after_operator(right_expression, is_left_short, f) {
+        if !is_type_cast && right_expression.is_some_and(|right| should_break_after_operator(right, is_left_short, f)) {
             return AssignmentLikeLayout::BreakAfterOperator;
-        }
-        if self.is_complex_type_alias() {
-            return AssignmentLikeLayout::BreakLeftHandSide;
         }
         if !left_may_break
             && (is_left_short
@@ -304,14 +259,14 @@ impl<'a> AssignmentLike<'a> {
             AssignmentLike::AssignmentExpression(assignment) => assignment.right(),
             AssignmentLike::ObjectProperty(property) => property.value(),
             AssignmentLike::PropertyDefinition(property) | AssignmentLike::AccessorProperty(property) => property.init(),
-            AssignmentLike::BindingProperty(_) | AssignmentLike::TSTypeAliasDeclaration(..) => None,
+            AssignmentLike::BindingProperty(_) => None,
         }
     }
 
     /// There is no operator and no right side: `let a`, `{ a }`.
     fn has_only_left_hand_side(&self) -> bool {
         match *self {
-            Self::AssignmentExpression(_) | Self::TSTypeAliasDeclaration(..) => false,
+            Self::AssignmentExpression(_) => false,
             Self::VariableDeclarator(declarator) => declarator.init().is_none(),
             Self::PropertyDefinition(property) | Self::AccessorProperty(property) => property.init().is_none(),
             // The value of `{ a = 1 }` includes the name.
@@ -359,43 +314,6 @@ impl<'a> AssignmentLike<'a> {
         };
         declarator.ty().is_some_and(is_complex_type_annotation)
             || (left_may_break && declarator.init().is_some_and(|init| init.arrow_function().is_some()))
-    }
-
-    fn should_break_after_operator(
-        &self,
-        right_expression: Option<Expr<'a>>,
-        is_left_short: bool,
-        f: &mut Formatter<'a>,
-    ) -> bool {
-        if let Some(right_expression) = right_expression {
-            return should_break_after_operator(right_expression, is_left_short, f);
-        }
-        let AssignmentLike::TSTypeAliasDeclaration(_, declaration) = *self else {
-            return false;
-        };
-        let ty = declaration.ty();
-        let has_comment = f.comments().has_comment_before(ty.span().start);
-        match ty.kind() {
-            TypeKind::Cond { check, extends, .. } => {
-                let is_generic = |ty: TypeNode<'a>| match ty.kind() {
-                    TypeKind::Fn(func) => func.kind() == FnKind::FunctionType && !func.type_params().is_empty(),
-                    TypeKind::Ref { args, .. } => !args.is_empty(),
-                    _ => false,
-                };
-                is_generic(check) || is_generic(extends) || has_comment
-            }
-            TypeKind::Union(types) => !should_hug_type(ty, types, f),
-            _ => has_comment,
-        }
-    }
-
-    /// Prettier's `isComplexTypeAliasParams`.
-    fn is_complex_type_alias(&self) -> bool {
-        let AssignmentLike::TSTypeAliasDeclaration(_, type_alias) = *self else {
-            return false;
-        };
-        let params = type_alias.type_params();
-        params.len() > 1 && params.iter().any(|param| param.constraint().is_some() || param.default().is_some())
     }
 
     /// Prettier's `isComplexDestructuringTarget`: an object pattern with more than two properties,
@@ -478,7 +396,7 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
 
 /// Prettier's `shouldBreakAfterOperator`.
 fn should_break_after_operator<'a>(right: Expr<'a>, is_left_short: bool, f: &mut Formatter<'a>) -> bool {
-    let can_inline = |e: Expr<'a>| e.right().is_some_and(BinaryLikeExpression::can_inline_logical_expr);
+    let can_inline = |e: Expr<'a>| BinaryLikeExpression::new(e).is_some_and(|it| it.should_inline_logical_expression());
     match right.as_ast_nodes() {
         AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_) | AstNodes::SequenceExpression(_) => true,
         AstNodes::LogicalExpression(logical) => !can_inline(logical),
@@ -550,16 +468,7 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
                 );
             }
             AssignmentLikeLayout::BreakAfterOperator => {
-                // A line comment after the `=` of a type alias stays there.
-                let is_plain_type_alias = matches!(
-                    self,
-                    AssignmentLike::TSTypeAliasDeclaration(_, declaration)
-                        if !matches!(declaration.ty().kind(), TypeKind::Cond { .. } | TypeKind::Union(_))
-                );
-                match is_plain_type_alias {
-                    true => write!(f, [line_suffix_boundary(), soft_line_indent_or_space(&right)]),
-                    false => write!(f, group(&soft_line_indent_or_space(&right))),
-                }
+                write!(f, group(&soft_line_indent_or_space(&right)));
             }
             AssignmentLikeLayout::NeverBreakAfterOperator | AssignmentLikeLayout::ChainTailArrowFunction => {
                 write!(f, [space(), right]);

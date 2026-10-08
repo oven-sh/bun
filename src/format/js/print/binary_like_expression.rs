@@ -61,14 +61,25 @@ impl<'a> BinaryLikeExpression<'a> {
         BinaryLikeExpression::new(self.left).filter(|left| should_flatten(self.operator, left.operator))
     }
 
-    fn should_inline_logical_expression(&self) -> bool {
-        self.is_logical() && Self::can_inline_logical_expr(self.right)
+    /// Whether the right side is a logical expression with the same operator: `a && (b && c)`.
+    /// Prettier rebalances the tree after parsing: to it, that is `(a && b) && c`.
+    fn right_with_same_operator(&self) -> Option<BinaryLikeExpression<'a>> {
+        match self.is_logical() {
+            true => BinaryLikeExpression::new(self.right).filter(|right| right.operator == self.operator),
+            false => None,
+        }
     }
 
-    /// Prettier's `shouldInlineLogicalExpression`, for the right side of a logical expression:
-    /// `a && { b }`, `a || [b]`, `a && <b />`.
-    pub(crate) fn can_inline_logical_expr(right: Expr<'a>) -> bool {
-        match right.kind() {
+    /// Prettier's `shouldInlineLogicalExpression`: `a && { b }`, `a || [b]`, `a && <b />`.
+    pub(crate) fn should_inline_logical_expression(&self) -> bool {
+        if !self.is_logical() {
+            return false;
+        }
+        let mut last = *self;
+        while let Some(right) = last.right_with_same_operator() {
+            last = right;
+        }
+        match last.right.kind() {
             ExprKind::Object(props) => !props.is_empty(),
             ExprKind::Array(elements) => !elements.is_empty(),
             ExprKind::Jsx(_) => true,
@@ -149,7 +160,7 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
         let inline_logical_expression = self.should_inline_logical_expression();
         let should_indent_if_inlines = should_indent_if_parent_inlines(parent);
         let parts = split_into_left_and_right_sides(*self, false);
-        let flattened = parts.len() > 2;
+        let flattened = parts.len() > 2 || self.right_with_same_operator().is_some();
 
         if (inline_logical_expression && !flattened) || (!inline_logical_expression && should_indent_if_inlines) {
             return write!(
@@ -243,8 +254,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         // `a && (b && c)` is written like `a && b && c`, in one group. Prettier rebalances the
         // tree for that after parsing.
         while let Some(operator) = logical_operator
-            && let Some(right_logical) = BinaryLikeExpression::new(binary_like_expression.right)
-            && right_logical.operator == operator
+            && let Some(right_logical) = binary_like_expression.right_with_same_operator()
         {
             write_trailing_comments_of_nested(binary_like_expression.left, f);
             write!(f, [space(), operator.as_str(), soft_line_break_or_space()]);

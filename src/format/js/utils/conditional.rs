@@ -91,7 +91,10 @@ enum ConditionalLayout {
     ///   ? d
     ///   : e;
     /// ```
-    NestedTest,
+    NestedTest {
+        /// The same as for `Root`.
+        jsx_chain: bool,
+    },
     /// ```javascript
     /// a
     ///   ? b
@@ -119,7 +122,7 @@ impl ConditionalLayout {
     }
 
     fn is_nested_test(self) -> bool {
-        matches!(self, Self::NestedTest)
+        matches!(self, Self::NestedTest { .. })
     }
 
     fn is_nested_alternate(self) -> bool {
@@ -127,7 +130,7 @@ impl ConditionalLayout {
     }
 
     fn is_jsx_chain(self) -> bool {
-        matches!(self, Self::Root { jsx_chain: true })
+        matches!(self, Self::Root { jsx_chain: true } | Self::NestedTest { jsx_chain: true })
     }
 }
 
@@ -173,12 +176,16 @@ impl<'a> FormatConditionalLike<'a> {
     fn layout(&self) -> ConditionalLayout {
         match (self.conditional, self.conditional.parent()) {
             (ConditionalLike::ConditionalExpression(e), AstNodes::ConditionalExpression(parent)) => match parent.kind() {
-                ExprKind::Cond { test, .. } if test == e => ConditionalLayout::NestedTest,
+                ExprKind::Cond { test, .. } if test == e => ConditionalLayout::NestedTest {
+                    jsx_chain: is_jsx_conditional_chain(e),
+                },
                 ExprKind::Cond { yes, .. } if yes == e => ConditionalLayout::NestedConsequent,
                 _ => ConditionalLayout::NestedAlternate,
             },
             (ConditionalLike::TSConditionalType(ty), AstNodes::TSConditionalType(parent)) => match parent.kind() {
-                TypeKind::Cond { check, extends, .. } if check == ty || extends == ty => ConditionalLayout::NestedTest,
+                TypeKind::Cond { check, extends, .. } if check == ty || extends == ty => {
+                    ConditionalLayout::NestedTest { jsx_chain: false }
+                }
                 TypeKind::Cond { yes, .. } if yes == ty => ConditionalLayout::NestedConsequent,
                 _ => ConditionalLayout::NestedAlternate,
             },
@@ -251,7 +258,10 @@ impl<'a> FormatConditionalLike<'a> {
     fn is_parent_static_member_expression(&self, layout: ConditionalLayout) -> bool {
         layout.is_root()
             && matches!(self.conditional, ConditionalLike::ConditionalExpression(_))
-            && matches!(self.conditional.parent(), AstNodes::StaticMemberExpression(_))
+            && matches!(
+                self.conditional.parent(),
+                AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_)
+            )
     }
 
     fn format_test(&self, f: &mut Formatter<'a>, layout: ConditionalLayout) {
@@ -375,7 +385,7 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
                 );
             } else {
                 match layout {
-                    ConditionalLayout::Root { .. } | ConditionalLayout::NestedTest => write!(f, indent(&tail)),
+                    ConditionalLayout::Root { .. } | ConditionalLayout::NestedTest { .. } => write!(f, indent(&tail)),
                     // The `dedent` takes back the `align` of the parent, which with tabs would
                     // become an indentation of its own.
                     ConditionalLayout::NestedConsequent => write!(f, dedent(&indent(&tail))),

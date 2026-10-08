@@ -199,9 +199,9 @@ impl<'t> Resolver<'t> {
     #[inline(always)]
     fn count(&mut self, it: &RawReference) {
         let is_modifying = it.flags.contains(ReferenceFlags::WRITE) && !it.flags.contains(ReferenceFlags::INIT);
-        let marks = u32::from(it.flags.contains(ReferenceFlags::READ)) * HAS_READ
-            | u32::from(it.flags.contains(ReferenceFlags::WRITE)) * HAS_WRITE
-            | u32::from(is_modifying) * HAS_MODIFYING_WRITE;
+        let marks = (u32::from(it.flags.contains(ReferenceFlags::READ)) * HAS_READ)
+            | (u32::from(it.flags.contains(ReferenceFlags::WRITE)) * HAS_WRITE)
+            | (u32::from(is_modifying) * HAS_MODIFYING_WRITE);
         let count = &mut self.counts[(it.variable as usize).min(self.variables.list.len()) + 1];
         *count = (*count + 1) | marks;
     }

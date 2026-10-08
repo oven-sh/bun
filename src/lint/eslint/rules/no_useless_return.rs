@@ -351,7 +351,7 @@ impl Rule for NoUselessReturn {
                 return;
             }
             let function = Node::Stmt(statement).enclosing_function();
-            let root = function.map_or(Node::File(cx.file()), Node::Func);
+            let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
             cx.state.roots.insert(root);
         });
         on.finish(|rule, cx| {

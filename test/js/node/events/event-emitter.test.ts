@@ -656,6 +656,24 @@ describe("EventEmitter.on", () => {
     expect((await asyncIterator.next()).value).toEqual([0]);
   });
 
+  test("does not resume the emitter after a close event", async () => {
+    const calls: string[] = [];
+    const emitter = Object.assign(new EventEmitter(), {
+      pause: () => calls.push("pause"),
+      resume: () => calls.push("resume"),
+    });
+    const asyncIterator = EventEmitter.on(emitter, "hey", { close: ["close"], highWaterMark: 2 } as any);
+
+    // The third queued event exceeds highWaterMark and pauses the emitter.
+    for (let i = 0; i < 4; i++) emitter.emit("hey", i);
+    emitter.emit("close");
+
+    const result = [];
+    for await (const ev of asyncIterator) result.push(ev);
+
+    expect({ result, calls }).toEqual({ result: [[0], [1], [2], [3]], calls: ["pause"] });
+  });
+
   test("readline.createInterface", async () => {
     const { createInterface } = require("node:readline");
     const { createReadStream } = require("node:fs");

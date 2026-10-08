@@ -79,13 +79,29 @@ pub trait Host {
     /// post-visit JSX-import emission picks it up.
     fn jsx_import(&mut self, kind: JsxImportKind) -> Ref;
 
+    /// Which JSX runtime symbol `ref_` is, if the visit pass or
+    /// [`Host::jsx_import`] declared it on the parser's `jsx_imports` table.
+    fn jsx_import_kind(&self, ref_: Ref) -> Option<JsxImportKind>;
+
     /// Whether JSX is being compiled in development mode (selects `jsxDEV`
     /// over `jsx`/`jsxs` and emits the trailing dev-only call args).
     fn is_jsx_dev(&self) -> bool {
         false
     }
 
+    /// Whether this file uses the classic JSX runtime: every element is a
+    /// `factory(type, props, ...children)` call and nothing is auto-imported.
+    fn is_jsx_classic(&self) -> bool;
+
+    /// The classic runtime's factory (`React.createElement`, `h`, ...),
+    /// resolved from the current scope the way the visit pass resolves it.
+    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
+
+    /// A new symbol for a module-level name, such as an outlined function.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
+
+    /// A new symbol for a name that the compiled function (or one outlined from it) declares.
+    fn new_local(&mut self, name: &[u8]) -> Ref;
 
     fn new_import_item(&mut self, name: &[u8]) -> Ref {
         self.new_generated(name)

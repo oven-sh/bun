@@ -72,7 +72,7 @@ const { isUint8Array } = require("node:util/types");
 // Readable into Uint8Array values. Returns the normalized batch,
 // or null if normalization produced no output.
 async function normalizeBatch(raw) {
-  const batch = [];
+  const batch: Uint8Array[] = [];
   for (let i = 0; i < raw.length; i++) {
     const value = raw[i];
     if (isUint8Array(value)) {
@@ -101,6 +101,10 @@ async function normalizeBatch(raw) {
 // When normalize is null (byte-mode), chunks are already Buffers
 // (Uint8Array subclass) and are yielded directly.
 const nop = () => {};
+
+interface BatchedAsyncIterator extends ReturnType<typeof createBatchedAsyncIterator> {
+  stream?: unknown;
+}
 
 async function* createBatchedAsyncIterator(stream, normalize) {
   let callback = nop;
@@ -150,7 +154,7 @@ async function* createBatchedAsyncIterator(stream, normalize) {
       }
     }
   } catch (err) {
-    error = aggregateTwoErrors(error, err);
+    error = aggregateTwoErrors(error, err as Error);
     throw error;
   } finally {
     if (error === undefined || stream._readableState?.autoDestroy) {
@@ -198,7 +202,7 @@ function fromReadable(readable) {
   const state = readable._readableState;
   const normalize = state && (state.objectMode || state.encoding) ? normalizeBatch : null;
 
-  const iter = createBatchedAsyncIterator(readable, normalize);
+  const iter: BatchedAsyncIterator = createBatchedAsyncIterator(readable, normalize);
   iter[kValidatedSource] = true;
   iter.stream = readable;
 
@@ -210,7 +214,14 @@ function fromReadable(readable) {
 // toReadable(source, options) -- stream/iter source -> classic Readable
 // ============================================================================
 
-const kNullPrototype = { __proto__: null };
+interface ClassicAdapterOptions {
+  __proto__?: null;
+  highWaterMark?: number;
+  signal?: AbortSignal;
+  backpressure?: string;
+}
+
+const kNullPrototype: ClassicAdapterOptions = { __proto__: null };
 
 /**
  * Create a byte-mode Readable from an AsyncIterable<Uint8Array[]>.
@@ -378,6 +389,12 @@ const fromWritableCache = new WeakMap();
  *   'drop-newest'. 'drop-oldest' is not supported.
  * @returns {object} A stream/iter Writer adapter.
  */
+interface DrainWaiter {
+  __proto__?: null;
+  resolve: () => void;
+  reject: (err?: unknown) => void;
+}
+
 function fromWritable(writable, options = kNullPrototype) {
   if (writable == null || typeof writable.write !== "function" || typeof writable.on !== "function") {
     throw $ERR_INVALID_ARG_TYPE("writable", "Writable", writable);
@@ -432,7 +449,7 @@ function fromWritable(writable, options = kNullPrototype) {
   // a list. A single persistent 'drain' listener and 'error' listener
   // (installed once lazily) resolve or reject all waiters to avoid
   // accumulating per-write listeners on the stream.
-  let waiters = [];
+  let waiters: DrainWaiter[] = [];
   let listenersInstalled = false;
   let onDrain;
   let onError;
@@ -459,7 +476,7 @@ function fromWritable(writable, options = kNullPrototype) {
   }
 
   // Reject all pending waiters and remove the drain/error listeners.
-  function cleanup(err) {
+  function cleanup(err?) {
     const pending = waiters;
     waiters = [];
     for (let i = 0; i < pending.length; i++) {
@@ -472,7 +489,7 @@ function fromWritable(writable, options = kNullPrototype) {
   }
 
   function waitForDrain() {
-    const { promise, resolve, reject } = PromiseWithResolvers();
+    const { promise, resolve, reject } = PromiseWithResolvers<void>();
     waiters.push({ __proto__: null, resolve, reject });
     installListeners();
     return promise;
@@ -781,7 +798,7 @@ function toWritable(writer) {
   }
 
   function _writev(entries, cb) {
-    const chunks = [];
+    const chunks: Uint8Array[] = [];
     for (let i = 0; i < entries.length; i++) {
       const { chunk, encoding } = entries[i];
       chunks[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
@@ -831,6 +848,15 @@ function toWritable(writer) {
     }
   }
 
+  interface WriterWritableOptions {
+    __proto__?: null;
+    highWaterMark: number;
+    write: typeof _write;
+    writev?: typeof _writev;
+    final: typeof _final;
+    destroy: typeof _destroy;
+  }
+
   function _destroy(err, cb) {
     if (err && hasFail) {
       writer.fail(err);
@@ -838,7 +864,7 @@ function toWritable(writer) {
     cb();
   }
 
-  const writableOptions = {
+  const writableOptions: WriterWritableOptions = {
     __proto__: null,
     // Use MAX_SAFE_INTEGER to effectively disable the Writable's
     // internal buffering. The underlying stream/iter Writer has its

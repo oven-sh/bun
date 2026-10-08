@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -600,5 +600,103 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  // Specifiers are joined onto the importer's directory to find a matching
+  // in-memory file. A specifier longer than a path buffer (4096 bytes on
+  // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These
+  // run in a child process because the bug is a crash.
+  describe.concurrent("specifiers longer than a path buffer", () => {
+    async function buildInChild(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    test("a CSS url() is kept as-is", async () => {
+      const result = await buildInChild(`
+        const url = "data:image/svg+xml," + Buffer.alloc(131072, "A").toString();
+        const result = await Bun.build({
+          entrypoints: ["/style.css"],
+          files: { "/style.css": '.x { background: url("' + url + '") }' },
+          throw: false,
+        });
+        const output = result.success ? await result.outputs[0].text() : "";
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(String),
+          outputHasUrl: output.includes(url),
+        }));
+      `);
+      expect(result).toEqual({ success: true, logs: [], outputHasUrl: true });
+    });
+
+    test("a relative import reports a resolve error", async () => {
+      const result = await buildInChild(`
+        const specifier = "./" + Buffer.alloc(131072, "A").toString() + ".js";
+        const result = await Bun.build({
+          entrypoints: ["/entry.js"],
+          files: { "/entry.js": 'import "' + specifier + '";' },
+          throw: false,
+        });
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(log => log.message.replace(specifier, "<specifier>")),
+        }));
+      `);
+      expect(result).toEqual({
+        success: false,
+        logs: ['Could not resolve: "<specifier>"'],
+      });
+    });
+
+    test("HTML script and stylesheet references report resolve errors", async () => {
+      const result = await buildInChild(`
+        const long = Buffer.alloc(131072, "A").toString();
+        const result = await Bun.build({
+          entrypoints: ["/index.html"],
+          files: {
+            "/index.html":
+              '<!doctype html><html><head><link rel="stylesheet" href="./' + long + '.css"></head>' +
+              '<body><script src="./' + long + '.js"></script></body></html>',
+          },
+          throw: false,
+        });
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(log => log.message.replace(long, "<long>")).sort(),
+        }));
+      `);
+      expect(result).toEqual({
+        success: false,
+        logs: ['Could not resolve: "./<long>.css"', 'Could not resolve: "./<long>.js"'],
+      });
+    });
+
+    test("a relative entry point reports a resolve error", async () => {
+      const result = await buildInChild(`
+        const entryPoint = Buffer.alloc(131072, "A").toString() + ".js";
+        const result = await Bun.build({
+          entrypoints: [entryPoint],
+          files: { "/entry.js": "" },
+          throw: false,
+        });
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(log => log.message.replace(entryPoint, "<entry point>")),
+        }));
+      `);
+      expect(result).toEqual({
+        success: false,
+        logs: ['ModuleNotFound resolving "<entry point>" (entry point)'],
+      });
+    });
   });
 });

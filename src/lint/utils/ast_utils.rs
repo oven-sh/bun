@@ -145,32 +145,19 @@ macro_rules! punctuator_predicates {
 }
 
 punctuator_predicates! {
-    is_arrow_token "isArrowToken", is_not_arrow_token "isNotArrowToken", "=>";
-    is_closing_brace_token "isClosingBraceToken", is_not_closing_brace_token "isNotClosingBraceToken", "}";
-    is_closing_bracket_token "isClosingBracketToken", is_not_closing_bracket_token "isNotClosingBracketToken", "]";
-    is_closing_paren_token "isClosingParenToken", is_not_closing_paren_token "isNotClosingParenToken", ")";
-    is_colon_token "isColonToken", is_not_colon_token "isNotColonToken", ":";
-    is_comma_token "isCommaToken", is_not_comma_token "isNotCommaToken", ",";
     is_dot_token "isDotToken", is_not_dot_token "isNotDotToken", ".";
     is_eq_token "isEqToken", is_not_eq_token "isNotEqToken", "=";
-    is_opening_brace_token "isOpeningBraceToken", is_not_opening_brace_token "isNotOpeningBraceToken", "{";
-    is_opening_bracket_token "isOpeningBracketToken", is_not_opening_bracket_token "isNotOpeningBracketToken", "[";
-    is_opening_paren_token "isOpeningParenToken", is_not_opening_paren_token "isNotOpeningParenToken", "(";
     is_question_dot_token "isQuestionDotToken", is_not_question_dot_token "isNotQuestionDotToken", "?.";
-    is_semicolon_token "isSemicolonToken", is_not_semicolon_token "isNotSemicolonToken", ";";
 }
 
-/// ESLint's `isCommentToken`.
-#[inline]
-pub fn is_comment_token(token: &Token<'_>) -> bool {
-    token.is_comment()
-}
-
-/// ESLint's `isNotCommentToken`, of `@eslint-community/eslint-utils`.
-#[inline]
-pub fn is_not_comment_token(token: &Token<'_>) -> bool {
-    !token.is_comment()
-}
+pub use super::eslint_utils::{
+    is_arrow_token, is_closing_brace_token, is_closing_bracket_token, is_closing_paren_token,
+    is_colon_token, is_comma_token, is_comment_token, is_not_arrow_token,
+    is_not_closing_brace_token, is_not_closing_bracket_token, is_not_closing_paren_token,
+    is_not_colon_token, is_not_comma_token, is_not_comment_token, is_not_opening_brace_token,
+    is_not_opening_bracket_token, is_not_opening_paren_token, is_not_semicolon_token,
+    is_opening_brace_token, is_opening_bracket_token, is_opening_paren_token, is_semicolon_token,
+};
 
 /// ESLint's `isKeywordToken`.
 #[inline]

@@ -61,6 +61,9 @@ fn should_inline<'a>(
     object_start: usize,
     f: &Formatter<'a>,
 ) -> bool {
+    if property.bytes().starts_with(b"#") && never_breaks_before_private_name(f) {
+        return true;
+    }
     let parent = e.as_chain_element().parent();
 
     let mut first_non_wrapper_parent = parent;
@@ -120,6 +123,11 @@ fn should_inline<'a>(
         }
         _ => false,
     }
+}
+
+/// oxfmt writes `a.#b` without a way to break. For Prettier it is a member expression like any other.
+fn never_breaks_before_private_name(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Whether what is written for `object` has the label of what is at its left edge: it is a call

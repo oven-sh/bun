@@ -10,6 +10,11 @@ use bun_sema::hir::*;
 impl Parser<'_> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+        // Only its modifiers say that `default class {}` has `default`.
+        let flags = match flags.contains(Flags::EXPORT) {
+            true => flags,
+            false => flags - Flags::DEFAULT,
+        };
         let class_flags =
             self.ambient() | flags & (Flags::ABSTRACT | Flags::EXPORT | Flags::DEFAULT);
         let class = self.class(start.pos, base, class_flags);
@@ -159,12 +164,56 @@ impl Parser<'_> {
         self.token() == T::Implements && self.peek().is_identifier_or_keyword()
     }
 
+    /// `scanClassMemberStart`, at a modifier: whether the list of members goes on with the token.
+    fn scan_class_member_start(&mut self) -> bool {
+        let mut last = T::Eof;
+        // "Eat up all modifiers, but hold on to the last one in case it is actually an identifier."
+        while self.token().is_modifier() {
+            last = self.token();
+            // `IsClassMemberModifier`: "it is certain that we are starting to parse class member"
+            if matches!(
+                last,
+                T::Public
+                    | T::Private
+                    | T::Protected
+                    | T::Readonly
+                    | T::Override
+                    | T::Static
+                    | T::Accessor
+            ) {
+                return true;
+            }
+            self.next();
+        }
+        if self.token() == T::Asterisk {
+            return true;
+        }
+        if self.is_literal_property_name() {
+            last = self.token();
+            self.next();
+        }
+        if self.token() == T::OpenBracket {
+            return true;
+        }
+        // "If we have a non-keyword identifier, or if we have an accessor, then it's safe to parse."
+        if last <= T::PrivateIdentifier || matches!(last, T::Get | T::Set) {
+            return true;
+        }
+        matches!(
+            self.token(),
+            T::OpenParen | T::LessThan | T::Exclamation | T::Colon | T::Equals | T::Question
+        ) || self.can_parse_semicolon()
+    }
+
     /// `parseClassElement`: pushes it on the stack of members, of which the class's start at
     /// `base`.
     fn class_element(&mut self, base: usize) {
         let start = self.start();
         let first_modifier = self.s.modifiers.len();
         let token = self.token();
+        if token.is_modifier() && !self.look_ahead(Self::scan_class_member_start) {
+            self.fail();
+        }
         let mut flags = match token.is_modifier() || token == T::At {
             true => self.modifiers(true, true, true),
             false => Flags::empty(),
@@ -174,9 +223,6 @@ impl Parser<'_> {
             if let ModifierKind::Decorator(decorator) = self.s.modifiers[modifier].kind {
                 self.s.decorators.push((index, decorator));
             }
-        }
-        if flags.intersects(Flags::CONST | Flags::EXPORT | Flags::DEFAULT | Flags::IN | Flags::OUT) {
-            self.refuse(Refusal::Reported);
         }
         if self.token() == T::Static && self.peek() == T::OpenBrace {
             return self.class_static_block(start, first_modifier);
@@ -199,8 +245,13 @@ impl Parser<'_> {
         }
         if kind == MemberKind::Property && self.token() == T::OpenBracket && self.is_index_signature()
         {
+            // It is placed after its decorators.
+            let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
+            let written = self.s.modifiers.get(first_modifier..).unwrap_or_default();
+            let name_pos = written.iter().find(is_keyword).map_or(self.pos(), |it| it.pos);
             let modifiers = self.take_modifiers(first_modifier);
             let mut member = self.index_signature(start, flags, modifiers);
+            member.name_pos = name_pos;
             if is_parent_ambient {
                 member.flags |= Flags::AMBIENT;
                 self.f[member.func].flags |= Flags::AMBIENT;
@@ -210,6 +261,8 @@ impl Parser<'_> {
             }
             return self.s.members.push(member);
         }
+        // The checker reports these, which are in the list.
+        flags -= Flags::CONST | Flags::EXPORT | Flags::DEFAULT;
         // `parseClassElement`: its own `declare` makes a property or a method ambient.
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) && kind == MemberKind::Property {
@@ -260,7 +313,13 @@ impl Parser<'_> {
                 && !is_generator
                 && key == PropKey::Name(known::constructor)
                 && (name_token == T::Constructor
-                    || name_token == T::String && self.token() == T::OpenParen);
+                    || name_token == T::String
+                        && self.token() == T::OpenParen
+                        && question.is_none());
+            // The parameters follow the keyword.
+            if is_constructor && question.is_some() {
+                self.fail();
+            }
             let fn_kind = match kind {
                 MemberKind::Getter => FnKind::Getter,
                 MemberKind::Setter => FnKind::Setter,

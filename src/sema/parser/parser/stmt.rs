@@ -188,7 +188,10 @@ impl Parser<'_> {
     fn is_await_using_declaration(&mut self) -> bool {
         self.look_ahead(|p| {
             p.next();
-            p.token() == T::Using && !p.newline_before() && p.next_is_binding_on_same_line(false)
+            // Only acorn asks for `using` on the line of `await`.
+            p.token() == T::Using
+                && !(p.newline_before() && p.is_ecmascript)
+                && p.next_is_binding_on_same_line(false)
         })
     }
 
@@ -424,17 +427,16 @@ impl Parser<'_> {
             _ => self.modifiers(true, false, false),
         };
         // No other modifier is before a declaration.
-        if self.is_ecmascript && flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
+        if self.is_ecmascript
+            && (flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC))
+                || flags.contains(Flags::ASYNC) && self.token() != T::Function)
+        {
             self.report();
         }
         if flags.intersects(Flags::IN | Flags::OUT) {
             self.report();
         }
-        // Only its modifiers say that `default class {}` has `default`.
-        let flags = match flags.contains(Flags::EXPORT) {
-            true => flags,
-            false => flags - Flags::DEFAULT,
-        };
+
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
@@ -567,16 +569,17 @@ impl Parser<'_> {
             // `parseEnumMember`
             let member = self.start();
             // The checker reports a number, a computed name and so on.
-            let is_bigint = self.token() == T::BigInt;
-            let (mut key, name_kind, _) = self.property_name();
-            // `name.Text()` ends with the `n`.
-            if is_bigint && let PropKey::Name(digits) = key {
-                let text = [self.lx.text_of(digits), b"n"].concat();
-                key = PropKey::Name(self.atom(&text));
+            let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
+            let (mut key, mut name_kind, _) = self.property_name();
+            if let Some(written) = bigint {
+                key = PropKey::Name(self.atom(written));
             }
             let (name, computed_name) = match key {
                 PropKey::Name(name) | PropKey::Private(name) => (name, ExprId::NONE),
-                PropKey::Computed(e) => (Atom::NONE, e),
+                PropKey::Computed(e) => {
+                    name_kind = NameKind::Identifier;
+                    (Atom::NONE, e)
+                }
                 PropKey::None => (Atom::NONE, ExprId::NONE),
             };
             let saved = self.enter_context(0, ctx::DISALLOW_IN);

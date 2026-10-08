@@ -867,8 +867,8 @@ impl Parser<'_> {
                             expression = self.call(start, expression, type_args, Chain::Start);
                         }
                         T::NoSubstitutionTemplate | T::TemplateHead => {
-                            self.refuse(Refusal::Reported);
-                            return expression;
+                            expression =
+                                self.tagged_template(start, expression, IdList::EMPTY, true);
                         }
                         _ => {
                             if self.token() == T::PrivateIdentifier {
@@ -887,10 +887,9 @@ impl Parser<'_> {
                     chain = Chain::Continue;
                 }
                 T::NoSubstitutionTemplate | T::TemplateHead => {
-                    if chain != Chain::No {
-                        self.refuse(Refusal::Reported);
-                    }
-                    expression = self.tagged_template(start, expression, IdList::EMPTY);
+                    let is_in_chain = chain != Chain::No && non_null != expression;
+                    expression =
+                        self.tagged_template(start, expression, IdList::EMPTY, is_in_chain);
                 }
                 T::LessThan | T::LessThanLessThan if !self.options.is_javascript => {
                     let Some(type_args) = self.try_type_arguments_in_expression() else {
@@ -901,7 +900,8 @@ impl Parser<'_> {
                             self.call(start, expression, type_args, chain)
                         }
                         T::NoSubstitutionTemplate | T::TemplateHead => {
-                            self.tagged_template(start, expression, type_args)
+                            let is_in_chain = chain != Chain::No && non_null != expression;
+                            self.tagged_template(start, expression, type_args, is_in_chain)
                         }
                         _ => {
                             let kind = ExprKind::Instantiation {
@@ -1223,10 +1223,15 @@ impl Parser<'_> {
         start: u32,
         callee: ExprId,
         type_args: IdList<TypeNodeId>,
+        is_in_chain: bool,
     ) -> ExprId {
         let backtick = self.pos();
         let head = self.lx.atom;
         let exprs = self.template_parts(true);
+        // `checkGrammarTaggedTemplateChain`
+        if is_in_chain {
+            self.flag(DiagnosticKind::Grammar, 1358, (backtick, self.prev_end()), &[]);
+        }
         // A `NoSubstitutionTemplateLiteral` is a string, as it is without a tag.
         let kind = match exprs.is_empty() {
             true => ExprKind::String(head),

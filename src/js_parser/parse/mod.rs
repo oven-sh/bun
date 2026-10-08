@@ -1797,7 +1797,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 true => !p.is_let_declaration(opts),
                 false => p.is_tolerant() && p.is_parameter_of_arrow_function(opts),
             }
-            || raw == b"using" && p.is_tolerant() && p.is_parameter_of_arrow_function(opts)
+            || raw == b"using"
+                && p.is_tolerant()
+                && p.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
         {
             return Ok(ExprOrLetStmt {
                 stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),
@@ -2048,7 +2050,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             })
     }
 
-    /// At a `let` that `isLetDeclaration` is asked about, or at a `using`: `let => 1`.
+    /// At a `let` that `isLetDeclaration` is asked about: `let => 1`.
     #[cold]
     #[inline(never)]
     fn is_parameter_of_arrow_function(&mut self, opts: &ParseStatementOptions<'a>) -> bool {

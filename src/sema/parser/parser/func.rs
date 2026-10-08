@@ -31,6 +31,11 @@ fn signature_context(flags: Flags) -> u32 {
 impl Parser<'_> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+        // Only its modifiers say that `default function f() {}` has `default`.
+        let flags = match flags.contains(Flags::EXPORT) {
+            true => flags,
+            false => flags - Flags::DEFAULT,
+        };
         self.next();
         let mut fn_flags =
             self.ambient() | flags & (Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC);
@@ -158,6 +163,10 @@ impl Parser<'_> {
         self.next();
         let base = self.s.type_params.len();
         while self.is_in_list(T::GreaterThan) {
+            // `isListElement`
+            if !matches!(self.token(), T::In | T::Const) && !self.is_identifier() {
+                self.fail();
+            }
             // `parseTypeParameter`
             let start = self.pos();
             let modifiers = self.s.modifiers.len();
@@ -165,9 +174,8 @@ impl Parser<'_> {
                 true => self.modifiers(false, true, false),
                 false => Flags::empty(),
             };
-            if flags.intersects(!(Flags::IN | Flags::OUT | Flags::CONST)) {
-                self.report();
-            }
+            // The checker reports the others, which are in the list.
+            let flags = flags & (Flags::IN | Flags::OUT | Flags::CONST);
             let (name, pos) = self.identifier();
             let constraint = match self.eat(T::Extends) {
                 // What starts an expression and no type is read as an expression, and reported.
@@ -284,12 +292,16 @@ impl Parser<'_> {
                     self.s.decorators.push((index, decorator));
                 }
             }
-            if seen.intersects(!PROPERTY_MODIFIERS) {
-                self.refuse(Refusal::Reported);
+            // The checker reports the others, which are in the list.
+            // `abstract` and `static` are still among the flags of the property
+            // (`getDeclarationModifierFlagsFromSymbol`).
+            flags |= seen & PROPERTY_MODIFIERS;
+            if seen.intersects(PROPERTY_MODIFIERS) {
+                flags |= Flags::PARAMETER_PROPERTY | seen & (Flags::ABSTRACT | Flags::STATIC);
             }
-            flags |= seen;
-            if !seen.is_empty() {
-                flags |= Flags::PARAMETER_PROPERTY;
+            // In a type all are.
+            if self.has_context(ctx::TYPE) {
+                flags |= seen;
             }
             if self.options.is_javascript {
                 self.check_js_parameter_modifiers(first, start.pos);
@@ -563,6 +575,10 @@ impl Parser<'_> {
         let context = signature_context(flags);
         if self.token() == T::OpenBrace {
             return self.function_block(context);
+        }
+        // It starts a statement and no expression statement: a block whose `{` is missing.
+        if self.token() == T::At {
+            self.fail();
         }
         let saved = self.enter_context(context, ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL);
         let body = self.assignment_expression_or_higher(allow_return_type);

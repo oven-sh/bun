@@ -252,7 +252,12 @@ impl Parser<'_> {
             T::Unique => {
                 self.next();
                 let operand_start = self.pos();
+                let nullable_types = self.unclaimed_nullable_types;
                 let operand = self.nested_type_operator();
+                // `symbol?` is not the whole element of a tuple.
+                if self.unclaimed_nullable_types != nullable_types {
+                    self.report();
+                }
                 match self.f.types.last() {
                     Some(&TypeNode {
                         kind: TypeNodeKind::Keyword(Keyword::Symbol),

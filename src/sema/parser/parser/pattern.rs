@@ -106,7 +106,7 @@ impl Parser<'_> {
                 }
             } else {
                 let is_identifier = self.is_binding_identifier();
-                let is_bigint = self.token() == T::BigInt;
+                let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
                 let name_end = self.lx.end;
                 let (mut key, mut name_kind, key_pos) = self.property_name();
                 // In a type nothing asks whether the name is in quotes.
@@ -114,9 +114,8 @@ impl Parser<'_> {
                     name_kind = NameKind::Identifier;
                 }
                 // `name.Text()` ends with the `n`.
-                if is_bigint && let PropKey::Name(digits) = key {
-                    let text = [self.lx.text_of(digits), b"n"].concat();
-                    key = PropKey::Name(self.atom(&text));
+                if let Some(written) = bigint {
+                    key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(written)));
                 }
                 let value = if is_identifier && self.token() != T::Colon {
                     match key {

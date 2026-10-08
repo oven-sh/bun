@@ -806,6 +806,158 @@ test("insecureHTTPParser accepts a CTL byte in a trailer value like node", async
   expect(result).toEqual({ trailers: { "x-t": "a\bb" }, raw: ["X-T", "a\bb"] });
 });
 
+async function clientErrorFor(wire: string, { end = false } = {}) {
+  const dispatched: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<object>();
+  // No response: HPE_CLOSED_CONNECTION needs the first response to be pending.
+  await using server = createServer(req => {
+    dispatched.push(req.url!);
+    req.resume();
+  });
+  server.on("clientError", (err: any, socket) => {
+    socket.destroy();
+    resolve({ dispatched, code: err.code, reason: err.reason, message: err.message });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(wire, "latin1");
+    if (end) socket.end();
+  });
+  socket.resume();
+  socket.on("error", () => {});
+  socket.on("close", () => reject(new Error(`socket closed without clientError, dispatched: ${dispatched}`)));
+  try {
+    return await promise;
+  } finally {
+    socket.destroy();
+  }
+}
+
+// Bun accepts a second Content-Length with the same value (node rejects it), so the duplicate rows use a different one.
+describe("bad Content-Length fires clientError with node's code and reason", () => {
+  const invalid = "HPE_INVALID_CONTENT_LENGTH";
+  const duplicate = "HPE_UNEXPECTED_CONTENT_LENGTH";
+  const empty = "Empty Content-Length";
+  const badChar = "Invalid character in Content-Length";
+  const overflow = "Content-Length overflow";
+  const repeated = "Duplicate Content-Length";
+  test.each([
+    ["empty value", "Host: x\r\nContent-Length:\r\n", invalid, empty],
+    ["whitespace-only value", "Host: x\r\nContent-Length:   \r\n", invalid, empty],
+    ["non-digit value", "Host: x\r\nContent-Length: abc\r\n", invalid, badChar],
+    ["signed value", "Host: x\r\nContent-Length: +5\r\n", invalid, badChar],
+    ["two numbers", "Host: x\r\nContent-Length: 5 5\r\n", invalid, badChar],
+    ["23-digit value", "Host: x\r\nContent-Length: 99999999999999999999999\r\n", invalid, overflow],
+    ["20 bytes with a non-digit", "Host: x\r\nContent-Length: 0000000000000000005x\r\n", invalid, badChar],
+    ["second field, other value", "Host: x\r\nContent-Length: 5\r\nContent-Length: 6\r\n", duplicate, repeated],
+    ["second field, non-digit", "Host: x\r\nContent-Length: 5\r\nContent-Length: x\r\n", duplicate, repeated],
+    ["second field, empty", "Host: x\r\nContent-Length: 5\r\nContent-Length:\r\n", invalid, empty],
+    ["first field non-digit", "Host: x\r\nContent-Length: x\r\nContent-Length: 5\r\n", invalid, badChar],
+    ["non-digit, then chunked", "Host: x\r\nContent-Length: x\r\nTransfer-Encoding: chunked\r\n", invalid, badChar],
+    ["non-digit, no Host", "Content-Length: x\r\n", invalid, badChar],
+  ])("%s", async (_, headers, code, reason) => {
+    expect(await clientErrorFor(`POST /a HTTP/1.1\r\n${headers}\r\nhello`)).toEqual({
+      dispatched: [],
+      code,
+      reason,
+      message: `Parse Error: ${reason}`,
+    });
+  });
+});
+
+// Bun's limits are 2^59 - 1 and 18 bytes. Node's limit is 2^64 - 1, with any number of leading zeros.
+test("Content-Length 576460752303423487 is dispatched, and a larger or longer value overflows", async () => {
+  const atLimit = "576460752303423487";
+  const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+  await using server = createServer(req => resolve(req.headers["content-length"]));
+  server.on("clientError", (err: any, socket) => {
+    socket.destroy();
+    reject(new Error(`clientError ${err.code}: ${err.reason}`));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${atLimit}\r\n\r\n`);
+  });
+  socket.on("error", () => {});
+  try {
+    expect(await promise).toBe(atLimit);
+  } finally {
+    socket.destroy();
+  }
+
+  for (const value of ["576460752303423488", "0576460752303423487"]) {
+    expect(await clientErrorFor(`POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: ${value}\r\n\r\n`)).toMatchObject({
+      dispatched: [],
+      code: "HPE_INVALID_CONTENT_LENGTH",
+      reason: "Content-Length overflow",
+    });
+  }
+});
+
+describe("clientError carries llhttp's reason where the parser error maps to one", () => {
+  const chunked = "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+  const fill = (n: number) => Buffer.alloc(n, "a").toString();
+  for (const { name, wire, end, code, reason } of [
+    {
+      name: "bare CR in a header value",
+      wire: "GET /a HTTP/1.1\r\nHost: x\r\nX-Foo: a\rb\r\n\r\n",
+      code: "HPE_LF_EXPECTED",
+      reason: "Missing expected LF after header value",
+    },
+    {
+      name: "head over maxHeaderSize",
+      wire: `GET /a HTTP/1.1\r\nHost: x\r\nX-Foo: ${fill(20000)}\r\n\r\n`,
+      code: "HPE_HEADER_OVERFLOW",
+      reason: "Header overflow",
+    },
+    {
+      name: "trailers over maxHeaderSize",
+      wire: `${chunked}0\r\nX-T: ${fill(70000)}\r\n\r\n`,
+      code: "HPE_HEADER_OVERFLOW",
+      reason: "Header overflow",
+    },
+    {
+      name: "Content-Length in trailers",
+      wire: `${chunked}0\r\nContent-Length: 5\r\n\r\n`,
+      code: "HPE_INVALID_CONTENT_LENGTH",
+      reason: "Content-Length can't be present with Transfer-Encoding",
+    },
+    {
+      name: "chunk extension over 16 KiB",
+      wire: `${chunked}5;${fill(17000)}\r\n`,
+      code: "HPE_CHUNK_EXTENSIONS_OVERFLOW",
+      reason: "Chunk extensions overflow",
+    },
+    {
+      name: "HTTP/2 preface",
+      wire: "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+      code: "HPE_PAUSED_H2_UPGRADE",
+      reason: "Pause on PRI/Upgrade",
+    },
+    {
+      name: "bytes after Connection: close",
+      wire: "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+      code: "HPE_CLOSED_CONNECTION",
+      reason: "Data after `Connection: close`",
+    },
+    {
+      name: "close inside the head",
+      wire: "GET /a HTTP/1.1\r\nHost: x\r\n",
+      end: true,
+      code: "HPE_INVALID_EOF_STATE",
+      reason: "Invalid EOF state",
+    },
+  ]) {
+    test(name, async () => {
+      expect(await clientErrorFor(wire, { end })).toMatchObject({ code, reason });
+    });
+  }
+});
+
 // RFC 9110 6.5.1: framing fields (Content-Length, Transfer-Encoding) are forbidden
 // in trailers. llhttp runs trailers through the same header state machine and the
 // already-set F_CHUNKED collides, so node rejects both before the body completes.

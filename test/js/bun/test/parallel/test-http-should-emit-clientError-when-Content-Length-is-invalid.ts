@@ -25,4 +25,4 @@ const client = connect(server.address().port, () => {
 });
 
 const err = (await promise) as Error;
-expect(err.code).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");
+expect(err.code).toBe("HPE_INVALID_CONTENT_LENGTH");

@@ -581,6 +581,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_format_conformance"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_format",
+ "bun_sys",
+]
+
+[[package]]
 name = "bun_glob"
 version = "0.0.0"
 dependencies = [
@@ -1065,6 +1075,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_format",
+ "bun_format_conformance",
  "bun_js_parser",
  "bun_lint",
  "bun_lint_driver",

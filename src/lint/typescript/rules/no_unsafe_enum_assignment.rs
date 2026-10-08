@@ -75,7 +75,9 @@ fn is_without_enums(ty: Type) -> bool {
 
 fn has_shared_enum_type<'a>(ty: Type<'a>, expected_enum_types: &[Type<'a>]) -> bool {
     let type_enum_types = get_enum_types(ty);
-    expected_enum_types.iter().any(|expected_enum_type| type_enum_types.contains(expected_enum_type))
+    expected_enum_types
+        .iter()
+        .any(|expected_enum_type| type_enum_types.contains(expected_enum_type))
 }
 
 fn is_mismatched_enum_assignment_types<'a>(sender_type: Type<'a>, receiver_type: Type<'a>) -> bool {
@@ -119,19 +121,55 @@ impl<'a> TypeCache<'a> {
         if let Some(&generic) = self.generic_types.get(&ty) {
             return generic;
         }
-        self.generic_types.insert(ty, false);
-        let generic = ty.has_flags(TypeFlags::INSTANTIABLE)
-            || ty
-                .types()
+        let parts_of = |ty: Type<'a>| {
+            ty.types()
                 .iter()
                 .chain(ty.alias_type_arguments())
                 .chain(ty.get_type_arguments())
-                .any(|part| self.is_generic_type(part));
-        self.generic_types.insert(ty, generic);
-        generic
+        };
+        // Not by recursion: a chain of aliases makes a type as deep as the file is long.
+        // The types that are being gone through, and the parts that are left of each.
+        let mut open = Vec::new();
+        let mut entered = ty;
+        loop {
+            let generic = entered.has_flags(TypeFlags::INSTANTIABLE);
+            self.generic_types.insert(entered, generic);
+            if generic {
+                break;
+            }
+            open.push((entered, parts_of(entered)));
+            // The next part that nothing is known about.
+            entered = loop {
+                let Some((_, parts)) = open.last_mut() else {
+                    return false;
+                };
+                match parts
+                    .next()
+                    .map(|part| (part, self.generic_types.get(&part).copied()))
+                {
+                    None => {
+                        open.pop();
+                    }
+                    Some((_, Some(false))) => {}
+                    Some((part, None)) => break part,
+                    Some((_, Some(true))) => {
+                        self.generic_types
+                            .extend(open.iter().map(|&(outer, _)| (outer, true)));
+                        return true;
+                    }
+                }
+            };
+        }
+        self.generic_types
+            .extend(open.iter().map(|&(outer, _)| (outer, true)));
+        true
     }
 
-    fn has_enum_assignment_mismatch(&mut self, sender_type: Type<'a>, receiver_type: Type<'a>) -> bool {
+    fn has_enum_assignment_mismatch(
+        &mut self,
+        sender_type: Type<'a>,
+        receiver_type: Type<'a>,
+    ) -> bool {
         if sender_type == receiver_type || is_without_enums(receiver_type) {
             return false;
         }
@@ -140,7 +178,8 @@ impl<'a> TypeCache<'a> {
         }
         self.visited.clear();
         let mismatch = self.has_deep_enum_assignment_mismatch(sender_type, receiver_type, 0, false);
-        self.top_level_mismatches.insert((sender_type, receiver_type), mismatch);
+        self.top_level_mismatches
+            .insert((sender_type, receiver_type), mismatch);
         mismatch
     }
 
@@ -170,9 +209,17 @@ impl<'a> TypeCache<'a> {
         let sender_type_arguments = sender_type.get_type_arguments();
         let receiver_type_arguments = receiver_type.get_type_arguments();
         if sender_type_arguments.len() == receiver_type_arguments.len()
-            && sender_type_arguments.iter().zip(receiver_type_arguments).any(|(sender, receiver)| {
-                self.has_deep_enum_assignment_mismatch(sender, receiver, depth + 1, within_generic_members)
-            })
+            && sender_type_arguments
+                .iter()
+                .zip(receiver_type_arguments)
+                .any(|(sender, receiver)| {
+                    self.has_deep_enum_assignment_mismatch(
+                        sender,
+                        receiver,
+                        depth + 1,
+                        within_generic_members,
+                    )
+                })
         {
             return true;
         }
@@ -185,24 +232,34 @@ impl<'a> TypeCache<'a> {
         let within_generic_members = generic || within_generic_members;
 
         // [number, Fruit] -> Fruit[]
-        if let (Some(sender), Some(receiver)) =
-            (sender_type.get_number_index_type(), receiver_type.get_number_index_type())
-            && self.has_deep_enum_assignment_mismatch(sender, receiver, depth + 1, within_generic_members)
-        {
+        if let (Some(sender), Some(receiver)) = (
+            sender_type.get_number_index_type(),
+            receiver_type.get_number_index_type(),
+        ) && self.has_deep_enum_assignment_mismatch(
+            sender,
+            receiver,
+            depth + 1,
+            within_generic_members,
+        ) {
             return true;
         }
 
         // { fruit: number } -> { fruit: Fruit }
-        receiver_type.get_properties().iter().any(|receiver_property| {
-            sender_type.get_property(receiver_property.name()).is_some_and(|sender_property| {
-                self.has_deep_enum_assignment_mismatch(
-                    sender_property.get_type(),
-                    receiver_property.get_type(),
-                    depth + 1,
-                    within_generic_members,
-                )
+        receiver_type
+            .get_properties()
+            .iter()
+            .any(|receiver_property| {
+                sender_type
+                    .get_property(receiver_property.name())
+                    .is_some_and(|sender_property| {
+                        self.has_deep_enum_assignment_mismatch(
+                            sender_property.get_type(),
+                            receiver_property.get_type(),
+                            depth + 1,
+                            within_generic_members,
+                        )
+                    })
             })
-        })
     }
 }
 
@@ -218,11 +275,18 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
             continue;
         }
         // One for each member of an enum.
-        let new_enum_types = get_enum_types(constrained_type).into_iter().filter(|&enum_type| enum_types.insert(enum_type));
+        let new_enum_types = get_enum_types(constrained_type)
+            .into_iter()
+            .filter(|&enum_type| enum_types.insert(enum_type));
         enum_names.extend(new_enum_types.map(|enum_type| enum_type.to_text()));
         pending.extend(constrained_type.get_type_arguments());
         pending.extend(constrained_type.get_number_index_type());
-        pending.extend(constrained_type.get_properties().iter().map(|property| property.get_type()));
+        pending.extend(
+            constrained_type
+                .get_properties()
+                .iter()
+                .map(|property| property.get_type()),
+        );
     }
     enum_names.sort_unstable();
     enum_names.dedup();
@@ -240,7 +304,12 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
 
 fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types: &[Type<'a>]) {
     let enum_names = match receiver_types {
-        &[only] => cx.state.descriptions.entry(only).or_insert_with(|| describe_enum_types(receiver_types)).clone(),
+        &[only] => cx
+            .state
+            .descriptions
+            .entry(only)
+            .or_insert_with(|| describe_enum_types(receiver_types))
+            .clone(),
         _ => describe_enum_types(receiver_types),
     };
     cx.report(node, message).data("enumNames", enum_names);
@@ -284,22 +353,43 @@ fn mark_checked<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
 /// Bitwise combinations of the members of an enum are its bit flags:
 /// `const readWrite: Flags = Flags.Read | Flags.Write;`, `flags &= ~Flags.Write;`
 fn is_safe_enum_bitwise_expression<'a>(node: Expr<'a>, receiver_type: Type<'a>) -> bool {
-    let is_safe_operand = |operand: Expr<'a>| {
-        is_safe_enum_bitwise_expression(operand, receiver_type)
-            || !is_mismatched_enum_assignment_types(operand.ty(), receiver_type)
-    };
-    match node.kind() {
-        ExprKind::Binary {
-            op: BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr,
-            left,
-            right,
-        } => is_safe_operand(left) && is_safe_operand(right),
-        ExprKind::Unary {
-            op: UnOp::BitNot,
-            operand,
-        } => is_safe_operand(operand),
-        _ => false,
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return true;
     }
+    // Down the first operands in a loop: `a | b | c | ..` is as deep as it is long.
+    let mut operands: SmallVec<[(Expr<'a>, Option<Expr<'a>>); 8]> = SmallVec::new();
+    let mut at = node;
+    loop {
+        match at.kind() {
+            ExprKind::Binary {
+                op: BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr,
+                left,
+                right,
+            } => {
+                operands.push((left, Some(right)));
+                at = left;
+            }
+            ExprKind::Unary {
+                op: UnOp::BitNot,
+                operand,
+            } => {
+                operands.push((operand, None));
+                at = operand;
+            }
+            _ => break,
+        }
+    }
+    let is_of_the_type =
+        |operand: Expr<'a>| !is_mismatched_enum_assignment_types(operand.ty(), receiver_type);
+    // The answer for `first`, and then for the expression that it is the first operand of.
+    let mut is_safe = false;
+    for (first, other) in operands.into_iter().rev() {
+        is_safe = (is_safe || is_of_the_type(first))
+            && other.is_none_or(|it| {
+                is_safe_enum_bitwise_expression(it, receiver_type) || is_of_the_type(it)
+            });
+    }
+    is_safe
 }
 
 fn is_unsafe_assignment<'a>(
@@ -308,7 +398,9 @@ fn is_unsafe_assignment<'a>(
     receiver_type: Type<'a>,
     sender_type: Type<'a>,
 ) -> bool {
-    cx.state.types.has_enum_assignment_mismatch(sender_type, receiver_type)
+    cx.state
+        .types
+        .has_enum_assignment_mismatch(sender_type, receiver_type)
         && !is_safe_enum_bitwise_expression(sender_node, receiver_type)
 }
 
@@ -340,13 +432,21 @@ fn check_assignment<'a>(
         return;
     }
     if let Some(receiver_type) = receiver_type().filter(|&it| !is_without_enums(it)) {
-        check_assignment_of_type(cx, receiver_type, sender_node, sender_node.ty(), reporting_node, message);
+        check_assignment_of_type(
+            cx,
+            receiver_type,
+            sender_node,
+            sender_node.ty(),
+            reporting_node,
+            message,
+        );
     }
 }
 
 /// `node`: a call, a `new` or a tagged template, whose substitutions are the arguments.
 fn check_arguments<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
-    let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind() else {
+    let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind()
+    else {
         return;
     };
     if call.args().iter().all(is_array_or_object_literal) {
@@ -368,15 +468,26 @@ fn check_arguments<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
             let mut mismatched_parameter_types: SmallVec<[Type<'a>; 2]> = SmallVec::new();
             for element_type in spread_type.get_type_arguments() {
                 if let Some(parameter_type) = signature.get_next_parameter_type()
-                    && cx.state.types.has_enum_assignment_mismatch(element_type, parameter_type)
+                    && cx
+                        .state
+                        .types
+                        .has_enum_assignment_mismatch(element_type, parameter_type)
                 {
                     mismatched_parameter_types.push(parameter_type);
                 }
             }
             if !mismatched_parameter_types.is_empty() {
-                report(cx, argument.span(), UNSAFE_ENUM_ARGUMENT, &mismatched_parameter_types);
+                report(
+                    cx,
+                    argument.span(),
+                    UNSAFE_ENUM_ARGUMENT,
+                    &mismatched_parameter_types,
+                );
             }
-            if spread_type.tuple_target().is_some_and(|target| target.has_rest_element()) {
+            if spread_type
+                .tuple_target()
+                .is_some_and(|target| target.has_rest_element())
+            {
                 signature.consume_remaining_arguments();
             }
             continue;
@@ -385,7 +496,13 @@ fn check_arguments<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
         // takesFruit(1);
         // takesFruits(...numbers);
         let parameter_type = signature.get_next_parameter_type();
-        check_assignment(cx, || parameter_type, argument, argument.span(), UNSAFE_ENUM_ARGUMENT);
+        check_assignment(
+            cx,
+            || parameter_type,
+            argument,
+            argument.span(),
+            UNSAFE_ENUM_ARGUMENT,
+        );
     }
 }
 
@@ -405,9 +522,15 @@ fn get_heritage_member_types(member: Member<'_>) -> SmallVec<[Type<'_>; 2]> {
     let Some(class_node) = member.ts_node().parent() else {
         return found;
     };
-    for heritage_clause in class_node.children().filter(|child| child.kind() == SyntaxKind::HeritageClause) {
+    for heritage_clause in class_node
+        .children()
+        .filter(|child| child.kind() == SyntaxKind::HeritageClause)
+    {
         for heritage_type in heritage_clause.children() {
-            if let Some(member_symbol) = heritage_type.get_type_at_location().get_property(member_name) {
+            if let Some(member_symbol) = heritage_type
+                .get_type_at_location()
+                .get_property(member_name)
+            {
                 found.push(member_symbol.get_type());
             }
         }
@@ -419,7 +542,10 @@ fn check_class_member<'a>(cx: &mut Context<'a>, member: Member<'a>) {
     let Some(value) = member.init() else {
         return;
     };
-    if member.kind() != MemberKind::Property || member.is_signature() || member.flags().contains(Flags::ABSTRACT) {
+    if member.kind() != MemberKind::Property
+        || member.is_signature()
+        || member.flags().contains(Flags::ABSTRACT)
+    {
         return;
     }
     // A member of a class is not contextually typed by the member that it implements or overrides:
@@ -427,19 +553,38 @@ fn check_class_member<'a>(cx: &mut Context<'a>, member: Member<'a>) {
     let heritage_member_types = get_heritage_member_types(member);
     if !heritage_member_types.is_empty() {
         let value_type = value.ty();
-        if heritage_member_types.iter().all(|&it| is_unsafe_assignment(cx, value, it, value_type)) {
-            report(cx, member.span(), UNSAFE_ENUM_ASSIGNMENT, &heritage_member_types);
+        if heritage_member_types
+            .iter()
+            .all(|&it| is_unsafe_assignment(cx, value, it, value_type))
+        {
+            report(
+                cx,
+                member.span(),
+                UNSAFE_ENUM_ASSIGNMENT,
+                &heritage_member_types,
+            );
             mark_checked(cx, value);
             return;
         }
     }
-    check_assignment(cx, || Some(member.type_at_location()), value, member.span(), UNSAFE_ENUM_ASSIGNMENT);
+    check_assignment(
+        cx,
+        || Some(member.type_at_location()),
+        value,
+        member.span(),
+        UNSAFE_ENUM_ASSIGNMENT,
+    );
 }
 
 fn check_mutation<'a>(cx: &mut Context<'a>, target_node: Expr<'a>, reporting_node: Expr<'a>) {
     let target_type = target_node.ty();
     if !get_enum_types(get_constraint_type(target_type)).is_empty() {
-        report(cx, reporting_node.span(), UNSAFE_ENUM_MUTATION, &[target_type]);
+        report(
+            cx,
+            reporting_node.span(),
+            UNSAFE_ENUM_MUTATION,
+            &[target_type],
+        );
     }
 }
 
@@ -458,16 +603,27 @@ fn check_return<'a>(cx: &mut Context<'a>, return_node: Expr<'a>, reporting_node:
         true => ty.get_awaited_type(),
         false => Some(ty),
     };
-    if let Some(receiver_type) = awaited(signature.get_return_type()).filter(|&it| !is_without_enums(it))
+    if let Some(receiver_type) =
+        awaited(signature.get_return_type()).filter(|&it| !is_without_enums(it))
         && let Some(sender_type) = awaited(return_node.ty())
     {
-        check_assignment_of_type(cx, receiver_type, return_node, sender_type, reporting_node, UNSAFE_ENUM_RETURN);
+        check_assignment_of_type(
+            cx,
+            receiver_type,
+            return_node,
+            sender_type,
+            reporting_node,
+            UNSAFE_ENUM_RETURN,
+        );
     }
 }
 
 /// `{ [key in Fruit]: string }` is `Fruit`, `{ [Fruit.Apple]: string; [Vegetable.Asparagus]: string }`
 /// is `Fruit.Apple` and `Vegetable.Asparagus`.
-fn get_mapped_key_constraint_types<'a>(declaration: TsNode<'a>, found: &mut SmallVec<[Type<'a>; 2]>) {
+fn get_mapped_key_constraint_types<'a>(
+    declaration: TsNode<'a>,
+    found: &mut SmallVec<[Type<'a>; 2]>,
+) {
     if !matches!(
         declaration.kind(),
         SyntaxKind::GetAccessor
@@ -483,13 +639,23 @@ fn get_mapped_key_constraint_types<'a>(declaration: TsNode<'a>, found: &mut Smal
     };
     match type_node.kind() {
         SyntaxKind::MappedType => {
-            let type_parameter = type_node.children().find(|child| child.kind() == SyntaxKind::TypeParameter);
-            found.extend(type_parameter.and_then(|it| it.constraint()).map(|it| it.get_type_from_type_node()));
+            let type_parameter = type_node
+                .children()
+                .find(|child| child.kind() == SyntaxKind::TypeParameter);
+            found.extend(
+                type_parameter
+                    .and_then(|it| it.constraint())
+                    .map(|it| it.get_type_from_type_node()),
+            );
         }
         SyntaxKind::TypeLiteral => {
             let names = type_node.children().filter_map(|member| member.name());
             let names = names.filter(|name| name.kind() == SyntaxKind::ComputedPropertyName);
-            found.extend(names.filter_map(|name| name.expression()).map(|it| it.get_type_at_location()));
+            found.extend(
+                names
+                    .filter_map(|name| name.expression())
+                    .map(|it| it.get_type_at_location()),
+            );
         }
         _ => {}
     }
@@ -500,7 +666,11 @@ fn check_computed_member<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     let ExprKind::Index { index, .. } = node.kind() else {
         return;
     };
-    let Some(symbol) = node.ts_node().expression().and_then(|object| object.get_symbol_at_location()) else {
+    let Some(symbol) = node
+        .ts_node()
+        .expression()
+        .and_then(|object| object.get_symbol_at_location())
+    else {
         return;
     };
     let mut receiver_types = SmallVec::new();
@@ -512,7 +682,9 @@ fn check_computed_member<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     }
     let sender_type = index.ty();
     let is_unsafe = receiver_types.iter().all(|&receiver_type| {
-        cx.state.types.has_enum_assignment_mismatch(sender_type, receiver_type)
+        cx.state
+            .types
+            .has_enum_assignment_mismatch(sender_type, receiver_type)
             || !sender_type.is_assignable_to(receiver_type)
     });
     if is_unsafe {
@@ -533,7 +705,10 @@ fn check_part_of_literal<'a>(
     if sender_node.is_missing() || is_array_or_object_literal(sender_node) {
         return false;
     }
-    let Some(receiver_type) = receiver_node.contextual_type().filter(|&it| !is_without_enums(it)) else {
+    let Some(receiver_type) = receiver_node
+        .contextual_type()
+        .filter(|&it| !is_without_enums(it))
+    else {
         return false;
     };
     if !is_unsafe_assignment(cx, sender_node, receiver_type, sender_node.ty()) {
@@ -569,7 +744,13 @@ fn check_literal<'a>(cx: &mut Context<'a>, node: Expr<'a>, is_final: bool) {
                     // The function of a method is no expression for TypeScript, and has no contextual type.
                     PropKind::Method | PropKind::Getter | PropKind::Setter => continue,
                 };
-                if check_part_of_literal(cx, node, (receiver_node, value), property.span(), is_final) {
+                if check_part_of_literal(
+                    cx,
+                    node,
+                    (receiver_node, value),
+                    property.span(),
+                    is_final,
+                ) {
                     return;
                 }
             }
@@ -607,8 +788,21 @@ impl Rule for NoUnsafeEnumAssignment {
             };
             match op {
                 None
-                | Some(BinOp::And | BinOp::BitAnd | BinOp::Nullish | BinOp::BitXor | BinOp::BitOr | BinOp::Or) => {
-                    check_assignment(cx, || Some(target.ty()), value, node.span(), UNSAFE_ENUM_ASSIGNMENT);
+                | Some(
+                    BinOp::And
+                    | BinOp::BitAnd
+                    | BinOp::Nullish
+                    | BinOp::BitXor
+                    | BinOp::BitOr
+                    | BinOp::Or,
+                ) => {
+                    check_assignment(
+                        cx,
+                        || Some(target.ty()),
+                        value,
+                        node.span(),
+                        UNSAFE_ENUM_ASSIGNMENT,
+                    );
                 }
                 Some(_) => check_mutation(cx, target, node),
             }
@@ -625,39 +819,77 @@ impl Rule for NoUnsafeEnumAssignment {
         on.params(|_, param, cx| {
             if let Some(right) = param.default() {
                 let node = param.span_without_modifiers();
-                check_assignment(cx, || Some(param.pat().ty()), right, node, UNSAFE_ENUM_ASSIGNMENT);
+                check_assignment(
+                    cx,
+                    || Some(param.pat().ty()),
+                    right,
+                    node,
+                    UNSAFE_ENUM_ASSIGNMENT,
+                );
             }
         });
-        on.pats([PatTag::Object, PatTag::Array], |_, pattern, cx| match pattern.kind() {
-            PatKind::Object(properties) => {
-                for property in properties {
-                    if let Some(right) = property.default() {
-                        let left = property.value();
-                        let node = Span::new(left.span().start, property.span().end);
-                        check_assignment(cx, || Some(left.ty()), right, node, UNSAFE_ENUM_ASSIGNMENT);
+        on.pats(
+            [PatTag::Object, PatTag::Array],
+            |_, pattern, cx| match pattern.kind() {
+                PatKind::Object(properties) => {
+                    for property in properties {
+                        if let Some(right) = property.default() {
+                            let left = property.value();
+                            let node = Span::new(left.span().start, property.span().end);
+                            check_assignment(
+                                cx,
+                                || Some(left.ty()),
+                                right,
+                                node,
+                                UNSAFE_ENUM_ASSIGNMENT,
+                            );
+                        }
                     }
                 }
-            }
-            PatKind::Array(elements) => {
-                for element in elements {
-                    if let (Some(left), Some(right)) = (element.pat(), element.default()) {
-                        check_assignment(cx, || Some(left.ty()), right, element.span(), UNSAFE_ENUM_ASSIGNMENT);
+                PatKind::Array(elements) => {
+                    for element in elements {
+                        if let (Some(left), Some(right)) = (element.pat(), element.default()) {
+                            check_assignment(
+                                cx,
+                                || Some(left.ty()),
+                                right,
+                                element.span(),
+                                UNSAFE_ENUM_ASSIGNMENT,
+                            );
+                        }
                     }
                 }
-            }
-            _ => {}
-        });
+                _ => {}
+            },
+        );
         on.var_decls(|_, declarator, cx| {
             if let Some(init) = declarator.init() {
-                check_assignment(cx, || Some(declarator.pat().ty()), init, declarator.span(), UNSAFE_ENUM_ASSIGNMENT);
+                check_assignment(
+                    cx,
+                    || Some(declarator.pat().ty()),
+                    init,
+                    declarator.span(),
+                    UNSAFE_ENUM_ASSIGNMENT,
+                );
             }
         });
-        on.exprs([ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate], |_, node, cx| check_arguments(cx, node));
-        on.exprs([ExprTag::Index], |_, node, cx| check_computed_member(cx, node));
+        on.exprs(
+            [ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate],
+            |_, node, cx| check_arguments(cx, node),
+        );
+        on.exprs([ExprTag::Index], |_, node, cx| {
+            check_computed_member(cx, node)
+        });
         // The type of `e as const` is that of `e`.
         on.exprs([ExprTag::As], |_, node, cx| {
             if let ExprKind::As { expr, ty } = node.kind() {
-                check_assignment(cx, || Some(ty.ty()), expr, node.span(), UNSAFE_ENUM_ASSERTION);
+                check_assignment(
+                    cx,
+                    || Some(ty.ty()),
+                    expr,
+                    node.span(),
+                    UNSAFE_ENUM_ASSERTION,
+                );
             }
         });
         if file.has_exprs([ExprTag::Jsx]) {
@@ -668,7 +900,13 @@ impl Rule for NoUnsafeEnumAssignment {
                     && value.jsx_container_span().is_some()
                     && !value.is_missing()
                 {
-                    check_assignment(cx, || value.contextual_type(), value, value.span(), UNSAFE_ENUM_ASSIGNMENT);
+                    check_assignment(
+                        cx,
+                        || value.contextual_type(),
+                        value,
+                        value.span(),
+                        UNSAFE_ENUM_ASSIGNMENT,
+                    );
                 }
             });
         }
@@ -676,7 +914,9 @@ impl Rule for NoUnsafeEnumAssignment {
         // the end, from the outside in.
         on.exprs([ExprTag::Array, ExprTag::Object], |_, node, cx| {
             // In JavaScript a property can have a type of its own, from a JSDoc comment.
-            if !node.is_assignment_target() && (cx.is_javascript() || node.contextual_type().is_some()) {
+            if !node.is_assignment_target()
+                && (cx.is_javascript() || node.contextual_type().is_some())
+            {
                 check_literal(cx, node, false);
             }
         });

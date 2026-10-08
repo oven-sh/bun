@@ -1,8 +1,9 @@
 //! typescript-eslint's `util/collectUnusedVariables.ts`.
 //!
 //! Upstream walks the tree once to set `variable.eslintUsed` on what is never to be reported, and
-//! then asks each variable of each scope whether it is exported or used. Here nothing is walked:
-//! what the visitor marks follows from the declarations and the references of a symbol.
+//! then asks each variable of each scope whether it is exported or used. Here only the parameters
+//! of signatures and setters are walked. What else the visitor marks follows from the declarations
+//! and the references of a symbol.
 //!
 //! The helpers of `isUsedVariable` are the same as those of ESLint's own `no-unused-vars`, and are
 //! public for it.
@@ -13,10 +14,9 @@ use super::{
     is_variable_definition,
 };
 use crate::ast::{
-    BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Module, ModuleName, Name, Node, Pat, Stmt,
-    StmtKind, StmtTag, TypeTag, UnOp,
+    BinOp, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Handle, Key, KeyKind, Module,
+    ModuleName, Name, Node, Pat, Stmt, StmtKind, StmtTag, TypeKind, TypeTag, UnOp,
 };
-use crate::options::{Json, Object};
 use crate::semantic::{Declaration, Reference, Scope, ScopeKind, SymFlags, Symbol};
 use crate::span::Span;
 use crate::tokens::TokenKind;
@@ -295,8 +295,7 @@ fn is_declared_by_loop_that_only_returns<'a>(pat: Pat<'a>, declaration: Declarat
 }
 
 /// What `UnusedVarsVisitor` marks because of how it is declared: enum members, the key of a mapped
-/// type, parameter properties, `this` parameters, the parameters of setters and of everything
-/// without a body, and the variable of a loop that only returns.
+/// type, parameter properties, `this` parameters, and the variable of a loop that only returns.
 fn is_declaration_marked_as_used(declaration: Declaration) -> bool {
     match declaration {
         Declaration::EnumMember(_) => true,
@@ -306,10 +305,6 @@ fn is_declaration_marked_as_used(declaration: Declaration) -> bool {
         Declaration::Param(pat) => {
             matches!(pat.parent(), Node::Param(param) if param.is_parameter_property())
                 || pat.as_ident().is_some_and(|name| name.is("this"))
-                || matches!(
-                    declaration.node(),
-                    Some(Node::Func(func)) if !func.has_body() || func.kind() == FnKind::Setter
-                )
         }
         Declaration::Var(pat) => is_declared_by_loop_that_only_returns(pat, declaration),
         _ => false,
@@ -343,40 +338,117 @@ fn mark_global_augmentations<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
     }
 }
 
-/// scope-manager's `referenceJsxPragma` and `referenceJsxFragment`: the first JSX element at which
-/// `parserOptions.jsxPragma` means something uses that, and the first fragment likewise
-/// `parserOptions.jsxFragmentName`.
-fn mark_jsx_factories<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
-    if file.hir.jsx.is_empty() {
-        return;
+/// Whether it is a function of `visitFunctionTypeSignature` or `visitSetter`: a signature, a
+/// function type, an overload, an ambient or abstract declaration, or a setter.
+fn has_marked_parameters(func: Func) -> bool {
+    match func.kind() {
+        FnKind::IndexSignature | FnKind::StaticBlock => false,
+        FnKind::Setter => true,
+        _ => !func.has_body(),
     }
-    let options = Object::of(Some(&file.language().parser_options));
-    let pragma = match options.get("jsxPragma") {
-        None => Some("React"),
-        Some(Json::Null) => None,
-        Some(_) => options.str("jsxPragma"),
-    };
-    let factories = [(pragma, false), (options.str("jsxFragmentName"), true)];
-    for (name, is_for_fragments) in factories {
-        let Some(name) = name else {
-            continue;
-        };
-        if !file.symbols().any(|symbol| symbol.name().is(name)) {
-            continue;
+}
+
+fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut UsedMarks) {
+    if let Some(symbol) = holder.scope().resolve_name(name) {
+        marks.mark(symbol);
+    }
+}
+
+fn mark_key<'a>(key: Option<Key<'a>>, holder: Node<'a>, marks: &mut UsedMarks) {
+    if let Some(KeyKind::Ident(name)) = key.map(Key::kind) {
+        mark_identifier(name, holder, marks);
+    }
+}
+
+/// Marks what the name of every `Identifier` of ESTree in `node` means where it is written, whether
+/// it refers to that or not: the `b` of `a.b`, a key, a label.
+fn mark_identifiers<'a>(node: Node<'a>, marks: &mut UsedMarks) {
+    match node {
+        Node::Expr(e) => match e.kind() {
+            ExprKind::Ident(name) => mark_identifier(name, node, marks),
+            ExprKind::Dot { name, .. } if !name.bytes().starts_with(b"#") => {
+                mark_identifier(name.name(), node, marks);
+            }
+            ExprKind::ImportMeta => {
+                marks.mark_variable_as_used("meta", node);
+            }
+            ExprKind::NewTarget => {
+                marks.mark_variable_as_used("target", node);
+            }
+            // The names of the tags are `JSXIdentifier`s.
+            ExprKind::Jsx(jsx) => {
+                jsx.type_args().iter().for_each(|it| mark_identifiers(Node::Type(it), marks));
+                jsx.attrs().iter().for_each(|it| mark_identifiers(Node::Prop(it), marks));
+                jsx.children().iter().for_each(|it| mark_identifiers(Node::Expr(it), marks));
+                return;
+            }
+            _ => {}
+        },
+        Node::Pat(pat) => {
+            if let Some(name) = pat.as_ident() {
+                mark_identifier(name, node, marks);
+            }
         }
-        let mut elements: Vec<Expr> = (0..file.hir.exprs.len())
-            .map(|id| Expr::new(file, hir::ExprId(id as u32)))
-            .filter(|e| match e.kind() {
-                ExprKind::Jsx(jsx) => {
-                    (!is_for_fragments || jsx.is_fragment()) && !matches!(e.parent(), Node::File(_))
-                }
-                _ => false,
-            })
-            .collect();
-        elements.sort_unstable_by_key(|e| e.span().start);
-        for element in elements {
-            if marks.mark_variable_as_used(name, element) {
-                break;
+        Node::PatProp(prop) => mark_key(prop.key(), node, marks),
+        Node::Prop(prop) if !prop.is_jsx_attribute() => mark_key(prop.key(), node, marks),
+        Node::Member(member) => mark_key(member.key(), node, marks),
+        Node::EnumMember(member) => mark_key(member.key(), node, marks),
+        Node::TypeParam(param) => mark_identifier(param.name().name(), node, marks),
+        Node::TupleElem(element) => {
+            if let Some(name) = element.name() {
+                mark_identifier(name.name(), node, marks);
+            }
+        }
+        Node::Func(func) => {
+            if let Some(name) = func.name() {
+                mark_identifier(name.name(), node, marks);
+            }
+            // Its parameters have their own turn.
+            if has_marked_parameters(func) {
+                node.for_each_child(|child| {
+                    if !matches!(child, Node::Param(_)) {
+                        mark_identifiers(child, marks);
+                    }
+                });
+                return;
+            }
+        }
+        Node::Type(ty) => match ty.kind() {
+            TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } => {
+                name.parts().for_each(|part| mark_identifier(part.name(), node, marks));
+            }
+            TypeKind::Predicate { param, .. } if !param.is("this") => {
+                mark_identifier(param, node, marks);
+            }
+            _ => {}
+        },
+        Node::Stmt(statement) => {
+            let name = match statement.kind() {
+                StmtKind::Labeled { label, .. } => Some(label),
+                StmtKind::Break(label) | StmtKind::Continue(label) => label,
+                StmtKind::Interface(it) => Some(it.name().name()),
+                StmtKind::TypeAlias(it) => Some(it.name().name()),
+                StmtKind::Enum(it) => Some(it.name().name()),
+                _ => None,
+            };
+            if let Some(name) = name {
+                mark_identifier(name, node, marks);
+            }
+        }
+        _ => {}
+    }
+    node.for_each_child(|child| mark_identifiers(child, marks));
+}
+
+/// Upstream's `visitFunctionTypeSignature` and `visitSetter`. They mean to mark the parameters, and
+/// visit each with a `PatternVisitor` that, with the option `visitChildrenEvenIfSelectorExists` of
+/// the visitor around it, goes on into type annotations and default values.
+fn mark_identifiers_in_parameters<'a>(file: &'a File<'a>, marks: &mut UsedMarks) {
+    for id in 0..file.hir.fns.len() {
+        let func = Func::new(file, hir::FnId(id as u32));
+        if has_marked_parameters(func) && !matches!(func.owner(), Node::File(_)) && !func.is_synthetic() {
+            for param in func.this_param().into_iter().chain(func.params()) {
+                mark_identifiers(Node::Param(param), marks);
             }
         }
     }
@@ -469,18 +541,14 @@ fn as_estree_function(node: Node<'_>) -> Option<Func<'_>> {
     node.as_func().filter(|func| func.has_body() && func.kind() != FnKind::StaticBlock)
 }
 
-/// Whether what is at `node` can run again, or at another time than what is around it in the
-/// variable scope: it is in a loop (ESLint's `isInLoop`) or in the initializer of a class field.
-fn is_in_loop_or_field_initializer(node: Node) -> bool {
-    let mut child = node;
+/// ESLint's `isInLoop`: there is a loop around `node` in its function.
+fn is_in_loop(node: Node) -> bool {
     for ancestor in node.ancestors() {
         match ancestor {
             Node::Stmt(statement) if statement.is_loop() => return true,
-            Node::Member(member) if member.init().map(Node::Expr) == Some(child) => return true,
             _ if as_estree_function(ancestor).is_some() => return false,
             _ => {}
         }
-        child = ancestor;
     }
     false
 }
@@ -510,7 +578,7 @@ pub fn get_rhs_node<'a>(
         Some(symbol) => symbol.scope().variable_scope() == scope,
         None => scope.kind() == ScopeKind::Global,
     };
-    (is_in_scope_of_variable && !is_in_loop_or_field_initializer(Node::Expr(id))).then_some(value)
+    (is_in_scope_of_variable && !is_in_loop(Node::Expr(id))).then_some(value)
 }
 
 /// ESLint's and typescript-eslint's `isStorableFunction`: the function `func_node`, which is inside
@@ -635,8 +703,10 @@ pub fn is_used_variable(variable: Variable) -> bool {
     let own = get_self_reference_ranges(variable);
     let is_imported_as_type = variable.defs().all(is_type_import);
     has_use(variable.references(), |reference| {
-        (is_imported_as_type || !is_type_only_reference(variable.symbol(), reference))
-            && !own.iter().any(|range| range.contains(reference.span()))
+        // It is written where the name is declared, and is in the scope around that.
+        reference.is_jsx_pragma()
+            || (is_imported_as_type || !is_type_only_reference(variable.symbol(), reference))
+                && !own.iter().any(|range| range.contains(reference.span()))
     })
 }
 
@@ -688,8 +758,8 @@ impl<'a> VariableAnalysis<'a> {
 
 /// typescript-eslint's `collectVariables`: every variable of the file, as used or unused.
 ///
-/// `eslint_used` is what has `variable.eslintUsed` set before: by the rule, by
-/// [`UsedMarks::mark_variable_as_used`]. `/* exported */` comments are applied here.
+/// What has `variable.eslintUsed` set before is what is in `eslint_used`, and what
+/// [`Symbol::is_marked_used`] holds for. `/* exported */` comments are applied here.
 ///
 /// Not among the variables, as upstream: the names of function expressions. And what is no
 /// [`Symbol`]: `arguments`, and the globals that the file does not declare, for which there is
@@ -701,7 +771,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
     };
     analysis.eslint_used.mark_exported_variables(file);
     mark_global_augmentations(file, &mut analysis.eslint_used);
-    mark_jsx_factories(file, &mut analysis.eslint_used);
+    mark_identifiers_in_parameters(file, &mut analysis.eslint_used);
     for symbol in file.symbols() {
         if symbol.flags().contains(SymFlags::CLASS) {
             let classes = symbol.declarations().filter_map(|it| match it {
@@ -714,7 +784,9 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
         if variable.defs().next().is_none() {
             continue;
         }
-        if !analysis.eslint_used.contains(symbol) && is_marked_as_used(variable) {
+        if !analysis.eslint_used.contains(symbol)
+            && (symbol.is_marked_used() || is_marked_as_used(variable))
+        {
             analysis.eslint_used.mark(symbol);
         }
         if analysis.eslint_used.contains(symbol)

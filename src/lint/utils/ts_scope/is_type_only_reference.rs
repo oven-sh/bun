@@ -2,8 +2,7 @@
 //! `@typescript-eslint/scope-manager`.
 
 use super::{reference_contains_type_predicate, reference_contains_type_query};
-use crate::ast::{Node, StmtTag};
-use crate::semantic::{Declaration, Reference, Symbol};
+use crate::semantic::{Declaration, DeclarationKind, Reference, Symbol};
 
 /// scope-manager's `definition.isTypeDefinition`: a class, an enum, an enum member, a namespace, an
 /// import, an interface, a type alias, a type parameter.
@@ -27,32 +26,29 @@ pub fn is_variable_definition(declaration: Declaration) -> bool {
 }
 
 /// scope-manager's `variable.isTypeVariable`.
+#[inline]
 pub fn is_type_variable(variable: Symbol) -> bool {
-    variable.declarations().any(is_type_definition)
+    variable.is_type_variable()
 }
 
 /// scope-manager's `variable.isValueVariable`.
+#[inline]
 pub fn is_value_variable(variable: Symbol) -> bool {
-    variable.declarations().any(is_variable_definition)
+    variable.is_value_variable()
 }
 
 /// scope-manager's `reference.isValueReference`. A `typeof a` in a type and the `x` of `x is T`
 /// refer to values.
+#[inline]
 pub fn is_value_reference(reference: Reference) -> bool {
-    !reference.is_type()
-        || matches!(reference.node(), Node::ExportSpec(spec) if !spec.is_type_only() && !spec.export().is_type_only())
-        || reference_contains_type_query(reference)
-        || reference_contains_type_predicate(reference)
+    reference.is_value()
 }
 
 /// scope-manager's `definition.type === DefinitionType.Variable`: bound by `var`, `let`, `const`
 /// or `using`, and not by `catch`.
+#[inline]
 pub fn is_variable_declarator_definition(declaration: Declaration) -> bool {
-    matches!(declaration, Declaration::Var(_))
-        && !matches!(
-            declaration.node().map(Node::parent),
-            Some(Node::Stmt(statement)) if statement.tag() == StmtTag::Try
-        )
+    declaration.kind() == Some(DeclarationKind::Variable)
 }
 
 /// typescript-eslint's `isMergedTypeValueVariable`.
@@ -66,5 +62,5 @@ pub fn is_type_only_reference(variable: Symbol, reference: Reference) -> bool {
     if reference_contains_type_query(reference) || reference_contains_type_predicate(reference) {
         return true;
     }
-    !is_value_reference(reference) && variable.declarations().any(is_variable_declarator_definition)
+    !reference.is_value() && variable.declarations().any(is_variable_declarator_definition)
 }

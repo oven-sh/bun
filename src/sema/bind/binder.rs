@@ -94,6 +94,48 @@ enum IsComputedName {
     Yes,
 }
 
+/// What a run of the binder leaves for the next one on the thread: lists that are empty and have room.
+#[derive(Default)]
+pub(super) struct Room {
+    b: BoundBuilder,
+    tables: Vec<Table>,
+    statement_lists: Vec<IdList<StmtId>>,
+    idents: Vec<(ExprId, ScopeId)>,
+    assigned: Vec<ExprId>,
+    expando_assignments: Vec<(ExprId, ScopeId)>,
+    label_reached: Vec<bool>,
+    containing_classes: Vec<ClassId>,
+    returns: Vec<u32>,
+    yields: Vec<u32>,
+}
+
+thread_local! {
+    /// A linter binds one file after the other, and is done with each before the next.
+    static ROOM: std::cell::Cell<Option<Box<Room>>> = const { std::cell::Cell::new(None) };
+}
+
+/// [`bind_for_lint`]
+pub(super) fn run_for_lint<'s>(
+    f: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    let mut room = ROOM.take().unwrap_or_default();
+    let mut b = Binder::<true>::run_in(f, options, atoms, &mut room);
+    let bound = b.move_to_arena(arena);
+    room.b = b;
+    ROOM.set(Some(room));
+    bound
+}
+
+/// `list`, which is empty, with `len` times `value`.
+fn filled<T: Clone>(mut list: Vec<T>, len: usize, value: T) -> Vec<T> {
+    list.clear();
+    list.resize(len, value);
+    list
+}
+
 /// `LINT`: for a linter without types. See [`bind_for_lint`].
 pub(super) struct Binder<'f, 's, const LINT: bool> {
     f: &'f File<'s>,
@@ -203,31 +245,43 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
+        Self::run_in(f, options, atoms, &mut Room::default())
+    }
+
+    fn run_in(
+        f: &'f File<'s>,
+        options: BindOptions,
+        atoms: &'f dyn crate::atom::Intern,
+        room: &mut Room,
+    ) -> BoundBuilder {
+        let old = std::mem::take(&mut room.b);
         // The length of a list that only the checker reads.
         let for_checker = |len: usize| if LINT { 0 } else { len };
         let for_lint = |len: usize| if LINT { len } else { 0 };
         let mut b = BoundBuilder {
-            expr_kinds: vec![NOT_REACHED; for_lint(f.exprs.len())],
-            ident_scope: vec![ScopeId::NONE; for_lint(f.exprs.len())],
-            expr_symbol: vec![SymbolId::NONE; f.exprs.len()],
-            expr_parent: vec![Parent::None; f.exprs.len()],
-            expr_flow: vec![UNREACHABLE; for_checker(f.exprs.len())],
-            stmt_parent: vec![Parent::None; f.stmts.len()],
-            stmt_scope: vec![ScopeId::NONE; for_checker(f.stmts.len())],
-            stmt_flow: vec![UNREACHABLE; f.stmts.len()],
-            case_fallthrough: vec![FlowId::NONE; f.cases.len()],
-            type_scope: vec![ScopeId::NONE; f.types.len()],
-            type_by_alias: vec![false; for_checker(f.types.len())],
-            pat_parent: vec![PatParent::None; f.pats.len()],
-            pat_symbol: vec![SymbolId::NONE; f.pats.len()],
-            prop_owner: vec![ExprId::NONE; f.props.len()],
-            member_owner: vec![MemberOwner::None; f.members.len()],
-            member_symbol: vec![SymbolId::NONE; f.members.len()],
-            member_scope: vec![ScopeId::NONE; f.members.len()],
-            param_fn: vec![FnId::NONE; f.params.len()],
-            type_param_symbol: vec![SymbolId::NONE; f.type_params.len()],
-            type_param_scope: vec![ScopeId::NONE; f.type_params.len()],
-            fns: vec![
+            expr_kinds: filled(old.expr_kinds, for_lint(f.exprs.len()), NOT_REACHED),
+            ident_scope: filled(old.ident_scope, for_lint(f.exprs.len()), ScopeId::NONE),
+            expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
+            expr_parent: filled(old.expr_parent, f.exprs.len(), Parent::None),
+            expr_flow: filled(old.expr_flow, for_checker(f.exprs.len()), UNREACHABLE),
+            stmt_parent: filled(old.stmt_parent, f.stmts.len(), Parent::None),
+            stmt_scope: filled(old.stmt_scope, for_checker(f.stmts.len()), ScopeId::NONE),
+            stmt_flow: filled(old.stmt_flow, f.stmts.len(), UNREACHABLE),
+            case_fallthrough: filled(old.case_fallthrough, f.cases.len(), FlowId::NONE),
+            type_scope: filled(old.type_scope, f.types.len(), ScopeId::NONE),
+            type_by_alias: filled(old.type_by_alias, for_checker(f.types.len()), false),
+            pat_parent: filled(old.pat_parent, f.pats.len(), PatParent::None),
+            pat_symbol: filled(old.pat_symbol, f.pats.len(), SymbolId::NONE),
+            prop_owner: filled(old.prop_owner, f.props.len(), ExprId::NONE),
+            member_owner: filled(old.member_owner, f.members.len(), MemberOwner::None),
+            member_symbol: filled(old.member_symbol, f.members.len(), SymbolId::NONE),
+            member_scope: filled(old.member_scope, f.members.len(), ScopeId::NONE),
+            param_fn: filled(old.param_fn, f.params.len(), FnId::NONE),
+            type_param_symbol: filled(old.type_param_symbol, f.type_params.len(), SymbolId::NONE),
+            type_param_scope: filled(old.type_param_scope, f.type_params.len(), ScopeId::NONE),
+            fns: filled(
+                old.fns,
+                f.fns.len(),
                 FnInfo {
                     owner: FnOwner::None,
                     scope: ScopeId::NONE,
@@ -237,31 +291,36 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                     end: UNREACHABLE,
                     exit: FlowId::NONE,
                     contains_this: false,
-                };
-                f.fns.len()
-            ],
-            requires_scope_change: vec![false; f.fns.len()],
-            fn_symbol: vec![SymbolId::NONE; f.fns.len()],
-            class_symbol: vec![SymbolId::NONE; f.classes.len()],
-            class_owner: vec![ClassOwner::Stmt(StmtId::NONE); f.classes.len()],
-            class_scope: vec![ScopeId::NONE; f.classes.len()],
-            interface_symbol: vec![SymbolId::NONE; f.interfaces.len()],
-            interface_scope: vec![ScopeId::NONE; f.interfaces.len()],
-            interface_contains_this: vec![false; f.interfaces.len()],
-            enum_scope: vec![ScopeId::NONE; f.enums.len()],
-            module_scope: vec![ScopeId::NONE; f.modules.len()],
-            alias_symbol: vec![SymbolId::NONE; f.aliases.len()],
-            alias_scope: vec![ScopeId::NONE; f.aliases.len()],
-            enum_symbol: vec![SymbolId::NONE; f.enums.len()],
-            enum_member_symbol: vec![SymbolId::NONE; f.enum_members.len()],
-            enum_member_owner: vec![EnumId::NONE; f.enum_members.len()],
-            module_symbol: vec![SymbolId::NONE; f.modules.len()],
-            module_instance_state: vec![ModuleInstanceState::NonInstantiated; f.modules.len()],
-            var_stmt: vec![StmtId::NONE; f.var_decls.len()],
-            case_stmt: vec![StmtId::NONE; f.cases.len()],
-            import_scope: vec![ScopeId::NONE; f.imports.len()],
-            import_equals_scope: vec![ScopeId::NONE; f.import_equals.len()],
-            export_scope: vec![ScopeId::NONE; f.exports.len()],
+                },
+            ),
+            requires_scope_change: filled(old.requires_scope_change, f.fns.len(), false),
+            fn_symbol: filled(old.fn_symbol, f.fns.len(), SymbolId::NONE),
+            class_symbol: filled(old.class_symbol, f.classes.len(), SymbolId::NONE),
+            class_owner: filled(old.class_owner, f.classes.len(), ClassOwner::Stmt(StmtId::NONE)),
+            class_scope: filled(old.class_scope, f.classes.len(), ScopeId::NONE),
+            interface_symbol: filled(old.interface_symbol, f.interfaces.len(), SymbolId::NONE),
+            interface_scope: filled(old.interface_scope, f.interfaces.len(), ScopeId::NONE),
+            interface_contains_this: filled(old.interface_contains_this, f.interfaces.len(), false),
+            enum_scope: filled(old.enum_scope, f.enums.len(), ScopeId::NONE),
+            module_scope: filled(old.module_scope, f.modules.len(), ScopeId::NONE),
+            alias_symbol: filled(old.alias_symbol, f.aliases.len(), SymbolId::NONE),
+            alias_scope: filled(old.alias_scope, f.aliases.len(), ScopeId::NONE),
+            enum_symbol: filled(old.enum_symbol, f.enums.len(), SymbolId::NONE),
+            enum_member_symbol: filled(old.enum_member_symbol, f.enum_members.len(), SymbolId::NONE),
+            enum_member_owner: filled(old.enum_member_owner, f.enum_members.len(), EnumId::NONE),
+            module_symbol: filled(old.module_symbol, f.modules.len(), SymbolId::NONE),
+            module_instance_state: filled(old.module_instance_state, f.modules.len(), ModuleInstanceState::NonInstantiated),
+            var_stmt: filled(old.var_stmt, f.var_decls.len(), StmtId::NONE),
+            case_stmt: filled(old.case_stmt, f.cases.len(), StmtId::NONE),
+            import_scope: filled(old.import_scope, f.imports.len(), ScopeId::NONE),
+            import_equals_scope: filled(old.import_equals_scope, f.import_equals.len(), ScopeId::NONE),
+            export_scope: filled(old.export_scope, f.exports.len(), ScopeId::NONE),
+            symbols: old.symbols,
+            scopes: old.scopes,
+            ids: old.ids,
+            declared: old.declared,
+            scope_node: old.scope_node,
+            expr_kind_counts: old.expr_kind_counts,
             ..Default::default()
         };
         if !LINT {
@@ -273,17 +332,17 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             options,
             atoms,
             b,
-            tables: Vec::new(),
+            tables: std::mem::take(&mut room.tables),
             scope: ScopeId::NONE,
-            statement_lists: Vec::new(),
-            idents: Vec::new(),
-            assigned: Vec::new(),
-            expando_assignments: Vec::new(),
+            statement_lists: std::mem::take(&mut room.statement_lists),
+            idents: std::mem::take(&mut room.idents),
+            assigned: std::mem::take(&mut room.assigned),
+            expando_assignments: std::mem::take(&mut room.expando_assignments),
             flow: UNREACHABLE,
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
-            label_reached: Vec::new(),
+            label_reached: std::mem::take(&mut room.label_reached),
             nested_names: Vec::new(),
             expr_kind_counts: [0; 2 * ExprTag::COUNT],
             referenced: Vec::new(),
@@ -305,10 +364,10 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             cur_member: MemberId::NONE,
             this_member: MemberId::NONE,
             this_property: PropId::NONE,
-            containing_classes: Vec::new(),
+            containing_classes: std::mem::take(&mut room.containing_classes),
             is_in_class_decorator: false,
-            returns: Vec::new(),
-            yields: Vec::new(),
+            returns: std::mem::take(&mut room.returns),
+            yields: std::mem::take(&mut room.yields),
             seen_this: false,
             this_in_name: false,
             flow_after_name: FlowId::NONE,
@@ -325,7 +384,26 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 ..Default::default()
             };
         }
-        this.finish()
+        this.finish();
+        this.tables.clear();
+        this.statement_lists.clear();
+        this.idents.clear();
+        this.assigned.clear();
+        this.expando_assignments.clear();
+        this.label_reached.clear();
+        this.containing_classes.clear();
+        this.returns.clear();
+        this.yields.clear();
+        room.tables = this.tables;
+        room.statement_lists = this.statement_lists;
+        room.idents = this.idents;
+        room.assigned = this.assigned;
+        room.expando_assignments = this.expando_assignments;
+        room.label_reached = this.label_reached;
+        room.containing_classes = this.containing_classes;
+        room.returns = this.returns;
+        room.yields = this.yields;
+        this.b
     }
 
     /// Whether the HIR is too deep to bind on this thread's stack. Every recursive path of the
@@ -1974,7 +2052,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         scope
     }
 
-    fn finish(mut self) -> BoundBuilder {
+    fn finish(&mut self) {
         if LINT {
             let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some();
             let nested = || self.b.scopes.iter().filter(is_nested).map(|s| &self.tables[s.locals.idx()]);
@@ -1988,11 +2066,10 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             self.nested_names = filter;
         }
         // Resolves names, now that everything is declared.
-        let mut idents = std::mem::take(&mut self.idents);
+        let idents = std::mem::take(&mut self.idents);
         if LINT {
-            self.b.expr_kind_counts = self.expr_kind_counts.to_vec();
-            let scopes = self.b.ident_scope.iter().enumerate();
-            idents.extend(scopes.filter(|it| it.1.is_some()).map(|(i, &scope)| (ExprId(i as u32), scope)));
+            self.b.expr_kind_counts.clear();
+            self.b.expr_kind_counts.extend_from_slice(&self.expr_kind_counts);
         }
         // FOR SPEED, with `LINT`: what `resolve` has said of late. A name is often used again nearby.
         let mut recent = [(ScopeId::NONE, Atom::NONE, None); 256];
@@ -2038,7 +2115,9 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 self.b.alias_idents.push((expr, scope));
             }
         }
-        for expr in std::mem::take(&mut self.assigned) {
+        self.idents = idents;
+        let assigned = std::mem::take(&mut self.assigned);
+        for &expr in &assigned {
             let symbol = self.b.expr_symbol[expr.idx()];
             if symbol.is_some() {
                 self.b.symbols[symbol.idx()].flags |= SymFlags::ASSIGNED;
@@ -2047,6 +2126,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 }
             }
         }
+        self.assigned = assigned;
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
         let (expr_symbol, arguments_objects) = (&self.b.expr_symbol, &self.b.arguments_objects);
         self.b.unchecked_assignment_targets.retain(|target| {
@@ -2082,7 +2162,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         self.bind_deferred_expando_assignments();
         // Nothing looks a name up any more, there is no flow graph, and nobody loads the modules.
         if LINT {
-            return self.b;
+            return;
         }
         // Tables, flat.
         self.b.tables.reserve_exact(self.tables.len());
@@ -2149,7 +2229,6 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         if !self.b.module_augmentations.is_empty() {
             self.b.module_augmentations.retain(|s| seen.insert(*s));
         }
-        self.b
     }
 
     /// Moves `items[first..]` to the end of `ids`. Returns where they are.
@@ -4487,6 +4566,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     fn note_identifier(&mut self, id: ExprId) {
         self.note_kind(id, ExprTag::Ident, false);
         self.b.ident_scope[id.idx()] = self.scope;
+        self.idents.push((id, self.scope));
     }
 
     /// The start of `expr`: the part that does not depend on flow or on the enclosing expression.
@@ -4668,9 +4748,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             ExprKind::Ident(_) => {
                 if LINT {
                     self.b.ident_scope[id.idx()] = self.scope;
-                } else {
-                    self.idents.push((id, self.scope));
                 }
+                self.idents.push((id, self.scope));
                 let (name, func) = self.associated_declaration;
                 if !LINT {
                     self.b.expr_flow[id.idx()] = self.flow;

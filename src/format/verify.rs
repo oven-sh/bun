@@ -24,6 +24,7 @@ use crate::js::utils::number::format_trimmed_number;
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{Expr, ExprKind, File, Node, StmtKind, TypeKind};
 use bun_lint::span::Span;
+use bun_sema::hir::StmtTag;
 use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
 
@@ -306,10 +307,11 @@ fn comments<'a>(file: &'a File<'a>) -> Vec<(Vec<u8>, u32)> {
     all
 }
 
-/// Puts the tokens of the imports at the top of the file in an order that does not depend on where
-/// they are written, in front of the others. The commas between them are left out.
+/// Puts the tokens of the imports of the file, wherever they are, in an order that does not depend
+/// on where they are written, in front of the others. The commas between them are left out.
 fn with_imports_in_order<'a>(file: &'a File<'a>, items: Vec<Item<'a>>) -> Vec<Item<'a>> {
-    let imports: Vec<Span> = file.body().iter().filter(|it| matches!(it.kind(), StmtKind::Import(_))).map(|it| it.span()).collect();
+    let mut imports: Vec<Span> = file.stmts_of_kind(StmtTag::Import).map(|it| it.span()).collect();
+    imports.sort_unstable_by_key(|it| it.start);
     let is_in_import = |item: &Item<'a>| {
         let after = imports.partition_point(|it| it.start <= item.1);
         after > 0 && item.1 < imports[after - 1].end

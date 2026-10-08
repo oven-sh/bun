@@ -371,6 +371,20 @@ impl<'a> Format<'a> for Expr<'a> {
     }
 }
 
+/// Every `!` of `x!!`, which is one expression, with the comments between them.
+pub(crate) struct FormatNonNullMarks<'a>(pub(crate) Expr<'a>);
+
+impl<'a> Format<'a> for FormatNonNullMarks<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let mut inner = self.0.inner_non_null_spans().peekable();
+        while inner.next().is_some() {
+            let next_mark = inner.peek().map_or(self.0.span().end, |next| next.end).saturating_sub(1);
+            write!(f, ["!", FormatTrailingComments::Comments(f.comments().comments_before(next_mark))]);
+        }
+        write!(f, "!");
+    }
+}
+
 /// Step 5 for an expression.
 pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     use print::{expressions, literals};
@@ -436,7 +450,7 @@ pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Fo
         ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => {
             print::as_or_satisfies_expression::write_as_or_satisfies_expression(e, f);
         }
-        ExprKind::NonNull(expression) => write!(f, [expression, "!"]),
+        ExprKind::NonNull(expression) => write!(f, [expression, FormatNonNullMarks(e)]),
         ExprKind::Instantiation { expr, type_args } => {
             write!(f, [expr, print::type_parameters::type_arguments(type_args, Node::Expr(e))]);
         }
@@ -475,6 +489,11 @@ fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>
     match node {
         // Decorators can be written before `export`, and comments before and after them.
         AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_) => {
+            if f.comments().is_suppressed(span.start) {
+                format_leading_comments(span).fmt(f);
+                write_ignored_statement(statement, span, f);
+                return write_trailing_comments_in(span, || node.parent(), f);
+            }
             format_node_without_comments(span, || node.parent(), f, |f| write_statement(statement, f));
         }
         _ => format_declaration_with_comments(statement, f),

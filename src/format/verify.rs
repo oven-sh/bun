@@ -11,6 +11,7 @@
 //! - The order of the flags of a regular expression.
 //! - The order of modifiers: `readonly abstract` is `abstract readonly`.
 //! - The white space in JSX text, and `{" "}`.
+//! - The empty braces of `import a, {} from "a"`.
 //! - The indentation of the lines of block comments.
 //!
 //! It is a debugging aid, not a proof: a formatter that drops a pair of parentheses that matters
@@ -175,6 +176,10 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                 continue;
             }
             _ => {}
+        }
+        // `import a, {} from "a"`
+        if text == b"from" && matches!(out.as_slice(), [.., a, b, c] if *a.0 == *b"," && *b.0 == *b"{" && *c.0 == *b"}") {
+            out.truncate(out.len() - 3);
         }
         out.push((Cow::Borrowed(text), start));
         // Modifiers are put in order.

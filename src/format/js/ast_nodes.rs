@@ -188,7 +188,13 @@ enum Level {
 }
 
 /// Whether `e` is a link of an optional chain after its first `?.`. The `!` of `a?.b!` is one.
+#[inline]
 fn is_chain_link(e: Expr<'_>) -> bool {
+    use bun_sema::hir::ExprTag;
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull) && is_chain_link_slow(e)
+}
+
+fn is_chain_link_slow(e: Expr<'_>) -> bool {
     match e.kind() {
         ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain != Chain::No,
         ExprKind::Call(call) => call.chain() != Chain::No,
@@ -198,10 +204,12 @@ fn is_chain_link(e: Expr<'_>) -> bool {
 }
 
 /// Whether oxc has a `ChainExpression` around `e`: it is all of `a?.b.c!`, not a part of it.
+#[inline]
 pub(crate) fn is_chain_root(e: Expr<'_>) -> bool {
-    if !is_chain_link(e) {
-        return false;
-    }
+    is_chain_link(e) && is_last_chain_link(e)
+}
+
+fn is_last_chain_link(e: Expr<'_>) -> bool {
     if e.is_parenthesized() {
         return true;
     }

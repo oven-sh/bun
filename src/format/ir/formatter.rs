@@ -272,7 +272,7 @@ pub(crate) struct Formatter<'a> {
     cleaned: FxHashMap<Interned, Interned>,
     next_group_id: Cell<u32>,
     source: &'a [u8],
-    source_is_ascii: bool,
+    width_is_len: bool,
     context: JsFormatContext<'a>,
 }
 
@@ -295,7 +295,7 @@ impl<'a> Formatter<'a> {
             cleaned,
             next_group_id: Cell::new(1),
             source,
-            source_is_ascii: bun_core::strings::first_non_ascii(source).is_none(),
+            width_is_len: super::width::is_width_len(source),
             context,
         }
     }
@@ -386,7 +386,7 @@ impl<'a> Formatter<'a> {
     #[inline]
     pub(crate) fn write_source_token(&mut self, span: Span) {
         let len = span.len();
-        let width = match self.source_is_ascii {
+        let width = match self.width_is_len {
             true => len,
             false => super::width::string_width(self.source.get(span.range()).unwrap_or_default()),
         };

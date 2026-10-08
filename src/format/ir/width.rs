@@ -87,12 +87,22 @@ fn width_of_non_ascii(text: &[u8]) -> u32 {
     width
 }
 
-/// `text` has no tabs or line breaks. Control characters count as nothing.
+/// Whether every byte for which `is_plain` is false is absent. It looks at whole blocks, which
+/// the compiler turns into vector instructions.
+#[inline]
+fn all_bytes(text: &[u8], is_plain: impl Fn(u8) -> bool + Copy) -> bool {
+    text.chunks(64).all(|block| block.iter().fold(true, |all, &byte| all & is_plain(byte)))
+}
+
+/// Whether the width of every part of `source` that has no tab and no line break is its length.
+pub(crate) fn is_width_len(source: &[u8]) -> bool {
+    all_bytes(source, |byte| matches!(byte, 0x20..=0x7E | b'\t' | b'\n' | b'\r'))
+}
+
+/// `text` has no line breaks. Control characters count as nothing.
 #[inline]
 pub(crate) fn string_width(text: &[u8]) -> u32 {
-    // Prettier's shortcut is for 0x20 to 0x7F. Control characters are so rare in a source text
-    // that it is not worth looking for them.
-    match text.is_ascii() {
+    match all_bytes(text, |byte| matches!(byte, 0x20..=0x7F)) {
         true => text.len() as u32,
         false => width_of_non_ascii(text),
     }

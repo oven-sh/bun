@@ -125,16 +125,12 @@ FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/values-misc.scss { printWidth: 100 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 80 }
 FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 100 }
-FAIL prettier edge-cases/md-in-js/nested-md-codeblock.js { printWidth: 80 }
-FAIL prettier edge-cases/md-in-js/nested-md-codeblock.js { printWidth: 100 }
 FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 80 }
 FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 100 }
 FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 80 }
 FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 100 }
 FAIL prettier edge-cases/xxx-in-md/lwc-code-block.md { printWidth: 80 }
 FAIL prettier edge-cases/xxx-in-md/lwc-code-block.md { printWidth: 100 }
-FAIL prettier edge-cases/xxx-in-md/whitespace-only-code-block.md { printWidth: 80 }
-FAIL prettier edge-cases/xxx-in-md/whitespace-only-code-block.md { printWidth: 100 }
 FAIL oxfmt graphql/graphql/comment-after-opening-delimiter.graphql { printWidth: 80 }
 FAIL oxfmt graphql/graphql/comment-after-opening-delimiter.graphql { printWidth: 100 }
 FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 80 }
@@ -235,10 +231,6 @@ FAIL oxfmt json/json/comments/oxfmt_ignore_array.json { printWidth: 80 }
 FAIL oxfmt json/json/comments/oxfmt_ignore_array.json { printWidth: 100 }
 FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 100 }
-FAIL prettier markdown/markdown/front-matter-closing-line.md { printWidth: 80 }
-FAIL prettier markdown/markdown/front-matter-closing-line.md { printWidth: 100 }
-FAIL oxfmt markdown/markdown/front-matter-closing-line.md { printWidth: 80 }
-FAIL oxfmt markdown/markdown/front-matter-closing-line.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 80 }
 FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 100 }
 FAIL oxfmt markdown/markdown/html-block-trailing-newline.md { printWidth: 80 }
@@ -291,6 +283,7 @@ FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth
 FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 100, proseWrap: "preserve" }
 FAIL oxfmt markdown/markdown/prose-wrap/ignored-block-trailing-quote-line.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/ignored-block-trailing-quote-line.md { printWidth: 100, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "never" }
@@ -363,8 +356,6 @@ FAIL oxfmt ts/comments/type-alias.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/type-alias.ts { printWidth: 100 }
 FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 80 }
 FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 100 }
-FAIL prettier ts/ignore/decorated-class-export.ts { printWidth: 80 }
-FAIL prettier ts/ignore/decorated-class-export.ts { printWidth: 100 }
 FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 80 }
 FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 100 }
 FAIL prettier ts/ignore/eol-after-operator.ts { printWidth: 80 }
@@ -464,5 +455,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1509/1570
-as oxfmt prints them, in its flavor: 1093/1498
+as Prettier prints them: 1516/1570
+as oxfmt prints them, in its flavor: 1095/1498

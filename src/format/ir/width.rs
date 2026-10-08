@@ -64,6 +64,29 @@ fn emoji_len(chars: &[u32]) -> usize {
 
 #[cold]
 fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
+    let mut width = 0;
+    let mut rest = text;
+    // ASCII only takes a closer look next to other characters: `#` is an emoji before a keycap, or joined to one.
+    while !rest.is_empty() {
+        let ascii = bun_core::strings::first_non_ascii(rest).map_or(rest.len(), |at| at as usize);
+        let plain = if ascii == rest.len() { ascii } else { ascii.saturating_sub(1) };
+        width += rest[..plain].iter().filter(|&&byte| is_printable(byte)).count() as u32;
+        rest = &rest[plain..];
+        let mut len = ascii - plain;
+        loop {
+            len += rest[len..].iter().take_while(|byte| !byte.is_ascii()).count();
+            if len == rest.len() || !rest[..len].ends_with("\u{200D}".as_bytes()) {
+                break;
+            }
+            len += 1;
+        }
+        width += width_of_characters(&rest[..len], flavor);
+        rest = &rest[len..];
+    }
+    width
+}
+
+fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
     let chars: smallvec::SmallVec<[u32; 64]> =
         bstr::ByteSlice::chars(text).map(u32::from).collect();
     let (mut width, mut i) = (0, 0);
